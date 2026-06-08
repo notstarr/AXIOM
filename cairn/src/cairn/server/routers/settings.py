@@ -211,7 +211,7 @@ def update_dispatch_settings(body: DispatchSettings):
             }
         )
     )
-    return body
+    return get_dispatch_settings()
 
 
 @router.post("/settings/test-pi", response_model=PiConnectionTestResponse)

@@ -1830,8 +1830,21 @@
                 <input x-model="worker.name" placeholder="deepseek-v4-pro" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
               </div>
               <div>
-                <label class="text-[11px] text-slate-400 mb-1 block font-medium">运行阶段</label>
-                <input x-model="worker.task_types_text" placeholder="bootstrap,reason,explore" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">参与阶段</label>
+                <div class="h-[38px] px-3 py-2 border border-slate-200 rounded-xl bg-white flex items-center gap-3">
+                  <label class="flex items-center gap-1.5 text-xs text-slate-600">
+                    <input type="checkbox" x-model="worker.phase_bootstrap" class="rounded border-slate-300 text-brand-500 focus:ring-brand-300">
+                    boot
+                  </label>
+                  <label class="flex items-center gap-1.5 text-xs text-slate-600">
+                    <input type="checkbox" x-model="worker.phase_reason" class="rounded border-slate-300 text-brand-500 focus:ring-brand-300">
+                    reason
+                  </label>
+                  <label class="flex items-center gap-1.5 text-xs text-slate-600">
+                    <input type="checkbox" x-model="worker.phase_explore" class="rounded border-slate-300 text-brand-500 focus:ring-brand-300">
+                    explore
+                  </label>
+                </div>
               </div>
               <div>
                 <label class="text-[11px] text-slate-400 mb-1 block font-medium">最大并发</label>
@@ -3187,6 +3200,10 @@ function cairnApp() {
 
     async loadDispatchSettings() {
       const data = await this.api('GET', '/settings/dispatch');
+      this.applyDispatchSettings(data);
+    },
+
+    applyDispatchSettings(data) {
       this.dispatchSettings = {
         runtime_interval: data.runtime_interval || 3,
         runtime_max_workers: data.runtime_max_workers || 8,
@@ -3203,7 +3220,9 @@ function cairnApp() {
         reason_max_intents: data.reason_max_intents || 2,
         workers: (data.workers || []).map(worker => ({
           ...worker,
-          task_types_text: Array.isArray(worker.task_types) ? worker.task_types.join(',') : String(worker.task_types || ''),
+          phase_bootstrap: Array.isArray(worker.task_types) && worker.task_types.includes('bootstrap'),
+          phase_reason: Array.isArray(worker.task_types) && worker.task_types.includes('reason'),
+          phase_explore: Array.isArray(worker.task_types) && worker.task_types.includes('explore'),
           pi_api_key: '',
           testing: false,
           test_result: null,
@@ -5412,12 +5431,16 @@ function cairnApp() {
     },
 
     workerPayload(worker) {
+      const taskTypes = [];
+      if (worker.phase_bootstrap) taskTypes.push('bootstrap');
+      if (worker.phase_reason) taskTypes.push('reason');
+      if (worker.phase_explore) taskTypes.push('explore');
+      if (taskTypes.length === 0) {
+        throw new Error(`Worker ${worker.name || '未命名'} 至少要勾选一个参与阶段`);
+      }
       return {
         name: worker.name,
-        task_types: String(worker.task_types_text || '')
-          .split(',')
-          .map(item => item.trim())
-          .filter(Boolean),
+        task_types: taskTypes,
         max_running: Number(worker.max_running || 1),
         priority: Number(worker.priority || 0),
         pi_model: worker.pi_model || '',
@@ -5458,7 +5481,9 @@ function cairnApp() {
       this.dispatchSettings.workers.push({
         name: `pi-worker-${index}`,
         task_types: ['bootstrap', 'reason', 'explore'],
-        task_types_text: 'bootstrap,reason,explore',
+        phase_bootstrap: true,
+        phase_reason: true,
+        phase_explore: true,
         max_running: 1,
         priority: 1,
         pi_model: '',
@@ -5478,9 +5503,8 @@ function cairnApp() {
 
     async savePiWorker(worker) {
       try {
-        await this.api('PUT', '/settings/dispatch', this.dispatchPayload());
-        worker.pi_api_key = '';
-        await this.loadDispatchSettings();
+        const updated = await this.api('PUT', '/settings/dispatch', this.dispatchPayload());
+        this.applyDispatchSettings(updated);
         this.showToast(`Worker ${worker.name} 已保存`);
       } catch (e) {
         this.showToast(e.message, 'error');
@@ -5510,8 +5534,8 @@ function cairnApp() {
 
     async saveServerSettings() {
       try {
-        await this.api('PUT', '/settings/dispatch', this.dispatchPayload());
-        await this.loadSettings();
+        const updated = await this.api('PUT', '/settings/dispatch', this.dispatchPayload());
+        this.applyDispatchSettings(updated);
         this.showToast('系统配置已保存');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
