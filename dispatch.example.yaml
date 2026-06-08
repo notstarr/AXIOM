@@ -1,0 +1,67 @@
+# Cairn server API endpoint.
+server: "http://cairn-server:8000"
+
+# Shared environment variables merged into every worker.
+common_env:
+  TSEC_SERVER_HOST: "<SERVER_HOST>:8000"
+  TSEC_AGENT_TOKEN: "xxx"
+
+runtime:
+  # Scheduler tick interval in seconds.
+  interval: 3
+  # Global concurrency cap across all workers and all projects.
+  max_workers: 8
+  # Maximum number of projects that may be actively scheduled at the same time.
+  max_running_projects: 3
+  # Per-project worker cap. Prevents one project from monopolizing the whole dispatcher.
+  max_project_workers: 4
+  # Timeout for each enabled worker healthcheck.
+  healthcheck_timeout: 20
+  # "startup_and_task" checks at dispatcher startup and before every task.
+  # "startup_only" checks only at startup. "disabled" skips automatic worker checks.
+  worker_healthcheck: "startup_only"
+  # Prompt set loaded from cairn/src/cairn/dispatcher/prompts/.
+  prompt_group: "default"
+
+tasks:
+  bootstrap:
+    # Main execution timeout for the initial direct solve attempt.
+    timeout: 300
+    # Time budget for conclude fallback after the main phase times out or returns unusable output.
+    conclude_timeout: 90
+  reason:
+    # Reason decides whether the goal is met and whether new intents should be proposed.
+    timeout: 300
+    # Hard cap on how many new intents one reason step may create.
+    max_intents: 2
+  explore:
+    # Main execution timeout for exploring a claimed intent.
+    timeout: 300
+    # Time budget for conclude fallback used to summarize confirmed findings from the same session.
+    conclude_timeout: 90
+
+container:
+  # Legacy field retained for compatibility. xrayAI executes tasks locally (no worker containers).
+  image: "ghcr.io/oritera/cairn-worker-container:latest"
+  network_mode: "host"
+  # Value is ignored in local-exec mode.
+  completed_action: "stop"
+  # Add Linux capabilities only when a task truly needs them, such as packet crafting or network admin actions.
+  # cap_add:
+  #   - "NET_RAW"
+  #   - "NET_ADMIN"
+
+
+workers:
+  # xrayAI keeps only PI workers.
+  - name: "pi_worker-c"
+    type: "pi"
+    task_types: [bootstrap, reason, explore]
+    max_running: 2
+    priority: 0
+    env:
+      PI_MODEL: "worker-c"
+      PI_BASE_URL: "https://api.example.com/compatible-mode/v1"
+      PI_API_KEY: "sk-xxx"
+      PI_PROVIDER_API: "openai-completions"
+      PI_MODEL_CONTEXT_WINDOW: "262144"
