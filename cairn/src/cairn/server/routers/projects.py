@@ -148,14 +148,22 @@ def create_project_group(body: CreateProjectGroupRequest):
                 now,
             ),
         )
-        return ProjectGroupSummary(
-            id=group_id,
-            title=body.title,
-            description=body.description,
-            scope=body.scope,
-            status="active",
-            created_at=now,
-        )
+        row = conn.execute(
+            """
+            SELECT g.*,
+                0 AS task_count,
+                0 AS active_task_count,
+                0 AS stopped_task_count,
+                0 AS completed_task_count,
+                0 AS vuln_count,
+                0 AS blackboard_count
+            FROM project_groups g
+            WHERE g.id = ?
+            """,
+            (group_id,),
+        ).fetchone()
+        assert row is not None
+        return _project_group_summary_from_row(row)
 
 
 @router.put("/project-groups/{group_id}", response_model=ProjectGroupSummary)

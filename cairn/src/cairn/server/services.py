@@ -13,14 +13,18 @@ def utcnow() -> str:
 
 
 def next_project_id(conn: sqlite3.Connection) -> str:
+    conn.execute("INSERT OR IGNORE INTO counters (name, value) VALUES ('project', 0)")
     conn.execute("UPDATE counters SET value = value + 1 WHERE name = 'project'")
     row = conn.execute("SELECT value FROM counters WHERE name = 'project'").fetchone()
+    assert row is not None
     return f"proj_{row['value']:03d}"
 
 
 def next_project_group_id(conn: sqlite3.Connection) -> str:
+    conn.execute("INSERT OR IGNORE INTO counters (name, value) VALUES ('project_group', 0)")
     conn.execute("UPDATE counters SET value = value + 1 WHERE name = 'project_group'")
     row = conn.execute("SELECT value FROM counters WHERE name = 'project_group'").fetchone()
+    assert row is not None
     return f"pg_{row['value']:03d}"
 
 

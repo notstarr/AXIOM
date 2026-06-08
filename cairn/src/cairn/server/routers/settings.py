@@ -2,13 +2,17 @@ from fastapi import APIRouter, HTTPException
 import json
 from pathlib import Path
 
+import requests
 import yaml
 
 from cairn.keyring import encrypt_secret
+from cairn.dispatcher.keyring import load_provider_api_key
 from cairn.server.db import get_conn
 from cairn.server.models import (
     DispatchSettings,
     DispatchWorkerSettings,
+    PiConnectionTestRequest,
+    PiConnectionTestResponse,
     ProviderKeyMeta,
     ProviderKeysResponse,
     Settings,
@@ -95,6 +99,11 @@ def update_settings(body: Settings):
 @router.get("/settings/dispatch", response_model=DispatchSettings)
 def get_dispatch_settings():
     data = _read_dispatch_yaml()
+    runtime = data.get("runtime") or {}
+    tasks = data.get("tasks") or {}
+    bootstrap = tasks.get("bootstrap") or {}
+    explore = tasks.get("explore") or {}
+    reason = tasks.get("reason") or {}
     workers = []
     for item in data.get("workers", []) or []:
         env = item.get("env") or {}
@@ -112,10 +121,19 @@ def get_dispatch_settings():
         )
     settings = get_settings()
     return DispatchSettings(
-        server=data.get("server", ""),
-        common_env=data.get("common_env") or {},
-        runtime=data.get("runtime") or {},
-        tasks=data.get("tasks") or {},
+        runtime_interval=runtime.get("interval", 3),
+        runtime_max_workers=runtime.get("max_workers", 8),
+        runtime_max_running_projects=runtime.get("max_running_projects", 3),
+        runtime_max_project_workers=runtime.get("max_project_workers", 4),
+        runtime_healthcheck_timeout=runtime.get("healthcheck_timeout", 20),
+        runtime_worker_healthcheck=runtime.get("worker_healthcheck", "startup_only"),
+        runtime_prompt_group=runtime.get("prompt_group", "default"),
+        bootstrap_timeout=bootstrap.get("timeout", 300),
+        bootstrap_conclude_timeout=bootstrap.get("conclude_timeout", 90),
+        explore_timeout=explore.get("timeout", 300),
+        explore_conclude_timeout=explore.get("conclude_timeout", 90),
+        reason_timeout=reason.get("timeout", 300),
+        reason_max_intents=reason.get("max_intents", 2),
         workers=workers,
         proxy_url=settings.proxy_url,
         proxy_bootstrap_enabled=settings.proxy_bootstrap_enabled,
@@ -127,10 +145,29 @@ def get_dispatch_settings():
 @router.put("/settings/dispatch", response_model=DispatchSettings)
 def update_dispatch_settings(body: DispatchSettings):
     current = _read_dispatch_yaml()
-    current["server"] = body.server
-    current["common_env"] = body.common_env
-    current["runtime"] = body.runtime
-    current["tasks"] = body.tasks
+    current["runtime"] = {
+        "interval": body.runtime_interval,
+        "max_workers": body.runtime_max_workers,
+        "max_running_projects": body.runtime_max_running_projects,
+        "max_project_workers": body.runtime_max_project_workers,
+        "healthcheck_timeout": body.runtime_healthcheck_timeout,
+        "worker_healthcheck": body.runtime_worker_healthcheck,
+        "prompt_group": body.runtime_prompt_group,
+    }
+    current["tasks"] = {
+        "bootstrap": {
+            "timeout": body.bootstrap_timeout,
+            "conclude_timeout": body.bootstrap_conclude_timeout,
+        },
+        "reason": {
+            "timeout": body.reason_timeout,
+            "max_intents": body.reason_max_intents,
+        },
+        "explore": {
+            "timeout": body.explore_timeout,
+            "conclude_timeout": body.explore_conclude_timeout,
+        },
+    }
     current["workers"] = [
         {
             "name": worker.name,
@@ -153,8 +190,11 @@ def update_dispatch_settings(body: DispatchSettings):
     update_settings(
         settings.model_copy(
             update={
-                "intent_timeout": int((body.tasks.get("explore") or {}).get("timeout", settings.intent_timeout)),
-                "reason_timeout": int((body.tasks.get("reason") or {}).get("timeout", settings.reason_timeout)),
+                "intent_timeout": body.explore_timeout,
+                "reason_timeout": body.reason_timeout,
+                "bootstrap_worker_count": _phase_worker_count(body.workers, "bootstrap", settings.bootstrap_worker_count),
+                "explore_worker_count": _phase_worker_count(body.workers, "explore", settings.explore_worker_count),
+                "reason_worker_count": _phase_worker_count(body.workers, "reason", settings.reason_worker_count),
                 "proxy_url": body.proxy_url,
                 "proxy_bootstrap_enabled": body.proxy_bootstrap_enabled,
                 "proxy_explore_enabled": body.proxy_explore_enabled,
@@ -163,6 +203,48 @@ def update_dispatch_settings(body: DispatchSettings):
         )
     )
     return body
+
+
+@router.post("/settings/test-pi", response_model=PiConnectionTestResponse)
+def test_pi_connection(body: PiConnectionTestRequest):
+    api_key = load_provider_api_key("pi")
+    if not api_key:
+        return PiConnectionTestResponse(ok=False, message="未设置 PI API Key，请先保存密钥")
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    try:
+        if body.pi_provider_api == "openai-responses":
+            response = requests.post(
+                f"{body.pi_base_url}/responses",
+                headers=headers,
+                json={"model": body.pi_model, "input": "ping", "max_output_tokens": 8},
+                timeout=15,
+            )
+        else:
+            response = requests.post(
+                f"{body.pi_base_url}/chat/completions",
+                headers=headers,
+                json={
+                    "model": body.pi_model,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 8,
+                    "temperature": 0,
+                },
+                timeout=15,
+            )
+    except requests.RequestException as exc:
+        return PiConnectionTestResponse(ok=False, message=f"连接失败：{exc}")
+    if 200 <= response.status_code < 300:
+        return PiConnectionTestResponse(ok=True, message="连接成功，模型可用")
+    detail = response.text[:500] if response.text else response.reason
+    return PiConnectionTestResponse(ok=False, message=f"HTTP {response.status_code}: {detail}")
+
+
+def _phase_worker_count(workers: list[DispatchWorkerSettings], phase: str, fallback: int) -> int:
+    total = sum(worker.max_running for worker in workers if phase in worker.task_types)
+    return max(1, total or fallback)
 
 
 def _read_dispatch_yaml() -> dict:

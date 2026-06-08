@@ -1713,15 +1713,14 @@
 <div x-show="activePage === 'settings'" x-cloak class="cyber-main-offset flex-1 flex flex-col overflow-hidden">
   <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 shrink-0">
     <h2 class="text-base font-semibold text-slate-800 tracking-tight">系统设置</h2>
-    <p class="text-xs text-slate-400 mt-0.5">按 dispatch.yaml 结构管理系统配置，API Key 仍加密保存在数据库。</p>
+    <p class="text-xs text-slate-400 mt-0.5">配置 PI 模型、调度并发、阶段超时和全局策略。</p>
   </header>
   <main class="flex-1 overflow-y-auto p-5 space-y-5">
-    <section class="grid grid-cols-1 xl:grid-cols-3 gap-5">
-      <div class="xl:col-span-2 rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
+    <section class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
         <div class="flex items-start justify-between gap-3">
           <div>
             <h3 class="text-sm font-semibold text-slate-700">API 配置</h3>
-            <p class="text-xs text-slate-400 mt-0.5">PI 使用 OpenAI 兼容格式，Base URL 和模型来自 dispatch.yaml worker 配置。</p>
+            <p class="text-xs text-slate-400 mt-0.5">模型名称由你自己填写；API Key 加密保存到数据库，不写入 dispatch.yaml。</p>
           </div>
           <span class="px-2 py-0.5 rounded-md bg-brand-50 text-brand-600 text-[10px] font-semibold">OpenAI Compatible</span>
         </div>
@@ -1729,50 +1728,105 @@
           <div class="md:col-span-2">
             <label class="text-[11px] text-slate-400 mb-1 block font-medium">Base URL</label>
             <input x-model="settingsForm.openai_base_url" placeholder="https://api.openai.com/v1" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+            <p class="text-[11px] text-slate-400 mt-1">填写 OpenAI 兼容接口地址，通常以 /v1 结尾。</p>
           </div>
           <div>
             <label class="text-[11px] text-slate-400 mb-1 block font-medium">模型</label>
-            <input x-model="settingsForm.openai_model" list="modelCandidates" placeholder="gpt-4.1 / kimi-k2 / ..." class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-            <datalist id="modelCandidates">
-              <option value="gpt-4.1"></option>
-              <option value="gpt-4.1-mini"></option>
-              <option value="kimi-k2"></option>
-              <option value="deepseek-chat"></option>
-            </datalist>
+            <input x-model="settingsForm.openai_model" placeholder="例如：gpt-4.1、deepseek-v4-pro、你的自定义模型名" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+            <p class="text-[11px] text-slate-400 mt-1">按你的服务商实际模型 ID 填写，不做固定下拉限制。</p>
           </div>
           <div>
             <label class="text-[11px] text-slate-400 mb-1 block font-medium">PI API 密钥</label>
             <input type="password" x-model="settingsForm.pi_api_key" placeholder="留空则保持当前密钥" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
             <p class="text-[11px] text-slate-400 mt-1">当前：<span x-text="settingsForm.pi_api_key_masked || '（未设置）'" class="font-medium text-slate-600"></span></p>
           </div>
-          <p class="md:col-span-2 text-[11px] text-slate-400">不再保存 Organization、Project、额外请求头；系统配置以 dispatch.yaml 内容为准。</p>
-        </div>
-      </div>
-
-      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-        <h3 class="text-sm font-semibold text-slate-700">运行入口</h3>
-        <p class="text-xs text-slate-400 mt-0.5">对应 dispatch.yaml 的 server 字段。</p>
-        <div class="mt-4 space-y-3">
           <div>
-            <label class="text-[11px] text-slate-400 mb-1 block font-medium">Server</label>
-            <input x-model="dispatchSettings.server" placeholder="http://localhost:6080" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">接口类型</label>
+            <select x-model="settingsForm.pi_provider_api" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white">
+              <option value="openai-completions">openai-completions（Chat Completions）</option>
+              <option value="openai-responses">openai-responses（Responses API）</option>
+            </select>
+          </div>
+          <div class="flex items-end gap-3">
+            <button @click="testPiConnection()" :disabled="isTestingPiConnection || !settingsForm.openai_base_url || !settingsForm.openai_model" class="px-4 py-2 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition disabled:opacity-40" x-text="isTestingPiConnection ? '测试中...' : '测试连接'"></button>
+            <p class="text-xs" :class="piConnectionTest.ok ? 'text-teal-600' : 'text-rose-600'" x-show="piConnectionTest.message" x-text="piConnectionTest.message"></p>
           </div>
         </div>
-      </div>
     </section>
 
     <section class="grid grid-cols-1 xl:grid-cols-3 gap-5">
       <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-        <h3 class="text-sm font-semibold text-slate-700">Runtime</h3>
-        <textarea rows="8" x-model="dispatchSettings.runtime_text" class="mt-4 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+        <h3 class="text-sm font-semibold text-slate-700">调度并发</h3>
+        <div class="mt-4 space-y-3">
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">全局最大 worker 数量</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.runtime_max_workers" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+            <p class="text-[11px] text-slate-400 mt-1">所有任务和所有 worker 加起来最多同时跑多少个。</p>
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">最大运行任务数量</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.runtime_max_running_projects" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+            <p class="text-[11px] text-slate-400 mt-1">同一时间最多调度多少个任务。</p>
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">单任务最大 worker 数量</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.runtime_max_project_workers" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+            <p class="text-[11px] text-slate-400 mt-1">防止一个任务占满全部 worker。</p>
+          </div>
+        </div>
       </div>
       <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-        <h3 class="text-sm font-semibold text-slate-700">Tasks</h3>
-        <textarea rows="8" x-model="dispatchSettings.tasks_text" class="mt-4 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+        <h3 class="text-sm font-semibold text-slate-700">心跳与健康检查</h3>
+        <div class="mt-4 space-y-3">
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">调度/心跳间隔（秒）</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.runtime_interval" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+            <p class="text-[11px] text-slate-400 mt-1">worker 心跳发送间隔；连续失败宽限约为该值的 2 倍。</p>
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">健康检查超时时间（秒）</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.runtime_healthcheck_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+            <p class="text-[11px] text-slate-400 mt-1">worker 启动或执行前健康检查最多等待多久。</p>
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">健康检查策略</label>
+            <select x-model="dispatchSettings.runtime_worker_healthcheck" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white">
+              <option value="startup_only">只在启动时检查</option>
+              <option value="startup_and_task">启动和每个任务前都检查</option>
+              <option value="disabled">关闭自动检查</option>
+            </select>
+          </div>
+        </div>
       </div>
       <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-        <h3 class="text-sm font-semibold text-slate-700">Common Env</h3>
-        <textarea rows="8" x-model="dispatchSettings.common_env_text" class="mt-4 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+        <h3 class="text-sm font-semibold text-slate-700">阶段超时</h3>
+        <div class="mt-4 grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">boot 超时（秒）</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.bootstrap_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">boot 总结超时</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.bootstrap_conclude_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">explore 超时</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.explore_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">explore 总结超时</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.explore_conclude_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">reason 超时</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">reason 最大 intent 数</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.reason_max_intents" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+          </div>
+        </div>
+        <p class="text-[11px] text-slate-400 mt-3">阶段超时控制单轮 AI/工具调用最长运行时间；总结超时用于超时后的 conclude 补救。</p>
       </div>
     </section>
 
@@ -1790,8 +1844,8 @@
             <input x-model="worker.task_types" placeholder="任务类型，用逗号分隔" class="px-3 py-2 border border-slate-200 rounded-xl text-sm">
             <input type="number" x-model.number="worker.max_running" min="1" placeholder="max_running" class="px-3 py-2 border border-slate-200 rounded-xl text-sm">
             <input type="number" x-model.number="worker.priority" min="0" placeholder="priority" class="px-3 py-2 border border-slate-200 rounded-xl text-sm">
-            <input x-model="worker.pi_base_url" placeholder="PI_BASE_URL" class="md:col-span-2 px-3 py-2 border border-slate-200 rounded-xl text-sm">
-            <input x-model="worker.pi_model" placeholder="PI_MODEL" class="px-3 py-2 border border-slate-200 rounded-xl text-sm">
+            <input x-model="worker.pi_base_url" placeholder="Base URL" class="md:col-span-2 px-3 py-2 border border-slate-200 rounded-xl text-sm">
+            <input x-model="worker.pi_model" placeholder="模型名称" class="px-3 py-2 border border-slate-200 rounded-xl text-sm">
             <input x-model="worker.pi_provider_api" placeholder="PI_PROVIDER_API" class="px-3 py-2 border border-slate-200 rounded-xl text-sm">
           </div>
         </template>
@@ -1821,41 +1875,6 @@
 </div>
 
 <!-- ═══════════ MODALS ═══════════ -->
-
-<!-- New Project -->
-<div x-show="showNewProject" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showNewProject = false">
-  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-4">新建项目</h3>
-    <div class="space-y-3">
-      <input x-model="newProject.title" placeholder="项目名称" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
-      <textarea x-model="newProject.origin" placeholder="起点（已知信息）" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
-      <textarea x-model="newProject.goal" placeholder="目标（需要达成）" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
-      <label class="flex items-center gap-2 px-1 text-sm text-slate-600">
-        <input type="checkbox" x-model="newProject.bootstrap" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
-        <span>启动 bootstrap</span>
-      </label>
-
-      <div>
-        <div class="flex items-center justify-between mb-2">
-          <span class="text-[11px] text-slate-400 font-medium uppercase tracking-wider">提示（可选）</span>
-          <button type="button" @click="newProject.hints.push({ content: '' })" class="text-[11px] text-brand-500 hover:text-brand-600 font-medium">+ 添加</button>
-        </div>
-        <template x-for="(hint, idx) in newProject.hints" :key="idx">
-          <div class="flex gap-2 mb-2">
-            <input x-model="hint.content" placeholder="提示内容" class="flex-1 px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
-            <button type="button" @click="newProject.hints.splice(idx, 1)" x-show="newProject.hints.length > 1" class="px-2 text-slate-300 hover:text-red-400 transition text-sm">&times;</button>
-          </div>
-        </template>
-        <p class="text-[11px] text-slate-400">提示创建者使用本地身份：<span class="font-medium text-slate-600" x-text="actorName()"></span></p>
-      </div>
-    </div>
-    <div class="flex justify-end gap-2 mt-5">
-      <button @click="showNewProject = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
-      <button @click="createProject()" :disabled="!newProject.title || !newProject.origin || !newProject.goal"
-        class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">创建</button>
-    </div>
-  </div>
-</div>
 
 <!-- Create Intent -->
 <div x-show="showIntentModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showIntentModal = false">
@@ -2205,7 +2224,6 @@ function cairnApp() {
     sidePanelWidth: 320,
     isResizingPanel: false,
 
-    showNewProject: false,
     showTaskComposer: false,
     showProjectGroupComposer: false,
     showIntentModal: false,
@@ -2254,6 +2272,7 @@ function cairnApp() {
       reason_worker_count: 1,
       openai_base_url: '',
       openai_model: '',
+      pi_provider_api: 'openai-completions',
       proxy_url: '',
       proxy_bootstrap_enabled: false,
       proxy_explore_enabled: false,
@@ -2262,12 +2281,23 @@ function cairnApp() {
       pi_api_key_masked: ''
     },
     dispatchSettings: {
-      server: '',
-      common_env_text: '{}',
-      runtime_text: '{}',
-      tasks_text: '{}',
+      runtime_interval: 3,
+      runtime_max_workers: 8,
+      runtime_max_running_projects: 3,
+      runtime_max_project_workers: 4,
+      runtime_healthcheck_timeout: 20,
+      runtime_worker_healthcheck: 'startup_only',
+      runtime_prompt_group: 'default',
+      bootstrap_timeout: 300,
+      bootstrap_conclude_timeout: 90,
+      explore_timeout: 300,
+      explore_conclude_timeout: 90,
+      reason_timeout: 300,
+      reason_max_intents: 2,
       workers: [],
     },
+    isTestingPiConnection: false,
+    piConnectionTest: { ok: false, message: '' },
     seeEvents: [],
     seeLastEventId: 0,
     tools: [],
@@ -2695,6 +2725,11 @@ function cairnApp() {
     async loadTools() {
       try {
         this.tools = await this.api('GET', '/tools');
+        if (!this.selectedToolId && this.tools.length > 0) {
+          this.selectTool(this.tools[0]);
+        } else if (this.selectedToolId && !this.tools.some(tool => tool.id === this.selectedToolId)) {
+          this.resetToolForm();
+        }
       } catch (e) {
         this.showToast(e.message, 'error');
       }
@@ -2775,6 +2810,7 @@ function cairnApp() {
     async syncPiTools() {
       try {
         this.tools = await this.api('POST', '/tools/sync-pi');
+        if (this.tools.length > 0) this.selectTool(this.tools[0]);
         this.showToast('PI 内置工具已同步');
       } catch (e) {
         this.showToast(e.message, 'error');
@@ -3174,14 +3210,26 @@ function cairnApp() {
 
     async loadDispatchSettings() {
       const data = await this.api('GET', '/settings/dispatch');
-      this.dispatchSettings.server = data.server || '';
-      this.dispatchSettings.common_env_text = JSON.stringify(data.common_env || {}, null, 2);
-      this.dispatchSettings.runtime_text = JSON.stringify(data.runtime || {}, null, 2);
-      this.dispatchSettings.tasks_text = JSON.stringify(data.tasks || {}, null, 2);
-      this.dispatchSettings.workers = (data.workers || []).map(worker => ({ ...worker }));
+      this.dispatchSettings = {
+        runtime_interval: data.runtime_interval || 3,
+        runtime_max_workers: data.runtime_max_workers || 8,
+        runtime_max_running_projects: data.runtime_max_running_projects || 3,
+        runtime_max_project_workers: data.runtime_max_project_workers || 4,
+        runtime_healthcheck_timeout: data.runtime_healthcheck_timeout || 20,
+        runtime_worker_healthcheck: data.runtime_worker_healthcheck || 'startup_only',
+        runtime_prompt_group: data.runtime_prompt_group || 'default',
+        bootstrap_timeout: data.bootstrap_timeout || 300,
+        bootstrap_conclude_timeout: data.bootstrap_conclude_timeout || 90,
+        explore_timeout: data.explore_timeout || 300,
+        explore_conclude_timeout: data.explore_conclude_timeout || 90,
+        reason_timeout: data.reason_timeout || 300,
+        reason_max_intents: data.reason_max_intents || 2,
+        workers: (data.workers || []).map(worker => ({ ...worker })),
+      };
       const firstWorker = this.dispatchSettings.workers[0] || {};
       this.settingsForm.openai_base_url = firstWorker.pi_base_url || this.settingsForm.openai_base_url || '';
       this.settingsForm.openai_model = firstWorker.pi_model || this.settingsForm.openai_model || '';
+      this.settingsForm.pi_provider_api = firstWorker.pi_provider_api || this.settingsForm.pi_provider_api || 'openai-completions';
       this.settingsForm.proxy_url = data.proxy_url || this.settingsForm.proxy_url || '';
       this.settingsForm.proxy_bootstrap_enabled = !!data.proxy_bootstrap_enabled;
       this.settingsForm.proxy_explore_enabled = !!data.proxy_explore_enabled;
@@ -5122,7 +5170,6 @@ function cairnApp() {
         const hints = hintContents.map(h => ({ content: h.content.trim(), creator: actor }));
         if (hints.length > 0) body.hints = hints;
         const data = await this.api('POST', '/projects', body);
-        this.showNewProject = false;
         this.showTaskComposer = false;
         this.newProject = {
           parent_project_id: body.parent_project_id || this.projectGroups[0]?.id || '',
@@ -5400,22 +5447,31 @@ function cairnApp() {
           .split('\n')
           .map(item => item.trim())
           .filter(Boolean);
-        const tasks = this.parseJsonObjectText(this.dispatchSettings.tasks_text);
+        const workers = (this.dispatchSettings.workers || []).map(worker => ({
+          name: worker.name,
+          task_types: Array.isArray(worker.task_types) ? worker.task_types : String(worker.task_types || '').split(',').map(item => item.trim()).filter(Boolean),
+          max_running: Number(worker.max_running || 1),
+          priority: Number(worker.priority || 0),
+          pi_model: this.settingsForm.openai_model || worker.pi_model || '',
+          pi_base_url: this.settingsForm.openai_base_url || worker.pi_base_url || '',
+          pi_provider_api: this.settingsForm.pi_provider_api || worker.pi_provider_api || 'openai-completions',
+          pi_model_context_window: worker.pi_model_context_window || '',
+        }));
         await this.api('PUT', '/settings/dispatch', {
-          server: this.dispatchSettings.server || '',
-          common_env: this.parseJsonObjectText(this.dispatchSettings.common_env_text),
-          runtime: this.parseJsonObjectText(this.dispatchSettings.runtime_text),
-          tasks,
-          workers: (this.dispatchSettings.workers || []).map(worker => ({
-            name: worker.name,
-            task_types: Array.isArray(worker.task_types) ? worker.task_types : String(worker.task_types || '').split(',').map(item => item.trim()).filter(Boolean),
-            max_running: Number(worker.max_running || 1),
-            priority: Number(worker.priority || 0),
-            pi_model: worker.pi_model || '',
-            pi_base_url: worker.pi_base_url || this.settingsForm.openai_base_url || '',
-            pi_provider_api: worker.pi_provider_api || 'openai-responses',
-            pi_model_context_window: worker.pi_model_context_window || '',
-          })),
+          runtime_interval: Number(this.dispatchSettings.runtime_interval || 3),
+          runtime_max_workers: Number(this.dispatchSettings.runtime_max_workers || 1),
+          runtime_max_running_projects: Number(this.dispatchSettings.runtime_max_running_projects || 1),
+          runtime_max_project_workers: Number(this.dispatchSettings.runtime_max_project_workers || 1),
+          runtime_healthcheck_timeout: Number(this.dispatchSettings.runtime_healthcheck_timeout || 20),
+          runtime_worker_healthcheck: this.dispatchSettings.runtime_worker_healthcheck || 'startup_only',
+          runtime_prompt_group: this.dispatchSettings.runtime_prompt_group || 'default',
+          bootstrap_timeout: Number(this.dispatchSettings.bootstrap_timeout || 300),
+          bootstrap_conclude_timeout: Number(this.dispatchSettings.bootstrap_conclude_timeout || 90),
+          explore_timeout: Number(this.dispatchSettings.explore_timeout || 300),
+          explore_conclude_timeout: Number(this.dispatchSettings.explore_conclude_timeout || 90),
+          reason_timeout: Number(this.dispatchSettings.reason_timeout || 300),
+          reason_max_intents: Number(this.dispatchSettings.reason_max_intents || 2),
+          workers,
           proxy_url: this.settingsForm.proxy_url || '',
           proxy_bootstrap_enabled: !!this.settingsForm.proxy_bootstrap_enabled,
           proxy_explore_enabled: !!this.settingsForm.proxy_explore_enabled,
@@ -5434,6 +5490,25 @@ function cairnApp() {
         await this.loadSettings();
         this.showToast('系统配置已保存');
       } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async testPiConnection() {
+      try {
+        this.isTestingPiConnection = true;
+        this.piConnectionTest = { ok: false, message: '' };
+        const result = await this.api('POST', '/settings/test-pi', {
+          pi_base_url: this.settingsForm.openai_base_url,
+          pi_model: this.settingsForm.openai_model,
+          pi_provider_api: this.settingsForm.pi_provider_api || 'openai-completions',
+        });
+        this.piConnectionTest = result;
+        this.showToast(result.message, result.ok ? 'info' : 'error');
+      } catch (e) {
+        this.piConnectionTest = { ok: false, message: e.message };
+        this.showToast(e.message, 'error');
+      } finally {
+        this.isTestingPiConnection = false;
+      }
     },
   };
 }

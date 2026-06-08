@@ -368,15 +368,61 @@ class DispatchWorkerSettings(BaseModel):
 
 
 class DispatchSettings(BaseModel):
-    server: str
-    common_env: dict[str, str] = Field(default_factory=dict)
-    runtime: dict[str, Any] = Field(default_factory=dict)
-    tasks: dict[str, Any] = Field(default_factory=dict)
+    runtime_interval: int = Field(default=3, ge=1)
+    runtime_max_workers: int = Field(default=8, ge=1)
+    runtime_max_running_projects: int = Field(default=3, ge=1)
+    runtime_max_project_workers: int = Field(default=4, ge=1)
+    runtime_healthcheck_timeout: int = Field(default=20, ge=1)
+    runtime_worker_healthcheck: Literal["startup_and_task", "startup_only", "disabled"] = "startup_only"
+    runtime_prompt_group: str = "default"
+    bootstrap_timeout: int = Field(default=300, ge=1)
+    bootstrap_conclude_timeout: int = Field(default=90, ge=1)
+    explore_timeout: int = Field(default=300, ge=1)
+    explore_conclude_timeout: int = Field(default=90, ge=1)
+    reason_timeout: int = Field(default=300, ge=1)
+    reason_max_intents: int = Field(default=2, ge=1)
     workers: list[DispatchWorkerSettings] = Field(default_factory=list)
     proxy_url: str = ""
     proxy_bootstrap_enabled: bool = False
     proxy_explore_enabled: bool = False
     domain_blacklist: list[str] = Field(default_factory=list)
+
+    @field_validator("runtime_prompt_group")
+    @classmethod
+    def validate_prompt_group(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+
+class PiConnectionTestRequest(BaseModel):
+    pi_base_url: str
+    pi_model: str
+    pi_provider_api: str = "openai-completions"
+
+    @field_validator("pi_base_url")
+    @classmethod
+    def validate_pi_base_url(cls, value: str) -> str:
+        text = value.strip().rstrip("/")
+        if not text:
+            raise ValueError("must not be empty")
+        if not (text.startswith("http://") or text.startswith("https://")):
+            raise ValueError("base url must start with http:// or https://")
+        return text
+
+    @field_validator("pi_model", "pi_provider_api")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+
+class PiConnectionTestResponse(BaseModel):
+    ok: bool
+    message: str
 
 
 class Fact(BaseModel):

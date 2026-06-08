@@ -98,6 +98,14 @@ def create_tool(body: CreatePiToolRequest):
         return _tool_from_row(row)
 
 
+@router.post("/tools/sync-pi", response_model=list[PiTool])
+def sync_pi_tools():
+    with get_conn() as conn:
+        _sync_builtin_tools(conn)
+        rows = conn.execute("SELECT * FROM pi_tools ORDER BY builtin DESC, name ASC").fetchall()
+        return [_tool_from_row(row) for row in rows]
+
+
 @router.put("/tools/{tool_id}", response_model=PiTool)
 def update_tool(tool_id: str, body: UpdatePiToolRequest):
     now = utcnow()
@@ -145,14 +153,6 @@ def delete_tool(tool_id: str):
             )
             return
         conn.execute("DELETE FROM pi_tools WHERE id = ?", (tool_id,))
-
-
-@router.post("/tools/sync-pi", response_model=list[PiTool])
-def sync_pi_tools():
-    with get_conn() as conn:
-        _sync_builtin_tools(conn)
-        rows = conn.execute("SELECT * FROM pi_tools ORDER BY builtin DESC, name ASC").fetchall()
-        return [_tool_from_row(row) for row in rows]
 
 
 def _sync_builtin_tools(conn) -> None:
