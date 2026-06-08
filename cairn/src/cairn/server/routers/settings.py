@@ -145,7 +145,6 @@ def get_dispatch_settings():
         proxy_password=proxy_password,
         proxy_bootstrap_enabled=settings.proxy_bootstrap_enabled,
         proxy_explore_enabled=settings.proxy_explore_enabled,
-        domain_blacklist=settings.domain_blacklist,
     )
 
 
@@ -209,7 +208,6 @@ def update_dispatch_settings(body: DispatchSettings):
                 "proxy_url": proxy_url,
                 "proxy_bootstrap_enabled": body.proxy_bootstrap_enabled,
                 "proxy_explore_enabled": body.proxy_explore_enabled,
-                "domain_blacklist": body.domain_blacklist,
             }
         )
     )

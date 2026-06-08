@@ -389,7 +389,6 @@ class DispatchSettings(BaseModel):
     proxy_password: str = ""
     proxy_bootstrap_enabled: bool = False
     proxy_explore_enabled: bool = False
-    domain_blacklist: list[str] = Field(default_factory=list)
 
     @field_validator("runtime_prompt_group")
     @classmethod

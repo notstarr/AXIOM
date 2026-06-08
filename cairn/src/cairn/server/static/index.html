@@ -1713,10 +1713,24 @@
 <div x-show="activePage === 'settings'" x-cloak class="cyber-main-offset flex-1 flex flex-col overflow-hidden">
   <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 shrink-0">
     <h2 class="text-base font-semibold text-slate-800 tracking-tight">系统设置</h2>
-    <p class="text-xs text-slate-400 mt-0.5">配置 PI 模型、调度并发、阶段超时和全局策略。</p>
+    <p class="text-xs text-slate-400 mt-0.5">按配置类型分区管理，后续可以继续扩展新的子配置。</p>
   </header>
-  <main class="flex-1 overflow-y-auto p-5 space-y-5">
-    <section class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+  <main class="flex-1 overflow-hidden p-5">
+    <div class="h-full grid grid-cols-[220px_minmax(0,1fr)] gap-5">
+      <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3 overflow-y-auto">
+        <p class="px-3 py-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">设置分类</p>
+        <div class="space-y-1">
+          <template x-for="tab in settingsTabs()" :key="tab.id">
+            <button type="button" @click="activeSettingsTab = tab.id" class="w-full text-left rounded-xl px-3 py-2.5 transition"
+              :class="activeSettingsTab === tab.id ? 'bg-brand-50 text-brand-700 border border-brand-100' : 'text-slate-500 hover:bg-slate-50 border border-transparent'">
+              <span class="block text-sm font-semibold" x-text="tab.title"></span>
+              <span class="block mt-0.5 text-[11px] opacity-70" x-text="tab.description"></span>
+            </button>
+          </template>
+        </div>
+      </aside>
+      <section class="overflow-y-auto space-y-5 pr-1">
+    <section x-show="activeSettingsTab === 'config'" x-cloak class="grid grid-cols-1 xl:grid-cols-3 gap-5">
       <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
         <h3 class="text-sm font-semibold text-slate-700">调度并发</h3>
         <div class="mt-4 space-y-3">
@@ -1792,7 +1806,7 @@
       </div>
     </section>
 
-    <section class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
+    <section x-show="activeSettingsTab === 'workers'" x-cloak class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
       <div class="flex items-center justify-between">
         <div>
           <h3 class="text-sm font-semibold text-slate-700">PI Workers</h3>
@@ -1864,7 +1878,7 @@
       </div>
     </section>
 
-    <section class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+    <section x-show="activeSettingsTab === 'proxy'" x-cloak class="grid grid-cols-1 gap-5">
       <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
         <h3 class="text-sm font-semibold text-slate-700">代理</h3>
         <input type="text" x-model="settingsForm.proxy_url" placeholder="socks5://127.0.0.1:1080" class="mt-4 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
@@ -1877,15 +1891,11 @@
           <label class="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" x-model="settingsForm.proxy_explore_enabled" class="rounded border-slate-300 text-brand-500 focus:ring-brand-300">用于 explore 阶段</label>
         </div>
       </div>
-
-      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-        <h3 class="text-sm font-semibold text-slate-700">全局域名黑名单</h3>
-        <textarea rows="5" x-model="settingsForm.domain_blacklist_text" placeholder="git.kkroup.cn&#10;example.com" class="mt-4 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
-        <p class="text-[11px] text-slate-400 mt-1">bootstrap/explore 阶段会拦截命中这些域名的命令（包含子域名）。</p>
-      </div>
     </section>
     <div class="flex justify-end">
       <button @click="saveServerSettings()" class="px-5 py-2.5 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200">保存系统设置</button>
+    </div>
+      </section>
     </div>
   </main>
 </div>
@@ -2232,6 +2242,7 @@ function cairnApp() {
     reopenForm: { projectId: '', projectTitle: '', description: '' },
     renameForm: { projectId: '', originalTitle: '', title: '' },
     localPrefs: { actor_name: '人工', layout_mode: 'dagre_tb' },
+    activeSettingsTab: 'workers',
     settingsForm: {
       intent_timeout: 5,
       reason_timeout: 5,
@@ -2243,7 +2254,6 @@ function cairnApp() {
       proxy_password: '',
       proxy_bootstrap_enabled: false,
       proxy_explore_enabled: false,
-      domain_blacklist_text: '',
     },
     dispatchSettings: {
       runtime_interval: 3,
@@ -2682,6 +2692,14 @@ function cairnApp() {
       return [
         { id: 'mcp', title: 'MCP 集成', subtitle: '外部能力接入预留', description: '后续将在这里配置 MCP Server、能力授权、连接状态和调用审计。' },
         { id: 'knowledge', title: '知识库', subtitle: '经验与资料沉淀预留', description: '后续将在这里管理知识条目、检索索引、项目经验和报告素材。' },
+      ];
+    },
+
+    settingsTabs() {
+      return [
+        { id: 'workers', title: 'Worker 管理', description: 'PI worker、模型、密钥' },
+        { id: 'config', title: '配置管理', description: '并发、超时、健康检查' },
+        { id: 'proxy', title: '代理', description: 'SOCKS5 和认证' },
       ];
     },
 
@@ -3163,7 +3181,6 @@ function cairnApp() {
         this.settingsForm.proxy_url = s.proxy_url || '';
         this.settingsForm.proxy_bootstrap_enabled = !!s.proxy_bootstrap_enabled;
         this.settingsForm.proxy_explore_enabled = !!s.proxy_explore_enabled;
-        this.settingsForm.domain_blacklist_text = Array.isArray(s.domain_blacklist) ? s.domain_blacklist.join('\n') : '';
         await this.loadDispatchSettings();
       } catch(e) { console.error(e); }
     },
@@ -3197,7 +3214,6 @@ function cairnApp() {
       this.settingsForm.proxy_password = data.proxy_password || '';
       this.settingsForm.proxy_bootstrap_enabled = !!data.proxy_bootstrap_enabled;
       this.settingsForm.proxy_explore_enabled = !!data.proxy_explore_enabled;
-      this.settingsForm.domain_blacklist_text = Array.isArray(data.domain_blacklist) ? data.domain_blacklist.join('\n') : this.settingsForm.domain_blacklist_text;
     },
 
     async openSeePanel() {
@@ -5414,10 +5430,6 @@ function cairnApp() {
     },
 
     dispatchPayload() {
-      const domainBlacklist = (this.settingsForm.domain_blacklist_text || '')
-        .split('\n')
-        .map(item => item.trim())
-        .filter(Boolean);
       return {
         runtime_interval: Number(this.dispatchSettings.runtime_interval || 3),
         runtime_max_workers: Number(this.dispatchSettings.runtime_max_workers || 1),
@@ -5438,7 +5450,6 @@ function cairnApp() {
         proxy_password: this.settingsForm.proxy_password || '',
         proxy_bootstrap_enabled: !!this.settingsForm.proxy_bootstrap_enabled,
         proxy_explore_enabled: !!this.settingsForm.proxy_explore_enabled,
-        domain_blacklist: domainBlacklist,
       };
     },
 
