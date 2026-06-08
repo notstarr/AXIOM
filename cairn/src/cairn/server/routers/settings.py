@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 import json
 from pathlib import Path
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import requests
 import yaml
@@ -107,9 +108,10 @@ def get_dispatch_settings():
     workers = []
     for item in data.get("workers", []) or []:
         env = item.get("env") or {}
+        worker_name = str(item.get("name", "")).strip()
         workers.append(
             DispatchWorkerSettings(
-                name=item.get("name", ""),
+                name=worker_name,
                 task_types=list(item.get("task_types") or []),
                 max_running=item.get("max_running", 1),
                 priority=item.get("priority", 0),
@@ -117,9 +119,12 @@ def get_dispatch_settings():
                 pi_base_url=env.get("PI_BASE_URL", ""),
                 pi_provider_api=env.get("PI_PROVIDER_API", ""),
                 pi_model_context_window=env.get("PI_MODEL_CONTEXT_WINDOW", ""),
+                pi_api_key="",
+                pi_api_key_masked=_provider_key_hint(_worker_key_provider(worker_name)),
             )
         )
     settings = get_settings()
+    proxy_url, proxy_username, proxy_password = _split_proxy_url(settings.proxy_url)
     return DispatchSettings(
         runtime_interval=runtime.get("interval", 3),
         runtime_max_workers=runtime.get("max_workers", 8),
@@ -135,7 +140,9 @@ def get_dispatch_settings():
         reason_timeout=reason.get("timeout", 300),
         reason_max_intents=reason.get("max_intents", 2),
         workers=workers,
-        proxy_url=settings.proxy_url,
+        proxy_url=proxy_url,
+        proxy_username=proxy_username,
+        proxy_password=proxy_password,
         proxy_bootstrap_enabled=settings.proxy_bootstrap_enabled,
         proxy_explore_enabled=settings.proxy_explore_enabled,
         domain_blacklist=settings.domain_blacklist,
@@ -186,6 +193,10 @@ def update_dispatch_settings(body: DispatchSettings):
         for worker in body.workers
     ]
     DISPATCH_YAML.write_text(yaml.safe_dump(current, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    for worker in body.workers:
+        if worker.pi_api_key.strip():
+            _save_provider_key(_worker_key_provider(worker.name), worker.pi_api_key, f"worker:{worker.name}")
+    proxy_url = _compose_proxy_url(body.proxy_url, body.proxy_username, body.proxy_password)
     settings = get_settings()
     update_settings(
         settings.model_copy(
@@ -195,7 +206,7 @@ def update_dispatch_settings(body: DispatchSettings):
                 "bootstrap_worker_count": _phase_worker_count(body.workers, "bootstrap", settings.bootstrap_worker_count),
                 "explore_worker_count": _phase_worker_count(body.workers, "explore", settings.explore_worker_count),
                 "reason_worker_count": _phase_worker_count(body.workers, "reason", settings.reason_worker_count),
-                "proxy_url": body.proxy_url,
+                "proxy_url": proxy_url,
                 "proxy_bootstrap_enabled": body.proxy_bootstrap_enabled,
                 "proxy_explore_enabled": body.proxy_explore_enabled,
                 "domain_blacklist": body.domain_blacklist,
@@ -207,7 +218,11 @@ def update_dispatch_settings(body: DispatchSettings):
 
 @router.post("/settings/test-pi", response_model=PiConnectionTestResponse)
 def test_pi_connection(body: PiConnectionTestRequest):
-    api_key = load_provider_api_key("pi")
+    api_key = body.pi_api_key.strip()
+    if not api_key and body.worker_name:
+        api_key = load_provider_api_key(_worker_key_provider(body.worker_name)) or ""
+    if not api_key:
+        api_key = load_provider_api_key("pi") or ""
     if not api_key:
         return PiConnectionTestResponse(ok=False, message="未设置 PI API Key，请先保存密钥")
     headers = {
@@ -245,6 +260,76 @@ def test_pi_connection(body: PiConnectionTestRequest):
 def _phase_worker_count(workers: list[DispatchWorkerSettings], phase: str, fallback: int) -> int:
     total = sum(worker.max_running for worker in workers if phase in worker.task_types)
     return max(1, total or fallback)
+
+
+def _worker_key_provider(worker_name: str) -> str:
+    safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in worker_name.strip())
+    return f"pi:{safe_name or 'default'}"
+
+
+def _save_provider_key(provider: str, api_key: str, updated_by: str) -> None:
+    now = utcnow()
+    ciphertext = encrypt_secret(api_key)
+    hint = api_key[-4:]
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO provider_keys (provider, key_ciphertext, key_hint, is_active, updated_at, updated_by)
+            VALUES (?, ?, ?, 1, ?, ?)
+            ON CONFLICT(provider) DO UPDATE SET
+                key_ciphertext=excluded.key_ciphertext,
+                key_hint=excluded.key_hint,
+                is_active=1,
+                updated_at=excluded.updated_at,
+                updated_by=excluded.updated_by
+            """,
+            (provider, ciphertext, hint, now, updated_by),
+        )
+
+
+def _provider_key_hint(provider: str) -> str:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT key_hint, is_active FROM provider_keys WHERE provider = ?",
+            (provider,),
+        ).fetchone()
+    if row is None or not bool(row["is_active"]) or not row["key_hint"]:
+        return ""
+    return f"****{row['key_hint']}"
+
+
+def _split_proxy_url(proxy_url: str) -> tuple[str, str, str]:
+    text = (proxy_url or "").strip()
+    if not text:
+        return "", "", ""
+    parts = urlsplit(text)
+    if not parts.username and not parts.password:
+        return text, "", ""
+    username = unquote(parts.username or "")
+    password = unquote(parts.password or "")
+    host = parts.hostname or ""
+    netloc = host
+    if parts.port is not None:
+        netloc = f"{host}:{parts.port}"
+    clean_url = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    return clean_url, username, password
+
+
+def _compose_proxy_url(proxy_url: str, username: str, password: str) -> str:
+    text = (proxy_url or "").strip()
+    if not text or not username.strip():
+        return text
+    parts = urlsplit(text)
+    if not parts.scheme or not parts.netloc:
+        return text
+    userinfo = quote(username.strip(), safe="")
+    if password.strip():
+        userinfo = f"{userinfo}:{quote(password.strip(), safe='')}"
+    host = parts.hostname or ""
+    netloc = f"{userinfo}@{host}"
+    if parts.port is not None:
+        netloc = f"{netloc}:{parts.port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
 def _read_dispatch_yaml() -> dict:

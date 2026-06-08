@@ -365,6 +365,8 @@ class DispatchWorkerSettings(BaseModel):
     pi_base_url: str
     pi_provider_api: str
     pi_model_context_window: str = ""
+    pi_api_key: str = ""
+    pi_api_key_masked: str = ""
 
 
 class DispatchSettings(BaseModel):
@@ -383,6 +385,8 @@ class DispatchSettings(BaseModel):
     reason_max_intents: int = Field(default=2, ge=1)
     workers: list[DispatchWorkerSettings] = Field(default_factory=list)
     proxy_url: str = ""
+    proxy_username: str = ""
+    proxy_password: str = ""
     proxy_bootstrap_enabled: bool = False
     proxy_explore_enabled: bool = False
     domain_blacklist: list[str] = Field(default_factory=list)
@@ -397,9 +401,11 @@ class DispatchSettings(BaseModel):
 
 
 class PiConnectionTestRequest(BaseModel):
+    worker_name: str = ""
     pi_base_url: str
     pi_model: str
     pi_provider_api: str = "openai-completions"
+    pi_api_key: str = ""
 
     @field_validator("pi_base_url")
     @classmethod
@@ -410,6 +416,11 @@ class PiConnectionTestRequest(BaseModel):
         if not (text.startswith("http://") or text.startswith("https://")):
             raise ValueError("base url must start with http:// or https://")
         return text
+
+    @field_validator("worker_name", "pi_api_key")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        return value.strip()
 
     @field_validator("pi_model", "pi_provider_api")
     @classmethod

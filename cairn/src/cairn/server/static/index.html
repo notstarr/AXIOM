@@ -1716,44 +1716,6 @@
     <p class="text-xs text-slate-400 mt-0.5">配置 PI 模型、调度并发、阶段超时和全局策略。</p>
   </header>
   <main class="flex-1 overflow-y-auto p-5 space-y-5">
-    <section class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-        <div class="flex items-start justify-between gap-3">
-          <div>
-            <h3 class="text-sm font-semibold text-slate-700">API 配置</h3>
-            <p class="text-xs text-slate-400 mt-0.5">模型名称由你自己填写；API Key 加密保存到数据库，不写入 dispatch.yaml。</p>
-          </div>
-          <span class="px-2 py-0.5 rounded-md bg-brand-50 text-brand-600 text-[10px] font-semibold">OpenAI Compatible</span>
-        </div>
-        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div class="md:col-span-2">
-            <label class="text-[11px] text-slate-400 mb-1 block font-medium">Base URL</label>
-            <input x-model="settingsForm.openai_base_url" placeholder="https://api.openai.com/v1" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-            <p class="text-[11px] text-slate-400 mt-1">填写 OpenAI 兼容接口地址，通常以 /v1 结尾。</p>
-          </div>
-          <div>
-            <label class="text-[11px] text-slate-400 mb-1 block font-medium">模型</label>
-            <input x-model="settingsForm.openai_model" placeholder="例如：gpt-4.1、deepseek-v4-pro、你的自定义模型名" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-            <p class="text-[11px] text-slate-400 mt-1">按你的服务商实际模型 ID 填写，不做固定下拉限制。</p>
-          </div>
-          <div>
-            <label class="text-[11px] text-slate-400 mb-1 block font-medium">PI API 密钥</label>
-            <input type="password" x-model="settingsForm.pi_api_key" placeholder="留空则保持当前密钥" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-            <p class="text-[11px] text-slate-400 mt-1">当前：<span x-text="settingsForm.pi_api_key_masked || '（未设置）'" class="font-medium text-slate-600"></span></p>
-          </div>
-          <div>
-            <label class="text-[11px] text-slate-400 mb-1 block font-medium">接口类型</label>
-            <select x-model="settingsForm.pi_provider_api" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white">
-              <option value="openai-completions">openai-completions（Chat Completions）</option>
-              <option value="openai-responses">openai-responses（Responses API）</option>
-            </select>
-          </div>
-          <div class="flex items-end gap-3">
-            <button @click="testPiConnection()" :disabled="isTestingPiConnection || !settingsForm.openai_base_url || !settingsForm.openai_model" class="px-4 py-2 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition disabled:opacity-40" x-text="isTestingPiConnection ? '测试中...' : '测试连接'"></button>
-            <p class="text-xs" :class="piConnectionTest.ok ? 'text-teal-600' : 'text-rose-600'" x-show="piConnectionTest.message" x-text="piConnectionTest.message"></p>
-          </div>
-        </div>
-    </section>
-
     <section class="grid grid-cols-1 xl:grid-cols-3 gap-5">
       <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
         <h3 class="text-sm font-semibold text-slate-700">调度并发</h3>
@@ -1834,20 +1796,70 @@
       <div class="flex items-center justify-between">
         <div>
           <h3 class="text-sm font-semibold text-slate-700">PI Workers</h3>
-          <p class="text-xs text-slate-400 mt-0.5">对应 dispatch.yaml workers，仅支持 pi 类型。</p>
+          <p class="text-xs text-slate-400 mt-0.5">每个 worker 独立配置 Base URL、模型、API Key、并发和可运行阶段。</p>
         </div>
+        <button @click="addPiWorker()" class="h-8 px-3 rounded-lg bg-slate-800 text-white text-xs hover:bg-slate-900 transition">新增 PI Worker</button>
       </div>
       <div class="mt-4 space-y-3">
         <template x-for="(worker, idx) in dispatchSettings.workers" :key="worker.name || idx">
-          <div class="rounded-xl border border-slate-200 bg-slate-50/70 p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
-            <input x-model="worker.name" placeholder="worker 名称" class="px-3 py-2 border border-slate-200 rounded-xl text-sm">
-            <input x-model="worker.task_types" placeholder="任务类型，用逗号分隔" class="px-3 py-2 border border-slate-200 rounded-xl text-sm">
-            <input type="number" x-model.number="worker.max_running" min="1" placeholder="max_running" class="px-3 py-2 border border-slate-200 rounded-xl text-sm">
-            <input type="number" x-model.number="worker.priority" min="0" placeholder="priority" class="px-3 py-2 border border-slate-200 rounded-xl text-sm">
-            <input x-model="worker.pi_base_url" placeholder="Base URL" class="md:col-span-2 px-3 py-2 border border-slate-200 rounded-xl text-sm">
-            <input x-model="worker.pi_model" placeholder="模型名称" class="px-3 py-2 border border-slate-200 rounded-xl text-sm">
-            <input x-model="worker.pi_provider_api" placeholder="PI_PROVIDER_API" class="px-3 py-2 border border-slate-200 rounded-xl text-sm">
+          <div class="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <p class="text-sm font-semibold text-slate-700" x-text="worker.name || `pi-worker-${idx + 1}`"></p>
+                <p class="text-[11px] text-slate-400">当前密钥：<span x-text="worker.pi_api_key_masked || '未设置'"></span></p>
+              </div>
+              <button @click="removePiWorker(idx)" class="px-3 py-1.5 text-xs border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50 transition">删除</button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">Worker 名称</label>
+                <input x-model="worker.name" placeholder="deepseek-v4-pro" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">运行阶段</label>
+                <input x-model="worker.task_types_text" placeholder="bootstrap,reason,explore" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">最大并发</label>
+                <input type="number" x-model.number="worker.max_running" min="1" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">优先级</label>
+                <input type="number" x-model.number="worker.priority" min="0" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+              </div>
+              <div class="md:col-span-2">
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">Base URL</label>
+                <input x-model="worker.pi_base_url" placeholder="https://api.example.com/v1" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">模型名称</label>
+                <input x-model="worker.pi_model" placeholder="模型 ID 自己填写" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">接口类型</label>
+                <select x-model="worker.pi_provider_api" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white">
+                  <option value="openai-completions">Chat Completions</option>
+                  <option value="openai-responses">Responses API</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">上下文窗口</label>
+                <input x-model="worker.pi_model_context_window" placeholder="200000" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+              </div>
+              <div class="md:col-span-2">
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">API Key</label>
+                <input type="password" x-model="worker.pi_api_key" placeholder="留空则保持当前 worker 的密钥" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+              </div>
+              <div class="md:col-span-4 flex flex-wrap items-center justify-end gap-2">
+                <span class="text-xs" :class="worker.test_result?.ok ? 'text-teal-600' : 'text-rose-600'" x-show="worker.test_result?.message" x-text="worker.test_result.message"></span>
+                <button @click="testPiWorkerConnection(worker)" :disabled="worker.testing || !worker.pi_base_url || !worker.pi_model" class="px-4 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl hover:bg-white transition disabled:opacity-40" x-text="worker.testing ? '测试中...' : '测试连接'"></button>
+                <button @click="savePiWorker(worker)" :disabled="!worker.name || !worker.pi_base_url || !worker.pi_model" class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-40">保存此 Worker</button>
+              </div>
+            </div>
           </div>
+        </template>
+        <template x-if="dispatchSettings.workers.length === 0">
+          <p class="text-sm text-slate-400 text-center py-8">暂无 PI Worker，点击右上角新增。</p>
         </template>
       </div>
     </section>
@@ -1856,6 +1868,10 @@
       <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
         <h3 class="text-sm font-semibold text-slate-700">代理</h3>
         <input type="text" x-model="settingsForm.proxy_url" placeholder="socks5://127.0.0.1:1080" class="mt-4 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+        <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <input x-model="settingsForm.proxy_username" placeholder="代理账号（可选）" class="px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+          <input type="password" x-model="settingsForm.proxy_password" placeholder="代理密码（可选）" class="px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+        </div>
         <div class="mt-3 flex flex-wrap gap-4">
           <label class="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" x-model="settingsForm.proxy_bootstrap_enabled" class="rounded border-slate-300 text-brand-500 focus:ring-brand-300">用于 bootstrap 阶段</label>
           <label class="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" x-model="settingsForm.proxy_explore_enabled" class="rounded border-slate-300 text-brand-500 focus:ring-brand-300">用于 explore 阶段</label>
@@ -2033,53 +2049,6 @@
   </div>
 </div>
 
-<!-- Settings -->
-<div x-show="showSettings" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showSettings = false">
-  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-4">服务端设置</h3>
-    <div>
-      <label class="text-[11px] text-slate-400 mb-1 block font-medium">意图超时时间（秒）</label>
-      <input type="number" x-model.number="settingsForm.intent_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
-    </div>
-    <div class="mt-4">
-      <label class="text-[11px] text-slate-400 mb-1 block font-medium">reason 超时时间（秒）</label>
-      <input type="number" x-model.number="settingsForm.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
-    </div>
-    <div class="mt-4">
-      <label class="text-[11px] text-slate-400 mb-1 block font-medium">SOCKS5 代理地址</label>
-      <input type="text" x-model="settingsForm.proxy_url" placeholder="socks5://127.0.0.1:1080" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
-      <div class="mt-2 space-y-1">
-        <label class="flex items-center gap-2 text-xs text-slate-600">
-          <input type="checkbox" x-model="settingsForm.proxy_bootstrap_enabled" class="rounded border-slate-300 text-brand-500 focus:ring-brand-300">
-          用于 bootstrap 阶段
-        </label>
-        <label class="flex items-center gap-2 text-xs text-slate-600">
-          <input type="checkbox" x-model="settingsForm.proxy_explore_enabled" class="rounded border-slate-300 text-brand-500 focus:ring-brand-300">
-          用于 explore 阶段
-        </label>
-      </div>
-    </div>
-    <div class="mt-4">
-      <label class="text-[11px] text-slate-400 mb-1 block font-medium">PI API 密钥</label>
-      <input type="password" x-model="settingsForm.pi_api_key" placeholder="留空则保持当前密钥" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
-      <p class="text-[11px] text-slate-400 mt-1">
-        当前：
-        <span x-text="settingsForm.pi_api_key_masked || '（未设置）'" class="font-medium text-slate-600"></span>
-      </p>
-      <p class="text-[11px] text-slate-400 mt-2">共享后端配置。API 密钥会加密落库。</p>
-    </div>
-    <div class="mt-4">
-      <label class="text-[11px] text-slate-400 mb-1 block font-medium">域名黑名单（每行一个）</label>
-      <textarea rows="4" x-model="settingsForm.domain_blacklist_text" placeholder="git.kkroup.cn&#10;example.com" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition"></textarea>
-      <p class="text-[11px] text-slate-400 mt-1">bootstrap/explore 阶段会拦截命中这些域名的命令（包含子域名）。</p>
-    </div>
-    <div class="flex justify-end gap-2 mt-5">
-      <button @click="showSettings = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
-      <button @click="saveServerSettings()" class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200">保存服务端设置</button>
-    </div>
-  </div>
-</div>
-
 <!-- SEE Panel -->
 <div x-show="showSeePanel" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showSeePanel = false">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[78vh] p-0 border border-slate-200/60 overflow-hidden flex flex-col" @click.stop>
@@ -2233,7 +2202,6 @@ function cairnApp() {
     showReopenModal: false,
     showRenameModal: false,
     showLocalPrefs: false,
-    showSettings: false,
     showSeePanel: false,
     showYamlModal: false,
     exportTab: 'yaml',
@@ -2270,15 +2238,12 @@ function cairnApp() {
       bootstrap_worker_count: 1,
       explore_worker_count: 2,
       reason_worker_count: 1,
-      openai_base_url: '',
-      openai_model: '',
-      pi_provider_api: 'openai-completions',
       proxy_url: '',
+      proxy_username: '',
+      proxy_password: '',
       proxy_bootstrap_enabled: false,
       proxy_explore_enabled: false,
       domain_blacklist_text: '',
-      pi_api_key: '',
-      pi_api_key_masked: ''
     },
     dispatchSettings: {
       runtime_interval: 3,
@@ -2296,8 +2261,6 @@ function cairnApp() {
       reason_max_intents: 2,
       workers: [],
     },
-    isTestingPiConnection: false,
-    piConnectionTest: { ok: false, message: '' },
     seeEvents: [],
     seeLastEventId: 0,
     tools: [],
@@ -3197,13 +3160,10 @@ function cairnApp() {
         this.settingsForm.bootstrap_worker_count = s.bootstrap_worker_count || 1;
         this.settingsForm.explore_worker_count = s.explore_worker_count || 2;
         this.settingsForm.reason_worker_count = s.reason_worker_count || 1;
-        this.settingsForm.openai_base_url = s.openai_base_url || '';
-        this.settingsForm.openai_model = s.openai_model || '';
         this.settingsForm.proxy_url = s.proxy_url || '';
         this.settingsForm.proxy_bootstrap_enabled = !!s.proxy_bootstrap_enabled;
         this.settingsForm.proxy_explore_enabled = !!s.proxy_explore_enabled;
         this.settingsForm.domain_blacklist_text = Array.isArray(s.domain_blacklist) ? s.domain_blacklist.join('\n') : '';
-        await this.loadProviderKeys();
         await this.loadDispatchSettings();
       } catch(e) { console.error(e); }
     },
@@ -3224,26 +3184,20 @@ function cairnApp() {
         explore_conclude_timeout: data.explore_conclude_timeout || 90,
         reason_timeout: data.reason_timeout || 300,
         reason_max_intents: data.reason_max_intents || 2,
-        workers: (data.workers || []).map(worker => ({ ...worker })),
+        workers: (data.workers || []).map(worker => ({
+          ...worker,
+          task_types_text: Array.isArray(worker.task_types) ? worker.task_types.join(',') : String(worker.task_types || ''),
+          pi_api_key: '',
+          testing: false,
+          test_result: null,
+        })),
       };
-      const firstWorker = this.dispatchSettings.workers[0] || {};
-      this.settingsForm.openai_base_url = firstWorker.pi_base_url || this.settingsForm.openai_base_url || '';
-      this.settingsForm.openai_model = firstWorker.pi_model || this.settingsForm.openai_model || '';
-      this.settingsForm.pi_provider_api = firstWorker.pi_provider_api || this.settingsForm.pi_provider_api || 'openai-completions';
       this.settingsForm.proxy_url = data.proxy_url || this.settingsForm.proxy_url || '';
+      this.settingsForm.proxy_username = data.proxy_username || '';
+      this.settingsForm.proxy_password = data.proxy_password || '';
       this.settingsForm.proxy_bootstrap_enabled = !!data.proxy_bootstrap_enabled;
       this.settingsForm.proxy_explore_enabled = !!data.proxy_explore_enabled;
       this.settingsForm.domain_blacklist_text = Array.isArray(data.domain_blacklist) ? data.domain_blacklist.join('\n') : this.settingsForm.domain_blacklist_text;
-    },
-
-    async loadProviderKeys() {
-      try {
-        const data = await this.api('GET', '/settings/keys');
-        const pi = (data.items || []).find(item => item.provider === 'pi');
-        this.settingsForm.pi_api_key_masked = pi?.masked_key || '';
-      } catch (e) {
-        console.error(e);
-      }
     },
 
     async openSeePanel() {
@@ -5441,74 +5395,114 @@ function cairnApp() {
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
+    workerPayload(worker) {
+      return {
+        name: worker.name,
+        task_types: String(worker.task_types_text || '')
+          .split(',')
+          .map(item => item.trim())
+          .filter(Boolean),
+        max_running: Number(worker.max_running || 1),
+        priority: Number(worker.priority || 0),
+        pi_model: worker.pi_model || '',
+        pi_base_url: worker.pi_base_url || '',
+        pi_provider_api: worker.pi_provider_api || 'openai-completions',
+        pi_model_context_window: worker.pi_model_context_window || '',
+        pi_api_key: worker.pi_api_key || '',
+        pi_api_key_masked: worker.pi_api_key_masked || '',
+      };
+    },
+
+    dispatchPayload() {
+      const domainBlacklist = (this.settingsForm.domain_blacklist_text || '')
+        .split('\n')
+        .map(item => item.trim())
+        .filter(Boolean);
+      return {
+        runtime_interval: Number(this.dispatchSettings.runtime_interval || 3),
+        runtime_max_workers: Number(this.dispatchSettings.runtime_max_workers || 1),
+        runtime_max_running_projects: Number(this.dispatchSettings.runtime_max_running_projects || 1),
+        runtime_max_project_workers: Number(this.dispatchSettings.runtime_max_project_workers || 1),
+        runtime_healthcheck_timeout: Number(this.dispatchSettings.runtime_healthcheck_timeout || 20),
+        runtime_worker_healthcheck: this.dispatchSettings.runtime_worker_healthcheck || 'startup_only',
+        runtime_prompt_group: this.dispatchSettings.runtime_prompt_group || 'default',
+        bootstrap_timeout: Number(this.dispatchSettings.bootstrap_timeout || 300),
+        bootstrap_conclude_timeout: Number(this.dispatchSettings.bootstrap_conclude_timeout || 90),
+        explore_timeout: Number(this.dispatchSettings.explore_timeout || 300),
+        explore_conclude_timeout: Number(this.dispatchSettings.explore_conclude_timeout || 90),
+        reason_timeout: Number(this.dispatchSettings.reason_timeout || 300),
+        reason_max_intents: Number(this.dispatchSettings.reason_max_intents || 2),
+        workers: (this.dispatchSettings.workers || []).map(worker => this.workerPayload(worker)),
+        proxy_url: this.settingsForm.proxy_url || '',
+        proxy_username: this.settingsForm.proxy_username || '',
+        proxy_password: this.settingsForm.proxy_password || '',
+        proxy_bootstrap_enabled: !!this.settingsForm.proxy_bootstrap_enabled,
+        proxy_explore_enabled: !!this.settingsForm.proxy_explore_enabled,
+        domain_blacklist: domainBlacklist,
+      };
+    },
+
+    addPiWorker() {
+      const index = (this.dispatchSettings.workers || []).length + 1;
+      this.dispatchSettings.workers.push({
+        name: `pi-worker-${index}`,
+        task_types: ['bootstrap', 'reason', 'explore'],
+        task_types_text: 'bootstrap,reason,explore',
+        max_running: 1,
+        priority: 1,
+        pi_model: '',
+        pi_base_url: '',
+        pi_provider_api: 'openai-completions',
+        pi_model_context_window: '200000',
+        pi_api_key: '',
+        pi_api_key_masked: '',
+        testing: false,
+        test_result: null,
+      });
+    },
+
+    removePiWorker(index) {
+      this.dispatchSettings.workers.splice(index, 1);
+    },
+
+    async savePiWorker(worker) {
+      try {
+        await this.api('PUT', '/settings/dispatch', this.dispatchPayload());
+        worker.pi_api_key = '';
+        await this.loadDispatchSettings();
+        this.showToast(`Worker ${worker.name} 已保存`);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async testPiWorkerConnection(worker) {
+      try {
+        worker.testing = true;
+        worker.test_result = null;
+        const result = await this.api('POST', '/settings/test-pi', {
+          worker_name: worker.name,
+          pi_base_url: worker.pi_base_url,
+          pi_model: worker.pi_model,
+          pi_provider_api: worker.pi_provider_api || 'openai-completions',
+          pi_api_key: worker.pi_api_key || '',
+        });
+        worker.test_result = result;
+        this.showToast(result.message, result.ok ? 'info' : 'error');
+      } catch (e) {
+        worker.test_result = { ok: false, message: e.message };
+        this.showToast(e.message, 'error');
+      } finally {
+        worker.testing = false;
+      }
+    },
+
     async saveServerSettings() {
       try {
-        const domainBlacklist = (this.settingsForm.domain_blacklist_text || '')
-          .split('\n')
-          .map(item => item.trim())
-          .filter(Boolean);
-        const workers = (this.dispatchSettings.workers || []).map(worker => ({
-          name: worker.name,
-          task_types: Array.isArray(worker.task_types) ? worker.task_types : String(worker.task_types || '').split(',').map(item => item.trim()).filter(Boolean),
-          max_running: Number(worker.max_running || 1),
-          priority: Number(worker.priority || 0),
-          pi_model: this.settingsForm.openai_model || worker.pi_model || '',
-          pi_base_url: this.settingsForm.openai_base_url || worker.pi_base_url || '',
-          pi_provider_api: this.settingsForm.pi_provider_api || worker.pi_provider_api || 'openai-completions',
-          pi_model_context_window: worker.pi_model_context_window || '',
-        }));
-        await this.api('PUT', '/settings/dispatch', {
-          runtime_interval: Number(this.dispatchSettings.runtime_interval || 3),
-          runtime_max_workers: Number(this.dispatchSettings.runtime_max_workers || 1),
-          runtime_max_running_projects: Number(this.dispatchSettings.runtime_max_running_projects || 1),
-          runtime_max_project_workers: Number(this.dispatchSettings.runtime_max_project_workers || 1),
-          runtime_healthcheck_timeout: Number(this.dispatchSettings.runtime_healthcheck_timeout || 20),
-          runtime_worker_healthcheck: this.dispatchSettings.runtime_worker_healthcheck || 'startup_only',
-          runtime_prompt_group: this.dispatchSettings.runtime_prompt_group || 'default',
-          bootstrap_timeout: Number(this.dispatchSettings.bootstrap_timeout || 300),
-          bootstrap_conclude_timeout: Number(this.dispatchSettings.bootstrap_conclude_timeout || 90),
-          explore_timeout: Number(this.dispatchSettings.explore_timeout || 300),
-          explore_conclude_timeout: Number(this.dispatchSettings.explore_conclude_timeout || 90),
-          reason_timeout: Number(this.dispatchSettings.reason_timeout || 300),
-          reason_max_intents: Number(this.dispatchSettings.reason_max_intents || 2),
-          workers,
-          proxy_url: this.settingsForm.proxy_url || '',
-          proxy_bootstrap_enabled: !!this.settingsForm.proxy_bootstrap_enabled,
-          proxy_explore_enabled: !!this.settingsForm.proxy_explore_enabled,
-          domain_blacklist: domainBlacklist,
-        });
-        const apiKey = (this.settingsForm.pi_api_key || '').trim();
-        if (apiKey) {
-          await this.api('PUT', '/settings/keys/pi', {
-            api_key: apiKey,
-            updated_by: this.actorName(),
-          });
-          this.settingsForm.pi_api_key = '';
-          await this.loadProviderKeys();
-        }
-        this.showSettings = false;
+        await this.api('PUT', '/settings/dispatch', this.dispatchPayload());
         await this.loadSettings();
         this.showToast('系统配置已保存');
       } catch(e) { this.showToast(e.message, 'error'); }
-    },
-
-    async testPiConnection() {
-      try {
-        this.isTestingPiConnection = true;
-        this.piConnectionTest = { ok: false, message: '' };
-        const result = await this.api('POST', '/settings/test-pi', {
-          pi_base_url: this.settingsForm.openai_base_url,
-          pi_model: this.settingsForm.openai_model,
-          pi_provider_api: this.settingsForm.pi_provider_api || 'openai-completions',
-        });
-        this.piConnectionTest = result;
-        this.showToast(result.message, result.ok ? 'info' : 'error');
-      } catch (e) {
-        this.piConnectionTest = { ok: false, message: e.message };
-        this.showToast(e.message, 'error');
-      } finally {
-        this.isTestingPiConnection = false;
-      }
     },
   };
 }

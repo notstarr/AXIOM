@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 
-from cairn.server.db import DEFAULT_DB
+from cairn.server.db import current_db_path
 
 LOG = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ def proxy_env_for_phase(phase: str) -> dict[str, str]:
 
 
 def _load_proxy_settings() -> tuple[str, bool, bool] | None:
-    db_path = DEFAULT_DB
+    db_path = current_db_path()
     if not db_path.exists():
         return None
     conn = sqlite3.connect(str(db_path))

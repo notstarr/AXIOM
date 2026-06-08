@@ -257,7 +257,7 @@ def _worker_env_with_runtime_keys(worker: WorkerConfig, *, phase: str) -> dict[s
     env = dict(worker.env)
     if worker.type != "pi":
         return env
-    runtime_key = load_provider_api_key("pi")
+    runtime_key = load_provider_api_key(f"pi:{worker.name}") or load_provider_api_key("pi")
     if runtime_key:
         env["PI_API_KEY"] = runtime_key
     env.update(proxy_env_for_phase(phase))
