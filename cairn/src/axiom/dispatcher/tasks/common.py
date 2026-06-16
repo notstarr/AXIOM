@@ -447,43 +447,48 @@ def best_effort_release_reason(client: CairnClient, project_id: str, worker_name
         )
 
 
-def _format_blackboard(items: list) -> str:
-    """Format blackboard items as structured XML-style metadata blocks.
+def _format_blackboard(items: list, group_id: str = "") -> str:
+    """Inject blackboard as a compact index. AI fetches full content on demand via bash curl.
 
-    Each item is wrapped with a <blackboard-item> tag containing metadata
-    attributes (id, category, priority, hint). The AI reads all items but
-    the hint attribute guides which items are most relevant to the current task.
+    Only title + hint are injected. The agent reads the index and calls bash to
+    fetch any item's full content when it decides it's relevant, avoiding loading
+    every item's potentially long content into the context window upfront.
     """
     if not items:
         return "（无）"
-    parts: list[str] = []
+
+    lines: list[str] = []
     for item in items:
         if hasattr(item, "title"):
             item_id = (item.id or "").strip()
             title = (item.title or "").strip()
-            content = (item.content or "").strip()
             hint = (getattr(item, "hint", "") or "").strip()
-            category = (item.category or "general").strip()
-            priority = (item.priority or "medium").strip()
         else:
             item_id = (item.get("id") or "").strip()
             title = (item.get("title") or "").strip()
-            content = (item.get("content") or "").strip()
             hint = (item.get("hint") or "").strip()
-            category = (item.get("category") or "general").strip()
-            priority = (item.get("priority") or "medium").strip()
-        body = content or title
-        if not body:
+
+        label = title or item_id
+        if not label:
             continue
-        attrs = f'id="{item_id}" category="{category}" priority="{priority}"'
-        if hint:
-            attrs += f' hint="{hint}"'
-        header = title if title and title != body else ""
-        if header:
-            parts.append(f"<blackboard-item {attrs}>\n{header}\n{content}\n</blackboard-item>")
-        else:
-            parts.append(f"<blackboard-item {attrs}>\n{body}\n</blackboard-item>")
-    return "\n\n".join(parts) if parts else "（无）"
+        hint_part = f"  ← {hint}" if hint else ""
+        lines.append(f"  [{item_id}] {label}{hint_part}")
+
+    if not lines:
+        return "（无）"
+
+    if group_id:
+        fetch_cmd = f"curl -s $AXIOM_SERVER/project-groups/{group_id}/blackboard/<item_id>"
+    else:
+        fetch_cmd = "curl -s $AXIOM_SERVER/project-groups/<group_id>/blackboard/<item_id>"
+
+    header = (
+        "以下是黑板条目索引（仅标题和使用提示）。"
+        "如需读取某条完整内容，用 bash 工具执行：\n"
+        f"  {fetch_cmd}\n"
+        "条目列表："
+    )
+    return header + "\n" + "\n".join(lines)
 
 
 def write_conclude_result(

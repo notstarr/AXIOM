@@ -126,7 +126,7 @@ def run_reason_task(
                 if project.project.depth_mode
                 else config.tasks.reason.max_intents
             ),
-            "blackboard": _format_blackboard(project.blackboard),
+            "blackboard": _format_blackboard(project.blackboard, project.project.parent_project_id or ""),
         }
         # Depth mode: inject checklist path and plan fact ID.
         if project.project.depth_mode:
