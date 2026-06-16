@@ -375,11 +375,18 @@ def _find_usage_candidates(value: Any) -> list[dict[str, int] | None]:
 
 
 def _normalize_usage_map(payload: dict[str, Any]) -> dict[str, int] | None:
+    # pi uses "input"/"output"/"totalTokens"; OpenAI uses "input_tokens"/"output_tokens"
     input_tokens = _to_non_negative_int(
-        payload.get("input_tokens", payload.get("prompt_tokens", payload.get("inputTokens")))
+        payload.get("input_tokens",
+        payload.get("prompt_tokens",
+        payload.get("inputTokens",
+        payload.get("input"))))  # pi native format
     )
     output_tokens = _to_non_negative_int(
-        payload.get("output_tokens", payload.get("completion_tokens", payload.get("outputTokens")))
+        payload.get("output_tokens",
+        payload.get("completion_tokens",
+        payload.get("outputTokens",
+        payload.get("output"))))  # pi native format
     )
     total_tokens = _to_non_negative_int(payload.get("total_tokens", payload.get("totalTokens")))
     if input_tokens is None and output_tokens is None and total_tokens is None:
@@ -602,11 +609,15 @@ def record_session_tools(
     worker_name: str,
     project_id: str,
     project_group_id: str | None = None,
-) -> int:
-    """Find the session file for a pi session and persist tool executions."""
+) -> tuple[int, dict[str, int]]:
+    """Find the session file for a pi session and persist tool executions.
+
+    Returns (records_inserted, token_usage) where token_usage has
+    input_tokens, output_tokens, total_tokens summed from the session.
+    """
     session_dir = Path("/tmp/axiom-pi") / worker_name / "sessions"
     if not session_dir.exists():
-        return 0
+        return 0, {}
     # Try matching by session_id first.
     if session_id:
         for candidate in sorted(session_dir.iterdir(), reverse=True):
@@ -631,4 +642,4 @@ def record_session_tools(
             project_group_id=project_group_id,
         )
     LOG.debug("no session files found for worker=%s", worker_name)
-    return 0
+    return 0, {}

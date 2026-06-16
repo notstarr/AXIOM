@@ -1302,6 +1302,31 @@
             <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">当前生效 Worker</p>
             <p class="text-xs text-slate-600 break-words" x-text="effectiveRuntimeWorkerNames().length > 0 ? effectiveRuntimeWorkerNames().join(', ') : '等待 dispatcher 上报'"></p>
           </div>
+          <!-- Token 消耗 -->
+          <div class="mt-3 pt-3 border-t border-slate-100">
+            <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">Token 消耗</p>
+            <template x-if="currentProjectTokenUsage().total === 0">
+              <p class="text-xs text-slate-300">暂无数据（任务执行后自动统计）</p>
+            </template>
+            <template x-if="currentProjectTokenUsage().total > 0">
+              <div class="space-y-1.5">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-slate-400">合计</span>
+                  <span class="font-semibold text-violet-600 tabular-nums" x-text="currentProjectTokenUsage().total.toLocaleString()"></span>
+                </div>
+                <div class="h-1.5 rounded-full bg-slate-100 overflow-hidden flex">
+                  <div class="h-full bg-violet-400 transition-all duration-300"
+                    :style="`width:${currentProjectTokenUsage().total > 0 ? Math.round(currentProjectTokenUsage().input / currentProjectTokenUsage().total * 100) : 0}%`"></div>
+                  <div class="h-full bg-violet-200 transition-all duration-300"
+                    :style="`width:${currentProjectTokenUsage().total > 0 ? Math.round(currentProjectTokenUsage().output / currentProjectTokenUsage().total * 100) : 0}%`"></div>
+                </div>
+                <div class="flex items-center justify-between text-[11px] text-slate-400">
+                  <span>输入 <span class="text-slate-600 tabular-nums" x-text="currentProjectTokenUsage().input.toLocaleString()"></span></span>
+                  <span>输出 <span class="text-slate-600 tabular-nums" x-text="currentProjectTokenUsage().output.toLocaleString()"></span></span>
+                </div>
+              </div>
+            </template>
+          </div>
         </section>
         <template x-if="selectedTimelineSummary()">
           <section class="sticky top-0 z-10 rounded-2xl border border-slate-200 bg-white/95 backdrop-blur px-4 py-3 shadow-sm">
@@ -2720,11 +2745,13 @@ function cairnApp() {
           console.error(e);
         }
       }));
-      if (this.activePage === 'dashboard') {
+      if (this.activePage === 'dashboard' || this.activePage === 'task-detail') {
         await Promise.all(ids.map(async (id) => {
+          // For task-detail only load the selected project; for dashboard load all
+          if (this.activePage === 'task-detail' && id !== this.selectedProjectId) return;
           if (!force && this.projectEventsCache[id]) return;
           try {
-            const events = await this.api('GET', `/projects/${id}/events?after_id=0&limit=30`);
+            const events = await this.api('GET', `/projects/${id}/events?after_id=0&limit=200`);
             this.projectEventsCache[id] = events || [];
           } catch (e) {
             console.error(e);
@@ -2971,6 +2998,21 @@ function cairnApp() {
       }).filter(Boolean);
       rows.sort((a, b) => b.total - a.total);
       return rows;
+    },
+
+    // Token usage for the currently selected project (from its cached events)
+    currentProjectTokenUsage() {
+      const pid = this.selectedProjectId;
+      if (!pid) return { input: 0, output: 0, total: 0 };
+      const events = this.projectEventsCache[pid] || [];
+      return events.reduce((acc, e) => {
+        const u = this.extractTokenUsage(e.payload || {});
+        if (!u) return acc;
+        acc.input += u.input;
+        acc.output += u.output;
+        acc.total += u.total;
+        return acc;
+      }, { input: 0, output: 0, total: 0 });
     },
 
     recentGlobalEvents() {
@@ -5646,9 +5688,10 @@ description: 一句话描述 skill 的用途和触发场景
 
     _normalizeTokenUsage(raw) {
       if (!raw || typeof raw !== 'object') return null;
-      const input = Number(raw.input_tokens ?? 0);
-      const output = Number(raw.output_tokens ?? 0);
-      const total = Number(raw.total_tokens ?? (input + output));
+      // Support both pi format (input/output/totalTokens) and OpenAI format (input_tokens/output_tokens)
+      const input = Number(raw.input_tokens ?? raw.input ?? 0);
+      const output = Number(raw.output_tokens ?? raw.output ?? 0);
+      const total = Number(raw.total_tokens ?? raw.totalTokens ?? (input + output));
       if (!Number.isFinite(input) || !Number.isFinite(output) || !Number.isFinite(total)) return null;
       if (input < 0 || output < 0 || total < 0) return null;
       return {

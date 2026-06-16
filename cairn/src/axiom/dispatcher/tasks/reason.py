@@ -164,12 +164,16 @@ def run_reason_task(
         total_ms = int((time.perf_counter() - task_started) * 1000)
         session = driver.extract_session(session, result.stdout, result.stderr)
         try:
-            recorded = record_session_tools(
+            recorded, token_usage = record_session_tools(
                 session_id=session or "",
                 worker_name=worker.name,
                 project_id=project.project.id,
             )
             LOG.info("recorded %d tool executions session=%s worker=%s", recorded, session, worker.name)
+            if token_usage:
+                _report_event(client, project.project.id, task_type="reason", phase="reason_execute",
+                              worker=worker.name, level="info", message="token usage",
+                              payload={"token_usage": token_usage})
         except Exception:
             LOG.exception("failed to record tool executions session=%s", session)
         cancelled = cancel_reason(result, cancellation)

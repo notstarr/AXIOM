@@ -11,6 +11,7 @@ from axiom.dispatcher.runtime.cancellation import TaskCancellation
 from axiom.dispatcher.runtime.heartbeat import HeartbeatLease
 from axiom.dispatcher.tasks.common import (
     _format_blackboard,
+    _report_event,
     best_effort_release,
     cancel_reason,
     preview,
@@ -74,7 +75,14 @@ def run_plan_task(
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         session = driver.extract_session(session, result.stdout, result.stderr)
-        record_session_tools(session_id=session or "", worker_name=worker.name, project_id=project.project.id)
+        try:
+            _, token_usage = record_session_tools(session_id=session or "", worker_name=worker.name, project_id=project.project.id)
+            if token_usage:
+                _report_event(client, project.project.id, task_type="plan", phase="plan",
+                              worker=worker.name, level="info", message="token usage",
+                              payload={"token_usage": token_usage})
+        except Exception:
+            LOG.exception("failed to record tool executions session=%s", session)
         cancelled = cancel_reason(result, cancellation)
         if cancelled is not None:
             LOG.info("plan cancelled project=%s worker=%s", project.project.id, worker.name)
