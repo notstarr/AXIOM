@@ -448,21 +448,42 @@ def best_effort_release_reason(client: CairnClient, project_id: str, worker_name
 
 
 def _format_blackboard(items: list) -> str:
-    """Format blackboard items into a single text block for prompt injection."""
+    """Format blackboard items as structured XML-style metadata blocks.
+
+    Each item is wrapped with a <blackboard-item> tag containing metadata
+    attributes (id, category, priority, hint). The AI reads all items but
+    the hint attribute guides which items are most relevant to the current task.
+    """
     if not items:
         return "（无）"
     parts: list[str] = []
     for item in items:
         if hasattr(item, "title"):
+            item_id = (item.id or "").strip()
             title = (item.title or "").strip()
             content = (item.content or "").strip()
+            hint = (getattr(item, "hint", "") or "").strip()
+            category = (item.category or "general").strip()
+            priority = (item.priority or "medium").strip()
         else:
+            item_id = (item.get("id") or "").strip()
             title = (item.get("title") or "").strip()
             content = (item.get("content") or "").strip()
-        text = content or title
-        if text:
-            parts.append(f"- {text}")
-    return "\n".join(parts) if parts else "（无）"
+            hint = (item.get("hint") or "").strip()
+            category = (item.get("category") or "general").strip()
+            priority = (item.get("priority") or "medium").strip()
+        body = content or title
+        if not body:
+            continue
+        attrs = f'id="{item_id}" category="{category}" priority="{priority}"'
+        if hint:
+            attrs += f' hint="{hint}"'
+        header = title if title and title != body else ""
+        if header:
+            parts.append(f"<blackboard-item {attrs}>\n{header}\n{content}\n</blackboard-item>")
+        else:
+            parts.append(f"<blackboard-item {attrs}>\n{body}\n</blackboard-item>")
+    return "\n\n".join(parts) if parts else "（无）"
 
 
 def write_conclude_result(

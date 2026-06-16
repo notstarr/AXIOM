@@ -491,16 +491,16 @@ def create_group_blackboard_item(group_id: str, body: CreateBlackboardItemReques
             dummy_pid = conn.execute("SELECT id FROM projects LIMIT 1").fetchone()
         fallback_pid = dummy_pid["id"] if dummy_pid else "proj_000"
         conn.execute(
-            "INSERT INTO blackboard_items (id, project_id, group_id, title, content, category, status, priority,"
+            "INSERT INTO blackboard_items (id, project_id, group_id, title, content, hint, category, status, priority,"
             " related_fact_id, related_intent_id, related_vuln_id, creator, updated_by, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (item_id, fallback_pid, group_id, body.title, body.content,
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (item_id, fallback_pid, group_id, body.title, body.content, body.hint,
              body.category, body.status, body.priority,
              body.related_fact_id, body.related_intent_id, body.related_vuln_id,
              body.creator, body.creator, now, now),
         )
         return BlackboardItem(
-            id=item_id, title=body.title, content=body.content,
+            id=item_id, title=body.title, content=body.content, hint=body.hint,
             category=body.category, status=body.status, priority=body.priority,
             related_fact_id=body.related_fact_id, related_intent_id=body.related_intent_id,
             related_vuln_id=body.related_vuln_id, creator=body.creator, updated_by=body.creator,
@@ -520,15 +520,15 @@ def update_group_blackboard_item(group_id: str, item_id: str, body: UpdateBlackb
             raise HTTPException(404, "Blackboard item not found")
         now = utcnow()
         conn.execute(
-            "UPDATE blackboard_items SET title = ?, content = ?, category = ?, status = ?, priority = ?,"
+            "UPDATE blackboard_items SET title = ?, content = ?, hint = ?, category = ?, status = ?, priority = ?,"
             " related_fact_id = ?, related_intent_id = ?, related_vuln_id = ?, updated_by = ?, updated_at = ?"
             " WHERE id = ? AND group_id = ?",
-            (body.title, body.content, body.category, body.status, body.priority,
+            (body.title, body.content, body.hint, body.category, body.status, body.priority,
              body.related_fact_id, body.related_intent_id, body.related_vuln_id,
              body.updated_by, now, item_id, group_id),
         )
         return BlackboardItem(
-            id=item_id, title=body.title, content=body.content,
+            id=item_id, title=body.title, content=body.content, hint=body.hint,
             category=body.category, status=body.status, priority=body.priority,
             related_fact_id=body.related_fact_id, related_intent_id=body.related_intent_id,
             related_vuln_id=body.related_vuln_id, creator=row["creator"], updated_by=body.updated_by,
@@ -564,16 +564,17 @@ def create_project_blackboard_item(project_id: str, body: CreateBlackboardItemRe
         conn.execute(
             """
             INSERT INTO blackboard_items (
-                id, project_id, title, content, category, status, priority,
+                id, project_id, title, content, hint, category, status, priority,
                 related_fact_id, related_intent_id, related_vuln_id,
                 creator, updated_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item_id,
                 project_id,
                 body.title,
                 body.content,
+                body.hint,
                 body.category,
                 body.status,
                 body.priority,
@@ -590,6 +591,7 @@ def create_project_blackboard_item(project_id: str, body: CreateBlackboardItemRe
             id=item_id,
             title=body.title,
             content=body.content,
+            hint=body.hint,
             category=body.category,
             status=body.status,
             priority=body.priority,
@@ -613,6 +615,7 @@ def update_project_blackboard_item(project_id: str, item_id: str, body: UpdateBl
             UPDATE blackboard_items
             SET title = ?,
                 content = ?,
+                hint = ?,
                 category = ?,
                 status = ?,
                 priority = ?,
@@ -626,6 +629,7 @@ def update_project_blackboard_item(project_id: str, item_id: str, body: UpdateBl
             (
                 body.title,
                 body.content,
+                body.hint,
                 body.category,
                 body.status,
                 body.priority,
