@@ -1038,6 +1038,10 @@
           :class="sideTab === 'hints' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">
           提示 <span class="ml-0.5 text-[10px] opacity-60" x-text="project.hints.length"></span>
         </button>
+        <button @click="sideTab = 'board'; reloadBlackboardGroup(project?.project?.parent_project_id)" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
+          :class="sideTab === 'board' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">
+          黑板 <span class="ml-0.5 text-[10px] opacity-60" x-text="groupBlackboardItems().length || ''"></span>
+        </button>
         <button @click="sideTab = 'log'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'log' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">日志</button>
       </div>
