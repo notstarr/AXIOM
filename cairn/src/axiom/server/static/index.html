@@ -365,7 +365,7 @@
     <section class="grid grid-cols-2 xl:grid-cols-4 gap-3">
 
       <!-- 项目总数 -->
-      <button type="button" @click="navigateTo('tasks')"
+      <button type="button" @click="navigateTo('projects')"
         class="text-left rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition group">
         <div class="flex items-start justify-between">
           <div class="h-9 w-9 rounded-xl bg-blue-50 text-blue-500 inline-flex items-center justify-center shrink-0">
@@ -506,10 +506,63 @@
       </div>
 
     </section>
+
+    <!-- 按任务 Token 消耗 -->
+    <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div class="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <h3 class="text-sm font-semibold text-slate-700">Token 消耗明细</h3>
+          <span class="text-[11px] text-slate-400">按任务</span>
+        </div>
+        <span class="text-[10px] text-slate-400" x-text="`共 ${dashboardStats().tokenTotal.toLocaleString()} tokens`"></span>
+      </div>
+      <div class="overflow-x-auto">
+        <template x-if="tokenByProject().length === 0">
+          <div class="px-5 py-10 text-center text-sm text-slate-300">暂无 Token 记录 — 等待任务执行后自动统计</div>
+        </template>
+        <table x-show="tokenByProject().length > 0" class="w-full text-[12px]">
+          <thead>
+            <tr class="border-b border-slate-100">
+              <th class="px-5 py-2.5 text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wide">任务</th>
+              <th class="px-4 py-2.5 text-right text-[11px] font-semibold text-slate-400 uppercase tracking-wide">输入</th>
+              <th class="px-4 py-2.5 text-right text-[11px] font-semibold text-slate-400 uppercase tracking-wide">输出</th>
+              <th class="px-5 py-2.5 text-right text-[11px] font-semibold text-slate-400 uppercase tracking-wide">合计</th>
+              <th class="px-5 py-2.5 text-right text-[11px] font-semibold text-slate-400 uppercase tracking-wide w-32">占比</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="row in tokenByProject()" :key="row.id">
+              <tr class="border-b border-slate-50 hover:bg-slate-50/60 transition cursor-pointer" @click="openProject(row.id)">
+                <td class="px-5 py-3">
+                  <div class="flex items-center gap-2">
+                    <span class="font-mono text-slate-300 text-[10px]" x-text="row.id"></span>
+                    <span class="text-slate-700 font-medium truncate max-w-[200px]" x-text="row.title"></span>
+                    <span class="px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
+                      :class="row.status === 'active' ? 'bg-teal-50 text-teal-600' : row.status === 'completed' ? 'bg-slate-100 text-slate-500' : 'bg-amber-50 text-amber-600'"
+                      x-text="row.status === 'active' ? '运行中' : row.status === 'completed' ? '已完成' : '已暂停'"></span>
+                  </div>
+                </td>
+                <td class="px-4 py-3 text-right tabular-nums text-slate-500" x-text="row.input.toLocaleString()"></td>
+                <td class="px-4 py-3 text-right tabular-nums text-slate-500" x-text="row.output.toLocaleString()"></td>
+                <td class="px-5 py-3 text-right tabular-nums font-semibold text-slate-700" x-text="row.total.toLocaleString()"></td>
+                <td class="px-5 py-3">
+                  <div class="flex items-center justify-end gap-2">
+                    <div class="w-20 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                      <div class="h-full rounded-full bg-violet-400 transition-all duration-300"
+                        :style="`width:${row.pct}%`"></div>
+                    </div>
+                    <span class="text-[10px] text-slate-400 tabular-nums w-8 text-right" x-text="row.pct + '%'"></span>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
   </main>
 </div>
-
-<!-- ═══════════ TASKS PAGE ═══════════ -->
 <div x-show="activePage === 'tasks'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
   <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
     <div class="flex items-center gap-2.5 min-w-0">
@@ -2873,6 +2926,38 @@ function cairnApp() {
         tokenOutput: tokenStats.output,
         tokenTotal: tokenStats.total,
       };
+    },
+
+    // 按任务统计 Token 消耗，按总量降序
+    tokenByProject() {
+      const cache = this.projectEventsCache || {};
+      const totalAll = Object.values(cache).flat().reduce((sum, e) => {
+        const u = this.extractTokenUsage(e.payload || {});
+        return sum + (u ? u.total : 0);
+      }, 0);
+      const rows = Object.entries(cache).map(([projectId, events]) => {
+        const usage = (events || []).reduce((acc, e) => {
+          const u = this.extractTokenUsage(e.payload || {});
+          if (!u) return acc;
+          acc.input += u.input;
+          acc.output += u.output;
+          acc.total += u.total;
+          return acc;
+        }, { input: 0, output: 0, total: 0 });
+        if (usage.total === 0) return null;
+        const proj = this.projects.find(p => p.id === projectId);
+        return {
+          id: projectId,
+          title: proj?.title || projectId,
+          status: proj?.status || '',
+          input: usage.input,
+          output: usage.output,
+          total: usage.total,
+          pct: totalAll > 0 ? Math.round(usage.total / totalAll * 100) : 0,
+        };
+      }).filter(Boolean);
+      rows.sort((a, b) => b.total - a.total);
+      return rows;
     },
 
     recentGlobalEvents() {
