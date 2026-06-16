@@ -378,7 +378,14 @@ class DispatcherLoop:
         open_intents = [i for i in project.intents if i.to is None and i.worker is None
                         and i.creator != "dispatcher.plan" and i.creator != "dispatcher.bootstrap"]
         running = self._project_running_explore_intents(project.project.id)
-        return len(open_intents) == 0 and len(running) == 0
+        if len(open_intents) > 0:
+            return False
+        # Allow reason to start when at most a few stragglers are still running.
+        # This avoids waiting for the last slow explore before reasoning on the
+        # majority of completed results. Threshold: ≤1 running (or ≤half of
+        # max_project_workers, whichever is larger).
+        straggler_threshold = max(1, self.config.runtime.max_project_workers // 2)
+        return len(running) <= straggler_threshold
 
     def _project_has_running_plan(self, project_id: str) -> bool:
         return any(
