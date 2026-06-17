@@ -21,7 +21,9 @@ import os
 import pathlib
 import signal
 import subprocess
+import threading
 import time
+from urllib.parse import urlsplit
 from typing import Any
 
 import requests
@@ -36,6 +38,14 @@ router = APIRouter(tags=["crawler"])
 CRAWLER_PROMPT_PATH = (
     pathlib.Path(__file__).resolve().parents[2]
     / "dispatcher" / "prompts" / "other" / "Crawler.md"
+)
+CRAWLER_EXECUTE_PROMPT_PATH = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "dispatcher" / "prompts" / "other" / "CrawlerExecute.md"
+)
+CRAWLER_FLUSH_PROMPT_PATH = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "dispatcher" / "prompts" / "other" / "CrawlerFlush.md"
 )
 CRAWLER_SESSION_DIR = "/tmp/axiom-crawler"
 _TOOLS = "bash,read_file,write_file,list_dir"
@@ -81,11 +91,20 @@ class CrawlerStartRequest(BaseModel):
 
 class CrawlerStatus(BaseModel):
     project_id: str
-    status: str = "idle"          # idle | running | done | failed
+    status: str = "idle"          # idle | running | stopping | done | failed
+    phase: str = "idle"           # idle | crawl | flush | final_flush
+    round: int = 0
     target_url: str = ""
     output_dir: str = ""
     pid: int | None = None
+    phase_pid: int | None = None
     started_at: str | None = None
+    phase_started_at: str | None = None
+    last_flush_at: str | None = None
+    active_window_seconds: int = 0
+    flush_window_seconds: int = 0
+    total_timeout_seconds: int = 0
+    stop_requested: bool = False
     sitemap_exists: bool = False
     api_list_exists: bool = False
     api_page_map_exists: bool = False
@@ -324,6 +343,208 @@ def _schema_output_exists(base: pathlib.Path, legacy_name: str, schema_v1_name: 
     return (base / schema_v1_name).exists() or (base / legacy_name).exists()
 
 
+def _log_contains_final_summary(log_path: str) -> bool:
+    path = pathlib.Path(log_path)
+    if not path.exists():
+        return False
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return '"accepted": true' in text and "description" in text
+
+
+def _normalize_target_domain(target_url: str) -> str:
+    return urlsplit(target_url.strip()).hostname or ""
+
+
+def _load_crawler_runtime_settings() -> dict[str, int]:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT crawler_active_window_seconds, crawler_flush_window_seconds, crawler_total_timeout_seconds "
+            "FROM settings WHERE rowid = 1"
+        ).fetchone()
+    return {
+        "active_window_seconds": int(row["crawler_active_window_seconds"]),
+        "flush_window_seconds": int(row["crawler_flush_window_seconds"]),
+        "total_timeout_seconds": int(row["crawler_total_timeout_seconds"]),
+    }
+
+
+def _phase_deadline_seconds(meta: dict) -> int:
+    phase = str(meta.get("phase") or "idle")
+    if phase in {"flush", "final_flush"}:
+        return int(meta.get("flush_window_seconds") or 0)
+    if phase == "crawl":
+        return int(meta.get("active_window_seconds") or 0)
+    return 0
+
+
+def _seconds_until_phase_switch(meta: dict) -> int | None:
+    started_at = meta.get("phase_started_at")
+    if not started_at:
+        return None
+    try:
+        from datetime import datetime, timezone
+        started = datetime.strptime(started_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    budget = _phase_deadline_seconds(meta)
+    if budget <= 0:
+        return None
+    remaining = budget - int(time.time() - started.timestamp())
+    return max(0, remaining)
+
+
+def _build_prompt(template_path: pathlib.Path, *, session_id: str, target_url: str, ai_dir: str) -> str:
+    prompt_template = template_path.read_text(encoding="utf-8")
+    intent_description = f"爬取目标站点 {target_url}，产出站点地图、API 清单和页面-API 映射到 {ai_dir}"
+    return (
+        prompt_template
+        .replace("{intent_id}", session_id)
+        .replace("{intent_description}", intent_description)
+        .replace("{ai_dir}", ai_dir)
+        .replace("<TARGET_DOMAIN>", _normalize_target_domain(target_url))
+        .replace("<TARGET_URL>", target_url)
+        .replace("<NOW_UTC>", utcnow())
+    )
+
+
+def _build_pi_argv(*, cfg: dict, agent_dir: str, session_dir: str, prompt: str) -> list[str]:
+    models_json = _build_models_json(cfg)
+    wrap_script = (
+        'agent_dir="$1"\n'
+        'models_json="$2"\n'
+        "shift 2\n"
+        'mkdir -p "$agent_dir"\n'
+        'mkdir -p "$agent_dir/sessions"\n'
+        'printf "%s" "$models_json" > "$agent_dir/models.json"\n'
+        'exec env PI_CODING_AGENT_DIR="$agent_dir" pi "$@"\n'
+    )
+    pi_args = [
+        "--no-extensions",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--no-context-files",
+        "--tools", _TOOLS,
+        "--provider", "axiom",
+        "--model", cfg["pi_model"],
+        "--session-dir", session_dir,
+        "-p", prompt,
+    ]
+    return ["/bin/sh", "-lc", wrap_script, "--", agent_dir, models_json, *pi_args]
+
+
+def _run_phase_once(*, cfg: dict, meta: dict, prompt_path: pathlib.Path, phase: str) -> None:
+    ai_dir = str(meta["output_dir"])
+    session_id = str(meta["session_id"])
+    agent_dir = str(meta["agent_dir"])
+    session_dir = str(meta["session_dir"])
+    prompt = _build_prompt(
+        prompt_path,
+        session_id=session_id,
+        target_url=str(meta["target_url"]),
+        ai_dir=ai_dir,
+    )
+    argv = _build_pi_argv(cfg=cfg, agent_dir=agent_dir, session_dir=session_dir, prompt=prompt)
+    log_path = str(meta["log"])
+    phase_started_at = utcnow()
+    meta["phase"] = phase
+    meta["status"] = "stopping" if meta.get("stop_requested") else "running"
+    meta["phase_started_at"] = phase_started_at
+    _write_meta(str(meta["project_id"]), meta)
+
+    with open(log_path, "a", encoding="utf-8") as log_f:
+        log_f.write(f"\n=== phase {phase} start {phase_started_at} ===\n")
+        log_f.flush()
+        proc = subprocess.Popen(
+            argv,
+            stdout=log_f,
+            stderr=log_f,
+            start_new_session=True,
+        )
+        meta["phase_pid"] = proc.pid
+        _write_meta(str(meta["project_id"]), meta)
+        timeout = int(meta["flush_window_seconds"] if phase in {"flush", "final_flush"} else meta["active_window_seconds"])
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait(timeout=5)
+        finally:
+            meta["phase_pid"] = None
+            if phase in {"flush", "final_flush"}:
+                meta["last_flush_at"] = utcnow()
+            _write_meta(str(meta["project_id"]), meta)
+
+
+def _run_crawler_supervisor(project_id: str) -> None:
+    meta = _read_meta(project_id)
+    if not meta:
+        return
+    with open(str(meta["log"]), "a", encoding="utf-8") as log_f:
+        log_f.write(f"\n=== supervisor start {utcnow()} project={project_id} ===\n")
+    cfg = _load_worker_config()
+    started_at = meta.get("started_at")
+    total_timeout = int(meta.get("total_timeout_seconds") or 0)
+    total_deadline = time.time() + total_timeout
+    if started_at:
+        try:
+            from datetime import datetime, timezone
+            started = datetime.strptime(str(started_at), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            total_deadline = started.timestamp() + total_timeout
+        except ValueError:
+            pass
+
+    while time.time() < total_deadline:
+        meta = _read_meta(project_id)
+        if not meta:
+            return
+        if meta.get("stop_requested"):
+            break
+        with open(str(meta["log"]), "a", encoding="utf-8") as log_f:
+            log_f.write(f"\n=== supervisor loop round={meta.get('round')} phase=crawl ===\n")
+        _run_phase_once(cfg=cfg, meta=meta, prompt_path=CRAWLER_EXECUTE_PROMPT_PATH, phase="crawl")
+
+        meta = _read_meta(project_id)
+        if not meta:
+            return
+        with open(str(meta["log"]), "a", encoding="utf-8") as log_f:
+            log_f.write(f"\n=== supervisor loop round={meta.get('round')} phase=flush ===\n")
+        _run_phase_once(cfg=cfg, meta=meta, prompt_path=CRAWLER_FLUSH_PROMPT_PATH, phase="flush")
+        meta = _read_meta(project_id)
+        if not meta:
+            return
+        meta["round"] = int(meta.get("round") or 0) + 1
+        _write_meta(project_id, meta)
+        if meta.get("stop_requested"):
+            break
+
+    meta = _read_meta(project_id)
+    if not meta:
+        return
+    with open(str(meta["log"]), "a", encoding="utf-8") as log_f:
+        log_f.write(f"\n=== supervisor phase=final_flush ===\n")
+    _run_phase_once(cfg=cfg, meta=meta, prompt_path=CRAWLER_FLUSH_PROMPT_PATH, phase="final_flush")
+    meta = _read_meta(project_id)
+    if not meta:
+        return
+    meta["status"] = "done"
+    meta["phase"] = "idle"
+    meta["pid"] = None
+    _write_meta(project_id, meta)
+
+
 def _build_models_json(cfg: dict) -> str:
     model: dict = {
         "id": cfg["pi_model"],
@@ -346,7 +567,7 @@ def _build_models_json(cfg: dict) -> str:
 
 @router.post("/project-groups/{group_id}/crawler/start", response_model=CrawlerStatus, status_code=201)
 def start_crawler(group_id: str, body: CrawlerStartRequest):
-    """Spawn a pi process to crawl the target URL. Bypasses the dispatcher entirely."""
+    """Start a phased crawler supervisor loop for the target URL."""
     with get_conn() as conn:
         row = conn.execute("SELECT id FROM project_groups WHERE id = ?", (group_id,)).fetchone()
         if not row:
@@ -360,9 +581,10 @@ def start_crawler(group_id: str, body: CrawlerStartRequest):
         if _is_running(pid):
             raise HTTPException(409, f"爬虫进程已在运行中 (pid={pid})")
 
-    cfg = _load_worker_config()
-    if not CRAWLER_PROMPT_PATH.exists():
-        raise HTTPException(500, f"Crawler.md 不存在: {CRAWLER_PROMPT_PATH}")
+    if not CRAWLER_EXECUTE_PROMPT_PATH.exists():
+        raise HTTPException(500, f"CrawlerExecute.md 不存在: {CRAWLER_EXECUTE_PROMPT_PATH}")
+    if not CRAWLER_FLUSH_PROMPT_PATH.exists():
+        raise HTTPException(500, f"CrawlerFlush.md 不存在: {CRAWLER_FLUSH_PROMPT_PATH}")
 
     parent_id = group_id
     ai_dir = f"/tmp/axiom-files/{parent_id}/crawler"
@@ -373,56 +595,45 @@ def start_crawler(group_id: str, body: CrawlerStartRequest):
     session_dir = f"{agent_dir}/sessions"
     pathlib.Path(session_dir).mkdir(parents=True, exist_ok=True)
 
-    models_json = _build_models_json(cfg)
-    prompt_template = CRAWLER_PROMPT_PATH.read_text(encoding="utf-8")
-
-    # Render only the variables Crawler.md actually uses
-    intent_description = f"爬取目标站点 {body.target_url}，产出站点地图、API 清单和页面-API 映射到 {ai_dir}"
-    prompt = (
-        prompt_template
-        .replace("{intent_id}", session_id)
-        .replace("{intent_description}", intent_description)
-        .replace("{ai_dir}", ai_dir)
-    )
-
-    # Build pi argv (same pattern as PiDriver._wrap_with_models)
-    wrap_script = (
-        'agent_dir="$1"\n'
-        'models_json="$2"\n'
-        "shift 2\n"
-        'mkdir -p "$agent_dir"\n'
-        'mkdir -p "$agent_dir/sessions"\n'
-        'printf "%s" "$models_json" > "$agent_dir/models.json"\n'
-        'exec env PI_CODING_AGENT_DIR="$agent_dir" pi "$@"\n'
-    )
-    pi_args = [
-        "--no-extensions",
-        "--no-prompt-templates",
-        "--no-themes",
-        "--no-context-files",
-        "--tools", _TOOLS,
-        "--provider", "axiom",
-        "--model", cfg["pi_model"],
-        "--session-dir", session_dir,
-        "-p", prompt,
-    ]
-    argv = ["/bin/sh", "-lc", wrap_script, "--", agent_dir, models_json, *pi_args]
-
     log_path = f"/tmp/axiom-crawler-{project_id}.log"
     now = utcnow()
-    with open(log_path, "w") as log_f:
-        proc = subprocess.Popen(
-            argv,
-            stdout=log_f,
-            stderr=log_f,
-            start_new_session=True,
-        )
+    runtime = _load_crawler_runtime_settings()
+    def _background_supervisor() -> None:
+        try:
+            _run_crawler_supervisor(project_id)
+        except Exception as exc:
+            meta = _read_meta(project_id)
+            if meta:
+                meta["status"] = "failed"
+                meta["phase"] = "idle"
+                meta["pid"] = None
+                meta["phase_pid"] = None
+                _write_meta(project_id, meta)
+            with open(log_path, "a", encoding="utf-8") as log_f:
+                log_f.write(f"\n=== supervisor error ===\n{exc!r}\n")
+
+    supervisor = threading.Thread(target=_background_supervisor, name=f"crawler-supervisor-{project_id}", daemon=True)
+    supervisor.start()
 
     _write_meta(project_id, {
-        "pid": proc.pid,
+        "project_id": project_id,
+        "pid": os.getpid(),
+        "phase_pid": None,
         "target_url": body.target_url,
         "output_dir": ai_dir,
         "started_at": now,
+        "status": "running",
+        "phase": "crawl",
+        "round": 1,
+        "phase_started_at": now,
+        "last_flush_at": None,
+        "active_window_seconds": runtime["active_window_seconds"],
+        "flush_window_seconds": runtime["flush_window_seconds"],
+        "total_timeout_seconds": runtime["total_timeout_seconds"],
+        "stop_requested": False,
+        "session_id": session_id,
+        "agent_dir": agent_dir,
+        "session_dir": session_dir,
         "log": log_path,
     })
 
@@ -430,10 +641,19 @@ def start_crawler(group_id: str, body: CrawlerStartRequest):
     return CrawlerStatus(
         project_id=project_id,
         status="running",
+        phase="crawl",
+        round=1,
         target_url=body.target_url,
         output_dir=ai_dir,
-        pid=proc.pid,
+        pid=os.getpid(),
+        phase_pid=None,
         started_at=now,
+        phase_started_at=now,
+        last_flush_at=None,
+        active_window_seconds=runtime["active_window_seconds"],
+        flush_window_seconds=runtime["flush_window_seconds"],
+        total_timeout_seconds=runtime["total_timeout_seconds"],
+        stop_requested=False,
         sitemap_exists=_schema_output_exists(base, "sitemap.yaml", "site_map.yaml"),
         api_list_exists=_schema_output_exists(base, "api-list.yaml", "api_inventory.yaml"),
         api_page_map_exists=_schema_output_exists(base, "api-page-map.yaml", "page_api_map.yaml"),
@@ -449,22 +669,37 @@ def get_crawler_status(group_id: str):
         return CrawlerStatus(project_id=project_id, status="idle")
 
     pid = meta.get("pid")
+    phase_pid = meta.get("phase_pid")
     if pid and _is_running(pid):
-        status = "running"
+        status = "stopping" if meta.get("stop_requested") else str(meta.get("status") or "running")
     elif pid:
-        status = "done"
+        status = "done" if _log_contains_final_summary(str(meta.get("log") or "")) else "failed"
+        meta["status"] = status
+        meta["phase"] = "idle"
+        meta["pid"] = None
+        meta["phase_pid"] = None
+        _write_meta(project_id, meta)
     else:
-        status = "idle"
+        status = str(meta.get("status") or "idle")
 
     ai_dir = meta.get("output_dir", "")
     base = pathlib.Path(ai_dir) if ai_dir else pathlib.Path("/nonexistent")
     return CrawlerStatus(
         project_id=project_id,
         status=status,
+        phase=str(meta.get("phase") or "idle"),
+        round=int(meta.get("round") or 0),
         target_url=meta.get("target_url", ""),
         output_dir=ai_dir,
-        pid=pid if status == "running" else None,
+        pid=pid if status in {"running", "stopping"} else None,
+        phase_pid=phase_pid if status in {"running", "stopping"} else None,
         started_at=meta.get("started_at"),
+        phase_started_at=meta.get("phase_started_at"),
+        last_flush_at=meta.get("last_flush_at"),
+        active_window_seconds=int(meta.get("active_window_seconds") or 0),
+        flush_window_seconds=int(meta.get("flush_window_seconds") or 0),
+        total_timeout_seconds=int(meta.get("total_timeout_seconds") or 0),
+        stop_requested=bool(meta.get("stop_requested")),
         sitemap_exists=_schema_output_exists(base, "sitemap.yaml", "site_map.yaml"),
         api_list_exists=_schema_output_exists(base, "api-list.yaml", "api_inventory.yaml"),
         api_page_map_exists=_schema_output_exists(base, "api-page-map.yaml", "page_api_map.yaml"),
@@ -473,7 +708,7 @@ def get_crawler_status(group_id: str):
 
 @router.post("/project-groups/{group_id}/crawler/stop")
 def stop_crawler(group_id: str):
-    """Send SIGTERM to the crawler process."""
+    """Request stop and let crawler enter final flush."""
     project_id = group_id
     meta = _read_meta(project_id)
     pid = meta.get("pid")
@@ -481,13 +716,7 @@ def stop_crawler(group_id: str):
         raise HTTPException(404, "没有运行中的爬虫进程")
     if not _is_running(pid):
         raise HTTPException(404, f"进程 {pid} 已退出")
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        raise HTTPException(404, f"进程 {pid} 已退出")
-    # Wait briefly for cleanup
-    for _ in range(5):
-        time.sleep(0.5)
-        if not _is_running(pid):
-            break
-    return {"stopped": True, "pid": pid}
+    meta["stop_requested"] = True
+    meta["status"] = "stopping"
+    _write_meta(project_id, meta)
+    return {"stopped": True, "pid": pid, "stop_requested": True}
