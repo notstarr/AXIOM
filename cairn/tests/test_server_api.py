@@ -132,22 +132,22 @@ def test_settings_and_export_are_backed_by_the_same_database(client: TestClient)
         },
     )
     assert response.status_code == 200
-        assert client.get("/settings").json() == {
-            "intent_timeout": 30,
-            "reason_timeout": 45,
-            "bootstrap_worker_count": 1,
-            "explore_worker_count": 2,
-            "reason_worker_count": 1,
-            "plan_worker_count": 1,
-            "plan_timeout": 600,
-            "crawler_active_window_seconds": 180,
-            "crawler_flush_window_seconds": 45,
-            "crawler_total_timeout_seconds": 1800,
-            "openai_base_url": "",
-            "openai_model": "",
-            "proxy_url": "",
-            "proxy_enabled": False,
-            "domain_blacklist": [],
+    assert client.get("/settings").json() == {
+        "intent_timeout": 30,
+        "reason_timeout": 45,
+        "bootstrap_worker_count": 1,
+        "explore_worker_count": 2,
+        "reason_worker_count": 1,
+        "plan_worker_count": 1,
+        "plan_timeout": 600,
+        "crawler_active_window_seconds": 180,
+        "crawler_flush_window_seconds": 45,
+        "crawler_total_timeout_seconds": 1800,
+        "openai_base_url": "",
+        "openai_model": "",
+        "proxy_url": "",
+        "proxy_enabled": False,
+        "domain_blacklist": [],
     }
 
     exported = client.get(f"/projects/{project_id}/export?format=yaml")
