@@ -14,6 +14,9 @@ class Settings(BaseModel):
     reason_worker_count: int = Field(default=1, ge=1)
     plan_timeout: int = Field(default=600, ge=1)
     plan_worker_count: int = Field(default=1, ge=1)
+    crawler_active_window_seconds: int = Field(default=180, ge=15)
+    crawler_flush_window_seconds: int = Field(default=45, ge=5)
+    crawler_total_timeout_seconds: int = Field(default=1800, ge=60)
     openai_base_url: str = ""
     openai_model: str = ""
     proxy_url: str = ""
@@ -156,11 +159,15 @@ BlackboardPriority = Literal["low", "medium", "high"]
 class Vulnerability(BaseModel):
     id: str
     title: str
+    type: str = ""
+    severity: VulnSeverity = "info"
     description: str
     prerequisites: str = ""
     impact: str
     evidence: list[str] = Field(default_factory=list)
     reproduction_steps: list[str] = Field(default_factory=list)
+    recommendation: str = ""
+    affected_scope: str = ""
     status: VulnStatus = "confirmed"
     source: str = "reason"
     reported_by: str
@@ -169,11 +176,15 @@ class Vulnerability(BaseModel):
 
 class CreateVulnerabilityRequest(BaseModel):
     title: str
+    type: str = ""
+    severity: VulnSeverity = "info"
     description: str
     prerequisites: str = ""
     impact: str
     evidence: list[str] = Field(default_factory=list)
     reproduction_steps: list[str] = Field(default_factory=list)
+    recommendation: str = ""
+    affected_scope: str = ""
     status: VulnStatus = "confirmed"
     source: str = "reason"
     reported_by: str
@@ -756,3 +767,29 @@ class ReopenResponse(BaseModel):
     project: ProjectMeta
     fact: Fact
     intent: Intent
+
+
+class ExploreStartRequest(BaseModel):
+    target_url: str
+    description: str = ""
+
+    @field_validator("target_url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("target_url must not be empty")
+        return text
+
+
+class ExploreStatus(BaseModel):
+    project_id: str
+    intent_id: str | None = None
+    intent_worker: str | None = None
+    status: Literal["idle", "running", "done", "failed"] = "idle"
+    target_url: str = ""
+    output_dir: str = ""
+    sitemap_exists: bool = False
+    api_list_exists: bool = False
+    api_page_map_exists: bool = False
+    created_at: str | None = None

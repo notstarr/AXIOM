@@ -3,14 +3,14 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 import pytest
 
-from cairn.server import db
-from cairn.server.app import app
+from axiom.server import db
+from axiom.server.app import app
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch) -> TestClient:
     monkeypatch.setattr(db, "_db_path", None)
-    db.configure(tmp_path / "cairn.db")
+    db.configure(tmp_path / "axiom.db")
     with TestClient(app) as test_client:
         yield test_client
 
@@ -116,15 +116,38 @@ def test_intent_creation_rejects_goal_source_and_mismatched_initial_worker(clien
 def test_settings_and_export_are_backed_by_the_same_database(client: TestClient) -> None:
     project_id = _create_project(client)
 
-    response = client.put("/settings", json={"intent_timeout": 30, "reason_timeout": 45})
+    response = client.put(
+        "/settings",
+        json={
+            "intent_timeout": 30,
+            "reason_timeout": 45,
+            "bootstrap_worker_count": 1,
+            "explore_worker_count": 2,
+            "reason_worker_count": 1,
+            "plan_worker_count": 1,
+            "plan_timeout": 600,
+            "proxy_url": "",
+            "proxy_enabled": False,
+            "domain_blacklist": [],
+        },
+    )
     assert response.status_code == 200
-    assert client.get("/settings").json() == {
-        "intent_timeout": 30,
-        "reason_timeout": 45,
-        "proxy_url": "",
-        "proxy_bootstrap_enabled": False,
-        "proxy_explore_enabled": False,
-        "domain_blacklist": [],
+        assert client.get("/settings").json() == {
+            "intent_timeout": 30,
+            "reason_timeout": 45,
+            "bootstrap_worker_count": 1,
+            "explore_worker_count": 2,
+            "reason_worker_count": 1,
+            "plan_worker_count": 1,
+            "plan_timeout": 600,
+            "crawler_active_window_seconds": 180,
+            "crawler_flush_window_seconds": 45,
+            "crawler_total_timeout_seconds": 1800,
+            "openai_base_url": "",
+            "openai_model": "",
+            "proxy_url": "",
+            "proxy_enabled": False,
+            "domain_blacklist": [],
     }
 
     exported = client.get(f"/projects/{project_id}/export?format=yaml")
@@ -136,9 +159,12 @@ def test_settings_and_export_are_backed_by_the_same_database(client: TestClient)
 
 def test_blackboard_item_crud_and_project_detail_integration(client: TestClient) -> None:
     project_id = _create_project(client)
+    detail = client.get(f"/projects/{project_id}")
+    group_id = detail.json()["project"]["parent_project_id"]
 
+    # Use group-level blackboard API
     created = client.post(
-        f"/projects/{project_id}/blackboard",
+        f"/project-groups/{group_id}/blackboard",
         json={
             "title": "Auth surface mapping",
             "content": "Track login, JWT, and role endpoints",
@@ -158,12 +184,12 @@ def test_blackboard_item_crud_and_project_detail_integration(client: TestClient)
     assert item["priority"] == "high"
     assert item["related_vuln_id"] == "v001"
 
-    listed = client.get(f"/projects/{project_id}/blackboard")
+    listed = client.get(f"/project-groups/{group_id}/blackboard")
     assert listed.status_code == 200
     assert len(listed.json()) == 1
 
     updated = client.put(
-        f"/projects/{project_id}/blackboard/{item['id']}",
+        f"/project-groups/{group_id}/blackboard/{item['id']}",
         json={
             "title": "Auth surface mapped",
             "content": "JWT and role endpoints verified",
@@ -181,13 +207,14 @@ def test_blackboard_item_crud_and_project_detail_integration(client: TestClient)
     assert updated.json()["updated_by"] == "pi-worker"
     assert updated.json()["related_fact_id"] == "f002"
 
-    detail = client.get(f"/projects/{project_id}")
-    assert detail.status_code == 200
-    assert len(detail.json()["blackboard"]) == 1
-    assert detail.json()["blackboard"][0]["title"] == "Auth surface mapped"
+    # Project detail should include group blackboard
+    detail2 = client.get(f"/projects/{project_id}")
+    assert detail2.status_code == 200
+    assert len(detail2.json()["blackboard"]) == 1
+    assert detail2.json()["blackboard"][0]["title"] == "Auth surface mapped"
 
     created2 = client.post(
-        f"/projects/{project_id}/blackboard",
+        f"/project-groups/{group_id}/blackboard",
         json={
             "title": "Session checks",
             "content": "Track session fixation tests",
@@ -199,16 +226,9 @@ def test_blackboard_item_crud_and_project_detail_integration(client: TestClient)
     )
     assert created2.status_code == 201
 
-    batch = client.post(
-        f"/projects/{project_id}/blackboard/batch/status",
-        json={"ids": ["b001", "b002"], "status": "resolved", "updated_by": "human"},
-    )
-    assert batch.status_code == 200
-    assert all(item["status"] == "resolved" for item in batch.json())
-
-    deleted = client.delete(f"/projects/{project_id}/blackboard/{item['id']}")
+    deleted = client.delete(f"/project-groups/{group_id}/blackboard/{item['id']}")
     assert deleted.status_code == 204
-    remaining = client.get(f"/projects/{project_id}/blackboard").json()
+    remaining = client.get(f"/project-groups/{group_id}/blackboard").json()
     assert len(remaining) == 1
     assert remaining[0]["id"] == "b002"
 
@@ -220,8 +240,7 @@ def test_settings_domain_blacklist_roundtrip(client: TestClient) -> None:
             "intent_timeout": 15,
             "reason_timeout": 15,
             "proxy_url": "",
-            "proxy_bootstrap_enabled": False,
-            "proxy_explore_enabled": False,
+            "proxy_enabled": False,
             "domain_blacklist": ["https://git.kkroup.cn/path", "api.example.com", "api.example.com"],
         },
     )
@@ -314,3 +333,63 @@ def test_project_creation_rejects_invalid_bootstrap_enabled(client: TestClient) 
     )
 
     assert response.status_code == 422
+
+
+def test_dispatch_settings_roundtrip_uses_database_and_exposes_runtime_state(client: TestClient) -> None:
+    response = client.put(
+        "/settings/dispatch",
+        json={
+            "runtime_interval": 7,
+            "runtime_max_workers": 9,
+            "runtime_max_running_projects": 4,
+            "runtime_max_project_workers": 3,
+            "runtime_healthcheck_timeout": 25,
+            "runtime_worker_healthcheck": "startup_only",
+            "runtime_prompt_group": "default",
+            "bootstrap_timeout": 320,
+            "bootstrap_conclude_timeout": 95,
+            "explore_timeout": 33,
+            "explore_conclude_timeout": 91,
+            "reason_timeout": 47,
+            "reason_max_intents": 4,
+            "workers": [
+                {
+                    "name": "alpha",
+                    "task_types": ["bootstrap", "reason"],
+                    "max_running": 2,
+                    "priority": 1,
+                    "pi_model": "gpt-test",
+                    "pi_base_url": "https://api.example.com/v1",
+                    "pi_provider_api": "openai-completions",
+                    "pi_model_context_window": "128000",
+                    "pi_api_key": "",
+                    "pi_api_key_masked": "",
+                }
+            ],
+            "proxy_url": "socks5://127.0.0.1:1080",
+            "proxy_username": "",
+            "proxy_password": "",
+            "proxy_enabled": True,
+            "bootstrap_worker_count": 1,
+            "explore_worker_count": 2,
+            "reason_worker_count": 1,
+        },
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["runtime_interval"] == 7
+    assert payload["runtime_max_workers"] == 9
+    assert payload["bootstrap_timeout"] == 320
+    assert payload["explore_timeout"] == 33
+    assert payload["reason_timeout"] == 47
+    assert payload["config_version"] >= 1
+    assert payload["workers"][0]["name"] == "alpha"
+    assert payload["bootstrap_worker_count"] == 1
+    assert payload["explore_worker_count"] == 2
+    assert payload["reason_worker_count"] == 1
+
+    settings_payload = client.get("/settings").json()
+    assert settings_payload["intent_timeout"] == 33
+    assert settings_payload["reason_timeout"] == 47
+    assert settings_payload["proxy_enabled"] is True

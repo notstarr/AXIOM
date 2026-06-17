@@ -1044,6 +1044,8 @@
         </button>
         <button @click="sideTab = 'log'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'log' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">日志</button>
+        <button @click="sideTab = 'explore'; loadExploreStatus()" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
+          :class="sideTab === 'explore' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">探索</button>
       </div>
 
       <!-- Detail -->
@@ -1263,7 +1265,7 @@
               <template x-if="(v.reproduction_steps || []).length > 0">
                 <div>
                   <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">复现步骤</p>
-                  <ol class="list-decimal ml-5 space-y-1">
+                  <ol class="list-none ml-2 space-y-1">
                     <template x-for="(step, idx) in (v.reproduction_steps || [])" :key="`${v.id}-step-${idx}`">
                       <li class="text-xs text-slate-600 break-words" x-text="step"></li>
                     </template>
@@ -1379,6 +1381,74 @@
           </div>
         </template>
       </div>
+
+      <!-- ── 探索面板 ── -->
+      <div x-show="sideTab === 'explore'" class="flex-1 overflow-y-auto p-4 space-y-3 bg-emerald-50/20">
+        <!-- 启动探索表单 -->
+        <section class="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">启动全站探索</p>
+          <div class="flex gap-2">
+            <input x-model="exploreTargetUrl" placeholder="https://target.com" class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-400">
+            <button @click="startExplore()" :disabled="!exploreTargetUrl || exploreStarting"
+              class="px-4 py-2 text-xs font-medium rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-40 transition">
+              <span x-show="!exploreStarting">启动</span>
+              <span x-show="exploreStarting">启动中…</span>
+            </button>
+          </div>
+          <p class="mt-1.5 text-[10px] text-slate-400">Chrome-SecTest 需已登录目标站点，mitmproxy 需已在端口 18080 运行</p>
+        </section>
+        <!-- 探索状态 -->
+        <template x-if="exploreStatus">
+          <section class="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm space-y-3">
+            <div class="flex items-center justify-between">
+              <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">探索状态</p>
+              <button @click="loadExploreStatus()" class="text-[10px] text-slate-400 hover:text-slate-600">刷新</button>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold"
+                :class="{
+                  'bg-slate-100 text-slate-500': exploreStatus.status === 'idle',
+                  'bg-amber-100 text-amber-700': exploreStatus.status === 'running',
+                  'bg-emerald-100 text-emerald-700': exploreStatus.status === 'done',
+                  'bg-rose-100 text-rose-600': exploreStatus.status === 'failed',
+                }"
+                x-text="{idle:'等待中', running:'探索中', done:'已完成', failed:'失败'}[exploreStatus.status] || exploreStatus.status">
+              </span>
+              <span class="text-xs text-slate-500 truncate" x-text="exploreStatus.target_url"></span>
+            </div>
+            <template x-if="exploreStatus.intent_id">
+              <p class="text-[11px] text-slate-400">Intent: <span class="font-mono" x-text="exploreStatus.intent_id"></span>
+                <span x-show="exploreStatus.intent_worker"> · <span x-text="exploreStatus.intent_worker"></span></span>
+              </p>
+            </template>
+            <!-- 产出文件 -->
+            <div class="pt-2 border-t border-slate-100 space-y-1.5">
+              <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">产出文件</p>
+              <div class="grid grid-cols-3 gap-2">
+                <div class="rounded-lg border px-2 py-1.5 text-center text-[10px]"
+                  :class="exploreStatus.sitemap_exists ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-300'">
+                  sitemap.yaml<br>
+                  <span x-text="exploreStatus.sitemap_exists ? '✓' : '—'"></span>
+                </div>
+                <div class="rounded-lg border px-2 py-1.5 text-center text-[10px]"
+                  :class="exploreStatus.api_list_exists ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-300'">
+                  api-list.yaml<br>
+                  <span x-text="exploreStatus.api_list_exists ? '✓' : '—'"></span>
+                </div>
+                <div class="rounded-lg border px-2 py-1.5 text-center text-[10px]"
+                  :class="exploreStatus.api_page_map_exists ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-300'">
+                  api-page-map<br>
+                  <span x-text="exploreStatus.api_page_map_exists ? '✓' : '—'"></span>
+                </div>
+              </div>
+            </div>
+            <template x-if="exploreStatus.output_dir">
+              <p class="text-[10px] text-slate-300 font-mono break-all" x-text="exploreStatus.output_dir"></p>
+            </template>
+          </section>
+        </template>
+      </div>
+
     </div>
   </div>
 
@@ -1441,7 +1511,6 @@
                 <span class="text-[11px] text-slate-400" x-text="`${selectedVulnerability().project_group_title || '未归属项目'} / ${selectedVulnerability().task_title || selectedVulnerability().project_id}`"></span>
               </div>
               <h3 class="mt-3 text-lg font-semibold text-slate-800 break-words" x-text="selectedVulnerability().title"></h3>
-              <p class="mt-1 text-sm text-slate-700 whitespace-pre-wrap break-words line-clamp-2" x-text="selectedVulnerability().description"></p>
               <div class="mt-2 flex gap-2">
                 <button @click="editVuln(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">编辑</button>
                 <button @click="deleteVuln(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-rose-200 text-rose-500 hover:bg-rose-50">删除</button>
@@ -1473,7 +1542,7 @@
               <template x-if="(selectedVulnerability().reproduction_steps || []).length > 0">
                 <div>
                   <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">复现步骤</p>
-                  <ol class="list-decimal ml-5 space-y-1">
+                  <ol class="list-none ml-2 space-y-1">
                     <template x-for="(step, idx) in (selectedVulnerability().reproduction_steps || [])" :key="`${selectedVulnerability().id}-page-step-${idx}`">
                       <li class="text-xs text-slate-600 break-words" x-text="step"></li>
                     </template>
@@ -1590,7 +1659,7 @@
             </template>
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               <template x-for="task in selectedProjectGroupTasks()" :key="`managed-task-${task.id}`">
-                <button type="button" @click="selectedProjectManagementTaskId = task.id; loadProjectDetailForManagement(task.id)" class="text-left rounded-xl border p-3 transition"
+                <button type="button" @click="selectedProjectManagementTaskId = task.id; loadProjectDetailForManagement(task.id); crawlerStatus = null; loadCrawlerStatus()" class="text-left rounded-xl border p-3 transition"
                   :class="selectedProjectManagementTaskId === task.id ? 'border-brand-200 bg-brand-50/50' : 'border-slate-200 hover:bg-slate-50'">
                   <div class="flex items-center justify-between gap-2">
                     <span class="font-mono text-[11px] text-slate-400" x-text="task.id"></span>
@@ -1633,6 +1702,74 @@
               </div>
             </template>
           </section>
+
+          <!-- 探索 section -->
+          <section class="rounded-2xl border border-emerald-200/70 bg-white shadow-sm p-4 space-y-3">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <h3 class="text-sm font-semibold text-slate-700">爬虫</h3>
+                <p class="text-xs text-slate-400 mt-0.5">自动点击所有页面按钮，捕获流量，产出站点地图与 API 清单</p>
+              </div>
+              <button @click="loadCrawlerStatus()" class="text-[11px] text-slate-400 hover:text-slate-600">刷新状态</button>
+            </div>
+
+            <!-- 启动表单（仅当 task 已选中时显示） -->
+            <template x-if="selectedProjectManagementId">
+              <div class="space-y-2">
+                <div class="flex gap-2">
+                  <input x-model="crawlerTargetUrl" placeholder="https://target.com" class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-400">
+                  <button @click="startCrawler()" :disabled="!crawlerTargetUrl || crawlerStarting"
+                    class="px-4 py-2 text-xs font-medium rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-40 transition">
+                    <span x-show="!crawlerStarting">启动爬虫</span>
+                    <span x-show="crawlerStarting">启动中…</span>
+                  </button>
+                </div>
+                <p class="text-[10px] text-slate-400">需要 Chrome-SecTest 已登录目标站点，mitmproxy 在端口 18080 运行</p>
+              </div>
+            </template>
+            <template x-if="!selectedProjectManagementId">
+              <p class="text-xs text-slate-400">请先在左侧选择一个项目</p>
+            </template>
+
+            <!-- 探索状态 -->
+            <template x-if="crawlerStatus">
+              <div class="rounded-xl border border-slate-100 bg-slate-50/60 p-3 space-y-2">
+                <div class="flex items-center gap-2">
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold"
+                    :class="{
+                      'bg-slate-100 text-slate-500': crawlerStatus.status === 'idle',
+                      'bg-amber-100 text-amber-700': crawlerStatus.status === 'running',
+                      'bg-emerald-100 text-emerald-700': crawlerStatus.status === 'done',
+                      'bg-rose-100 text-rose-600': crawlerStatus.status === 'failed',
+                    }"
+                    x-text="{idle:'空闲', running:'爬取中', done:'已完成', failed:'失败'}[crawlerStatus.status] || crawlerStatus.status">
+                  </span>
+                  <span class="text-xs text-slate-500 truncate" x-text="crawlerStatus.target_url"></span>
+                  <template x-if="crawlerStatus.status === 'running'">
+                    <button @click="stopCrawler()" class="ml-auto text-[10px] text-rose-500 hover:text-rose-700">停止</button>
+                  </template>
+                </div>
+                <template x-if="crawlerStatus.pid">
+                  <p class="text-[11px] text-slate-400">PID: <span class="font-mono" x-text="crawlerStatus.pid"></span></p>
+                </template>
+                <div class="grid grid-cols-3 gap-2 pt-1">
+                  <div class="rounded-lg border px-2 py-1.5 text-center text-[10px]"
+                    :class="crawlerStatus.sitemap_exists ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-300'">
+                    sitemap.yaml<br><span x-text="crawlerStatus.sitemap_exists ? '✓ 已生成' : '—'"></span>
+                  </div>
+                  <div class="rounded-lg border px-2 py-1.5 text-center text-[10px]"
+                    :class="crawlerStatus.api_list_exists ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-300'">
+                    api-list.yaml<br><span x-text="crawlerStatus.api_list_exists ? '✓ 已生成' : '—'"></span>
+                  </div>
+                  <div class="rounded-lg border px-2 py-1.5 text-center text-[10px]"
+                    :class="crawlerStatus.api_page_map_exists ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-300'">
+                    api-page-map<br><span x-text="crawlerStatus.api_page_map_exists ? '✓ 已生成' : '—'"></span>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </section>
+
         </div>
       </template>
     </section>
@@ -1734,53 +1871,75 @@
 <div x-show="activePage === 'files'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0" x-init="loadFileTree()">
   <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
     <h2 class="text-base font-semibold text-slate-800">Files</h2>
-    <span class="text-xs text-slate-400">按项目组 / 任务 / human·ai 组织</span>
     <div class="flex-1"></div>
+    <label x-show="fileFolder === 'human' && !fileIsGroupLevel" class="px-2.5 py-1.5 text-xs rounded-lg bg-brand-500 text-white cursor-pointer hover:bg-brand-600">上传
+      <input type="file" @change="uploadFileToTask($event)" class="hidden">
+    </label>
     <button @click="loadFileTree()" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">刷新</button>
   </header>
-  <div class="flex-1 min-h-0 grid grid-cols-[280px_minmax(0,1fr)]">
-    <aside class="border-r border-slate-200 bg-slate-50/60 overflow-y-auto p-3 space-y-1">
+  <div class="flex-1 min-h-0 grid grid-cols-[240px_minmax(0,1fr)]">
+    <!-- Left tree: pure folder tree, no icons -->
+    <aside class="border-r border-slate-200 bg-slate-50/40 overflow-y-auto p-2 text-xs select-none">
       <template x-for="g in fileGroups" :key="g.id">
         <div>
-          <button @click="fileGroupOpen = (fileGroupOpen === g.id ? '' : g.id)" class="w-full text-left px-2 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
-            x-text="g.title || g.id"></button>
-          <div x-show="fileGroupOpen === g.id" class="ml-2 space-y-0.5">
+          <button @click="fileGroupOpen = (fileGroupOpen === g.id ? '' : g.id)"
+            class="w-full text-left px-2 py-1 rounded hover:bg-slate-100 font-semibold text-slate-600 flex items-center gap-1">
+            <span x-text="fileGroupOpen === g.id ? '▾' : '▸'" class="text-slate-400 text-[10px] w-3 shrink-0"></span>
+            <span x-text="g.title || g.id" class="truncate"></span>
+          </button>
+          <div x-show="fileGroupOpen === g.id" class="ml-3">
+            <!-- Group-level crawler folder (at project level, not task level) -->
+            <template x-if="g.hasCrawler">
+              <button @click="selectFolder(g.id, '', 'crawler', true)"
+                class="w-full text-left px-2 py-0.5 rounded hover:bg-slate-100 flex items-center gap-1"
+                :class="fileIsGroupLevel && fileGroupId === g.id ? 'bg-slate-200 font-semibold text-slate-700' : 'text-slate-500'">
+                <span class="text-slate-300 text-[10px] w-3 shrink-0">—</span>
+                <span>crawler</span>
+              </button>
+            </template>
+            <!-- Tasks -->
             <template x-for="t in g.tasks" :key="t.id">
-              <button @click="selectFileTask(t.id, g.id)" class="w-full text-left px-2 py-1 rounded text-[11px]"
-                :class="fileTaskId === t.id ? 'bg-brand-100 text-brand-700' : 'text-slate-500 hover:bg-slate-100'"
-                x-text="t.title || t.id"></button>
+              <div>
+                <button @click="fileGroupOpen2 = (fileGroupOpen2 === t.id ? '' : t.id)"
+                  class="w-full text-left px-2 py-0.5 rounded hover:bg-slate-100 flex items-center gap-1 text-slate-500">
+                  <span x-text="fileGroupOpen2 === t.id ? '▾' : '▸'" class="text-slate-400 text-[10px] w-3 shrink-0"></span>
+                  <span x-text="t.title || t.id" class="truncate"></span>
+                </button>
+                <div x-show="fileGroupOpen2 === t.id" class="ml-3">
+                  <template x-for="fd in t.folders" :key="fd">
+                    <button @click="selectFolder(g.id, t.id, fd, false)"
+                      class="w-full text-left px-2 py-0.5 rounded hover:bg-slate-100 flex items-center gap-1"
+                      :class="!fileIsGroupLevel && fileTaskId === t.id && fileFolder === fd ? 'bg-slate-200 font-semibold text-slate-700' : 'text-slate-500'">
+                      <span class="text-slate-300 text-[10px] w-3 shrink-0">—</span>
+                      <span x-text="fd"></span>
+                    </button>
+                  </template>
+                </div>
+              </div>
             </template>
           </div>
         </div>
       </template>
     </aside>
-    <section class="overflow-y-auto p-4 space-y-4">
-      <template x-if="!fileTaskId">
-        <div class="text-sm text-slate-400 py-20 text-center">选择左侧任务查看文件</div>
+    <!-- Right: file grid -->
+    <section class="overflow-y-auto p-4">
+      <template x-if="!fileFolder">
+        <div class="text-sm text-slate-400 py-20 text-center">选择左侧文件夹查看文件</div>
       </template>
-      <template x-if="fileTaskId">
+      <template x-if="fileFolder">
         <div>
-          <div class="flex items-center gap-3 mb-3">
-            <button @click="fileFolder='human'" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition"
-              :class="fileFolder === 'human' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'">👤 human</button>
-            <button @click="fileFolder='ai'" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition"
-              :class="fileFolder === 'ai' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'">🤖 ai</button>
-            <span class="flex-1"></span>
-            <label x-show="fileFolder === 'human'" class="px-2.5 py-1.5 text-xs rounded-lg bg-brand-500 text-white cursor-pointer hover:bg-brand-600">上传
-              <input type="file" @change="uploadFileToTask($event)" class="hidden">
-            </label>
-          </div>
+          <p class="text-[11px] text-slate-400 mb-3 font-mono"
+            x-text="fileIsGroupLevel ? fileGroupId + ' / ' + fileFolder : fileTaskId + ' / ' + fileFolder"></p>
           <div class="grid grid-cols-4 gap-3">
-            <template x-for="f in (fileFolder === 'human' ? fileHuman : fileAi)" :key="f.name">
+            <template x-for="f in fileList" :key="f.name">
               <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md transition cursor-pointer" @click="previewFile(f.name, f.size)">
-                <p class="text-2xl mb-2">📄</p>
                 <p class="text-xs font-semibold text-slate-700 truncate mb-1" x-text="f.name"></p>
                 <p class="text-[10px] text-slate-400" x-text="f.size ? (f.size < 1024 ? f.size+'B' : (f.size/1024).toFixed(1)+'KB') : ''"></p>
-                <button @click.stop="deleteFile(f.name)" class="mt-2 text-[10px] text-rose-500 hover:text-rose-600">删除</button>
+                <button @click.stop="deleteCurrentFile(f.name)" class="mt-2 text-[10px] text-rose-500 hover:text-rose-600">删除</button>
               </div>
             </template>
           </div>
-          <div x-show="(fileFolder === 'human' ? fileHuman : fileAi).length === 0" class="text-xs text-slate-400 py-8 text-center">暂无文件</div>
+          <div x-show="fileList.length === 0" class="text-xs text-slate-400 py-8 text-center">暂无文件</div>
         </div>
       </template>
       <!-- MD Preview Modal -->
@@ -1792,9 +1951,7 @@
             <button @click="filePreview.open = false" class="text-slate-400 hover:text-slate-600 text-lg">&times;</button>
           </div>
           <div class="flex-1 overflow-y-auto p-5">
-            <!-- Raw content (default) -->
             <pre x-show="!filePreview.isMarkdown" class="text-xs text-slate-700 whitespace-pre-wrap font-mono" x-text="filePreview.content"></pre>
-            <!-- Rendered markdown -->
             <div x-show="filePreview.isMarkdown" class="md-preview text-sm text-slate-700" x-html="filePreview.rendered"></div>
           </div>
         </div>
@@ -2048,6 +2205,115 @@
         </div>
       </div>
     </section>
+
+    <!-- 爬虫 Worker 设置 -->
+    <section x-show="activeSettingsTab === 'crawler'" x-cloak
+      x-init="loadCrawlerWorkerSettings()"
+      class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-4">
+      <div>
+        <h3 class="text-sm font-semibold text-slate-700">爬虫 Worker 配置</h3>
+        <p class="text-xs text-slate-400 mt-0.5">爬虫独立于 dispatcher，使用专属模型配置直接 spawn 进程</p>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">爬取阶段时长（秒）</label>
+          <input type="number" min="15" x-model.number="settingsForm.crawler_active_window_seconds"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+          <p class="text-[11px] text-slate-400">每轮 crawler 主动探索页面和动作的时长。</p>
+        </div>
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">整理阶段时长（秒）</label>
+          <input type="number" min="5" x-model.number="settingsForm.crawler_flush_window_seconds"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+          <p class="text-[11px] text-slate-400">每轮结束后强制把发现写入 YAML 的时长。</p>
+        </div>
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">总超时时长（秒）</label>
+          <input type="number" min="60" x-model.number="settingsForm.crawler_total_timeout_seconds"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+          <p class="text-[11px] text-slate-400">整个 crawler 运行上限，超时后进入最终整理阶段。</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Base URL -->
+        <div class="space-y-1 md:col-span-2">
+          <label class="text-[11px] font-medium text-slate-500">PI_BASE_URL</label>
+          <div class="flex gap-2">
+            <input x-model="crawlerWorkerForm.pi_base_url" @blur="crawlerFetchModels()" placeholder="https://api.example.com/v1"
+              class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+            <button @click="crawlerFetchModels()" :disabled="!crawlerWorkerForm.pi_base_url || crawlerLoadingModels"
+              class="px-3 py-2 text-xs border border-slate-200 rounded-xl hover:bg-slate-50 disabled:opacity-40 transition whitespace-nowrap"
+              x-text="crawlerLoadingModels ? '获取中...' : '获取模型'">
+            </button>
+          </div>
+          <p x-show="crawlerModelsError" class="text-[11px] text-rose-500" x-text="crawlerModelsError"></p>
+        </div>
+
+        <!-- API Key -->
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">PI_API_KEY（留空保持不变）</label>
+          <input x-model="crawlerWorkerForm.pi_api_key" type="password" placeholder="sk-..."
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+        </div>
+
+        <!-- Provider API -->
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">PI_PROVIDER_API</label>
+          <select x-model="crawlerWorkerForm.pi_provider_api"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+            <option value="openai-completions">openai-completions</option>
+            <option value="openai-responses">openai-responses</option>
+          </select>
+        </div>
+
+        <!-- Model 下拉（有模型列表时显示下拉，否则手动输入） -->
+        <div class="space-y-1 md:col-span-2">
+          <label class="text-[11px] font-medium text-slate-500">PI_MODEL</label>
+          <template x-if="crawlerAvailableModels.length > 0">
+            <select x-model="crawlerWorkerForm.pi_model"
+              @change="crawlerAutoFillContext()"
+              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+              <option value="">-- 选择模型 --</option>
+              <template x-for="m in crawlerAvailableModels" :key="m.id">
+                <option :value="m.id" x-text="`${m.id}  (${(m.context_window/1000).toFixed(0)}k ctx)`"></option>
+              </template>
+            </select>
+          </template>
+          <template x-if="crawlerAvailableModels.length === 0">
+            <input x-model="crawlerWorkerForm.pi_model" placeholder="deepseek-v4-pro"
+              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+          </template>
+        </div>
+
+        <!-- Context Window（自动填充，可手动覆盖） -->
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">Context Window</label>
+          <input x-model="crawlerWorkerForm.pi_context_window" placeholder="128000"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+        </div>
+
+        <!-- 测试连接 -->
+        <div class="space-y-1 flex flex-col justify-end">
+          <label class="text-[11px] font-medium text-slate-500 opacity-0">.</label>
+          <div class="flex items-center gap-3">
+            <button @click="crawlerTestConnection()"
+              :disabled="!crawlerWorkerForm.pi_base_url || !crawlerWorkerForm.pi_model || crawlerTesting"
+              class="px-4 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl hover:bg-white transition disabled:opacity-40"
+              x-text="crawlerTesting ? '测试中...' : '测试连接'">
+            </button>
+            <template x-if="crawlerTestResult">
+              <span class="text-xs" :class="crawlerTestResult.ok ? 'text-teal-600' : 'text-rose-600'"
+                x-text="crawlerTestResult.message"></span>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end">
+        <button @click="saveCrawlerWorkerSettings()" class="px-5 py-2.5 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition">保存爬虫配置</button>
+      </div>
+    </section>
+
     <div class="flex justify-end">
       <button @click="saveServerSettings()" class="px-5 py-2.5 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200">保存系统设置</button>
     </div>
@@ -2352,6 +2618,15 @@ function cairnApp() {
     vulnEditor: { open: false, isNew: true, project_id: '', id: '', title: '', description: '', prerequisites: '', impact: '', evidence: '', reproduction_steps: '', status: 'confirmed' },
     reopenForm: { projectId: '', projectTitle: '', description: '' },
     renameForm: { projectId: '', originalTitle: '', title: '' },
+    crawlerTargetUrl: '',
+    crawlerStarting: false,
+    crawlerStatus: null,
+    crawlerWorkerForm: { pi_model: '', pi_base_url: '', pi_api_key: '', pi_provider_api: 'openai-completions', pi_context_window: '128000' },
+    crawlerAvailableModels: [],
+    crawlerLoadingModels: false,
+    crawlerModelsError: '',
+    crawlerTesting: false,
+    crawlerTestResult: null,
     localPrefs: { actor_name: '人工', layout_mode: 'dagre_tb' },
     activeSettingsTab: 'workers',
     settingsForm: {
@@ -2362,6 +2637,9 @@ function cairnApp() {
       reason_worker_count: 1,
       plan_timeout: 600,
       plan_worker_count: 1,
+      crawler_active_window_seconds: 180,
+      crawler_flush_window_seconds: 45,
+      crawler_total_timeout_seconds: 1800,
       proxy_url: '',
       proxy_username: '',
       proxy_password: '',
@@ -2406,10 +2684,12 @@ function cairnApp() {
     skillEditor: { open: false, isNew: true, id: '', name: '', description: '', content: '' },
     fileGroups: [],
     fileGroupOpen: '',
+    fileGroupOpen2: '',
+    fileGroupId: '',
     fileTaskId: '',
-    fileFolder: 'human',
-    fileHuman: [],
-    fileAi: [],
+    fileFolder: '',
+    fileList: [],
+    fileIsGroupLevel: false,
     filePreview: { open: false, name: '', content: '', isMarkdown: false, rendered: '' },
     seeEvents: [],
     seeLastEventId: 0,
@@ -2697,7 +2977,7 @@ function cairnApp() {
           this.selectedTaskManagementId = this.projects[0].id;
         }
         if (!this.selectedProjectManagementTaskId && this.projects.length > 0) {
-          this.selectedProjectManagementTaskId = this.tasksForGroup(this.selectedProjectManagementId)[0]?.id || this.projects[0].id;
+          this.selectedProjectManagementTaskId = this.tasksForGroup(this.selectedProjectManagementId)[0]?.id || '';
         }
       } catch(e) { console.error(e); }
     },
@@ -3033,6 +3313,7 @@ function cairnApp() {
         { id: 'workers', title: 'Worker 管理', description: 'PI worker、模型、密钥' },
         { id: 'config', title: '配置管理', description: '并发、超时、健康检查' },
         { id: 'proxy', title: '代理', description: 'SOCKS5 和认证' },
+        { id: 'crawler', title: '爬虫 Worker', description: '爬虫专用模型配置' },
       ];
     },
 
@@ -3157,26 +3438,58 @@ description: 一句话描述 skill 的用途和触发场景
         if (!map[gid]) map[gid] = [];
         map[gid].push(p);
       }
-      this.fileGroups = (this.projectGroups || []).map(g => ({
-        id: g.id, title: g.title,
-        tasks: (map[g.id] || []).map(p => ({ id: p.id, title: p.title }))
-      }));
+      // Build group nodes, check if group-level crawler/ exists
+      const groups = [];
+      for (const g of (this.projectGroups || [])) {
+        // Check group-level crawler
+        let hasCrawler = false;
+        try {
+          const r = await fetch(`/file-groups/${g.id}/crawler`);
+          if (r.ok) hasCrawler = true;
+        } catch(e) {}
+        // Build task nodes, check which subfolders exist
+        const tasks = [];
+        for (const p of (map[g.id] || [])) {
+          let folders = [];
+          try {
+            const r = await fetch(`/files/${p.id}`);
+            if (r.ok) {
+              const d = await r.json();
+              if ((d.human || []).length > 0) folders.push('human');
+              if ((d.ai || []).length > 0) folders.push('ai');
+              // Always show human and ai as folders (even if empty) to allow upload
+              if (!folders.includes('human')) folders.push('human');
+              if (!folders.includes('ai')) folders.push('ai');
+            }
+          } catch(e) { folders = ['human', 'ai']; }
+          tasks.push({ id: p.id, title: p.title, folders });
+        }
+        groups.push({ id: g.id, title: g.title, hasCrawler, tasks });
+      }
+      this.fileGroups = groups;
     },
 
-    async selectFileTask(taskId, groupId) {
+    async selectFolder(groupId, taskId, folder, isGroupLevel) {
+      this.fileGroupId = groupId;
       this.fileTaskId = taskId;
-      this.fileGroupOpen = groupId;
-      this.fileHuman = [];
-      this.fileAi = [];
+      this.fileFolder = folder;
+      this.fileIsGroupLevel = isGroupLevel;
+      this.fileList = [];
       this.filePreview.open = false;
       try {
-        const resp = await fetch(`/files/${taskId}`);
-        if (resp.ok) {
-          const data = await resp.json();
-          this.fileHuman = data.human || [];
-          this.fileAi = data.ai || [];
+        if (isGroupLevel) {
+          const r = await fetch(`/file-groups/${groupId}/${folder}`);
+          if (r.ok) { const d = await r.json(); this.fileList = d.files || []; }
+        } else {
+          const r = await fetch(`/files/${taskId}`);
+          if (r.ok) { const d = await r.json(); this.fileList = d[folder] || []; }
         }
       } catch(e) {}
+    },
+
+    // Keep selectFileTask for backward compat (projects page crawler uses different state)
+    async selectFileTask(taskId, groupId) {
+      await this.selectFolder(groupId, taskId, 'human', false);
     },
 
     async previewFile(name, size) {
@@ -3185,7 +3498,10 @@ description: 一句话描述 skill 的用途和触发场景
         return;
       }
       try {
-        const resp = await fetch(`/files/${this.fileTaskId}/${this.fileFolder}/${encodeURIComponent(name)}`);
+        const url = this.fileIsGroupLevel
+          ? `/file-groups/${this.fileGroupId}/${this.fileFolder}/${encodeURIComponent(name)}`
+          : `/files/${this.fileTaskId}/${this.fileFolder}/${encodeURIComponent(name)}`;
+        const resp = await fetch(url);
         if (resp.ok) {
           const data = await resp.json();
           const isMd = name.toLowerCase().endsWith('.md');
@@ -3195,13 +3511,18 @@ description: 一句话描述 skill 的用途和触发场景
       } catch(e) {}
     },
 
-    async deleteFile(name) {
+    async deleteCurrentFile(name) {
       if (!confirm(`删除 ${name}？`)) return;
       try {
-        await this.api('DELETE', `/files/${this.fileTaskId}/${this.fileFolder}/${encodeURIComponent(name)}`);
-        await this.selectFileTask(this.fileTaskId, this.fileGroupOpen);
+        const url = this.fileIsGroupLevel
+          ? `/file-groups/${this.fileGroupId}/${this.fileFolder}/${encodeURIComponent(name)}`
+          : `/files/${this.fileTaskId}/${this.fileFolder}/${encodeURIComponent(name)}`;
+        await this.api('DELETE', url);
+        await this.selectFolder(this.fileGroupId, this.fileTaskId, this.fileFolder, this.fileIsGroupLevel);
       } catch(e) { this.showToast(e.message, 'error'); }
     },
+
+    async deleteFile(name) { await this.deleteCurrentFile(name); },
 
     async uploadFileToTask(event) {
       const file = event.target.files[0];
@@ -3224,6 +3545,116 @@ description: 一句话描述 skill 的用途和触发场景
         this.vulnEditor = { open: true, isNew: true, project_id: '', id: '', title: '', description: '', prerequisites: '', impact: '', evidence: '', reproduction_steps: '', status: 'confirmed' };
       }
     },
+
+    async loadCrawlerWorkerSettings() {
+      try {
+        const d = await this.api('GET', '/crawler/worker');
+        this.crawlerWorkerForm = { ...d, pi_api_key: '' };
+      } catch(e) {}
+    },
+
+    async saveCrawlerWorkerSettings() {
+      try {
+        await this.api('PUT', '/crawler/worker', this.crawlerWorkerForm);
+        this.showToast('爬虫配置已保存', 'success');
+        this.crawlerWorkerForm.pi_api_key = '';
+      } catch(e) {
+        this.showToast('保存失败: ' + (e.message || e), 'error');
+      }
+    },
+
+    async crawlerFetchModels() {
+      if (!this.crawlerWorkerForm.pi_base_url) return;
+      this.crawlerLoadingModels = true;
+      this.crawlerModelsError = '';
+      this.crawlerAvailableModels = [];
+      try {
+        const params = new URLSearchParams({ base_url: this.crawlerWorkerForm.pi_base_url });
+        if (this.crawlerWorkerForm.pi_api_key) params.set('api_key', this.crawlerWorkerForm.pi_api_key);
+        const data = await this.api('GET', `/crawler/worker/models?${params}`);
+        if (data.error) {
+          this.crawlerModelsError = data.error;
+        } else {
+          this.crawlerAvailableModels = data.models || [];
+          if (this.crawlerAvailableModels.length > 0 && !this.crawlerWorkerForm.pi_model) {
+            this.crawlerWorkerForm.pi_model = this.crawlerAvailableModels[0].id;
+            this.crawlerAutoFillContext();
+          }
+        }
+      } catch(e) {
+        this.crawlerModelsError = e.message || '获取模型列表失败';
+      } finally {
+        this.crawlerLoadingModels = false;
+      }
+    },
+
+    crawlerAutoFillContext() {
+      const m = this.crawlerAvailableModels.find(x => x.id === this.crawlerWorkerForm.pi_model);
+      if (m && m.context_window) {
+        this.crawlerWorkerForm.pi_context_window = String(m.context_window);
+      }
+    },
+
+    async crawlerTestConnection() {
+      this.crawlerTesting = true;
+      this.crawlerTestResult = null;
+      try {
+        const result = await this.api('POST', '/crawler/worker/test', {
+          pi_base_url: this.crawlerWorkerForm.pi_base_url,
+          pi_model: this.crawlerWorkerForm.pi_model,
+          pi_api_key: this.crawlerWorkerForm.pi_api_key || '',
+          pi_provider_api: this.crawlerWorkerForm.pi_provider_api,
+        });
+        this.crawlerTestResult = result;
+        this.showToast(result.message, result.ok ? 'info' : 'error');
+      } catch(e) {
+        this.crawlerTestResult = { ok: false, message: e.message };
+      } finally {
+        this.crawlerTesting = false;
+      }
+    },
+
+    async loadCrawlerStatus() {
+      if (!this.selectedProjectManagementId) return;
+      try {
+        this.crawlerStatus = await this.api('GET', `/project-groups/${this.selectedProjectManagementId}/crawler`);
+      } catch(e) { /* ignore */ }
+    },
+
+    async startCrawler() {
+      if (!this.selectedProjectManagementId || !this.crawlerTargetUrl) return;
+      this.crawlerStarting = true;
+      try {
+        this.crawlerStatus = await this.api('POST', `/project-groups/${this.selectedProjectManagementId}/crawler/start`, {
+          target_url: this.crawlerTargetUrl,
+        });
+        this.showToast('爬虫已启动', 'success');
+      } catch(e) {
+        this.showToast('启动爬虫失败: ' + (e.message || e), 'error');
+      } finally {
+        this.crawlerStarting = false;
+      }
+    },
+
+    async stopCrawler() {
+      if (!this.selectedProjectManagementId) return;
+      try {
+        await this.api('POST', `/project-groups/${this.selectedProjectManagementId}/crawler/stop`);
+        this.showToast('爬虫已停止', 'success');
+        await this.loadCrawlerStatus();
+      } catch(e) {
+        this.showToast('停止失败: ' + (e.message || e), 'error');
+      }
+    },
+
+    async loadExploreStatus() {
+      if (!this.selectedProjectId) return;
+      try {
+        await this.api('GET', `/projects/${this.selectedProjectId}/crawler`);
+      } catch(e) { /* ignore */ }
+    },
+
+    async startExplore() { /* deprecated, use startCrawler */ },
 
     async saveVuln() {
       const ed = this.vulnEditor;

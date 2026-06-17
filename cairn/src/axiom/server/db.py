@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS settings (
     bootstrap_worker_count INTEGER NOT NULL DEFAULT 1,
     explore_worker_count INTEGER NOT NULL DEFAULT 2,
     reason_worker_count INTEGER NOT NULL DEFAULT 1,
+    crawler_active_window_seconds INTEGER NOT NULL DEFAULT 180,
+    crawler_flush_window_seconds INTEGER NOT NULL DEFAULT 45,
+    crawler_total_timeout_seconds INTEGER NOT NULL DEFAULT 1800,
     dispatch_runtime_interval INTEGER NOT NULL DEFAULT 3,
     dispatch_runtime_max_workers INTEGER NOT NULL DEFAULT 8,
     dispatch_runtime_max_running_projects INTEGER NOT NULL DEFAULT 3,
@@ -287,6 +290,7 @@ def configure(path: Path) -> None:
         _ensure_pi_tools_schema(conn)
         _ensure_pi_skills_schema(conn)
         _ensure_plan_settings_columns(conn)
+        _ensure_crawler_schema(conn)
 
 
 def current_db_path() -> Path:
@@ -303,6 +307,12 @@ def _ensure_settings_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE settings ADD COLUMN reason_worker_count INTEGER NOT NULL DEFAULT 1")
     if "dispatch_runtime_interval" not in columns:
         conn.execute("ALTER TABLE settings ADD COLUMN dispatch_runtime_interval INTEGER NOT NULL DEFAULT 3")
+    if "crawler_active_window_seconds" not in columns:
+        conn.execute("ALTER TABLE settings ADD COLUMN crawler_active_window_seconds INTEGER NOT NULL DEFAULT 180")
+    if "crawler_flush_window_seconds" not in columns:
+        conn.execute("ALTER TABLE settings ADD COLUMN crawler_flush_window_seconds INTEGER NOT NULL DEFAULT 45")
+    if "crawler_total_timeout_seconds" not in columns:
+        conn.execute("ALTER TABLE settings ADD COLUMN crawler_total_timeout_seconds INTEGER NOT NULL DEFAULT 1800")
     if "dispatch_runtime_max_workers" not in columns:
         conn.execute("ALTER TABLE settings ADD COLUMN dispatch_runtime_max_workers INTEGER NOT NULL DEFAULT 8")
     if "dispatch_runtime_max_running_projects" not in columns:
@@ -350,6 +360,9 @@ def _ensure_settings_columns(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE settings SET bootstrap_worker_count = 1 WHERE bootstrap_worker_count IS NULL OR bootstrap_worker_count < 1")
     conn.execute("UPDATE settings SET explore_worker_count = 2 WHERE explore_worker_count IS NULL OR explore_worker_count < 1")
     conn.execute("UPDATE settings SET reason_worker_count = 1 WHERE reason_worker_count IS NULL OR reason_worker_count < 1")
+    conn.execute("UPDATE settings SET crawler_active_window_seconds = 180 WHERE crawler_active_window_seconds IS NULL OR crawler_active_window_seconds < 15")
+    conn.execute("UPDATE settings SET crawler_flush_window_seconds = 45 WHERE crawler_flush_window_seconds IS NULL OR crawler_flush_window_seconds < 5")
+    conn.execute("UPDATE settings SET crawler_total_timeout_seconds = 1800 WHERE crawler_total_timeout_seconds IS NULL OR crawler_total_timeout_seconds < 60")
     conn.execute("UPDATE settings SET dispatch_runtime_interval = 3 WHERE dispatch_runtime_interval IS NULL OR dispatch_runtime_interval < 1")
     conn.execute("UPDATE settings SET dispatch_runtime_max_workers = 8 WHERE dispatch_runtime_max_workers IS NULL OR dispatch_runtime_max_workers < 1")
     conn.execute("UPDATE settings SET dispatch_runtime_max_running_projects = 3 WHERE dispatch_runtime_max_running_projects IS NULL OR dispatch_runtime_max_running_projects < 1")
@@ -574,3 +587,23 @@ def _parse_skill_frontmatter(raw: str) -> tuple[str | None, str | None, str | No
         elif line.startswith("description:"):
             desc = line[12:].strip().strip('"').strip("'")
     return name, desc, body
+
+
+def _ensure_crawler_schema(conn: sqlite3.Connection) -> None:
+    """Create the crawler_workers table for standalone crawler configuration."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS crawler_workers (
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            pi_model         TEXT NOT NULL DEFAULT '',
+            pi_base_url      TEXT NOT NULL DEFAULT '',
+            pi_api_key       TEXT NOT NULL DEFAULT '',
+            pi_provider_api  TEXT NOT NULL DEFAULT 'openai-completions',
+            pi_context_window TEXT NOT NULL DEFAULT '128000',
+            updated_at       TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO crawler_workers (id, updated_at) VALUES (1, strftime('%Y-%m-%dT%H:%M:%SZ','now'))"
+    )
