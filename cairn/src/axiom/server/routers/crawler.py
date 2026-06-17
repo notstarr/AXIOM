@@ -1,0 +1,493 @@
+"""
+crawler.py — 爬虫 Router
+
+完全独立于 dispatcher 调度循环。
+直接 spawn pi 进程执行 other/Crawler.md 提示词，不创建任何 intent。
+
+API:
+    GET  /crawler/worker               — 读取爬虫 worker 配置
+    PUT  /crawler/worker               — 保存爬虫 worker 配置
+    GET  /crawler/worker/models        — 从 base_url 获取可用模型列表
+    POST /crawler/worker/test          — 测试连接
+    POST /projects/{pid}/crawler/start  — 对某个任务启动爬虫
+    GET  /projects/{pid}/crawler        — 查询爬虫运行状态
+    POST /projects/{pid}/crawler/stop   — 停止爬虫进程
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import signal
+import subprocess
+import time
+from typing import Any
+
+import requests
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from axiom.server.db import current_db_path, get_conn
+from axiom.server.services import get_project_or_404, utcnow
+
+router = APIRouter(tags=["crawler"])
+
+CRAWLER_PROMPT_PATH = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "dispatcher" / "prompts" / "other" / "Crawler.md"
+)
+CRAWLER_SESSION_DIR = "/tmp/axiom-crawler"
+_TOOLS = "bash,read_file,write_file,list_dir"
+
+
+# ─────────────────────────────────────────
+# Models
+# ─────────────────────────────────────────
+
+class CrawlerWorkerConfig(BaseModel):
+    pi_model: str = ""
+    pi_base_url: str = ""
+    pi_api_key: str = ""
+    pi_provider_api: str = "openai-completions"
+    pi_context_window: str = "128000"
+
+
+class CrawlerTestRequest(BaseModel):
+    pi_base_url: str
+    pi_model: str
+    pi_api_key: str = ""
+    pi_provider_api: str = "openai-completions"
+
+
+class CrawlerTestResponse(BaseModel):
+    ok: bool
+    message: str
+
+
+class CrawlerModelsResponse(BaseModel):
+    models: list[dict[str, Any]]
+    error: str = ""
+
+
+class CrawlerStartRequest(BaseModel):
+    target_url: str
+
+    def model_post_init(self, _ctx):
+        self.target_url = self.target_url.strip()
+        if not self.target_url:
+            raise ValueError("target_url must not be empty")
+
+
+class CrawlerStatus(BaseModel):
+    project_id: str
+    status: str = "idle"          # idle | running | done | failed
+    target_url: str = ""
+    output_dir: str = ""
+    pid: int | None = None
+    started_at: str | None = None
+    sitemap_exists: bool = False
+    api_list_exists: bool = False
+    api_page_map_exists: bool = False
+
+
+# ─────────────────────────────────────────
+# Worker config CRUD
+# ─────────────────────────────────────────
+
+@router.get("/crawler/worker", response_model=CrawlerWorkerConfig)
+def get_crawler_worker():
+    """Return the current crawler worker configuration."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT pi_model, pi_base_url, pi_provider_api, pi_context_window "
+            "FROM crawler_workers WHERE id = 1"
+        ).fetchone()
+    if row is None:
+        return CrawlerWorkerConfig()
+    return CrawlerWorkerConfig(
+        pi_model=row["pi_model"] or "",
+        pi_base_url=row["pi_base_url"] or "",
+        pi_api_key="",          # never expose stored key
+        pi_provider_api=row["pi_provider_api"] or "openai-completions",
+        pi_context_window=row["pi_context_window"] or "128000",
+    )
+
+
+@router.put("/crawler/worker", response_model=CrawlerWorkerConfig)
+def update_crawler_worker(body: CrawlerWorkerConfig):
+    """Save crawler worker configuration. Pass empty pi_api_key to keep existing key."""
+    now = utcnow()
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT pi_api_key FROM crawler_workers WHERE id = 1"
+        ).fetchone()
+        api_key = body.pi_api_key.strip() if body.pi_api_key else (
+            existing["pi_api_key"] if existing else ""
+        )
+        conn.execute(
+            """
+            UPDATE crawler_workers SET
+                pi_model = ?, pi_base_url = ?, pi_api_key = ?,
+                pi_provider_api = ?, pi_context_window = ?, updated_at = ?
+            WHERE id = 1
+            """,
+            (body.pi_model, body.pi_base_url, api_key,
+             body.pi_provider_api, body.pi_context_window, now),
+        )
+    return CrawlerWorkerConfig(
+        pi_model=body.pi_model,
+        pi_base_url=body.pi_base_url,
+        pi_api_key="",
+        pi_provider_api=body.pi_provider_api,
+        pi_context_window=body.pi_context_window,
+    )
+
+
+def _get_api_key_from_db_or_body(api_key_body: str) -> str:
+    """Use provided key, or fall back to stored key."""
+    if api_key_body.strip():
+        return api_key_body.strip()
+    with get_conn() as conn:
+        row = conn.execute("SELECT pi_api_key FROM crawler_workers WHERE id = 1").fetchone()
+    return (row["pi_api_key"] or "") if row else ""
+
+
+@router.get("/crawler/worker/models", response_model=CrawlerModelsResponse)
+def list_crawler_models(base_url: str = "", api_key: str = ""):
+    """Fetch available models from the configured base_url GET /models endpoint."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT pi_base_url, pi_api_key FROM crawler_workers WHERE id = 1"
+        ).fetchone()
+    stored_base_url = row["pi_base_url"] if row else ""
+    stored_api_key = row["pi_api_key"] if row else ""
+
+    # Use provided values, fall back to stored values
+    effective_base_url = base_url.strip() or stored_base_url
+    effective_api_key = api_key.strip() or stored_api_key
+
+    if not effective_base_url:
+        return CrawlerModelsResponse(models=[], error="base_url 未配置")
+
+    url = effective_base_url.rstrip("/") + "/models"
+    headers: dict[str, str] = {}
+    if effective_api_key:
+        headers["Authorization"] = f"Bearer {effective_api_key}"
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+    except requests.RequestException as e:
+        return CrawlerModelsResponse(models=[], error=f"请求失败: {e}")
+    if resp.status_code != 200:
+        return CrawlerModelsResponse(models=[], error=f"HTTP {resp.status_code}: {resp.text[:200]}")
+    try:
+        data = resp.json()
+    except Exception:
+        return CrawlerModelsResponse(models=[], error="响应不是合法 JSON")
+
+    # OpenAI-compatible: {"data": [{"id": "...", ...}]}
+    raw_models: list[dict] = []
+    if isinstance(data, dict) and "data" in data:
+        raw_models = data["data"] if isinstance(data["data"], list) else []
+    elif isinstance(data, list):
+        raw_models = data
+
+    # Infer context window from known model name patterns
+    def _infer_ctx(model_id: str) -> int:
+        return 1000000
+
+    models = []
+    for m in raw_models:
+        if not isinstance(m, dict):
+            continue
+        model_id = m.get("id") or m.get("name") or ""
+        if not model_id:
+            continue
+        ctx = (
+            m.get("context_length")
+            or m.get("context_window")
+            or m.get("max_context_length")
+            or _infer_ctx(model_id)
+        )
+        models.append({
+            "id": model_id,
+            "context_window": int(ctx) if ctx else 128000,
+        })
+
+    return CrawlerModelsResponse(models=models)
+
+
+@router.post("/crawler/worker/test", response_model=CrawlerTestResponse)
+def test_crawler_connection(body: CrawlerTestRequest):
+    """Send a minimal chat completion to verify the model is reachable."""
+    api_key = _get_api_key_from_db_or_body(body.pi_api_key)
+    if not api_key:
+        # Last resort: try without key (some endpoints don't require auth)
+        api_key = ""
+    if not body.pi_base_url or not body.pi_model:
+        return CrawlerTestResponse(ok=False, message="base_url 或 model 为空")
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    try:
+        if body.pi_provider_api == "openai-responses":
+            resp = requests.post(
+                body.pi_base_url.rstrip("/") + "/responses",
+                headers=headers,
+                json={"model": body.pi_model, "input": "ping", "max_output_tokens": 8},
+                timeout=15,
+            )
+        else:
+            resp = requests.post(
+                body.pi_base_url.rstrip("/") + "/chat/completions",
+                headers=headers,
+                json={
+                    "model": body.pi_model,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 8,
+                    "temperature": 0,
+                },
+                timeout=15,
+            )
+    except requests.RequestException as e:
+        return CrawlerTestResponse(ok=False, message=f"连接失败：{e}")
+
+    if 200 <= resp.status_code < 300:
+        return CrawlerTestResponse(ok=True, message="连接成功，模型可用")
+    return CrawlerTestResponse(ok=False, message=f"HTTP {resp.status_code}: {resp.text[:300]}")
+
+
+# ─────────────────────────────────────────
+# Per-project crawler endpoints
+# ─────────────────────────────────────────
+
+def _pid_file(project_id: str) -> pathlib.Path:
+    return pathlib.Path(f"/tmp/axiom-crawler-{project_id}.pid")
+
+
+def _meta_file(project_id: str) -> pathlib.Path:
+    return pathlib.Path(f"/tmp/axiom-crawler-{project_id}.meta.json")
+
+
+def _is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        stat = pathlib.Path(f"/proc/{pid}/stat")
+        if stat.exists():
+            parts = stat.read_text().split()
+            if len(parts) >= 3 and parts[2] == "Z":
+                return False
+        else:
+            result = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "stat="],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip().startswith("Z"):
+                return False
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def _read_meta(project_id: str) -> dict:
+    f = _meta_file(project_id)
+    if not f.exists():
+        return {}
+    try:
+        return json.loads(f.read_text())
+    except Exception:
+        return {}
+
+
+def _write_meta(project_id: str, data: dict) -> None:
+    _meta_file(project_id).write_text(json.dumps(data, ensure_ascii=False))
+
+
+def _load_worker_config() -> dict:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT pi_model, pi_base_url, pi_api_key, pi_provider_api, pi_context_window "
+            "FROM crawler_workers WHERE id = 1"
+        ).fetchone()
+    if row is None:
+        raise HTTPException(400, "爬虫 worker 尚未配置，请先在系统设置中配置")
+    if not row["pi_model"] or not row["pi_base_url"]:
+        raise HTTPException(400, "爬虫 worker 配置不完整（缺少 pi_model 或 pi_base_url）")
+    return dict(row)
+
+
+def _schema_output_exists(base: pathlib.Path, legacy_name: str, schema_v1_name: str) -> bool:
+    return (base / schema_v1_name).exists() or (base / legacy_name).exists()
+
+
+def _build_models_json(cfg: dict) -> str:
+    model: dict = {
+        "id": cfg["pi_model"],
+        "name": cfg["pi_model"],
+    }
+    ctx = cfg.get("pi_context_window", "")
+    if ctx:
+        try:
+            model["contextWindow"] = int(ctx)
+        except ValueError:
+            pass
+    provider = {
+        "baseUrl": cfg["pi_base_url"],
+        "api": cfg.get("pi_provider_api", "openai-completions"),
+        "apiKey": cfg.get("pi_api_key", ""),
+        "models": [model],
+    }
+    return json.dumps({"providers": {"axiom": provider}}, ensure_ascii=False, separators=(",", ":"))
+
+
+@router.post("/project-groups/{group_id}/crawler/start", response_model=CrawlerStatus, status_code=201)
+def start_crawler(group_id: str, body: CrawlerStartRequest):
+    """Spawn a pi process to crawl the target URL. Bypasses the dispatcher entirely."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT id FROM project_groups WHERE id = ?", (group_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"Project group {group_id} not found")
+
+    project_id = group_id  # use group_id as the crawler identifier
+    # Check if already running
+    meta = _read_meta(project_id)
+    if meta.get("pid"):
+        pid = meta["pid"]
+        if _is_running(pid):
+            raise HTTPException(409, f"爬虫进程已在运行中 (pid={pid})")
+
+    cfg = _load_worker_config()
+    if not CRAWLER_PROMPT_PATH.exists():
+        raise HTTPException(500, f"Crawler.md 不存在: {CRAWLER_PROMPT_PATH}")
+
+    parent_id = group_id
+    ai_dir = f"/tmp/axiom-files/{parent_id}/crawler"
+    pathlib.Path(ai_dir).mkdir(parents=True, exist_ok=True)
+
+    session_id = f"crawler-{project_id}"
+    agent_dir = f"{CRAWLER_SESSION_DIR}/{project_id}"
+    session_dir = f"{agent_dir}/sessions"
+    pathlib.Path(session_dir).mkdir(parents=True, exist_ok=True)
+
+    models_json = _build_models_json(cfg)
+    prompt_template = CRAWLER_PROMPT_PATH.read_text(encoding="utf-8")
+
+    # Render only the variables Crawler.md actually uses
+    intent_description = f"爬取目标站点 {body.target_url}，产出站点地图、API 清单和页面-API 映射到 {ai_dir}"
+    prompt = (
+        prompt_template
+        .replace("{intent_id}", session_id)
+        .replace("{intent_description}", intent_description)
+        .replace("{ai_dir}", ai_dir)
+    )
+
+    # Build pi argv (same pattern as PiDriver._wrap_with_models)
+    wrap_script = (
+        'agent_dir="$1"\n'
+        'models_json="$2"\n'
+        "shift 2\n"
+        'mkdir -p "$agent_dir"\n'
+        'mkdir -p "$agent_dir/sessions"\n'
+        'printf "%s" "$models_json" > "$agent_dir/models.json"\n'
+        'exec env PI_CODING_AGENT_DIR="$agent_dir" pi "$@"\n'
+    )
+    pi_args = [
+        "--no-extensions",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--no-context-files",
+        "--tools", _TOOLS,
+        "--provider", "axiom",
+        "--model", cfg["pi_model"],
+        "--session-dir", session_dir,
+        "-p", prompt,
+    ]
+    argv = ["/bin/sh", "-lc", wrap_script, "--", agent_dir, models_json, *pi_args]
+
+    log_path = f"/tmp/axiom-crawler-{project_id}.log"
+    now = utcnow()
+    with open(log_path, "w") as log_f:
+        proc = subprocess.Popen(
+            argv,
+            stdout=log_f,
+            stderr=log_f,
+            start_new_session=True,
+        )
+
+    _write_meta(project_id, {
+        "pid": proc.pid,
+        "target_url": body.target_url,
+        "output_dir": ai_dir,
+        "started_at": now,
+        "log": log_path,
+    })
+
+    base = pathlib.Path(ai_dir)
+    return CrawlerStatus(
+        project_id=project_id,
+        status="running",
+        target_url=body.target_url,
+        output_dir=ai_dir,
+        pid=proc.pid,
+        started_at=now,
+        sitemap_exists=_schema_output_exists(base, "sitemap.yaml", "site_map.yaml"),
+        api_list_exists=_schema_output_exists(base, "api-list.yaml", "api_inventory.yaml"),
+        api_page_map_exists=_schema_output_exists(base, "api-page-map.yaml", "page_api_map.yaml"),
+    )
+
+
+@router.get("/project-groups/{group_id}/crawler", response_model=CrawlerStatus)
+def get_crawler_status(group_id: str):
+    """Return crawler status and output file existence."""
+    project_id = group_id
+    meta = _read_meta(project_id)
+    if not meta:
+        return CrawlerStatus(project_id=project_id, status="idle")
+
+    pid = meta.get("pid")
+    if pid and _is_running(pid):
+        status = "running"
+    elif pid:
+        status = "done"
+    else:
+        status = "idle"
+
+    ai_dir = meta.get("output_dir", "")
+    base = pathlib.Path(ai_dir) if ai_dir else pathlib.Path("/nonexistent")
+    return CrawlerStatus(
+        project_id=project_id,
+        status=status,
+        target_url=meta.get("target_url", ""),
+        output_dir=ai_dir,
+        pid=pid if status == "running" else None,
+        started_at=meta.get("started_at"),
+        sitemap_exists=_schema_output_exists(base, "sitemap.yaml", "site_map.yaml"),
+        api_list_exists=_schema_output_exists(base, "api-list.yaml", "api_inventory.yaml"),
+        api_page_map_exists=_schema_output_exists(base, "api-page-map.yaml", "page_api_map.yaml"),
+    )
+
+
+@router.post("/project-groups/{group_id}/crawler/stop")
+def stop_crawler(group_id: str):
+    """Send SIGTERM to the crawler process."""
+    project_id = group_id
+    meta = _read_meta(project_id)
+    pid = meta.get("pid")
+    if not pid:
+        raise HTTPException(404, "没有运行中的爬虫进程")
+    if not _is_running(pid):
+        raise HTTPException(404, f"进程 {pid} 已退出")
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        raise HTTPException(404, f"进程 {pid} 已退出")
+    # Wait briefly for cleanup
+    for _ in range(5):
+        time.sleep(0.5)
+        if not _is_running(pid):
+            break
+    return {"stopped": True, "pid": pid}
