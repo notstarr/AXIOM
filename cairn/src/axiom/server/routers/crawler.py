@@ -368,9 +368,18 @@ def _merge_unique_list(existing: list[Any], incoming: list[Any]) -> list[Any]:
     return merged
 
 
+def _crawler_state_id_column(table: str) -> str:
+    return {
+        "crawler_pages": "page_id",
+        "crawler_apis": "api_id",
+        "crawler_page_maps": "map_id",
+    }[table]
+
+
 def _upsert_crawler_state_row(conn, table: str, group_id: str, row_id: str, payload: dict[str, Any]) -> None:
+    id_column = _crawler_state_id_column(table)
     existing = conn.execute(
-        f"SELECT data_json FROM {table} WHERE group_id = ? AND {table[:-1]}_id = ?",
+        f"SELECT data_json FROM {table} WHERE group_id = ? AND {id_column} = ?",
         (group_id, row_id),
     ).fetchone()
     merged = payload
@@ -388,9 +397,9 @@ def _upsert_crawler_state_row(conn, table: str, group_id: str, row_id: str, payl
                     merged[key] = value
     conn.execute(
         f"""
-        INSERT INTO {table} (group_id, {table[:-1]}_id, data_json, updated_at)
+        INSERT INTO {table} (group_id, {id_column}, data_json, updated_at)
         VALUES (?, ?, ?, ?)
-        ON CONFLICT(group_id, {table[:-1]}_id) DO UPDATE SET
+        ON CONFLICT(group_id, {id_column}) DO UPDATE SET
             data_json = excluded.data_json,
             updated_at = excluded.updated_at
         """,
