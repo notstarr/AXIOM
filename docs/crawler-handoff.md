@@ -1,106 +1,64 @@
-# Crawler Handoff
+# Crawler Handoff Notes
 
-This document summarizes the crawler work completed so far, the current architecture, the known gaps, and the recommended next steps for the next agent.
+This document captures the current crawler architecture, what has already been changed, what is working, and what is still weak. It is intended as a handoff for another agent to continue improving the crawler.
 
-## Goal Of This Workstream
+## Current Goal
 
-The crawler was being reworked from a single long-running prompt that directly edited YAML into a phased crawler flow closer to the main task loop style:
+The crawler is no longer treated as a one-shot long-running agent that owns the final YAML files directly.
 
-- `crawl`
-- `flush`
-- `final_flush`
+The intended architecture is now:
 
-And then further evolved toward a backend-owned crawler state model, where final YAML files are treated more like exported views than the only source of truth.
+- phased execution: `crawl -> flush -> crawl -> ... -> final_flush`
+- global crawler timing config in server settings
+- crawler state owned by the backend
+- exported YAML files are derived views of backend crawler state
 
-## High-Level Design Direction Chosen
+The three exported crawler files remain:
 
-The current direction is:
+- `site_map.yaml`
+- `api_inventory.yaml`
+- `page_api_map.yaml`
 
-1. Use a phased crawler runner with hard phase switching.
-2. Keep crawler-specific global timing settings in `/settings`.
-3. Reuse the same browser session across phases.
-4. Let flush persist findings and export YAML.
-5. Start moving toward backend-owned crawler state tables:
-   - `crawler_pages`
-   - `crawler_apis`
-   - `crawler_page_maps`
+## Important Files
 
-This is inspired by the main `bootstrap -> reason -> explore` loop, where agents return structured increments and the backend maintains the authoritative state.
+### Backend / runtime
 
-## Files Touched In This Workstream
-
-### Backend
+- `cairn/src/axiom/server/routers/crawler.py`
+  - phased runner logic
+  - crawler meta handling
+  - schema export and crawler state merge helpers
 
 - `cairn/src/axiom/server/db.py`
-- `cairn/src/axiom/server/models.py`
-- `cairn/src/axiom/server/routers/settings.py`
-- `cairn/src/axiom/server/routers/crawler.py`
+  - settings columns for crawler timing
+  - crawler state tables:
+    - `crawler_pages`
+    - `crawler_apis`
+    - `crawler_page_maps`
+
 - `cairn/src/axiom/cli.py`
+  - CLI entrypoint `crawler-supervisor`
 
 ### Prompts
 
-- `cairn/src/axiom/dispatcher/prompts/other/Crawler.md`
 - `cairn/src/axiom/dispatcher/prompts/other/CrawlerExecute.md`
 - `cairn/src/axiom/dispatcher/prompts/other/CrawlerFlush.md`
 
 ### Frontend
 
 - `cairn/src/axiom/server/static/index.html`
+  - crawler status card
+  - crawler snapshot buttons
+  - YAML preview modal
 
-### Docs
-
-- `docs/crawler-output-schema.md`
-
-## Important Commits In Order
-
-These commits are the key milestones of the crawler refactor:
-
-1. `76f8052 docs(crawler): define output schema v1`
-2. `c452aeb feat(crawler): switch outputs to schema v1`
-3. `e15fe22 fix(crawler): detect schema v1 output files`
-4. `f4a5b92 feat(crawler): add global timing settings`
-5. `bb4068f test(settings): fix crawler timing assertion`
-6. `fba9523 feat(crawler): run phased execute and flush loops`
-7. `f8838fc feat(crawler): persist phased state before export`
-8. `387014d fix(crawler): persist state rows correctly`
-9. `cf0a9b7 feat(crawler): add snapshot preview action`
-10. `31eab01 feat(crawler): split snapshot preview actions`
-11. `4ec57a7 style(crawler): stack snapshot actions vertically`
-12. `ffabe5b style(preview): prefer vertical YAML scrolling`
-
-## What Was Implemented
-
-### 1. Schema v1 For Crawler Outputs
-
-The intended crawler outputs were redesigned as three business-model-oriented files:
-
-- `site_map.yaml`
-- `api_inventory.yaml`
-- `page_api_map.yaml`
-
-The schema definition lives in:
+### Schema / docs
 
 - `docs/crawler-output-schema.md`
 
-### 2. Global Crawler Timing Settings
+## Current Runtime Model
 
-Added to `/settings`:
+### Status fields
 
-- `crawler_active_window_seconds`
-- `crawler_flush_window_seconds`
-- `crawler_total_timeout_seconds`
-
-Defaults currently:
-
-- active: `180`
-- flush: `45`
-- total: `1800`
-
-These are now stored in the `settings` table and surfaced in the settings UI.
-
-### 3. Phase-Aware Crawler Status
-
-`CrawlerStatus` was expanded to include:
+`/project-groups/{group_id}/crawler` now returns phase-aware fields:
 
 - `status`
 - `phase`
@@ -115,216 +73,276 @@ These are now stored in the `settings` table and surfaced in the settings UI.
 - `flush_window_seconds`
 - `total_timeout_seconds`
 - `stop_requested`
-- file existence booleans
+- `sitemap_exists`
+- `api_list_exists`
+- `api_page_map_exists`
 
-### 4. Phase-Specific Prompts
+### Timing config
 
-The crawler was split into:
+Global settings were added to `/settings` and the settings page:
 
-- `CrawlerExecute.md`
-- `CrawlerFlush.md`
+- `crawler_active_window_seconds`
+- `crawler_flush_window_seconds`
+- `crawler_total_timeout_seconds`
 
-Current intention:
+Defaults currently:
 
-- execute phase: explore and gather
-- flush phase: write/merge/export, not broad exploration
+- active: `180`
+- flush: `45`
+- total: `1800`
 
-### 5. Dedicated Crawler Supervisor CLI Entry
+### Supervisor process
 
-Added a dedicated CLI command:
+The crawler is now started through a dedicated CLI runner instead of a background thread:
 
 - `axiom crawler-supervisor --project-id <group_id>`
 
-The goal was to stop relying on in-server background threads and to run phased crawling as a separate runner process, closer to dispatcher-style control.
+This is launched from `start_crawler()` in `crawler.py` via:
 
-### 6. Crawler Snapshot Preview In Frontend
+- `uv run --project <cairn-root> axiom crawler-supervisor --project-id pg_xxx`
 
-The crawler UI now has three separate snapshot preview actions:
+This is intentionally closer to the stable `bootstrap/reason/explore` process model.
+
+## Crawler State Store
+
+The backend now has three crawler state tables.
+
+They are keyed by `group_id`.
+
+### `crawler_pages`
+
+- `group_id`
+- `page_id`
+- `data_json`
+- `updated_at`
+
+### `crawler_apis`
+
+- `group_id`
+- `api_id`
+- `data_json`
+- `updated_at`
+
+### `crawler_page_maps`
+
+- `group_id`
+- `map_id`
+- `data_json`
+- `updated_at`
+
+### Important helper functions in `crawler.py`
+
+- `_persist_schema_files_into_state(group_id, ai_dir)`
+- `_export_state_to_schema_files(group_id, ai_dir, target_url)`
+- `_upsert_crawler_state_row(...)`
+- `_crawler_state_id_column(...)`
+
+Current behavior:
+
+- after `flush` / `final_flush`, if the schema files exist, backend ingests them into state store
+- backend then re-exports the three YAML files from that state store
+
+This means exported YAML is no longer meant to be the sole source of truth.
+
+## What Was Learned From Main Loop (`bootstrap/reason/explore`)
+
+The stable main loop does **not** let the agent maintain a large YAML file directly.
+
+Instead:
+
+- the agent returns a very small structured result
+- backend writes authoritative state to DB
+- `/export` renders YAML from DB state
+
+This is the conceptual model the crawler has been moving toward.
+
+Files that were read to confirm this:
+
+- `cairn/src/axiom/dispatcher/tasks/bootstrap.py`
+- `cairn/src/axiom/dispatcher/tasks/reason.py`
+- `cairn/src/axiom/dispatcher/tasks/explore.py`
+- `cairn/src/axiom/dispatcher/protocol/client.py`
+- `cairn/src/axiom/server/routers/export.py`
+
+## What Is Working Now
+
+### 1. Phase switching is real
+
+`pg_006` confirmed actual transitions in logs such as:
+
+- `phase=crawl`
+- `phase=flush`
+- later rounds returning to `phase=crawl`
+
+### 2. Flush can now produce files
+
+The flush phase is no longer purely conceptual. It can write the three schema files.
+
+### 3. Crawler state ingestion bug was fixed
+
+There was a bug in `_upsert_crawler_state_row()` where the code tried to derive column names dynamically and produced invalid names like:
+
+- `crawler_page_id`
+- `crawler_api_id`
+- `crawler_page_map_id`
+
+This was fixed by explicitly mapping table name to primary id column.
+
+### 4. Snapshot preview exists in crawler UI
+
+The crawler UI now exposes three separate snapshot preview buttons:
 
 - view site map
 - view API inventory
-- view page/API map
+- view page map
 
-These reuse the existing YAML preview modal and read files from:
+Each opens the existing YAML preview modal for a single file.
 
-- `/file-groups/{group_id}/crawler/{filename}`
+The preview modal was also adjusted to prefer vertical scrolling and wrapped content instead of forcing horizontal scrolling.
 
-The preview area was also adjusted to prefer vertical scrolling over horizontal overflow.
+## Current Quality of `pg_006`
 
-## Current Architecture State
+`pg_006` is the main validation group used in recent work.
 
-### What Works
+Current observations:
 
-1. Global crawler timings are configured and visible.
-2. Frontend displays phase/round/flush timing info.
-3. Snapshot preview for crawler outputs is available as three separate buttons.
-4. New schema filenames are recognized by crawler status.
-5. The phased crawler can run through multiple rounds (`crawl -> flush -> crawl`).
-6. Flush can produce the three YAML files.
-7. A backend crawler state model was added in DB:
-   - `crawler_pages`
-   - `crawler_apis`
-   - `crawler_page_maps`
-8. State ingestion bug for those tables was fixed.
+- exported files exist
+- backend state rows exist
+- the outputs are no longer skeleton-only
 
-### Important Verified Result
+However, quality is still incomplete:
 
-The final ingestion bug was fixed by explicitly mapping ID columns:
+### `site_map.yaml`
 
-- `crawler_pages -> page_id`
-- `crawler_apis -> api_id`
-- `crawler_page_maps -> map_id`
+- contains meaningful pages such as:
+  - `page_home`
+  - `page_portal_login`
+  - `page_guest_home`
+  - `page_chat_home`
+  - `page_chat_channel`
+  - `page_mall_home`
+  - `page_mall_product`
+  - `page_desk_home`
+  - further pages continue beyond the first read window
 
-Without that fix, state rows remained at zero.
+- still not a complete site graph
 
-## Current Verified Shortcomings
+### `api_inventory.yaml`
 
-This is the most important part for the next agent.
+- contains real API entries such as:
+  - `api_portal_subsystems`
+  - `api_portal_auth_guest_register`
+  - `api_portal_auth_guest_login`
+  - `api_ads_serve`
+  - `api_ads_track_impression`
+  - `api_mall_cart_items`
+  - `api_desk_tickets`
 
-### 1. State Store Is Not Yet The Sole Authority In Practice
+- parameter provenance has started to appear
+- still not dense enough for full replay-quality business flow testing
 
-Even though the state tables exist and manual verification showed rows can be inserted, the current phased flow is still heavily dependent on the agent writing schema-like YAML first.
+### `page_api_map.yaml`
 
-The current flow is still:
+- contains useful mappings for:
+  - home on-load
+  - portal guest register/login
+  - guest logout
+  - chat send
+  - mall add-to-cart denied
+  - desk submit denied
 
-1. crawler writes YAML-like schema files
-2. backend ingests them into state tables
-3. backend re-exports them
+- still sparse across many discovered pages
 
-This is better than pure direct-file authority, but still not as robust as the main task loop architecture.
+### Practical quality assessment
 
-### 2. Flush Still Relies Too Much On Agent Obedience
+Rough assessment from current state:
 
-Even after narrowing `CrawlerFlush.md`, session traces showed that flush sometimes still:
+- phase execution stability: medium-good
+- file export stability: good enough
+- business modeling quality: moderate
+- traffic testing readiness: moderate but incomplete
 
-- uses `browser-use open ...`
-- attempts browser exploration-like behavior
-- runs into session conflicts
+The system is now much closer to a usable crawler, but not yet a complete high-fidelity business modeling crawler.
 
-This means flush is still not reliably acting like a narrow conclude phase.
+## Known Remaining Problems
 
-### 3. Phase Execution Became More Stable, But Not Fully Deterministic
+### 1. Flush still carries too much responsibility
 
-At various points during the workstream:
+Even after phase splitting and state store introduction, `CrawlerFlush.md` is still asked to do a lot:
 
-- thread-based runner behavior was unstable
-- server PID was mistakenly treated as crawler PID
-- phase logs and round counters sometimes appeared inconsistent
+- infer business names
+- merge incremental findings
+- map actions to APIs
+- derive parameter sources
 
-The dedicated CLI runner improved things, but the next agent should still treat the phased runner as partially stabilized, not fully solved.
+This remains the main quality bottleneck.
 
-### 4. Output Quality Is Better But Still Sparse
+### 2. Incremental density is still too low
 
-When the crawler does produce schema content, the output is useful but still incomplete.
+The crawler now produces structured output, but the density of discovered actions / APIs / mapping entries is still lower than the likely reachable site behavior.
 
-Typical problems observed:
+### 3. Completion semantics are still weak
 
-- page coverage is partial
-- API coverage is partial
-- page->action->API mapping density is still low
-- parameter provenance exists for some APIs but is not systematic yet
+The system still needs a better distinction between:
 
-### 5. Completion Semantics Still Need Improvement
-
-There is still no strong explicit `completion_reason` model such as:
-
-- `timeout`
-- `exhausted`
-- `stop_requested`
-- `failed`
-
-Without this, `done` remains ambiguous.
-
-## Why The Main Loop Is More Stable
-
-The `bootstrap/reason/explore` loop was inspected during this workstream.
-
-What was learned:
-
-- agents in the main loop return small structured payloads
-- backend updates authoritative graph/database state
-- YAML is produced by export from DB state
-
-This is the core stability advantage of the main loop.
-
-The crawler still only partially follows that model.
-
-## Recommended Next Steps For The Next Agent
-
-### Priority 1: Move From File-Ingested State To Direct Incremental State Updates
-
-The crawler should evolve from:
-
-- agent writes full schema files
-- backend ingests them
-
-to:
-
-- agent returns small structured crawler increments
-- backend merges them directly into crawler state tables
-- export derives the three YAML files from crawler state
-
-This is the single most important architectural next step.
-
-### Priority 2: Narrow Flush Further Toward Explore-Conclude Style
-
-`CrawlerFlush.md` should continue to shrink in scope.
-
-Desired behavior:
-
-- no broad exploration
-- no session wrestling
-- no re-opening distant pages
-- only summarize already confirmed incremental findings
-
-### Priority 3: Add Explicit Completion Reasoning
-
-Add a field such as `completion_reason` to crawler state and status API so that `done` can be interpreted correctly.
-
-### Priority 4: Improve Quality Metrics In Status
-
-Useful fields to add:
-
-- `pages_discovered_total`
-- `apis_discovered_total`
-- `mappings_discovered_total`
-- `new_pages_last_round`
-- `new_apis_last_round`
-- `new_mappings_last_round`
-
-### Priority 5: Add Targeted Tests For Phased Crawler Behavior
-
-Current tests still mainly cover server API behavior in general.
-
-The crawler-specific phased state path needs more explicit tests for:
-
-- phase transitions
+- exhausted
+- timeout
 - stop_requested
-- final flush
-- file existence after flush
-- state-table updates
+- failed
 
-## Suggested Immediate Work Plan
+`completion_reason` has been discussed but is not yet implemented.
 
-If the next agent wants to continue with minimal context rebuild, the best order is:
+### 4. Round/log cleanliness still needs polish
 
-1. read `cairn/src/axiom/server/routers/crawler.py`
-2. read `docs/crawler-output-schema.md`
-3. inspect the current `CrawlerExecute.md` and `CrawlerFlush.md`
-4. replace YAML-first ingestion with direct structured incremental updates into the crawler state tables
-5. keep the three exported YAML files as views, not the source of truth
+Phase transitions work, but there may still be log ordering / round-number consistency issues in edge cases.
 
-## Final Summary
+Not a blocker anymore, but still a cleanup area.
 
-This workstream successfully delivered:
+## Commits On This Crawler Line
 
-- phased crawler execution
-- global crawler timing settings
-- schema-v1 output model
-- crawler snapshot preview in frontend
-- backend crawler state tables
-- state export wiring
+Relevant commits made during this work:
 
-But it did not yet fully complete the architectural transition to a truly backend-owned crawler state model the way the main graph loop already works.
+- `76f8052 docs(crawler): define output schema v1`
+- `c452aeb feat(crawler): switch outputs to schema v1`
+- `e15fe22 fix(crawler): detect schema v1 output files`
+- `f4a5b92 feat(crawler): add global timing settings`
+- `bb4068f test(settings): fix crawler timing assertion`
+- `fba9523 feat(crawler): run phased execute and flush loops`
+- `f8838fc feat(crawler): persist phased state before export`
+- `387014d fix(crawler): persist state rows correctly`
+- `cf0a9b7 feat(crawler): add snapshot preview action`
+- `31eab01 feat(crawler): split snapshot preview actions`
+- `4ec57a7 style(crawler): stack snapshot actions vertically`
+- `ffabe5b style(preview): prefer vertical YAML scrolling`
 
-That remaining shift is the highest-value next step.
+## Recommended Next Steps For Another Agent
+
+Priority order:
+
+1. add `completion_reason` to crawler meta/status
+   - `timeout`
+   - `exhausted`
+   - `stop_requested`
+   - `failed`
+
+2. improve incremental quality instead of architecture again
+   - enrich `page_api_map`
+   - enrich `api_inventory` provenance chains
+   - deepen page coverage for mall/desk/cms/ads flows
+
+3. reduce flush prompt responsibility further if needed
+   - keep it incremental
+   - avoid broad re-exploration
+
+4. add a small targeted crawler test if feasible
+   - especially around state store ingestion and export generation
+
+## Key Takeaway
+
+The big architectural shift is done:
+
+- phased runner exists
+- backend state store exists
+- exports are derived from backend state
+
+What remains is quality refinement, not core architecture invention.
