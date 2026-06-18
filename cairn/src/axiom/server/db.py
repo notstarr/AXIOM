@@ -607,3 +607,37 @@ def _ensure_crawler_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT OR IGNORE INTO crawler_workers (id, updated_at) VALUES (1, strftime('%Y-%m-%dT%H:%M:%SZ','now'))"
     )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS crawler_pages (
+            group_id TEXT NOT NULL,
+            page_id TEXT NOT NULL,
+            data_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (group_id, page_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS crawler_apis (
+            group_id TEXT NOT NULL,
+            api_id TEXT NOT NULL,
+            data_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (group_id, api_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS crawler_page_maps (
+            group_id TEXT NOT NULL,
+            map_id TEXT NOT NULL,
+            data_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (group_id, map_id)
+        )
+        """
+    )

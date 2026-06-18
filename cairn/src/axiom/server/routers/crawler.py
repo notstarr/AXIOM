@@ -21,14 +21,15 @@ import os
 import pathlib
 import signal
 import subprocess
-import threading
 import time
+import uuid
 from urllib.parse import urlsplit
 from typing import Any
 
 import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+import yaml
 
 from axiom.server.db import current_db_path, get_conn
 from axiom.server.services import get_project_or_404, utcnow
@@ -48,7 +49,8 @@ CRAWLER_FLUSH_PROMPT_PATH = (
     / "dispatcher" / "prompts" / "other" / "CrawlerFlush.md"
 )
 CRAWLER_SESSION_DIR = "/tmp/axiom-crawler"
-_TOOLS = "bash,read_file,write_file,list_dir"
+_CRAWL_TOOLS = "bash,read_file,write_file,list_dir"
+_FLUSH_TOOLS = "bash,read_file,write_file,list_dir"
 
 
 # ─────────────────────────────────────────
@@ -97,6 +99,7 @@ class CrawlerStatus(BaseModel):
     target_url: str = ""
     output_dir: str = ""
     pid: int | None = None
+    supervisor_id: str | None = None
     phase_pid: int | None = None
     started_at: str | None = None
     phase_started_at: str | None = None
@@ -343,6 +346,98 @@ def _schema_output_exists(base: pathlib.Path, legacy_name: str, schema_v1_name: 
     return (base / schema_v1_name).exists() or (base / legacy_name).exists()
 
 
+def _load_yaml_file(path: pathlib.Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _merge_unique_list(existing: list[Any], incoming: list[Any]) -> list[Any]:
+    seen = {json.dumps(item, ensure_ascii=False, sort_keys=True) for item in existing}
+    merged = list(existing)
+    for item in incoming:
+        key = json.dumps(item, ensure_ascii=False, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged
+
+
+def _upsert_crawler_state_row(conn, table: str, group_id: str, row_id: str, payload: dict[str, Any]) -> None:
+    existing = conn.execute(
+        f"SELECT data_json FROM {table} WHERE group_id = ? AND {table[:-1]}_id = ?",
+        (group_id, row_id),
+    ).fetchone()
+    merged = payload
+    if existing:
+        try:
+            current = json.loads(existing["data_json"] or "{}")
+        except json.JSONDecodeError:
+            current = {}
+        if isinstance(current, dict):
+            merged = dict(current)
+            for key, value in payload.items():
+                if isinstance(value, list) and isinstance(merged.get(key), list):
+                    merged[key] = _merge_unique_list(merged[key], value)
+                elif value not in (None, "", [], {}):
+                    merged[key] = value
+    conn.execute(
+        f"""
+        INSERT INTO {table} (group_id, {table[:-1]}_id, data_json, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(group_id, {table[:-1]}_id) DO UPDATE SET
+            data_json = excluded.data_json,
+            updated_at = excluded.updated_at
+        """,
+        (group_id, row_id, json.dumps(merged, ensure_ascii=False, separators=(",", ":")), utcnow()),
+    )
+
+
+def _persist_schema_files_into_state(group_id: str, ai_dir: str) -> None:
+    base = pathlib.Path(ai_dir)
+    site_map = _load_yaml_file(base / "site_map.yaml")
+    api_inventory = _load_yaml_file(base / "api_inventory.yaml")
+    page_api_map = _load_yaml_file(base / "page_api_map.yaml")
+    with get_conn() as conn:
+        for page in site_map.get("pages", []) or []:
+            if isinstance(page, dict) and page.get("id"):
+                _upsert_crawler_state_row(conn, "crawler_pages", group_id, str(page["id"]), page)
+        for api in api_inventory.get("apis", []) or []:
+            if isinstance(api, dict) and api.get("id"):
+                _upsert_crawler_state_row(conn, "crawler_apis", group_id, str(api["id"]), api)
+        for mapping in page_api_map.get("mappings", []) or []:
+            if isinstance(mapping, dict) and mapping.get("id"):
+                _upsert_crawler_state_row(conn, "crawler_page_maps", group_id, str(mapping["id"]), mapping)
+
+
+def _export_state_to_schema_files(group_id: str, ai_dir: str, target_url: str) -> None:
+    base = pathlib.Path(ai_dir)
+    base.mkdir(parents=True, exist_ok=True)
+    with get_conn() as conn:
+        pages = [json.loads(row["data_json"]) for row in conn.execute(
+            "SELECT data_json FROM crawler_pages WHERE group_id = ? ORDER BY updated_at, page_id", (group_id,)
+        ).fetchall()]
+        apis = [json.loads(row["data_json"]) for row in conn.execute(
+            "SELECT data_json FROM crawler_apis WHERE group_id = ? ORDER BY updated_at, api_id", (group_id,)
+        ).fetchall()]
+        mappings = [json.loads(row["data_json"]) for row in conn.execute(
+            "SELECT data_json FROM crawler_page_maps WHERE group_id = ? ORDER BY updated_at, map_id", (group_id,)
+        ).fetchall()]
+    target = {
+        "url": target_url,
+        "domain": _normalize_target_domain(target_url),
+        "started_at": utcnow(),
+    }
+    (base / "site_map.yaml").write_text(yaml.safe_dump({"version": 1, "target": target, "pages": pages}, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    (base / "api_inventory.yaml").write_text(yaml.safe_dump({"version": 1, "target": target, "apis": apis}, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    (base / "page_api_map.yaml").write_text(yaml.safe_dump({"version": 1, "target": target, "mappings": mappings}, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
 def _log_contains_final_summary(log_path: str) -> bool:
     path = pathlib.Path(log_path)
     if not path.exists():
@@ -410,7 +505,7 @@ def _build_prompt(template_path: pathlib.Path, *, session_id: str, target_url: s
     )
 
 
-def _build_pi_argv(*, cfg: dict, agent_dir: str, session_dir: str, prompt: str) -> list[str]:
+def _build_pi_argv(*, cfg: dict, agent_dir: str, session_dir: str, prompt: str, tools: str) -> list[str]:
     models_json = _build_models_json(cfg)
     wrap_script = (
         'agent_dir="$1"\n'
@@ -426,7 +521,7 @@ def _build_pi_argv(*, cfg: dict, agent_dir: str, session_dir: str, prompt: str) 
         "--no-prompt-templates",
         "--no-themes",
         "--no-context-files",
-        "--tools", _TOOLS,
+        "--tools", tools,
         "--provider", "axiom",
         "--model", cfg["pi_model"],
         "--session-dir", session_dir,
@@ -446,7 +541,8 @@ def _run_phase_once(*, cfg: dict, meta: dict, prompt_path: pathlib.Path, phase: 
         target_url=str(meta["target_url"]),
         ai_dir=ai_dir,
     )
-    argv = _build_pi_argv(cfg=cfg, agent_dir=agent_dir, session_dir=session_dir, prompt=prompt)
+    tools = _FLUSH_TOOLS if phase in {"flush", "final_flush"} else _CRAWL_TOOLS
+    argv = _build_pi_argv(cfg=cfg, agent_dir=agent_dir, session_dir=session_dir, prompt=prompt, tools=tools)
     log_path = str(meta["log"])
     phase_started_at = utcnow()
     meta["phase"] = phase
@@ -457,6 +553,17 @@ def _run_phase_once(*, cfg: dict, meta: dict, prompt_path: pathlib.Path, phase: 
     with open(log_path, "a", encoding="utf-8") as log_f:
         log_f.write(f"\n=== phase {phase} start {phase_started_at} ===\n")
         log_f.flush()
+        if phase in {"flush", "final_flush"}:
+            # Flush should summarize using files and recent evidence, not keep a
+            # conflicting browser-use session alive from the crawl phase.
+            subprocess.run(
+                [
+                    "/bin/bash",
+                    "-lc",
+                    f"source ~/browser-use-env/bin/activate && browser-use --session {session_id} close >/dev/null 2>&1 || true",
+                ],
+                check=False,
+            )
         proc = subprocess.Popen(
             argv,
             stdout=log_f,
@@ -484,7 +591,16 @@ def _run_phase_once(*, cfg: dict, meta: dict, prompt_path: pathlib.Path, phase: 
         finally:
             meta["phase_pid"] = None
             if phase in {"flush", "final_flush"}:
+                _persist_schema_files_into_state(str(meta["project_id"]), str(meta["output_dir"]))
+                _export_state_to_schema_files(str(meta["project_id"]), str(meta["output_dir"]), str(meta["target_url"]))
                 meta["last_flush_at"] = utcnow()
+                base = pathlib.Path(str(meta["output_dir"]))
+                if not (
+                    _schema_output_exists(base, "sitemap.yaml", "site_map.yaml")
+                    and _schema_output_exists(base, "api-list.yaml", "api_inventory.yaml")
+                    and _schema_output_exists(base, "api-page-map.yaml", "page_api_map.yaml")
+                ):
+                    raise RuntimeError(f"{phase} phase did not persist required schema files")
             _write_meta(str(meta["project_id"]), meta)
 
 
@@ -598,26 +714,28 @@ def start_crawler(group_id: str, body: CrawlerStartRequest):
     log_path = f"/tmp/axiom-crawler-{project_id}.log"
     now = utcnow()
     runtime = _load_crawler_runtime_settings()
-    def _background_supervisor() -> None:
-        try:
-            _run_crawler_supervisor(project_id)
-        except Exception as exc:
-            meta = _read_meta(project_id)
-            if meta:
-                meta["status"] = "failed"
-                meta["phase"] = "idle"
-                meta["pid"] = None
-                meta["phase_pid"] = None
-                _write_meta(project_id, meta)
-            with open(log_path, "a", encoding="utf-8") as log_f:
-                log_f.write(f"\n=== supervisor error ===\n{exc!r}\n")
-
-    supervisor = threading.Thread(target=_background_supervisor, name=f"crawler-supervisor-{project_id}", daemon=True)
-    supervisor.start()
+    supervisor_id = f"sup-{project_id}-{uuid.uuid4().hex[:8]}"
+    project_root = pathlib.Path(__file__).resolve().parents[3]
+    proc = subprocess.Popen(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(project_root),
+            "axiom",
+            "crawler-supervisor",
+            "--project-id",
+            project_id,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
     _write_meta(project_id, {
         "project_id": project_id,
-        "pid": os.getpid(),
+        "pid": proc.pid,
+        "supervisor_id": supervisor_id,
         "phase_pid": None,
         "target_url": body.target_url,
         "output_dir": ai_dir,
@@ -645,7 +763,8 @@ def start_crawler(group_id: str, body: CrawlerStartRequest):
         round=1,
         target_url=body.target_url,
         output_dir=ai_dir,
-        pid=os.getpid(),
+        pid=proc.pid,
+        supervisor_id=supervisor_id,
         phase_pid=None,
         started_at=now,
         phase_started_at=now,
@@ -669,10 +788,11 @@ def get_crawler_status(group_id: str):
         return CrawlerStatus(project_id=project_id, status="idle")
 
     pid = meta.get("pid")
+    supervisor_id = meta.get("supervisor_id")
     phase_pid = meta.get("phase_pid")
-    if pid and _is_running(pid):
+    if phase_pid and _is_running(phase_pid):
         status = "stopping" if meta.get("stop_requested") else str(meta.get("status") or "running")
-    elif pid:
+    elif meta.get("status") in {"running", "stopping"}:
         status = "done" if _log_contains_final_summary(str(meta.get("log") or "")) else "failed"
         meta["status"] = status
         meta["phase"] = "idle"
@@ -692,6 +812,7 @@ def get_crawler_status(group_id: str):
         target_url=meta.get("target_url", ""),
         output_dir=ai_dir,
         pid=pid if status in {"running", "stopping"} else None,
+        supervisor_id=supervisor_id if status in {"running", "stopping", "done", "failed"} else None,
         phase_pid=phase_pid if status in {"running", "stopping"} else None,
         started_at=meta.get("started_at"),
         phase_started_at=meta.get("phase_started_at"),
@@ -711,12 +832,12 @@ def stop_crawler(group_id: str):
     """Request stop and let crawler enter final flush."""
     project_id = group_id
     meta = _read_meta(project_id)
-    pid = meta.get("pid")
-    if not pid:
+    phase_pid = meta.get("phase_pid")
+    if not meta.get("status") in {"running", "stopping"}:
         raise HTTPException(404, "没有运行中的爬虫进程")
-    if not _is_running(pid):
-        raise HTTPException(404, f"进程 {pid} 已退出")
+    if phase_pid and not _is_running(phase_pid):
+        raise HTTPException(404, f"阶段进程 {phase_pid} 已退出")
     meta["stop_requested"] = True
     meta["status"] = "stopping"
     _write_meta(project_id, meta)
-    return {"stopped": True, "pid": pid, "stop_requested": True}
+    return {"stopped": True, "pid": phase_pid, "stop_requested": True}

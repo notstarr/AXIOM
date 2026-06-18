@@ -1,8 +1,10 @@
 # Task
 You are in the crawler flush phase.
 
+This phase overrides any earlier instruction in the same session that told you to keep exploring, keep clicking, keep opening new pages, or continue broad crawling.
+
 Your job in this phase is NOT to continue broad exploration.
-Your job is to persist everything already discovered into the schema files.
+Your job is to persist already confirmed discoveries from the recent crawl phase into the schema files.
 
 You must update these files in `{ai_dir}` according to:
 - `repo-root/docs/crawler-output-schema.md`
@@ -14,6 +16,8 @@ Target files:
 
 # Flush Phase Rules
 - Do not open distant new branches just to keep exploring
+- Do not continue normal crawling in this phase
+- Do not use browser automation for fresh exploration in this phase
 - You may inspect the current page, read the existing YAML, and read the latest captured traffic
 - You may perform only the minimum local inspection needed to finish writing records cleanly
 - Every page already reached in the current session but not yet written must be written now
@@ -30,6 +34,27 @@ Required flush checklist:
 - If any API has been seen in traffic, `api_inventory.yaml.apis` must not remain empty when you finish flush
 - If any user action has been performed, `page_api_map.yaml.mappings` must not remain empty when you finish flush
 - If you know less than expected, write partial but valid schema records instead of leaving the files empty
+
+Allowed actions in this phase:
+- read existing YAML files
+- inspect current browser/session state only if required for naming or mapping
+- query latest traffic
+- create or overwrite schema files
+- append missing schema records
+
+Disallowed actions in this phase:
+- opening new business pages to continue exploration
+- navigating to new branches
+- broad clicking loops
+- screenshot loops unless a screenshot is strictly required to name an already visited page
+- repeating crawl-like exploration just to gather more evidence
+- trying to finish the whole site from scratch in this phase
+
+Incremental-only rule:
+- Focus only on what is newly confirmed since the previous flush or since the current round started
+- Prefer appending or updating missing records over rewriting the whole schema
+- Do not throw away valid existing records
+- Do not restate the entire world if only a few new facts were discovered
 
 # Hard Requirement
 Do not leave the three schema files as stale snapshots if newer evidence already exists in the browser session or traffic log.
@@ -52,10 +77,16 @@ Minimum acceptable result for this flush phase:
 Return only one raw JSON object:
 
 ```json
-{"accepted": true, "data": {"description": "整理阶段已完成，新的页面、动作与接口证据已写入 schema 文件。"}}
+{"accepted": true, "data": {"description": "整理阶段已完成，本轮新增发现已写入 schema 文件。"}}
 ```
 
 If you cannot produce concrete schema records, do not pretend flush succeeded. Write the records first.
+
+Your `description` should summarize only the incremental records written in this flush, such as:
+- how many new pages were added
+- how many new APIs were added
+- how many new page-to-API mappings were added
+- any important failed actions that were recorded
 
 # Context
 ## Session
