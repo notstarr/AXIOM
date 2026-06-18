@@ -1754,6 +1754,13 @@
                     <button @click="stopCrawler()" class="ml-auto text-[10px] text-rose-500 hover:text-rose-700">停止</button>
                   </template>
                 </div>
+                <div class="flex justify-end">
+                  <button @click="viewCrawlerSnapshot(selectedProjectManagementId, selectedProjectGroup()?.title || selectedProjectManagementId)"
+                    :disabled="!crawlerStatus.sitemap_exists && !crawlerStatus.api_list_exists && !crawlerStatus.api_page_map_exists"
+                    class="px-2.5 py-1 text-[11px] rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 transition">
+                    查看快照
+                  </button>
+                </div>
                 <template x-if="crawlerStatus.pid">
                   <p class="text-[11px] text-slate-400">PID: <span class="font-mono" x-text="crawlerStatus.pid"></span></p>
                 </template>
@@ -4108,6 +4115,25 @@ description: 一句话描述 skill 的用途和触发场景
       this.exportTab = 'yaml';
       await this.loadExportTab('yaml');
       this.showYamlModal = true;
+    },
+
+    async viewCrawlerSnapshot(groupId, title = '') {
+      if (!groupId) return;
+      try {
+        const names = ['site_map.yaml', 'api_inventory.yaml', 'page_api_map.yaml'];
+        const parts = [];
+        for (const name of names) {
+          const text = await this.fetchText(`/file-groups/${groupId}/crawler/${name}`);
+          parts.push(`# ${name}\n\n${text}`);
+        }
+        this.yamlPreviewTitle = `爬虫快照 · ${title || groupId}`;
+        this.exportTab = 'yaml';
+        this.yamlPreviewText = parts.join('\n\n---\n\n');
+        this.yamlPreviewHtml = this.highlightYaml(this.yamlPreviewText);
+        this.showYamlModal = true;
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
     },
 
     async switchExportTab(tab) {
