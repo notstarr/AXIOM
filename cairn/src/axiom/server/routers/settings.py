@@ -6,7 +6,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import requests
 
-from axiom.keyring import KeyringError, encrypt_secret
+from axiom.shared.keyring import KeyringError, encrypt_secret
 from axiom.dispatcher.keyring import load_provider_api_key
 from axiom.server.db import get_conn
 

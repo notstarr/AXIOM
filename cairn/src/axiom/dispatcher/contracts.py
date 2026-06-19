@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from axiom.dispatcher.output_parser import extract_json_object
+from axiom.shared.output_parser import extract_json_object
 
 
 def parse_json_output(stdout: str) -> dict[str, Any]:

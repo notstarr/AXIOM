@@ -10,7 +10,7 @@ import subprocess
 import time
 from typing import Any
 
-from axiom.dispatcher.output_parser import extract_json_object
+from axiom.shared.output_parser import extract_json_object
 from axiom.server.db import get_conn
 from axiom.server.services import utcnow
 

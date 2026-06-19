@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 
-from axiom.keyring import KeyringError, decrypt_secret
+from axiom.shared.keyring import KeyringError, decrypt_secret
 from axiom.server.db import current_db_path
 
 LOG = logging.getLogger(__name__)
