@@ -1,0 +1,204 @@
+from __future__ import annotations
+
+import json
+import logging
+import os
+import sqlite3
+import threading
+import time
+from pathlib import Path
+
+from axiom.server.db import current_db_path
+
+LOG = logging.getLogger(__name__)
+
+
+class LiveToolTracker:
+    """Polls a pi session file while the task runs, writing tool events to DB in real time.
+
+    Tool calls and their results arrive as separate lines in the session file.
+    We cache tool calls and defer writing until the matching result is available.
+    """
+
+    def __init__(
+        self,
+        *,
+        worker_name: str,
+        project_id: str,
+        poll_interval: float = 0.5,
+    ):
+        self._worker_name = worker_name
+        self._project_id = project_id
+        self._poll_interval = poll_interval
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._session_path: str | None = None
+        self._last_pos = 0
+        # toolCall cache: id -> (tool_name, input_dict)
+        self._pending_calls: dict[str, tuple[str, dict]] = {}
+        # toolResult cache: id -> (output_text, is_error)
+        self._pending_results: dict[str, tuple[str, bool]] = {}
+        self._written_ids: set[str] = set()
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._started_at = time.time()
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._poll_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=3)
+            self._thread = None
+        # Flush any remaining pairs
+        self._flush_pending()
+
+    def _poll_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                self._tick()
+            except Exception:
+                LOG.debug("live tool tracker tick failed", exc_info=True)
+            self._stop_event.wait(self._poll_interval)
+
+    def _tick(self) -> None:
+        session_dir = Path("/tmp/axiom-pi") / self._worker_name / "sessions"
+        if not session_dir.exists():
+            return
+        # Only consider files created after this tracker started.
+        candidates = sorted(
+            [
+                p for p in session_dir.iterdir()
+                if p.suffix == ".jsonl" and p.stat().st_mtime >= self._started_at
+            ],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not candidates:
+            return
+        newest = str(candidates[0])
+
+        # Switch to the newest file if it changed.
+        if newest != self._session_path:
+            self._session_path = newest
+            self._last_pos = 0
+            self._pending_calls.clear()
+            self._pending_results.clear()
+            LOG.info("live tracker watching session=%s project=%s", Path(newest).name, self._project_id)
+
+        try:
+            st = os.stat(self._session_path)
+            if st.st_size < self._last_pos:
+                self._last_pos = 0
+            if st.st_size == self._last_pos:
+                return
+            with open(self._session_path, encoding="utf-8") as fh:
+                fh.seek(self._last_pos)
+                for line in fh:
+                    self._process_line(line.strip())
+                self._last_pos = fh.tell()
+        except FileNotFoundError:
+            self._session_path = None
+        except Exception:
+            LOG.debug("live tracker read error", exc_info=True)
+
+        # Write any completed pairs
+        self._flush_pending()
+
+    def _process_line(self, line: str) -> None:
+        if not line:
+            return
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            return
+        if event.get("type") != "message":
+            return
+        msg = event.get("message") or {}
+        role = msg.get("role", "")
+
+        if role == "toolResult":
+            call_id = msg.get("toolCallId", "")
+            if not call_id or call_id in self._written_ids:
+                return
+            output_text = ""
+            for block in (msg.get("content") or []):
+                if isinstance(block, dict) and block.get("type") == "text":
+                    output_text = block.get("text", "")
+                    break
+            is_error = bool(msg.get("isError", False))
+            self._pending_results[call_id] = (output_text, is_error)
+            return
+
+        if role != "assistant":
+            return
+
+        for block in (msg.get("content") or []):
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") != "toolCall":
+                continue
+            call_id = block.get("id", "")
+            if not call_id or call_id in self._written_ids:
+                continue
+            tool_name = block.get("name", "unknown")
+            inp = block.get("arguments") or block.get("input") or {}
+            self._pending_calls[call_id] = (tool_name, inp)
+
+    def _flush_pending(self) -> None:
+        """Write records for tool calls that have matching results."""
+        for call_id in list(self._pending_calls):
+            if call_id in self._written_ids:
+                del self._pending_calls[call_id]
+                continue
+            if call_id not in self._pending_results:
+                continue
+            tool_name, inp = self._pending_calls.pop(call_id)
+            output, is_error = self._pending_results.pop(call_id)
+            self._write_record(call_id, tool_name, inp, output, is_error)
+            self._written_ids.add(call_id)
+            LOG.info("live tracker wrote tool=%s call_id=%s project=%s", tool_name, call_id[:20], self._project_id)
+
+    def _write_record(self, call_id: str, tool_name: str, inp: dict, output: str, is_error: bool) -> None:
+        db_path = current_db_path()
+        if not db_path.exists():
+            return
+        from axiom.dispatcher.tools.tracker import _tool_input_to_argv, _truncate, _utcnow
+
+        argv = _tool_input_to_argv(tool_name, inp)
+        now = _utcnow()
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO tool_executions (
+                    id, tool, kind, argv_json, status,
+                    returncode, stdout, stderr, duration_ms,
+                    project_group_id, project_id, created_at, finished_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    call_id,
+                    tool_name,
+                    "builtin",
+                    json.dumps(argv, ensure_ascii=False, separators=(",", ":")),
+                    "error" if is_error else "success",
+                    1 if is_error else 0,
+                    _truncate(output) if not is_error else "",
+                    _truncate(output) if is_error else "",
+                    0,
+                    "",
+                    self._project_id,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+        finally:
+            conn.close()

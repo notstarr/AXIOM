@@ -4,19 +4,34 @@ import json
 
 import pytest
 
-from cairn.dispatcher.contracts import (
+from axiom.dispatcher.contracts import (
     parse_json_output,
+    validate_bootstrap_execute_payload,
     validate_explore_payload,
     validate_reason_payload,
 )
-from cairn.dispatcher.runtime.process import ManagedProcess
-from cairn.dispatcher.workers.adapters.pi import PiDriver
+from axiom.dispatcher.runtime.process import ManagedProcess
+from axiom.dispatcher.workers.adapters.pi import PiDriver
 
 
 def test_parse_json_output_extracts_object_from_markdown_noise() -> None:
     assert parse_json_output('result:\n```json\n{"accepted": true, "data": {}}\n```') == {
         "accepted": True,
         "data": {},
+    }
+
+
+def test_parse_json_output_prefers_fenced_final_json_over_earlier_examples() -> None:
+    text = (
+        'Example request body: {"pi_base_url":"http://127.0.0.1","pi_model":"x"}\n'
+        'Final answer:\n'
+        '```json\n'
+        '{"accepted": true, "data": {"intents": [{"from": ["origin"], "description": "probe"}]}}\n'
+        '```'
+    )
+    assert parse_json_output(text) == {
+        "accepted": True,
+        "data": {"intents": [{"from": ["origin"], "description": "probe"}]},
     }
 
 
@@ -53,6 +68,33 @@ def test_explore_payload_rejects_planning_text() -> None:
         validate_explore_payload(parse_json_output("Need inspect files and keep working."))
 
 
+def test_bootstrap_execute_payload_accepts_fact_only_result() -> None:
+    kind, data = validate_bootstrap_execute_payload(
+        {"accepted": True, "data": {"fact": {"description": "initial lead"}}}
+    )
+
+    assert kind == "fact"
+    assert data == {"fact_description": "initial lead"}
+
+
+def test_bootstrap_execute_payload_accepts_complete_result() -> None:
+    kind, data = validate_bootstrap_execute_payload(
+        {
+            "accepted": True,
+            "data": {
+                "fact": {"description": "initial lead"},
+                "complete": {"description": "goal solved"},
+            },
+        }
+    )
+
+    assert kind == "complete"
+    assert data == {
+        "fact_description": "initial lead",
+        "complete_description": "goal solved",
+    }
+
+
 def test_pi_driver_extracts_session_and_last_assistant_text() -> None:
     driver = PiDriver()
     stdout = "\n".join(
@@ -72,6 +114,92 @@ def test_pi_driver_extracts_session_and_last_assistant_text() -> None:
 
     assert driver.extract_session(None, stdout, "") == "session-123"
     assert driver.extract_response_text(stdout, "") == '{"accepted":true,"data":{}}'
+
+
+def test_pi_driver_extracts_text_from_stream_events() -> None:
+    driver = PiDriver()
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "session", "id": "session-456"}),
+            json.dumps({"type": "start", "partial": {"role": "assistant", "content": []}}),
+            json.dumps({"type": "text_start", "contentIndex": 0}),
+            json.dumps({"type": "text_delta", "contentIndex": 0, "delta": '{"accepted":'}),
+            json.dumps({"type": "text_delta", "contentIndex": 0, "delta": 'true,"data":{}}'}),
+            json.dumps(
+                {
+                    "type": "done",
+                    "reason": "stop",
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": '{"accepted":true,"data":{}}'}]},
+                }
+            ),
+        ]
+    )
+
+    assert driver.extract_session(None, stdout, "") == "session-456"
+    assert driver.extract_response_text(stdout, "") == '{"accepted":true,"data":{}}'
+
+
+def test_pi_driver_extracts_text_from_message_update_wrapper() -> None:
+    driver = PiDriver()
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "session", "id": "session-789"}),
+            json.dumps({"type": "message_start", "message": {"role": "assistant", "content": []}}),
+            json.dumps(
+                {
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "text_end",
+                        "contentIndex": 0,
+                        "content": '{"accepted":true,"data":{}}',
+                        "partial": {"role": "assistant", "content": [{"type": "text", "text": '{"accepted":true,"data":{}}'}]},
+                    },
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": '{"accepted":true,"data":{}}'}]},
+                }
+            ),
+        ]
+    )
+
+    assert driver.extract_session(None, stdout, "") == "session-789"
+    assert driver.extract_response_text(stdout, "") == '{"accepted":true,"data":{}}'
+
+
+def test_pi_driver_prefers_assistant_error_over_user_prompt_examples() -> None:
+    driver = PiDriver()
+    stdout = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "When rejecting output exactly "
+                                    '{"accepted": false, "reason": "policy_refusal"}'
+                                ),
+                            }
+                        ],
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "assistant",
+                        "content": [],
+                        "stopReason": "error",
+                        "errorMessage": "Connection error.",
+                    },
+                }
+            ),
+        ]
+    )
+
+    assert driver.extract_response_text(stdout, "") == "Connection error."
 
 
 def test_close_stream_closes_response_even_when_stream_close_fails() -> None:

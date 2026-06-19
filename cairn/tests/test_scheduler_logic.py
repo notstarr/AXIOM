@@ -2,26 +2,26 @@ from __future__ import annotations
 
 from concurrent.futures import Future
 
-from cairn.dispatcher.models import ReasonCheckpoint, RunningTask
-from cairn.dispatcher.runtime.cancellation import TaskCancellation
-from cairn.dispatcher.scheduler.loop import DispatcherLoop
-from cairn.dispatcher.scheduler.worker_select import choose_worker
-from cairn.server.models import Fact, ProjectSummary
+from axiom.dispatcher.models import ReasonCheckpoint, RunningTask
+from axiom.dispatcher.runtime.cancellation import TaskCancellation
+from axiom.dispatcher.scheduler.loop import DispatcherLoop
+from axiom.dispatcher.scheduler.worker_select import choose_worker
+from axiom.server.models import Fact, ProjectSummary
 
 from conftest import make_config, make_intent, make_project
 
 
 def _loop() -> DispatcherLoop:
     loop = DispatcherLoop.__new__(DispatcherLoop)
+    loop.config_version = type("Version", (), {"version": 1, "updated_at": ""})()
     loop.reason_checkpoints = {}
     loop.runtime_project_ids = set()
-    loop.cleanup_futures = {}
-    loop._cleanup_pending = set()
-    loop._inactive_cleanup_done = {}
     loop.worker_unhealthy_until = {}
     loop.worker_rejected_until = {}
+    loop.bootstrap_retry_state = {}
     loop._log_state = {}
     loop.project_cursor = 0
+    loop._retired_executors = []
     return loop
 
 
@@ -66,46 +66,18 @@ def test_reason_trigger_returns_none_when_graph_is_unchanged() -> None:
     assert loop._reason_trigger(project) is None
 
 
-def test_refresh_runtime_projects_discards_active_and_changed_cleanup_markers() -> None:
+def test_refresh_runtime_projects_discards_inactive_ids() -> None:
     loop = _loop()
     loop.runtime_project_ids = {"active", "stopped", "deleted"}
-    loop._inactive_cleanup_done = {
-        "active": "stopped",
-        "stopped": "stopped",
-        "changed": "completed",
-        "deleted": "completed",
-    }
 
     loop._refresh_runtime_projects(
         [
             _summary("active", "active"),
             _summary("stopped", "stopped"),
-            _summary("changed", "stopped"),
         ]
     )
 
     assert loop.runtime_project_ids == {"active"}
-    assert loop._inactive_cleanup_done == {"stopped": "stopped"}
-
-
-def test_reap_cleanup_future_records_only_successful_inactive_cleanup() -> None:
-    loop = _loop()
-    succeeded: Future[bool] = Future()
-    failed: Future[bool] = Future()
-    succeeded.set_result(True)
-    failed.set_result(False)
-    loop.cleanup_futures = {
-        succeeded: ("container-success", "proj-success", "completed"),
-        failed: ("container-failed", "proj-failed", "stopped"),
-    }
-    loop._cleanup_pending = {"container-success", "container-failed"}
-    loop._inactive_cleanup_done = {"proj-failed": "stopped"}
-
-    loop._reap_cleanup_futures()
-
-    assert loop.cleanup_futures == {}
-    assert loop._cleanup_pending == set()
-    assert loop._inactive_cleanup_done == {"proj-success": "completed"}
 
 
 def test_choose_worker_prefers_priority_then_lower_running_count() -> None:
@@ -134,7 +106,6 @@ def test_new_fact_dispatches_reason_before_unclaimed_explore_intent() -> None:
         hint_count=1,
         open_intent_count=1,
     )
-    loop.container_manager = type("Containers", (), {"container_name": lambda _self, project_id: project_id})()
     loop.client = type(
         "Client",
         (),
@@ -164,7 +135,6 @@ def test_initial_enabled_project_without_bootstrap_worker_dispatches_reason() ->
     loop.futures = {}
     project = make_project()
     project.facts = project.facts[:2]
-    loop.container_manager = type("Containers", (), {"container_name": lambda _self, project_id: project_id})()
     loop.client = type(
         "Client",
         (),
@@ -188,7 +158,6 @@ def test_initial_disabled_project_skips_configured_bootstrap_worker() -> None:
     project = make_project()
     project.project.bootstrap_enabled = False
     project.facts = project.facts[:2]
-    loop.container_manager = type("Containers", (), {"container_name": lambda _self, project_id: project_id})()
     loop.client = type(
         "Client",
         (),
@@ -282,19 +251,57 @@ def test_select_worker_reports_busy_unhealthy_rejected_and_unsupported_workers(m
     unhealthy = base.workers[0].model_copy(update={"name": "unhealthy", "task_types": ["reason"]})
     rejected = base.workers[0].model_copy(update={"name": "rejected", "task_types": ["reason"]})
     unsupported = base.workers[0].model_copy(update={"name": "unsupported", "task_types": ["explore"]})
-    loop.config = base.model_copy(update={"workers": [busy, unhealthy, rejected, unsupported]})
+    loop.config = base.model_copy(
+        update={
+            "workers": [busy, unhealthy, rejected, unsupported],
+            "phase_limits": base.phase_limits.model_copy(update={"reason": 2}),
+        }
+    )
     loop.futures = {Future(): RunningTask("proj", "reason", "busy", TaskCancellation())}
     loop.worker_unhealthy_until = {"unhealthy": 110.0}
     loop.worker_rejected_until = {("proj", "reason", "rejected"): 120.0}
-    monkeypatch.setattr("cairn.dispatcher.scheduler.loop.time.time", lambda: 100.0)
+    monkeypatch.setattr("axiom.dispatcher.scheduler.loop.time.time", lambda: 100.0)
 
     selection = loop._select_worker("proj", "reason")
 
     assert selection.worker is None
+    assert selection.blocked_phase_limit is None
     assert selection.blocked_busy == ["busy(1/1)"]
     assert selection.blocked_unhealthy == ["unhealthy(10.0s)"]
     assert selection.blocked_rejected == ["rejected(20.0s)"]
     assert selection.blocked_task_type == ["unsupported"]
+
+
+def test_select_worker_respects_phase_limit(monkeypatch) -> None:
+    loop = _loop()
+    loop.config = make_config()
+    loop.futures = {Future(): RunningTask("proj", "reason", "test-worker", TaskCancellation())}
+    monkeypatch.setattr("axiom.dispatcher.scheduler.loop.time.time", lambda: 100.0)
+
+    selection = loop._select_worker("proj", "reason")
+
+    assert selection.worker is None
+    assert selection.blocked_phase_limit == "1/1"
+
+
+def test_bootstrap_retry_blocked_after_repeated_rejects(monkeypatch) -> None:
+    loop = _loop()
+    loop.config = make_config()
+    intent = make_intent()
+    project = make_project(intents=[intent])
+    loop.bootstrap_retry_state[("proj_001", "i001")] = type(
+        "State",
+        (),
+        {
+            "signature": loop._bootstrap_retry_signature(project),
+            "count": 3,
+            "blocked_until": 80.0,
+            "needs_hint": True,
+        },
+    )()
+    monkeypatch.setattr("axiom.dispatcher.scheduler.loop.time.time", lambda: 100.0)
+
+    assert loop._bootstrap_retry_blocked(project, intent)
 
 
 def test_disabled_worker_healthcheck_skips_automatic_startup_but_force_runs_diagnostic() -> None:

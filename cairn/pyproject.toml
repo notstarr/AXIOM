@@ -1,5 +1,5 @@
 [project]
-name = "cairn"
+name = "axiom"
 version = "0.2.1"
 description = "Fact-graph based collaborative exploration protocol"
 authors = [
@@ -11,13 +11,13 @@ dependencies = [
     "uvicorn[standard]>=0.34",
     "click>=8.1",
     "pyyaml>=6.0",
-    "docker>=7.1.0",
     "requests>=2.32.3",
     "cryptography>=48.0.0",
+    "python-multipart>=0.0.32",
 ]
 
 [project.scripts]
-cairn = "cairn.cli:main"
+axiom = "axiom.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.8.9,<0.9.0"]

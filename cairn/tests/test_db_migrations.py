@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from cairn.server import db
+from axiom.server import db
 
 
 def test_configure_adds_bootstrap_enabled_to_legacy_projects_table(tmp_path, monkeypatch) -> None:

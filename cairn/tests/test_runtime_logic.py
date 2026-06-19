@@ -3,11 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from cairn.dispatcher.config import ContainerConfig
-from cairn.dispatcher.protocol.client import ApiResult
-from cairn.dispatcher.runtime.cancellation import TaskCancellation
-from cairn.dispatcher.runtime.containers import ContainerManager
-from cairn.dispatcher.runtime.heartbeat import HeartbeatLease
+from axiom.dispatcher.protocol.client import ApiResult
+from axiom.dispatcher.runtime.cancellation import TaskCancellation
+from axiom.dispatcher.runtime.heartbeat import HeartbeatLease
+from axiom.dispatcher.runtime.process import ManagedProcess
 
 
 @dataclass
@@ -22,33 +21,6 @@ class FakeProcess:
         self.kill_count += 1
 
 
-class FakeContainer:
-    def __init__(self) -> None:
-        self.client = type("Client", (), {"api": object()})()
-        self.stop_count = 0
-        self.archives: list[tuple[str, bytes]] = []
-        self.archive_result = True
-
-    def stop(self, timeout: int) -> None:
-        assert timeout == 1
-        self.stop_count += 1
-
-    def put_archive(self, path: str, archive: bytes) -> bool:
-        self.archives.append((path, archive))
-        return self.archive_result
-
-
-def _manager(*, completed_action: str = "stop", workspace_root: Path | None = None) -> ContainerManager:
-    return ContainerManager(
-        ContainerConfig(
-            image="image",
-            network_mode="host",
-            completed_action=completed_action,
-        ),
-        workspace_root=workspace_root,
-    )
-
-
 def test_task_cancellation_keeps_first_reason_and_cancels_late_process() -> None:
     cancellation = TaskCancellation()
 
@@ -57,14 +29,14 @@ def test_task_cancellation_keeps_first_reason_and_cancels_late_process() -> None
     assert cancellation.reason == "project stopped"
 
     process = FakeProcess()
-    cancellation.attach_process(process)
+    cancellation.attach_process(process)  # type: ignore[arg-type]
     assert process.cancelled == ["project stopped"]
 
 
 def test_heartbeat_conflict_failure_kills_attached_process() -> None:
     process = FakeProcess()
     lease = HeartbeatLease(lambda: ApiResult(409, text="lost"), "intent", "worker", interval=60)
-    lease.attach_process(process)
+    lease.attach_process(process)  # type: ignore[arg-type]
 
     lease._fail(409, "lost")
 
@@ -73,34 +45,29 @@ def test_heartbeat_conflict_failure_kills_attached_process() -> None:
     assert process.kill_count == 1
 
 
-def test_container_manager_build_exec_process_uses_workspace_root(tmp_path: Path) -> None:
-    manager = _manager(workspace_root=tmp_path)
-
-    process = manager.build_exec_process("container", {"A": "B"}, ["agent", "-p", "prompt"], timeout_seconds=300)
+def test_managed_process_builds_with_env_and_command(tmp_path: Path) -> None:
+    process = ManagedProcess(["agent", "-p", "prompt"], {"A": "B"}, cwd=str(tmp_path))
 
     assert process.command == ["agent", "-p", "prompt"]
     assert process.env == {"A": "B"}
     assert process.cwd == str(tmp_path)
 
 
-def test_completed_container_stop_action_only_stops_running_container() -> None:
-    manager = _manager()
+def test_write_graph_snapshot_creates_file(tmp_path: Path, monkeypatch) -> None:
+    from axiom.dispatcher.tasks.common import write_graph_snapshot_file
+    import uuid
 
-    assert manager.cleanup_completed("proj/001")
-    assert manager.container_name("proj/001") == "local-proj-001"
+    import axiom.dispatcher.tasks.common as common
 
+    test_dir = tmp_path / "axiom-prompts"
+    test_dir.mkdir(parents=True)
 
-def test_stopped_container_cleanup_is_noop_after_container_has_already_stopped() -> None:
-    manager = _manager()
+    monkeypatch.setattr(common, "GRAPH_SNAPSHOT_ROOT", str(test_dir))
+    monkeypatch.setattr(uuid, "uuid4", lambda: type("UUID", (), {"hex": "abc123"})())
 
-    assert manager.cleanup_stopped("proj_001")
+    result = write_graph_snapshot_file("proj-001", "facts: []\n", phase="test-phase")
 
-
-def test_write_text_file_writes_local_path(tmp_path: Path) -> None:
-    manager = _manager(workspace_root=tmp_path)
-    target = tmp_path / "sub" / "graph.yaml"
-
-    manager.write_text_file("container", str(target), "facts: []\n")
-
-    assert target.exists()
-    assert target.read_text(encoding="utf-8") == "facts: []\n"
+    graph_file = test_dir / "test-phase-abc123" / "graph.yaml"
+    assert graph_file.exists()
+    assert graph_file.read_text(encoding="utf-8") == "facts: []\n"
+    assert str(graph_file) in result

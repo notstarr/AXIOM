@@ -13,6 +13,8 @@ from axiom.server.models import (
     CreateProjectGroupRequest,
     CreateProjectRequest,
     CreateVulnerabilityRequest,
+    ExploreStartRequest,
+    ExploreStatus,
     Fact,
     Hint,
     HeartbeatRequest,
@@ -401,20 +403,24 @@ def create_project_vuln(project_id: str, body: CreateVulnerabilityRequest):
         conn.execute(
             """
             INSERT INTO vulns (
-                id, project_id, title, description, prerequisites, impact,
-                evidence_json, reproduction_steps_json,
+                id, project_id, title, type, severity, description, prerequisites, impact,
+                evidence_json, reproduction_steps_json, recommendation, affected_scope,
                 status, source, reported_by, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 vuln_id,
                 project_id,
                 body.title,
+                body.type,
+                body.severity,
                 body.description,
                 body.prerequisites,
                 body.impact,
                 evidence_json,
                 steps_json,
+                body.recommendation,
+                body.affected_scope,
                 body.status,
                 body.source,
                 body.reported_by,
@@ -424,11 +430,15 @@ def create_project_vuln(project_id: str, body: CreateVulnerabilityRequest):
         return Vulnerability(
             id=vuln_id,
             title=body.title,
+            type=body.type,
+            severity=body.severity,
             description=body.description,
             prerequisites=body.prerequisites,
             impact=body.impact,
             evidence=body.evidence,
             reproduction_steps=body.reproduction_steps,
+            recommendation=body.recommendation,
+            affected_scope=body.affected_scope,
             status=body.status,
             source=body.source,
             reported_by=body.reported_by,
@@ -446,15 +456,17 @@ def update_project_vuln(project_id: str, vuln_id: str, body: CreateVulnerability
         evidence_json = json.dumps(body.evidence, ensure_ascii=False, separators=(",", ":"))
         steps_json = json.dumps(body.reproduction_steps, ensure_ascii=False, separators=(",", ":"))
         conn.execute("""
-            UPDATE vulns SET title=?, description=?, prerequisites=?, impact=?,
-            evidence_json=?, reproduction_steps_json=?, status=?
+            UPDATE vulns SET title=?, type=?, severity=?, description=?, prerequisites=?, impact=?,
+            evidence_json=?, reproduction_steps_json=?, recommendation=?, affected_scope=?, status=?
             WHERE id=? AND project_id=?
-        """, (body.title, body.description, body.prerequisites, body.impact,
-              evidence_json, steps_json, body.status,
+        """, (body.title, body.type, body.severity, body.description, body.prerequisites, body.impact,
+              evidence_json, steps_json, body.recommendation, body.affected_scope, body.status,
               vuln_id, project_id))
-    return Vulnerability(id=vuln_id, title=body.title, description=body.description, prerequisites=body.prerequisites,
+    return Vulnerability(id=vuln_id, title=body.title, type=body.type, severity=body.severity,
+                         description=body.description, prerequisites=body.prerequisites,
                          impact=body.impact, evidence=body.evidence,
-                         reproduction_steps=body.reproduction_steps, status=body.status, source=body.source,
+                         reproduction_steps=body.reproduction_steps, recommendation=body.recommendation,
+                         affected_scope=body.affected_scope, status=body.status, source=body.source,
                          reported_by=body.reported_by, created_at=row["created_at"])
 
 
@@ -980,3 +992,90 @@ async def upload_har(file: UploadFile):
     with open(path, "wb") as f:
         f.write(content)
     return {"path": path, "size": len(content)}
+
+
+@router.post("/projects/{project_id}/explore/start", response_model=ExploreStatus, status_code=201)
+def start_explore(project_id: str, body: ExploreStartRequest):
+    """Create an explore intent for the project. The dispatcher will pick it up automatically."""
+    import pathlib as _pathlib
+
+    with get_conn() as conn:
+        project_row = get_project_or_404(conn, project_id)
+        check_project_active(conn, project_id)
+
+        now = utcnow()
+        intent_id = next_intent_id(conn, project_id)
+        description = body.description.strip() or f"探索目标站点 {body.target_url}，产出站点地图、API 清单和页面-API 映射"
+
+        conn.execute(
+            "INSERT INTO intents (id, project_id, description, creator, created_at) VALUES (?, ?, ?, ?, ?)",
+            (intent_id, project_id, description, "explore-ui", now),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO facts (id, project_id, description) VALUES (?, ?, ?)",
+            ("explore_target_url", project_id, body.target_url),
+        )
+
+        parent_id = project_row["parent_project_id"] or "unknown"
+        output_dir = f"/tmp/axiom-files/{parent_id}/{project_id}/ai"
+        _pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+        return ExploreStatus(
+            project_id=project_id,
+            intent_id=intent_id,
+            status="running",
+            target_url=body.target_url,
+            output_dir=output_dir,
+            created_at=now,
+        )
+
+
+@router.get("/projects/{project_id}/explore", response_model=ExploreStatus)
+def get_explore_status(project_id: str):
+    """Get the current explore status and output file existence for a project."""
+    import pathlib as _pathlib
+
+    with get_conn() as conn:
+        project_row = get_project_or_404(conn, project_id)
+        parent_id = project_row["parent_project_id"] or "unknown"
+        output_dir = f"/tmp/axiom-files/{parent_id}/{project_id}/ai"
+
+        intent_row = conn.execute(
+            "SELECT id, worker, concluded_at FROM intents "
+            "WHERE project_id = ? AND creator = 'explore-ui' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (project_id,),
+        ).fetchone()
+
+        fact_row = conn.execute(
+            "SELECT description FROM facts WHERE project_id = ? AND id = 'explore_target_url'",
+            (project_id,),
+        ).fetchone()
+        target_url = fact_row["description"] if fact_row else ""
+
+        if intent_row is None:
+            status = "idle"
+            intent_id = None
+            intent_worker = None
+        elif intent_row["concluded_at"]:
+            status = "done"
+            intent_id = intent_row["id"]
+            intent_worker = intent_row["worker"]
+        else:
+            status = "running"
+            intent_id = intent_row["id"]
+            intent_worker = intent_row["worker"]
+
+        base = _pathlib.Path(output_dir)
+        return ExploreStatus(
+            project_id=project_id,
+            intent_id=intent_id,
+            intent_worker=intent_worker,
+            status=status,
+            target_url=target_url,
+            output_dir=output_dir,
+            sitemap_exists=(base / "sitemap.yaml").exists(),
+            api_list_exists=(base / "api-list.yaml").exists(),
+            api_page_map_exists=(base / "api-page-map.yaml").exists(),
+        )
+

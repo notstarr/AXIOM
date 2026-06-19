@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from cairn.dispatcher.config import DispatchConfig
-from cairn.dispatcher.protocol.client import ApiResult
-from cairn.dispatcher.workers.base import DriverResult
-from cairn.server.models import Fact, Hint, Intent, ProjectDetail, ProjectMeta
+from axiom.dispatcher.config import DispatchConfig
+from axiom.dispatcher.protocol.client import ApiResult
+from axiom.dispatcher.workers.base import DriverResult
+from axiom.server.models import Fact, Hint, Intent, ProjectDetail, ProjectMeta
 
 
 def make_config() -> DispatchConfig:
@@ -24,11 +24,6 @@ def make_config() -> DispatchConfig:
                 "bootstrap": {"timeout": 10, "conclude_timeout": 5},
                 "reason": {"timeout": 10, "max_intents": 3},
                 "explore": {"timeout": 10, "conclude_timeout": 5},
-            },
-            "container": {
-                "image": "test-image",
-                "network_mode": "host",
-                "completed_action": "stop",
             },
             "workers": [
                 {
@@ -103,17 +98,6 @@ class FakeLease:
 
 
 @dataclass
-class FakeContainerManager:
-    writes: list[tuple[str, str, str]] = field(default_factory=list)
-
-    def ensure_running(self, project_id: str) -> str:
-        return f"container-{project_id}"
-
-    def write_text_file(self, container_name: str, path: str, content: str) -> None:
-        self.writes.append((container_name, path, content))
-
-
-@dataclass
 class FakeClient:
     project: ProjectDetail
     concluded: list[tuple[str, str, str, str]] = field(default_factory=list)
@@ -171,17 +155,17 @@ class FakeDriver:
     def supports_conclude(self) -> bool:
         return True
 
-    def prepare_session(self) -> str:
+    def prepare_session(self) -> str | None:
         return "session-001"
 
-    def build_healthcheck(self, _worker) -> list[str]:
+    def build_healthcheck(self, _worker, phase: str = "") -> list[str]:
         return ["healthcheck"]
 
-    def build_execute(self, _worker, prompt: str, session: str | None) -> DriverResult:
+    def build_execute(self, _worker, prompt: str, session: str | None, phase: str = "") -> DriverResult:
         self.execute_prompts.append(prompt)
         return DriverResult(["execute"], session=session)
 
-    def build_conclude(self, _worker, prompt: str, _session: str) -> list[str]:
+    def build_conclude(self, _worker, prompt: str, _session: str, phase: str = "") -> list[str]:
         self.conclude_prompts.append(prompt)
         return ["conclude"]
 

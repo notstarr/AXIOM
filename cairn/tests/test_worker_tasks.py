@@ -2,15 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from cairn.dispatcher.protocol.client import ApiResult
-from cairn.dispatcher.runtime.cancellation import TaskCancellation
-from cairn.dispatcher.runtime.process import ProcessResult
-from cairn.dispatcher.tasks.common import HealthcheckRun
-from cairn.dispatcher.tasks import bootstrap, explore, reason
+from axiom.dispatcher.protocol.client import ApiResult
+from axiom.dispatcher.runtime.cancellation import TaskCancellation
+from axiom.dispatcher.runtime.process import ProcessResult
+from axiom.dispatcher.tasks.common import HealthcheckRun
+from axiom.dispatcher.tasks import bootstrap, explore, reason
 
 from conftest import (
     FakeClient,
-    FakeContainerManager,
     FakeDriver,
     FakeLease,
     make_config,
@@ -27,11 +26,10 @@ def _lease_factory(lease: FakeLease):
     return lambda *_args, **_kwargs: lease
 
 
-def test_reason_writes_graph_snapshot_and_creates_intent(monkeypatch) -> None:
+def test_reason_writes_graph_snapshot_and_creates_intent(monkeypatch, tmp_path) -> None:
     config = make_config()
     project = make_project()
     client = FakeClient(project)
-    containers = FakeContainerManager()
     driver = FakeDriver()
     lease = FakeLease()
     graph_yaml = "project:\n  title: huge\n" + ("x" * 100_000)
@@ -52,7 +50,6 @@ def test_reason_writes_graph_snapshot_and_creates_intent(monkeypatch) -> None:
     outcome = reason.run_reason_task(
         config,
         client,
-        containers,
         project,
         graph_yaml,
         config.workers[0],
@@ -63,14 +60,10 @@ def test_reason_writes_graph_snapshot_and_creates_intent(monkeypatch) -> None:
     assert client.created_intents == [("proj_001", ["f001"], "next step", "test-worker")]
     assert client.released_reasons == [("proj_001", "test-worker")]
     assert lease.started and lease.stopped
-    assert len(containers.writes) == 1
-    container_name, path, content = containers.writes[0]
-    assert container_name == "container-proj_001"
-    assert path.startswith("/tmp/cairn-prompts/reason_execute-")
-    assert path.endswith("/graph.yaml")
-    assert content == graph_yaml
     assert graph_yaml not in driver.execute_prompts[0]
-    assert path in driver.execute_prompts[0]
+    # graph snapshot path uses real tmp path; just verify it contains the expected structure
+    assert "graph.yaml" in driver.execute_prompts[0]
+    assert "reason_execute-" in driver.execute_prompts[0]
 
 
 def test_explore_early_plain_text_exit_uses_conclude_fallback(monkeypatch) -> None:
@@ -78,7 +71,6 @@ def test_explore_early_plain_text_exit_uses_conclude_fallback(monkeypatch) -> No
     intent = make_intent()
     project = make_project(intents=[intent])
     client = FakeClient(project)
-    containers = FakeContainerManager()
     driver = FakeDriver()
     lease = FakeLease()
     results: Iterator[ProcessResult] = iter(
@@ -96,7 +88,6 @@ def test_explore_early_plain_text_exit_uses_conclude_fallback(monkeypatch) -> No
     outcome = explore.run_explore_task(
         config,
         client,
-        containers,
         project,
         "facts:\n- id: f001\n",
         intent,
@@ -106,9 +97,6 @@ def test_explore_early_plain_text_exit_uses_conclude_fallback(monkeypatch) -> No
 
     assert outcome == "success"
     assert client.concluded == [("proj_001", "i001", "test-worker", "confirmed fact")]
-    assert len(containers.writes) == 2
-    assert "/explore_execute-" in containers.writes[0][1]
-    assert "/explore_conclude-" in containers.writes[1][1]
     assert len(driver.execute_prompts) == 1
     assert len(driver.conclude_prompts) == 1
     assert lease.started and lease.stopped
@@ -120,7 +108,6 @@ def test_explore_healthcheck_failure_releases_claim(monkeypatch) -> None:
     intent = make_intent()
     project = make_project(intents=[intent])
     client = FakeClient(project)
-    containers = FakeContainerManager()
     lease = FakeLease()
 
     monkeypatch.setattr(explore, "get_driver", lambda _name: FakeDriver())
@@ -134,7 +121,6 @@ def test_explore_healthcheck_failure_releases_claim(monkeypatch) -> None:
     outcome = explore.run_explore_task(
         config,
         client,
-        containers,
         project,
         "graph",
         intent,
@@ -144,7 +130,6 @@ def test_explore_healthcheck_failure_releases_claim(monkeypatch) -> None:
 
     assert outcome == "unhealthy"
     assert client.released == [("proj_001", "i001", "test-worker")]
-    assert containers.writes == []
 
 
 def test_bootstrap_success_concludes_fact_then_completes_project(monkeypatch) -> None:
@@ -152,7 +137,6 @@ def test_bootstrap_success_concludes_fact_then_completes_project(monkeypatch) ->
     intent = make_intent()
     project = make_project(intents=[intent])
     client = FakeClient(project)
-    containers = FakeContainerManager()
     driver = FakeDriver()
     lease = FakeLease()
 
@@ -173,7 +157,6 @@ def test_bootstrap_success_concludes_fact_then_completes_project(monkeypatch) ->
     outcome = bootstrap.run_bootstrap_task(
         config,
         client,
-        containers,
         project,
         intent,
         config.workers[0],
@@ -186,11 +169,45 @@ def test_bootstrap_success_concludes_fact_then_completes_project(monkeypatch) ->
     assert lease.started and lease.stopped
 
 
+def test_bootstrap_fact_only_writes_fact_without_completing_project(monkeypatch) -> None:
+    config = make_config()
+    intent = make_intent()
+    project = make_project(intents=[intent])
+    client = FakeClient(project)
+    driver = FakeDriver()
+    lease = FakeLease()
+
+    monkeypatch.setattr(bootstrap, "get_driver", lambda _name: driver)
+    monkeypatch.setattr(bootstrap.HeartbeatLease, "for_intent", _lease_factory(lease))
+    monkeypatch.setattr(bootstrap, "run_healthcheck", _healthy)
+    monkeypatch.setattr(
+        bootstrap,
+        "run_worker_process",
+        lambda *_args, **_kwargs: ProcessResult(
+            0,
+            '{"accepted":true,"data":{"fact":{"description":"initial foothold"}}}',
+            "",
+        ),
+    )
+
+    outcome = bootstrap.run_bootstrap_task(
+        config,
+        client,
+        project,
+        intent,
+        config.workers[0],
+        TaskCancellation(),
+    )
+
+    assert outcome == "success"
+    assert client.concluded == [("proj_001", "i001", "test-worker", "initial foothold")]
+    assert client.completed == []
+
+
 def test_reason_complete_treats_inactive_project_as_success(monkeypatch) -> None:
     config = make_config()
     project = make_project()
     client = FakeClient(project)
-    containers = FakeContainerManager()
     lease = FakeLease()
 
     def complete(*_args, **_kwargs) -> ApiResult:
@@ -213,7 +230,6 @@ def test_reason_complete_treats_inactive_project_as_success(monkeypatch) -> None
     outcome = reason.run_reason_task(
         config,
         client,
-        containers,
         project,
         "graph",
         config.workers[0],
@@ -229,7 +245,6 @@ def test_reason_startup_only_mode_skips_task_healthcheck(monkeypatch) -> None:
     config.runtime.worker_healthcheck = "startup_only"
     project = make_project()
     client = FakeClient(project)
-    containers = FakeContainerManager()
     lease = FakeLease()
 
     monkeypatch.setattr(reason, "get_driver", lambda _name: FakeDriver())
@@ -252,7 +267,6 @@ def test_reason_startup_only_mode_skips_task_healthcheck(monkeypatch) -> None:
     outcome = reason.run_reason_task(
         config,
         client,
-        containers,
         project,
         "graph",
         config.workers[0],

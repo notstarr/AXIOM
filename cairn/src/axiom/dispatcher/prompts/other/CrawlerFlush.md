@@ -1,95 +1,109 @@
 # Task
-You are in the crawler flush phase.
+You are in the crawler flush fallback phase.
 
-This phase overrides any earlier instruction in the same session that told you to keep exploring, keep clicking, keep opening new pages, or continue broad crawling.
+This phase exists only because the crawl phase failed, timed out, or returned invalid output. Your job is to recover the best confirmed **incremental crawler payload** from evidence that already exists.
 
-Your job in this phase is NOT to continue broad exploration.
-Your job is to persist already confirmed discoveries from the recent crawl phase into the schema files.
+This phase overrides any earlier instruction in the same session that told you to continue exploring. Do not keep crawling.
 
-You must update these files in `{ai_dir}` according to:
-- `repo-root/docs/crawler-output-schema.md`
-
-Target files:
-- `site_map.yaml`
-- `api_inventory.yaml`
-- `page_api_map.yaml`
-
-# Flush Phase Rules
-- Do not open distant new branches just to keep exploring
-- Do not continue normal crawling in this phase
-- Do not use browser automation for fresh exploration in this phase
-- You may inspect the current page, read the existing YAML, and read the latest captured traffic
-- You may perform only the minimum local inspection needed to finish writing records cleanly
-- Every page already reached in the current session but not yet written must be written now
-- Every API already observed in traffic but not yet written must be written now
-- Every user action already performed but not yet mapped must be written now
-- If a request failed (401/403/404/500/validation failure), record it as a failed action or failed API observation instead of dropping it
-
-Required flush checklist:
-- If `site_map.yaml` does not exist, create it now with schema v1 skeleton
-- If `api_inventory.yaml` does not exist, create it now with schema v1 skeleton
-- If `page_api_map.yaml` does not exist, create it now with schema v1 skeleton
-- If the entry page has been visited but `site_map.yaml.pages` is empty, write the entry page immediately
-- If any page has been visited in this session, `site_map.yaml.pages` must not remain empty when you finish flush
-- If any API has been seen in traffic, `api_inventory.yaml.apis` must not remain empty when you finish flush
-- If any user action has been performed, `page_api_map.yaml.mappings` must not remain empty when you finish flush
-- If you know less than expected, write partial but valid schema records instead of leaving the files empty
-
-Allowed actions in this phase:
-- read existing YAML files
-- inspect current browser/session state only if required for naming or mapping
-- query latest traffic
-- create or overwrite schema files
-- append missing schema records
-
-Disallowed actions in this phase:
-- opening new business pages to continue exploration
-- navigating to new branches
-- broad clicking loops
-- screenshot loops unless a screenshot is strictly required to name an already visited page
-- repeating crawl-like exploration just to gather more evidence
-- trying to finish the whole site from scratch in this phase
-
-Incremental-only rule:
-- Focus only on what is newly confirmed since the previous flush or since the current round started
-- Prefer appending or updating missing records over rewriting the whole schema
-- Do not throw away valid existing records
-- Do not restate the entire world if only a few new facts were discovered
-
-# Hard Requirement
-Do not leave the three schema files as stale snapshots if newer evidence already exists in the browser session or traffic log.
-
-Do not finish this phase with skeleton-only files if the browser has already visited one or more real pages.
-
-Minimum acceptable result for this flush phase:
-- at least one concrete page record in `site_map.yaml`
-- at least one concrete action or on-load mapping in `page_api_map.yaml` once actions or page-load traffic exist
-- at least one concrete API record in `api_inventory.yaml` once API traffic exists
+# Flush Fallback Rules
+- Do not open new branches
+- Do not continue normal exploration
+- Do not use browser automation for fresh exploration
+- Use only already-confirmed evidence from this round:
+  - latest captured traffic
+  - screenshots or local artifacts
+  - current logical crawler state
+- If you can recover a valid incremental payload, return it
+- If you cannot recover any concrete increment, return a rejection payload
 
 # Environment
-- Browser automation: `browser-use --cdp-url http://localhost:9223 --session {intent_id} <command>`
+- CDP helper is available but should NOT be used for fresh exploration in this phase:
+  `python3 repo-root/tools/crawler/cdp_ctl.py --tab-id {intent_id} <command>`
+  (only `url` / `state` are acceptable if you need to confirm where the browser ended up)
 - Traffic query: `python3 repo-root/tools/mitm/proxy_get_traffic.py`
-- Output directory: `{ai_dir}`
+- Output directory for screenshots/artifacts: `{ai_dir}`
 - Schema reference: `repo-root/docs/crawler-output-schema.md`
-- Activate venv before any command: `source ~/browser-use-env/bin/activate`
+- Do NOT use `browser-use`.
+
+# What Counts As Recoverable Increment
+- a newly discovered page
+- a newly observed API
+- a newly confirmed page-to-API mapping
+- a failed action/API outcome such as 401/403/validation failure
+
+If evidence is partial, return partial but valid records. Do not invent missing facts.
 
 # Output
-Return only one raw JSON object:
+Return only one raw JSON object.
 
+Success example:
 ```json
-{"accepted": true, "data": {"description": "整理阶段已完成，本轮新增发现已写入 schema 文件。"}}
+{
+  "accepted": true,
+  "data": {
+    "description": "保底阶段恢复了工单提交失败相关增量。",
+    "pages": [
+      {
+        "id": "page_desk_ticket_new",
+        "name": "新建工单页",
+        "url": "https://desk.redhaze.top/desk/tickets/new",
+        "path": "/desk/tickets/new",
+        "page_type": "form"
+      }
+    ],
+    "apis": [
+      {
+        "id": "api_desk_tickets",
+        "method": "POST",
+        "path": "/api/desk/tickets",
+        "status_codes_seen": [401]
+      }
+    ],
+    "mappings": [
+      {
+        "id": "map_desk_ticket_new",
+        "page_id": "page_desk_ticket_new",
+        "page_name": "新建工单页",
+        "page_url": "https://desk.redhaze.top/desk/tickets/new",
+        "on_load": [],
+        "actions": [
+          {
+            "action_id": "action_submit_ticket",
+            "action_name": "提交工单",
+            "trigger_type": "form_submit",
+            "trigger_label": "提交工单",
+            "target_hint": "工单创建表单",
+            "result": {
+              "navigation": false,
+              "status": "denied"
+            },
+            "apis": [
+              {
+                "api_id": "api_desk_tickets",
+                "method": "POST",
+                "path": "/api/desk/tickets"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
 ```
 
-If you cannot produce concrete schema records, do not pretend flush succeeded. Write the records first.
+Failure example:
+```json
+{"accepted": false, "reason": "no_recoverable_increment"}
+```
 
-Your `description` should summarize only the incremental records written in this flush, such as:
-- how many new pages were added
-- how many new APIs were added
-- how many new page-to-API mappings were added
-- any important failed actions that were recorded
+Requirements:
+- `description` is required on success
+- At least one of `pages` / `apis` / `mappings` must be non-empty on success
+- Return only the incremental records recoverable from this failed crawl round
 
 # Context
-## Session
+## Session (CDP target id for your dedicated tab)
 ```
 {intent_id}
 ```

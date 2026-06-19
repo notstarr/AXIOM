@@ -5,8 +5,8 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from cairn.dispatcher.config import DispatchConfig, WorkerConfig, validate_prompt_resources
-from cairn.dispatcher.workers.adapters.pi import PiDriver
+from axiom.dispatcher.config import DispatchConfig, WorkerConfig, validate_prompt_resources
+from axiom.dispatcher.workers.adapters.pi import PiDriver
 
 from conftest import make_config
 
@@ -52,6 +52,20 @@ def test_dispatch_config_rejects_duplicate_workers_and_excess_project_parallelis
         DispatchConfig.model_validate(payload)
 
 
+def test_dispatch_config_ignores_extra_container_field() -> None:
+    """container 字段在本地模式下被静默忽略"""
+    payload = make_config().model_dump()
+    payload["container"] = {
+        "image": "old-image",
+        "network_mode": "host",
+        "completed_action": "stop",
+    }
+    config = DispatchConfig.model_validate(payload)
+    assert config is not None
+    # container 字段不在 DispatchConfig 的 model_fields 中（被 extra="ignore" 忽略）
+    assert "container" not in DispatchConfig.model_fields
+
+
 def test_pi_worker_rejects_invalid_context_window() -> None:
     with pytest.raises(ValidationError, match="PI_MODEL_CONTEXT_WINDOW must be greater than 0"):
         WorkerConfig.model_validate(
@@ -72,23 +86,23 @@ def test_pi_worker_rejects_invalid_context_window() -> None:
         )
 
 
-def test_mock_worker_rejects_unknown_phase_configuration() -> None:
+def test_worker_only_accepts_pi_type() -> None:
+    """仅支持 pi 类型，其他类型被拒绝"""
     with pytest.raises(ValidationError, match="Input should be 'pi'"):
         WorkerConfig.model_validate(
             {
-                "name": "mock",
-                "type": "mock",
+                "name": "other",
+                "type": "other",
                 "task_types": ["explore"],
                 "max_running": 1,
                 "priority": 0,
-                "env": {"MOCK_UNKNOWN": "{}"},
+                "env": {},
             }
         )
 
 
-def test_bundled_prompt_groups_have_required_placeholders() -> None:
+def test_bundled_default_prompt_group_has_required_placeholders() -> None:
     validate_prompt_resources("default")
-    validate_prompt_resources("mock")
 
 
 def test_pi_driver_models_json_and_execute_argv_include_context_window_and_tools() -> None:
@@ -112,7 +126,7 @@ def test_pi_driver_models_json_and_execute_argv_include_context_window_and_tools
     result = PiDriver().build_execute(worker, "prompt", None)
     models = json.loads(result.argv[5])
 
-    assert models["providers"]["cairn"]["models"][0]["contextWindow"] == 131072
+    assert models["providers"]["axiom"]["models"][0]["contextWindow"] == 131072
     assert "--tools" in result.argv
     assert result.argv[-2:] == ["-p", "prompt"]
 
@@ -120,7 +134,7 @@ def test_pi_driver_models_json_and_execute_argv_include_context_window_and_tools
 def test_pi_worker_configuration_is_accepted() -> None:
     worker = WorkerConfig.model_validate(
         {
-            "name": "codex",
+            "name": "pi-alpha",
             "type": "pi",
             "task_types": ["reason"],
             "max_running": 1,

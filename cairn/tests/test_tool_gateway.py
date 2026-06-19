@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from cairn.dispatcher.tools.gateway import ToolGateway
-import cairn.dispatcher.tools.gateway as gateway_module
+from axiom.dispatcher.tools.gateway import ToolGateway
+import axiom.dispatcher.tools.gateway as gateway_module
 
 
 def test_gateway_classifies_builtin_tool() -> None:

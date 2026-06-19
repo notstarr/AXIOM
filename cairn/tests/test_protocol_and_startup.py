@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import requests
 
-from cairn.dispatcher.protocol.client import CairnClient
-from cairn.dispatcher.runtime.startup_healthcheck import (
+from axiom.dispatcher.protocol.client import CairnClient
+from axiom.dispatcher.runtime.startup_healthcheck import (
     StartupHealthcheckResult,
     _parse_stdout,
     format_failure_summary,

@@ -1,50 +1,222 @@
 # Task
-You are in the crawler execute phase.
+You are in the crawler execute phase. {round_info}
 
-Your job in this phase is to explore the target website aggressively but coherently:
-- continue depth-first traversal with backtracking
-- prefer discovering new business pages, new actions, and new traffic
-- keep using the existing browser session `{intent_id}`
-- capture traffic evidence for every action
+Your job is to explore the target website and return a **structured incremental crawler payload** for the single best chunk of progress made in this round.
 
-This phase is exploration-first, not summary-first.
+This phase is the primary path. It should normally succeed and return a usable increment directly.
 
-You are explicitly NOT allowed to finish the whole crawl in this phase unless the website is truly trivial and no unexplored branches remain.
+# Core Mission: Business Modeling + API Discovery for Pentest Prep
 
-However, you MUST still keep the schema files valid if you touch them.
+You are building a **business model** of the target site for **penetration testing preparation**. Your goals, in priority order:
+1. Discover all business pages and how they connect (site map)
+2. Discover all API endpoints — especially **action APIs** triggered by user operations (likes, comments, follows, purchases, etc.)
+3. Record API details: method, path, params, response structure, auth requirements
+4. Map pages to APIs (what API calls happen when a user does X on page Y)
+
+**Action APIs are the most valuable.** A page-load API (GET article) is less valuable than an action API (POST comment, POST like, POST follow). Even if an action returns 401/403/302 (login required), **record the API endpoint** — that's pentest intelligence.
+
+# Two Exploration Modes
+
+The crawler runs multiple rounds. Based on the Crawler State below, choose your mode:
+
+## Mode A: Breadth-First Navigation (when few pages discovered)
+If fewer than ~15 pages are discovered, focus on **navigating to unvisited pages**:
+- Pick from the frontier links or find new links on the current page
+- Navigate to each major area: news, courses, groups, search, points-mall, user profiles, etc.
+- For each page: record it in `pages[]`, capture its on-load APIs in `mappings[]`
+- Do NOT spend time operating buttons yet — just map the territory
+
+## Mode B: Deep Operation (when most pages already discovered)
+If 15+ pages are already discovered, focus on **operating functional buttons** on discovered pages:
+- Go back to pages you've already visited
+- Find and click every functional button: like, favorite, comment, share, follow, join, report, purchase, check-in, post, etc.
+- Even if actions return errors (401/403/302), record the API endpoint
+- Use `fill` for search boxes and comment inputs, then submit
+- Mark pages as `exhausted: true` when all buttons have been operated
+
+**In either mode, if you notice a functional button on the current page, click it** — don't save it for later.
+
+# What To Do Each Round
+
+1. Read the Crawler State section to know what's already discovered
+2. Choose Mode A or Mode B based on page count
+3. Navigate to the target page (Mode A: new page; Mode B: known page to operate)
+4. Run `state` to see interactive elements
+5. Execute **at most two meaningful actions** (navigate + operate counts as one action)
+6. Check `proxy_get_traffic.py` for triggered APIs
+7. Return structured payload
+
+# Finding Functional Buttons
+
+Not all buttons show up in `state`. Use `eval` to find hidden interactive elements:
+```
+eval "Array.from(document.querySelectorAll('[onclick], button, .btn, [class*=like], [class*=fav], [class*=collect], [class*=comment], [class*=share], [class*=follow], [class*=join], [class*=report], [class*=checkin], [class*=exchange], [class*=purchase]')).map(el=>({tag:el.tagName, text:(el.innerText||'').trim().slice(0,40), cls:el.className.slice(0,50), onclick:(el.getAttribute('onclick')||'').slice(0,80)})).filter(x=>x.text||x.onclick)"
+```
+
+# Functional Areas to Cover
+
+Make sure the crawl covers ALL of these business areas (if they exist on the site):
+- **Articles/News**: list, detail, like, favorite, comment, share, report, publish
+- **Courses/Training**: list, detail, collect, comment
+- **Groups/Community**: list, detail, join, post, like post, comment post, report
+- **Search**: search with keywords, filter by type
+- **Points Mall**: product list, exchange/redeem, region selection
+- **User Profile**: view profile, follow/unfollow, check-in
+- **Q&A**: question list, ask question, answer
+- **Feed/Activity**: feed list, publish feed
+- **Auth**: login page, register page, password reset
+- **Notifications**: notification list, mark as read
+
+# API Detail Recording
+
+For each API you discover, record as much detail as possible:
+- `method`: HTTP method (GET/POST/PUT/DELETE)
+- `path`: API path (use `{id}` for numeric/UUID segments, e.g. `/news/{id}/comments`)
+- `status_codes_seen`: array of status codes observed
+- `auth`: `{"required": true/false, "type": "cookie/token/unknown"}`
+- `params`: array of `{"name": "...", "in": "query/body/path", "type": "string/int/unknown"}`
+- `response_keys`: array of top-level keys in JSON response (if you can see the response)
+- `purpose`: short description of what this API does
+- `note`: any observations (e.g. "returns 401 without login", "rate limited")
+
+To get response details, after an action triggers an API, run:
+```
+python3 repo-root/tools/mitm/proxy_get_traffic.py --filter /api/ --type api --full --last 5
+```
 
 # Important Constraints
-- Do not spend this phase rewriting the entire schema from scratch
-- Do not produce a final whole-site summary in this phase
-- Do not claim the crawl is complete just because you have enough information to summarize
-- Stop this phase after making meaningful progress on one or more branches; leave persistence and final completeness checks to the flush/final phases
-- Focus on exploration and evidence gathering so the later flush phase can persist the findings cleanly
+- Do not rewrite the entire world
+- Do not produce a whole-site summary
+- Do not directly probe raw `/api/...` endpoints in the browser URL bar
+- Do not rely on updating physical YAML files yourself
+- Return structured incremental content only; the backend owns authoritative state
+- Do NOT use `browser-use`. Use only `cdp_ctl.py` as specified below.
+
+# Exhausted Marking
+- A page is `exhausted` only when: you have visited it AND operated all its functional buttons AND all its navigation links are in the discovered list
+- Set `"exhausted": true` only when truly done with a page
 
 # Environment
-- Browser automation: `browser-use --cdp-url http://localhost:9223 --session {intent_id} <command>`
+- CDP helper (stateless, no daemon, no sessions): `python3 repo-root/tools/crawler/cdp_ctl.py`
+  - Use the project venv python explicitly: `python3 repo-root/tools/crawler/cdp_ctl.py`
+  - Always pass `--tab-id {intent_id}` so every command hits your dedicated tab.
+  - Commands:
+    - `state`                 — URL, title, readyState, and indexed interactive elements
+    - `links`                 — all links (index, text, href)
+    - `url` / `title`         — quick getters
+    - `text [--chars N]`      — document.body.innerText
+    - `eval "<js>"`           — evaluate JS, print return value
+    - `click <idx>`           — click element at state-index (real mouse event)
+    - `click-text "<text>"`   — click first element whose text contains
+    - `click-href "<sub>"`    — click first link whose href contains
+    - `fill <idx> "<value>"`  — fill an input at state-index with a value (React-compatible)
+    - `open "<url>"`          — navigate the tab, wait for load
+    - `screenshot "<path>"`   — save PNG
+  - Example: `python3 repo-root/tools/crawler/cdp_ctl.py --tab-id {intent_id} state`
 - Traffic query: `python3 repo-root/tools/mitm/proxy_get_traffic.py`
-- Output directory: `{ai_dir}`
+  - Use `--filter /api/ --type api --full --last 5` to see full request/response details for recent API calls
+- Logical crawler views are maintained by the backend
+- Output directory for screenshots/artifacts: `{ai_dir}`
 - Schema reference: `repo-root/docs/crawler-output-schema.md`
-- Activate venv before any command: `source ~/browser-use-env/bin/activate`
 
-# Execute Phase Rules
-- Explore the current frontier using DFS
-- Prefer one branch at a time
-- Avoid repeating already explored page/action pairs when the YAML already records them
-- Clear traffic before each action
-- Capture traffic after each action
-- If a page or action is obviously new, you may append minimal local notes to remember it, but do not stop the whole phase for heavy summarization
-- Do not directly open raw `/api/...` endpoints for probing
+## How to drive the browser
+1. Run `state` to see the current page and its interactive elements.
+2. Pick a meaningful action. Prefer `click-text` / `click-href` (robust) over `click <idx>`.
+3. After each click/open, wait briefly then run `state` again to confirm the new page. Check `proxy_get_traffic.py` for any API calls the action triggered.
+4. JS dialogs (alert/confirm/beforeunload) are auto-dismissed — you do not need to handle them.
+5. If a command returns `CDP_ERROR`, retry it once. If it fails again, return your best partial increment.
+
+# Increment Rules
+- Return only the incremental records discovered in this phase
+- If you discovered a new page, include a `pages[]` delta
+- If you observed a new API or new status code/metadata for an API, include an `apis[]` delta
+- If an action triggered APIs or navigation, include a `mappings[]` delta
+- **If an action failed (401/403/302/validation error), still return the API endpoint and the mapping**
+- Use stable `id` values matching the schema style
+- If you are uncertain about optional fields, omit them or use partial values; do not invent
 
 # Output
 Return only one raw JSON object:
 
 ```json
-{"accepted": true, "data": {"description": "执行阶段已完成，已继续探索并采集新证据，但尚未进入最终整理阶段。"}}
+{
+  "accepted": true,
+  "data": {
+    "description": "本轮在文章详情页操作了收藏、点赞、评论按钮，发现3个操作型API，均返回302需登录。",
+    "pages": [
+      {
+        "id": "page_news_detail_92255",
+        "name": "文章详情页",
+        "url": "https://xz.aliyun.com/news/92255",
+        "path": "/news/92255",
+        "page_type": "article",
+        "parent_id": "page_news",
+        "discovered_via": {"type": "dom", "source_page_id": "page_news", "trigger_label": "文章链接"}
+      }
+    ],
+    "apis": [
+      {
+        "id": "api_news_collect",
+        "method": "POST",
+        "path": "/api/v2/news/{id}/collections",
+        "status_codes_seen": [302],
+        "auth": {"required": true, "type": "cookie"},
+        "params": [{"name": "id", "in": "path", "type": "int"}],
+        "purpose": "收藏文章",
+        "note": "点击收藏按钮触发，302跳转登录"
+      },
+      {
+        "id": "api_news_like",
+        "method": "POST",
+        "path": "/api/v2/news/{id}/likes",
+        "status_codes_seen": [302],
+        "auth": {"required": true, "type": "cookie"},
+        "params": [{"name": "id", "in": "path", "type": "int"}],
+        "purpose": "点赞"
+      },
+      {
+        "id": "api_news_comment",
+        "method": "POST",
+        "path": "/api/v2/news/{id}/comments",
+        "status_codes_seen": [302],
+        "auth": {"required": true, "type": "cookie"},
+        "params": [{"name": "id", "in": "path", "type": "int"}, {"name": "body", "in": "body", "type": "string"}],
+        "response_keys": ["message", "data"],
+        "purpose": "提交评论"
+      }
+    ],
+    "mappings": [
+      {
+        "id": "map_news_detail_92255",
+        "page_id": "page_news_detail_92255",
+        "page_name": "文章详情页",
+        "page_url": "https://xz.aliyun.com/news/92255",
+        "on_load": [
+          {"api_id": "api_news_comments_list", "method": "GET", "path": "/news/{id}/comments", "note": "页面加载时获取评论列表"}
+        ],
+        "actions": [
+          {
+            "action_id": "action_collect",
+            "action_name": "收藏",
+            "trigger_type": "click",
+            "trigger_label": "收藏按钮",
+            "result": {"navigation": false, "status": "denied"},
+            "apis": [{"api_id": "api_news_collect", "method": "POST", "path": "/api/v2/news/{id}/collections"}]
+          }
+        ]
+      }
+    ]
+  }
+}
 ```
 
+Requirements:
+- `description` is required
+- At least one of `pages` / `apis` / `mappings` must be non-empty
+- Return only new incremental records from this phase
+
 # Context
-## Session
+## Session (CDP target id for your dedicated tab)
 ```
 {intent_id}
 ```
@@ -52,4 +224,9 @@ Return only one raw JSON object:
 ## Target
 ```
 {intent_description}
+```
+
+## Crawler State
+```
+{crawler_state}
 ```

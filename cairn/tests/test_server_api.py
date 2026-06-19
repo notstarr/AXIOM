@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 import pytest
 
@@ -155,6 +157,41 @@ def test_settings_and_export_are_backed_by_the_same_database(client: TestClient)
     assert "origin: starting point" in exported.text
     assert "goal: finish" in exported.text
     assert client.get(f"/projects/{project_id}/export?format=invalid").status_code == 400
+
+
+def test_crawler_state_views_can_be_read_without_physical_yaml_files(client: TestClient) -> None:
+    project_id = _create_project(client)
+    detail = client.get(f"/projects/{project_id}").json()
+    group_id = detail["project"]["parent_project_id"]
+
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO crawler_pages (group_id, page_id, data_json, updated_at) VALUES (?, ?, ?, ?)",
+            (
+                group_id,
+                "page_home",
+                json.dumps(
+                    {
+                        "id": "page_home",
+                        "name": "Home",
+                        "url": "https://example.com/home",
+                        "path": "/home",
+                        "page_type": "landing",
+                    },
+                    ensure_ascii=False,
+                ),
+                "2026-06-18T00:00:00Z",
+            ),
+        )
+
+    listing = client.get(f"/file-groups/{group_id}/crawler")
+    assert listing.status_code == 200
+    names = {item["name"] for item in listing.json()["files"]}
+    assert "site_map.yaml" in names
+
+    site_map = client.get(f"/file-groups/{group_id}/crawler/site_map.yaml")
+    assert site_map.status_code == 200
+    assert "page_home" in site_map.json()["content"]
 
 
 def test_blackboard_item_crud_and_project_detail_integration(client: TestClient) -> None:

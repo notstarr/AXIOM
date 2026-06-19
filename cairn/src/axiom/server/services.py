@@ -208,15 +208,20 @@ def build_vulns(conn: sqlite3.Connection, project_id: str) -> list[Vulnerability
     for row in rows:
         evidence = _parse_json_list(row["evidence_json"])
         steps = _parse_json_list(row["reproduction_steps_json"])
+        keys = row.keys()
         vulns.append(
             Vulnerability(
                 id=row["id"],
                 title=row["title"] if row["title"] else "",
+                type=row["type"] if "type" in keys else "",
+                severity=row["severity"] if "severity" in keys else "info",
                 description=row["description"],
-                prerequisites=row["prerequisites"] if "prerequisites" in row.keys() else "",
+                prerequisites=row["prerequisites"] if "prerequisites" in keys else "",
                 impact=row["impact"],
                 evidence=evidence,
                 reproduction_steps=steps,
+                recommendation=row["recommendation"] if "recommendation" in keys else "",
+                affected_scope=row["affected_scope"] if "affected_scope" in keys else "",
                 status=row["status"],
                 source=row["source"],
                 reported_by=row["reported_by"],

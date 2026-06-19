@@ -1754,21 +1754,26 @@
                     <button @click="stopCrawler()" class="ml-auto text-[10px] text-rose-500 hover:text-rose-700">停止</button>
                   </template>
                 </div>
-                <div class="flex flex-col gap-2">
+                <div class="grid grid-cols-3 gap-2">
+                  <button @click="viewCrawlerResults()"
+                    :disabled="!crawlerStatus.sitemap_exists && !crawlerStatus.api_list_exists && !crawlerStatus.api_page_map_exists"
+                    class="col-span-3 px-3 py-2 text-xs font-medium rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-40 transition">
+                    查看爬虫结果
+                  </button>
                   <button @click="viewCrawlerSnapshot(selectedProjectManagementId, 'site_map.yaml', selectedProjectGroup()?.title || selectedProjectManagementId)"
                     :disabled="!crawlerStatus.sitemap_exists"
                     class="px-2.5 py-1 text-[11px] rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 transition">
-                    查看站点地图
+                    站点地图 YAML
                   </button>
                   <button @click="viewCrawlerSnapshot(selectedProjectManagementId, 'api_inventory.yaml', selectedProjectGroup()?.title || selectedProjectManagementId)"
                     :disabled="!crawlerStatus.api_list_exists"
                     class="px-2.5 py-1 text-[11px] rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 transition">
-                    查看 API 清单
+                    API 清单 YAML
                   </button>
                   <button @click="viewCrawlerSnapshot(selectedProjectManagementId, 'page_api_map.yaml', selectedProjectGroup()?.title || selectedProjectManagementId)"
                     :disabled="!crawlerStatus.api_page_map_exists"
                     class="px-2.5 py-1 text-[11px] rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 transition">
-                    查看页面映射
+                    页面映射 YAML
                   </button>
                 </div>
                 <template x-if="crawlerStatus.pid">
@@ -2551,9 +2556,218 @@
       </div>
     </div>
     <div class="max-h-[75vh] overflow-auto bg-slate-50 p-4">
-      <div class="rounded-xl border border-slate-200 bg-white overflow-y-auto overflow-x-hidden shadow-sm">
+      <div class="rounded-xl border border-slate-200 bg-white overflow-y-auto overflow-x-auto shadow-sm">
         <div class="w-full p-0 text-[12px] leading-6 font-mono select-text break-words whitespace-pre-wrap" x-html="yamlPreviewHtml"></div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Crawler Results Modal -->
+<div x-show="crawlerResultsOpen" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="crawlerResultsOpen = false">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl mx-4 border border-slate-200/60 overflow-hidden flex flex-col" style="max-height:85vh" @click.stop>
+    <!-- Header -->
+    <div class="px-5 py-4 border-b border-slate-200/80 flex items-center justify-between gap-4 shrink-0">
+      <div class="min-w-0 flex items-center gap-3">
+        <h3 class="text-sm font-semibold text-slate-700">爬虫结果</h3>
+        <template x-if="crawlerResultsData">
+          <div class="flex items-center gap-2 text-[11px] text-slate-400">
+            <span class="px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-mono" x-text="crawlerResultsData.counts.pages + ' 页'"></span>
+            <span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-mono" x-text="crawlerResultsData.counts.apis + ' API'"></span>
+            <span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 font-mono" x-text="crawlerResultsData.counts.mappings + ' 映射'"></span>
+          </div>
+        </template>
+      </div>
+      <div class="flex items-center gap-2">
+        <button @click="refreshCrawlerResults()" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">刷新</button>
+        <button @click="crawlerResultsOpen = false" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
+      </div>
+    </div>
+    <!-- Tabs -->
+    <div class="px-5 py-2 border-b border-slate-100 flex items-center gap-1 shrink-0">
+      <button @click="crawlerResultsTab = 'pages'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
+        :class="crawlerResultsTab === 'pages' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">
+        页面 <span class="opacity-60" x-text="crawlerResultsData ? '(' + crawlerResultsData.counts.pages + ')' : ''"></span>
+      </button>
+      <button @click="crawlerResultsTab = 'apis'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
+        :class="crawlerResultsTab === 'apis' ? 'bg-amber-50 text-amber-600' : 'text-slate-400 hover:text-slate-600'">
+        API <span class="opacity-60" x-text="crawlerResultsData ? '(' + crawlerResultsData.counts.apis + ')' : ''"></span>
+      </button>
+      <button @click="crawlerResultsTab = 'mappings'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
+        :class="crawlerResultsTab === 'mappings' ? 'bg-emerald-50 text-emerald-600' : 'text-slate-400 hover:text-slate-600'">
+        映射 <span class="opacity-60" x-text="crawlerResultsData ? '(' + crawlerResultsData.counts.mappings + ')' : ''"></span>
+      </button>
+    </div>
+    <!-- Content -->
+    <div class="flex-1 overflow-auto bg-slate-50 p-4">
+      <!-- Loading -->
+      <template x-if="crawlerResultsLoading">
+        <div class="flex items-center justify-center py-12 text-sm text-slate-400">加载中…</div>
+      </template>
+      <!-- No data -->
+      <template x-if="!crawlerResultsLoading && !crawlerResultsData">
+        <div class="flex items-center justify-center py-12 text-sm text-slate-400">暂无数据</div>
+      </template>
+
+      <!-- Pages tab -->
+      <template x-if="!crawlerResultsLoading && crawlerResultsData && crawlerResultsTab === 'pages'">
+        <div class="space-y-2">
+          <template x-for="(page, i) in crawlerResultsData.pages" :key="page.id || i">
+            <div class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+              <div class="flex items-start gap-3">
+                <div class="shrink-0 w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center text-[11px] font-mono" x-text="i + 1"></div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="text-sm font-medium text-slate-700" x-text="page.name || page.id"></span>
+                    <template x-if="page.page_type">
+                      <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-500" x-text="page.page_type"></span>
+                    </template>
+                    <template x-if="page.requires_auth">
+                      <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-50 text-rose-500">需认证</span>
+                    </template>
+                    <template x-if="page.exhausted">
+                      <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600">已穷尽</span>
+                    </template>
+                  </div>
+                  <a :href="page.url" target="_blank" class="text-[11px] text-blue-400 hover:text-blue-600 break-all" x-text="page.url"></a>
+                  <template x-if="page.discovered_via && page.discovered_via.trigger_label">
+                    <p class="text-[10px] text-slate-400 mt-1">来源: <span x-text="page.discovered_via.trigger_label"></span></p>
+                  </template>
+                  <template x-if="page.actions && page.actions.length">
+                    <div class="mt-1.5 flex flex-wrap gap-1">
+                      <template x-for="(action, j) in page.actions" :key="action.id || j">
+                        <span class="px-1.5 py-0.5 rounded text-[10px] bg-indigo-50 text-indigo-500" x-text="action.name || action.label || action.id"></span>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </template>
+          <template x-if="!crawlerResultsData.pages.length">
+            <div class="text-center py-8 text-sm text-slate-400">暂无页面数据</div>
+          </template>
+        </div>
+      </template>
+
+      <!-- APIs tab -->
+      <template x-if="!crawlerResultsLoading && crawlerResultsData && crawlerResultsTab === 'apis'">
+        <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table class="w-full text-xs">
+            <thead class="bg-slate-50 text-slate-400 text-[10px] uppercase tracking-wide">
+              <tr>
+                <th class="text-left px-3 py-2 font-medium">#</th>
+                <th class="text-left px-3 py-2 font-medium">方法</th>
+                <th class="text-left px-3 py-2 font-medium">路径</th>
+                <th class="text-left px-3 py-2 font-medium">状态码</th>
+                <th class="text-left px-3 py-2 font-medium">认证</th>
+                <th class="text-left px-3 py-2 font-medium">说明</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <template x-for="(api, i) in crawlerResultsData.apis" :key="api.id || i">
+                <tr class="hover:bg-slate-50/60">
+                  <td class="px-3 py-2 text-slate-300 font-mono" x-text="i + 1"></td>
+                  <td class="px-3 py-2">
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold"
+                      :class="{
+                        'bg-emerald-50 text-emerald-600': api.method === 'GET',
+                        'bg-amber-50 text-amber-600': api.method === 'POST',
+                        'bg-sky-50 text-sky-600': api.method === 'PUT' || api.method === 'PATCH',
+                        'bg-rose-50 text-rose-500': api.method === 'DELETE',
+                        'bg-slate-100 text-slate-500': !['GET','POST','PUT','PATCH','DELETE'].includes(api.method),
+                      }"
+                      x-text="api.method || '?'"></span>
+                  </td>
+                  <td class="px-3 py-2 font-mono text-slate-600 break-all" x-text="api.path || api.full_url_example || ''"></td>
+                  <td class="px-3 py-2">
+                    <div class="flex flex-wrap gap-1">
+                      <template x-for="code in (api.status_codes_seen || [])" :key="code">
+                        <span class="px-1.5 py-0.5 rounded text-[10px] font-mono"
+                          :class="{
+                            'bg-emerald-50 text-emerald-600': code < 300,
+                            'bg-amber-50 text-amber-600': code >= 300 && code < 400,
+                            'bg-rose-50 text-rose-500': code >= 400,
+                          }"
+                          x-text="code"></span>
+                      </template>
+                    </div>
+                  </td>
+                  <td class="px-3 py-2">
+                    <template x-if="api.auth && api.auth.required">
+                      <span class="px-1.5 py-0.5 rounded text-[10px] bg-rose-50 text-rose-500" x-text="api.auth.type || '需认证'"></span>
+                    </template>
+                    <template x-if="!api.auth || !api.auth.required">
+                      <span class="text-[10px] text-slate-300">—</span>
+                    </template>
+                  </td>
+                  <td class="px-3 py-2 text-slate-400 text-[11px] max-w-xs truncate" x-text="api.purpose || (api.notes || []).join('; ') || ''"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <template x-if="!crawlerResultsData.apis.length">
+            <div class="text-center py-8 text-sm text-slate-400">暂无 API 数据</div>
+          </template>
+        </div>
+      </template>
+
+      <!-- Mappings tab -->
+      <template x-if="!crawlerResultsLoading && crawlerResultsData && crawlerResultsTab === 'mappings'">
+        <div class="space-y-2">
+          <template x-for="(map, i) in crawlerResultsData.mappings" :key="map.id || i">
+            <div class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+              <div class="flex items-center gap-2 mb-1.5">
+                <span class="text-sm font-medium text-slate-700" x-text="map.page_name || map.page_id"></span>
+                <a :href="map.page_url" target="_blank" class="text-[10px] text-blue-400 hover:text-blue-600 truncate" x-text="map.page_url"></a>
+              </div>
+              <!-- on_load APIs -->
+              <template x-if="map.on_load && map.on_load.length">
+                <div class="mb-1.5">
+                  <p class="text-[10px] text-slate-400 mb-1">页面加载时:</p>
+                  <div class="flex flex-wrap gap-1">
+                    <template x-for="(api, j) in map.on_load" :key="j">
+                      <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-50 text-amber-600" x-text="(api.method || 'GET') + ' ' + (api.path || '')"></span>
+                    </template>
+                  </div>
+                </div>
+              </template>
+              <!-- actions -->
+              <template x-if="map.actions && map.actions.length">
+                <div>
+                  <p class="text-[10px] text-slate-400 mb-1">用户操作:</p>
+                  <div class="space-y-1">
+                    <template x-for="(action, j) in map.actions" :key="action.action_id || j">
+                      <div class="flex items-center gap-2 text-[11px]">
+                        <span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-500" x-text="action.trigger_type || 'action'"></span>
+                        <span class="text-slate-600" x-text="action.action_name || action.trigger_label || ''"></span>
+                        <template x-if="action.result && action.result.status">
+                          <span class="px-1.5 py-0.5 rounded text-[10px]"
+                            :class="{
+                              'bg-emerald-50 text-emerald-600': action.result.status === 'success',
+                              'bg-rose-50 text-rose-500': action.result.status === 'denied' || action.result.status === 'failure',
+                              'bg-slate-100 text-slate-500': action.result.status === 'noop',
+                            }"
+                            x-text="action.result.status"></span>
+                        </template>
+                        <template x-if="action.apis && action.apis.length">
+                          <span class="text-slate-300">→</span>
+                          <template x-for="(api, k) in action.apis" :key="k">
+                            <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-50 text-amber-600" x-text="(api.method || 'GET') + ' ' + (api.path || '')"></span>
+                          </template>
+                        </template>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+          <template x-if="!crawlerResultsData.mappings.length">
+            <div class="text-center py-8 text-sm text-slate-400">暂无映射数据</div>
+          </template>
+        </div>
+      </template>
     </div>
   </div>
 </div>
@@ -2652,6 +2866,10 @@ function cairnApp() {
     crawlerTargetUrl: '',
     crawlerStarting: false,
     crawlerStatus: null,
+    crawlerResultsOpen: false,
+    crawlerResultsTab: 'pages',
+    crawlerResultsData: null,
+    crawlerResultsLoading: false,
     crawlerWorkerForm: { pi_model: '', pi_base_url: '', pi_api_key: '', pi_provider_api: 'openai-completions', pi_context_window: '128000' },
     crawlerAvailableModels: [],
     crawlerLoadingModels: false,
@@ -3678,6 +3896,28 @@ description: 一句话描述 skill 的用途和触发场景
       }
     },
 
+    async viewCrawlerResults() {
+      if (!this.selectedProjectManagementId) return;
+      this.crawlerResultsOpen = true;
+      this.crawlerResultsTab = 'pages';
+      this.crawlerResultsData = null;
+      this.crawlerResultsLoading = true;
+      try {
+        this.crawlerResultsData = await this.api('GET', `/project-groups/${this.selectedProjectManagementId}/crawler/results`);
+      } catch(e) {
+        this.showToast('加载结果失败: ' + (e.message || e), 'error');
+      } finally {
+        this.crawlerResultsLoading = false;
+      }
+    },
+
+    async refreshCrawlerResults() {
+      if (!this.selectedProjectManagementId) return;
+      try {
+        this.crawlerResultsData = await this.api('GET', `/project-groups/${this.selectedProjectManagementId}/crawler/results`);
+      } catch(e) { /* ignore */ }
+    },
+
     async loadExploreStatus() {
       if (!this.selectedProjectId) return;
       try {
@@ -4082,7 +4322,7 @@ description: 一句话描述 skill 的用途和触发场景
           background = activeItemStripe === 0 ? tint.itemA : tint.itemB;
         }
 
-        return `<div style="white-space:pre;padding:0 16px;background:${background};font-weight:${fontWeight};color:#0f172a">${lineHtml}</div>`;
+        return `<div style="white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;padding:0 16px;background:${background};font-weight:${fontWeight};color:#0f172a">${lineHtml}</div>`;
       }).join('');
     },
 
@@ -4130,7 +4370,8 @@ description: 一句话描述 skill 的用途和触发场景
     async viewCrawlerSnapshot(groupId, filename, title = '') {
       if (!groupId || !filename) return;
       try {
-        const text = await this.fetchText(`/file-groups/${groupId}/crawler/${filename}`);
+        const data = await this.api('GET', `/file-groups/${groupId}/crawler/${encodeURIComponent(filename)}`);
+        const text = data.content || '';
         this.yamlPreviewTitle = `爬虫快照 · ${title || groupId} · ${filename}`;
         this.exportTab = 'yaml';
         this.yamlPreviewText = text;
@@ -4966,6 +5207,12 @@ description: 一句话描述 skill 的用途和触发场景
           if (['dashboard', 'projects', 'vulnerabilities'].includes(this.activePage)) {
             await this.loadAllProjectDetails();
           }
+        }
+        // Auto-poll crawler status while running
+        if (this.activePage === 'projects' && this.crawlerStatus && (this.crawlerStatus.status === 'running' || this.crawlerStatus.status === 'stopping')) {
+          await this.loadCrawlerStatus();
+          // Live-refresh results modal if open
+          if (this.crawlerResultsOpen) await this.refreshCrawlerResults();
         }
       }, 5000);
     },
