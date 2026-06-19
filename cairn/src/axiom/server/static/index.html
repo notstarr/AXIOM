@@ -502,8 +502,8 @@
                 <div class="border border-slate-200 rounded-lg overflow-hidden">
                   <!-- Page node header -->
                   <div class="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-slate-50 transition"
-                    @click="node.expanded = !node.expanded">
-                    <svg class="w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform" :class="node.expanded ? 'rotate-90' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+                    @click="toggleTreeNode(node.pageId)">
+                    <svg class="w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform" :class="isTreeNodeExpanded(node.pageId) ? 'rotate-90' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
                     <span class="w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-mono font-bold shrink-0"
                       :class="pageTypeColor(node.pageType)" x-text="(i+1)"></span>
                     <div class="flex-1 min-w-0">
@@ -517,7 +517,7 @@
                     <span class="text-[10px] text-slate-400 shrink-0 tabular-nums" x-text="node.apiCount + ' API'"></span>
                   </div>
                   <!-- Expanded content -->
-                  <template x-if="node.expanded">
+                  <template x-if="isTreeNodeExpanded(node.pageId)">
                     <div class="border-t border-slate-100 bg-slate-50/50 p-3 space-y-2">
                       <!-- On-load APIs -->
                       <template x-if="node.onLoadApis && node.onLoadApis.length">
@@ -771,17 +771,16 @@
     </template>
 
     <div class="grid grid-cols-[320px_minmax(0,1fr)] gap-4 flex-1 min-h-0">
-      <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-2 overflow-y-auto space-y-1.5">
+      <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3 overflow-y-auto space-y-2">
         <template x-for="p in projects" :key="p.id">
           <button type="button" @click="selectedTaskManagementId = p.id" class="w-full text-left rounded-xl border p-3 transition"
             :class="selectedTaskManagementId === p.id ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 hover:bg-slate-50'">
-            <div class="flex items-center gap-2 h-5">
-              <span class="font-mono text-[11px] text-slate-400 tabular-nums shrink-0 w-20 truncate" x-text="p.id"></span>
-              <span class="flex-1"></span>
-              <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold shrink-0" :class="projectStatusBadgeClass(p.status)" x-text="projectStatusLabel(p.status)"></span>
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-mono text-[11px] text-slate-400" x-text="p.id"></span>
+              <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="projectStatusBadgeClass(p.status)" x-text="projectStatusLabel(p.status)"></span>
             </div>
-            <p class="mt-1.5 text-sm font-semibold text-slate-700 leading-snug line-clamp-1 h-5" x-text="p.title"></p>
-            <p class="mt-1 text-xs text-slate-400 truncate h-4" x-text="projectGroupTitle(p.parent_project_id)"></p>
+            <p class="mt-2 text-sm font-semibold text-slate-700 break-words" x-text="p.title"></p>
+            <p class="mt-1 text-xs text-slate-400 truncate" x-text="projectGroupTitle(p.parent_project_id)"></p>
           </button>
         </template>
       </aside>
@@ -1567,8 +1566,8 @@
           </div>
           <template x-for="v in filteredVulnerabilities().filter(v => v.status === 'pending')" :key="v.id + v.project_id">
             <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer">
-              <p class="text-sm font-medium text-slate-700 leading-snug line-clamp-2" x-text="v.title"></p>
-              <p class="mt-1 text-[10px] text-slate-400 font-mono tabular-nums" x-text="v.project_id"></p>
+              <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
+              <p class="text-[10px] text-slate-400 mt-1 font-mono" x-text="v.project_id"></p>
             </div>
           </template>
         </div>
@@ -1580,8 +1579,8 @@
           </div>
           <template x-for="v in filteredVulnerabilities().filter(v => v.status === 'confirmed')" :key="v.id + v.project_id">
             <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer">
-              <p class="text-sm font-medium text-slate-700 leading-snug line-clamp-2" x-text="v.title"></p>
-              <p class="mt-1 text-[10px] text-slate-400 font-mono tabular-nums" x-text="v.project_id"></p>
+              <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
+              <p class="text-[10px] text-slate-400 mt-1 font-mono" x-text="v.project_id"></p>
             </div>
           </template>
         </div>
@@ -1593,8 +1592,8 @@
           </div>
           <template x-for="v in filteredVulnerabilities().filter(v => v.status === 'fixing')" :key="v.id + v.project_id">
             <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer">
-              <p class="text-sm font-medium text-slate-700 leading-snug line-clamp-2" x-text="v.title"></p>
-              <p class="mt-1 text-[10px] text-slate-400 font-mono tabular-nums" x-text="v.project_id"></p>
+              <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
+              <p class="text-[10px] text-slate-400 mt-1 font-mono" x-text="v.project_id"></p>
             </div>
           </template>
         </div>
@@ -1606,8 +1605,8 @@
           </div>
           <template x-for="v in filteredVulnerabilities().filter(v => v.status === 'fixed')" :key="v.id + v.project_id">
             <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer">
-              <p class="text-sm font-medium text-slate-700 leading-snug line-clamp-2" x-text="v.title"></p>
-              <p class="mt-1 text-[10px] text-slate-400 font-mono tabular-nums" x-text="v.project_id"></p>
+              <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
+              <p class="text-[10px] text-slate-400 mt-1 font-mono" x-text="v.project_id"></p>
             </div>
           </template>
         </div>
@@ -1623,13 +1622,12 @@
           <template x-for="v in filteredVulnerabilities()" :key="`${v.project_id}-${v.id}`">
           <button type="button" @click="selectedVulnerabilityKey = vulnerabilityKey(v)" class="w-full text-left rounded-xl border p-3 transition"
             :class="selectedVulnerabilityKey === vulnerabilityKey(v) ? 'border-rose-200 bg-rose-50/60' : 'border-slate-200 hover:bg-slate-50'">
-            <div class="flex items-center gap-2 h-5">
-              <span class="font-mono text-[11px] text-slate-400 tabular-nums shrink-0 w-16 truncate" x-text="v.id"></span>
-              <span class="flex-1"></span>
-              <span class="px-1.5 py-0.5 rounded-md text-[9px] font-semibold shrink-0" :class="vulnStatusClass(v.status)" x-text="vulnStatusLabel(v.status)"></span>
+            <div class="flex items-center gap-2">
+              <span class="font-mono text-[11px] text-slate-400" x-text="v.id"></span>
+              <span class="px-1.5 py-0.5 rounded-md text-[9px] font-semibold" :class="vulnStatusClass(v.status)" x-text="vulnStatusLabel(v.status)"></span>
             </div>
-            <p class="mt-1.5 text-sm font-semibold text-slate-700 leading-snug line-clamp-1 h-5" x-text="v.title"></p>
-            <p class="mt-1 text-xs text-slate-400 truncate h-4" x-text="`${v.project_group_title || '未归属项目'} / ${v.task_title || v.project_id}`"></p>
+            <p class="mt-2 text-sm font-semibold text-slate-700 break-words line-clamp-2" x-text="v.title"></p>
+            <p class="mt-1 text-xs text-slate-400 truncate" x-text="`${v.project_group_title || '未归属项目'} / ${v.task_title || v.project_id}`"></p>
           </button>
           </template>
         </aside>
@@ -1736,13 +1734,12 @@
       <template x-for="p in projectGroups" :key="p.id">
         <button type="button" @click="selectManagedProject(p.id)" class="w-full text-left rounded-xl border p-3 transition"
           :class="selectedProjectManagementId === p.id ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'">
-          <div class="flex items-center gap-2 h-5">
-            <span class="font-mono text-[11px] text-slate-400 tabular-nums shrink-0 w-20 truncate" x-text="p.id"></span>
-            <span class="flex-1"></span>
-            <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold shrink-0" :class="p.status === 'active' ? 'bg-teal-50 text-teal-600' : 'bg-slate-100 text-slate-500'" x-text="p.status === 'active' ? '启用' : '已归档'"></span>
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-mono text-[11px] text-slate-400" x-text="p.id"></span>
+            <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="p.status === 'active' ? 'bg-teal-50 text-teal-600' : 'bg-slate-100 text-slate-500'" x-text="p.status === 'active' ? '启用' : '已归档'"></span>
           </div>
-          <p class="mt-1.5 text-sm font-semibold text-slate-700 leading-snug line-clamp-1 h-5" x-text="p.title"></p>
-          <p class="mt-1 text-xs text-slate-400 tabular-nums h-4" x-text="`${p.task_count} 任务 · ${p.vuln_count} 漏洞`"></p>
+          <p class="mt-2 text-sm font-semibold text-slate-700 break-words" x-text="p.title"></p>
+          <p class="mt-1 text-xs text-slate-400" x-text="`${p.task_count} 任务 · ${p.vuln_count} 漏洞`"></p>
         </button>
       </template>
     </aside>
@@ -1787,13 +1784,12 @@
               <template x-for="task in selectedProjectGroupTasks()" :key="`managed-task-${task.id}`">
                 <button type="button" @click="selectedProjectManagementTaskId = task.id; loadProjectDetailForManagement(task.id); crawlerStatus = null; loadCrawlerStatus()" class="text-left rounded-xl border p-3 transition"
                   :class="selectedProjectManagementTaskId === task.id ? 'border-brand-200 bg-brand-50/50' : 'border-slate-200 hover:bg-slate-50'">
-                  <div class="flex items-center gap-2 h-5">
-                    <span class="font-mono text-[11px] text-slate-400 tabular-nums shrink-0 w-20 truncate" x-text="task.id"></span>
-                    <span class="flex-1"></span>
-                    <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold shrink-0" :class="projectStatusBadgeClass(task.status)" x-text="projectStatusLabel(task.status)"></span>
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="font-mono text-[11px] text-slate-400" x-text="task.id"></span>
+                    <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="projectStatusBadgeClass(task.status)" x-text="projectStatusLabel(task.status)"></span>
                   </div>
-                  <p class="mt-1.5 text-sm font-semibold text-slate-700 leading-snug line-clamp-1 h-5" x-text="task.title"></p>
-                  <p class="mt-1 text-xs text-slate-400 tabular-nums h-4" x-text="`${task.fact_count} 事实 · ${task.intent_count} 意图`"></p>
+                  <p class="mt-2 text-sm font-semibold text-slate-700 break-words" x-text="task.title"></p>
+                  <p class="mt-1 text-xs text-slate-400" x-text="`${task.fact_count} 事实 · ${task.intent_count} 意图`"></p>
                 </button>
               </template>
             </div>
@@ -3227,6 +3223,7 @@ function cairnApp() {
     crawlerResultsGroupId: '',
     crawlerResultsPageTab: 'pages',
     crawlerResultsPageData: null,
+    treeExpanded: {},
     projectGroups: [],
     projects: [],
     project: null,
@@ -4458,9 +4455,17 @@ description: 一句话描述 skill 的用途和触发场景
           onLoadApis,
           actions,
           apiCount,
-          expanded: false,
         };
       });
+    },
+
+    toggleTreeNode(pageId) {
+      if (!this.treeExpanded) this.treeExpanded = {};
+      this.treeExpanded[pageId] = !this.treeExpanded[pageId];
+    },
+
+    isTreeNodeExpanded(pageId) {
+      return this.treeExpanded && this.treeExpanded[pageId];
     },
 
     pageTypeColor(type) {
