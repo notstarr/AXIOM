@@ -1507,6 +1507,28 @@ tbody tr:hover {
   letter-spacing: 0.02em;
 }
 
+/* ── Global: tabular numbers for alignment ── */
+.font-mono, [class*="tabular-nums"] {
+  font-variant-numeric: tabular-nums;
+}
+/* Auto-align all numeric display elements */
+.text-3xl, .text-2xl, .text-xl {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── List item: unified layout ── */
+button[class*="rounded-xl"][class*="border"][class*="p-3"] {
+  text-align: left;
+}
+button[class*="rounded-xl"][class*="border"][class*="p-3"] > p {
+  line-height: 1.4;
+}
+
+/* ── Heading alignment: consistent line-height ── */
+h1, h2, h3, h4 {
+  line-height: 1.3;
+}
+
 /* ════════════════════════════════════════════════
    Unified Component Design System
    Consistent radius, border, color, size, interaction

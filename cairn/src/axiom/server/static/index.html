@@ -364,7 +364,7 @@
           </div>
           <svg class="w-4 h-4 text-slate-300 group-hover:text-blue-400 transition mt-1" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
         </div>
-        <div class="mt-4 text-3xl font-semibold tracking-tight text-slate-800" x-text="projectGroups.length"></div>
+        <div class="mt-4 text-3xl font-semibold tracking-tight text-slate-800 tabular-nums" x-text="projectGroups.length"></div>
         <p class="mt-1 text-xs font-medium text-slate-400">项目</p>
         <p class="mt-1 text-[11px] text-slate-300" x-text="`${projects.length} 个关联任务`"></p>
       </button>
@@ -380,7 +380,7 @@
           </div>
           <svg class="w-4 h-4 text-slate-300 group-hover:text-teal-400 transition mt-1" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
         </div>
-        <div class="mt-4 text-3xl font-semibold tracking-tight text-slate-800" x-text="countProjectsByStatus('active')"></div>
+        <div class="mt-4 text-3xl font-semibold tracking-tight text-slate-800 tabular-nums" x-text="countProjectsByStatus('active')"></div>
         <p class="mt-1 text-xs font-medium text-slate-400">运行中任务</p>
         <p class="mt-1 text-[11px] text-slate-300" x-text="`已暂停 ${countProjectsByStatus('stopped')} · 已完成 ${countProjectsByStatus('completed')}`"></p>
       </button>
@@ -397,7 +397,7 @@
           </div>
           <svg class="w-4 h-4 text-slate-300 group-hover:text-rose-400 transition mt-1" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
         </div>
-        <div class="mt-4 text-3xl font-semibold tracking-tight text-slate-800" x-text="dashboardStats().vulnTotal"></div>
+        <div class="mt-4 text-3xl font-semibold tracking-tight text-slate-800 tabular-nums" x-text="dashboardStats().vulnTotal"></div>
         <p class="mt-1 text-xs font-medium text-slate-400">漏洞</p>
         <p class="mt-1 text-[11px]"
           :class="dashboardStats().criticalVulns > 0 ? 'text-rose-400' : 'text-slate-300'"
@@ -413,7 +413,7 @@
             </svg>
           </div>
         </div>
-        <div class="mt-4 text-3xl font-semibold tracking-tight text-slate-800" x-text="dashboardStats().tokenTotal.toLocaleString()"></div>
+        <div class="mt-4 text-3xl font-semibold tracking-tight text-slate-800 tabular-nums" x-text="dashboardStats().tokenTotal.toLocaleString()"></div>
         <p class="mt-1 text-xs font-medium text-slate-400">Token 累计</p>
         <p class="mt-1 text-[11px] text-slate-300" x-text="`输入 ${dashboardStats().tokenInput.toLocaleString()} · 输出 ${dashboardStats().tokenOutput.toLocaleString()}`"></p>
       </div>
@@ -482,15 +482,16 @@
           <template x-if="recentGlobalEvents().length === 0">
             <div class="flex items-center justify-center h-24 text-sm text-slate-300">暂无事件</div>
           </template>
-          <template x-for="event in recentGlobalEvents()" :key="`${event.project_id}-${event.id}`">
-            <div class="rounded-xl bg-slate-50 p-3">
-              <div class="flex items-center justify-between gap-2 mb-1">
-                <span class="text-[11px] font-medium text-slate-500 font-mono truncate" x-text="event.project_id"></span>
-                <span class="text-[10px] text-slate-300 shrink-0 tabular-nums" x-text="formatTime(event.created_at)"></span>
-              </div>
-              <p class="text-[11px] text-slate-500 break-words leading-relaxed" x-text="event.message"></p>
-            </div>
-          </template>
+           <template x-for="event in recentGlobalEvents()" :key="`${event.project_id}-${event.id}`">
+             <div class="rounded-xl bg-slate-50 p-3">
+               <div class="flex items-center gap-2 mb-1">
+                 <span class="text-[11px] font-medium text-slate-500 font-mono tabular-nums shrink-0 truncate" x-text="event.project_id"></span>
+                 <span class="flex-1"></span>
+                 <span class="text-[10px] text-slate-400 shrink-0 tabular-nums" x-text="formatTime(event.created_at)"></span>
+               </div>
+               <p class="text-[11px] text-slate-500 leading-relaxed line-clamp-3" x-text="event.message"></p>
+             </div>
+           </template>
         </div>
       </div>
 
@@ -524,7 +525,7 @@
               <tr class="border-b border-slate-50 hover:bg-slate-50/60 transition cursor-pointer" @click="openProject(row.id)">
                 <td class="px-5 py-3">
                   <div class="flex items-center gap-2">
-                    <span class="font-mono text-slate-300 text-[10px]" x-text="row.id"></span>
+                    <span class="font-mono text-slate-400 text-[10px] tabular-nums shrink-0" x-text="row.id"></span>
                     <span class="text-slate-700 font-medium truncate max-w-[200px]" x-text="row.title"></span>
                     <span class="px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
                       :class="row.status === 'active' ? 'bg-teal-50 text-teal-600' : row.status === 'completed' ? 'bg-slate-100 text-slate-500' : 'bg-amber-50 text-amber-600'"
@@ -685,11 +686,12 @@
         <template x-for="p in projects" :key="p.id">
           <button type="button" @click="selectedTaskManagementId = p.id" class="w-full text-left rounded-xl border p-3 transition"
             :class="selectedTaskManagementId === p.id ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 hover:bg-slate-50'">
-            <div class="flex items-center justify-between gap-2">
-              <span class="font-mono text-[11px] text-slate-400" x-text="p.id"></span>
-              <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="projectStatusBadgeClass(p.status)" x-text="projectStatusLabel(p.status)"></span>
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="font-mono text-[11px] text-slate-400 tabular-nums shrink-0" x-text="p.id"></span>
+              <span class="flex-1"></span>
+              <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold shrink-0" :class="projectStatusBadgeClass(p.status)" x-text="projectStatusLabel(p.status)"></span>
             </div>
-            <p class="mt-2 text-sm font-semibold text-slate-700 break-words" x-text="p.title"></p>
+            <p class="text-sm font-semibold text-slate-700 leading-snug line-clamp-2" x-text="p.title"></p>
             <p class="mt-1 text-xs text-slate-400 truncate" x-text="projectGroupTitle(p.parent_project_id)"></p>
           </button>
         </template>
@@ -715,10 +717,10 @@
               </div>
             </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div class="rounded-xl bg-slate-50 p-3"><p class="text-xs text-slate-400">事实</p><p class="mt-1 text-xl font-semibold" x-text="selectedTaskSummary().fact_count"></p></div>
-              <div class="rounded-xl bg-violet-50 p-3"><p class="text-xs text-violet-600">意图</p><p class="mt-1 text-xl font-semibold text-violet-700" x-text="selectedTaskSummary().intent_count"></p></div>
-              <div class="rounded-xl bg-amber-50 p-3"><p class="text-xs text-amber-600">执行中</p><p class="mt-1 text-xl font-semibold text-amber-700" x-text="selectedTaskSummary().working_intent_count"></p></div>
-              <div class="rounded-xl bg-sky-50 p-3"><p class="text-xs text-sky-600">Hints</p><p class="mt-1 text-xl font-semibold text-sky-700" x-text="selectedTaskSummary().hint_count"></p></div>
+              <div class="rounded-xl bg-slate-50 p-3"><p class="text-xs text-slate-400">事实</p><p class="mt-1 text-xl font-semibold tabular-nums" x-text="selectedTaskSummary().fact_count"></p></div>
+              <div class="rounded-xl bg-violet-50 p-3"><p class="text-xs text-violet-600">意图</p><p class="mt-1 text-xl font-semibold text-violet-700 tabular-nums" x-text="selectedTaskSummary().intent_count"></p></div>
+              <div class="rounded-xl bg-amber-50 p-3"><p class="text-xs text-amber-600">执行中</p><p class="mt-1 text-xl font-semibold text-amber-700 tabular-nums" x-text="selectedTaskSummary().working_intent_count"></p></div>
+              <div class="rounded-xl bg-sky-50 p-3"><p class="text-xs text-sky-600">Hints</p><p class="mt-1 text-xl font-semibold text-sky-700 tabular-nums" x-text="selectedTaskSummary().hint_count"></p></div>
             </div>
             <div class="rounded-xl border border-slate-200 p-4">
               <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">操作</p>
@@ -1476,8 +1478,8 @@
           </div>
           <template x-for="v in filteredVulnerabilities().filter(v => v.status === 'pending')" :key="v.id + v.project_id">
             <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer">
-              <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
-              <p class="text-[10px] text-slate-400 mt-1" x-text="v.project_id"></p>
+              <p class="text-sm font-medium text-slate-700 leading-snug line-clamp-2" x-text="v.title"></p>
+              <p class="mt-1 text-[10px] text-slate-400 font-mono tabular-nums" x-text="v.project_id"></p>
             </div>
           </template>
         </div>
@@ -1489,8 +1491,8 @@
           </div>
           <template x-for="v in filteredVulnerabilities().filter(v => v.status === 'confirmed')" :key="v.id + v.project_id">
             <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer">
-              <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
-              <p class="text-[10px] text-slate-400 mt-1" x-text="v.project_id"></p>
+              <p class="text-sm font-medium text-slate-700 leading-snug line-clamp-2" x-text="v.title"></p>
+              <p class="mt-1 text-[10px] text-slate-400 font-mono tabular-nums" x-text="v.project_id"></p>
             </div>
           </template>
         </div>
@@ -1502,8 +1504,8 @@
           </div>
           <template x-for="v in filteredVulnerabilities().filter(v => v.status === 'fixing')" :key="v.id + v.project_id">
             <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer">
-              <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
-              <p class="text-[10px] text-slate-400 mt-1" x-text="v.project_id"></p>
+              <p class="text-sm font-medium text-slate-700 leading-snug line-clamp-2" x-text="v.title"></p>
+              <p class="mt-1 text-[10px] text-slate-400 font-mono tabular-nums" x-text="v.project_id"></p>
             </div>
           </template>
         </div>
@@ -1515,8 +1517,8 @@
           </div>
           <template x-for="v in filteredVulnerabilities().filter(v => v.status === 'fixed')" :key="v.id + v.project_id">
             <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer">
-              <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
-              <p class="text-[10px] text-slate-400 mt-1" x-text="v.project_id"></p>
+              <p class="text-sm font-medium text-slate-700 leading-snug line-clamp-2" x-text="v.title"></p>
+              <p class="mt-1 text-[10px] text-slate-400 font-mono tabular-nums" x-text="v.project_id"></p>
             </div>
           </template>
         </div>
@@ -1530,15 +1532,16 @@
             <div class="px-4 py-10 text-sm text-center text-slate-400">暂无漏洞记录</div>
           </template>
           <template x-for="v in filteredVulnerabilities()" :key="`${v.project_id}-${v.id}`">
-            <button type="button" @click="selectedVulnerabilityKey = vulnerabilityKey(v)" class="w-full text-left rounded-xl border p-3 transition"
-              :class="selectedVulnerabilityKey === vulnerabilityKey(v) ? 'border-rose-200 bg-rose-50/60' : 'border-slate-200 hover:bg-slate-50'">
-              <div class="flex items-center gap-2">
-                <span class="font-mono text-[11px] text-slate-400" x-text="v.id"></span>
-                <span class="px-1.5 py-0.5 rounded-md text-[9px] font-semibold" :class="vulnStatusClass(v.status)" x-text="vulnStatusLabel(v.status)"></span>
-              </div>
-              <p class="mt-2 text-sm font-semibold text-slate-700 break-words line-clamp-2" x-text="v.title"></p>
-              <p class="mt-1 text-xs text-slate-400 truncate" x-text="`${v.project_group_title || '未归属项目'} / ${v.task_title || v.project_id}`"></p>
-            </button>
+          <button type="button" @click="selectedVulnerabilityKey = vulnerabilityKey(v)" class="w-full text-left rounded-xl border p-3 transition"
+            :class="selectedVulnerabilityKey === vulnerabilityKey(v) ? 'border-rose-200 bg-rose-50/60' : 'border-slate-200 hover:bg-slate-50'">
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="font-mono text-[11px] text-slate-400 tabular-nums shrink-0" x-text="v.id"></span>
+              <span class="flex-1"></span>
+              <span class="px-1.5 py-0.5 rounded-md text-[9px] font-semibold shrink-0" :class="vulnStatusClass(v.status)" x-text="vulnStatusLabel(v.status)"></span>
+            </div>
+            <p class="text-sm font-semibold text-slate-700 leading-snug line-clamp-2" x-text="v.title"></p>
+            <p class="mt-1 text-xs text-slate-400 truncate" x-text="`${v.project_group_title || '未归属项目'} / ${v.task_title || v.project_id}`"></p>
+          </button>
           </template>
         </aside>
         <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-y-auto">
@@ -1644,12 +1647,13 @@
       <template x-for="p in projectGroups" :key="p.id">
         <button type="button" @click="selectManagedProject(p.id)" class="w-full text-left rounded-xl border p-3 transition"
           :class="selectedProjectManagementId === p.id ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'">
-          <div class="flex items-center justify-between gap-2">
-            <span class="font-mono text-[11px] text-slate-400" x-text="p.id"></span>
-            <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="p.status === 'active' ? 'bg-teal-50 text-teal-600' : 'bg-slate-100 text-slate-500'" x-text="p.status === 'active' ? '启用' : '已归档'"></span>
+          <div class="flex items-center gap-2 mb-1.5">
+            <span class="font-mono text-[11px] text-slate-400 tabular-nums shrink-0" x-text="p.id"></span>
+            <span class="flex-1"></span>
+            <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold shrink-0" :class="p.status === 'active' ? 'bg-teal-50 text-teal-600' : 'bg-slate-100 text-slate-500'" x-text="p.status === 'active' ? '启用' : '已归档'"></span>
           </div>
-          <p class="mt-2 text-sm font-semibold text-slate-700 break-words" x-text="p.title"></p>
-          <p class="mt-1 text-xs text-slate-400" x-text="`${p.task_count} 任务 · ${p.vuln_count} 漏洞`"></p>
+          <p class="text-sm font-semibold text-slate-700 leading-snug line-clamp-2" x-text="p.title"></p>
+          <p class="mt-1 text-xs text-slate-400 tabular-nums" x-text="`${p.task_count} 任务 · ${p.vuln_count} 漏洞`"></p>
         </button>
       </template>
     </aside>
@@ -2084,15 +2088,15 @@
         <div class="grid grid-cols-3 gap-3">
           <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm card-hover">
             <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">页面</p>
-            <p class="text-2xl font-bold text-slate-800 mt-1" x-text="crawlerResultsPageData?.counts?.pages || 0"></p>
+            <p class="text-2xl font-bold text-slate-800 mt-1 tabular-nums" x-text="crawlerResultsPageData?.counts?.pages || 0"></p>
           </div>
           <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm card-hover">
             <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">API</p>
-            <p class="text-2xl font-bold text-slate-800 mt-1" x-text="crawlerResultsPageData?.counts?.apis || 0"></p>
+            <p class="text-2xl font-bold text-slate-800 mt-1 tabular-nums" x-text="crawlerResultsPageData?.counts?.apis || 0"></p>
           </div>
           <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm card-hover">
             <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">映射</p>
-            <p class="text-2xl font-bold text-slate-800 mt-1" x-text="crawlerResultsPageData?.counts?.mappings || 0"></p>
+            <p class="text-2xl font-bold text-slate-800 mt-1 tabular-nums" x-text="crawlerResultsPageData?.counts?.mappings || 0"></p>
           </div>
         </div>
         <!-- Tabs -->
@@ -2846,9 +2850,9 @@
         <h3 class="text-sm font-semibold text-slate-700">爬虫结果</h3>
         <template x-if="crawlerResultsData">
           <div class="flex items-center gap-2 text-[11px] text-slate-400">
-            <span class="px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-mono" x-text="crawlerResultsData.counts.pages + ' 页'"></span>
-            <span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-mono" x-text="crawlerResultsData.counts.apis + ' API'"></span>
-            <span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 font-mono" x-text="crawlerResultsData.counts.mappings + ' 映射'"></span>
+            <span class="px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-mono tabular-nums" x-text="crawlerResultsData.counts.pages + ' 页'"></span>
+            <span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-mono tabular-nums" x-text="crawlerResultsData.counts.apis + ' API'"></span>
+            <span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 font-mono tabular-nums" x-text="crawlerResultsData.counts.mappings + ' 映射'"></span>
           </div>
         </template>
       </div>
