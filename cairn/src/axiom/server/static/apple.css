@@ -1507,3 +1507,215 @@ tbody tr:hover {
   letter-spacing: 0.02em;
 }
 
+/* ════════════════════════════════════════════════
+   Unified Component Design System
+   Consistent radius, border, color, size, interaction
+   ════════════════════════════════════════════════ */
+
+/* ── Unified sizing tokens ── */
+:root {
+  --input-h-sm: 32px;
+  --input-h-md: 36px;
+  --input-h-lg: 40px;
+  --btn-h-sm: 28px;
+  --btn-h-md: 32px;
+  --btn-h-lg: 40px;
+  --gap-xs: 4px;
+  --gap-sm: 8px;
+  --gap-md: 12px;
+  --gap-lg: 16px;
+  --gap-xl: 24px;
+}
+
+/* ── Buttons: unified ── */
+button[class*="rounded-lg"],
+button[class*="rounded-xl"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gap-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: all var(--transition-fast) !important;
+  border: 1px solid transparent;
+}
+button[class*="rounded-lg"]:not([class*="bg-brand"]):not([class*="bg-rose"]):not([class*="bg-emerald"]):not([class*="bg-amber"]):not([class*="bg-blue"]):not([class*="bg-sky"]) {
+  border-color: var(--border) !important;
+  color: var(--text-secondary) !important;
+  background: var(--bg-primary) !important;
+}
+button[class*="rounded-lg"]:not([class*="bg-brand"]):not([class*="bg-rose"]):not([class*="bg-emerald"]):not([class*="bg-amber"]):not([class*="bg-blue"]):not([class*="bg-sky"]):hover {
+  background: var(--bg-secondary) !important;
+  border-color: var(--border-strong) !important;
+}
+button[class*="rounded-lg"]:disabled,
+button[class*="rounded-xl"]:disabled {
+  opacity: 0.4 !important;
+  cursor: not-allowed;
+}
+
+/* ── Primary (brand) buttons ── */
+button[class*="bg-brand-500"],
+button[class*="bg-brand-600"] {
+  background: var(--accent) !important;
+  color: var(--text-inverse) !important;
+  border: none !important;
+  box-shadow: 0 1px 3px rgba(0, 113, 227, 0.2) !important;
+}
+button[class*="bg-brand-500"]:hover,
+button[class*="bg-brand-600"]:hover {
+  background: var(--accent-hover) !important;
+  box-shadow: 0 2px 8px rgba(0, 113, 227, 0.3) !important;
+}
+
+/* ── Danger buttons ── */
+button[class*="bg-rose-500"],
+button[class*="bg-rose-600"] {
+  background: var(--danger) !important;
+  color: var(--text-inverse) !important;
+  border: none !important;
+}
+button[class*="bg-rose-500"]:hover,
+button[class*="bg-rose-600"]:hover {
+  opacity: 0.9;
+}
+
+/* ── Inputs: unified height, padding, radius ── */
+input[type="text"],
+input[type="number"],
+input[type="password"],
+input[type="email"],
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+select,
+textarea {
+  height: var(--input-h-md);
+  padding: 0 12px;
+  border-radius: var(--radius-lg) !important;
+  border: 1px solid var(--border) !important;
+  background: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+  font-family: var(--font-sans) !important;
+  font-size: 13px !important;
+  line-height: 1;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast) !important;
+}
+textarea {
+  height: auto;
+  padding: 10px 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+select {
+  height: var(--input-h-md);
+  cursor: pointer;
+}
+
+/* ── Cards: unified ── */
+[class*="rounded-2xl"][class*="border"][class*="border-slate-200"][class*="bg-white"] {
+  border-radius: var(--radius-xl) !important;
+  border-color: var(--border) !important;
+  background: var(--bg-elevated) !important;
+  box-shadow: var(--shadow-xs) !important;
+}
+
+/* ── Badges: unified ── */
+[class*="rounded-full"][class*="font-semibold"] {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full) !important;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* ── Tabs: unified ── */
+[class*="border-b-2"] {
+  transition: border-color var(--transition-base), color var(--transition-base) !important;
+}
+
+/* ── Tables: unified ── */
+table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+thead th {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary) !important;
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border) !important;
+}
+tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border) !important;
+  color: var(--text-secondary) !important;
+}
+tbody tr:last-child td {
+  border-bottom: none !important;
+}
+
+/* ── Page headers: unified ── */
+header[class*="bg-white\/80"] {
+  padding: 12px 20px !important;
+  border-bottom: 1px solid var(--border) !important;
+  background: var(--bg-glass) !important;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+header h2 {
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  color: var(--text-primary) !important;
+  margin: 0;
+}
+header p {
+  font-size: 11px !important;
+  color: var(--text-tertiary) !important;
+  margin: 2px 0 0;
+}
+
+/* ── Main content: unified padding ── */
+main[class*="p-5"] {
+  padding: var(--gap-xl) !important;
+}
+
+/* ── Empty states: unified ── */
+[class*="text-slate-400"][class*="text-center"]:not([class*="rounded"]) {
+  color: var(--text-tertiary) !important;
+  font-size: 13px;
+}
+
+/* ── Section spacing: unified ── */
+main[class*="space-y-4"] > * + * {
+  margin-top: var(--gap-lg) !important;
+}
+main[class*="space-y-3"] > * + * {
+  margin-top: var(--gap-md) !important;
+}
+
+/* ── Icon sizing: unified ── */
+svg[class*="w-3\.5"],
+svg[class*="w-4"]:not([class*="w-4\.5"]) {
+  flex-shrink: 0;
+}
+
+/* ── Form labels: unified ── */
+label, .text-[10px].font-semibold.text-slate-400.uppercase.tracking-widest {
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary) !important;
+}
+
+/* ── Search inputs: unified ── */
+input[placeholder*="搜索"],
+input[placeholder*="search"] {
+  height: var(--input-h-md);
+  border-radius: var(--radius-lg) !important;
+}
+

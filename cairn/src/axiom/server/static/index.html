@@ -1522,80 +1522,81 @@
         </div>
       </div>
     </template>
-    <!-- List view (original) -->
+    <!-- List view -->
     <template x-if="!showVulnBoard">
-      <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3 overflow-y-auto space-y-2">
-        <template x-if="filteredVulnerabilities().length === 0">
-          <div class="px-4 py-10 text-sm text-center text-slate-400">暂无漏洞记录</div>
-        </template>
-        <template x-for="v in filteredVulnerabilities()" :key="`${v.project_id}-${v.id}`">
-          <button type="button" @click="selectedVulnerabilityKey = vulnerabilityKey(v)" class="w-full text-left rounded-xl border p-3 transition"
-            :class="selectedVulnerabilityKey === vulnerabilityKey(v) ? 'border-rose-200 bg-rose-50/60' : 'border-slate-200 hover:bg-slate-50'">
-            <div class="flex items-center gap-2">
-              <span class="font-mono text-[11px] text-slate-400" x-text="v.id"></span>
-              <span class="px-1.5 py-0.5 rounded-md text-[9px] font-semibold" :class="vulnStatusClass(v.status)" x-text="vulnStatusLabel(v.status)"></span>
-            </div>
-            <p class="mt-2 text-sm font-semibold text-slate-700 break-words line-clamp-2" x-text="v.title"></p>
-            <p class="mt-1 text-xs text-slate-400 truncate" x-text="`${v.project_group_title || '未归属项目'} / ${v.task_title || v.project_id}`"></p>
-          </button>
-        </template>
-      </aside>
-      <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-y-auto">
-        <template x-if="!selectedVulnerability()">
-          <div class="h-full min-h-[420px] flex items-center justify-center text-sm text-slate-400">请选择左侧漏洞查看详情</div>
-        </template>
-        <template x-if="selectedVulnerability()">
-          <article>
-            <div class="px-5 py-4 border-b border-rose-100 bg-rose-50/60">
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-mono font-bold" x-text="selectedVulnerability().id"></span>
-                <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="vulnStatusClass(selectedVulnerability().status)" x-text="vulnStatusLabel(selectedVulnerability().status)"></span>
-                <span class="text-[11px] text-slate-400" x-text="`${selectedVulnerability().project_group_title || '未归属项目'} / ${selectedVulnerability().task_title || selectedVulnerability().project_id}`"></span>
+      <div class="grid grid-cols-[340px_minmax(0,1fr)] gap-4 flex-1 min-h-0 h-full">
+        <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3 overflow-y-auto space-y-2">
+          <template x-if="filteredVulnerabilities().length === 0">
+            <div class="px-4 py-10 text-sm text-center text-slate-400">暂无漏洞记录</div>
+          </template>
+          <template x-for="v in filteredVulnerabilities()" :key="`${v.project_id}-${v.id}`">
+            <button type="button" @click="selectedVulnerabilityKey = vulnerabilityKey(v)" class="w-full text-left rounded-xl border p-3 transition"
+              :class="selectedVulnerabilityKey === vulnerabilityKey(v) ? 'border-rose-200 bg-rose-50/60' : 'border-slate-200 hover:bg-slate-50'">
+              <div class="flex items-center gap-2">
+                <span class="font-mono text-[11px] text-slate-400" x-text="v.id"></span>
+                <span class="px-1.5 py-0.5 rounded-md text-[9px] font-semibold" :class="vulnStatusClass(v.status)" x-text="vulnStatusLabel(v.status)"></span>
               </div>
-              <h3 class="mt-3 text-lg font-semibold text-slate-800 break-words" x-text="selectedVulnerability().title"></h3>
-              <div class="mt-2 flex gap-2">
-                <button @click="editVuln(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">编辑</button>
-                <button @click="deleteVuln(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-rose-200 text-rose-500 hover:bg-rose-50">删除</button>
-              </div>
-            </div>
-            <div class="p-5 space-y-4">
-              <div>
-                <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">描述</p>
-                <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="selectedVulnerability().description"></p>
-              </div>
-              <div x-show="selectedVulnerability().prerequisites">
-                <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">利用前提</p>
-                <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="selectedVulnerability().prerequisites"></p>
-              </div>
-              <div>
-                <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">影响</p>
-                <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="selectedVulnerability().impact"></p>
-              </div>
-              <template x-if="(selectedVulnerability().evidence || []).length > 0">
-                <div>
-                  <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">证据</p>
-                  <ul class="list-disc ml-5 space-y-1">
-                    <template x-for="(ev, idx) in (selectedVulnerability().evidence || [])" :key="`${selectedVulnerability().id}-page-ev-${idx}`">
-                      <li class="text-xs text-slate-600 break-words" x-text="ev"></li>
-                    </template>
-                  </ul>
+              <p class="mt-2 text-sm font-semibold text-slate-700 break-words line-clamp-2" x-text="v.title"></p>
+              <p class="mt-1 text-xs text-slate-400 truncate" x-text="`${v.project_group_title || '未归属项目'} / ${v.task_title || v.project_id}`"></p>
+            </button>
+          </template>
+        </aside>
+        <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-y-auto">
+          <template x-if="!selectedVulnerability()">
+            <div class="h-full min-h-[420px] flex items-center justify-center text-sm text-slate-400">请选择左侧漏洞查看详情</div>
+          </template>
+          <template x-if="selectedVulnerability()">
+            <article>
+              <div class="px-5 py-4 border-b border-rose-100 bg-rose-50/60">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-mono font-bold" x-text="selectedVulnerability().id"></span>
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="vulnStatusClass(selectedVulnerability().status)" x-text="vulnStatusLabel(selectedVulnerability().status)"></span>
+                  <span class="text-[11px] text-slate-400" x-text="`${selectedVulnerability().project_group_title || '未归属项目'} / ${selectedVulnerability().task_title || selectedVulnerability().project_id}`"></span>
                 </div>
-              </template>
-              <template x-if="(selectedVulnerability().reproduction_steps || []).length > 0">
-                <div>
-                  <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">复现步骤</p>
-                  <ol class="list-none ml-2 space-y-1">
-                    <template x-for="(step, idx) in (selectedVulnerability().reproduction_steps || [])" :key="`${selectedVulnerability().id}-page-step-${idx}`">
-                      <li class="text-xs text-slate-600 break-words" x-text="step"></li>
-                    </template>
-                  </ol>
+                <h3 class="mt-3 text-lg font-semibold text-slate-800 break-words" x-text="selectedVulnerability().title"></h3>
+                <div class="mt-2 flex gap-2">
+                  <button @click="editVuln(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">编辑</button>
+                  <button @click="deleteVuln(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-rose-200 text-rose-500 hover:bg-rose-50">删除</button>
                 </div>
-              </template>
-            </div>
-          </article>
-        </template>
-      </section>
-    </div>
+              </div>
+              <div class="p-5 space-y-4">
+                <div>
+                  <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">描述</p>
+                  <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="selectedVulnerability().description"></p>
+                </div>
+                <div x-show="selectedVulnerability().prerequisites">
+                  <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">利用前提</p>
+                  <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="selectedVulnerability().prerequisites"></p>
+                </div>
+                <div>
+                  <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">影响</p>
+                  <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="selectedVulnerability().impact"></p>
+                </div>
+                <template x-if="(selectedVulnerability().evidence || []).length > 0">
+                  <div>
+                    <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">证据</p>
+                    <ul class="list-disc ml-5 space-y-1">
+                      <template x-for="(ev, idx) in (selectedVulnerability().evidence || [])" :key="`${selectedVulnerability().id}-page-ev-${idx}`">
+                        <li class="text-xs text-slate-600 break-words" x-text="ev"></li>
+                      </template>
+                    </ul>
+                  </div>
+                </template>
+                <template x-if="(selectedVulnerability().reproduction_steps || []).length > 0">
+                  <div>
+                    <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">复现步骤</p>
+                    <ol class="list-none ml-2 space-y-1">
+                      <template x-for="(step, idx) in (selectedVulnerability().reproduction_steps || [])" :key="`${selectedVulnerability().id}-page-step-${idx}`">
+                        <li class="text-xs text-slate-600 break-words" x-text="step"></li>
+                      </template>
+                    </ol>
+                  </div>
+                </template>
+              </div>
+            </article>
+          </template>
+        </section>
+      </div>
     </template>
   </main>
 </div>
