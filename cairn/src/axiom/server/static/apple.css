@@ -1348,3 +1348,138 @@ input::placeholder, textarea::placeholder {
   -webkit-backdrop-filter: blur(12px) saturate(160%) !important;
 }
 
+/* ════════════════════════════════════════════════
+   Aesthetic Enhancements — micro-interactions & polish
+   ════════════════════════════════════════════════ */
+
+/* ── Sidebar: subtle active indicator ── */
+.sidebar .nav-item[style*="background"] {
+  position: relative;
+}
+.sidebar .nav-item[style*="background"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  opacity: 0.8;
+}
+
+/* ── Cards: refined border + shadow on hover ── */
+.rounded-2xl.border.border-slate-200.bg-white {
+  transition: box-shadow var(--transition-base), border-color var(--transition-base), transform var(--transition-base);
+}
+.rounded-2xl.border.border-slate-200.bg-white:hover {
+  box-shadow: var(--shadow-md) !important;
+}
+
+/* ── Buttons: smoother active state ── */
+.bg-brand-500, .bg-brand-600 {
+  transition: background-color var(--transition-fast), transform 80ms ease, box-shadow var(--transition-fast) !important;
+}
+.bg-brand-500:hover {
+  box-shadow: 0 2px 8px rgba(0, 113, 227, 0.25) !important;
+}
+.bg-brand-500:active {
+  transform: scale(0.97) !important;
+}
+
+/* ── Status badges: subtle inner glow ── */
+[class*="bg-teal-50"], [class*="bg-amber-50"], [class*="bg-emerald-50"],
+[class*="bg-rose-50"], [class*="bg-violet-50"], [class*="bg-sky-50"] {
+  transition: opacity var(--transition-fast);
+}
+
+/* ── List items: smooth selection transition ── */
+.rounded-xl.border.p-3.transition {
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), transform var(--transition-fast) !important;
+}
+.rounded-xl.border.p-3.transition:hover {
+  transform: translateX(2px);
+}
+
+/* ── Tabs: smooth underline slide ── */
+.border-b-2 {
+  transition: border-color var(--transition-base), color var(--transition-base) !important;
+}
+
+/* ── Scrollbar: refined ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+/* ── Empty states: softer visual ── */
+.border-dashed {
+  border-color: var(--border) !important;
+  transition: border-color var(--transition-base);
+}
+.border-dashed:hover {
+  border-color: var(--border-strong) !important;
+}
+
+/* ── Form inputs: smoother focus ring ── */
+input:focus, select:focus, textarea:focus {
+  box-shadow: 0 0 0 3px var(--accent-light), 0 1px 2px rgba(0,0,0,0.04) !important;
+}
+
+/* ── Select dropdowns: custom arrow ── */
+select {
+  appearance: none !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23AEAEB2' d='M6 8.5L1.5 4h9z'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 8px center !important;
+  padding-right: 28px !important;
+}
+
+/* ── Cytoscape graph: subtle grid background ── */
+#cy {
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(0,0,0,0.04) 1px, transparent 0) !important;
+  background-size: 24px 24px !important;
+}
+
+/* ── Modal: refined shadow + border ── */
+.modal-enter {
+  box-shadow: var(--shadow-xl), 0 0 0 1px var(--border) !important;
+}
+
+/* ── Toast: refined glass ── */
+.fixed.bottom-6.right-6:not(.rounded-full) {
+  border: 1px solid rgba(255,255,255,0.12) !important;
+}
+
+/* ── Page transition: fade-in on route change ── */
+.main-content > div[x-show] {
+  animation: pageFadeIn 200ms ease-out;
+}
+@keyframes pageFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Table rows: hover highlight ── */
+tbody tr:hover {
+  background: var(--bg-secondary) !important;
+  transition: background-color var(--transition-fast);
+}
+
+/* ── Badge text: letter-spacing refinement ── */
+[class*="rounded-full"][class*="font-semibold"] {
+  letter-spacing: 0.02em;
+}
+
