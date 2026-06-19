@@ -202,23 +202,4 @@ def test_pi_driver_prefers_assistant_error_over_user_prompt_examples() -> None:
     assert driver.extract_response_text(stdout, "") == "Connection error."
 
 
-def test_close_stream_closes_response_even_when_stream_close_fails() -> None:
-    class Response:
-        def __init__(self) -> None:
-            self.closed = False
-
-        def close(self) -> None:
-            self.closed = True
-
-    class Stream:
-        def __init__(self) -> None:
-            self._response = Response()
-
-        def close(self) -> None:
-            raise ValueError("already closed")
-
-    stream = Stream()
-    ManagedProcess._close_stream(stream)
-
-    assert stream._response.closed
 

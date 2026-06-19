@@ -218,16 +218,6 @@ def _parse_json_object(raw: str | None) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _parse_json_list(raw: str | None, default: list) -> list:
-    if not raw:
-        return default
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return default
-    return parsed if isinstance(parsed, list) else default
-
-
 # ── Skills ──
 
 @router.get("/skills", response_model=list[PiSkill])

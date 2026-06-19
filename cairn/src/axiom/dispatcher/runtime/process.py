@@ -97,37 +97,6 @@ class ManagedProcess:
             self._cancel_reason = reason
         self.kill()
 
-    @staticmethod
-    def _decode(chunk: bytes | str | None) -> str:
-        if chunk is None:
-            return ""
-        if isinstance(chunk, bytes):
-            return chunk.decode("utf-8", errors="replace")
-        return chunk
-
-    @staticmethod
-    def _split_chunk(chunk: object) -> tuple[str, str]:
-        if isinstance(chunk, tuple):
-            stdout, stderr = chunk
-            return ManagedProcess._decode(stdout), ManagedProcess._decode(stderr)
-        return ManagedProcess._decode(chunk), ""
-
-    @staticmethod
-    def _close_stream(stream: object) -> None:
-        try:
-            close = getattr(stream, "close", None)
-            if callable(close):
-                close()
-        except Exception:
-            pass
-        response = getattr(stream, "_response", None)
-        try:
-            close_response = getattr(response, "close", None)
-            if callable(close_response):
-                close_response()
-        except Exception:
-            pass
-
     def _terminate_gracefully(self) -> None:
         if self._process is None or self._process.poll() is not None:
             return
