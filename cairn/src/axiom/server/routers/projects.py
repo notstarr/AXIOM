@@ -198,6 +198,34 @@ def update_project_group(group_id: str, body: UpdateProjectGroupRequest):
         return _project_group_summary_from_row(row)
 
 
+@router.delete("/project-groups/{group_id}", status_code=204)
+def delete_project_group(group_id: str):
+    """Delete a project group and cascade-delete all its tasks, facts, intents, vulns, blackboard items."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT id FROM project_groups WHERE id = ?", (group_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"Project group {group_id} not found")
+        project_rows = conn.execute(
+            "SELECT id FROM projects WHERE parent_project_id = ?", (group_id,)
+        ).fetchall()
+        project_ids = [r["id"] for r in project_rows]
+        for pid in project_ids:
+            conn.execute("DELETE FROM tool_executions WHERE project_id = ?", (pid,))
+            conn.execute("DELETE FROM task_events WHERE project_id = ?", (pid,))
+            conn.execute("DELETE FROM vulns WHERE project_id = ?", (pid,))
+            conn.execute("DELETE FROM hints WHERE project_id = ?", (pid,))
+            conn.execute("DELETE FROM intent_sources WHERE project_id = ?", (pid,))
+            conn.execute("DELETE FROM intents WHERE project_id = ?", (pid,))
+            conn.execute("DELETE FROM facts WHERE project_id = ?", (pid,))
+            conn.execute("DELETE FROM blackboard_items WHERE project_id = ?", (pid,))
+            conn.execute("DELETE FROM projects WHERE id = ?", (pid,))
+        conn.execute("DELETE FROM blackboard_items WHERE group_id = ?", (group_id,))
+        conn.execute("DELETE FROM crawler_pages WHERE group_id = ?", (group_id,))
+        conn.execute("DELETE FROM crawler_apis WHERE group_id = ?", (group_id,))
+        conn.execute("DELETE FROM crawler_page_maps WHERE group_id = ?", (group_id,))
+        conn.execute("DELETE FROM project_groups WHERE id = ?", (group_id,))
+
+
 @router.get("/projects", response_model=list[ProjectSummary])
 def list_projects():
     with get_conn() as conn:

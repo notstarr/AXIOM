@@ -1636,7 +1636,7 @@
       <p class="text-xs text-slate-400 mt-0.5">查看项目基础信息，并在项目内维护黑板事项</p>
     </div>
     <div class="flex-1"></div>
-    <button @click="showProjectGroupComposer = !showProjectGroupComposer" class="h-8 px-3 rounded-lg border border-brand-200 text-xs text-brand-600 hover:bg-brand-50 transition">新建项目</button>
+    <button @click="openGroupModal()" class="h-8 px-3 rounded-lg border border-brand-200 text-xs text-brand-600 hover:bg-brand-50 transition">新建项目</button>
     <button @click="loadProjectGroups(); loadProjects(); loadAllProjectDetails(true)" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 transition">刷新</button>
   </header>
   <main class="flex-1 overflow-hidden grid grid-cols-[280px_minmax(0,1fr)]">
@@ -1658,20 +1658,6 @@
       </template>
     </aside>
     <section class="overflow-y-auto p-5 space-y-4">
-      <section x-show="showProjectGroupComposer" x-cloak class="rounded-2xl border border-brand-100 bg-white shadow-sm p-4">
-        <div class="flex items-center justify-between gap-3 mb-3">
-          <div>
-            <h3 class="text-sm font-semibold text-slate-700">新建项目</h3>
-            <p class="text-xs text-slate-400 mt-0.5">项目用于归集多个关联任务。</p>
-          </div>
-          <button @click="showProjectGroupComposer = false" class="text-xs text-slate-400 hover:text-slate-600">收起</button>
-        </div>
-        <div class="grid grid-cols-1 md:grid-cols-[260px_minmax(0,1fr)_auto] gap-3">
-          <input x-model="projectGroupForm.title" placeholder="项目名称" class="px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-          <input x-model="projectGroupForm.description" placeholder="项目说明（可选）" class="px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-          <button @click="createProjectGroup()" :disabled="!projectGroupForm.title" class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30">创建项目</button>
-        </div>
-      </section>
       <template x-if="!selectedProjectGroup()">
         <div class="rounded-2xl border border-dashed border-slate-200 bg-white px-5 py-14 text-center text-slate-400">请选择一个项目</div>
       </template>
@@ -1681,19 +1667,22 @@
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div class="flex items-center gap-2">
-                  <span class="font-mono text-xs text-slate-400" x-text="selectedProjectGroup().id"></span>
+                  <span class="font-mono text-xs text-slate-400 tabular-nums" x-text="selectedProjectGroup().id"></span>
                   <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="selectedProjectGroup().status === 'active' ? 'bg-teal-50 text-teal-600' : 'bg-slate-100 text-slate-500'" x-text="selectedProjectGroup().status === 'active' ? '启用' : '已归档'"></span>
                 </div>
                 <h3 class="mt-2 text-lg font-semibold text-slate-800" x-text="selectedProjectGroup().title"></h3>
                 <p class="mt-1 text-xs text-slate-400" x-text="selectedProjectGroup().description || '暂无项目说明'"></p>
               </div>
-              <button @click="showTaskComposer = true; newProject.parent_project_id = selectedProjectGroup().id; navigateTo('tasks')" class="px-3 py-2 text-sm rounded-xl border border-brand-200 text-brand-600 hover:bg-brand-50 transition">新建关联任务</button>
+              <div class="flex gap-2">
+                <button @click="showTaskComposer = true; newProject.parent_project_id = selectedProjectGroup().id; navigateTo('tasks')" class="px-3 py-2 text-sm rounded-xl border border-brand-200 text-brand-600 hover:bg-brand-50 transition">新建关联任务</button>
+                <button @click="deleteProjectGroup(selectedProjectGroup().id, selectedProjectGroup().title)" class="px-3 py-2 text-sm rounded-xl border border-rose-200 text-rose-500 hover:bg-rose-50 transition">删除项目</button>
+              </div>
             </div>
             <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div class="rounded-xl bg-slate-50 p-3"><p class="text-xs text-slate-400">任务</p><p class="mt-1 text-xl font-semibold" x-text="selectedProjectGroup().task_count"></p></div>
-              <div class="rounded-xl bg-teal-50 p-3"><p class="text-xs text-teal-600">运行中</p><p class="mt-1 text-xl font-semibold text-teal-700" x-text="selectedProjectGroup().active_task_count"></p></div>
-              <div class="rounded-xl bg-rose-50 p-3"><p class="text-xs text-rose-600">漏洞</p><p class="mt-1 text-xl font-semibold text-rose-700" x-text="selectedProjectGroup().vuln_count"></p></div>
-              <div class="rounded-xl bg-sky-50 p-3"><p class="text-xs text-sky-600">黑板</p><p class="mt-1 text-xl font-semibold text-sky-700" x-text="selectedProjectGroup().blackboard_count"></p></div>
+              <div class="rounded-xl bg-slate-50 p-3"><p class="text-xs text-slate-400">任务</p><p class="mt-1 text-xl font-semibold tabular-nums" x-text="selectedProjectGroup().task_count"></p></div>
+              <div class="rounded-xl bg-teal-50 p-3"><p class="text-xs text-teal-600">运行中</p><p class="mt-1 text-xl font-semibold text-teal-700 tabular-nums" x-text="selectedProjectGroup().active_task_count"></p></div>
+              <div class="rounded-xl bg-rose-50 p-3"><p class="text-xs text-rose-600">漏洞</p><p class="mt-1 text-xl font-semibold text-rose-700 tabular-nums" x-text="selectedProjectGroup().vuln_count"></p></div>
+              <div class="rounded-xl bg-sky-50 p-3"><p class="text-xs text-sky-600">黑板</p><p class="mt-1 text-xl font-semibold text-sky-700 tabular-nums" x-text="selectedProjectGroup().blackboard_count"></p></div>
             </div>
           </section>
 
@@ -1709,13 +1698,14 @@
               <template x-for="task in selectedProjectGroupTasks()" :key="`managed-task-${task.id}`">
                 <button type="button" @click="selectedProjectManagementTaskId = task.id; loadProjectDetailForManagement(task.id); crawlerStatus = null; loadCrawlerStatus()" class="text-left rounded-xl border p-3 transition"
                   :class="selectedProjectManagementTaskId === task.id ? 'border-brand-200 bg-brand-50/50' : 'border-slate-200 hover:bg-slate-50'">
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="font-mono text-[11px] text-slate-400" x-text="task.id"></span>
-                    <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="projectStatusBadgeClass(task.status)" x-text="projectStatusLabel(task.status)"></span>
+                  <div class="flex items-center gap-2 mb-1.5">
+                    <span class="font-mono text-[11px] text-slate-400 tabular-nums shrink-0" x-text="task.id"></span>
+                    <span class="flex-1"></span>
+                    <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold shrink-0" :class="projectStatusBadgeClass(task.status)" x-text="projectStatusLabel(task.status)"></span>
                   </div>
-                  <p class="mt-2 text-sm font-semibold text-slate-700 break-words" x-text="task.title"></p>
-                  <p class="mt-1 text-xs text-slate-400" x-text="`${task.fact_count} 事实 · ${task.intent_count} 意图`"></p>
-                  </button>
+                  <p class="text-sm font-semibold text-slate-700 leading-snug line-clamp-2" x-text="task.title"></p>
+                  <p class="mt-1 text-xs text-slate-400 tabular-nums" x-text="`${task.fact_count} 事实 · ${task.intent_count} 意图`"></p>
+                </button>
               </template>
             </div>
           </section>
@@ -3050,6 +3040,49 @@
   </div>
 </div>
 
+<!-- New Project Group Modal -->
+<div x-show="showGroupModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showGroupModal = false">
+  <div class="bg-white rounded-2xl shadow-2xl modal-enter w-full max-w-md mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
+    <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+      <h3 class="text-sm font-semibold text-slate-700">新建项目</h3>
+      <button @click="showGroupModal = false" class="text-slate-400 hover:text-slate-600 text-lg">&times;</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div>
+        <label class="text-xs font-semibold text-slate-500 mb-1 block">项目名称</label>
+        <input x-model="projectGroupForm.title" placeholder="例如：XX系统渗透测试" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-slate-500 mb-1 block">项目说明（可选）</label>
+        <textarea x-model="projectGroupForm.description" rows="3" placeholder="项目描述、目标范围、注意事项等" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+      </div>
+    </div>
+    <div class="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
+      <button @click="showGroupModal = false" class="px-4 py-2 text-sm rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50 transition">取消</button>
+      <button @click="createProjectGroup()" :disabled="!projectGroupForm.title" class="px-4 py-2 text-sm rounded-xl bg-brand-500 text-white font-medium hover:bg-brand-600 transition disabled:opacity-30">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Project Group Confirmation -->
+<div x-show="showDeleteGroupModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showDeleteGroupModal = false">
+  <div class="bg-white rounded-2xl shadow-2xl modal-enter w-full max-w-md p-6 border border-slate-200/60" @click.stop>
+    <div class="flex items-start gap-3">
+      <div class="w-10 h-10 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center shrink-0">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+      </div>
+      <div class="flex-1 min-w-0">
+        <h3 class="text-sm font-semibold text-slate-700">删除项目</h3>
+        <p class="mt-1 text-xs text-slate-400">即将删除项目「<span class="font-medium text-slate-600" x-text="deleteGroupConfirm.title"></span>」及其下所有任务、漏洞、黑板事项和爬虫数据。此操作不可撤销。</p>
+      </div>
+    </div>
+    <div class="mt-5 flex justify-end gap-2">
+      <button @click="showDeleteGroupModal = false" class="px-4 py-2 text-sm rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50 transition">取消</button>
+      <button @click="confirmDeleteProjectGroup()" class="px-4 py-2 text-sm rounded-xl bg-rose-500 text-white font-medium hover:bg-rose-600 transition">确认删除</button>
+    </div>
+  </div>
+</div>
+
 <!-- Delete Project -->
 <div x-show="showDeleteModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="closeDeleteModal()">
   <div class="bg-white rounded-2xl shadow-2xl modal-enter w-full max-w-md p-6 border border-slate-200/60" @click.stop>
@@ -3126,6 +3159,9 @@ function cairnApp() {
 
     showTaskComposer: false,
     showProjectGroupComposer: false,
+    showGroupModal: false,
+    showDeleteGroupModal: false,
+    deleteGroupConfirm: { id: '', title: '' },
     showIntentModal: false,
     showConcludeModal: false,
     showCompleteModal: false,
@@ -3603,13 +3639,41 @@ function cairnApp() {
           description: this.projectGroupForm.description || '',
         });
         this.projectGroupForm = { title: '', description: '' };
-        this.showProjectGroupComposer = false;
+        this.showGroupModal = false;
         await this.loadProjectGroups();
         this.selectManagedProject(group.id);
         this.newProject.parent_project_id = group.id;
         this.showToast('项目已创建');
       } catch (e) {
         this.showToast(e.message, 'error');
+      }
+    },
+
+    openGroupModal() {
+      this.projectGroupForm = { title: '', description: '' };
+      this.showGroupModal = true;
+    },
+
+    deleteProjectGroup(id, title) {
+      this.deleteGroupConfirm = { id, title };
+      this.showDeleteGroupModal = true;
+    },
+
+    async confirmDeleteProjectGroup() {
+      const id = this.deleteGroupConfirm.id;
+      if (!id) return;
+      try {
+        await this.api('DELETE', `/project-groups/${id}`);
+        this.showDeleteGroupModal = false;
+        this.deleteGroupConfirm = { id: '', title: '' };
+        if (this.selectedProjectManagementId === id) {
+          this.selectedProjectManagementId = '';
+        }
+        await this.loadProjectGroups();
+        await this.loadProjects();
+        this.showToast('项目已删除');
+      } catch (e) {
+        this.showToast('删除失败: ' + (e.message || e), 'error');
       }
     },
 
