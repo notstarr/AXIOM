@@ -40,4 +40,9 @@ def index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/legacy", include_in_schema=False)
+def legacy():
+    return FileResponse(STATIC_DIR / "index-legacy.html")
+
+
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
