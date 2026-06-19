@@ -6,7 +6,10 @@ from pathlib import Path
 import yaml
 
 from axiom.server import db
-from axiom.server.routers import crawler
+from axiom.server.routers.crawler import supervisor as crawler_supervisor
+from axiom.server.routers.crawler import constants as crawler_constants
+from axiom.server.routers.crawler import meta as crawler_meta
+from axiom.server.routers.crawler.router import get_crawler_status as _get_crawler_status
 
 
 def _configure_test_db(tmp_path, monkeypatch) -> None:
@@ -84,10 +87,10 @@ def test_flush_phase_rejects_stale_yaml_when_worker_never_reports_success(tmp_pa
     meta, prompt_path = _base_meta(tmp_path)
     output_dir = Path(meta["output_dir"])
     _write_minimal_schema(output_dir)
-    monkeypatch.setattr(crawler, "CRAWLER_TRAFFIC_FILE", tmp_path / "empty-proxy.jsonl", raising=False)
+    monkeypatch.setattr(crawler_constants, "CRAWLER_TRAFFIC_FILE", tmp_path / "empty-proxy.jsonl", raising=False)
 
-    monkeypatch.setattr(crawler, "_build_pi_argv", lambda **_kwargs: ["fake-pi"])
-    monkeypatch.setattr(crawler.subprocess, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(crawler_supervisor, "_build_pi_argv", lambda **_kwargs: ["fake-pi"])
+    monkeypatch.setattr(crawler_supervisor.subprocess, "run", lambda *args, **kwargs: None)
 
     class FakeProc:
         def __init__(self, _argv, stdout=None, **_kwargs) -> None:
@@ -100,9 +103,9 @@ def test_flush_phase_rejects_stale_yaml_when_worker_never_reports_success(tmp_pa
                 self.stdout.flush()
             return 0
 
-    monkeypatch.setattr(crawler.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(crawler_supervisor.subprocess, "Popen", FakeProc)
 
-    assert crawler._run_phase_once(
+    assert crawler_supervisor.run_phase_once(
         cfg={"pi_model": "test-model"},
         meta=meta,
         prompt_path=prompt_path,
@@ -120,10 +123,10 @@ def test_flush_phase_persists_schema_after_worker_reports_success(tmp_path, monk
     meta, prompt_path = _base_meta(tmp_path)
     output_dir = Path(meta["output_dir"])
     _write_minimal_schema(output_dir)
-    monkeypatch.setattr(crawler, "CRAWLER_TRAFFIC_FILE", tmp_path / "empty-proxy.jsonl", raising=False)
+    monkeypatch.setattr(crawler_constants, "CRAWLER_TRAFFIC_FILE", tmp_path / "empty-proxy.jsonl", raising=False)
 
-    monkeypatch.setattr(crawler, "_build_pi_argv", lambda **_kwargs: ["fake-pi"])
-    monkeypatch.setattr(crawler.subprocess, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(crawler_supervisor, "_build_pi_argv", lambda **_kwargs: ["fake-pi"])
+    monkeypatch.setattr(crawler_supervisor.subprocess, "run", lambda *args, **kwargs: None)
 
     class FakeProc:
         def __init__(self, _argv, stdout=None, **_kwargs) -> None:
@@ -136,9 +139,9 @@ def test_flush_phase_persists_schema_after_worker_reports_success(tmp_path, monk
                 self.stdout.flush()
             return 0
 
-    monkeypatch.setattr(crawler.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(crawler_supervisor.subprocess, "Popen", FakeProc)
 
-    crawler._run_phase_once(
+    crawler_supervisor.run_phase_once(
         cfg={"pi_model": "test-model"},
         meta=meta,
         prompt_path=prompt_path,
@@ -172,11 +175,11 @@ def test_crawler_status_does_not_treat_historical_success_as_current_done(tmp_pa
         "phase_accepted": False,
     }
 
-    monkeypatch.setattr(crawler, "_read_meta", lambda _project_id: meta)
-    monkeypatch.setattr(crawler, "_is_running", lambda _pid: False)
-    monkeypatch.setattr(crawler, "_write_meta", lambda _project_id, data: meta.update(data))
+    monkeypatch.setattr(crawler_meta, "read_meta", lambda _project_id: meta)
+    monkeypatch.setattr(crawler_meta, "is_running", lambda _pid: False)
+    monkeypatch.setattr(crawler_meta, "write_meta", lambda _project_id, data: meta.update(data))
 
-    status = crawler.get_crawler_status("pg_test")
+    status = _get_crawler_status("pg_test")
 
     assert status.status == "failed"
 
@@ -197,9 +200,9 @@ def test_flush_phase_can_fallback_to_recent_traffic_when_worker_never_summarizes
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(crawler, "_build_pi_argv", lambda **_kwargs: ["fake-pi"])
-    monkeypatch.setattr(crawler.subprocess, "run", lambda *args, **kwargs: None)
-    monkeypatch.setattr(crawler, "CRAWLER_TRAFFIC_FILE", traffic_path, raising=False)
+    monkeypatch.setattr(crawler_supervisor, "_build_pi_argv", lambda **_kwargs: ["fake-pi"])
+    monkeypatch.setattr(crawler_supervisor.subprocess, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(crawler_constants, "CRAWLER_TRAFFIC_FILE", traffic_path, raising=False)
 
     class FakeProc:
         def __init__(self, _argv, stdout=None, **_kwargs) -> None:
@@ -212,9 +215,9 @@ def test_flush_phase_can_fallback_to_recent_traffic_when_worker_never_summarizes
                 self.stdout.flush()
             return 0
 
-    monkeypatch.setattr(crawler.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(crawler_supervisor.subprocess, "Popen", FakeProc)
 
-    crawler._run_phase_once(
+    crawler_supervisor.run_phase_once(
         cfg={"pi_model": "test-model"},
         meta=meta,
         prompt_path=prompt_path,
@@ -249,9 +252,9 @@ def test_flush_phase_merges_traffic_with_dedup_on_success(tmp_path, monkeypatch)
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(crawler, "_build_pi_argv", lambda **_kwargs: ["fake-pi"])
-    monkeypatch.setattr(crawler.subprocess, "run", lambda *args, **kwargs: None)
-    monkeypatch.setattr(crawler, "CRAWLER_TRAFFIC_FILE", traffic_path, raising=False)
+    monkeypatch.setattr(crawler_supervisor, "_build_pi_argv", lambda **_kwargs: ["fake-pi"])
+    monkeypatch.setattr(crawler_supervisor.subprocess, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(crawler_constants, "CRAWLER_TRAFFIC_FILE", traffic_path, raising=False)
 
     class FakeProc:
         def __init__(self, _argv, stdout=None, **_kwargs) -> None:
@@ -264,9 +267,9 @@ def test_flush_phase_merges_traffic_with_dedup_on_success(tmp_path, monkeypatch)
                 self.stdout.flush()
             return 0
 
-    monkeypatch.setattr(crawler.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(crawler_supervisor.subprocess, "Popen", FakeProc)
 
-    crawler._run_phase_once(
+    crawler_supervisor.run_phase_once(
         cfg={"pi_model": "test-model"},
         meta=meta,
         prompt_path=prompt_path,
@@ -303,9 +306,9 @@ def test_crawl_phase_merges_traffic_with_dedup_on_success(tmp_path, monkeypatch)
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(crawler, "_build_pi_argv", lambda **_kwargs: ["fake-pi"])
-    monkeypatch.setattr(crawler.subprocess, "run", lambda *args, **kwargs: None)
-    monkeypatch.setattr(crawler, "CRAWLER_TRAFFIC_FILE", traffic_path, raising=False)
+    monkeypatch.setattr(crawler_supervisor, "_build_pi_argv", lambda **_kwargs: ["fake-pi"])
+    monkeypatch.setattr(crawler_supervisor.subprocess, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(crawler_constants, "CRAWLER_TRAFFIC_FILE", traffic_path, raising=False)
 
     class FakeProc:
         def __init__(self, _argv, stdout=None, **_kwargs) -> None:
@@ -318,9 +321,9 @@ def test_crawl_phase_merges_traffic_with_dedup_on_success(tmp_path, monkeypatch)
                 self.stdout.flush()
             return 0
 
-    monkeypatch.setattr(crawler.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(crawler_supervisor.subprocess, "Popen", FakeProc)
 
-    crawler._run_phase_once(
+    crawler_supervisor.run_phase_once(
         cfg={"pi_model": "test-model"},
         meta=meta,
         prompt_path=prompt_path,

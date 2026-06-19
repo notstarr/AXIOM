@@ -79,6 +79,6 @@ def dispatch(config_path: Path, once: bool, startup_healthcheck_only: bool, log_
 def crawler_supervisor(project_id: str, db_path: str):
     """Run the phased crawler supervisor loop."""
     db.configure(Path(db_path))
-    from axiom.server.routers.crawler import _run_crawler_supervisor
+    from axiom.server.routers.crawler import run_crawler_supervisor
 
-    _run_crawler_supervisor(project_id)
+    run_crawler_supervisor(project_id)
