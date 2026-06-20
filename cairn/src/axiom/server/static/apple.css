@@ -1353,7 +1353,7 @@ input::placeholder, textarea::placeholder {
 
 /* ── Cytoscape graph container ── */
 #cy {
-  background: var(--bg-secondary) !important;
+  background: #f8fafc !important;
 }
 
 /* ── scroll-to-bottom button ── */
@@ -1482,9 +1482,9 @@ select {
 
 /* ── Cytoscape graph: subtle grid background ── */
 #cy {
-  background-color: #0f172a !important;
+  background-color: #f8fafc !important;
   background-image:
-    radial-gradient(circle at 1px 1px, rgba(255,255,255,0.04) 1px, transparent 0) !important;
+    radial-gradient(circle at 1px 1px, rgba(0,0,0,0.05) 1px, transparent 0) !important;
   background-size: 24px 24px !important;
 }
 

@@ -933,17 +933,17 @@
     <!-- Graph -->
     <div class="flex-1 relative min-w-0">
       <div class="absolute top-3 left-3 z-10 flex items-center gap-1.5">
-        <button @click="fitGraph()" class="h-7 w-7 bg-slate-800/90 backdrop-blur rounded-lg shadow-sm border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 transition inline-flex items-center justify-center" title="适配图谱" aria-label="适配图谱">
+        <button @click="fitGraph()" class="h-7 w-7 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-slate-200/60 text-slate-500 hover:text-slate-700 hover:bg-white transition inline-flex items-center justify-center" title="适配图谱" aria-label="适配图谱">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
         </button>
         <select x-model="layoutMode" @change="applySelectedLayout()"
-          class="h-7 bg-slate-800/90 backdrop-blur rounded-lg shadow-sm border border-slate-700 px-2.5 text-xs text-slate-300 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition">
-          <option value="dagre_tb">Dagre ↓</option>
-          <option value="dagre_lr">Dagre →</option>
+          class="h-7 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-slate-200/60 px-2.5 text-xs text-slate-600 hover:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-300 transition">
           <option value="elk_tb">ELK ↓</option>
           <option value="elk_lr">ELK →</option>
+          <option value="dagre_tb">Dagre ↓</option>
+          <option value="dagre_lr">Dagre →</option>
         </select>
-        <input x-model="graphSearch" @input="searchGraphNodes()" placeholder="搜索节点…" class="h-7 w-36 bg-slate-800/90 backdrop-blur rounded-lg shadow-sm border border-slate-700 px-2.5 text-xs text-slate-300 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition">
+        <input x-model="graphSearch" @input="searchGraphNodes()" placeholder="搜索节点…" class="h-7 w-36 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-slate-200/60 px-2.5 text-xs text-slate-600 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-300 transition">
       </div>
 
       <template x-if="project.project.reason">
@@ -1012,7 +1012,7 @@
         </div>
       </div>
 
-      <div id="cy" class="relative z-0 flex-1 h-full" style="background:#0f172a;background-image:radial-gradient(circle at 1px 1px,rgba(255,255,255,0.04) 1px,transparent 0);background-size:24px 24px;"></div>
+      <div id="cy" class="relative z-0 flex-1 h-full"></div>
     </div>
 
     <div @pointerdown.prevent="startPanelResize($event)" class="w-2 shrink-0 cursor-col-resize group flex items-stretch justify-center touch-none relative z-20">
@@ -3234,7 +3234,7 @@ function cairnApp() {
     selectedNode: null,
     selectedFacts: [],
     selectedTimelineEntryId: null,
-    layoutMode: 'dagre_tb',
+    layoutMode: 'elk_tb',
     graphSearch: '',
     sidePanelWidth: 320,
     isResizingPanel: false,
@@ -3282,7 +3282,7 @@ function cairnApp() {
     crawlerModelsError: '',
     crawlerTesting: false,
     crawlerTestResult: null,
-    localPrefs: { actor_name: '人工', layout_mode: 'dagre_tb' },
+    localPrefs: { actor_name: '人工', layout_mode: 'elk_tb' },
     activeSettingsTab: 'workers',
     settingsForm: {
       intent_timeout: 5,
@@ -3577,7 +3577,7 @@ function cairnApp() {
           if (this.isValidLayoutMode(parsed.layout_mode)) {
             this.localPrefs.layout_mode = parsed.layout_mode;
           } else if (parsed.layout_dir === 'TB' || parsed.layout_dir === 'LR') {
-            this.localPrefs.layout_mode = parsed.layout_dir === 'LR' ? 'dagre_lr' : 'dagre_tb';
+            this.localPrefs.layout_mode = parsed.layout_dir === 'LR' ? 'elk_lr' : 'elk_tb';
           }
         }
         const rawPanelWidth = localStorage.getItem('axiom.sidePanelWidth');
@@ -3589,7 +3589,7 @@ function cairnApp() {
         console.error(e);
       }
       if (!this.localPrefs.actor_name.trim()) this.localPrefs.actor_name = '人工';
-      if (!this.isValidLayoutMode(this.localPrefs.layout_mode)) this.localPrefs.layout_mode = 'dagre_tb';
+      if (!this.isValidLayoutMode(this.localPrefs.layout_mode)) this.localPrefs.layout_mode = 'elk_tb';
       this.layoutMode = this.localPrefs.layout_mode;
     },
 
@@ -5882,8 +5882,10 @@ description: 一句话描述 skill 的用途和触发场景
         container,
         elements: [...nodes, ...edges],
         style: this.graphStyles(),
-        layout: this.layoutOpts(),
-        minZoom: 0.15, maxZoom: 3.5,
+        layout: this.layoutOpts(false),
+        minZoom: 0.35, maxZoom: 3.5,
+        wheelSensitivity: 0.3,
+        pixelRatio: 1,
       });
       this.cy = rawCy;
       const self = this;
@@ -5892,63 +5894,66 @@ description: 一句话描述 skill 的用途和触发场景
       rawCy.on('tap', e => { if (e.target === rawCy) self.clearSelection(); });
       this.pulseActive();
       this.setupAutoFit();
+      // Ensure readable zoom after initial fit
+      setTimeout(() => {
+        if (this.cy && this.cy.zoom() < 0.5) this.cy.zoom(0.5);
+      }, 100);
     },
 
     graphStyles() {
       const font = '-apple-system,BlinkMacSystemFont,Inter,sans-serif';
       return [
-        // ── Fact nodes: card style on dark background ──
+        // ── Fact nodes: white card with colored left bar ──
         { selector: 'node[nodeType="origin"]', style: {
-          shape:'round-rectangle', 'background-color':'#0d9488', 'background-opacity':0.9,
-          label:'data(label)', color:'#f0fdfa', 'font-size':'11px', 'font-weight':'700',
+          shape:'round-rectangle', 'background-color':'#f0fdfa', 'background-opacity':1,
+          label:'data(label)', color:'#0d9488', 'font-size':'11px', 'font-weight':'700',
           'text-wrap':'wrap', 'text-max-width':'100px', 'text-overflow-wrap':'anywhere',
           width:'data(width)', height:'data(height)',
-          'border-width':2, 'border-color':'#14b8a6',
-          'text-valign':'center', 'text-halign':'center', 'font-family':font,
-          'text-margin-y':0, padding:'8px',
+          'border-width':1.5, 'border-color':'#99f6e4',
+          'text-valign':'center', 'text-halign':'center', 'font-family':font, padding:'8px',
         }},
         { selector: 'node[nodeType="goal"]', style: {
-          shape:'round-rectangle', 'background-color':'#be123c', 'background-opacity':0.9,
-          label:'data(label)', color:'#fff1f2', 'font-size':'11px', 'font-weight':'700',
+          shape:'round-rectangle', 'background-color':'#fef2f2', 'background-opacity':1,
+          label:'data(label)', color:'#be123c', 'font-size':'11px', 'font-weight':'700',
           'text-wrap':'wrap', 'text-max-width':'100px', 'text-overflow-wrap':'anywhere',
           width:'data(width)', height:'data(height)',
-          'border-width':2, 'border-color':'#f43f5e',
+          'border-width':1.5, 'border-color':'#fecaca',
           'text-valign':'center', 'text-halign':'center', 'font-family':font, padding:'8px',
         }},
         { selector: 'node[nodeType="fact"]', style: {
-          shape:'round-rectangle', 'background-color':'#1e293b', 'background-opacity':0.95,
-          label:'data(label)', color:'#e2e8f0', 'font-size':'10px', 'font-weight':'600',
+          shape:'round-rectangle', 'background-color':'#ffffff', 'background-opacity':1,
+          label:'data(label)', color:'#334155', 'font-size':'10px', 'font-weight':'600',
           'text-wrap':'wrap', 'text-max-width':'120px', 'text-overflow-wrap':'anywhere',
           width:'data(width)', height:'data(height)',
-          'border-width':1.5, 'border-color':'#475569',
+          'border-width':1.5, 'border-color':'#e2e8f0',
           'text-valign':'center', 'text-halign':'center', 'font-family':font, padding:'8px',
         }},
         { selector: 'node[nodeType="depth_origin"]', style: {
-          shape:'round-rectangle', 'background-color':'#0d9488', 'background-opacity':0.9,
-          label:'data(label)', color:'#f0fdfa', 'font-size':'11px', 'font-weight':'700',
+          shape:'round-rectangle', 'background-color':'#f0fdfa', 'background-opacity':1,
+          label:'data(label)', color:'#0d9488', 'font-size':'11px', 'font-weight':'700',
           'text-wrap':'wrap', 'text-max-width':'100px', 'text-overflow-wrap':'anywhere',
           width:'data(width)', height:'data(height)',
-          'border-width':2, 'border-color':'#14b8a6',
+          'border-width':1.5, 'border-color':'#99f6e4',
           'text-valign':'center', 'text-halign':'center', 'font-family':font, padding:'8px',
         }},
         { selector: 'node[nodeType="depth_plan"]', style: {
-          shape:'round-rectangle', 'background-color':'#312e81', 'background-opacity':0.9,
-          label:'data(label)', color:'#e0e7ff', 'font-size':'10px', 'font-weight':'600',
+          shape:'round-rectangle', 'background-color':'#eef2ff', 'background-opacity':1,
+          label:'data(label)', color:'#4338ca', 'font-size':'10px', 'font-weight':'600',
           'text-wrap':'wrap', 'text-max-width':'120px', 'text-overflow-wrap':'anywhere',
           width:'data(width)', height:'data(height)',
-          'border-width':1.5, 'border-color':'#6366f1',
+          'border-width':1.5, 'border-color':'#c7d2fe',
           'text-valign':'center', 'text-halign':'center', 'font-family':font, padding:'8px',
         }},
         { selector: 'node[nodeType="depth_fact"]', style: {
-          shape:'round-rectangle', 'background-color':'#1e293b', 'background-opacity':0.95,
-          label:'data(label)', color:'#fde68a', 'font-size':'10px', 'font-weight':'600',
+          shape:'round-rectangle', 'background-color':'#ffffff', 'background-opacity':1,
+          label:'data(label)', color:'#92400e', 'font-size':'10px', 'font-weight':'600',
           'text-wrap':'wrap', 'text-max-width':'120px', 'text-overflow-wrap':'anywhere',
           width:'data(width)', height:'data(height)',
-          'border-width':1.5, 'border-color':'#a16207',
+          'border-width':1.5, 'border-color':'#fde68a',
           'text-valign':'center', 'text-halign':'center', 'font-family':font, padding:'8px',
         }},
 
-        // ── Intent nodes: pill/diamond style ──
+        // ── Intent nodes ──
         { selector: 'node[nodeType="in_progress"]', style: {
           shape:'ellipse', 'background-color':'#f59e0b', 'background-opacity':0.85,
           label:'?', color:'#fff', 'font-size':'11px', 'font-weight':'bold',
@@ -5956,22 +5961,22 @@ description: 一句话描述 skill 的用途和触发场景
           'text-valign':'center', 'text-halign':'center', 'font-family':font,
         }},
         { selector: 'node[nodeType="unclaimed"]', style: {
-          shape:'ellipse', 'background-color':'#334155', 'background-opacity':0.6,
+          shape:'ellipse', 'background-color':'#f1f5f9', 'background-opacity':0.8,
           label:'?', color:'#94a3b8', 'font-size':'11px', 'font-weight':'bold',
-          width:22, height:22, 'border-width':1.5, 'border-color':'#64748b', 'border-style':'dashed',
+          width:22, height:22, 'border-width':1.5, 'border-color':'#cbd5e1', 'border-style':'dashed',
           'text-valign':'center', 'text-halign':'center', 'font-family':font,
         }},
         { selector: 'node[nodeType="bootstrap_pending"]', style: {
-          shape:'round-rectangle', 'background-color':'#1c1917', 'background-opacity':0.9,
-          label:'data(label)', color:'#fdba74', 'font-size':'10px', 'font-weight':'600',
+          shape:'round-rectangle', 'background-color':'#fff7ed', 'background-opacity':1,
+          label:'data(label)', color:'#c2410c', 'font-size':'10px', 'font-weight':'600',
           width:'data(width)', height:'data(height)',
           'border-width':1.5, 'border-color':'#fdba74', 'border-style':'dashed',
           'text-wrap':'wrap', 'text-max-width':'70px',
           'text-valign':'center', 'text-halign':'center', 'font-family':font, padding:'6px',
         }},
         { selector: 'node[nodeType="bootstrap_running"]', style: {
-          shape:'round-rectangle', 'background-color':'#c2410c', 'background-opacity':0.9,
-          label:'data(label)', color:'#fff7ed', 'font-size':'10px', 'font-weight':'bold',
+          shape:'round-rectangle', 'background-color':'#ffedd5', 'background-opacity':1,
+          label:'data(label)', color:'#9a3412', 'font-size':'10px', 'font-weight':'bold',
           width:'data(width)', height:'data(height)',
           'border-width':2, 'border-color':'#fb923c',
           'text-wrap':'wrap', 'text-max-width':'70px',
@@ -5985,50 +5990,50 @@ description: 一句话描述 skill 的用途和触发场景
           label:'data(label)', 'font-size':'7px', color:'#64748b',
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':'#0f172a', 'text-background-opacity':0.8,
+          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.9,
         }},
         { selector: 'edge[status="in_progress"]', style: {
-          width:2, 'line-color':'#fbbf24', 'line-style':'dashed', 'line-dash-pattern':[8,4],
-          'target-arrow-color':'#fbbf24', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:'#fbbf24',
+          width:2, 'line-color':'#f59e0b', 'line-style':'dashed', 'line-dash-pattern':[8,4],
+          'target-arrow-color':'#f59e0b', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          label:'data(label)', 'font-size':'7px', color:'#b45309',
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':'#0f172a', 'text-background-opacity':0.85,
+          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.9,
         }},
         { selector: 'edge[status="unclaimed"]', style: {
-          width:1.5, 'line-color':'#475569', 'line-style':'dashed', 'line-dash-pattern':[5,5],
-          'target-arrow-color':'#475569', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:'#64748b',
+          width:1.5, 'line-color':'#cbd5e1', 'line-style':'dashed', 'line-dash-pattern':[5,5],
+          'target-arrow-color':'#cbd5e1', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          label:'data(label)', 'font-size':'7px', color:'#94a3b8',
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':'#0f172a', 'text-background-opacity':0.8,
+          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.7,
         }},
         { selector: 'edge[status="bootstrap_pending"]', style: {
           width:2, 'line-color':'#fdba74', 'line-style':'dashed', 'line-dash-pattern':[8,4],
           'target-arrow-color':'#fdba74', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:'#fdba74',
+          label:'data(label)', 'font-size':'7px', color:'#c2410c',
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'88px', 'text-wrap':'ellipsis',
-          'text-background-color':'#0f172a', 'text-background-opacity':0.85,
+          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.85,
         }},
         { selector: 'edge[status="bootstrap_running"]', style: {
           width:2.5, 'line-color':'#fb923c', 'line-style':'dashed', 'line-dash-pattern':[10,4],
           'target-arrow-color':'#fb923c', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:'#fb923c',
+          label:'data(label)', 'font-size':'7px', color:'#c2410c',
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'88px', 'text-wrap':'ellipsis',
-          'text-background-color':'#0f172a', 'text-background-opacity':0.85,
+          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.95,
         }},
         { selector: 'edge[edgeType="bootstrap_scope"]', style: {
           label:'', width:1.8, 'curve-style':'bezier',
           'line-style':'dotted', 'line-dash-pattern':[2,5],
           'target-arrow-shape':'triangle-backcurve', 'arrow-scale':0.75,
-          'target-distance-from-node':2, 'line-color':'#475569',
+          'target-distance-from-node':2, 'line-color':'#cbd5e1',
         }},
 
         // ── Interaction states ──
@@ -6046,6 +6051,10 @@ description: 一句话描述 skill 的用途和触发场景
         }},
         { selector: '.faded', style: { opacity:0.25 }},
         { selector: '.fresh', style: { opacity:0 }},
+        // ── Pulse animation via CSS class (no JS animate) ──
+        { selector: 'node.node-pulse', style: {
+          'border-color':'#f59e0b', 'border-width':3,
+        }},
       ];
     },
 
@@ -6187,35 +6196,30 @@ description: 一句话描述 skill 的用途和触发场景
           ex.data(e.data);
         }
       }
-      if (changed) this.cy.layout(this.layoutOpts()).run();
+      if (changed) {
+        this.cy.layout(this.layoutOpts()).run();
+        setTimeout(() => {
+          if (this.cy && this.cy.zoom() < 0.5) this.cy.zoom(0.5);
+        }, 450);
+      }
       this.pulseActive();
       this.refreshGraphDecorations();
     },
 
     pulseActive() {
       if (!this.cy) return;
+      // Use CSS class instead of JS animate for better performance
       this.cy.nodes('[nodeType="in_progress"], [nodeType="bootstrap_running"]').forEach(node => {
-        if (node.scratch('_pulseActive')) return;
-        node.scratch('_pulseActive', true);
-        const isBootstrap = node.data('nodeType') === 'bootstrap_running';
-        const minOpacity = isBootstrap ? 0.55 : 0.35;
-        const maxOpacity = isBootstrap ? 0.98 : 0.8;
-        const pulseOut = () => {
-          if (!node.inside()) {
-            node.removeScratch('_pulseActive');
-            return;
-          }
-          node.animate({ style:{'background-opacity':minOpacity} }, { duration:900, complete: pulseIn });
-        };
-        const pulseIn = () => {
-          if (!node.inside()) {
-            node.removeScratch('_pulseActive');
-            return;
-          }
-          node.animate({ style:{'background-opacity':maxOpacity} }, { duration:900, complete: pulseOut });
-        };
-        pulseOut();
+        if (!node.hasClass('node-pulse')) node.addClass('node-pulse');
       });
+      // Remove pulse class from nodes that are no longer active
+      this.cy.nodes('.node-pulse').forEach(node => {
+        const nt = node.data('nodeType');
+        if (nt !== 'in_progress' && nt !== 'bootstrap_running') {
+          node.removeClass('node-pulse');
+        }
+      });
+      // Edge dash flow — keep lightweight, only on active edges
       this.cy.edges('[status="in_progress"], [status="bootstrap_running"]').forEach(edge => {
         if (edge.scratch('_flowActive')) return;
         edge.scratch('_flowActive', true);
@@ -6242,7 +6246,12 @@ description: 一句话描述 skill 的用途和触发场景
       });
     },
 
-    fitGraph() { if (this.cy) this.cy.fit(undefined, 50); },
+    fitGraph() {
+      if (this.cy) {
+        this.cy.fit(undefined, 50);
+        if (this.cy.zoom() < 0.5) this.cy.zoom(0.5);
+      }
+    },
 
     searchGraphNodes() {
       if (!this.cy) return;
@@ -6373,8 +6382,9 @@ description: 一句话描述 skill 的用途和触发场景
             }
             this.cy.resize();
             this.cy.fit(undefined, 50);
+            if (this.cy.zoom() < 0.5) this.cy.zoom(0.5);
           }
-        }, 200);
+        }, 500);
       });
       this._resizeObserver.observe(container);
     },
@@ -6386,7 +6396,7 @@ description: 一句话描述 skill 的用途和触发场景
       }
     },
     applySelectedLayout() {
-      this.layoutMode = this.isValidLayoutMode(this.layoutMode) ? this.layoutMode : 'dagre_tb';
+      this.layoutMode = this.isValidLayoutMode(this.layoutMode) ? this.layoutMode : 'elk_tb';
       this.localPrefs.layout_mode = this.layoutMode;
       this.saveLocalPrefs();
       if (this.cy) this.cy.layout(this.layoutOpts()).run();
@@ -7383,7 +7393,7 @@ description: 一句话描述 skill 的用途和触发场景
     saveLocalSettings() {
       try {
         this.localPrefs.actor_name = this.actorName();
-        this.localPrefs.layout_mode = this.isValidLayoutMode(this.localPrefs.layout_mode) ? this.localPrefs.layout_mode : 'dagre_tb';
+        this.localPrefs.layout_mode = this.isValidLayoutMode(this.localPrefs.layout_mode) ? this.localPrefs.layout_mode : 'elk_tb';
         this.layoutMode = this.localPrefs.layout_mode;
         this.saveLocalPrefs();
         if (this.cy) this.cy.layout(this.layoutOpts()).run();
