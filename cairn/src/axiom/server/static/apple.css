@@ -310,14 +310,14 @@ html, body {
 .nav-item::after {
   content: attr(data-tooltip);
   position: absolute;
-  left: calc(100% + 10px);
+  left: calc(100% + 8px);
   top: 50%;
   transform: translateY(-50%);
   background: var(--bg-primary);
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 500;
-  padding: 5px 9px;
+  padding: 5px 10px;
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-md);
   border: 1px solid var(--border);
@@ -326,6 +326,16 @@ html, body {
   opacity: 0;
   transition: opacity var(--transition-fast);
   z-index: 200;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+}
+
+/* 底部工具提示防止被右侧裁切：显示在图标左侧 */
+.sidebar-bottom .nav-item::after {
+  left: auto;
+  right: calc(100% + 8px);
 }
 
 .nav-item:hover::after {
@@ -1681,8 +1691,25 @@ tbody tr:last-child td {
 }
 
 /* ── Page headers: unified ── */
+
+/* line-clamp utility (Tailwind-compatible) */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-align: left;
+}
+
+/* Ensure truncation works on inline elements inside flex containers */
+aside button .font-mono.truncate,
+aside .font-mono.truncate {
+  display: block;
+  max-width: 100%;
+}
+
 header[class*="bg-white\/80"] {
-  padding: 12px 20px !important;
+  padding: 14px 20px !important;
   border-bottom: 1px solid var(--border) !important;
   background: var(--bg-glass) !important;
   backdrop-filter: blur(20px) saturate(180%);
@@ -1692,6 +1719,7 @@ header h2 {
   font-size: 15px !important;
   font-weight: 600 !important;
   color: var(--text-primary) !important;
+  line-height: 1.3;
   margin: 0;
 }
 header p {

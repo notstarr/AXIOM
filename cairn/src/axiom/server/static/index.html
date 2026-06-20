@@ -771,7 +771,7 @@
     </template>
 
     <div class="grid grid-cols-[320px_minmax(0,1fr)] gap-4 flex-1 min-h-0">
-      <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3 overflow-y-auto space-y-2">
+      <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3 overflow-y-auto overflow-x-hidden space-y-2">
         <template x-for="p in projects" :key="p.id">
           <button type="button" @click="selectedTaskManagementId = p.id" class="w-full text-left rounded-xl border p-3 transition"
             :class="selectedTaskManagementId === p.id ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 hover:bg-slate-50'">
@@ -1565,9 +1565,9 @@
             <span class="text-[10px] text-slate-400" x-text="filteredVulnerabilities().filter(v => v.status === 'pending').length"></span>
           </div>
           <template x-for="v in filteredVulnerabilities().filter(v => v.status === 'pending')" :key="v.id + v.project_id">
-            <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer">
+            <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer min-w-0 overflow-hidden">
               <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
-              <p class="text-[10px] text-slate-400 mt-1 font-mono" x-text="v.project_id"></p>
+              <p class="text-[10px] text-slate-400 mt-1 font-mono truncate" x-text="v.project_id"></p>
             </div>
           </template>
         </div>
@@ -1578,9 +1578,9 @@
             <span class="text-[10px] text-slate-400" x-text="filteredVulnerabilities().filter(v => v.status === 'confirmed').length"></span>
           </div>
           <template x-for="v in filteredVulnerabilities().filter(v => v.status === 'confirmed')" :key="v.id + v.project_id">
-            <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer">
+            <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer min-w-0 overflow-hidden">
               <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
-              <p class="text-[10px] text-slate-400 mt-1 font-mono" x-text="v.project_id"></p>
+              <p class="text-[10px] text-slate-400 mt-1 font-mono truncate" x-text="v.project_id"></p>
             </div>
           </template>
         </div>
@@ -1591,9 +1591,9 @@
             <span class="text-[10px] text-slate-400" x-text="filteredVulnerabilities().filter(v => v.status === 'fixing').length"></span>
           </div>
           <template x-for="v in filteredVulnerabilities().filter(v => v.status === 'fixing')" :key="v.id + v.project_id">
-            <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer">
+            <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer min-w-0 overflow-hidden">
               <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
-              <p class="text-[10px] text-slate-400 mt-1 font-mono" x-text="v.project_id"></p>
+              <p class="text-[10px] text-slate-400 mt-1 font-mono truncate" x-text="v.project_id"></p>
             </div>
           </template>
         </div>
@@ -1604,9 +1604,9 @@
             <span class="text-[10px] text-slate-400" x-text="filteredVulnerabilities().filter(v => v.status === 'fixed').length"></span>
           </div>
           <template x-for="v in filteredVulnerabilities().filter(v => v.status === 'fixed')" :key="v.id + v.project_id">
-            <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer">
+            <div @click="editVuln(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer min-w-0 overflow-hidden">
               <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
-              <p class="text-[10px] text-slate-400 mt-1 font-mono" x-text="v.project_id"></p>
+              <p class="text-[10px] text-slate-400 mt-1 font-mono truncate" x-text="v.project_id"></p>
             </div>
           </template>
         </div>
@@ -1615,19 +1615,15 @@
     <!-- List view -->
     <template x-if="!showVulnBoard">
       <div class="grid grid-cols-[340px_minmax(0,1fr)] gap-4 flex-1 min-h-0 h-full">
-        <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3 overflow-y-auto space-y-2">
+        <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3 overflow-y-auto overflow-x-hidden space-y-2">
           <template x-if="filteredVulnerabilities().length === 0">
             <div class="px-4 py-10 text-sm text-center text-slate-400">暂无漏洞记录</div>
           </template>
           <template x-for="v in filteredVulnerabilities()" :key="`${v.project_id}-${v.id}`">
-          <button type="button" @click="selectedVulnerabilityKey = vulnerabilityKey(v)" class="w-full text-left rounded-xl border p-3 transition"
+          <button type="button" @click="selectedVulnerabilityKey = vulnerabilityKey(v)" class="w-full flex flex-col items-start text-left rounded-xl border p-3 transition overflow-hidden"
             :class="selectedVulnerabilityKey === vulnerabilityKey(v) ? 'border-rose-200 bg-rose-50/60' : 'border-slate-200 hover:bg-slate-50'">
-            <div class="flex items-center gap-2">
-              <span class="font-mono text-[11px] text-slate-400" x-text="v.id"></span>
-              <span class="px-1.5 py-0.5 rounded-md text-[9px] font-semibold" :class="vulnStatusClass(v.status)" x-text="vulnStatusLabel(v.status)"></span>
-            </div>
-            <p class="mt-2 text-sm font-semibold text-slate-700 break-words line-clamp-2" x-text="v.title"></p>
-            <p class="mt-1 text-xs text-slate-400 truncate" x-text="`${v.project_group_title || '未归属项目'} / ${v.task_title || v.project_id}`"></p>
+            <span class="px-1.5 py-0.5 rounded-md text-[9px] font-semibold whitespace-nowrap" :class="vulnStatusClass(v.status)" x-text="vulnStatusLabel(v.status)"></span>
+            <p class="mt-1.5 text-sm font-semibold text-slate-700 line-clamp-2" x-text="v.title"></p>
           </button>
           </template>
         </aside>
@@ -1727,19 +1723,15 @@
     <button @click="loadProjectGroups(); loadProjects(); loadAllProjectDetails(true)" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 transition">刷新</button>
   </header>
   <main class="flex-1 overflow-hidden grid grid-cols-[280px_minmax(0,1fr)]">
-    <aside class="border-r border-slate-200 bg-white overflow-y-auto p-3 space-y-2">
+    <aside class="border-r border-slate-200 bg-white overflow-y-auto overflow-x-hidden p-3 space-y-2">
       <template x-if="projectGroups.length === 0">
         <p class="text-sm text-slate-400 text-center py-10">暂无项目</p>
       </template>
       <template x-for="p in projectGroups" :key="p.id">
-        <button type="button" @click="selectManagedProject(p.id)" class="w-full text-left rounded-xl border p-3 transition"
+        <button type="button" @click="selectManagedProject(p.id)" class="w-full flex flex-col items-start text-left rounded-xl border p-3 transition overflow-hidden"
           :class="selectedProjectManagementId === p.id ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'">
-          <div class="flex items-center justify-between gap-2">
-            <span class="font-mono text-[11px] text-slate-400" x-text="p.id"></span>
-            <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="p.status === 'active' ? 'bg-teal-50 text-teal-600' : 'bg-slate-100 text-slate-500'" x-text="p.status === 'active' ? '启用' : '已归档'"></span>
-          </div>
-          <p class="mt-2 text-sm font-semibold text-slate-700 break-words" x-text="p.title"></p>
-          <p class="mt-1 text-xs text-slate-400" x-text="`${p.task_count} 任务 · ${p.vuln_count} 漏洞`"></p>
+          <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold whitespace-nowrap" :class="p.status === 'active' ? 'bg-teal-50 text-teal-600' : 'bg-slate-100 text-slate-500'" x-text="p.status === 'active' ? '启用' : '已归档'"></span>
+          <p class="mt-1.5 text-sm font-semibold text-slate-700 line-clamp-2" x-text="p.title"></p>
         </button>
       </template>
     </aside>
