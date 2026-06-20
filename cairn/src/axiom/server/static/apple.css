@@ -1560,8 +1560,8 @@ h1, h2, h3, h4 {
 }
 
 /* ── Buttons: unified ── */
-button[class*="rounded-lg"],
-button[class*="rounded-xl"] {
+button[class*="rounded-lg"]:not([class*="w-full"][class*="text-left"]),
+button[class*="rounded-xl"]:not([class*="w-full"][class*="text-left"]) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1571,12 +1571,12 @@ button[class*="rounded-xl"] {
   transition: all var(--transition-fast) !important;
   border: 1px solid transparent;
 }
-button[class*="rounded-lg"]:not([class*="bg-brand"]):not([class*="bg-rose"]):not([class*="bg-emerald"]):not([class*="bg-amber"]):not([class*="bg-blue"]):not([class*="bg-sky"]) {
+button[class*="rounded-lg"]:not([class*="w-full"][class*="text-left"]):not([class*="bg-brand"]):not([class*="bg-rose"]):not([class*="bg-emerald"]):not([class*="bg-amber"]):not([class*="bg-blue"]):not([class*="bg-sky"]) {
   border-color: var(--border) !important;
   color: var(--text-secondary) !important;
   background: var(--bg-primary) !important;
 }
-button[class*="rounded-lg"]:not([class*="bg-brand"]):not([class*="bg-rose"]):not([class*="bg-emerald"]):not([class*="bg-amber"]):not([class*="bg-blue"]):not([class*="bg-sky"]):hover {
+button[class*="rounded-lg"]:not([class*="w-full"][class*="text-left"]):not([class*="bg-brand"]):not([class*="bg-rose"]):not([class*="bg-emerald"]):not([class*="bg-amber"]):not([class*="bg-blue"]):not([class*="bg-sky"]):hover {
   background: var(--bg-secondary) !important;
   border-color: var(--border-strong) !important;
 }
