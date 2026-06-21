@@ -4,7 +4,7 @@ from datetime import datetime
 import yaml
 
 from axiom.server.db import get_conn
-from axiom.server.services import expire_reason_leases, expire_workers, get_project_or_404
+from axiom.server.services import expire_reason_leases, expire_workers, get_project_or_404, build_vulns
 
 router = APIRouter(tags=["export"])
 
@@ -151,14 +151,123 @@ def _export_timeline(conn, project_id: str) -> str:
     return "\n\n".join(e[2] for e in events) + "\n"
 
 
+_SEVERITY_EMOJI = {
+    "critical": "🔴",
+    "high": "🟠",
+    "medium": "🟡",
+    "low": "🔵",
+    "info": "⚪",
+}
+
+_STATUS_LABEL = {
+    "pending": "待确认",
+    "confirmed": "已确认",
+    "fixing": "修复中",
+    "fixed": "已修复",
+    "false_positive": "误报",
+}
+
+
+def _export_vulns_md(conn, project_id: str) -> str:
+    proj = get_project_or_404(conn, project_id)
+    vulns = build_vulns(conn, project_id)
+
+    lines: list[str] = []
+    lines.append(f"# 漏洞报告 — {proj['title']}")
+    lines.append("")
+    lines.append(f"- **项目 ID**: `{project_id}`")
+    lines.append(f"- **漏洞数量**: {len(vulns)}")
+    lines.append(f"- **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    if not vulns:
+        lines.append("*暂无漏洞记录*")
+        return "\n".join(lines)
+
+    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+    sorted_vulns = sorted(vulns, key=lambda v: severity_order.get(v.severity, 99))
+
+    summary_lines = ["## 概览", ""]
+    summary_lines.append("| # | ID | 严重程度 | 状态 | 标题 |")
+    summary_lines.append("|---|-----|---------|------|------|")
+    for i, v in enumerate(sorted_vulns, 1):
+        emoji = _SEVERITY_EMOJI.get(v.severity, "")
+        status_label = _STATUS_LABEL.get(v.status, v.status)
+        summary_lines.append(f"| {i} | {v.id} | {emoji} {v.severity} | {status_label} | {v.title} |")
+    summary_lines.append("")
+    summary_lines.append("---")
+    summary_lines.append("")
+    lines.extend(summary_lines)
+
+    for i, v in enumerate(sorted_vulns, 1):
+        emoji = _SEVERITY_EMOJI.get(v.severity, "")
+        status_label = _STATUS_LABEL.get(v.status, v.status)
+        lines.append(f"## {i}. {v.title}")
+        lines.append("")
+        lines.append(f"- **漏洞 ID**: `{v.id}`")
+        lines.append(f"- **类型**: {v.type or '未分类'}")
+        lines.append(f"- **严重程度**: {emoji} {v.severity}")
+        lines.append(f"- **状态**: {status_label}")
+        lines.append(f"- **影响范围**: {v.affected_scope or '—'}")
+        lines.append(f"- **上报来源**: {v.source}")
+        lines.append(f"- **上报者**: {v.reported_by}")
+        lines.append(f"- **发现时间**: {format_export_timestamp(v.created_at) or '—'}")
+        lines.append("")
+
+        lines.append("### 描述")
+        lines.append("")
+        lines.append(v.description or "—")
+        lines.append("")
+
+        if v.prerequisites:
+            lines.append("### 利用前提")
+            lines.append("")
+            lines.append(v.prerequisites)
+            lines.append("")
+
+        lines.append("### 影响")
+        lines.append("")
+        lines.append(v.impact or "—")
+        lines.append("")
+
+        if v.evidence:
+            lines.append("### 证据")
+            lines.append("")
+            for ev in v.evidence:
+                lines.append(f"```\n{ev}\n```")
+                lines.append("")
+
+        if v.reproduction_steps:
+            lines.append("### 复现步骤")
+            lines.append("")
+            for idx, step in enumerate(v.reproduction_steps, 1):
+                lines.append(f"{idx}. {step}")
+            lines.append("")
+
+        if v.recommendation:
+            lines.append("### 修复建议")
+            lines.append("")
+            lines.append(v.recommendation)
+            lines.append("")
+
+        lines.append("---")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 @router.get("/projects/{project_id}/export")
 def export_project(project_id: str, format: str = "yaml"):
-    if format not in ("yaml", "timeline"):
-        raise HTTPException(400, "Supported formats: yaml, timeline")
+    if format not in ("yaml", "timeline", "vulns_md"):
+        raise HTTPException(400, "Supported formats: yaml, timeline, vulns_md")
 
     with get_conn() as conn:
         if format == "timeline":
             text = _export_timeline(conn, project_id)
+        elif format == "vulns_md":
+            text = _export_vulns_md(conn, project_id)
         else:
             text = _export_yaml(conn, project_id)
 
