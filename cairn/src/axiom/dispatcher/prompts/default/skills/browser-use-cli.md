@@ -138,5 +138,5 @@ browser-use --cdp-url http://localhost:9223 extract "页面主要内容"
 - **每次操作前先运行 `browser-use state`**，获取元素编号，不要凭猜测点击
 - 浏览器会话在命令间**持续保持**，不需要每次重新 `open`
 - `extract` 使用 LLM 解析，适合提取复杂结构化数据；`eval` 直接执行 JS，适合精确操作
-- 如需使用已登录的 TargetSystem 账号，加 `--cdp-url http://localhost:9223` 连接 Chrome-SecTest
+- 如需使用已登录的目标系统账号，加 `--cdp-url http://localhost:9223` 连接 Chrome-SecTest
 - 截图会保存在**当前工作目录**，建议指定绝对路径

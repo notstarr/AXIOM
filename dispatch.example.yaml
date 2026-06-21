@@ -41,15 +41,15 @@ tasks:
     conclude_timeout: 90
 
 workers:
-  # xrayAI keeps only PI workers.
-  - name: "pi_worker-c"
+  # PI worker example — adjust model/provider/key for your setup.
+  - name: "pi_worker_1"
     type: "pi"
     task_types: [bootstrap, reason, explore]
     max_running: 2
     priority: 0
     env:
-      PI_MODEL: "worker-c"
-      PI_BASE_URL: "https://api.example.com/compatible-mode/v1"
+      PI_MODEL: "your-model-name"
+      PI_BASE_URL: "https://api.your-provider.com/v1"
       PI_API_KEY: "sk-xxx"
       PI_PROVIDER_API: "openai-completions"
-      PI_MODEL_CONTEXT_WINDOW: "262144"
+      PI_MODEL_CONTEXT_WINDOW: "128000"

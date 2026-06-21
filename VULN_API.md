@@ -18,7 +18,7 @@
   "affected_scope": "/api/search 接口",
   "status": "confirmed",
   "source": "reason",
-  "reported_by": "worker-a",
+  "reported_by": "worker_1",
   "created_at": "2026-06-10T10:00:00Z"
 }
 ```
@@ -69,7 +69,7 @@ POST /projects/{project_id}/vulns
   "affected_scope": "...",
   "status": "confirmed",
   "source": "reason",
-  "reported_by": "worker-a"
+  "reported_by": "worker_1"
 }
 ```
 

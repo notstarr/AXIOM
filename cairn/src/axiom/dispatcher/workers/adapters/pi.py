@@ -223,7 +223,7 @@ class PiDriver(WorkerDriver):
         if message_text:
             return message_text
 
-        # Some reasoning-focused models (e.g. worker-d) put all their output in
+        # Some reasoning-focused models put all their output in
         # reasoning_content and leave the text content block empty.  Fall back
         # to reasoning_content when the text content is blank.
         reasoning_text = self._extract_reasoning_from_message(assistant_message)

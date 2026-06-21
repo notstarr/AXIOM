@@ -37,16 +37,16 @@ with sync_playwright() as p:
     browser.close()
 ```
 
-### 复用已登录 Chrome（TargetSystem 场景）
+### 复用已登录 Chrome（已认证场景）
 
 ```python
 from playwright.sync_api import sync_playwright
 
 with sync_playwright() as p:
-    # 连接 Chrome-SecTest（port 9223，已登录 TargetSystem）
+    # 连接 Chrome-SecTest（port 9223，已登录目标系统）
     browser = p.chromium.connect_over_cdp("http://localhost:9223")
     page = browser.contexts[0].new_page()
-    page.goto("https://app.staging.cn-beijing.volce.target.work")
+    page.goto("https://target.example.com")
     page.screenshot(path="evidence.png", full_page=True)
     # 不要 browser.close()
 ```

@@ -81,7 +81,7 @@ For each API you discover, record as much detail as possible:
 
 To get response details, after an action triggers an API, run:
 ```
-python3 repo-root/tools/mitm/proxy_get_traffic.py --filter /api/ --type api --full --last 5
+python3 tools/mitm/proxy_get_traffic.py --filter /api/ --type api --full --last 5
 ```
 
 # Important Constraints
@@ -97,8 +97,8 @@ python3 repo-root/tools/mitm/proxy_get_traffic.py --filter /api/ --type api --fu
 - Set `"exhausted": true` only when truly done with a page
 
 # Environment
-- CDP helper (stateless, no daemon, no sessions): `python3 repo-root/tools/crawler/cdp_ctl.py`
-  - Use the project venv python explicitly: `python3 repo-root/tools/crawler/cdp_ctl.py`
+- CDP helper (stateless, no daemon, no sessions): `python3 tools/crawler/cdp_ctl.py`
+  - Use the project venv python explicitly: `python3 tools/crawler/cdp_ctl.py`
   - Always pass `--tab-id {intent_id}` so every command hits your dedicated tab.
   - Commands:
     - `state`                 — URL, title, readyState, and indexed interactive elements
@@ -112,12 +112,12 @@ python3 repo-root/tools/mitm/proxy_get_traffic.py --filter /api/ --type api --fu
     - `fill <idx> "<value>"`  — fill an input at state-index with a value (React-compatible)
     - `open "<url>"`          — navigate the tab, wait for load
     - `screenshot "<path>"`   — save PNG
-  - Example: `python3 repo-root/tools/crawler/cdp_ctl.py --tab-id {intent_id} state`
-- Traffic query: `python3 repo-root/tools/mitm/proxy_get_traffic.py`
+  - Example: `python3 tools/crawler/cdp_ctl.py --tab-id {intent_id} state`
+- Traffic query: `python3 tools/mitm/proxy_get_traffic.py`
   - Use `--filter /api/ --type api --full --last 5` to see full request/response details for recent API calls
 - Logical crawler views are maintained by the backend
 - Output directory for screenshots/artifacts: `{ai_dir}`
-- Schema reference: `repo-root/docs/crawler-output-schema.md`
+- Schema reference: `docs/crawler-output-schema.md`
 
 ## How to drive the browser
 1. Run `state` to see the current page and its interactive elements.

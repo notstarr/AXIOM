@@ -38,7 +38,7 @@
 
 **Chrome-SecTest 带代理启动方式：**
 ```bash
-MITM_PROXY=1 bash repo-root/tools/xss-verify/launch.sh
+MITM_PROXY=1 bash tools/xss-verify/launch.sh
 ```
 
 ---
@@ -56,8 +56,8 @@ mitmproxy addon，后台录流量到 JSONL 文件。
 ```bash
 source ~/browser-use-env/bin/activate
 PROXY_FLOW_FILE=/tmp/proxy_flows.jsonl \
-MITM_TARGET_HOST=target.work \
-mitmdump -s repo-root/tools/mitm/mitm_addon.py \
+MITM_TARGET_HOST=target.example.com \
+mitmdump -s tools/mitm/mitm_addon.py \
   --listen-port 18080 -q &
 ```
 
@@ -107,7 +107,7 @@ python3 .../proxy_get_traffic.py --status
 
 ```json
 // 请求体
-{ "target_url": "https://app.staging.cn-beijing.volce.target.work" }
+{ "target_url": "https://target.example.com" }
 
 // 响应
 {

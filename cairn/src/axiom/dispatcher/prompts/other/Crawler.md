@@ -13,7 +13,7 @@ Your job is to behave like walking a maze:
 - Use the YAML files as external memory so progress survives timeouts and restarts
 
 The output schema is defined in:
-- `repo-root/docs/crawler-output-schema.md`
+- `docs/crawler-output-schema.md`
 
 You MUST follow that schema when writing output files.
 
@@ -35,18 +35,18 @@ Normal completion:
 # Environment
 - Browser automation: `browser-use --cdp-url http://localhost:9223 --session {intent_id} <command>`
   (**Must use `--cdp-url http://localhost:9223`** to connect Chrome-SecTest which already has login session. Never use plain `browser-use` without `--cdp-url` or the page won't be authenticated.)
-- Traffic query: `python3 repo-root/tools/mitm/proxy_get_traffic.py`
+- Traffic query: `python3 tools/mitm/proxy_get_traffic.py`
 - Output directory: `{ai_dir}`
 - Activate venv before any command: `source ~/browser-use-env/bin/activate`
 
 Verify Chrome-SecTest is running (required — it has the login session):
 ```bash
-curl -s http://localhost:9223/json/list | python3 -c "import json,sys; tabs=json.load(sys.stdin); print(f'✅ Chrome-SecTest: {len(tabs)} tab(s)')" 2>/dev/null || echo "❌ Chrome-SecTest NOT running — start it first with: MITM_PROXY=1 bash repo-root/tools/xss-verify/launch.sh"
+curl -s http://localhost:9223/json/list | python3 -c "import json,sys; tabs=json.load(sys.stdin); print(f'✅ Chrome-SecTest: {len(tabs)} tab(s)')" 2>/dev/null || echo "❌ Chrome-SecTest NOT running — start it first with: MITM_PROXY=1 bash tools/xss-verify/launch.sh"
 ```
 
 If Chrome-SecTest is not running, start it:
 ```bash
-MITM_PROXY=1 bash repo-root/tools/xss-verify/launch.sh
+MITM_PROXY=1 bash tools/xss-verify/launch.sh
 sleep 3
 ```
 
@@ -93,7 +93,7 @@ mappings: []
 
 Clear any stale traffic log:
 ```bash
-python3 repo-root/tools/mitm/proxy_get_traffic.py --clear
+python3 tools/mitm/proxy_get_traffic.py --clear
 ```
 
 Open the entry page and take a screenshot:
@@ -175,7 +175,7 @@ browser-use --session {intent_id} state
 
 1. **Clear traffic log** (must do this before every single action):
    ```bash
-   python3 repo-root/tools/mitm/proxy_get_traffic.py --clear
+   python3 tools/mitm/proxy_get_traffic.py --clear
    ```
 
 2. **Choose exactly one unexplored action for the current page** and act on it:
@@ -193,7 +193,7 @@ browser-use --session {intent_id} state
 
 4. **Capture traffic triggered by this action:**
     ```bash
-    python3 repo-root/tools/mitm/proxy_get_traffic.py \
+    python3 tools/mitm/proxy_get_traffic.py \
       --type api --summary --last 50
     ```
 
@@ -295,7 +295,7 @@ browser-use --cdp-url http://localhost:9223 --session {intent_id} close
 
 # Output File Formats
 
-Follow `repo-root/docs/crawler-output-schema.md`.
+Follow `docs/crawler-output-schema.md`.
 
 ## site_map.yaml
 ```yaml

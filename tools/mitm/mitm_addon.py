@@ -6,7 +6,7 @@ mitm_addon.py — mitmproxy addon，记录 HTTP 流量到 JSONL 文件
 
 环境变量：
     PROXY_FLOW_FILE   输出文件路径（默认 /tmp/proxy_flows.jsonl）
-    MITM_TARGET_HOST  只记录包含此字符串的域名（如 target.work）
+    MITM_TARGET_HOST  只记录包含此字符串的域名（如 target.example.com）
                       为空时记录所有非静态资源请求
 
 写入格式（每行一个 JSON）：

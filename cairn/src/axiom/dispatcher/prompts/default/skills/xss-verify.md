@@ -6,8 +6,8 @@ description: 验证存储型/反射型 XSS 是否真实在受害者浏览器中�
 ## 工具路径
 
 ```
-repo-root/tools/xss-verify/detect.py    ← 主工具
-repo-root/tools/xss-verify/launch.sh    ← 启动浏览器
+tools/xss-verify/detect.py    ← 主工具
+tools/xss-verify/launch.sh    ← 启动浏览器
 ```
 
 依赖：`python3 + websocket-client`（已安装）
@@ -19,14 +19,14 @@ repo-root/tools/xss-verify/launch.sh    ← 启动浏览器
 ### Step 1：确保浏览器已运行
 
 ```bash
-bash repo-root/tools/xss-verify/launch.sh
+bash tools/xss-verify/launch.sh
 ```
 
 ### Step 2：运行检测工具
 
 ```bash
-python3 repo-root/tools/xss-verify/detect.py \
-  "https://app.staging.cn-beijing.volce.target.work/victim-page" \
+python3 tools/xss-verify/detect.py \
+  "https://target.example.com/victim-page" \
   --timeout 8 \
   --cdp-port 9223
 ```

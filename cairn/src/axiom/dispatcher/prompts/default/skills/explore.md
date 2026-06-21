@@ -19,7 +19,7 @@ source ~/browser-use-env/bin/activate
 ```
 
 工具路径：
-- 流量查询：`python3 repo-root/tools/mitm/proxy_get_traffic.py`
+- 流量查询：`python3 tools/mitm/proxy_get_traffic.py`
 - 浏览器：`browser-use --session {intent_id}`（用当前 intent_id 作为 session 名）
 
 检查 mitmproxy 是否运行：
@@ -167,7 +167,7 @@ source ~/browser-use-env/bin/activate
 ```
 
 工具路径：
-- 流量查询：`python3 repo-root/tools/mitm/proxy_get_traffic.py`
+- 流量查询：`python3 tools/mitm/proxy_get_traffic.py`
 - 浏览器：`browser-use --session {intent_id}`
 
 **mitmproxy 应已由系统在你启动前自动拉起。** 若不确定，检查：
@@ -300,7 +300,7 @@ browser-use --session {intent_id} close
 - **在范围内**：目标主域名 + 其附属子域名（如 `api.target.com`、`auth.target.com`）
 - **跳过**：跳转到完全不相关的外部域名时，记录该链接但不跟进
 
-判断是否同域：检查域名后缀是否包含目标主域，如目标是 `target.work`，则 `saas.target.work` 在范围内，`github.com` 不在。
+判断是否同域：检查域名后缀是否包含目标主域，如目标是 `example.com`，则 `app.example.com` 在范围内，`github.com` 不在。
 
 ---
 
