@@ -168,6 +168,63 @@ _STATUS_LABEL = {
 }
 
 
+def _format_vuln_md(v, project_title: str = "") -> list[str]:
+    emoji = _SEVERITY_EMOJI.get(v.severity, "")
+    status_label = _STATUS_LABEL.get(v.status, v.status)
+    lines: list[str] = []
+    lines.append(f"# {v.title}")
+    lines.append("")
+    lines.append(f"- **漏洞 ID**: `{v.id}`")
+    if project_title:
+        lines.append(f"- **所属项目**: {project_title}")
+    lines.append(f"- **类型**: {v.type or '未分类'}")
+    lines.append(f"- **严重程度**: {emoji} {v.severity}")
+    lines.append(f"- **状态**: {status_label}")
+    lines.append(f"- **影响范围**: {v.affected_scope or '—'}")
+    lines.append(f"- **上报来源**: {v.source}")
+    lines.append(f"- **上报者**: {v.reported_by}")
+    lines.append(f"- **发现时间**: {format_export_timestamp(v.created_at) or '—'}")
+    lines.append("")
+
+    lines.append("## 描述")
+    lines.append("")
+    lines.append(v.description or "—")
+    lines.append("")
+
+    if v.prerequisites:
+        lines.append("## 利用前提")
+        lines.append("")
+        lines.append(v.prerequisites)
+        lines.append("")
+
+    lines.append("## 影响")
+    lines.append("")
+    lines.append(v.impact or "—")
+    lines.append("")
+
+    if v.evidence:
+        lines.append("## 证据")
+        lines.append("")
+        for ev in v.evidence:
+            lines.append(f"```\n{ev}\n```")
+            lines.append("")
+
+    if v.reproduction_steps:
+        lines.append("## 复现步骤")
+        lines.append("")
+        for idx, step in enumerate(v.reproduction_steps, 1):
+            lines.append(f"{idx}. {step}")
+        lines.append("")
+
+    if v.recommendation:
+        lines.append("## 修复建议")
+        lines.append("")
+        lines.append(v.recommendation)
+        lines.append("")
+
+    return lines
+
+
 def _export_vulns_md(conn, project_id: str) -> str:
     proj = get_project_or_404(conn, project_id)
     vulns = build_vulns(conn, project_id)
@@ -202,60 +259,22 @@ def _export_vulns_md(conn, project_id: str) -> str:
     lines.extend(summary_lines)
 
     for i, v in enumerate(sorted_vulns, 1):
-        emoji = _SEVERITY_EMOJI.get(v.severity, "")
-        status_label = _STATUS_LABEL.get(v.status, v.status)
         lines.append(f"## {i}. {v.title}")
         lines.append("")
-        lines.append(f"- **漏洞 ID**: `{v.id}`")
-        lines.append(f"- **类型**: {v.type or '未分类'}")
-        lines.append(f"- **严重程度**: {emoji} {v.severity}")
-        lines.append(f"- **状态**: {status_label}")
-        lines.append(f"- **影响范围**: {v.affected_scope or '—'}")
-        lines.append(f"- **上报来源**: {v.source}")
-        lines.append(f"- **上报者**: {v.reported_by}")
-        lines.append(f"- **发现时间**: {format_export_timestamp(v.created_at) or '—'}")
-        lines.append("")
-
-        lines.append("### 描述")
-        lines.append("")
-        lines.append(v.description or "—")
-        lines.append("")
-
-        if v.prerequisites:
-            lines.append("### 利用前提")
-            lines.append("")
-            lines.append(v.prerequisites)
-            lines.append("")
-
-        lines.append("### 影响")
-        lines.append("")
-        lines.append(v.impact or "—")
-        lines.append("")
-
-        if v.evidence:
-            lines.append("### 证据")
-            lines.append("")
-            for ev in v.evidence:
-                lines.append(f"```\n{ev}\n```")
-                lines.append("")
-
-        if v.reproduction_steps:
-            lines.append("### 复现步骤")
-            lines.append("")
-            for idx, step in enumerate(v.reproduction_steps, 1):
-                lines.append(f"{idx}. {step}")
-            lines.append("")
-
-        if v.recommendation:
-            lines.append("### 修复建议")
-            lines.append("")
-            lines.append(v.recommendation)
-            lines.append("")
-
+        lines.extend(_format_vuln_md(v, project_title=proj["title"]))
         lines.append("---")
         lines.append("")
 
     return "\n".join(lines)
+
+
+def _export_single_vuln_md(conn, project_id: str, vuln_id: str) -> str:
+    proj = get_project_or_404(conn, project_id)
+    vulns = build_vulns(conn, project_id)
+    vuln = next((v for v in vulns if v.id == vuln_id), None)
+    if not vuln:
+        raise HTTPException(404, f"Vulnerability {vuln_id} not found in project {project_id}")
+    return "\n".join(_format_vuln_md(vuln, project_title=proj["title"]))
 
 
 @router.get("/projects/{project_id}/export")
@@ -272,3 +291,10 @@ def export_project(project_id: str, format: str = "yaml"):
             text = _export_yaml(conn, project_id)
 
         return Response(content=text, media_type="text/plain")
+
+
+@router.get("/projects/{project_id}/vulns/{vuln_id}/export")
+def export_single_vuln(project_id: str, vuln_id: str):
+    with get_conn() as conn:
+        text = _export_single_vuln_md(conn, project_id, vuln_id)
+        return Response(content=text, media_type="text/markdown")
