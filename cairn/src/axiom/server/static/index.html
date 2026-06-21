@@ -2132,8 +2132,8 @@
             :class="crawlerResultsPageTab === 'apis' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">API</button>
           <button @click="crawlerResultsPageTab = 'mappings'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
             :class="crawlerResultsPageTab === 'mappings' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">映射</button>
-          <button @click="crawlerResultsPageTab = 'tree'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
-            :class="crawlerResultsPageTab === 'tree' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">业务树</button>
+          <button @click="crawlerResultsPageTab = 'tree'; $nextTick(() => initCrawlerGraph())" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
+            :class="crawlerResultsPageTab === 'tree' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">业务图</button>
         </div>
         <!-- Pages -->
         <template x-if="crawlerResultsPageTab === 'pages'">
@@ -2233,92 +2233,21 @@
             </template>
           </div>
         </template>
-        <!-- Business Tree -->
+        <!-- Business Graph (Cytoscape + ELK) -->
         <template x-if="crawlerResultsPageTab === 'tree'">
-          <div class="card p-5">
-            <p class="text-xs text-slate-500 mb-4">以页面为节点的业务逻辑树，展开可查看每个页面的加载 API 和用户操作触发的 API。</p>
-            <div class="space-y-1">
-              <template x-for="(node, i) in crawlerBusinessTree()" :key="node.pageId || i">
-                <div class="border border-slate-200 rounded-lg overflow-hidden">
-                  <!-- Page node header -->
-                  <div class="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-slate-50 transition"
-                    @click="toggleTreeNode(node.pageId)">
-                    <svg class="w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform" :class="isTreeNodeExpanded(node.pageId) ? 'rotate-90' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
-                    <span class="w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-mono font-bold shrink-0"
-                      :class="pageTypeColor(node.pageType)" x-text="(i+1)"></span>
-                    <div class="flex-1 min-w-0">
-                      <div class="flex items-center gap-2">
-                        <span class="text-sm font-medium text-slate-700 truncate" x-text="node.pageName"></span>
-                        <span x-show="node.pageType" class="badge bg-slate-100 text-slate-500" x-text="node.pageType"></span>
-                        <span x-show="node.exhausted" class="badge bg-emerald-50 text-emerald-600">已穷尽</span>
-                      </div>
-                      <a :href="node.pageUrl" target="_blank" class="text-[10px] text-blue-400 hover:underline truncate block" x-text="node.pageUrl"></a>
-                    </div>
-                    <span class="text-[10px] text-slate-400 shrink-0 tabular-nums" x-text="node.apiCount + ' API'"></span>
-                  </div>
-                  <!-- Expanded content -->
-                  <template x-if="isTreeNodeExpanded(node.pageId)">
-                    <div class="border-t border-slate-100 bg-slate-50/50 p-3 space-y-2">
-                      <!-- On-load APIs -->
-                      <template x-if="node.onLoadApis && node.onLoadApis.length">
-                        <div>
-                          <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2v20M2 12h20"/></svg>
-                            页面加载
-                          </p>
-                          <div class="space-y-1 ml-5">
-                            <template x-for="(api, j) in node.onLoadApis" :key="j">
-                              <div class="flex items-center gap-2 text-[11px]">
-                                    <span class="badge font-mono shrink-0" :class="methodClass(api.method)" x-text="api.method || 'GET'"></span>
-                                    <span class="font-mono text-slate-600 break-all" x-text="api.path"></span>
-                                    <span x-show="api.note" class="text-slate-400 truncate" x-text="api.note"></span>
-                              </div>
-                            </template>
-                          </div>
-                        </div>
-                      </template>
-                      <!-- User actions -->
-                      <template x-if="node.actions && node.actions.length">
-                        <div>
-                          <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-                            用户操作
-                          </p>
-                          <div class="space-y-2 ml-5">
-                            <template x-for="(action, j) in node.actions" :key="action.action_id || j">
-                              <div class="rounded-lg border border-slate-200 bg-white p-2">
-                                <div class="flex items-center gap-2 mb-1">
-                                  <span class="badge bg-indigo-50 text-indigo-500 shrink-0" x-text="action.trigger_type || 'action'"></span>
-                                  <span class="text-xs text-slate-600" x-text="action.action_name || action.trigger_label || ''"></span>
-                                  <template x-if="action.result && action.result.status">
-                                    <span class="badge shrink-0"
-                                      :class="{'bg-emerald-50 text-emerald-600': action.result.status === 'success', 'bg-rose-50 text-rose-500': action.result.status === 'denied' || action.result.status === 'failure', 'bg-slate-100 text-slate-500': action.result.status === 'noop'}"
-                                      x-text="action.result.status"></span>
-                                  </template>
-                                </div>
-                                <template x-if="action.apis && action.apis.length">
-                                  <div class="ml-4 space-y-0.5">
-                                    <template x-for="(api, k) in action.apis" :key="k">
-                                      <div class="flex items-center gap-2 text-[11px]">
-                                        <span class="text-slate-300">↳</span>
-                                        <span class="badge font-mono shrink-0" :class="methodClass(api.method)" x-text="api.method || 'GET'"></span>
-                                        <span class="font-mono text-slate-600 break-all" x-text="api.path"></span>
-                                      </div>
-                                    </template>
-                                  </div>
-                                </template>
-                              </div>
-                            </template>
-                          </div>
-                        </div>
-                      </template>
-                      <div x-show="(!node.onLoadApis || !node.onLoadApis.length) && (!node.actions || !node.actions.length)" class="text-xs text-slate-400 ml-5">无 API 记录</div>
-                    </div>
-                  </template>
-                </div>
-              </template>
-              <div x-show="crawlerBusinessTree().length === 0" class="text-center py-8 text-slate-400 text-sm">暂无数据</div>
+          <div class="relative">
+            <div class="absolute top-2 left-2 z-10 flex items-center gap-1.5">
+              <button @click="fitCrawlerGraph()" class="h-7 w-7 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-slate-200/60 text-slate-500 hover:text-slate-700 hover:bg-white transition inline-flex items-center justify-center" title="适配图谱">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+              </button>
+              <select x-model="crawlerGraphLayout" @change="applyCrawlerLayout()"
+                class="h-7 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-slate-200/60 px-2.5 text-xs text-slate-600 hover:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-300 transition">
+                <option value="elk_tb">ELK ↓</option>
+                <option value="elk_lr">ELK →</option>
+              </select>
             </div>
+            <div id="crawlerCy" class="w-full rounded-xl border border-slate-200 bg-slate-50/40" style="height: 600px"></div>
+            <div x-show="!crawlerResultsPageData || !(crawlerResultsPageData.pages || []).length" class="absolute inset-0 flex items-center justify-center text-sm text-slate-400">暂无数据</div>
           </div>
         </template>
       </div>
@@ -3262,6 +3191,8 @@ function cairnApp() {
     crawlerResultsPageTab: 'pages',
     crawlerResultsPageData: null,
     treeExpanded: {},
+    crawlerCy: null,
+    crawlerGraphLayout: 'elk_tb',
     projectGroups: [],
     projects: [],
     project: null,
@@ -4501,6 +4432,232 @@ description: 一句话描述 skill 的用途和触发场景
           apiCount,
         };
       });
+    },
+
+    buildCrawlerGraphElements() {
+      const tree = this.crawlerBusinessTree();
+      const nodes = [];
+      const edges = [];
+      const pageTypeColors = {
+        list: { bg: '#eff6ff', border: '#bfdbfe', text: '#1d4ed8' },
+        detail: { bg: '#f5f3ff', border: '#ddd6fe', text: '#6d28d9' },
+        article: { bg: '#f5f3ff', border: '#ddd6fe', text: '#6d28d9' },
+        form: { bg: '#fffbeb', border: '#fde68a', text: '#b45309' },
+        search: { bg: '#f0f9ff', border: '#bae6fd', text: '#0369a1' },
+        auth: { bg: '#fff1f2', border: '#fecdd3', text: '#be123c' },
+        landing: { bg: '#ecfdf5', border: '#a7f3d0', text: '#047857' },
+      };
+      const defaultColor = { bg: '#f8fafc', border: '#e2e8f0', text: '#475569' };
+
+      for (const node of tree) {
+        const color = pageTypeColors[node.pageType] || defaultColor;
+        const label = node.pageName || node.pageId;
+        const shortLabel = label.length > 20 ? label.slice(0, 20) + '…' : label;
+        nodes.push({ data: {
+          id: `page_${node.pageId}`,
+          label: shortLabel,
+          fullLabel: label,
+          nodeType: 'page',
+          pageType: node.pageType || 'unknown',
+          url: node.pageUrl,
+          exhausted: node.exhausted,
+          width: Math.max(80, shortLabel.length * 9 + 24),
+          height: 36,
+          bgColor: color.bg,
+          borderColor: color.border,
+          textColor: color.text,
+        }});
+
+        for (const api of node.onLoadApis) {
+          const apiId = `api_${node.pageId}_onload_${api.method}_${api.path}`.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 80);
+          const method = (api.method || 'GET').toUpperCase();
+          const apiLabel = `${method} ${api.path}`;
+          const shortApiLabel = apiLabel.length > 30 ? method + ' ' + api.path.slice(0, 25) + '…' : apiLabel;
+          nodes.push({ data: {
+            id: apiId,
+            label: shortApiLabel,
+            fullLabel: apiLabel,
+            nodeType: 'api',
+            method,
+            path: api.path,
+            note: api.note || '',
+            width: Math.max(70, shortApiLabel.length * 6.5 + 16),
+            height: 24,
+          }});
+          edges.push({ data: { source: `page_${node.pageId}`, target: apiId, edgeType: 'loads' }});
+        }
+
+        for (const action of node.actions) {
+          const actionId = `action_${node.pageId}_${action.action_id || action.action_name || Math.random().toString(36).slice(2,6)}`;
+          const actionLabel = action.action_name || action.trigger_type || 'action';
+          const shortActionLabel = actionLabel.length > 18 ? actionLabel.slice(0, 18) + '…' : actionLabel;
+          const status = action.result?.status || '';
+          nodes.push({ data: {
+            id: actionId,
+            label: shortActionLabel,
+            fullLabel: actionLabel,
+            nodeType: 'action',
+            triggerType: action.trigger_type || '',
+            status,
+            width: Math.max(70, shortActionLabel.length * 7 + 20),
+            height: 28,
+          }});
+          edges.push({ data: { source: `page_${node.pageId}`, target: actionId, edgeType: 'triggers' }});
+
+          for (const api of action.apis) {
+            const subApiId = `${actionId}_${api.method}_${api.path}`.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 80);
+            const method = (api.method || 'GET').toUpperCase();
+            const apiLabel = `${method} ${api.path}`;
+            const shortApiLabel = apiLabel.length > 30 ? method + ' ' + api.path.slice(0, 25) + '…' : apiLabel;
+            nodes.push({ data: {
+              id: subApiId,
+              label: shortApiLabel,
+              fullLabel: apiLabel,
+              nodeType: 'api',
+              method,
+              path: api.path,
+              note: '',
+              width: Math.max(70, shortApiLabel.length * 6.5 + 16),
+              height: 24,
+            }});
+            edges.push({ data: { source: actionId, target: subApiId, edgeType: 'calls' }});
+          }
+        }
+      }
+      return { nodes, edges };
+    },
+
+    crawlerGraphStyles() {
+      const font = '-apple-system,BlinkMacSystemFont,Inter,sans-serif';
+      return [
+        { selector: 'node[nodeType="page"]', style: {
+          shape: 'round-rectangle', 'background-color': 'data(bgColor)', 'background-opacity': 1,
+          label: 'data(label)', color: 'data(textColor)', 'font-size': '11px', 'font-weight': '700',
+          'text-wrap': 'wrap', 'text-max-width': '120px', 'text-overflow-wrap': 'anywhere',
+          width: 'data(width)', height: 'data(height)',
+          'border-width': 1.5, 'border-color': 'data(borderColor)',
+          'text-valign': 'center', 'text-halign': 'center', 'font-family': font, padding: '6px',
+        }},
+        { selector: 'node[nodeType="action"]', style: {
+          shape: 'round-rectangle', 'background-color': '#eef2ff', 'background-opacity': 1,
+          label: 'data(label)', color: '#4338ca', 'font-size': '10px', 'font-weight': '600',
+          'text-wrap': 'wrap', 'text-max-width': '100px', 'text-overflow-wrap': 'anywhere',
+          width: 'data(width)', height: 'data(height)',
+          'border-width': 1.5, 'border-color': '#c7d2fe',
+          'text-valign': 'center', 'text-halign': 'center', 'font-family': font, padding: '5px',
+        }},
+        { selector: 'node[nodeType="action"][status="success"]', style: {
+          'border-color': '#86efac', 'background-color': '#f0fdf4',
+        }},
+        { selector: 'node[nodeType="action"][status="denied"], node[nodeType="action"][status="failure"]', style: {
+          'border-color': '#fda4af', 'background-color': '#fff1f3',
+        }},
+        { selector: 'node[nodeType="api"]', style: {
+          shape: 'round-rectangle', 'background-color': '#ffffff', 'background-opacity': 1,
+          label: 'data(label)', color: '#334155', 'font-size': '9px', 'font-weight': '500',
+          'text-wrap': 'wrap', 'text-max-width': '140px', 'text-overflow-wrap': 'anywhere',
+          width: 'data(width)', height: 'data(height)',
+          'border-width': 1, 'border-color': '#e2e8f0',
+          'text-valign': 'center', 'text-halign': 'center', 'font-family': font, padding: '4px',
+        }},
+        { selector: 'node[nodeType="api"][method="GET"]', style: { 'border-color': '#86efac', color: '#15803d' }},
+        { selector: 'node[nodeType="api"][method="POST"]', style: { 'border-color': '#fcd34d', color: '#b45309' }},
+        { selector: 'node[nodeType="api"][method="PUT"], node[nodeType="api"][method="PATCH"]', style: { 'border-color': '#7dd3fc', color: '#0369a1' }},
+        { selector: 'node[nodeType="api"][method="DELETE"]', style: { 'border-color': '#fda4af', color: '#be123c' }},
+        { selector: 'edge[edgeType="loads"]', style: {
+          width: 1.5, 'line-color': '#94a3b8', 'target-arrow-color': '#94a3b8',
+          'target-arrow-shape': 'triangle', 'curve-style': 'bezier', label: '加载', 'font-size': '7px', color: '#94a3b8',
+          'text-rotation': 'autorotate', 'text-margin-y': -8, 'text-background-color': '#ffffff', 'text-background-opacity': 0.9, 'text-background-padding': '1px',
+        }},
+        { selector: 'edge[edgeType="triggers"]', style: {
+          width: 1.5, 'line-color': '#a5b4fc', 'target-arrow-color': '#a5b4fc',
+          'target-arrow-shape': 'triangle', 'curve-style': 'bezier', label: '触发', 'font-size': '7px', color: '#6366f1',
+          'text-rotation': 'autorotate', 'text-margin-y': -8, 'text-background-color': '#ffffff', 'text-background-opacity': 0.9, 'text-background-padding': '1px',
+        }},
+        { selector: 'edge[edgeType="calls"]', style: {
+          width: 1, 'line-color': '#cbd5e1', 'line-style': 'dashed', 'line-dash-pattern': [4, 3],
+          'target-arrow-color': '#cbd5e1', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier',
+        }},
+        { selector: '.faded', style: { opacity: 0.2 }},
+      ];
+    },
+
+    crawlerGraphLayoutOpts() {
+      const direction = this.crawlerGraphLayout === 'elk_lr' ? 'RIGHT' : 'DOWN';
+      return {
+        name: 'elk',
+        fit: true,
+        padding: 40,
+        animate: true,
+        animationDuration: 300,
+        animationEasing: 'ease-in-out-cubic',
+        elk: {
+          algorithm: 'layered',
+          'elk.direction': direction,
+          'elk.aspectRatio': '1.5',
+          'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
+          'elk.spacing.nodeNode': '40',
+          'elk.layered.spacing.nodeNodeBetweenLayers': '60',
+          'elk.spacing.edgeNode': '20',
+          'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+          'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED',
+        },
+      };
+    },
+
+    initCrawlerGraph() {
+      const container = document.getElementById('crawlerCy');
+      if (!container) return;
+      const { nodes, edges } = this.buildCrawlerGraphElements();
+      if (nodes.length === 0) return;
+
+      if (this.crawlerCy) {
+        this.crawlerCy.destroy();
+        this.crawlerCy = null;
+      }
+
+      this.crawlerCy = cytoscape({
+        container,
+        elements: [...nodes, ...edges],
+        style: this.crawlerGraphStyles(),
+        layout: this.crawlerGraphLayoutOpts(),
+        minZoom: 0.3, maxZoom: 3,
+        wheelSensitivity: 0.3,
+        pixelRatio: 1,
+      });
+
+      const self = this;
+      this.crawlerCy.on('tap', 'node', (e) => {
+        const node = e.target;
+        const nt = node.data('nodeType');
+        if (nt === 'page') {
+          self.crawlerCy.elements().removeClass('faded');
+          const sub = node.outgoers().add(node);
+          self.crawlerCy.elements().not(sub).addClass('faded');
+          sub.removeClass('faded');
+        }
+      });
+      this.crawlerCy.on('tap', (e) => {
+        if (e.target === self.crawlerCy) {
+          self.crawlerCy.elements().removeClass('faded');
+        }
+      });
+
+      setTimeout(() => {
+        if (this.crawlerCy && this.crawlerCy.zoom() < 0.4) this.crawlerCy.zoom(0.4);
+      }, 200);
+    },
+
+    fitCrawlerGraph() {
+      if (this.crawlerCy) {
+        this.crawlerCy.elements().removeClass('faded');
+        this.crawlerCy.fit(undefined, 40);
+        if (this.crawlerCy.zoom() < 0.4) this.crawlerCy.zoom(0.4);
+      }
+    },
+
+    applyCrawlerLayout() {
+      if (this.crawlerCy) this.crawlerCy.layout(this.crawlerGraphLayoutOpts()).run();
     },
 
     toggleTreeNode(pageId) {
