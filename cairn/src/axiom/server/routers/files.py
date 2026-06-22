@@ -122,6 +122,9 @@ def read_file_raw(project_id: str, folder: str, filename: str):
     except ValueError:
         raise HTTPException(403, "path traversal denied")
     return FileResponse(file_path)
+
+
+@router.post("/files/{project_id}/upload")
 async def upload_file(project_id: str, file: UploadFile, set_origin: bool = False):
     """Upload a file to the human/ folder. Set set_origin=true to also update the project's origin fact with the full server path."""
     human_dir, _ = _ensure_dirs(project_id)

@@ -48,10 +48,12 @@ def run_plan_task(
         checklist_path = f"{checklist_dir}/checklist.md"
         sequence_path = f"{checklist_dir}/sequence.md"
         _os.makedirs(checklist_dir, exist_ok=True)
+        # Resolve origin: if it's a bare filename, try to find it in human/ folder
+        origin = project.facts[0].description if project.facts else ""
         prompt = render_prompt(
             load_prompt(prompt_group, "plan.md"),
             {
-                "origin": project.facts[0].description if project.facts else "",
+                "origin": origin,
                 "checklist_path": checklist_path,
                 "sequence_path": sequence_path,
                 "ai_dir": checklist_dir,
@@ -107,8 +109,8 @@ def run_plan_task(
             LOG.warning("plan API error project=%s worker=%s", project.project.id, worker.name)
             best_effort_release(client, project.project.id, intent.id, worker.name)
             return "api_error"
-        except Exception:
-            LOG.warning("plan parse failed project=%s worker=%s", project.project.id, worker.name)
+        except Exception as exc:
+            LOG.warning("plan parse failed project=%s worker=%s error=%s stdout_preview=%s stderr_preview=%s", project.project.id, worker.name, exc, preview(result.stdout), preview(result.stderr))
             best_effort_release(client, project.project.id, intent.id, worker.name)
             return "failed"
         # Write one summary fact pointing to the checklist and sequence diagram.

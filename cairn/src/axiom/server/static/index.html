@@ -7877,6 +7877,10 @@ function cairnApp() {
             const uploadResp = await fetch(`/files/${pid}/upload?set_origin=true`, { method: 'POST', body: form });
             if (!uploadResp.ok) {
               this.showToast('HAR 文件上传失败，请手动上传', 'error');
+            } else {
+              await this.loadProjects();
+              const updated = this.projects.find(p => p.id === pid);
+              if (updated) this.openProject(pid);
             }
           } catch(e) {
             this.showToast('HAR 文件上传失败: ' + (e.message || e), 'error');
