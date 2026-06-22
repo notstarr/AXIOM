@@ -283,7 +283,7 @@ def _config_data_from_fallback(fallback: dict[str, Any]) -> dict[str, Any]:
     runtime = dict(fallback.get("runtime") or {})
     tasks = dict(fallback.get("tasks") or {})
     return {
-        "server": fallback.get("server", "http://127.0.0.1:8000"),
+        "server": fallback.get("server", "http://127.0.0.1:8888"),
         "runtime": {
             "interval": runtime.get("interval", 3),
             "max_workers": runtime.get("max_workers", 8),
