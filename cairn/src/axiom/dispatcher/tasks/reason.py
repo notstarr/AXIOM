@@ -135,6 +135,7 @@ def run_reason_task(
             sequence_path = f"/tmp/axiom-files/{parent}/{project.project.id}/ai/sequence.md"
             replacements["checklist_path"] = checklist_path
             replacements["sequence_path"] = sequence_path
+            replacements["ai_dir"] = f"/tmp/axiom-files/{parent}/{project.project.id}/ai"
             plan_fact_id = ""
             for f in project.facts:
                 if f.id not in ("origin", "goal") and "checklist" in f.description.lower():
