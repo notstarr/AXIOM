@@ -67,3 +67,6 @@ curl -X POST "${AXIOM_SERVER}/projects/${PROJECT_ID}/vulns" \
 - [ ] 是否验证了影响是真实的（不是猜测）？
 - [ ] evidence 是否包含完整的请求和响应？
 - [ ] 有没有把同一个漏洞拆成多个？
+
+## 其他
+references/field-spec.md 获取漏洞规范
