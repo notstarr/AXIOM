@@ -641,3 +641,81 @@ def _ensure_crawler_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+
+    # Crawler tasks — standalone, not tied to project groups
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS crawler_tasks (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL DEFAULT '',
+            target_url TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'idle',
+            created_at TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+
+    # Migration: create crawler_tasks entries for existing group_id data
+    _migrate_crawler_tasks(conn)
+
+
+def _migrate_crawler_tasks(conn: sqlite3.Connection) -> None:
+    """Create crawler_tasks entries for existing crawler data keyed by group_id."""
+    import json as _json
+    import os as _os
+
+    # Check if migration was already done
+    row = conn.execute("SELECT COUNT(*) AS n FROM crawler_tasks").fetchone()
+    if row and row["n"] > 0:
+        return
+
+    # Find all distinct group_ids that have crawler data
+    group_ids: set[str] = set()
+    for table in ("crawler_pages", "crawler_apis", "crawler_page_maps"):
+        try:
+            rows = conn.execute(f"SELECT DISTINCT group_id FROM {table}").fetchall()
+            group_ids.update(r["group_id"] for r in rows)
+        except Exception:
+            pass
+
+    # Also check meta files on disk
+    import glob as _glob
+    for meta_path in _glob.glob("/tmp/axiom-crawler-*.meta.json"):
+        try:
+            with open(meta_path) as f:
+                meta = _json.load(f)
+            pid = meta.get("project_id") or ""
+            if pid:
+                group_ids.add(pid)
+        except Exception:
+            pass
+
+    now = "2026-06-22T00:00:00Z"
+    for gid in sorted(group_ids):
+        # Try to get title from project_groups
+        title = ""
+        target_url = ""
+        try:
+            prow = conn.execute(
+                "SELECT title FROM project_groups WHERE id = ?", (gid,)
+            ).fetchone()
+            if prow:
+                title = prow["title"] or ""
+        except Exception:
+            pass
+
+        # Try to get target_url from meta file
+        meta_path = f"/tmp/axiom-crawler-{gid}.meta.json"
+        if _os.path.exists(meta_path):
+            try:
+                with open(meta_path) as f:
+                    meta = _json.load(f)
+                target_url = meta.get("target_url", "")
+            except Exception:
+                pass
+
+        conn.execute(
+            "INSERT OR IGNORE INTO crawler_tasks (id, title, target_url, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (gid, title or gid, target_url, "idle", now, now),
+        )

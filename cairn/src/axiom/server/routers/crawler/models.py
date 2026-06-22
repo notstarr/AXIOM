@@ -61,3 +61,20 @@ class CrawlerStatus(BaseModel):
     sitemap_exists: bool = False
     api_list_exists: bool = False
     api_page_map_exists: bool = False
+
+
+class CrawlerTask(BaseModel):
+    id: str
+    title: str = ""
+    target_url: str = ""
+    status: str = "idle"
+    created_at: str = ""
+    updated_at: str = ""
+    page_count: int = 0
+    api_count: int = 0
+    mapping_count: int = 0
+
+
+class CreateCrawlerTaskRequest(BaseModel):
+    title: str = ""
+    target_url: str = ""

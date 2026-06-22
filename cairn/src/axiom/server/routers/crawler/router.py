@@ -26,6 +26,8 @@ from .models import (
     CrawlerModelsResponse,
     CrawlerStartRequest,
     CrawlerStatus,
+    CrawlerTask,
+    CreateCrawlerTaskRequest,
 )
 from .constants import (
     CRAWLER_EXECUTE_PROMPT_PATH,
@@ -382,3 +384,254 @@ def get_crawler_results(group_id: str):
             "mappings": len(mappings),
         },
     }
+
+
+# ── Standalone crawler task endpoints ──────
+
+def _next_crawler_task_id(conn) -> str:
+    row = conn.execute("SELECT MAX(CAST(SUBSTR(id, 4) AS INTEGER)) AS m FROM crawler_tasks WHERE id LIKE 'ct_%'").fetchone()
+    n = (row["m"] or 0) + 1 if row else 1
+    return f"ct_{n:03d}"
+
+
+def _crawler_task_from_row(row, conn=None) -> CrawlerTask:
+    page_count = api_count = mapping_count = 0
+    if conn:
+        try:
+            page_count = conn.execute("SELECT COUNT(*) AS n FROM crawler_pages WHERE group_id = ?", (row["id"],)).fetchone()["n"]
+            api_count = conn.execute("SELECT COUNT(*) AS n FROM crawler_apis WHERE group_id = ?", (row["id"],)).fetchone()["n"]
+            mapping_count = conn.execute("SELECT COUNT(*) AS n FROM crawler_page_maps WHERE group_id = ?", (row["id"],)).fetchone()["n"]
+        except Exception:
+            pass
+    return CrawlerTask(
+        id=row["id"],
+        title=row["title"] or "",
+        target_url=row["target_url"] or "",
+        status=row["status"] or "idle",
+        created_at=row["created_at"] or "",
+        updated_at=row["updated_at"] or "",
+        page_count=page_count,
+        api_count=api_count,
+        mapping_count=mapping_count,
+    )
+
+
+@router.get("/crawler/tasks", response_model=list[CrawlerTask])
+def list_crawler_tasks():
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM crawler_tasks ORDER BY created_at DESC, id DESC").fetchall()
+        return [_crawler_task_from_row(r, conn) for r in rows]
+
+
+@router.post("/crawler/tasks", response_model=CrawlerTask, status_code=201)
+def create_crawler_task(body: CreateCrawlerTaskRequest):
+    now = utcnow()
+    with get_conn() as conn:
+        task_id = _next_crawler_task_id(conn)
+        conn.execute(
+            "INSERT INTO crawler_tasks (id, title, target_url, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (task_id, body.title or task_id, body.target_url, "idle", now, now),
+        )
+        row = conn.execute("SELECT * FROM crawler_tasks WHERE id = ?", (task_id,)).fetchone()
+        return _crawler_task_from_row(row, conn)
+
+
+@router.delete("/crawler/tasks/{task_id}", status_code=204)
+def delete_crawler_task(task_id: str):
+    with get_conn() as conn:
+        row = conn.execute("SELECT 1 FROM crawler_tasks WHERE id = ?", (task_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"Crawler task {task_id} not found")
+        conn.execute("DELETE FROM crawler_tasks WHERE id = ?", (task_id,))
+        conn.execute("DELETE FROM crawler_pages WHERE group_id = ?", (task_id,))
+        conn.execute("DELETE FROM crawler_apis WHERE group_id = ?", (task_id,))
+        conn.execute("DELETE FROM crawler_page_maps WHERE group_id = ?", (task_id,))
+    # Clean up meta file
+    mf = pathlib.Path(f"/tmp/axiom-crawler-{task_id}.meta.json")
+    if mf.exists():
+        mf.unlink(missing_ok=True)
+
+
+@router.post("/crawler/tasks/{task_id}/start", response_model=CrawlerStatus, status_code=201)
+def start_crawler_task(task_id: str, body: CrawlerStartRequest):
+    with get_conn() as conn:
+        row = conn.execute("SELECT 1 FROM crawler_tasks WHERE id = ?", (task_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"Crawler task {task_id} not found")
+
+    project_id = task_id
+    meta = read_meta(project_id)
+    if meta.get("pid"):
+        pid = meta["pid"]
+        if is_running(pid):
+            raise HTTPException(409, f"爬虫进程已在运行中 (pid={pid})")
+
+    if not CRAWLER_EXECUTE_PROMPT_PATH.exists():
+        raise HTTPException(500, f"CrawlerExecute.md 不存在: {CRAWLER_EXECUTE_PROMPT_PATH}")
+    if not CRAWLER_FLUSH_PROMPT_PATH.exists():
+        raise HTTPException(500, f"CrawlerFlush.md 不存在: {CRAWLER_FLUSH_PROMPT_PATH}")
+
+    ai_dir = f"/tmp/axiom-files/{task_id}/crawler"
+    pathlib.Path(ai_dir).mkdir(parents=True, exist_ok=True)
+
+    old_meta = read_meta(project_id)
+    if old_meta.get("cdp_tab_id"):
+        close_crawler_tab(str(old_meta["cdp_tab_id"]))
+
+    session_id = f"crawler-{project_id}"
+    agent_dir = f"{CRAWLER_SESSION_DIR}/{project_id}"
+    session_dir = f"{agent_dir}/sessions"
+    pathlib.Path(session_dir).mkdir(parents=True, exist_ok=True)
+
+    log_path = f"/tmp/axiom-crawler-{project_id}.log"
+    now = utcnow()
+    runtime = load_crawler_runtime_settings()
+    supervisor_id = f"sup-{project_id}-{uuid.uuid4().hex[:8]}"
+    project_root = pathlib.Path(__file__).resolve().parents[4]
+    proc = subprocess.Popen(
+        [
+            "uv", "run", "--project", str(project_root),
+            "axiom", "crawler-supervisor", "--project-id", project_id,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+    write_meta(project_id, {
+        "project_id": project_id,
+        "pid": proc.pid,
+        "supervisor_id": supervisor_id,
+        "phase_pid": None,
+        "target_url": body.target_url,
+        "output_dir": ai_dir,
+        "started_at": now,
+        "status": "running",
+        "phase": "crawl",
+        "round": 1,
+        "phase_started_at": now,
+        "last_flush_at": None,
+        "active_window_seconds": runtime["active_window_seconds"],
+        "flush_window_seconds": runtime["flush_window_seconds"],
+        "total_timeout_seconds": runtime["total_timeout_seconds"],
+        "stop_requested": False,
+        "session_id": session_id,
+        "cdp_tab_id": "",
+        "agent_dir": agent_dir,
+        "session_dir": session_dir,
+        "log": log_path,
+    })
+
+    with get_conn() as conn:
+        conn.execute("UPDATE crawler_tasks SET status = 'running', target_url = ?, updated_at = ? WHERE id = ?", (body.target_url, now, task_id))
+
+    return CrawlerStatus(
+        project_id=project_id,
+        status="running",
+        phase="crawl",
+        round=1,
+        target_url=body.target_url,
+        output_dir=ai_dir,
+        pid=proc.pid,
+        supervisor_id=supervisor_id,
+        phase_pid=None,
+        started_at=now,
+        phase_started_at=now,
+        last_flush_at=None,
+        active_window_seconds=runtime["active_window_seconds"],
+        flush_window_seconds=runtime["flush_window_seconds"],
+        total_timeout_seconds=runtime["total_timeout_seconds"],
+        stop_requested=False,
+        sitemap_exists=state_view_exists(project_id, "site_map.yaml"),
+        api_list_exists=state_view_exists(project_id, "api_inventory.yaml"),
+        api_page_map_exists=state_view_exists(project_id, "page_api_map.yaml"),
+    )
+
+
+@router.get("/crawler/tasks/{task_id}/status", response_model=CrawlerStatus)
+def get_crawler_task_status(task_id: str):
+    project_id = task_id
+    meta = read_meta(project_id)
+    if not meta:
+        return CrawlerStatus(project_id=project_id, status="idle")
+
+    pid = meta.get("pid")
+    phase_pid = meta.get("phase_pid")
+    if phase_pid and is_running(phase_pid):
+        status = "stopping" if meta.get("stop_requested") else str(meta.get("status") or "running")
+    elif pid and is_running(pid):
+        status = "stopping" if meta.get("stop_requested") else str(meta.get("status") or "running")
+    elif meta.get("status") in {"running", "stopping"}:
+        status = "done" if str(meta.get("phase") or "idle") == "idle" and bool(meta.get("phase_accepted")) else "failed"
+        meta["status"] = status
+        meta["phase"] = "idle"
+        meta["pid"] = None
+        meta["phase_pid"] = None
+        write_meta(project_id, meta)
+        with get_conn() as conn:
+            conn.execute("UPDATE crawler_tasks SET status = ?, updated_at = ? WHERE id = ?", (status, utcnow(), task_id))
+    else:
+        status = str(meta.get("status") or "idle")
+
+    return CrawlerStatus(
+        project_id=project_id,
+        status=status,
+        phase=str(meta.get("phase") or "idle"),
+        round=int(meta.get("round") or 0),
+        target_url=meta.get("target_url", ""),
+        output_dir=meta.get("output_dir", ""),
+        pid=pid if status in {"running", "stopping"} else None,
+        supervisor_id=meta.get("supervisor_id") if status in {"running", "stopping", "done", "failed"} else None,
+        phase_pid=phase_pid if status in {"running", "stopping"} else None,
+        started_at=meta.get("started_at"),
+        phase_started_at=meta.get("phase_started_at"),
+        last_flush_at=meta.get("last_flush_at"),
+        active_window_seconds=int(meta.get("active_window_seconds") or 0),
+        flush_window_seconds=int(meta.get("flush_window_seconds") or 0),
+        total_timeout_seconds=int(meta.get("total_timeout_seconds") or 0),
+        stop_requested=bool(meta.get("stop_requested")),
+        sitemap_exists=state_view_exists(project_id, "site_map.yaml"),
+        api_list_exists=state_view_exists(project_id, "api_inventory.yaml"),
+        api_page_map_exists=state_view_exists(project_id, "page_api_map.yaml"),
+    )
+
+
+@router.post("/crawler/tasks/{task_id}/stop")
+def stop_crawler_task(task_id: str):
+    project_id = task_id
+    meta = read_meta(project_id)
+    if not meta.get("status") in {"running", "stopping"}:
+        raise HTTPException(404, "没有运行中的爬虫进程")
+    meta["stop_requested"] = True
+    meta["status"] = "stopping"
+    write_meta(project_id, meta)
+    return {"stopped": True, "stop_requested": True}
+
+
+@router.get("/crawler/tasks/{task_id}/results")
+def get_crawler_task_results(task_id: str):
+    pages = load_state_rows(task_id, "crawler_pages")
+    apis = load_state_rows(task_id, "crawler_apis")
+    mappings = load_state_rows(task_id, "crawler_page_maps")
+    target = target_url_for_group(task_id)
+    return {
+        "group_id": task_id,
+        "target_url": target,
+        "pages": pages,
+        "apis": apis,
+        "mappings": mappings,
+        "counts": {"pages": len(pages), "apis": len(apis), "mappings": len(mappings)},
+    }
+
+
+@router.get("/crawler/tasks/{task_id}/export")
+def export_crawler_task_yaml(task_id: str):
+    """Export all three YAML files as a single combined text for plan input."""
+    parts = []
+    for filename in ("site_map.yaml", "api_inventory.yaml", "page_api_map.yaml"):
+        if state_view_exists(task_id, filename):
+            snapshot = render_state_snapshot(task_id, filename)
+            parts.append(f"### {filename}\n{snapshot}")
+    if not parts:
+        raise HTTPException(404, "No crawler data available")
+    return {"yaml": "\n\n".join(parts)}

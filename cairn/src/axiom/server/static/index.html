@@ -699,15 +699,45 @@
           <!-- Origin -->
           <div>
             <label class="text-xs font-semibold text-slate-500 mb-1 block" x-text="newProject.depth_mode ? '流量数据' : '起点（已知信息）'"></label>
-            <div class="flex items-center gap-2 mb-1">
-              <p class="text-[11px] text-slate-400" x-text="newProject.depth_mode ? '上传 HAR 或粘贴文件路径' : '目标 URL 或已知信息'"></p>
-              <label x-show="newProject.depth_mode" class="px-2 py-0.5 text-[10px] rounded border border-amber-200 text-amber-600 hover:bg-amber-50 cursor-pointer">
-                上传 HAR
-                <input type="file" accept=".har,.json" @change="uploadHarFile($event)" class="hidden">
-              </label>
-            </div>
-            <textarea x-model="newProject.origin" rows="6" :placeholder="newProject.depth_mode ? '/tmp/axiom-uploads/traffic.har' : 'https://example.com'"
-              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+            <template x-if="newProject.depth_mode">
+              <div class="space-y-2">
+                <div class="flex items-center gap-2">
+                  <button @click="newProject.depthInputMode = 'har'" class="px-3 py-1 text-xs rounded-lg transition"
+                    :class="newProject.depthInputMode !== 'crawler' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'text-slate-400 border border-slate-200 hover:bg-slate-50'">导入 HAR</button>
+                  <button @click="newProject.depthInputMode = 'crawler'" class="px-3 py-1 text-xs rounded-lg transition"
+                    :class="newProject.depthInputMode === 'crawler' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'text-slate-400 border border-slate-200 hover:bg-slate-50'">选择爬虫任务</button>
+                </div>
+                <template x-if="newProject.depthInputMode !== 'crawler'">
+                  <div>
+                    <div class="flex items-center gap-2 mb-1">
+                      <label class="px-2 py-0.5 text-[10px] rounded border border-amber-200 text-amber-600 hover:bg-amber-50 cursor-pointer">
+                        上传 HAR
+                        <input type="file" accept=".har,.json" @change="uploadHarFile($event)" class="hidden">
+                      </label>
+                    </div>
+                    <textarea x-model="newProject.origin" rows="4" placeholder="/tmp/axiom-uploads/traffic.har"
+                      class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+                  </div>
+                </template>
+                <template x-if="newProject.depthInputMode === 'crawler'">
+                  <div>
+                    <select x-model="newProject.crawlerTaskId" @change="onCrawlerTaskSelectForProject()"
+                      class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-400">
+                      <option value="">选择爬虫任务…</option>
+                      <template x-for="t in crawlerTasks" :key="t.id">
+                        <option :value="t.id" x-text="`${t.id} — ${t.title} (${t.page_count}页/${t.api_count}API)`"></option>
+                      </template>
+                    </select>
+                    <p x-show="newProject.crawlerTaskId" class="mt-1 text-[11px] text-emerald-600">将使用该爬虫任务的 YAML 产出作为 plan 输入</p>
+                    <p x-show="!newProject.crawlerTaskId" class="mt-1 text-[10px] text-slate-400">请先在爬虫管理页面创建并运行爬虫任务</p>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <template x-if="!newProject.depth_mode">
+              <textarea x-model="newProject.origin" rows="6" placeholder="https://example.com"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+            </template>
           </div>
           <!-- Goal (only for breadth mode) -->
           <div x-show="!newProject.depth_mode">
@@ -1986,327 +2016,382 @@
 </template>
 
 <!-- ═══════════ CRAWLER MANAGEMENT PAGE ═══════════ -->
-<div x-show="activePage === 'crawler-results'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
+<div x-show="activePage === 'crawler-results'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0" x-init="loadCrawlerTasks()">
   <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
     <div>
       <h2 class="text-base font-semibold text-slate-800 tracking-tight">爬虫管理</h2>
-      <p class="text-xs text-slate-400 mt-0.5">启动爬虫、查看状态、浏览产出结果</p>
+      <p class="text-xs text-slate-400 mt-0.5">独立的爬虫任务管理，产出可用于深度模式测试</p>
     </div>
     <div class="flex-1"></div>
-    <select x-model="crawlerResultsGroupId" @change="onCrawlerGroupChange()" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 bg-white">
-      <option value="">选择项目组</option>
-      <template x-for="g in projectGroups" :key="g.id">
-        <option :value="g.id" x-text="g.title || g.id"></option>
-      </template>
-    </select>
+    <button @click="showCrawlerTaskForm = true" class="h-8 px-3 rounded-lg border border-emerald-200 text-xs text-emerald-600 hover:bg-emerald-50 transition">新建爬虫任务</button>
+    <button @click="loadCrawlerTasks()" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 transition">刷新</button>
   </header>
-  <main class="flex-1 overflow-y-auto p-5">
-    <template x-if="!crawlerResultsGroupId">
-      <div class="flex items-center justify-center h-full text-slate-400 text-sm">请选择一个项目组</div>
-    </template>
-    <template x-if="crawlerResultsGroupId">
-      <div class="space-y-4" x-init="loadCrawlerResultsPage()">
-        <!-- Crawler control panel -->
-        <section class="rounded-2xl border border-emerald-200/70 bg-white shadow-sm p-4 space-y-3">
-          <div class="flex items-center justify-between gap-3">
-            <div>
-              <h3 class="text-sm font-semibold text-slate-700">爬虫控制</h3>
-              <p class="text-xs text-slate-400 mt-0.5">自动点击所有页面按钮，捕获流量，产出站点地图与 API 清单</p>
-            </div>
-            <button @click="loadCrawlerStatus()" class="text-[11px] text-slate-400 hover:text-slate-600">刷新状态</button>
+  <main class="flex-1 overflow-hidden grid grid-cols-[300px_minmax(0,1fr)]">
+    <!-- Task list -->
+    <aside class="border-r border-slate-200 bg-white overflow-y-auto p-3 space-y-2">
+      <template x-if="crawlerTasks.length === 0">
+        <p class="text-sm text-slate-400 text-center py-10">暂无爬虫任务</p>
+      </template>
+      <template x-for="t in crawlerTasks" :key="t.id">
+        <button type="button" @click="selectCrawlerTask(t.id)" class="w-full flex flex-col items-start text-left rounded-xl border p-3 transition"
+          :class="selectedCrawlerTaskId === t.id ? 'border-emerald-200 bg-emerald-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'">
+          <div class="flex items-center gap-2 w-full">
+            <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold whitespace-nowrap"
+              :class="{
+                'bg-slate-100 text-slate-500': t.status === 'idle',
+                'bg-amber-100 text-amber-700': t.status === 'running',
+                'bg-emerald-100 text-emerald-700': t.status === 'done',
+                'bg-rose-100 text-rose-600': t.status === 'failed',
+                'bg-sky-100 text-sky-700': t.status === 'stopping',
+              }"
+              x-text="{idle:'空闲', running:'运行中', stopping:'停止中', done:'已完成', failed:'失败'}[t.status] || t.status"></span>
+            <span class="font-mono text-[10px] text-slate-400 ml-auto" x-text="t.id"></span>
           </div>
-          <!-- Start form -->
-          <div class="space-y-2">
-            <div class="flex gap-2">
-              <input x-model="crawlerTargetUrl" placeholder="https://target.com" class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-400">
-              <button @click="startCrawler()" :disabled="!crawlerTargetUrl || crawlerStarting"
-                class="px-4 py-2 text-xs font-medium rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-40 transition">
-                <span x-show="!crawlerStarting">启动爬虫</span>
-                <span x-show="crawlerStarting">启动中…</span>
-              </button>
-            </div>
-            <p class="text-[10px] text-slate-400">需要 Chrome-SecTest 已登录目标站点，mitmproxy 在端口 18080 运行</p>
+          <p class="mt-1.5 text-sm font-semibold text-slate-700 line-clamp-2" x-text="t.title || t.id"></p>
+          <p class="mt-0.5 text-[10px] text-slate-400 truncate" x-text="t.target_url || '—'"></p>
+          <div class="mt-1 flex gap-2 text-[10px] text-slate-400">
+            <span x-text="t.page_count + ' 页'"></span>
+            <span x-text="t.api_count + ' API'"></span>
+            <span x-text="t.mapping_count + ' 映射'"></span>
           </div>
-          <!-- Status -->
-          <template x-if="crawlerStatus">
-            <div class="rounded-xl border border-slate-100 bg-slate-50/60 p-3 space-y-2">
-              <div class="flex items-center gap-2">
-                <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold"
-                  :class="{
-                    'bg-slate-100 text-slate-500': crawlerStatus.status === 'idle',
-                    'bg-amber-100 text-amber-700': crawlerStatus.status === 'running',
-                    'bg-sky-100 text-sky-700': crawlerStatus.status === 'stopping',
-                    'bg-emerald-100 text-emerald-700': crawlerStatus.status === 'done',
-                    'bg-rose-100 text-rose-600': crawlerStatus.status === 'failed',
-                  }"
-                  x-text="{idle:'空闲', running:'运行中', stopping:'停止中', done:'已完成', failed:'失败'}[crawlerStatus.status] || crawlerStatus.status">
-                </span>
-                <template x-if="crawlerStatus.phase && crawlerStatus.phase !== 'idle'">
-                  <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-indigo-50 text-indigo-600"
-                    x-text="{crawl:'爬取阶段', flush:'整理阶段', final_flush:'最终整理'}[crawlerStatus.phase] || crawlerStatus.phase"></span>
-                </template>
-                <span class="text-xs text-slate-500 truncate" x-text="crawlerStatus.target_url"></span>
-                <template x-if="crawlerStatus.status === 'running' || crawlerStatus.status === 'stopping'">
-                  <button @click="stopCrawler()" class="ml-auto text-[10px] text-rose-500 hover:text-rose-700">停止</button>
+        </button>
+      </template>
+    </aside>
+    <!-- Task detail -->
+    <section class="overflow-y-auto p-5 space-y-4">
+      <template x-if="!selectedCrawlerTaskId">
+        <div class="rounded-2xl border border-dashed border-slate-200 bg-white px-5 py-14 text-center text-slate-400">请选择左侧爬虫任务</div>
+      </template>
+      <template x-if="selectedCrawlerTask()">
+        <div class="space-y-4">
+          <!-- Task info + controls -->
+          <section class="rounded-2xl border border-emerald-200/70 bg-white shadow-sm p-4 space-y-3">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-xs text-slate-400" x-text="selectedCrawlerTask().id"></span>
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold"
+                    :class="{
+                      'bg-slate-100 text-slate-500': selectedCrawlerTask().status === 'idle',
+                      'bg-amber-100 text-amber-700': selectedCrawlerTask().status === 'running',
+                      'bg-emerald-100 text-emerald-700': selectedCrawlerTask().status === 'done',
+                      'bg-rose-100 text-rose-600': selectedCrawlerTask().status === 'failed',
+                      'bg-sky-100 text-sky-700': selectedCrawlerTask().status === 'stopping',
+                    }"
+                    x-text="{idle:'空闲', running:'运行中', stopping:'停止中', done:'已完成', failed:'失败'}[selectedCrawlerTask().status] || selectedCrawlerTask().status"></span>
+                </div>
+                <h3 class="mt-2 text-lg font-semibold text-slate-800" x-text="selectedCrawlerTask().title || selectedCrawlerTask().id"></h3>
+                <p class="mt-1 text-xs text-slate-400 truncate" x-text="selectedCrawlerTask().target_url || '—'"></p>
+              </div>
+              <button @click="deleteCrawlerTask(selectedCrawlerTask().id, selectedCrawlerTask().title)" class="px-3 py-2 text-sm rounded-xl border border-rose-200 text-rose-500 hover:bg-rose-50 transition shrink-0">删除</button>
+            </div>
+            <!-- Start form -->
+            <div class="space-y-2">
+              <div class="flex gap-2">
+                <input x-model="crawlerTargetUrl" :placeholder="selectedCrawlerTask().target_url || 'https://target.com'" class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-400">
+                <button @click="startCrawler()" :disabled="!crawlerTargetUrl || crawlerStarting"
+                  class="px-4 py-2 text-xs font-medium rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-40 transition">
+                  <span x-show="!crawlerStarting">启动爬虫</span>
+                  <span x-show="crawlerStarting">启动中…</span>
+                </button>
+                <template x-if="crawlerStatus && (crawlerStatus.status === 'running' || crawlerStatus.status === 'stopping')">
+                  <button @click="stopCrawler()" class="px-4 py-2 text-xs font-medium rounded-xl border border-rose-200 text-rose-500 hover:bg-rose-50 transition">停止</button>
                 </template>
               </div>
-              <div class="grid grid-cols-3 gap-2">
-                <button @click="viewCrawlerSnapshot(crawlerResultsGroupId, 'site_map.yaml', selectedCrawlerGroup()?.title || crawlerResultsGroupId)"
-                  :disabled="!crawlerStatus.sitemap_exists"
-                  class="px-2.5 py-1 text-[11px] rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 transition">
-                  站点地图 YAML
-                </button>
-                <button @click="viewCrawlerSnapshot(crawlerResultsGroupId, 'api_inventory.yaml', selectedCrawlerGroup()?.title || crawlerResultsGroupId)"
-                  :disabled="!crawlerStatus.api_list_exists"
-                  class="px-2.5 py-1 text-[11px] rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 transition">
-                  API 清单 YAML
-                </button>
-                <button @click="viewCrawlerSnapshot(crawlerResultsGroupId, 'page_api_map.yaml', selectedCrawlerGroup()?.title || crawlerResultsGroupId)"
-                  :disabled="!crawlerStatus.api_page_map_exists"
-                  class="px-2.5 py-1 text-[11px] rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 transition">
-                  页面映射 YAML
-                </button>
+              <p class="text-[10px] text-slate-400">需要 Chrome-SecTest 已登录目标站点，mitmproxy 在端口 18080 运行</p>
+            </div>
+            <!-- Live status -->
+            <template x-if="crawlerStatus && crawlerStatus.status !== 'idle'">
+              <div class="rounded-xl border border-slate-100 bg-slate-50/60 p-3 space-y-2">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <template x-if="crawlerStatus.phase && crawlerStatus.phase !== 'idle'">
+                    <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-indigo-50 text-indigo-600"
+                      x-text="{crawl:'爬取阶段', flush:'整理阶段', final_flush:'最终整理'}[crawlerStatus.phase] || crawlerStatus.phase"></span>
+                  </template>
+                  <template x-if="crawlerStatus.pid">
+                    <span class="text-[11px] text-slate-400">PID: <span class="font-mono" x-text="crawlerStatus.pid"></span></span>
+                  </template>
+                  <span class="text-[11px] text-slate-500" x-text="'轮次: ' + (crawlerStatus.round || 0)"></span>
+                  <span class="text-[11px] text-slate-500" x-show="crawlerStatus.last_flush_at" x-text="'上次整理: ' + (crawlerStatus.last_flush_at ? formatTime(crawlerStatus.last_flush_at) : '—')"></span>
+                </div>
+                <div class="grid grid-cols-3 gap-2 pt-1">
+                  <div class="rounded-lg border px-2 py-1.5 text-center text-[10px]"
+                    :class="crawlerStatus.sitemap_exists ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-300'">
+                    site_map.yaml<br><span x-text="crawlerStatus.sitemap_exists ? '✓ 已生成' : '—'"></span>
+                  </div>
+                  <div class="rounded-lg border px-2 py-1.5 text-center text-[10px]"
+                    :class="crawlerStatus.api_list_exists ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-300'">
+                    api_inventory.yaml<br><span x-text="crawlerStatus.api_list_exists ? '✓ 已生成' : '—'"></span>
+                  </div>
+                  <div class="rounded-lg border px-2 py-1.5 text-center text-[10px]"
+                    :class="crawlerStatus.api_page_map_exists ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-300'">
+                    page_api_map.yaml<br><span x-text="crawlerStatus.api_page_map_exists ? '✓ 已生成' : '—'"></span>
+                  </div>
+                </div>
+                <div class="flex gap-2 pt-1">
+                  <button @click="viewCrawlerSnapshot(selectedCrawlerTaskId, 'site_map.yaml', selectedCrawlerTask().title)"
+                    :disabled="!crawlerStatus.sitemap_exists"
+                    class="px-2.5 py-1 text-[11px] rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 transition">
+                    站点地图 YAML
+                  </button>
+                  <button @click="viewCrawlerSnapshot(selectedCrawlerTaskId, 'api_inventory.yaml', selectedCrawlerTask().title)"
+                    :disabled="!crawlerStatus.api_list_exists"
+                    class="px-2.5 py-1 text-[11px] rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 transition">
+                    API 清单 YAML
+                  </button>
+                  <button @click="viewCrawlerSnapshot(selectedCrawlerTaskId, 'page_api_map.yaml', selectedCrawlerTask().title)"
+                    :disabled="!crawlerStatus.api_page_map_exists"
+                    class="px-2.5 py-1 text-[11px] rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 transition">
+                    页面映射 YAML
+                  </button>
+                </div>
               </div>
-              <template x-if="crawlerStatus.pid">
-                <p class="text-[11px] text-slate-400">PID: <span class="font-mono" x-text="crawlerStatus.pid"></span></p>
+            </template>
+          </section>
+
+          <!-- Results stats -->
+          <div class="grid grid-cols-3 gap-3">
+            <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm card-hover">
+              <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">页面</p>
+              <p class="text-2xl font-bold text-slate-800 mt-1 tabular-nums" x-text="crawlerResultsPageData?.counts?.pages || 0"></p>
+            </div>
+            <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm card-hover">
+              <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">API</p>
+              <p class="text-2xl font-bold text-slate-800 mt-1 tabular-nums" x-text="crawlerResultsPageData?.counts?.apis || 0"></p>
+            </div>
+            <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm card-hover">
+              <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">映射</p>
+              <p class="text-2xl font-bold text-slate-800 mt-1 tabular-nums" x-text="crawlerResultsPageData?.counts?.mappings || 0"></p>
+            </div>
+          </div>
+
+          <!-- Result tabs -->
+          <div class="flex items-center gap-1 border-b border-slate-100 pb-1">
+            <button @click="crawlerResultsPageTab = 'pages'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
+              :class="crawlerResultsPageTab === 'pages' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">页面</button>
+            <button @click="crawlerResultsPageTab = 'apis'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
+              :class="crawlerResultsPageTab === 'apis' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">API</button>
+            <button @click="crawlerResultsPageTab = 'mappings'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
+              :class="crawlerResultsPageTab === 'mappings' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">映射</button>
+            <button @click="crawlerResultsPageTab = 'tree'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
+              :class="crawlerResultsPageTab === 'tree' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">业务树</button>
+          </div>
+
+          <!-- Pages tab -->
+          <template x-if="crawlerResultsPageTab === 'pages'">
+            <div class="space-y-2">
+              <template x-for="(page, i) in (crawlerResultsPageData?.pages || [])" :key="page.id || i">
+                <div class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover">
+                  <div class="flex items-start gap-3">
+                    <div class="shrink-0 w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center text-[11px] font-mono" x-text="i + 1"></div>
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-sm font-medium text-slate-700" x-text="page.name || page.id"></span>
+                        <template x-if="page.page_type"><span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-500" x-text="page.page_type"></span></template>
+                        <template x-if="page.exhausted"><span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600">已穷尽</span></template>
+                      </div>
+                      <a :href="page.url" target="_blank" class="text-[10px] text-blue-400 hover:underline truncate block mt-0.5" x-text="page.url"></a>
+                    </div>
+                  </div>
+                </div>
               </template>
-              <div class="grid grid-cols-2 gap-2 text-[11px] text-slate-500">
-                <div>轮次: <span class="font-mono" x-text="crawlerStatus.round || 0"></span></div>
-                <div>上次整理: <span x-text="crawlerStatus.last_flush_at ? formatTime(crawlerStatus.last_flush_at) : '—'"></span></div>
-              </div>
-              <div class="grid grid-cols-3 gap-2 pt-1">
-                <div class="rounded-lg border px-2 py-1.5 text-center text-[10px]"
-                  :class="crawlerStatus.sitemap_exists ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-300'">
-                  site_map.yaml<br><span x-text="crawlerStatus.sitemap_exists ? '✓ 已生成' : '—'"></span>
-                </div>
-                <div class="rounded-lg border px-2 py-1.5 text-center text-[10px]"
-                  :class="crawlerStatus.api_list_exists ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-300'">
-                  api_inventory.yaml<br><span x-text="crawlerStatus.api_list_exists ? '✓ 已生成' : '—'"></span>
-                </div>
-                <div class="rounded-lg border px-2 py-1.5 text-center text-[10px]"
-                  :class="crawlerStatus.api_page_map_exists ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-300'">
-                  page_api_map.yaml<br><span x-text="crawlerStatus.api_page_map_exists ? '✓ 已生成' : '—'"></span>
-                </div>
-              </div>
+              <div x-show="(crawlerResultsPageData?.pages || []).length === 0" class="text-center py-8 text-slate-400 text-sm">暂无页面数据</div>
             </div>
           </template>
-        </section>
 
-        <!-- Stats -->
-        <div class="grid grid-cols-3 gap-3">
-          <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm card-hover">
-            <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">页面</p>
-            <p class="text-2xl font-bold text-slate-800 mt-1 tabular-nums" x-text="crawlerResultsPageData?.counts?.pages || 0"></p>
-          </div>
-          <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm card-hover">
-            <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">API</p>
-            <p class="text-2xl font-bold text-slate-800 mt-1 tabular-nums" x-text="crawlerResultsPageData?.counts?.apis || 0"></p>
-          </div>
-          <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm card-hover">
-            <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">映射</p>
-            <p class="text-2xl font-bold text-slate-800 mt-1 tabular-nums" x-text="crawlerResultsPageData?.counts?.mappings || 0"></p>
-          </div>
-        </div>
-        <!-- Tabs -->
-        <div class="flex items-center gap-1 border-b border-slate-100 pb-1">
-          <button @click="crawlerResultsPageTab = 'pages'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
-            :class="crawlerResultsPageTab === 'pages' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">页面</button>
-          <button @click="crawlerResultsPageTab = 'apis'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
-            :class="crawlerResultsPageTab === 'apis' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">API</button>
-          <button @click="crawlerResultsPageTab = 'mappings'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
-            :class="crawlerResultsPageTab === 'mappings' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">映射</button>
-          <button @click="crawlerResultsPageTab = 'tree'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
-            :class="crawlerResultsPageTab === 'tree' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">业务树</button>
-        </div>
-        <!-- Pages -->
-        <template x-if="crawlerResultsPageTab === 'pages'">
-          <div class="space-y-2">
-            <template x-for="(page, i) in (crawlerResultsPageData?.pages || [])" :key="page.id || i">
-              <div class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover">
-                <div class="flex items-start gap-3">
-                  <div class="shrink-0 w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center text-[11px] font-mono" x-text="i + 1"></div>
-                  <div class="min-w-0 flex-1">
-                    <div class="flex items-center gap-2 flex-wrap">
-                      <span class="text-sm font-medium text-slate-700" x-text="page.name || page.id"></span>
-                      <template x-if="page.page_type"><span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-500" x-text="page.page_type"></span></template>
-                      <template x-if="page.exhausted"><span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600">已穷尽</span></template>
-                    </div>
-                    <a :href="page.url" target="_blank" class="text-[11px] text-blue-400 hover:text-blue-600 break-all" x-text="page.url"></a>
-                  </div>
-                </div>
-              </div>
-            </template>
-          </div>
-        </template>
-        <!-- APIs -->
-        <template x-if="crawlerResultsPageTab === 'apis'">
-          <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            <table class="w-full text-xs">
-              <thead class="bg-slate-50 text-slate-400 text-[10px] uppercase tracking-wide">
-                <tr><th class="text-left px-3 py-2 font-medium">#</th><th class="text-left px-3 py-2 font-medium">方法</th><th class="text-left px-3 py-2 font-medium">路径</th><th class="text-left px-3 py-2 font-medium">状态码</th><th class="text-left px-3 py-2 font-medium">说明</th></tr>
-              </thead>
-              <tbody class="divide-y divide-slate-100">
-                <template x-for="(api, i) in (crawlerResultsPageData?.apis || [])" :key="api.id || i">
-                  <tr class="hover:bg-slate-50/60">
-                    <td class="px-3 py-2 text-slate-300 font-mono" x-text="i + 1"></td>
-                    <td class="px-3 py-2">
-                      <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold"
-                        :class="{'bg-emerald-50 text-emerald-600': api.method === 'GET', 'bg-amber-50 text-amber-600': api.method === 'POST', 'bg-rose-50 text-rose-500': api.method === 'DELETE', 'bg-sky-50 text-sky-600': api.method === 'PUT' || api.method === 'PATCH', 'bg-slate-100 text-slate-500': !['GET','POST','DELETE','PUT','PATCH'].includes(api.method)}"
-                        x-text="api.method || '?'"></span>
-                    </td>
-                    <td class="px-3 py-2 font-mono text-slate-600 break-all" x-text="api.path || ''"></td>
-                    <td class="px-3 py-2">
-                      <template x-for="code in (api.status_codes_seen || [])" :key="code">
-                        <span class="px-1.5 py-0.5 rounded text-[10px] font-mono mr-1"
-                          :class="{'bg-emerald-50 text-emerald-600': code < 300, 'bg-amber-50 text-amber-600': code >= 300 && code < 400, 'bg-rose-50 text-rose-500': code >= 400}"
-                          x-text="code"></span>
-                      </template>
-                    </td>
-                    <td class="px-3 py-2 text-slate-400 text-[11px] max-w-xs truncate" x-text="api.purpose || (api.notes || []).join('; ') || ''"></td>
+          <!-- APIs tab -->
+          <template x-if="crawlerResultsPageTab === 'apis'">
+            <div class="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+              <table class="w-full text-xs">
+                <thead class="bg-slate-50 text-slate-400">
+                  <tr>
+                    <th class="px-3 py-2 text-left font-medium">#</th>
+                    <th class="px-3 py-2 text-left font-medium">方法</th>
+                    <th class="px-3 py-2 text-left font-medium">路径</th>
+                    <th class="px-3 py-2 text-left font-medium">认证</th>
+                    <th class="px-3 py-2 text-left font-medium">说明</th>
                   </tr>
-                </template>
-              </tbody>
-            </table>
-          </div>
-        </template>
-        <!-- Mappings -->
-        <template x-if="crawlerResultsPageTab === 'mappings'">
-          <div class="space-y-2">
-            <template x-for="(map, i) in (crawlerResultsPageData?.mappings || [])" :key="map.id || i">
-              <div class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover">
-                <div class="flex items-center gap-2 mb-1.5">
-                  <span class="text-sm font-medium text-slate-700" x-text="map.page_name || map.page_id"></span>
-                  <a :href="map.page_url" target="_blank" class="text-[10px] text-blue-400 hover:text-blue-600 truncate" x-text="map.page_url"></a>
-                </div>
-                <template x-if="map.on_load && map.on_load.length">
-                  <div class="mb-1.5">
-                    <p class="text-[10px] text-slate-400 mb-1">页面加载时:</p>
-                    <div class="flex flex-wrap gap-1">
-                      <template x-for="(api, j) in map.on_load" :key="j">
-                        <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-50 text-amber-600" x-text="(api.method || 'GET') + ' ' + (api.path || '')"></span>
-                      </template>
-                    </div>
-                  </div>
-                </template>
-                <template x-if="map.actions && map.actions.length">
-                  <div>
-                    <p class="text-[10px] text-slate-400 mb-1">用户操作:</p>
-                    <div class="space-y-1">
-                      <template x-for="(action, j) in map.actions" :key="action.action_id || j">
-                        <div class="flex items-center gap-2 text-[11px]">
-                          <span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-500" x-text="action.trigger_type || 'action'"></span>
-                          <span class="text-slate-600" x-text="action.action_name || action.trigger_label || ''"></span>
-                          <template x-if="action.result && action.result.status">
-                            <span class="px-1.5 py-0.5 rounded text-[10px]"
-                              :class="{'bg-emerald-50 text-emerald-600': action.result.status === 'success', 'bg-rose-50 text-rose-500': action.result.status === 'denied' || action.result.status === 'failure', 'bg-slate-100 text-slate-500': action.result.status === 'noop'}"
-                              x-text="action.result.status"></span>
-                          </template>
-                          <template x-if="action.apis && action.apis.length">
-                            <span class="text-slate-300">→</span>
-                            <template x-for="(api, k) in action.apis" :key="k">
-                              <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-50 text-amber-600" x-text="(api.method || 'GET') + ' ' + (api.path || '')"></span>
-                            </template>
-                          </template>
-                        </div>
-                      </template>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </template>
-          </div>
-        </template>
-        <!-- Business Tree -->
-        <template x-if="crawlerResultsPageTab === 'tree'">
-          <div class="card p-5">
-            <p class="text-xs text-slate-500 mb-4">以页面为节点的业务逻辑树，展开可查看每个页面的加载 API 和用户操作触发的 API。</p>
-            <div class="space-y-1">
-              <template x-for="(node, i) in crawlerBusinessTree()" :key="node.pageId || i">
-                <div class="border border-slate-200 rounded-lg overflow-hidden">
-                  <!-- Page node header -->
-                  <div class="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-slate-50 transition"
-                    @click="toggleTreeNode(node.pageId)">
-                    <svg class="w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform" :class="isTreeNodeExpanded(node.pageId) ? 'rotate-90' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
-                    <span class="w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-mono font-bold shrink-0"
-                      :class="pageTypeColor(node.pageType)" x-text="(i+1)"></span>
-                    <div class="flex-1 min-w-0">
-                      <div class="flex items-center gap-2">
-                        <span class="text-sm font-medium text-slate-700 truncate" x-text="node.pageName"></span>
-                        <span x-show="node.pageType" class="badge bg-slate-100 text-slate-500" x-text="node.pageType"></span>
-                        <span x-show="node.exhausted" class="badge bg-emerald-50 text-emerald-600">已穷尽</span>
-                      </div>
-                      <a :href="node.pageUrl" target="_blank" class="text-[10px] text-blue-400 hover:underline truncate block" x-text="node.pageUrl"></a>
-                    </div>
-                    <span class="text-[10px] text-slate-400 shrink-0 tabular-nums" x-text="node.apiCount + ' API'"></span>
-                  </div>
-                  <!-- Expanded content -->
-                  <template x-if="isTreeNodeExpanded(node.pageId)">
-                    <div class="border-t border-slate-100 bg-slate-50/50 p-3 space-y-2">
-                      <!-- On-load APIs -->
-                      <template x-if="node.onLoadApis && node.onLoadApis.length">
-                        <div>
-                          <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2v20M2 12h20"/></svg>
-                            页面加载
-                          </p>
-                          <div class="space-y-1 ml-5">
-                            <template x-for="(api, j) in node.onLoadApis" :key="j">
-                              <div class="flex items-center gap-2 text-[11px]">
-                                    <span class="badge font-mono shrink-0" :class="methodClass(api.method)" x-text="api.method || 'GET'"></span>
-                                    <span class="font-mono text-slate-600 break-all" x-text="api.path"></span>
-                                    <span x-show="api.note" class="text-slate-400 truncate" x-text="api.note"></span>
-                              </div>
-                            </template>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <template x-for="(api, i) in (crawlerResultsPageData?.apis || [])" :key="api.id || i">
+                    <tr class="hover:bg-slate-50">
+                      <td class="px-3 py-2 text-slate-400 font-mono" x-text="i + 1"></td>
+                      <td class="px-3 py-2">
+                        <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+                          :class="{'bg-emerald-50 text-emerald-600': (api.method||'GET')==='GET', 'bg-amber-50 text-amber-600': (api.method||'')==='POST', 'bg-sky-50 text-sky-600': ['PUT','PATCH'].includes(api.method||''), 'bg-rose-50 text-rose-600': (api.method||'')==='DELETE'}"
+                          x-text="api.method || 'GET'"></span>
+                      </td>
+                      <td class="px-3 py-2 font-mono text-slate-600 break-all" x-text="api.path"></td>
+                      <td class="px-3 py-2 text-slate-500" x-text="api.auth?.required ? '是' : '否'"></td>
+                      <td class="px-3 py-2 text-slate-500" x-text="api.purpose || ''"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <div x-show="(crawlerResultsPageData?.apis || []).length === 0" class="text-center py-8 text-slate-400 text-sm">暂无 API 数据</div>
+            </div>
+          </template>
+
+          <!-- Mappings tab -->
+          <template x-if="crawlerResultsPageTab === 'mappings'">
+            <div class="space-y-3">
+              <template x-for="(m, i) in (crawlerResultsPageData?.mappings || [])" :key="m.id || i">
+                <div class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                  <p class="text-sm font-medium text-slate-700" x-text="m.page_name || m.page_url"></p>
+                  <a :href="m.page_url" target="_blank" class="text-[10px] text-blue-400 hover:underline" x-text="m.page_url"></a>
+                  <template x-if="m.on_load && m.on_load.length">
+                    <div class="mt-2">
+                      <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">页面加载</p>
+                      <div class="space-y-0.5 ml-3">
+                        <template x-for="(api, j) in m.on_load" :key="j">
+                          <div class="flex items-center gap-2 text-[11px]">
+                            <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+                              :class="{'bg-emerald-50 text-emerald-600': (api.method||'GET')==='GET', 'bg-amber-50 text-amber-600': (api.method||'')==='POST', 'bg-sky-50 text-sky-600': ['PUT','PATCH'].includes(api.method||''), 'bg-rose-50 text-rose-600': (api.method||'')==='DELETE'}"
+                              x-text="api.method || 'GET'"></span>
+                            <span class="font-mono text-slate-600 break-all" x-text="api.path"></span>
                           </div>
-                        </div>
-                      </template>
-                      <!-- User actions -->
-                      <template x-if="node.actions && node.actions.length">
-                        <div>
-                          <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-                            用户操作
-                          </p>
-                          <div class="space-y-2 ml-5">
-                            <template x-for="(action, j) in node.actions" :key="action.action_id || j">
-                              <div class="rounded-lg border border-slate-200 bg-white p-2">
-                                <div class="flex items-center gap-2 mb-1">
-                                  <span class="badge bg-indigo-50 text-indigo-500 shrink-0" x-text="action.trigger_type || 'action'"></span>
-                                  <span class="text-xs text-slate-600" x-text="action.action_name || action.trigger_label || ''"></span>
-                                  <template x-if="action.result && action.result.status">
-                                    <span class="badge shrink-0"
-                                      :class="{'bg-emerald-50 text-emerald-600': action.result.status === 'success', 'bg-rose-50 text-rose-500': action.result.status === 'denied' || action.result.status === 'failure', 'bg-slate-100 text-slate-500': action.result.status === 'noop'}"
-                                      x-text="action.result.status"></span>
-                                  </template>
-                                </div>
-                                <template x-if="action.apis && action.apis.length">
-                                  <div class="ml-4 space-y-0.5">
-                                    <template x-for="(api, k) in action.apis" :key="k">
-                                      <div class="flex items-center gap-2 text-[11px]">
-                                        <span class="text-slate-300">↳</span>
-                                        <span class="badge font-mono shrink-0" :class="methodClass(api.method)" x-text="api.method || 'GET'"></span>
-                                        <span class="font-mono text-slate-600 break-all" x-text="api.path"></span>
-                                      </div>
-                                    </template>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="m.actions && m.actions.length">
+                    <div class="mt-2">
+                      <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">用户操作</p>
+                      <div class="space-y-1.5 ml-3">
+                        <template x-for="(action, j) in m.actions" :key="action.action_id || j">
+                          <div class="rounded-lg border border-slate-100 bg-slate-50/50 p-2">
+                            <div class="flex items-center gap-2 mb-1">
+                              <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-500" x-text="action.trigger_type || 'action'"></span>
+                              <span class="text-xs text-slate-600" x-text="action.action_name || ''"></span>
+                            </div>
+                            <template x-if="action.apis && action.apis.length">
+                              <div class="ml-3 space-y-0.5">
+                                <template x-for="(api, k) in action.apis" :key="k">
+                                  <div class="flex items-center gap-2 text-[11px]">
+                                    <span class="text-slate-300">↳</span>
+                                    <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+                                      :class="{'bg-emerald-50 text-emerald-600': (api.method||'GET')==='GET', 'bg-amber-50 text-amber-600': (api.method||'')==='POST', 'bg-sky-50 text-sky-600': ['PUT','PATCH'].includes(api.method||''), 'bg-rose-50 text-rose-600': (api.method||'')==='DELETE'}"
+                                      x-text="api.method || 'GET'"></span>
+                                    <span class="font-mono text-slate-600 break-all" x-text="api.path"></span>
                                   </div>
                                 </template>
                               </div>
                             </template>
                           </div>
-                        </div>
-                      </template>
-                      <div x-show="(!node.onLoadApis || !node.onLoadApis.length) && (!node.actions || !node.actions.length)" class="text-xs text-slate-400 ml-5">无 API 记录</div>
+                        </template>
+                      </div>
                     </div>
                   </template>
                 </div>
               </template>
-              <div x-show="crawlerBusinessTree().length === 0" class="text-center py-8 text-slate-400 text-sm">暂无数据</div>
+              <div x-show="(crawlerResultsPageData?.mappings || []).length === 0" class="text-center py-8 text-slate-400 text-sm">暂无映射数据</div>
             </div>
-          </div>
-        </template>
-      </div>
-    </template>
+          </template>
+
+          <!-- Business tree tab -->
+          <template x-if="crawlerResultsPageTab === 'tree'">
+            <div class="card p-5">
+              <p class="text-xs text-slate-500 mb-4">以页面为节点的业务逻辑树，展开可查看每个页面的加载 API 和用户操作触发的 API。</p>
+              <div class="space-y-1">
+                <template x-for="(node, i) in crawlerBusinessTree()" :key="node.pageId || i">
+                  <div class="border border-slate-200 rounded-lg overflow-hidden">
+                    <div class="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-slate-50 transition" @click="toggleTreeNode(node.pageId)">
+                      <svg class="w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform" :class="isTreeNodeExpanded(node.pageId) ? 'rotate-90' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+                      <span class="w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-mono font-bold shrink-0" :class="pageTypeColor(node.pageType)" x-text="(i+1)"></span>
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2">
+                          <span class="text-sm font-medium text-slate-700 truncate" x-text="node.pageName"></span>
+                          <span x-show="node.pageType" class="badge bg-slate-100 text-slate-500" x-text="node.pageType"></span>
+                          <span x-show="node.exhausted" class="badge bg-emerald-50 text-emerald-600">已穷尽</span>
+                        </div>
+                        <a :href="node.pageUrl" target="_blank" class="text-[10px] text-blue-400 hover:underline truncate block" x-text="node.pageUrl"></a>
+                      </div>
+                      <span class="text-[10px] text-slate-400 shrink-0 tabular-nums" x-text="node.apiCount + ' API'"></span>
+                    </div>
+                    <template x-if="isTreeNodeExpanded(node.pageId)">
+                      <div class="border-t border-slate-100 bg-slate-50/50 p-3 space-y-2">
+                        <template x-if="node.onLoadApis && node.onLoadApis.length">
+                          <div>
+                            <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">页面加载</p>
+                            <div class="space-y-1 ml-5">
+                              <template x-for="(api, j) in node.onLoadApis" :key="j">
+                                <div class="flex items-center gap-2 text-[11px]">
+                                  <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+                                    :class="{'bg-emerald-50 text-emerald-600': (api.method||'GET')==='GET', 'bg-amber-50 text-amber-600': (api.method||'')==='POST', 'bg-sky-50 text-sky-600': ['PUT','PATCH'].includes(api.method||''), 'bg-rose-50 text-rose-600': (api.method||'')==='DELETE'}"
+                                    x-text="api.method || 'GET'"></span>
+                                  <span class="font-mono text-slate-600 break-all" x-text="api.path"></span>
+                                  <span x-show="api.note" class="text-slate-400 truncate" x-text="api.note"></span>
+                                </div>
+                              </template>
+                            </div>
+                          </div>
+                        </template>
+                        <template x-if="node.actions && node.actions.length">
+                          <div>
+                            <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">用户操作</p>
+                            <div class="space-y-2 ml-5">
+                              <template x-for="(action, j) in node.actions" :key="action.action_id || j">
+                                <div class="rounded-lg border border-slate-200 bg-white p-2">
+                                  <div class="flex items-center gap-2 mb-1">
+                                    <span class="badge bg-indigo-50 text-indigo-500 shrink-0" x-text="action.trigger_type || 'action'"></span>
+                                    <span class="text-xs text-slate-600" x-text="action.action_name || ''"></span>
+                                    <template x-if="action.result && action.result.status">
+                                      <span class="badge shrink-0"
+                                        :class="{'bg-emerald-50 text-emerald-600': action.result.status === 'success', 'bg-rose-50 text-rose-500': action.result.status === 'denied' || action.result.status === 'failure', 'bg-slate-100 text-slate-500': action.result.status === 'noop'}"
+                                        x-text="action.result.status"></span>
+                                    </template>
+                                  </div>
+                                  <template x-if="action.apis && action.apis.length">
+                                    <div class="ml-4 space-y-0.5">
+                                      <template x-for="(api, k) in action.apis" :key="k">
+                                        <div class="flex items-center gap-2 text-[11px]">
+                                          <span class="text-slate-300">↳</span>
+                                          <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+                                            :class="{'bg-emerald-50 text-emerald-600': (api.method||'GET')==='GET', 'bg-amber-50 text-amber-600': (api.method||'')==='POST', 'bg-sky-50 text-sky-600': ['PUT','PATCH'].includes(api.method||''), 'bg-rose-50 text-rose-600': (api.method||'')==='DELETE'}"
+                                            x-text="api.method || 'GET'"></span>
+                                          <span class="font-mono text-slate-600 break-all" x-text="api.path"></span>
+                                        </div>
+                                      </template>
+                                    </div>
+                                  </template>
+                                </div>
+                              </template>
+                            </div>
+                          </div>
+                        </template>
+                        <div x-show="(!node.onLoadApis || !node.onLoadApis.length) && (!node.actions || !node.actions.length)" class="text-xs text-slate-400 ml-5">无 API 记录</div>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <div x-show="crawlerBusinessTree().length === 0" class="text-center py-8 text-slate-400 text-sm">暂无数据</div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </section>
   </main>
+</div>
+
+<!-- Crawler Task Form Modal -->
+<div x-show="showCrawlerTaskForm" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showCrawlerTaskForm = false">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4" @click.stop>
+    <div class="px-5 py-3 border-b border-slate-200 flex items-center gap-3">
+      <h3 class="text-sm font-semibold text-slate-700">新建爬虫任务</h3>
+      <div class="flex-1"></div>
+      <button @click="showCrawlerTaskForm = false" class="text-slate-400 hover:text-slate-600 text-lg">&times;</button>
+    </div>
+    <div class="p-5 space-y-3">
+      <input x-model="newCrawlerTask.title" placeholder="任务名称（如：先知社区爬取）" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+      <input x-model="newCrawlerTask.target_url" placeholder="目标 URL（https://target.com）" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+    </div>
+    <div class="px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
+      <button @click="showCrawlerTaskForm = false" class="px-4 py-2 text-sm rounded-xl border border-slate-200 text-slate-500">取消</button>
+      <button @click="createCrawlerTask()" :disabled="!newCrawlerTask.title || !newCrawlerTask.target_url"
+        class="px-4 py-2 text-sm rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-40">创建</button>
+    </div>
+  </div>
 </div>
 
 <!-- ═══════════ GLOBAL SEARCH (Cmd+K) ═══════════ -->
@@ -3241,10 +3326,13 @@ function cairnApp() {
     vulnBoardFilter: 'all',
     errorDetail: null,
     notifications: [],
-    crawlerResultsGroupId: '',
     crawlerResultsPageTab: 'pages',
     crawlerResultsPageData: null,
     treeExpanded: {},
+    crawlerTasks: [],
+    selectedCrawlerTaskId: '',
+    showCrawlerTaskForm: false,
+    newCrawlerTask: { title: '', target_url: '' },
     projectGroups: [],
     projects: [],
     project: null,
@@ -3288,7 +3376,7 @@ function cairnApp() {
     exportProjectId: '',
     showDeleteModal: false,
 
-    newProject: { parent_project_id: '', title: '', origin: '', goal: '', bootstrap: true, depth_mode: false, blackboard: '' },
+    newProject: { parent_project_id: '', title: '', origin: '', goal: '', bootstrap: true, depth_mode: false, blackboard: '', depthInputMode: 'har', crawlerTaskId: '' },
     projectGroupForm: { title: '', description: '' },
     projectGroupSettingsForm: { title: '', description: '', targets_text: '', exclude_text: '', notes: '', status: 'active' },
     intentForm: { description: '' },
@@ -4393,21 +4481,69 @@ description: 一句话描述 skill 的用途和触发场景
       }
     },
 
-    async loadCrawlerStatus() {
-      if (!this.crawlerResultsGroupId) return;
+    async loadCrawlerTasks() {
       try {
-        this.crawlerStatus = await this.api('GET', `/project-groups/${this.crawlerResultsGroupId}/crawler`);
+        this.crawlerTasks = await this.api('GET', '/crawler/tasks');
+      } catch(e) { /* ignore */ }
+    },
+
+    selectedCrawlerTask() {
+      return this.crawlerTasks.find(t => t.id === this.selectedCrawlerTaskId) || null;
+    },
+
+    async selectCrawlerTask(taskId) {
+      this.selectedCrawlerTaskId = taskId;
+      this.crawlerStatus = null;
+      this.crawlerResultsPageData = null;
+      this.crawlerTargetUrl = '';
+      await this.loadCrawlerStatus();
+      await this.loadCrawlerResultsPage();
+    },
+
+    async createCrawlerTask() {
+      if (!this.newCrawlerTask.title || !this.newCrawlerTask.target_url) return;
+      try {
+        const task = await this.api('POST', '/crawler/tasks', this.newCrawlerTask);
+        this.crawlerTasks.unshift(task);
+        this.showCrawlerTaskForm = false;
+        this.newCrawlerTask = { title: '', target_url: '' };
+        this.selectCrawlerTask(task.id);
+        this.showToast('爬虫任务已创建');
+      } catch(e) {
+        this.showToast(e.message || '创建失败', 'error');
+      }
+    },
+
+    async deleteCrawlerTask(taskId, title) {
+      if (!confirm(`删除爬虫任务 ${title || taskId}？`)) return;
+      try {
+        await this.api('DELETE', `/crawler/tasks/${taskId}`);
+        this.crawlerTasks = this.crawlerTasks.filter(t => t.id !== taskId);
+        if (this.selectedCrawlerTaskId === taskId) {
+          this.selectedCrawlerTaskId = '';
+          this.crawlerStatus = null;
+          this.crawlerResultsPageData = null;
+        }
+        this.showToast('已删除');
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async loadCrawlerStatus() {
+      if (!this.selectedCrawlerTaskId) return;
+      try {
+        this.crawlerStatus = await this.api('GET', `/crawler/tasks/${this.selectedCrawlerTaskId}/status`);
       } catch(e) { /* ignore */ }
     },
 
     async startCrawler() {
-      if (!this.crawlerResultsGroupId || !this.crawlerTargetUrl) return;
+      if (!this.selectedCrawlerTaskId || !this.crawlerTargetUrl) return;
       this.crawlerStarting = true;
       try {
-        this.crawlerStatus = await this.api('POST', `/project-groups/${this.crawlerResultsGroupId}/crawler/start`, {
+        this.crawlerStatus = await this.api('POST', `/crawler/tasks/${this.selectedCrawlerTaskId}/start`, {
           target_url: this.crawlerTargetUrl,
         });
         this.showToast('爬虫已启动', 'success');
+        await this.loadCrawlerTasks();
       } catch(e) {
         this.showToast('启动爬虫失败: ' + (e.message || e), 'error');
       } finally {
@@ -4416,9 +4552,9 @@ description: 一句话描述 skill 的用途和触发场景
     },
 
     async stopCrawler() {
-      if (!this.crawlerResultsGroupId) return;
+      if (!this.selectedCrawlerTaskId) return;
       try {
-        await this.api('POST', `/project-groups/${this.crawlerResultsGroupId}/crawler/stop`);
+        await this.api('POST', `/crawler/tasks/${this.selectedCrawlerTaskId}/stop`);
         this.showToast('爬虫已停止', 'success');
         await this.loadCrawlerStatus();
       } catch(e) {
@@ -4426,45 +4562,13 @@ description: 一句话描述 skill 的用途和触发场景
       }
     },
 
-    async viewCrawlerResults() {
-      if (!this.crawlerResultsGroupId) return;
-      this.crawlerResultsOpen = true;
-      this.crawlerResultsTab = 'pages';
-      this.crawlerResultsData = null;
-      this.crawlerResultsLoading = true;
-      try {
-        this.crawlerResultsData = await this.api('GET', `/project-groups/${this.crawlerResultsGroupId}/crawler/results`);
-      } catch(e) {
-        this.showToast('加载结果失败: ' + (e.message || e), 'error');
-      } finally {
-        this.crawlerResultsLoading = false;
-      }
-    },
-
-    async refreshCrawlerResults() {
-      if (!this.crawlerResultsGroupId) return;
-      try {
-        this.crawlerResultsData = await this.api('GET', `/project-groups/${this.crawlerResultsGroupId}/crawler/results`);
-      } catch(e) { /* ignore */ }
-    },
-
     async loadCrawlerResultsPage() {
-      if (!this.crawlerResultsGroupId) { this.crawlerResultsPageData = null; return; }
+      if (!this.selectedCrawlerTaskId) { this.crawlerResultsPageData = null; return; }
       try {
-        this.crawlerResultsPageData = await this.api('GET', `/project-groups/${this.crawlerResultsGroupId}/crawler/results`);
+        this.crawlerResultsPageData = await this.api('GET', `/crawler/tasks/${this.selectedCrawlerTaskId}/results`);
       } catch(e) {
         this.crawlerResultsPageData = { pages: [], apis: [], mappings: [], counts: { pages: 0, apis: 0, mappings: 0 } };
       }
-    },
-
-    async onCrawlerGroupChange() {
-      this.crawlerStatus = null;
-      await this.loadCrawlerStatus();
-      await this.loadCrawlerResultsPage();
-    },
-
-    selectedCrawlerGroup() {
-      return this.projectGroups.find(g => g.id === this.crawlerResultsGroupId) || null;
     },
 
     crawlerBusinessTree() {
@@ -5821,22 +5925,23 @@ description: 一句话描述 skill 的用途和触发场景
             await this.loadAllProjectDetails();
           }
         }
-        // Auto-poll crawler status while on crawler management page
-        if (this.activePage === 'crawler-results' && this.crawlerResultsGroupId) {
+        // Auto-poll crawler status on crawler management page
+        if (this.activePage === 'crawler-results' && this.selectedCrawlerTaskId) {
           if (this.crawlerStatus && (this.crawlerStatus.status === 'running' || this.crawlerStatus.status === 'stopping')) {
             const wasRunning = this.crawlerStatus.status === 'running';
             await this.loadCrawlerStatus();
             if (wasRunning && this.crawlerStatus.status === 'done') {
               this.pushNotification({ type: 'success', title: '爬虫完成', message: this.crawlerStatus.target_url });
               await this.loadCrawlerResultsPage();
+              await this.loadCrawlerTasks();
             } else if (wasRunning && this.crawlerStatus.status === 'failed') {
               this.pushNotification({ type: 'error', title: '爬虫失败', message: this.crawlerStatus.target_url });
+              await this.loadCrawlerTasks();
             }
           } else {
             await this.loadCrawlerStatus();
           }
           await this.loadCrawlerResultsPage();
-          if (this.crawlerResultsOpen) await this.refreshCrawlerResults();
         }
       }, 5000);
     },
@@ -7486,6 +7591,18 @@ description: 一句话描述 skill 的用途和触发场景
       return `分阶段：${parts.join(' | ')}`;
     },
 
+    async onCrawlerTaskSelectForProject() {
+      if (this.newProject.crawlerTaskId) {
+        this.newProject.origin = `crawler-task:${this.newProject.crawlerTaskId}`;
+        if (!this.newProject.title) {
+          const task = this.crawlerTasks.find(t => t.id === this.newProject.crawlerTaskId);
+          if (task) this.newProject.title = task.title || task.id;
+        }
+      } else {
+        this.newProject.origin = '';
+      }
+    },
+
     async createProject() {
       try {
         if (this.projectGroups.length === 0) await this.loadProjectGroups();
@@ -7494,11 +7611,27 @@ description: 一句话描述 skill 的用途和触发场景
           this.showToast('请先创建项目，再创建任务', 'error');
           return;
         }
+
+        let origin = this.newProject.origin;
+        if (this.newProject.depth_mode && this.newProject.depthInputMode === 'crawler' && this.newProject.crawlerTaskId) {
+          try {
+            const resp = await this.api('GET', `/crawler/tasks/${this.newProject.crawlerTaskId}/export`);
+            origin = resp.yaml || '';
+          } catch(e) {
+            this.showToast('获取爬虫数据失败: ' + (e.message || e), 'error');
+            return;
+          }
+          if (!origin) {
+            this.showToast('该爬虫任务暂无数据，请先运行爬虫', 'error');
+            return;
+          }
+        }
+
         const actor = this.actorName();
         const body = {
           parent_project_id: parentProjectId,
           title: this.newProject.title,
-          origin: this.newProject.origin,
+          origin: origin,
           goal: this.newProject.depth_mode ? '深度模式' : this.newProject.goal,
           bootstrap_enabled: this.newProject.bootstrap && !this.newProject.depth_mode,
           depth_mode: !!this.newProject.depth_mode,
@@ -7518,6 +7651,7 @@ description: 一句话描述 skill 的用途和触发场景
           parent_project_id: parentProjectId || this.projectGroups[0]?.id || '',
           title:'', origin:'', goal:'',
           bootstrap: true, depth_mode: false, blackboard: '',
+          depthInputMode: 'har', crawlerTaskId: '',
         };
         await this.loadProjectGroups();
         await this.loadProjects();
