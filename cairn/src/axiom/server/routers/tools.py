@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
+import pathlib
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from axiom.server.db import get_conn
 from axiom.server.models import (
@@ -298,3 +302,108 @@ def _skill_from_row(row) -> PiSkill:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+# ── Skill file management (multi-file skills) ──
+
+_SKILLS_DIR = pathlib.Path(__file__).resolve().parents[2] / "dispatcher" / "skills"
+
+
+def _skill_dir(name: str) -> pathlib.Path:
+    return _SKILLS_DIR / name
+
+
+def _validate_rel_path(path: str) -> str:
+    """Ensure path is within the skill directory (no traversal)."""
+    if not path or ".." in path.split("/"):
+        raise HTTPException(400, "Invalid path")
+    if path.startswith("/"):
+        raise HTTPException(400, "Path must be relative")
+    return path
+
+
+@router.get("/skills/{skill_name}/files")
+def list_skill_files(skill_name: str) -> list[dict[str, Any]]:
+    """List all files in a skill directory."""
+    sd = _skill_dir(skill_name)
+    if not sd.is_dir():
+        return []
+    files = []
+    for root, _dirs, fnames in os.walk(sd):
+        for fname in sorted(fnames):
+            full = pathlib.Path(root) / fname
+            rel = str(full.relative_to(sd))
+            files.append({"path": rel, "size": full.stat().st_size})
+    return sorted(files, key=lambda f: f["path"])
+
+
+@router.get("/skills/{skill_name}/files/{file_path:path}")
+def read_skill_file(skill_name: str, file_path: str):
+    """Read a file from a skill directory."""
+    _validate_rel_path(file_path)
+    sd = _skill_dir(skill_name)
+    full = sd / file_path
+    if not full.is_file():
+        raise HTTPException(404, f"File not found: {file_path}")
+    return {"path": file_path, "content": full.read_text(encoding="utf-8")}
+
+
+class WriteSkillFileRequest(BaseModel):
+    content: str
+    path: str = ""
+
+
+@router.put("/skills/{skill_name}/files/{file_path:path}")
+def write_skill_file(skill_name: str, file_path: str, body: WriteSkillFileRequest):
+    """Write or update a file in a skill directory."""
+    target_path = body.path or file_path
+    _validate_rel_path(target_path)
+    if not target_path.endswith(".md") and not target_path.endswith(".txt") and not target_path.endswith(".sh") and not target_path.endswith(".py") and not target_path.endswith(".json") and not target_path.endswith(".yaml") and not target_path.endswith(".yml"):
+        if not target_path.endswith("SKILL.md") and "/" not in target_path:
+            pass
+    sd = _skill_dir(skill_name)
+    if not sd.is_dir():
+        raise HTTPException(404, f"Skill directory not found: {skill_name}")
+    full = sd / target_path
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_text(body.content, encoding="utf-8")
+    return {"path": target_path, "saved": True}
+
+
+@router.delete("/skills/{skill_name}/files/{file_path:path}", status_code=204)
+def delete_skill_file(skill_name: str, file_path: str):
+    """Delete a file from a skill directory. SKILL.md cannot be deleted."""
+    _validate_rel_path(file_path)
+    if file_path == "SKILL.md":
+        raise HTTPException(400, "Cannot delete SKILL.md")
+    sd = _skill_dir(skill_name)
+    full = sd / file_path
+    if full.is_file():
+        full.unlink()
+    # Clean up empty parent dirs (but not the skill root)
+    parent = full.parent
+    while parent != sd and parent.is_dir() and not any(parent.iterdir()):
+        parent.rmdir()
+        parent = parent.parent
+
+
+class CreateSkillFileRequest(BaseModel):
+    path: str
+    content: str = ""
+
+
+@router.post("/skills/{skill_name}/files", status_code=201)
+def create_skill_file(skill_name: str, body: CreateSkillFileRequest):
+    """Create a new file in a skill directory."""
+    _validate_rel_path(body.path)
+    if body.path == "SKILL.md":
+        raise HTTPException(400, "SKILL.md already exists")
+    sd = _skill_dir(skill_name)
+    if not sd.is_dir():
+        raise HTTPException(404, f"Skill directory not found: {skill_name}")
+    full = sd / body.path
+    if full.exists():
+        raise HTTPException(409, f"File already exists: {body.path}")
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_text(body.content, encoding="utf-8")
+    return {"path": body.path, "created": True}

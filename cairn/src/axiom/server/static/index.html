@@ -1816,91 +1816,124 @@
 <div x-show="activePage === 'skills'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0" x-init="loadSkills()">
   <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
     <h2 class="text-base font-semibold text-slate-800">Skill 管理</h2>
-    <span class="text-xs text-slate-400">渐进式注入 · Markdown 格式 · 全阶段生效</span>
+    <span class="text-xs text-slate-400">多文件结构 · 渐进式注入 · Markdown 格式</span>
     <div class="flex-1"></div>
     <button @click="openSkillEditor()" class="px-3 py-1.5 text-xs rounded-lg bg-brand-500 text-white hover:bg-brand-600">新建 Skill</button>
     <label class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 cursor-pointer transition">
-      上传 .md
-      <input type="file" accept=".md" @change="uploadSkillFile($event)" class="hidden">
+      上传文件夹/MD
+      <input type="file" accept=".md,.txt,.sh,.py,.json,.yaml,.yml" multiple webkitdirectory @change="uploadSkillFiles($event)" class="hidden">
     </label>
     <button @click="loadSkills()" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">刷新</button>
   </header>
-  <div class="flex-1 overflow-y-auto p-5 space-y-4">
-    <template x-if="!skills || skills.length === 0">
-      <div class="text-center text-sm text-slate-400 py-20">暂无 Skill，点击「新建 Skill」创建一个</div>
-    </template>
-    <template x-for="sk in (skills || [])" :key="sk.id">
-      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-        <div class="flex items-start justify-between gap-3">
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-semibold text-slate-700" x-text="sk.name"></span>
-              <span x-show="sk.builtin" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-brand-50 text-brand-600">内置</span>
-              <span x-show="sk.enabled" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-50 text-emerald-600">启用</span>
-              <span x-show="!sk.enabled" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-100 text-slate-400">禁用</span>
-              <span class="text-[10px] text-slate-400">→ pi 匹配: </span>
-              <code class="text-[10px] bg-slate-100 px-1 rounded" x-text="(sk.display_name || sk.name)"></code>
+  <main class="flex-1 overflow-hidden grid grid-cols-[260px_200px_minmax(0,1fr)]">
+    <!-- Skill list -->
+    <aside class="border-r border-slate-200 bg-white overflow-y-auto p-3 space-y-2">
+      <template x-if="!skills || skills.length === 0">
+        <p class="text-sm text-slate-400 text-center py-10">暂无 Skill</p>
+      </template>
+      <template x-for="sk in (skills || [])" :key="sk.id">
+        <button type="button" @click="selectSkill(sk)" class="w-full flex flex-col items-start text-left rounded-xl border p-3 transition"
+          :class="skillEditor.id === sk.id ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'">
+          <div class="flex items-center gap-1.5 w-full">
+            <span class="text-sm font-semibold text-slate-700 truncate" x-text="sk.name"></span>
+            <span x-show="sk.builtin" class="px-1 py-0.5 rounded text-[8px] font-semibold bg-brand-50 text-brand-600 shrink-0">内置</span>
+          </div>
+          <p class="mt-0.5 text-[10px] text-slate-400 line-clamp-2" x-text="sk.description || ''"></p>
+          <div class="mt-1 flex items-center gap-2">
+            <span class="px-1 py-0.5 rounded text-[8px] font-semibold"
+              :class="sk.enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'"
+              x-text="sk.enabled ? '启用' : '禁用'"></span>
+          </div>
+        </button>
+      </template>
+    </aside>
+    <!-- File tree -->
+    <aside class="border-r border-slate-200 bg-white overflow-y-auto p-3 space-y-1" x-show="skillEditor.id">
+      <template x-if="!skillEditor.id">
+        <p class="text-xs text-slate-400 text-center py-10">← 选择一个 Skill</p>
+      </template>
+      <template x-if="skillEditor.id">
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">文件</span>
+            <button @click="showNewSkillFileInput = !showNewSkillFileInput" class="text-[10px] text-brand-500 hover:text-brand-700">+ 新建</button>
+          </div>
+          <div x-show="showNewSkillFileInput" class="mb-2">
+            <input x-model="newSkillFilePath" placeholder="references/notes.md" @keydown.enter="createSkillFile()"
+              class="w-full px-2 py-1 text-[11px] border border-slate-200 rounded text-sm font-mono">
+            <button @click="createSkillFile()" :disabled="!newSkillFilePath"
+              class="mt-1 w-full px-2 py-1 text-[10px] rounded bg-brand-500 text-white hover:bg-brand-600 disabled:opacity-40">创建</button>
+          </div>
+          <template x-for="f in skillFiles" :key="f.path">
+            <div class="group flex items-center gap-1 rounded-lg px-2 py-1.5 cursor-pointer transition"
+              :class="skillEditor.activeFile === f.path ? 'bg-brand-50 text-brand-700' : 'hover:bg-slate-50 text-slate-600'"
+              @click="openSkillFile(f.path)">
+              <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+              <span class="text-xs truncate flex-1" x-text="f.path"></span>
+              <button x-show="f.path !== 'SKILL.md'" @click.stop="deleteSkillFile(f.path)"
+                class="opacity-0 group-hover:opacity-100 text-rose-400 hover:text-rose-600 text-[10px] shrink-0">×</button>
             </div>
-            <p class="mt-1 text-xs text-slate-500" x-text="(sk.description || '').slice(0, 120)"></p>
-            <pre class="mt-2 text-[11px] text-slate-500 font-mono max-h-24 overflow-y-auto bg-slate-50 rounded-lg p-2 whitespace-pre-wrap" x-text="(sk.content || '').slice(0, 300) + ((sk.content || '').length > 300 ? '...' : '')"></pre>
-          </div>
-          <div class="flex items-center gap-2 shrink-0">
-            <label class="flex items-center gap-1 text-xs text-slate-500 cursor-pointer">
-              <input type="checkbox" :checked="sk.enabled" @change="toggleSkill(sk)" class="rounded border-slate-300 text-brand-500">
+          </template>
+          <div x-show="skillFiles.length === 0" class="text-xs text-slate-400 text-center py-4">无文件</div>
+        </div>
+      </template>
+    </aside>
+    <!-- Editor -->
+    <section class="overflow-hidden flex flex-col" x-show="skillEditor.id">
+      <template x-if="!skillEditor.id">
+        <div class="flex items-center justify-center h-full text-slate-400 text-sm">← 选择一个 Skill 开始编辑</div>
+      </template>
+      <template x-if="skillEditor.id">
+        <div class="flex flex-col h-full">
+          <!-- Skill meta bar -->
+          <div class="shrink-0 px-4 py-2 border-b border-slate-100 bg-white flex items-center gap-3">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-semibold text-slate-700" x-text="skillEditor.name"></span>
+              <span x-show="skillEditor.builtin" class="px-1 py-0.5 rounded text-[8px] font-semibold bg-brand-50 text-brand-600">内置</span>
+            </div>
+            <label class="flex items-center gap-1 text-xs text-slate-500 cursor-pointer ml-auto">
+              <input type="checkbox" :checked="skillEditor.enabled" @change="toggleSkillFromEditor()" class="rounded border-slate-300 text-brand-500">
+              <span x-text="skillEditor.enabled ? '启用' : '禁用'"></span>
             </label>
-            <button @click="openSkillEditor(sk)" class="px-2 py-1 text-xs rounded border border-slate-200 text-slate-500 hover:bg-slate-50">编辑</button>
-            <button @click="deleteSkill(sk)" class="px-2 py-1 text-xs rounded border border-rose-200 text-rose-500 hover:bg-rose-50">删除</button>
+            <button @click="deleteSkill({id: skillEditor.id, name: skillEditor.name, builtin: skillEditor.builtin})" class="px-2 py-1 text-xs rounded border border-rose-200 text-rose-500 hover:bg-rose-50">删除</button>
+          </div>
+          <!-- SKILL.md frontmatter (name + description) -->
+          <div class="shrink-0 px-4 py-2 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3" x-show="skillEditor.activeFile === 'SKILL.md'">
+            <div class="flex-1 grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-[10px] font-semibold text-slate-400 block">name</label>
+                <input x-model="skillEditor.name" :disabled="!skillEditor.isNew" @input="skillEditor.name = skillEditor.name.replace(/[^a-z0-9-]/g, '-').replace(/--+/g, '-').replace(/^-|-$/g, '')"
+                  class="w-full px-2 py-1 text-xs border border-slate-200 rounded font-mono disabled:bg-slate-100 disabled:text-slate-400">
+              </div>
+              <div>
+                <label class="text-[10px] font-semibold text-slate-400 block">description</label>
+                <input x-model="skillEditor.description" placeholder="触发场景描述"
+                  class="w-full px-2 py-1 text-xs border border-slate-200 rounded">
+              </div>
+            </div>
+            <button @click="fillSkillPreset()" class="px-2 py-1 text-[10px] rounded border border-slate-200 text-slate-500 hover:bg-slate-100 shrink-0">预设</button>
+          </div>
+          <!-- File editor -->
+          <div class="flex-1 overflow-hidden p-4">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs font-mono text-slate-400" x-text="skillEditor.activeFile || ''"></span>
+              <span x-show="skillEditor.fileDirty" class="text-[10px] text-amber-500">未保存</span>
+            </div>
+            <textarea x-model="skillEditor.fileContent" @input="skillEditor.fileDirty = true"
+              :placeholder="skillEditor.activeFile ? '文件内容...' : '← 选择左侧文件'"
+              :disabled="!skillEditor.activeFile"
+              class="w-full h-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 resize-none disabled:bg-slate-50 disabled:cursor-not-allowed"></textarea>
+          </div>
+          <!-- Save bar -->
+          <div class="shrink-0 px-4 py-2 border-t border-slate-100 bg-white flex items-center justify-end gap-2">
+            <span class="text-[10px] text-slate-400 mr-auto" x-show="skillEditor.builtin && skillEditor.activeFile !== 'SKILL.md'">辅助文件从磁盘管理，直接保存到源码目录</span>
+            <button @click="saveSkillFile()" :disabled="!skillEditor.activeFile || !skillEditor.fileDirty"
+              class="px-4 py-1.5 text-sm rounded-xl bg-brand-500 text-white hover:bg-brand-600 disabled:opacity-40">保存</button>
           </div>
         </div>
-      </div>
-    </template>
-  </div>
-  <!-- Skill editor modal -->
-  <div x-show="skillEditor.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="skillEditor.open = false">
-    <div class="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col mx-4">
-      <div class="px-5 py-3 border-b border-slate-200 flex items-center gap-3">
-        <h3 class="text-sm font-semibold text-slate-700" x-text="skillEditor.isNew ? '新建 Skill' : '编辑 Skill'"></h3>
-        <span class="text-[10px] text-slate-400">Claude Code 格式 — <code>---</code> frontmatter + Markdown</span>
-        <div class="flex-1"></div>
-        <button @click="skillEditor.open = false" class="text-slate-400 hover:text-slate-600 text-lg">&times;</button>
-      </div>
-      <div class="flex-1 overflow-y-auto p-5 space-y-4">
-        <div>
-          <label class="text-xs font-semibold text-slate-500 mb-1 block">名称 <span class="text-slate-300">— 同时也是目录名，pi 要求匹配 SKILL.md 中的 frontmatter name</span></label>
-          <input x-model="skillEditor.name" @input="skillEditor.name = skillEditor.name.replace(/[^a-z0-9-]/g, '-').replace(/--+/g, '-').replace(/^-|-$/g, '')" placeholder="例: vuln-review" :disabled="!skillEditor.isNew" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 disabled:bg-slate-50 disabled:text-slate-400">
-        </div>
-        <div>
-          <label class="text-xs font-semibold text-slate-500 mb-1 block">描述 <span class="text-slate-300">— 模型根据此字段决定是否触发 skill。写场景而非功能描述</span></label>
-          <input x-model="skillEditor.description" placeholder="例: 当成功利用安全漏洞并证明实际危害后，使用 curl POST 上报漏洞数据" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-        </div>
-        <div>
-          <div class="flex items-center justify-between mb-1">
-            <label class="text-xs font-semibold text-slate-500">正文（Markdown）</label>
-            <button @click="fillSkillPreset()" class="px-2 py-0.5 text-[10px] rounded border border-slate-200 text-slate-500 hover:bg-slate-100">预设</button>
-          </div>
-          <p class="text-[10px] text-slate-400 mb-1">不含 frontmatter——name 和 description 会自动拼装。正文写指令内容。</p>
-          <textarea x-model="skillEditor.content" rows="16"
-            placeholder="## 触发条件
-
-当 AI 准备...
-
-## 操作步骤
-
-1. ...
-2. ...
-
-## 规则
-
-- 规则 1` : ''"
-            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
-        </div>
-      </div>
-      <div class="px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2">
-        <button @click="skillEditor.open = false" class="px-4 py-2 text-sm rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50">取消</button>
-        <button @click="saveSkill()" class="px-4 py-2 text-sm rounded-xl bg-brand-500 text-white hover:bg-brand-600" x-text="skillEditor.isNew ? '创建' : '保存'"></button>
-      </div>
-    </div>
-  </div>
+      </template>
+    </section>
+  </main>
 </div>
 
 <!-- ═══════════ FILES PAGE ═══════════ -->
@@ -3456,7 +3489,10 @@ function cairnApp() {
     toolFilterSearch: '',
     toolPollTimer: null,
     skills: [],
-    skillEditor: { open: false, isNew: true, id: '', name: '', description: '', content: '' },
+    skillEditor: { id: '', name: '', description: '', content: '', isNew: false, builtin: false, enabled: true, activeFile: '', fileContent: '', fileDirty: false },
+    skillFiles: [],
+    showNewSkillFileInput: false,
+    newSkillFilePath: '',
     fileGroups: [],
     fileGroupOpen: '',
     fileGroupOpen2: '',
@@ -4190,36 +4226,125 @@ function cairnApp() {
       } catch (e) { /* ignore */ }
     },
 
-    async toggleSkill(sk) {
-      try {
-        await this.api('PUT', `/skills/${sk.id}`, { enabled: !sk.enabled });
-        sk.enabled = !sk.enabled;
-      } catch (e) { this.showToast(e.message, 'error'); }
+    async uploadHarFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      this._harFile = file;
+      this.newProject.origin = file.name;
+      this.showToast(`已选择: ${file.name} (${Math.round(file.size/1024)}KB)，创建任务后自动上传`);
+      event.target.value = '';
     },
 
-    openSkillEditor(sk) {
-      if (sk) {
-        const fm = (sk.content || '').match(/^---\s*\n(.*?)\n---/s);
-        let desc = sk.description || '';
-        let body = sk.content || '';
-        if (fm) {
-          const dm = fm[1].match(/^description:\s*(.+)$/m);
-          if (dm) desc = dm[1].trim();
-          body = (sk.content || '').replace(/^---\s*\n.*?\n---\s*\n?/s, '');
-        }
-        this.skillEditor = { open: true, isNew: false, id: sk.id, name: sk.name, description: desc, content: body };
-      } else {
-        this.skillEditor = { open: true, isNew: true, id: '', name: '', description: '', content: '' };
+    async selectSkill(sk) {
+      this.skillEditor = { id: sk.id, name: sk.name, description: sk.description || '', content: sk.content || '', isNew: false, builtin: sk.builtin, enabled: sk.enabled, activeFile: '', fileContent: '', fileDirty: false };
+      this.showNewSkillFileInput = false;
+      this.newSkillFilePath = '';
+      await this.loadSkillFiles();
+      if (this.skillFiles.length > 0) {
+        await this.openSkillFile('SKILL.md');
       }
     },
 
-    fillSkillPreset() {
-      this.skillEditor.content = `---
-name: ${this.skillEditor.name || 'my-skill'}
-description: 一句话描述 skill 的用途和触发场景
----
+    async loadSkillFiles() {
+      if (!this.skillEditor.name) { this.skillFiles = []; return; }
+      try {
+        this.skillFiles = await this.api('GET', `/skills/${this.skillEditor.name}/files`);
+      } catch(e) { this.skillFiles = []; }
+    },
 
-## 触发条件
+    async openSkillFile(path) {
+      if (this.skillEditor.fileDirty) {
+        if (!confirm('当前文件未保存，是否切换？')) return;
+      }
+      try {
+        if (path === 'SKILL.md') {
+          const sk = this.skills.find(s => s.id === this.skillEditor.id);
+          if (sk) {
+            const fm = (sk.content || '').match(/^---\s*\n(.*?)\n---/s);
+            let body = sk.content || '';
+            if (fm) body = (sk.content || '').replace(/^---\s*\n.*?\n---\s*\n?/s, '');
+            this.skillEditor.activeFile = path;
+            this.skillEditor.fileContent = body;
+            this.skillEditor.fileDirty = false;
+            return;
+          }
+        }
+        const resp = await this.api('GET', `/skills/${this.skillEditor.name}/files/${path}`);
+        this.skillEditor.activeFile = path;
+        this.skillEditor.fileContent = resp.content;
+        this.skillEditor.fileDirty = false;
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async saveSkillFile() {
+      if (!this.skillEditor.activeFile || !this.skillEditor.name) return;
+      const path = this.skillEditor.activeFile;
+      const content = this.skillEditor.fileContent || '';
+      try {
+        if (path === 'SKILL.md') {
+          const name = this.skillEditor.name.trim();
+          const desc = (this.skillEditor.description || '').trim();
+          if (!desc) { this.showToast('description 不能为空', 'error'); return; }
+          const fullContent = `---\nname: ${name}\ndescription: ${desc}\n---\n\n${content}`;
+          if (this.skillEditor.isNew) {
+            await this.api('POST', '/skills', { name, display_name: name, description: desc, content: fullContent, enabled: true });
+            this.skillEditor.isNew = false;
+          } else {
+            await this.api('PUT', `/skills/${this.skillEditor.id}`, { description: desc, content: fullContent });
+          }
+          await this.loadSkills();
+        } else {
+          await this.api('PUT', `/skills/${this.skillEditor.name}/files/${path}`, { content });
+        }
+        this.skillEditor.fileDirty = false;
+        this.showToast('已保存');
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async createSkillFile() {
+      if (!this.skillEditor.name || !this.newSkillFilePath) return;
+      const path = this.newSkillFilePath.trim();
+      try {
+        await this.api('POST', `/skills/${this.skillEditor.name}/files`, { path, content: '' });
+        this.showNewSkillFileInput = false;
+        this.newSkillFilePath = '';
+        await this.loadSkillFiles();
+        await this.openSkillFile(path);
+        this.showToast('文件已创建');
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async deleteSkillFile(path) {
+      if (!confirm(`删除文件 ${path}？`)) return;
+      try {
+        await this.api('DELETE', `/skills/${this.skillEditor.name}/files/${path}`);
+        await this.loadSkillFiles();
+        if (this.skillEditor.activeFile === path) {
+          this.skillEditor.activeFile = '';
+          this.skillEditor.fileContent = '';
+        }
+        this.showToast('已删除');
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async toggleSkillFromEditor() {
+      const sk = this.skills.find(s => s.id === this.skillEditor.id);
+      if (!sk) return;
+      try {
+        await this.api('PUT', `/skills/${sk.id}`, { enabled: !sk.enabled });
+        sk.enabled = !sk.enabled;
+        this.skillEditor.enabled = sk.enabled;
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    openSkillEditor() {
+      this.skillEditor = { id: '', name: '', description: '', content: '', isNew: true, builtin: false, enabled: true, activeFile: 'SKILL.md', fileContent: '', fileDirty: false };
+      this.skillFiles = [{ path: 'SKILL.md', size: 0 }];
+      this.showNewSkillFileInput = false;
+    },
+
+    fillSkillPreset() {
+      this.skillEditor.fileContent = `## 触发条件
 
 当 AI 准备...
 
@@ -4231,67 +4356,88 @@ description: 一句话描述 skill 的用途和触发场景
 ## 规则
 
 - 规则 1`;
+      this.skillEditor.fileDirty = true;
     },
 
-    async uploadHarFile(event) {
-      const file = event.target.files[0];
-      if (!file) return;
-      this._harFile = file;
-      this.newProject.origin = file.name;
-      this.showToast(`已选择: ${file.name} (${Math.round(file.size/1024)}KB)，创建任务后自动上传`);
-      event.target.value = '';
-    },
+    async uploadSkillFiles(event) {
+      const files = Array.from(event.target.files || []);
+      if (files.length === 0) return;
 
-    uploadSkillFile(event) {
-      const file = event.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = e.target.result;
-        // Auto-open editor if not open
-        if (!this.skillEditor.open) {
+      const mdFiles = files.filter(f => f.name.endsWith('.md'));
+      if (mdFiles.length === 1 && files.length === 1) {
+        const file = mdFiles[0];
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          const text = e.target.result;
           const fmMatch = text.match(/^---\s*\nname:\s*(\S+)/m);
           const name = fmMatch ? fmMatch[1] : file.name.replace(/\.md$/, '').replace(/[^a-z0-9-]/g, '-');
-          this.skillEditor = { open: true, isNew: true, id: '', name, content: text };
-        } else {
-          this.skillEditor.content = text;
-          if (this.skillEditor.isNew && !this.skillEditor.name) {
-            const fm = text.match(/^---\s*\nname:\s*(\S+)/m);
-            this.skillEditor.name = fm ? fm[1] : file.name.replace(/\.md$/, '').replace(/[^a-z0-9-]/g, '-');
+          const descMatch = text.match(/^description:\s*(.+)$/m);
+          const desc = descMatch ? descMatch[1].trim() : '';
+          let body = text;
+          const fm = text.match(/^---\s*\n.*?\n---\s*\n?/s);
+          if (fm) body = text.replace(fm, '');
+          this.skillEditor = { id: '', name, description: desc, content: '', isNew: true, builtin: false, enabled: true, activeFile: 'SKILL.md', fileContent: body, fileDirty: true };
+          this.skillFiles = [{ path: 'SKILL.md', size: text.length }];
+        };
+        reader.readAsText(file);
+      } else {
+        const dirs = new Set(files.map(f => f.webkitRelativePath?.split('/')[0] || 'uploaded-skill'));
+        const skillName = [...dirs][0].replace(/[^a-z0-9-]/g, '-').toLowerCase();
+        try {
+          const exists = this.skills.find(s => s.name === skillName);
+          if (!exists) {
+            await this.api('POST', '/skills', { name: skillName, display_name: skillName, description: '上传的 Skill', content: '---\nname: ' + skillName + '\ndescription: 上传的 Skill\n---\n\n请编辑此文件', enabled: true });
           }
-        }
-      };
-      reader.readAsText(file);
+          for (const file of files) {
+            const relPath = file.webkitRelativePath?.split('/').slice(1).join('/') || file.name;
+            if (!relPath || relPath.endsWith('/')) continue;
+            const content = await file.text();
+            if (relPath === 'SKILL.md') {
+              const fmMatch = content.match(/^---\s*\n(.*?)\n---\s*\n?/s);
+              let name = skillName, desc = '上传的 Skill', body = content;
+              if (fmMatch) {
+                const nm = fmMatch[1].match(/^name:\s*(\S+)/m);
+                const dm = fmMatch[1].match(/^description:\s*(.+)$/m);
+                if (nm) name = nm[1].trim();
+                if (dm) desc = dm[1].trim();
+                body = content.replace(/^---\s*\n.*?\n---\s*\n?/s, '');
+                const fullContent = `---\nname: ${name}\ndescription: ${desc}\n---\n\n${body}`;
+                await this.api('PUT', `/skills/${skillName}/files/SKILL.md`, { content: fullContent });
+                continue;
+              }
+            }
+            await this.api('PUT', `/skills/${skillName}/files/${relPath}`, { content });
+          }
+          await this.loadSkills();
+          const sk = this.skills.find(s => s.name === skillName);
+          if (sk) await this.selectSkill(sk);
+          this.showToast(`已上传 ${files.length} 个文件到 ${skillName}`);
+        } catch(e) { this.showToast(e.message, 'error'); }
+      }
       event.target.value = '';
     },
 
     async saveSkill() {
-      const ed = this.skillEditor;
-      const name = ed.name.trim();
-      const desc = (ed.description || '').trim();
-      const bodyText = (ed.content || '').trim();
-      if (!name) { this.showToast('名称不能为空', 'error'); return; }
-      if (!desc) { this.showToast('描述不能为空', 'error'); return; }
-      if (!bodyText) { this.showToast('内容不能为空', 'error'); return; }
-      // Assemble full content with frontmatter
-      const fullContent = `---\nname: ${name}\ndescription: ${desc}\n---\n\n${bodyText}`;
-      try {
-        if (ed.isNew) {
-          await this.api('POST', '/skills', { name, display_name: name, description: desc, content: fullContent, enabled: true });
-        } else {
-          await this.api('PUT', `/skills/${ed.id}`, { description: desc, content: fullContent });
-        }
-        this.skillEditor.open = false;
-        await this.loadSkills();
-        this.showToast(ed.isNew ? 'Skill 已创建' : 'Skill 已更新');
-      } catch (e) { this.showToast(e.message, 'error'); }
+      await this.saveSkillFile();
     },
 
     async deleteSkill(sk) {
-      if (!confirm(`确定要删除 "${sk.display_name || sk.name}" 吗？`)) return;
+      if (!confirm(`确定要删除 "${sk.name}" 吗？`)) return;
       try {
         await this.api('DELETE', `/skills/${sk.id}`);
+        if (this.skillEditor.id === sk.id) {
+          this.skillEditor = { id: '', name: '', description: '', content: '', isNew: false, builtin: false, enabled: true, activeFile: '', fileContent: '', fileDirty: false };
+          this.skillFiles = [];
+        }
         await this.loadSkills();
+        this.showToast('已删除');
+      } catch (e) { this.showToast(e.message, 'error'); }
+    },
+
+    async toggleSkill(sk) {
+      try {
+        await this.api('PUT', `/skills/${sk.id}`, { enabled: !sk.enabled });
+        sk.enabled = !sk.enabled;
       } catch (e) { this.showToast(e.message, 'error'); }
     },
 
