@@ -474,13 +474,18 @@ def _ensure_pi_skills_schema(conn: sqlite3.Connection) -> None:
     skill_cols = {row["name"] for row in conn.execute("PRAGMA table_info(pi_skills)")}
     if "content" not in skill_cols:
         conn.execute("ALTER TABLE pi_skills ADD COLUMN content TEXT NOT NULL DEFAULT ''")
-    # Sync builtin skills from disk
-    builtin_dir = Path(__file__).resolve().parents[1] / "dispatcher" / "prompts" / "default" / "skills"
+    # Sync builtin skills from disk (multi-file: skills/{name}/SKILL.md)
+    builtin_dir = Path(__file__).resolve().parents[1] / "dispatcher" / "skills"
     if builtin_dir.exists():
-        for skill_file in sorted(builtin_dir.glob("*.md")):
+        for skill_dir in sorted(builtin_dir.iterdir()):
+            if not skill_dir.is_dir():
+                continue
+            skill_file = skill_dir / "SKILL.md"
+            if not skill_file.exists():
+                continue
             raw = skill_file.read_text(encoding="utf-8")
             fm_name, fm_desc, fm_body = _parse_skill_frontmatter(raw)
-            name = fm_name or skill_file.stem
+            name = fm_name or skill_dir.name
             desc = fm_desc or f"Builtin skill: {name}"
             content = fm_body or raw
             row = conn.execute("SELECT id, enabled, builtin FROM pi_skills WHERE name = ?", (name,)).fetchone()

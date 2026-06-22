@@ -437,13 +437,18 @@ class PiDriver(WorkerDriver):
 
 
 def _write_skill_files(skill_dir: str) -> None:
-    """Write enabled skill content to {skill_dir}/{name}/SKILL.md for pi.
+    """Write enabled skills to {skill_dir}/{name}/ for pi.
+
+    For builtin skills: copy the entire source directory (including scripts/,
+    references/, etc.) from dispatcher/skills/{name}/, then overwrite SKILL.md
+    with DB content (so frontend edits take effect).
+
+    For custom skills: write a single SKILL.md from DB content.
 
     pi requires --- frontmatter with name + description.
-    If the stored content already starts with ---, write as-is.
-    Otherwise, prepend frontmatter from DB columns.
     """
     import os as _os
+    import shutil as _shutil
     db_path = current_db_path()
     if not db_path.exists():
         return
@@ -451,7 +456,7 @@ def _write_skill_files(skill_dir: str) -> None:
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
-            "SELECT name, description, content FROM pi_skills "
+            "SELECT name, description, content, source FROM pi_skills "
             "WHERE enabled = 1 AND content IS NOT NULL AND content != '' "
             "ORDER BY builtin DESC, name ASC"
         ).fetchall()
@@ -459,6 +464,9 @@ def _write_skill_files(skill_dir: str) -> None:
         conn.close()
         return
     conn.close()
+
+    builtin_skills_dir = Path(__file__).resolve().parents[2] / "skills"
+
     for row in rows:
         name = row["name"].strip()
         desc = (row["description"] or "").strip()
@@ -467,10 +475,22 @@ def _write_skill_files(skill_dir: str) -> None:
             continue
         skill_subdir = _os.path.join(skill_dir, name)
         _os.makedirs(skill_subdir, exist_ok=True)
+
+        source_dir = builtin_skills_dir / name
+        if row["source"] == "builtin" and source_dir.is_dir():
+            for item in source_dir.iterdir():
+                if item.name == "SKILL.md":
+                    continue
+                dest = Path(skill_subdir) / item.name
+                if item.is_dir():
+                    if dest.exists():
+                        _shutil.rmtree(dest)
+                    _shutil.copytree(item, dest)
+                else:
+                    _shutil.copy2(item, dest)
+
         path = _os.path.join(skill_subdir, "SKILL.md")
-        # If body already has frontmatter, write as-is; otherwise prepend.
         if body.startswith("---"):
-            _os.makedirs(skill_subdir, exist_ok=True)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(body)
         else:

@@ -29,6 +29,7 @@ Only return the following after you have confirmed that Goal has been satisfied:
 - Use rejection only for true refusal cases. Do not reject merely because Goal is not finished yet.
 - Do not put long data blobs in `description`. Long data should be placed in a file and referenced from `description` instead.
 - If you are told to use reasoning, always output your final answer as a raw JSON object in the text (not inside reasoning). Do not output only reasoning with an empty text response.
+- Before finishing, check the available_skills list in the system prompt. If any skill's description matches your current findings, read and follow it.
 
 # Context
 ## Origin

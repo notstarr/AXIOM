@@ -35,6 +35,7 @@ If there are untested checklist items, attack chains, or new valuable directions
 - An Intent may originate from multiple facts.
 - Different intents should cover different exploration dimensions and avoid duplication or heavy overlap.
 - **All intent `description` text must be written in Chinese (中文). API paths, HTTP methods, parameter names, code snippets, and technical identifiers stay as-is; only human-readable narrative must be in Chinese.**
+- Before finishing, check the available_skills list in the system prompt. If any skill's description matches your current findings, read and follow it.
 
 ## Blackboard
 ```

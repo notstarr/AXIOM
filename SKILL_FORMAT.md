@@ -3,12 +3,21 @@
 ## 文件结构
 
 ```
-skills/
-└── {name}/              ← 目录名 = skill 名称
-    └── SKILL.md          ← 固定文件名，大小写敏感
+dispatcher/skills/                 ← skills 根目录（与 prompts/ 平级）
+└── {name}/                        ← 目录名 = skill 名称
+    ├── SKILL.md                   ← 主指令文件（必需）
+    ├── references/                ← 参考资料（可选）
+    │   ├── command-cheatsheet.md
+    │   └── field-spec.md
+    ├── scripts/                   ← 脚本（可选）
+    │   ├── enum.sh
+    │   └── check.py
+    └── assets/                    ← 模板等资源（可选）
+        └── report-template.md
 ```
 
 pi 通过 `--skill <skills_dir>` 加载时，递归扫描每个子目录，找到 `SKILL.md` 就加载。
+模型可通过 `read` 工具读取 skill 目录下的其他文件（references/、scripts/ 等）。
 
 ## SKILL.md 格式
 
@@ -31,6 +40,11 @@ description: 一句话描述用途和触发场景
 
 - 规则 1
 - 规则 2
+
+## 参考资料
+
+- `references/command-cheatsheet.md` — 命令速查
+- `references/field-spec.md` — 字段规范
 ```
 
 ## 约束规则（pi 强制校验）
@@ -53,9 +67,9 @@ description: 一句话描述用途和触发场景
 ```xml
 <available_skills>
   <skill>
-    <name>vuln-review</name>
-    <description>漏洞审核——在上报漏洞前对所有 vuln 声明进行严格审查</description>
-    <location>/tmp/.../skills/vuln-review/SKILL.md</location>
+    <name>vuln-report</name>
+    <description>当成功利用安全漏洞...</description>
+    <location>/tmp/.../skills/vuln-report/SKILL.md</location>
   </skill>
 </available_skills>
 ```
@@ -64,6 +78,24 @@ description: 一句话描述用途和触发场景
    > "Use the read tool to load a skill's file when the task matches its description."
 
 4. 模型对话中判断 description 匹配 → 调 `read` 工具读取 `SKILL.md` → 加载正文指令
+5. 模型可进一步 `read` skill 目录下的 references/、scripts/ 等辅助文件
+
+## 多文件机制
+
+- **SKILL.md**：主指令，存入 DB，前端可编辑
+- **references/**、**scripts/**、**assets/**：辅助文件，从磁盘复制到 pi 工作目录
+- builtin skill 的辅助文件从 `dispatcher/skills/{name}/` 复制
+- custom skill 只有 SKILL.md（前端创建，无辅助文件）
+- 前端编辑 SKILL.md 后，下次 worker 启动时覆盖复制后的 SKILL.md，辅助文件不变
+
+## 环境变量
+
+Skills 中可使用以下环境变量：
+
+| 变量 | 说明 |
+|------|------|
+| `${AXIOM_SERVER}` | AXIOM 服务器地址（如 `http://127.0.0.1:8000`） |
+| `${PROJECT_ID}` | 当前任务的项目 ID |
 
 ## 命名规范
 
@@ -71,7 +103,7 @@ description: 一句话描述用途和触发场景
 ✅ vuln-review
 ✅ sql-injection-check
 ✅ flag-submit
-✅ red-team-doctrine
+✅ subdomain-enum
 ❌ Vuln-Review        （有大写）
 ❌ vuln_review        （有下划线）
 ❌ -vuln-review       （以 - 开头）

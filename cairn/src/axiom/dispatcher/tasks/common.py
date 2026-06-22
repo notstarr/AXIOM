@@ -209,6 +209,8 @@ def run_worker_process(
             },
         )
     env = _worker_env_with_runtime_keys(worker, phase=phase)
+    if project_id:
+        env["PROJECT_ID"] = project_id
     process = ManagedProcess(invocation.argv, env)
     process.start()
     # Start live tool tracking — polls the session file while pi runs.
