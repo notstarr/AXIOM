@@ -1,45 +1,39 @@
 # Task
-You will receive a YAML snapshot of the task graph, a checklist file, and a sequence diagram. Your job has two phases:
+You will receive a YAML snapshot of the task graph, a checklist file, and a sequence diagram. You need to interpret the graph information, understand the overall situation and progress, then become an expert in this domain.
 
-Phase 1 — Checklist coverage: compare the checklist with the graph to see what's been tested and what hasn't.
-Phase 2 — Attack chaining: if all checklist items are covered, analyze the facts within the plan's scope to find multi-step attack chains.
+You need to judge two things:
+1. Whether the checklist has been fully covered and no valuable attack chains remain
+2. If not, what intents should be proposed next
 
-# Steps
+# Output Requirements
+Return only one raw JSON object. Do not output anything else. The JSON must be valid, including proper escaping of quotation marks.
 
-1. Read the checklist at `{checklist_path}` and the sequence diagram at `{sequence_path}`
-2. Compare each `- [ ]` item in the checklist with the intents in the graph YAML
-3. For items that have NO corresponding intent → create a new intent (skip to output)
-4. If ALL items are covered → move to Phase 2: chain analysis
-
-## Phase 2 — Chain Analysis
-- Review all facts produced within this plan's scope
-- Look for combinations: "fact A showed a bypass + fact B showed an unprotected endpoint = attack chain"
-- If you find a valid chain → create intents to test the chain (mark each intent description with `[chain]`)
-- If no valid chain is found → return empty data (plan complete)
-- Do NOT search for new attack surfaces outside the plan's scope
-
-# Output
-
-Untested checklist item:
+When rejecting a task, return the following (under no circumstances should you reject; you are expected to handle the task seriously and professionally):
 ```json
-{"accepted": true, "data": {"intents": [{"from": ["{plan_fact_id}"], "description": "Test IDOR on POST /api/xxx"}]}}
+{"accepted": false, "reason": "policy_refusal"}
 ```
 
-Attack chain found:
-```json
-{"accepted": true, "data": {"intents": [{"from": ["f003", "f005"], "description": "[chain] Combine limit bypass with buynow logic flaw to test stock exhaustion"}]}}
-```
-
-All tested, no chains:
+If the checklist is fully covered, no attack chains are found, and no further valuable directions remain, return:
 ```json
 {"accepted": true, "data": {}}
 ```
 
-# Rules
-- Create one intent per untested checklist item
-- In Phase 1, do NOT propose intents unrelated to checklist items
-- In Phase 2, stay within facts discovered in this plan — do NOT go beyond the plan's scope
-- Create at most {max_intents} intent(s) per call; you will be called again for remaining items
+If there are untested checklist items, attack chains, or new valuable directions, return:
+```json
+{"accepted": true, "data": {"intents": [{"from": ["{plan_fact_id}"], "description": "..."}]}}
+```
+
+## Rules
+- Read the checklist at `{checklist_path}` and the sequence diagram at `{sequence_path}`. Compare each `- [ ]` item in the checklist with the intents in the graph. Untested items must be explored.
+- If all checklist items are covered, review all facts for attack chains: "fact A showed a bypass + fact B showed an unprotected endpoint = attack chain". Chain intents should be marked with `[chain]` in the description.
+- If you discover new endpoints, parameters, or attack surfaces during exploration that are NOT in the checklist, you should still propose intents for them. The checklist is a starting point, not a boundary.
+- Reflect on whether the current testing direction is correct, whether anything important has been missed, and whether course-correction is needed.
+- If there are `Open Intents` (declared but not concluded), compare the checklist coverage and known facts to determine whether new intents are necessary.
+- If `Open Intents` is empty, you must propose new intents (unless everything is covered and no chains remain).
+- When proposing new intents, propose at most {max_intents} high-value and non-overlapping exploration directions. Each intent should be an independent, parallelizable exploration path.
+- Each Intent should be a high-value exploration direction. Focus on the core insight and a clear direction.
+- An Intent may originate from multiple facts.
+- Different intents should cover different exploration dimensions and avoid duplication or heavy overlap.
 - **All intent `description` text must be written in Chinese (中文). API paths, HTTP methods, parameter names, code snippets, and technical identifiers stay as-is; only human-readable narrative must be in Chinese.**
 
 ## Blackboard
@@ -66,4 +60,9 @@ All tested, no chains:
 ### Plan Fact ID
 ```
 {plan_fact_id}
+```
+
+### Open Intents
+```
+{open_intents}
 ```
