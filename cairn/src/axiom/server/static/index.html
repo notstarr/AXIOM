@@ -393,7 +393,6 @@
 <!-- ═══════════ DASHBOARD PAGE ═══════════ -->
 <div x-show="activePage === 'dashboard'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
   <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
-    <img src="/static/logo.jpg" alt="axiom" class="w-9 h-9 rounded-lg object-cover shrink-0">
     <div>
       <h2 class="text-base font-semibold text-slate-800 tracking-tight">AXIOM</h2>
       <p class="text-xs text-slate-400 mt-0.5">项目、任务、漏洞与 Token 总览</p>
@@ -406,8 +405,15 @@
   </header>
   <main class="flex-1 overflow-y-auto p-5 space-y-4">
 
-    <!-- 4 stat cards -->
-    <section class="grid grid-cols-2 xl:grid-cols-4 gap-3">
+    <!-- Logo + stat cards -->
+    <section class="grid grid-cols-2 xl:grid-cols-5 gap-3">
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm flex items-center gap-4">
+        <img src="/static/logo.jpg" alt="axiom" class="w-20 h-20 rounded-2xl object-cover shrink-0">
+        <div>
+          <h3 class="text-lg font-bold text-slate-800 tracking-tight">AXIOM</h3>
+          <p class="text-xs text-slate-400">深度渗透测试平台</p>
+        </div>
+      </div>
 
       <!-- 项目总数 -->
       <button type="button" @click="navigateTo('projects')"

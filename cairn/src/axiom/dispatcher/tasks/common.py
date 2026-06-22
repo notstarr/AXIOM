@@ -271,7 +271,7 @@ def _worker_env_with_runtime_keys(worker: WorkerConfig, *, phase: str) -> dict[s
     """Build the process environment for a worker, injecting proxy settings."""
     env = dict(worker.env)
     # Inject the AXIOM server URL so pi skills can call the API via curl.
-    env.setdefault("AXIOM_SERVER", "http://127.0.0.1:8000")
+    env.setdefault("AXIOM_SERVER", "http://127.0.0.1:8888")
     api_base_url = env.get("PI_BASE_URL", "")
     env.update(proxy_env_for_phase(phase, api_base_url=api_base_url))
     # Drop placeholder entries so that pi falls back to models.json's apiKey.
