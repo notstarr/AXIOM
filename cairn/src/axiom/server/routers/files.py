@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 
 from axiom.server.db import get_conn
 
@@ -13,6 +14,8 @@ router = APIRouter(tags=["files"])
 
 FILES_ROOT = Path("/tmp/axiom-files")
 _CRAWLER_VIEW_FILENAMES = ("site_map.yaml", "api_inventory.yaml", "page_api_map.yaml")
+
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico"}
 
 
 def _task_dir(project_id: str) -> Path:
@@ -42,22 +45,32 @@ def _ensure_dirs(project_id: str) -> tuple[Path, Path]:
     return human_dir, ai_dir
 
 
+def _list_dir_recursive(folder_path: Path) -> list[dict]:
+    """List all files recursively, each with relative path."""
+    result = []
+    if not folder_path.exists():
+        return result
+    for f in sorted(folder_path.rglob("*"), key=lambda x: str(x.relative_to(folder_path))):
+        if f.is_file():
+            rel = str(f.relative_to(folder_path))
+            result.append({
+                "name": f.name,
+                "path": rel,
+                "size": f.stat().st_size,
+                "modified": f.stat().st_mtime,
+            })
+    return result
+
+
 @router.get("/files/{project_id}")
 def list_files(project_id: str):
-    """List files for a task, grouped by human/ai/crawler."""
+    """List files for a task, grouped by human/ai/crawler. Recursive."""
     human_dir, ai_dir = _ensure_dirs(project_id)
     task_dir = _task_dir(project_id)
     crawler_dir = task_dir / "crawler"
     result = {"project_id": project_id, "human": [], "ai": [], "crawler": []}
     for folder, key in [(human_dir, "human"), (ai_dir, "ai"), (crawler_dir, "crawler")]:
-        if folder.exists():
-            for f in sorted(folder.iterdir()):
-                if f.is_file():
-                    result[key].append({
-                        "name": f.name,
-                        "size": f.stat().st_size,
-                        "modified": f.stat().st_mtime,
-                    })
+        result[key] = _list_dir_recursive(folder)
     return result
 
 
@@ -95,7 +108,20 @@ def read_file(project_id: str, folder: str, filename: str):
     }
 
 
-@router.post("/files/{project_id}/upload")
+@router.get("/files-raw/{project_id}/{folder}/{filename:path}")
+def read_file_raw(project_id: str, folder: str, filename: str):
+    """Serve a file's raw bytes (for images and other binary previews)."""
+    if folder not in _ALLOWED_FOLDERS:
+        raise HTTPException(400, f"folder must be one of {_ALLOWED_FOLDERS}")
+    task_dir = _task_dir(project_id)
+    file_path = task_dir / folder / filename
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(404, "file not found")
+    try:
+        file_path.resolve().relative_to(task_dir.resolve())
+    except ValueError:
+        raise HTTPException(403, "path traversal denied")
+    return FileResponse(file_path)
 async def upload_file(project_id: str, file: UploadFile, set_origin: bool = False):
     """Upload a file to the human/ folder. Set set_origin=true to also update the project's origin fact with the full server path."""
     human_dir, _ = _ensure_dirs(project_id)
@@ -135,23 +161,15 @@ def delete_file(project_id: str, folder: str, filename: str):
 
 @router.get("/file-groups/{group_id}/{folder}")
 def list_group_folder(group_id: str, folder: str):
-    """List files in a project-group-level folder (e.g. crawler)."""
+    """List files in a project-group-level folder (e.g. crawler). Recursive."""
     if folder not in ("crawler",):
         raise HTTPException(400, "invalid group folder")
     group_dir = FILES_ROOT / group_id / folder
-    files = []
-    if group_dir.exists():
-        for f in sorted(group_dir.iterdir()):
-            if f.is_file():
-                files.append({
-                    "name": f.name,
-                    "size": f.stat().st_size,
-                    "modified": f.stat().st_mtime,
-                })
+    files = _list_dir_recursive(group_dir)
     if folder == "crawler":
         from axiom.server.routers import crawler as crawler_router
 
-        existing = {item["name"] for item in files}
+        existing = {item["path"] for item in files}
         for name in _CRAWLER_VIEW_FILENAMES:
             if name in existing:
                 continue
@@ -159,6 +177,7 @@ def list_group_folder(group_id: str, folder: str):
                 content = crawler_router._render_crawler_state_snapshot(group_id, name)
                 files.append({
                     "name": name,
+                    "path": name,
                     "size": len(content.encode("utf-8")),
                     "modified": 0,
                 })
@@ -197,6 +216,22 @@ def read_group_file(group_id: str, folder: str, filename: str):
     except UnicodeDecodeError:
         content = f"[二进制文件 ({size/1024:.1f}KB)，不支持预览]"
     return {"name": filename, "folder": folder, "group_id": group_id, "content": content, "size": size}
+
+
+@router.get("/file-groups-raw/{group_id}/{folder}/{filename:path}")
+def read_group_file_raw(group_id: str, folder: str, filename: str):
+    """Serve a group-level file's raw bytes (for images and binary previews)."""
+    if folder not in ("crawler",):
+        raise HTTPException(400, "invalid group folder")
+    group_dir = FILES_ROOT / group_id
+    file_path = group_dir / folder / filename
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(404, "file not found")
+    try:
+        file_path.resolve().relative_to(group_dir.resolve())
+    except ValueError:
+        raise HTTPException(403, "path traversal denied")
+    return FileResponse(file_path)
 
 
 @router.delete("/file-groups/{group_id}/{folder}/{filename:path}")

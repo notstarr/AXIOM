@@ -1947,8 +1947,8 @@
     </label>
     <button @click="loadFileTree()" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">刷新</button>
   </header>
-  <div class="flex-1 min-h-0 grid grid-cols-[240px_minmax(0,1fr)]">
-    <!-- Left tree: pure folder tree, no icons -->
+  <div class="flex-1 min-h-0 grid grid-cols-[240px_260px_minmax(0,1fr)]">
+    <!-- Left tree: project/group/folder tree -->
     <aside class="border-r border-slate-200 bg-slate-50/40 overflow-y-auto p-2 text-xs select-none">
       <template x-for="g in fileGroups" :key="g.id">
         <div>
@@ -1991,41 +1991,69 @@
         </div>
       </template>
     </aside>
-    <!-- Right: file grid -->
-    <section class="overflow-y-auto p-4">
+    <!-- Middle: file tree (recursive) -->
+    <aside class="border-r border-slate-200 bg-white overflow-y-auto p-2 select-none">
       <template x-if="!fileFolder">
-        <div class="text-sm text-slate-400 py-20 text-center">选择左侧文件夹查看文件</div>
+        <p class="text-xs text-slate-400 text-center py-10">← 选择左侧文件夹</p>
       </template>
       <template x-if="fileFolder">
         <div>
-          <p class="text-[11px] text-slate-400 mb-3 font-mono"
+          <p class="text-[10px] text-slate-400 font-mono px-2 py-1 mb-1"
             x-text="fileIsGroupLevel ? fileGroupId + ' / ' + fileFolder : fileTaskId + ' / ' + fileFolder"></p>
-          <div class="grid grid-cols-4 gap-3">
-            <template x-for="f in fileList" :key="f.name">
-              <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md transition cursor-pointer" @click="previewFile(f.name, f.size)">
-                <p class="text-xs font-semibold text-slate-700 truncate mb-1" x-text="f.name"></p>
-                <p class="text-[10px] text-slate-400" x-text="f.size ? (f.size < 1024 ? f.size+'B' : (f.size/1024).toFixed(1)+'KB') : ''"></p>
-                <button @click.stop="deleteCurrentFile(f.name)" class="mt-2 text-[10px] text-rose-500 hover:text-rose-600">删除</button>
-              </div>
-            </template>
-          </div>
-          <div x-show="fileList.length === 0" class="text-xs text-slate-400 py-8 text-center">暂无文件</div>
+          <template x-for="node in flattenFileTree(buildFileTree(fileList))" :key="node.path">
+            <div class="group flex items-center gap-1 rounded-lg px-1 py-1 cursor-pointer transition"
+              :style="'padding-left: ' + (4 + node.depth * 14) + 'px'"
+              :class="filePreview.path === node.path ? 'bg-brand-50 text-brand-700' : 'hover:bg-slate-50 text-slate-600'"
+              @click="node.type === 'dir' ? toggleDir(node.path) : previewFile(node.path, node.size)">
+              <template x-if="node.type === 'dir'">
+                <span class="text-slate-400 text-[10px] w-3 shrink-0" x-text="expandedDirs[node.path] ? '▾' : '▸'"></span>
+              </template>
+              <template x-if="node.type === 'file'">
+                <span class="w-3 shrink-0" x-text="isImageFile(node.name) ? '🖼' : (isMdFile(node.name) ? '📝' : '📄')" :class="{'opacity-40': !isImageFile(node.name) && !isMdFile(node.name)}"></span>
+              </template>
+              <span class="text-xs truncate flex-1" x-text="node.name"></span>
+              <button x-show="node.type === 'file'" @click.stop="deleteCurrentFile(node.path)"
+                class="opacity-0 group-hover:opacity-100 text-rose-400 hover:text-rose-600 text-[10px] shrink-0">×</button>
+            </div>
+          </template>
+          <div x-show="fileList.length === 0" class="text-xs text-slate-400 text-center py-8">暂无文件</div>
         </div>
       </template>
-      <!-- MD Preview Modal -->
-      <div x-show="filePreview.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="filePreview.open = false">
-        <div class="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col mx-4" @click.stop>
-          <div class="px-5 py-3 border-b border-slate-200 flex items-center gap-3">
-            <h4 class="text-sm font-semibold text-slate-700 truncate" x-text="filePreview.name"></h4>
+    </aside>
+    <!-- Right: preview pane -->
+    <section class="overflow-hidden flex flex-col">
+      <template x-if="!filePreview.open">
+        <div class="flex items-center justify-center h-full text-slate-400 text-sm">选择文件预览</div>
+      </template>
+      <template x-if="filePreview.open">
+        <div class="flex flex-col h-full">
+          <div class="shrink-0 px-4 py-2 border-b border-slate-100 bg-white flex items-center gap-2">
+            <span class="text-xs font-mono text-slate-600 truncate" x-text="filePreview.name"></span>
+            <span x-show="filePreview.isImage" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-blue-50 text-blue-600">图片</span>
+            <span x-show="filePreview.isMarkdown" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-50 text-emerald-600">Markdown</span>
             <div class="flex-1"></div>
-            <button @click="filePreview.open = false" class="text-slate-400 hover:text-slate-600 text-lg">&times;</button>
+            <a :href="filePreview.rawUrl" download x-show="filePreview.rawUrl"
+              class="px-2 py-1 text-[10px] rounded border border-slate-200 text-slate-500 hover:bg-slate-50">下载</a>
           </div>
-          <div class="flex-1 overflow-y-auto p-5">
-            <pre x-show="!filePreview.isMarkdown" class="text-xs text-slate-700 whitespace-pre-wrap font-mono" x-text="filePreview.content"></pre>
-            <div x-show="filePreview.isMarkdown" class="md-preview text-sm text-slate-700" x-html="filePreview.rendered"></div>
+          <div class="flex-1 overflow-auto">
+            <!-- Image preview -->
+            <template x-if="filePreview.isImage">
+              <div class="flex items-center justify-center min-h-full p-6 bg-slate-50/50">
+                <img :src="filePreview.rawUrl" :alt="filePreview.name"
+                  class="max-w-full max-h-full rounded-lg shadow-sm object-contain" @error="filePreview.content = '图片加载失败'; filePreview.isImage = false">
+              </div>
+            </template>
+            <!-- Markdown preview -->
+            <template x-if="!filePreview.isImage && filePreview.isMarkdown">
+              <div class="md-preview p-5 text-sm text-slate-700 max-w-3xl" x-html="filePreview.rendered"></div>
+            </template>
+            <!-- Text/code preview -->
+            <template x-if="!filePreview.isImage && !filePreview.isMarkdown">
+              <pre class="text-xs text-slate-700 whitespace-pre-wrap font-mono p-4" x-text="filePreview.content"></pre>
+            </template>
           </div>
         </div>
-      </div>
+      </template>
     </section>
   </div>
 </div>
@@ -3502,7 +3530,8 @@ function cairnApp() {
     fileFolder: '',
     fileList: [],
     fileIsGroupLevel: false,
-    filePreview: { open: false, name: '', content: '', isMarkdown: false, rendered: '' },
+    expandedDirs: {},
+    filePreview: { open: false, name: '', path: '', content: '', isMarkdown: false, isImage: false, rawUrl: '', rendered: '' },
     seeEvents: [],
     seeLastEventId: 0,
     tools: [],
@@ -4489,7 +4518,8 @@ function cairnApp() {
       this.fileFolder = folder;
       this.fileIsGroupLevel = isGroupLevel;
       this.fileList = [];
-      this.filePreview.open = false;
+      this.expandedDirs = {};
+      this.filePreview = { open: false, name: '', path: '', content: '', isMarkdown: false, isImage: false, rawUrl: '', rendered: '' };
       try {
         if (isGroupLevel) {
           const r = await fetch(`/file-groups/${groupId}/${folder}`);
@@ -4506,32 +4536,85 @@ function cairnApp() {
       await this.selectFolder(groupId, taskId, 'human', false);
     },
 
-    async previewFile(name, size) {
-      if (size > 1024 * 1024) {
-        this.filePreview = { open: true, name, content: `[文件过大 (${(size/1024/1024).toFixed(1)}MB)，不支持预览]`, isMarkdown: false, rendered: '' };
+    isImageFile(name) {
+      return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(name);
+    },
+    isMdFile(name) {
+      return /\.md$/i.test(name);
+    },
+    buildFileTree(files) {
+      const root = { children: {} };
+      for (const f of files) {
+        const parts = f.path.split('/');
+        let node = root;
+        for (let i = 0; i < parts.length; i++) {
+          const part = parts[i];
+          const isLast = i === parts.length - 1;
+          if (isLast) {
+            node.children[part] = { name: part, path: f.path, type: 'file', size: f.size };
+          } else {
+            if (!node.children[part] || node.children[part].type === 'file') {
+              node.children[part] = { name: part, path: parts.slice(0, i+1).join('/'), type: 'dir', children: {} };
+            }
+            node = node.children[part];
+          }
+        }
+      }
+      const toArray = (n) => Object.values(n.children).map(c => c.type === 'dir' ? { ...c, children: toArray(c) } : c)
+        .sort((a, b) => a.type !== b.type ? (a.type === 'dir' ? -1 : 1) : a.name.localeCompare(b.name));
+      return toArray(root);
+    },
+    flattenFileTree(nodes, depth = 0) {
+      const result = [];
+      for (const node of nodes) {
+        result.push({ ...node, depth });
+        if (node.type === 'dir' && this.expandedDirs[node.path]) {
+          result.push(...this.flattenFileTree(node.children, depth + 1));
+        }
+      }
+      return result;
+    },
+    toggleDir(path) {
+      this.expandedDirs[path] = !this.expandedDirs[path];
+    },
+    async previewFile(path, size) {
+      const name = path.split('/').pop();
+      const isImage = this.isImageFile(name);
+      const isMd = this.isMdFile(name);
+      const rawUrl = this.fileIsGroupLevel
+        ? `/file-groups-raw/${this.fileGroupId}/${this.fileFolder}/${encodeURIComponent(path)}`
+        : `/files-raw/${this.fileTaskId}/${this.fileFolder}/${encodeURIComponent(path)}`;
+      if (isImage) {
+        this.filePreview = { open: true, name, path, content: '', isMarkdown: false, isImage: true, rawUrl, rendered: '' };
+        return;
+      }
+      if (size > 5 * 1024 * 1024) {
+        this.filePreview = { open: true, name, path, content: `[文件过大 (${(size/1024/1024).toFixed(1)}MB)，不支持预览]`, isMarkdown: false, isImage: false, rawUrl, rendered: '' };
         return;
       }
       try {
         const url = this.fileIsGroupLevel
-          ? `/file-groups/${this.fileGroupId}/${this.fileFolder}/${encodeURIComponent(name)}`
-          : `/files/${this.fileTaskId}/${this.fileFolder}/${encodeURIComponent(name)}`;
+          ? `/file-groups/${this.fileGroupId}/${this.fileFolder}/${encodeURIComponent(path)}`
+          : `/files/${this.fileTaskId}/${this.fileFolder}/${encodeURIComponent(path)}`;
         const resp = await fetch(url);
         if (resp.ok) {
           const data = await resp.json();
-          const isMd = name.toLowerCase().endsWith('.md');
           const rendered = isMd ? marked.parse(data.content || '') : '';
-          this.filePreview = { open: true, name, content: data.content, isMarkdown: isMd, rendered };
+          this.filePreview = { open: true, name, path, content: data.content, isMarkdown: isMd, isImage: false, rawUrl, rendered };
         }
       } catch(e) {}
     },
 
-    async deleteCurrentFile(name) {
-      if (!confirm(`删除 ${name}？`)) return;
+    async deleteCurrentFile(path) {
+      if (!confirm(`删除 ${path}？`)) return;
       try {
         const url = this.fileIsGroupLevel
-          ? `/file-groups/${this.fileGroupId}/${this.fileFolder}/${encodeURIComponent(name)}`
-          : `/files/${this.fileTaskId}/${this.fileFolder}/${encodeURIComponent(name)}`;
+          ? `/file-groups/${this.fileGroupId}/${this.fileFolder}/${encodeURIComponent(path)}`
+          : `/files/${this.fileTaskId}/${this.fileFolder}/${encodeURIComponent(path)}`;
         await this.api('DELETE', url);
+        if (this.filePreview.path === path) {
+          this.filePreview = { open: false, name: '', path: '', content: '', isMarkdown: false, isImage: false, rawUrl: '', rendered: '' };
+        }
         await this.selectFolder(this.fileGroupId, this.fileTaskId, this.fileFolder, this.fileIsGroupLevel);
       } catch(e) { this.showToast(e.message, 'error'); }
     },
