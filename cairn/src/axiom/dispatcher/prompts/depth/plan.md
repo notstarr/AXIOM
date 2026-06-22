@@ -90,6 +90,39 @@ Write to `{checklist_path}`:
 - Prioritize business-logic flaws: state machine bypass, price tampering, race conditions, privilege escalation, trust boundary violations, cross-flow identifier leakage
 - Include inferred endpoints as E items — these are high-value hidden attack surface
 
+## Hypothesis Quality Gate — CRITICAL
+
+Every H item MUST describe a **demonstrable attack with real impact**, not a design observation. Before writing each H item, apply this filter:
+
+```
+Is this a normal business behavior that happens to look unsafe?
+  → YES (e.g., "order cancelled → coupon returned", "user can see own full PII")
+  → NOT a hypothesis. Discard.
+
+Does the hypothesis require actually exploiting a flaw to produce a harmful outcome?
+  → YES (e.g., "skip payment step to get order for free", "use another user's coupon to get discount")
+  → Valid hypothesis. Include it.
+
+  → NO (e.g., "endpoint has no rate limiting", "encryption uses fixed IV", "response field is static")
+  → This is an observation, not a vulnerability hypothesis. The observation may ENABLE a hypothesis,
+    but is not itself one. Only include if you can chain it to a concrete harmful outcome.
+```
+
+**What is NOT a hypothesis (do not include)**:
+- "Endpoint has no rate limiting" → This is an observation. Only include if you can chain it to a concrete attack: "OTP brute-force to hijack account" (but the hypothesis must require actually succeeding, not just sending N failed attempts)
+- "Encryption uses fixed IV" → Design observation. Only include if you can describe how to exploit it: "recover AES key using known plaintext to decrypt all users' phone numbers"
+- "Response field is a static constant" → Configuration observation. Not a vulnerability by itself.
+- "Token is in body instead of header" → Architecture choice. Not a vulnerability.
+- "User can see their own unmasked PII" → Normal behavior. Only a vulnerability if accessible cross-user.
+- "Coupon is restored after order cancellation" → Normal business logic. Only a vulnerability if the same coupon can be used in multiple ACTIVE (non-cancelled) orders simultaneously (race condition).
+
+**What IS a valid hypothesis**:
+- "Bypass purchase limit by setting user_limit_num=-1, enabling unlimited purchases of restricted items" — requires actual exploitation, produces real economic harm
+- "Use cancelled order's coupon in a NEW order while the cancelled order still references it" — tests concurrent use, not serial cancel-reuse
+- "Access another user's order details by predicting timestamp-based order_no" — requires cross-user access proof
+
+**Each H item must specify**: the attack payload/method, the expected harmful outcome, and what evidence would CONFIRM the vulnerability (not just "the endpoint doesn't check X").
+
 # Sequence Diagram Format
 
 Write to `{sequence_path}`. Use structured text (NOT Mermaid):
@@ -150,6 +183,7 @@ GET /api/files/shared       → file_id (body[].file_id)   → GET /api/files/{i
 # Rules
 - Read ALL intelligence before writing. Your model quality determines the entire test campaign.
 - Attack hypotheses must be derived from the business model, not from a vulnerability checklist.
+- **Every hypothesis must describe a concrete attack that produces real harm if successful.** Design observations (no rate limiting, fixed IV, static fields, token placement) are NOT hypotheses — they may enable a hypothesis but are not vulnerabilities themselves. Normal business behavior (coupon restored after cancellation, user seeing own PII) is NEVER a hypothesis.
 - If the intelligence is sparse, still produce a model — mark assumptions clearly.
 - Write files FIRST, then return the JSON response.
 - Keep the checklist concise — each hypothesis one line, actionable.
