@@ -1,6 +1,6 @@
 ---
 name: business-logic-testing
-description: 业务逻辑漏洞测试启发清单，遇到支付、优惠券、秒杀、会员、积分、注册等场景时参考
+description: 业务逻辑漏洞测试启发清单，覆盖支付、优惠、库存、权限、资产、认证等场景
 ---
 
 ## 这是什么
