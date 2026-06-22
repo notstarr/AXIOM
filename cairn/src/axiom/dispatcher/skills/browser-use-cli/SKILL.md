@@ -1,6 +1,6 @@
 ---
 name: browser-use-cli
-description: 当任务需要操作浏览器、访问网页、点击元素、填写表单、截图或提取网页数据时，使用 browser-use CLI 完成。浏览器会话在命令间保持，无需重复打开。
+description: 当需要操作浏览器（访问网页、点击元素、填写表单、截图）时使用
 ---
 
 ## ⚠️ 多 Worker 隔离（必须遵守）

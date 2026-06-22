@@ -1,6 +1,6 @@
 ---
 name: explore
-description: 当 Intent Description 包含"探索目标站点"或目标 URL 时使用此 skill。自动点击所有可达页面的按钮和链接，捕获 HTTP 流量，在 ai_dir 目录下产出 sitemap.yaml、api-list.yaml、api-page-map.yaml 三个文件。
+description: 当需要全站爬取、探索目标站点页面和 API 时使用
 ---
 ## 任务说明
 

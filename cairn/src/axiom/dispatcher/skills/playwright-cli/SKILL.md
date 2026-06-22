@@ -1,6 +1,6 @@
 ---
 name: playwright-cli
-description: 当需要对网页截图、执行 JavaScript、或通过 Python 脚本控制浏览器时使用。适合截图留证、渲染验证、DOM 操作。持续交互操作（点击/填表）请用 browser-use-cli。
+description: 当需要截图留证或通过脚本控制浏览器时使用
 ---
 
 ## 多 Worker 隔离（必须遵守）

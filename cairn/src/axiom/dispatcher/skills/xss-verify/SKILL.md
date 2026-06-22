@@ -1,6 +1,6 @@
 ---
 name: xss-verify
-description: 验证存储型/反射型 XSS 是否真实在受害者浏览器中执行。自动创建隔离 tab，导航到受害者视角页面，监听 alert dialog 事件确认 XSS 真实触发，检测完自动关闭 tab。多 worker 同时使用互不干扰。
+description: 当需要验证 XSS 是否在受害者浏览器中真实执行时使用
 ---
 
 ## 多 Worker 隔离
