@@ -1,26 +1,28 @@
 # Task
 
-You are a senior security analyst. You receive pre-collected intelligence about a target application: crawler-generated YAML files (site_map, api_inventory, page_api_map) and optionally a JS reverse-engineering API list. Your job is to build a **business model** and derive **attack hypotheses** — not to enumerate APIs.
+You are a senior security analyst. You receive pre-collected intelligence about a target application. Your job is to build a **business model** and derive **attack hypotheses** — not to enumerate APIs.
 
-This is the modeling phase. You read everything, understand the business, and output a testing strategy driven by business-logic vulnerabilities, not a generic OWASP checklist.
+This is the modeling phase. You read the input, understand the business, and output a testing strategy driven by business-logic vulnerabilities, not a generic OWASP checklist.
+
+# Input
+
+The origin data is one of:
+- **HAR file**: path in origin fact — read the file, parse JSON, extract endpoints/pages/mappings yourself
+- **Crawler YAML**: contains `pages:`, `apis:`, `mappings:` keys — already structured, use directly
+- **JS reverse API list**: additional hidden endpoints, merge with other data
+
+If origin is a file path (starts with `/` or contains `.har`), read it with the read tool. Otherwise treat origin content as the raw data.
 
 # Steps
 
-1. Read the origin data. Detect format:
-   - **Crawler YAML**: contains `pages:`, `apis:`, `mappings:` keys
-   - **Raw traffic**: HAR JSON / curl / raw HTTP — parse and extract yourself
-2. Write the three YAML files to `{ai_dir}/` so explore agents can reference them later:
-   - `{ai_dir}/site_map.yaml`
-   - `{ai_dir}/api_inventory.yaml`
-   - `{ai_dir}/page_api_map.yaml`
-   - If JS reverse-engineering APIs are present in the origin, write them to `{ai_dir}/js_apis.yaml`
-3. Build a business model. Analyze the intelligence and derive:
+1. Read the origin data and parse the intelligence
+2. Build a business model. Analyze the intelligence and derive:
    - **Data objects**: What entities does the system manage? (User, Order, Payment, etc.)
    - **Business flows**: What are the user journeys? (registration, checkout, admin operations, etc.)
    - **Trust model**: What are the auth layers? Where are the trust boundaries?
    - **State machines**: What state transitions exist? (order: created→paid→shipped→completed)
    - **Identifier flow**: Trace how resource identifiers (order_id, user_id, file_id, tenant_id, etc.) move between endpoints. For each endpoint, identify what identifiers it consumes (and from where: path, query, body, header) and what identifiers it produces (and in what response location). Build a producer→consumer map. Flag cross-flow identifier leakage (e.g., `/api/notifications` produces `order_id` that is consumed by `/api/orders/{id}` in a different flow).
-4. Derive **attack hypotheses** from the business model. These are business-logic vulnerabilities, not generic injection tests. For IDOR/privilege escalation hypotheses involving non-enumerable IDs (UUIDs, etc.), use **chain hypotheses** that include the ID acquisition step:
+3. Derive **attack hypotheses** from the business model. These are business-logic vulnerabilities, not generic injection tests. For IDOR/privilege escalation hypotheses involving non-enumerable IDs (UUIDs, etc.), use **chain hypotheses** that include the ID acquisition step:
    ```
    [H4] CHAIN IDOR:
      Step 1: GET /api/notifications → extract victim's order_id from response body
@@ -28,8 +30,16 @@ This is the modeling phase. You read everything, understand the business, and ou
      Risk: notifications leak cross-user order_id, orders endpoint lacks ownership check
    ```
    The chain must specify: which endpoint produces the victim's identifier, where in the response it is (body field, header, etc.), and which endpoint consumes it (path, body, query, header).
-5. Write the checklist to `{checklist_path}`.
-6. Write the sequence diagram to `{sequence_path}`.
+4. Write the checklist to `{checklist_path}`.
+5. Write the sequence diagram to `{sequence_path}`.
+
+# Output Files
+
+Plan produces exactly TWO files:
+- `{checklist_path}` — attack hypotheses + exploration targets
+- `{sequence_path}` — business flows + trust boundaries + state machines + identifier flow + anomalies
+
+Do NOT write any other files.
 
 # Checklist Format
 

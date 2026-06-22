@@ -324,7 +324,7 @@
 <!-- ═══════════ APPLE-STYLE SIDEBAR ═══════════ -->
 <aside class="sidebar">
   <div class="sidebar-logo">
-    <img src="/static/favicon.svg" alt="axiom">
+    <img src="/static/logo.jpg" alt="axiom">
   </div>
   <nav class="sidebar-nav">
     <button type="button" class="nav-item" data-tooltip="仪表盘"
@@ -7869,11 +7869,18 @@ function cairnApp() {
         };
         const data = await this.api('POST', '/projects', body);
         const pid = data.project.id;
-        // Upload HAR to project human/ folder
+        // Upload HAR to project human/ folder and set origin to full path
         if (this._harFile) {
-          const form = new FormData();
-          form.append('file', this._harFile);
-          fetch(`/files/${pid}/upload?set_origin=true`, { method: 'POST', body: form }).catch(()=>{});
+          try {
+            const form = new FormData();
+            form.append('file', this._harFile);
+            const uploadResp = await fetch(`/files/${pid}/upload?set_origin=true`, { method: 'POST', body: form });
+            if (!uploadResp.ok) {
+              this.showToast('HAR 文件上传失败，请手动上传', 'error');
+            }
+          } catch(e) {
+            this.showToast('HAR 文件上传失败: ' + (e.message || e), 'error');
+          }
           this._harFile = null;
         }
         this.showTaskComposer = false;

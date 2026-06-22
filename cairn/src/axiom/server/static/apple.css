@@ -225,8 +225,8 @@ html, body {
 }
 
 .sidebar-logo {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--radius-md);
   display: flex;
   align-items: center;
@@ -237,8 +237,10 @@ html, body {
 }
 
 .sidebar-logo img {
-  width: 20px;
-  height: 20px;
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: var(--radius-md);
 }
 
 .sidebar-nav {
