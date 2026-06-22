@@ -247,6 +247,10 @@ def create_skill(body: CreatePiSkillRequest):
             """,
             (skill_id, body.name, display_name, body.description, body.content, 1 if body.enabled else 0, now, now),
         )
+        # Create skill directory + SKILL.md on disk
+        skill_dir = _SKILLS_DIR / body.name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(body.content, encoding="utf-8")
         row = conn.execute("SELECT * FROM pi_skills WHERE id = ?", (skill_id,)).fetchone()
         return _skill_from_row(row)
 
@@ -258,21 +262,24 @@ def update_skill(skill_id: str, body: UpdatePiSkillRequest):
         row = conn.execute("SELECT * FROM pi_skills WHERE id = ?", (skill_id,)).fetchone()
         if row is None:
             raise HTTPException(404, "Skill not found")
+        name = row["name"]
+        new_desc = body.description if body.description is not None else row["description"]
+        new_content = body.content if body.content is not None else row["content"]
+        new_enabled = 1 if body.enabled else 0 if body.enabled is not None else row["enabled"]
+        new_display = body.display_name if body.display_name is not None else row["display_name"]
         conn.execute(
             """
             UPDATE pi_skills
             SET display_name = ?, description = ?, content = ?, enabled = ?, updated_at = ?
             WHERE id = ?
             """,
-            (
-                body.display_name if body.display_name is not None else row["display_name"],
-                body.description if body.description is not None else row["description"],
-                body.content if body.content is not None else row["content"],
-                1 if body.enabled else 0 if body.enabled is not None else row["enabled"],
-                now,
-                skill_id,
-            ),
+            (new_display, new_desc, new_content, new_enabled, now, skill_id),
         )
+        # Sync back to disk for builtin skills
+        skill_dir = _SKILLS_DIR / name
+        skill_file = skill_dir / "SKILL.md"
+        if skill_file.exists():
+            skill_file.write_text(new_content, encoding="utf-8")
         updated = conn.execute("SELECT * FROM pi_skills WHERE id = ?", (skill_id,)).fetchone()
         return _skill_from_row(updated)
 
@@ -280,13 +287,18 @@ def update_skill(skill_id: str, body: UpdatePiSkillRequest):
 @router.delete("/skills/{skill_id}", status_code=204)
 def delete_skill(skill_id: str):
     with get_conn() as conn:
-        row = conn.execute("SELECT builtin FROM pi_skills WHERE id = ?", (skill_id,)).fetchone()
+        row = conn.execute("SELECT name, builtin FROM pi_skills WHERE id = ?", (skill_id,)).fetchone()
         if row is None:
             raise HTTPException(404, "Skill not found")
         if bool(row["builtin"]):
             conn.execute("UPDATE pi_skills SET enabled = 0, updated_at = ? WHERE id = ?", (utcnow(), skill_id))
             return
         conn.execute("DELETE FROM pi_skills WHERE id = ?", (skill_id,))
+    # Remove skill directory from disk (custom skills only)
+    skill_dir = _SKILLS_DIR / row["name"]
+    if skill_dir.is_dir():
+        import shutil
+        shutil.rmtree(skill_dir)
 
 
 def _skill_from_row(row) -> PiSkill:
