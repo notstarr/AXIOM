@@ -19,7 +19,15 @@ This is the modeling phase. You read everything, understand the business, and ou
    - **Business flows**: What are the user journeys? (registration, checkout, admin operations, etc.)
    - **Trust model**: What are the auth layers? Where are the trust boundaries?
    - **State machines**: What state transitions exist? (order: created→paid→shipped→completed)
-4. Derive **attack hypotheses** from the business model. These are business-logic vulnerabilities, not generic injection tests.
+   - **Identifier flow**: Trace how resource identifiers (order_id, user_id, file_id, tenant_id, etc.) move between endpoints. For each endpoint, identify what identifiers it consumes (and from where: path, query, body, header) and what identifiers it produces (and in what response location). Build a producer→consumer map. Flag cross-flow identifier leakage (e.g., `/api/notifications` produces `order_id` that is consumed by `/api/orders/{id}` in a different flow).
+4. Derive **attack hypotheses** from the business model. These are business-logic vulnerabilities, not generic injection tests. For IDOR/privilege escalation hypotheses involving non-enumerable IDs (UUIDs, etc.), use **chain hypotheses** that include the ID acquisition step:
+   ```
+   [H4] CHAIN IDOR:
+     Step 1: GET /api/notifications → extract victim's order_id from response body
+     Step 2: GET /api/orders/{order_id} with attacker token → verify cross-user access
+     Risk: notifications leak cross-user order_id, orders endpoint lacks ownership check
+   ```
+   The chain must specify: which endpoint produces the victim's identifier, where in the response it is (body field, header, etc.), and which endpoint consumes it (path, body, query, header).
 5. Write the checklist to `{checklist_path}`.
 6. Write the sequence diagram to `{sequence_path}`.
 
@@ -40,8 +48,18 @@ Write to `{checklist_path}`:
 - [H1] flow=checkout, step=3→5: Skip payment, directly trigger callback to set order state to paid
 - [H2] flow=checkout, step=4: Tamper payment amount parameter
 - [H3] flow=checkout, step=5: Replay payment callback
-- [H4] flow=order_mgmt, step=GET /api/orders/{id}: Horizontal privilege escalation — can User A access User B's order?
-- [H5] flow=admin, step=PUT /api/users/{id}/role: Vertical privilege escalation — can regular user escalate to admin?
+- [H4] CHAIN IDOR:
+  Step 1: GET /api/notifications → extract victim order_id from response.body[].order_id
+  Step 2: GET /api/orders/{order_id} with attacker token → verify cross-user access
+  Risk: notifications leak cross-user order_id, orders endpoint lacks ownership check
+- [H5] CHAIN IDOR (body param):
+  Step 1: GET /api/users/profile → extract victim user_id from response.user_id
+  Step 2: PUT /api/users/{user_id}/role with body {"role":"admin"} → test vertical escalation
+  Risk: profile exposes user_id, role update lacks admin check
+- [H6] CHAIN IDOR (nested body):
+  Step 1: GET /api/files/shared → extract victim file_id from response[].file_id
+  Step 2: POST /api/share with body {"file_id":"<victim_file_id>","target_user":"<attacker>"} → test cross-user file access
+  Risk: shared files list leaks file_id, share endpoint lacks ownership check on body.file_id
 
 ## Exploration Targets
 - [E1] GET /api/orders (list endpoint — inferred from /api/orders/{id}, not in YAML)
@@ -55,10 +73,11 @@ Write to `{checklist_path}`:
 
 **Rules for checklist**:
 - H = Hypothesis: derived from business model, each references a specific flow and step
+- CHAIN hypotheses: for IDOR/privilege escalation with non-enumerable IDs, include the full attack path — which endpoint produces the victim's identifier, where it's located in the response, and which endpoint consumes it
 - E = Exploration: things to verify or discover, not yet confirmed
 - Each item must be specific and actionable
 - Do NOT list "test SQL injection on /api/login" — that's generic. Instead: "login endpoint accepts unfiltered username, test for auth bypass"
-- Prioritize business-logic flaws: state machine bypass, price tampering, race conditions, privilege escalation, trust boundary violations
+- Prioritize business-logic flaws: state machine bypass, price tampering, race conditions, privilege escalation, trust boundary violations, cross-flow identifier leakage
 - Include inferred endpoints as E items — these are high-value hidden attack surface
 
 # Sequence Diagram Format
@@ -91,6 +110,19 @@ Write to `{sequence_path}`. Use structured text (NOT Mermaid):
 - checkout step 4↔5: payment + callback concurrent
 - order creation: concurrent POST /api/orders
 
+[Identifier Flow]
+# Format: PRODUCER endpoint → identifier (location) → CONSUMER endpoint (location)
+# Locations: path, query, body.field, header.Name
+POST /api/orders            → order_id (body.order_id)    → GET /api/orders/{id} (path)
+                                                        → POST /api/payment (body.order_id)
+                                                        → DELETE /api/orders/{id} (path)
+GET /api/notifications      → order_id (body[].order_id) → GET /api/orders/{id} (path)    ← CROSS-FLOW LEAK
+GET /api/users/profile      → user_id (body.user_id)     → GET /api/users/{id} (path)
+                                                        → PUT /api/users/{id}/role (path)
+POST /api/files             → file_id (body.file_id)     → GET /api/files/{id} (path)
+                                                        → POST /api/share (body.file_id)
+GET /api/files/shared       → file_id (body[].file_id)   → GET /api/files/{id} (path)    ← CROSS-FLOW LEAK
+
 [Anomalies]
 - /api/pay/cb has no signature header in traffic — callback may be forgeable
 - /api/admin/users returns 200 without admin token in one captured request
@@ -102,6 +134,7 @@ Write to `{sequence_path}`. Use structured text (NOT Mermaid):
 - Trust boundaries mark where auth level changes
 - State machines show entity lifecycle
 - Race conditions flag concurrent-access risks
+- Identifier Flow: trace every resource identifier (order_id, user_id, file_id, etc.) from producer to consumer. Location format: `path`, `query`, `body.field_name`, `header.Header_Name`. Mark cross-flow leaks explicitly with `← CROSS-FLOW LEAK`
 - Anomalies capture anything suspicious found in the intelligence
 
 # Rules
