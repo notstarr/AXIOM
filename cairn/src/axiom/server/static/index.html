@@ -2133,7 +2133,7 @@
           <button @click="crawlerResultsPageTab = 'mappings'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
             :class="crawlerResultsPageTab === 'mappings' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">映射</button>
           <button @click="crawlerResultsPageTab = 'tree'; $nextTick(() => initCrawlerGraph())" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
-            :class="crawlerResultsPageTab === 'tree' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">业务树</button>
+            :class="crawlerResultsPageTab === 'tree' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">业务图</button>
         </div>
         <!-- Pages -->
         <template x-if="crawlerResultsPageTab === 'pages'">
