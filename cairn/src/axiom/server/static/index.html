@@ -1831,9 +1831,9 @@
       <template x-if="!skills || skills.length === 0">
         <p class="text-sm text-slate-400 text-center py-10">暂无 Skill</p>
       </template>
-      <template x-for="sk in (skills || [])" :key="sk.id">
+      <template x-for="sk in (skills || [])" :key="sk.name">
         <button type="button" @click="selectSkill(sk)" class="w-full flex flex-col items-start text-left rounded-xl border p-3 transition"
-          :class="skillEditor.id === sk.id ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'">
+          :class="skillEditor.name === sk.name ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'">
           <div class="flex items-center gap-1.5 w-full">
             <span class="text-sm font-semibold text-slate-700 truncate" x-text="sk.name"></span>
             <span x-show="sk.builtin" class="px-1 py-0.5 rounded text-[8px] font-semibold bg-brand-50 text-brand-600 shrink-0">内置</span>
@@ -1848,11 +1848,11 @@
       </template>
     </aside>
     <!-- File tree -->
-    <aside class="border-r border-slate-200 bg-white overflow-y-auto p-3 space-y-1" x-show="skillEditor.id">
-      <template x-if="!skillEditor.id">
+    <aside class="border-r border-slate-200 bg-white overflow-y-auto p-3 space-y-1" x-show="skillEditor.name">
+      <template x-if="!skillEditor.name">
         <p class="text-xs text-slate-400 text-center py-10">← 选择一个 Skill</p>
       </template>
-      <template x-if="skillEditor.id">
+      <template x-if="skillEditor.name">
         <div>
           <div class="flex items-center justify-between mb-2">
             <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">文件</span>
@@ -1879,11 +1879,11 @@
       </template>
     </aside>
     <!-- Editor -->
-    <section class="overflow-hidden flex flex-col" x-show="skillEditor.id">
-      <template x-if="!skillEditor.id">
+    <section class="overflow-hidden flex flex-col" x-show="skillEditor.name">
+      <template x-if="!skillEditor.name">
         <div class="flex items-center justify-center h-full text-slate-400 text-sm">← 选择一个 Skill 开始编辑</div>
       </template>
-      <template x-if="skillEditor.id">
+      <template x-if="skillEditor.name">
         <div class="flex flex-col h-full">
           <!-- Skill meta bar -->
           <div class="shrink-0 px-4 py-2 border-b border-slate-100 bg-white flex items-center gap-3">
@@ -1895,7 +1895,7 @@
               <input type="checkbox" :checked="skillEditor.enabled" @change="toggleSkillFromEditor()" class="rounded border-slate-300 text-brand-500">
               <span x-text="skillEditor.enabled ? '启用' : '禁用'"></span>
             </label>
-            <button @click="deleteSkill({id: skillEditor.id, name: skillEditor.name, builtin: skillEditor.builtin})" class="px-2 py-1 text-xs rounded border border-rose-200 text-rose-500 hover:bg-rose-50">删除</button>
+            <button @click="deleteSkill({name: skillEditor.name})" class="px-2 py-1 text-xs rounded border border-rose-200 text-rose-500 hover:bg-rose-50">删除</button>
           </div>
           <!-- SKILL.md frontmatter (name + description) -->
           <div class="shrink-0 px-4 py-2 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3" x-show="skillEditor.activeFile === 'SKILL.md'">
@@ -3489,7 +3489,7 @@ function cairnApp() {
     toolFilterSearch: '',
     toolPollTimer: null,
     skills: [],
-    skillEditor: { id: '', name: '', description: '', content: '', isNew: false, builtin: false, enabled: true, activeFile: '', fileContent: '', fileDirty: false },
+    skillEditor: { name: '', description: '', content: '', isNew: false, builtin: false, enabled: true, activeFile: '', fileContent: '', fileDirty: false },
     skillFiles: [],
     showNewSkillFileInput: false,
     newSkillFilePath: '',
@@ -4236,7 +4236,7 @@ function cairnApp() {
     },
 
     async selectSkill(sk) {
-      this.skillEditor = { id: sk.id, name: sk.name, description: sk.description || '', content: sk.content || '', isNew: false, builtin: sk.builtin, enabled: sk.enabled, activeFile: '', fileContent: '', fileDirty: false };
+      this.skillEditor = { name: sk.name, description: sk.description || '', content: sk.content || '', isNew: false, builtin: sk.builtin, enabled: sk.enabled, activeFile: '', fileContent: '', fileDirty: false };
       this.showNewSkillFileInput = false;
       this.newSkillFilePath = '';
       await this.loadSkillFiles();
@@ -4258,7 +4258,7 @@ function cairnApp() {
       }
       try {
         if (path === 'SKILL.md') {
-          const sk = this.skills.find(s => s.id === this.skillEditor.id);
+          const sk = this.skills.find(s => s.name === this.skillEditor.name);
           if (sk) {
             const fm = (sk.content || '').match(/^---\s*\n(.*?)\n---/s);
             let body = sk.content || '';
@@ -4290,7 +4290,7 @@ function cairnApp() {
             await this.api('POST', '/skills', { name, display_name: name, description: desc, content: fullContent, enabled: true });
             this.skillEditor.isNew = false;
           } else {
-            await this.api('PUT', `/skills/${this.skillEditor.id}`, { description: desc, content: fullContent });
+            await this.api('PUT', `/skills/${this.skillEditor.name}`, { description: desc, content: fullContent });
           }
           await this.loadSkills();
         } else {
@@ -4328,17 +4328,17 @@ function cairnApp() {
     },
 
     async toggleSkillFromEditor() {
-      const sk = this.skills.find(s => s.id === this.skillEditor.id);
+      const sk = this.skills.find(s => s.name === this.skillEditor.name);
       if (!sk) return;
       try {
-        await this.api('PUT', `/skills/${sk.id}`, { enabled: !sk.enabled });
+        await this.api('PUT', `/skills/${sk.name}`, { enabled: !sk.enabled });
         sk.enabled = !sk.enabled;
         this.skillEditor.enabled = sk.enabled;
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
     openSkillEditor() {
-      this.skillEditor = { id: '', name: '', description: '', content: '', isNew: true, builtin: false, enabled: true, activeFile: 'SKILL.md', fileContent: '', fileDirty: false };
+      this.skillEditor = { name: '', description: '', content: '', isNew: true, builtin: false, enabled: true, activeFile: 'SKILL.md', fileContent: '', fileDirty: false };
       this.skillFiles = [{ path: 'SKILL.md', size: 0 }];
       this.showNewSkillFileInput = false;
     },
@@ -4424,9 +4424,9 @@ function cairnApp() {
     async deleteSkill(sk) {
       if (!confirm(`确定要删除 "${sk.name}" 吗？`)) return;
       try {
-        await this.api('DELETE', `/skills/${sk.id}`);
-        if (this.skillEditor.id === sk.id) {
-          this.skillEditor = { id: '', name: '', description: '', content: '', isNew: false, builtin: false, enabled: true, activeFile: '', fileContent: '', fileDirty: false };
+        await this.api('DELETE', `/skills/${sk.name}`);
+        if (this.skillEditor.name === sk.name) {
+          this.skillEditor = { name: '', description: '', content: '', isNew: false, builtin: false, enabled: true, activeFile: '', fileContent: '', fileDirty: false };
           this.skillFiles = [];
         }
         await this.loadSkills();
@@ -4436,7 +4436,7 @@ function cairnApp() {
 
     async toggleSkill(sk) {
       try {
-        await this.api('PUT', `/skills/${sk.id}`, { enabled: !sk.enabled });
+        await this.api('PUT', `/skills/${sk.name}`, { enabled: !sk.enabled });
         sk.enabled = !sk.enabled;
       } catch (e) { this.showToast(e.message, 'error'); }
     },

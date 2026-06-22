@@ -11,11 +11,8 @@ from pydantic import BaseModel
 
 from axiom.server.db import get_conn
 from axiom.server.models import (
-    CreatePiSkillRequest,
     CreatePiToolRequest,
-    PiSkill,
     PiTool,
-    UpdatePiSkillRequest,
     UpdatePiToolRequest,
 )
 from axiom.server.services import utcnow
@@ -222,111 +219,144 @@ def _parse_json_object(raw: str | None) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
-# ── Skills ──
-
-@router.get("/skills", response_model=list[PiSkill])
-def list_skills():
-    with get_conn() as conn:
-        rows = conn.execute("SELECT * FROM pi_skills ORDER BY builtin DESC, name ASC").fetchall()
-        return [_skill_from_row(row) for row in rows]
-
-
-@router.post("/skills", response_model=PiSkill, status_code=201)
-def create_skill(body: CreatePiSkillRequest):
-    now = utcnow()
-    skill_id = f"skill_{uuid.uuid4().hex[:12]}"
-    display_name = body.display_name or body.name
-    with get_conn() as conn:
-        existing = conn.execute("SELECT 1 FROM pi_skills WHERE name = ?", (body.name,)).fetchone()
-        if existing is not None:
-            raise HTTPException(409, "Skill name already exists")
-        conn.execute(
-            """
-            INSERT INTO pi_skills (id, name, display_name, description, content, enabled, builtin, source, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 0, 'custom', ?, ?)
-            """,
-            (skill_id, body.name, display_name, body.description, body.content, 1 if body.enabled else 0, now, now),
-        )
-        # Create skill directory + SKILL.md on disk
-        skill_dir = _SKILLS_DIR / body.name
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        (skill_dir / "SKILL.md").write_text(body.content, encoding="utf-8")
-        row = conn.execute("SELECT * FROM pi_skills WHERE id = ?", (skill_id,)).fetchone()
-        return _skill_from_row(row)
-
-
-@router.put("/skills/{skill_id}", response_model=PiSkill)
-def update_skill(skill_id: str, body: UpdatePiSkillRequest):
-    now = utcnow()
-    with get_conn() as conn:
-        row = conn.execute("SELECT * FROM pi_skills WHERE id = ?", (skill_id,)).fetchone()
-        if row is None:
-            raise HTTPException(404, "Skill not found")
-        name = row["name"]
-        new_desc = body.description if body.description is not None else row["description"]
-        new_content = body.content if body.content is not None else row["content"]
-        new_enabled = 1 if body.enabled else 0 if body.enabled is not None else row["enabled"]
-        new_display = body.display_name if body.display_name is not None else row["display_name"]
-        conn.execute(
-            """
-            UPDATE pi_skills
-            SET display_name = ?, description = ?, content = ?, enabled = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (new_display, new_desc, new_content, new_enabled, now, skill_id),
-        )
-        # Sync back to disk for builtin skills
-        skill_dir = _SKILLS_DIR / name
-        skill_file = skill_dir / "SKILL.md"
-        if skill_file.exists():
-            skill_file.write_text(new_content, encoding="utf-8")
-        updated = conn.execute("SELECT * FROM pi_skills WHERE id = ?", (skill_id,)).fetchone()
-        return _skill_from_row(updated)
-
-
-@router.delete("/skills/{skill_id}", status_code=204)
-def delete_skill(skill_id: str):
-    with get_conn() as conn:
-        row = conn.execute("SELECT name, builtin FROM pi_skills WHERE id = ?", (skill_id,)).fetchone()
-        if row is None:
-            raise HTTPException(404, "Skill not found")
-        if bool(row["builtin"]):
-            conn.execute("UPDATE pi_skills SET enabled = 0, updated_at = ? WHERE id = ?", (utcnow(), skill_id))
-            return
-        conn.execute("DELETE FROM pi_skills WHERE id = ?", (skill_id,))
-    # Remove skill directory from disk (custom skills only)
-    skill_dir = _SKILLS_DIR / row["name"]
-    if skill_dir.is_dir():
-        import shutil
-        shutil.rmtree(skill_dir)
-
-
-def _skill_from_row(row) -> PiSkill:
-    return PiSkill(
-        id=row["id"],
-        name=row["name"],
-        display_name=row["display_name"] or row["name"],
-        description=row["description"] or "",
-        content=(row["content"] if "content" in row.keys() else "") or "",
-        enabled=bool(row["enabled"]),
-        builtin=bool(row["builtin"]),
-        source=(row["source"] if "source" in row.keys() else "") or "custom",
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-    )
-
-
-# ── Skill file management (multi-file skills) ──
+# ── Skills (file-based, no DB) ──
 
 _SKILLS_DIR = pathlib.Path(__file__).resolve().parents[2] / "dispatcher" / "skills"
 
 
-def _skill_dir(name: str) -> pathlib.Path:
+def _parse_frontmatter(raw: str) -> dict:
+    """Parse YAML frontmatter from SKILL.md content."""
+    info = {"name": "", "description": "", "disabled": False}
+    text = raw.strip()
+    if not text.startswith("---"):
+        return info
+    second = text.find("---", 3)
+    if second == -1:
+        return info
+    fm = text[3:second].strip()
+    for line in fm.split("\n"):
+        line = line.strip()
+        if line.startswith("name:"):
+            info["name"] = line[5:].strip().strip('"').strip("'")
+        elif line.startswith("description:"):
+            info["description"] = line[12:].strip().strip('"').strip("'")
+        elif line.startswith("disable-model-invocation:"):
+            info["disabled"] = line[26:].strip().lower() in ("true", "yes", "1")
+    return info
+
+
+def _skill_info(skill_dir: pathlib.Path) -> dict | None:
+    """Read skill info from a skill directory."""
+    skill_file = skill_dir / "SKILL.md"
+    if not skill_file.exists():
+        return None
+    raw = skill_file.read_text(encoding="utf-8")
+    fm = _parse_frontmatter(raw)
+    stat = skill_file.stat()
+    return {
+        "id": skill_dir.name,
+        "name": fm["name"] or skill_dir.name,
+        "display_name": skill_dir.name,
+        "description": fm["description"],
+        "content": raw,
+        "enabled": not fm["disabled"],
+        "builtin": True,
+        "source": "builtin",
+        "created_at": "",
+        "updated_at": "",
+    }
+
+
+@router.get("/skills")
+def list_skills():
+    """List all skills by scanning the skills directory."""
+    if not _SKILLS_DIR.is_dir():
+        return []
+    skills = []
+    for entry in sorted(_SKILLS_DIR.iterdir()):
+        if not entry.is_dir():
+            continue
+        info = _skill_info(entry)
+        if info:
+            skills.append(info)
+    return skills
+
+
+class CreateSkillRequest(BaseModel):
+    name: str
+    description: str = ""
+    content: str = ""
+
+
+@router.post("/skills", status_code=201)
+def create_skill(body: CreateSkillRequest):
+    name = body.name.strip().lower()
+    if not name or not all(c in "abcdefghijklmnopqrstuvwxyz0123456789-" for c in name):
+        raise HTTPException(400, "Name must be lowercase a-z, 0-9, hyphens only")
+    skill_dir = _SKILLS_DIR / name
+    if skill_dir.exists():
+        raise HTTPException(409, f"Skill '{name}' already exists")
+    skill_dir.mkdir(parents=True)
+    content = body.content or f"---\nname: {name}\ndescription: {body.description}\n---\n\n"
+    if not content.startswith("---"):
+        content = f"---\nname: {name}\ndescription: {body.description}\n---\n\n{content}"
+    (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
+    return _skill_info(skill_dir)
+
+
+class UpdateSkillRequest(BaseModel):
+    description: str | None = None
+    content: str | None = None
+    enabled: bool | None = None
+
+
+@router.put("/skills/{skill_name}")
+def update_skill(skill_name: str, body: UpdateSkillRequest):
+    skill_dir = _SKILLS_DIR / skill_name
+    skill_file = skill_dir / "SKILL.md"
+    if not skill_file.exists():
+        raise HTTPException(404, f"Skill '{skill_name}' not found")
+    raw = skill_file.read_text(encoding="utf-8")
+    fm = _parse_frontmatter(raw)
+
+    # Determine new content
+    new_content = body.content if body.content is not None else raw
+    new_desc = body.description if body.description is not None else fm["description"]
+    new_disabled = not body.enabled if body.enabled is not None else fm["disabled"]
+
+    # Reassemble with frontmatter
+    if new_content.startswith("---"):
+        # Replace frontmatter in existing content
+        second = new_content.find("---", 3)
+        if second != -1:
+            body_text = new_content[second + 3:].strip()
+        else:
+            body_text = new_content
+    else:
+        body_text = new_content.strip()
+
+    disable_line = "\ndisable-model-invocation: true" if new_disabled else ""
+    full = f"---\nname: {fm['name'] or skill_name}\ndescription: {new_desc}{disable_line}\n---\n\n{body_text}"
+    skill_file.write_text(full, encoding="utf-8")
+    return _skill_info(skill_dir)
+
+
+@router.delete("/skills/{skill_name}", status_code=204)
+def delete_skill(skill_name: str):
+    skill_dir = _SKILLS_DIR / skill_name
+    if not skill_dir.is_dir():
+        raise HTTPException(404, f"Skill '{skill_name}' not found")
+    import shutil
+    shutil.rmtree(skill_dir)
+
+
+# ── Skill file management (multi-file skills) ──
+
+def _skill_dir_path(name: str) -> pathlib.Path:
     return _SKILLS_DIR / name
 
 
 def _validate_rel_path(path: str) -> str:
-    """Ensure path is within the skill directory (no traversal)."""
     if not path or ".." in path.split("/"):
         raise HTTPException(400, "Invalid path")
     if path.startswith("/"):
@@ -336,8 +366,7 @@ def _validate_rel_path(path: str) -> str:
 
 @router.get("/skills/{skill_name}/files")
 def list_skill_files(skill_name: str) -> list[dict[str, Any]]:
-    """List all files in a skill directory."""
-    sd = _skill_dir(skill_name)
+    sd = _skill_dir_path(skill_name)
     if not sd.is_dir():
         return []
     files = []
@@ -351,9 +380,8 @@ def list_skill_files(skill_name: str) -> list[dict[str, Any]]:
 
 @router.get("/skills/{skill_name}/files/{file_path:path}")
 def read_skill_file(skill_name: str, file_path: str):
-    """Read a file from a skill directory."""
     _validate_rel_path(file_path)
-    sd = _skill_dir(skill_name)
+    sd = _skill_dir_path(skill_name)
     full = sd / file_path
     if not full.is_file():
         raise HTTPException(404, f"File not found: {file_path}")
@@ -367,13 +395,9 @@ class WriteSkillFileRequest(BaseModel):
 
 @router.put("/skills/{skill_name}/files/{file_path:path}")
 def write_skill_file(skill_name: str, file_path: str, body: WriteSkillFileRequest):
-    """Write or update a file in a skill directory."""
     target_path = body.path or file_path
     _validate_rel_path(target_path)
-    if not target_path.endswith(".md") and not target_path.endswith(".txt") and not target_path.endswith(".sh") and not target_path.endswith(".py") and not target_path.endswith(".json") and not target_path.endswith(".yaml") and not target_path.endswith(".yml"):
-        if not target_path.endswith("SKILL.md") and "/" not in target_path:
-            pass
-    sd = _skill_dir(skill_name)
+    sd = _skill_dir_path(skill_name)
     if not sd.is_dir():
         raise HTTPException(404, f"Skill directory not found: {skill_name}")
     full = sd / target_path
@@ -384,15 +408,13 @@ def write_skill_file(skill_name: str, file_path: str, body: WriteSkillFileReques
 
 @router.delete("/skills/{skill_name}/files/{file_path:path}", status_code=204)
 def delete_skill_file(skill_name: str, file_path: str):
-    """Delete a file from a skill directory. SKILL.md cannot be deleted."""
     _validate_rel_path(file_path)
     if file_path == "SKILL.md":
         raise HTTPException(400, "Cannot delete SKILL.md")
-    sd = _skill_dir(skill_name)
+    sd = _skill_dir_path(skill_name)
     full = sd / file_path
     if full.is_file():
         full.unlink()
-    # Clean up empty parent dirs (but not the skill root)
     parent = full.parent
     while parent != sd and parent.is_dir() and not any(parent.iterdir()):
         parent.rmdir()
@@ -406,11 +428,10 @@ class CreateSkillFileRequest(BaseModel):
 
 @router.post("/skills/{skill_name}/files", status_code=201)
 def create_skill_file(skill_name: str, body: CreateSkillFileRequest):
-    """Create a new file in a skill directory."""
     _validate_rel_path(body.path)
     if body.path == "SKILL.md":
         raise HTTPException(400, "SKILL.md already exists")
-    sd = _skill_dir(skill_name)
+    sd = _skill_dir_path(skill_name)
     if not sd.is_dir():
         raise HTTPException(404, f"Skill directory not found: {skill_name}")
     full = sd / body.path

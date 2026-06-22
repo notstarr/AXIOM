@@ -255,22 +255,6 @@ CREATE TABLE IF NOT EXISTS pi_tools (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pi_tools_enabled_name ON pi_tools(enabled, name);
-
-CREATE TABLE IF NOT EXISTS pi_skills (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    display_name TEXT NOT NULL DEFAULT '',
-    description TEXT NOT NULL DEFAULT '',
-    skill_path TEXT NOT NULL DEFAULT '',
-    phases_json TEXT NOT NULL DEFAULT '["bootstrap","reason","explore"]',
-    enabled INTEGER NOT NULL DEFAULT 1,
-    builtin INTEGER NOT NULL DEFAULT 0,
-    source TEXT NOT NULL DEFAULT 'custom',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_pi_skills_enabled_name ON pi_skills(enabled, name);
 """
 
 
@@ -288,7 +272,6 @@ def configure(path: Path) -> None:
         _ensure_blackboard_columns(conn)
         _ensure_vuln_columns(conn)
         _ensure_pi_tools_schema(conn)
-        _ensure_pi_skills_schema(conn)
         _ensure_plan_settings_columns(conn)
         _ensure_crawler_schema(conn)
 
@@ -452,56 +435,6 @@ def _ensure_pi_tools_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pi_tools_enabled_name ON pi_tools(enabled, name)")
 
 
-def _ensure_pi_skills_schema(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS pi_skills (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL UNIQUE,
-            display_name TEXT NOT NULL DEFAULT '',
-            description TEXT NOT NULL DEFAULT '',
-            content TEXT NOT NULL DEFAULT '',
-            enabled INTEGER NOT NULL DEFAULT 1,
-            builtin INTEGER NOT NULL DEFAULT 0,
-            source TEXT NOT NULL DEFAULT 'custom',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_pi_skills_enabled_name ON pi_skills(enabled, name)")
-    # Add content column if upgrading from old schema
-    skill_cols = {row["name"] for row in conn.execute("PRAGMA table_info(pi_skills)")}
-    if "content" not in skill_cols:
-        conn.execute("ALTER TABLE pi_skills ADD COLUMN content TEXT NOT NULL DEFAULT ''")
-    # Sync builtin skills from disk (multi-file: skills/{name}/SKILL.md)
-    builtin_dir = Path(__file__).resolve().parents[1] / "dispatcher" / "skills"
-    if builtin_dir.exists():
-        for skill_dir in sorted(builtin_dir.iterdir()):
-            if not skill_dir.is_dir():
-                continue
-            skill_file = skill_dir / "SKILL.md"
-            if not skill_file.exists():
-                continue
-            raw = skill_file.read_text(encoding="utf-8")
-            fm_name, fm_desc, fm_body = _parse_skill_frontmatter(raw)
-            name = fm_name or skill_dir.name
-            desc = fm_desc or f"Builtin skill: {name}"
-            content = fm_body or raw
-            row = conn.execute("SELECT id, enabled, builtin FROM pi_skills WHERE name = ?", (name,)).fetchone()
-            if row is None:
-                skill_id = f"skill_{name}"
-                conn.execute(
-                    """INSERT OR IGNORE INTO pi_skills (id, name, display_name, description, content, enabled, builtin, source, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, 1, 1, 'builtin', datetime('now'), datetime('now'))""",
-                    (skill_id, name, name, desc, content),
-                )
-            elif int(row["builtin"]) == 1:
-                conn.execute(
-                    "UPDATE pi_skills SET display_name = ?, description = ?, content = ? WHERE name = ?",
-                    (name, desc, content, name),
-                )
-
 
 def _assign_default_project_group(conn: sqlite3.Connection) -> None:
     project_columns = {row["name"] for row in conn.execute("PRAGMA table_info(projects)")}
@@ -564,34 +497,6 @@ def get_conn() -> Generator[sqlite3.Connection, None, None]:
     finally:
         conn.close()
 
-
-def _parse_skill_frontmatter(raw: str) -> tuple[str | None, str | None, str | None]:
-    """Parse Claude Code skill frontmatter. Returns (name, description, body).
-
-    Format:
-        ---
-        name: <name>
-        description: <one-line>
-        ---
-        <markdown body>
-    """
-    text = raw.strip()
-    if not text.startswith("---"):
-        return None, None, None
-    second = text.find("---", 3)
-    if second == -1:
-        return None, None, None
-    fm_block = text[3:second].strip()
-    body = text[second + 3:].strip()
-    name: str | None = None
-    desc: str | None = None
-    for line in fm_block.split("\n"):
-        line = line.strip()
-        if line.startswith("name:"):
-            name = line[5:].strip().strip('"').strip("'")
-        elif line.startswith("description:"):
-            desc = line[12:].strip().strip('"').strip("'")
-    return name, desc, body
 
 
 def _ensure_crawler_schema(conn: sqlite3.Connection) -> None:
