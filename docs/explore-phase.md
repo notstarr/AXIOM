@@ -38,14 +38,14 @@
 
 **Chrome-SecTest 带代理启动方式：**
 ```bash
-MITM_PROXY=1 bash tools/xss-verify/launch.sh
+MITM_PROXY=1 bash skills/xss-verify/scripts/launch-chrome.sh
 ```
 
 ---
 
 ### 2. 工具脚本
 
-#### `tools/mitm/mitm_addon.py`
+#### `skills/explore/scripts/mitm_addon.py`
 mitmproxy addon，后台录流量到 JSONL 文件。
 
 - 自动跳过静态资源（JS/CSS/图片/字体）
@@ -57,11 +57,11 @@ mitmproxy addon，后台录流量到 JSONL 文件。
 source ~/browser-use-env/bin/activate
 PROXY_FLOW_FILE=/tmp/proxy_flows.jsonl \
 MITM_TARGET_HOST=target.example.com \
-mitmdump -s tools/mitm/mitm_addon.py \
+mitmdump -s skills/explore/scripts/mitm_addon.py \
   --listen-port 18080 -q &
 ```
 
-#### `tools/mitm/proxy_get_traffic.py`
+#### `skills/explore/scripts/proxy_get_traffic.py`
 AI 调用此脚本查询录制的流量，支持：
 
 ```bash
@@ -203,9 +203,9 @@ mappings:
 
 | 文件 | 说明 |
 |---|---|
-| `tools/mitm/mitm_addon.py` | mitmproxy addon，录流量 |
-| `tools/mitm/proxy_get_traffic.py` | AI 查询流量的 CLI 工具 |
-| `tools/xss-verify/launch.sh` | 已更新，支持 `MITM_PROXY=1` |
+| `skills/explore/scripts/mitm_addon.py` | mitmproxy addon，录流量 |
+| `skills/explore/scripts/proxy_get_traffic.py` | AI 查询流量的 CLI 工具 |
+| `skills/xss-verify/scripts/launch-chrome.sh` | 已更新，支持 `MITM_PROXY=1` |
 | `cairn/src/axiom/dispatcher/prompts/default/skills/explore.md` | explore skill |
 | `cairn/src/axiom/server/models.py` | 新增 `ExploreStartRequest`、`ExploreStatus` |
 | `cairn/src/axiom/server/routers/projects.py` | 新增两个 explore 路由 |

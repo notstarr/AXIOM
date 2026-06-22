@@ -80,7 +80,7 @@ subprocess.run([
 
 ## 二、新增 / 修改的文件
 
-### 1. `tools/crawler/cdp_ctl.py` （新建）
+### 1. `skills/explore/scripts/cdp_ctl.py` （新建）
 
 无状态 Chrome DevTools Protocol CLI。核心设计：
 

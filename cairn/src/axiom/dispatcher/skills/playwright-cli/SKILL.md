@@ -136,7 +136,7 @@ python3 my_script.py
 
 | 问题 | 解决 |
 |------|------|
-| `connect_over_cdp` 失败 | Chrome-SecTest 未运行，用 `bash tools/xss-verify/launch.sh` 启动 |
+| `connect_over_cdp` 失败 | Chrome-SecTest 未运行，用 xss-verify skill 的 `scripts/launch-chrome.sh` 启动 |
 | 抢页面/tab 被其他人导航了 | 确认用了 `context.new_page()` 创建新 tab，不是复用已有 tab |
 | `browser.close()` 后其他 worker CDP 断开 | 模式 B 下只 `page.close()`，永远不要 `browser.close()` |
 | 截图空白 | 页面未加载完，加 `page.wait_for_load_state("networkidle")` |

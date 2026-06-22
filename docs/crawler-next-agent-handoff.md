@@ -10,7 +10,7 @@ The only remaining live issue is **external**: the project's own target `*.redha
 
 ## What Was Changed This Round
 
-### 1. New: stateless CDP helper — `tools/crawler/cdp_ctl.py`
+### 1. New: stateless CDP helper — `skills/explore/scripts/cdp_ctl.py`
 
 Replaces `browser-use` entirely for the crawler. Key properties:
 
@@ -52,14 +52,14 @@ A validation crawl was run against a live target (`https://example.com`) using t
 
 ## Files To Read First (next agent)
 
-- `tools/crawler/cdp_ctl.py` — the new browser-control helper (start here)
+- `skills/explore/scripts/cdp_ctl.py` — the new browser-control helper (start here)
 - `cairn/src/axiom/server/routers/crawler.py` — tab lifecycle (`_ensure_crawler_tab`, `_run_crawler_supervisor`, `_run_phase_once`)
 - `cairn/src/axiom/dispatcher/prompts/other/CrawlerExecute.md` / `CrawlerFlush.md` — agent instructions
 - `cairn/tests/test_crawler_runtime.py` — backend merge behavior
 
 ## One-Sentence Handoff
 
-The crawler's browser-control instability is fixed by replacing `browser-use` with a stateless CDP CLI (`tools/crawler/cdp_ctl.py`) plus a dedicated-tab lifecycle in `crawler.py`; the full pipeline (drive → emit `{accepted:true}` payload → validate → merge to backend state → round++) is proven working end-to-end live, and the only thing left is for the project's own redhaze target to come back online so `pg_006` can run for real.
+The crawler's browser-control instability is fixed by replacing `browser-use` with a stateless CDP CLI (`skills/explore/scripts/cdp_ctl.py`) plus a dedicated-tab lifecycle in `crawler.py`; the full pipeline (drive → emit `{accepted:true}` payload → validate → merge to backend state → round++) is proven working end-to-end live, and the only thing left is for the project's own redhaze target to come back online so `pg_006` can run for real.
 
 ## Final Product Direction Agreed With User
 

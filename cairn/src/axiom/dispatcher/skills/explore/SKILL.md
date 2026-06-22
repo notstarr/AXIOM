@@ -17,8 +17,10 @@ description: 当需要全站爬取、探索目标站点页面和 API 时使用
 source ~/browser-use-env/bin/activate
 ```
 
-工具路径：
-- 流量查询：`python3 tools/mitm/proxy_get_traffic.py`
+工具路径（本 skill 目录下的 `scripts/`）：
+- 流量查询：`python3 scripts/proxy_get_traffic.py`
+- 流量录制：`scripts/mitm_addon.py`（mitmproxy addon）
+- CDP 控制：`python3 scripts/cdp_ctl.py`
 - 浏览器：`browser-use --session {intent_id}`
 
 **mitmproxy 应已由系统在你启动前自动拉起。** 若不确定，检查：
@@ -72,7 +74,7 @@ mappings: []
 
 清空历史流量记录：
 ```bash
-python3 .../proxy_get_traffic.py --file /tmp/proxy_flows.jsonl --clear
+python3 scripts/proxy_get_traffic.py --file /tmp/proxy_flows.jsonl --clear
 ```
 
 ### Step 1：启动浏览器，访问目标 URL
@@ -99,7 +101,7 @@ browser-use --session {intent_id} screenshot {output_dir}/page_entry.png
 
 1. **清空上一轮流量记录：**
    ```bash
-   python3 .../proxy_get_traffic.py --clear
+   python3 scripts/proxy_get_traffic.py --clear
    ```
 
 2. **取队列中下一个元素，执行操作（点击/导航）**
@@ -111,7 +113,7 @@ browser-use --session {intent_id} screenshot {output_dir}/page_entry.png
 
 4. **读取本次操作触发的流量：**
    ```bash
-   python3 .../proxy_get_traffic.py --type api --summary
+   python3 scripts/proxy_get_traffic.py --type api --summary
    ```
 
 5. **更新三个 YAML：**
