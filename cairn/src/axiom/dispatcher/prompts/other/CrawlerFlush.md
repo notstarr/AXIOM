@@ -17,13 +17,9 @@ This phase overrides any earlier instruction in the same session that told you t
 - If you cannot recover any concrete increment, return a rejection payload
 
 # Environment
-- CDP helper is available but should NOT be used for fresh exploration in this phase:
-  `python3 skills/explore/scripts/cdp_ctl.py --tab-id {intent_id} <command>`
-  (only `url` / `state` are acceptable if you need to confirm where the browser ended up)
-- Traffic query: `python3 skills/explore/scripts/proxy_get_traffic.py`
+- Browser control: read the `browser-control` skill for cdp_ctl.py and proxy_get_traffic.py usage. In this flush phase, do NOT do fresh exploration — only `url` / `state` are acceptable if you need to confirm where the browser ended up.
 - Output directory for screenshots/artifacts: `{ai_dir}`
 - Schema reference: `docs/crawler-output-schema.md`
-- Do NOT use `browser-use`.
 
 # What Counts As Recoverable Increment
 - a newly discovered page

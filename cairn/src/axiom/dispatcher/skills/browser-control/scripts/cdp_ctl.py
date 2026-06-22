@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-cdp_ctl.py — Playwright-over-CDP CLI for the crawler.
+cdp_ctl.py — Playwright-over-CDP CLI.
 
 Connects to an already-running Chrome via CDP (connect_over_cdp), performs ONE
 action per invocation, and exits. No daemon, no sessions, no persistent state.
@@ -21,9 +21,18 @@ Commands:
     click <idx>         Click element at state-index (real mouse event).
     click-text "<t>"    Click first element whose text contains <t>.
     click-href "<sub>"  Click first link whose href contains <sub>.
+    hover <idx>         Hover element at state-index.
     fill <idx> "<val>"  Fill an input at state-index with a value.
+    select <idx> "<v>"  Select an option in a <select> at state-index.
+    keys "<key>"        Send keyboard event (Enter, Escape, Tab, etc).
+    scroll down|up [px] Scroll page down or up (default 500px).
+    back                Go back to previous page.
     open "<url>"        Navigate the tab, wait for networkidle, print new URL.
-    screenshot <path>   Save a PNG screenshot.
+    wait text "<text>"  Wait until page contains text.
+    wait url "<url>"    Wait until page URL matches.
+    cookies             Print all cookies as JSON.
+    screenshot <path>   Save a viewport screenshot.
+    full-screenshot <path>  Save a full-page screenshot.
     new-tab "<url>"     Create a dedicated tab, return its CDP target id.
     close-tab <id>      Close a tab by CDP target id.
 """
@@ -406,6 +415,147 @@ def cmd_screenshot(page: Page, args) -> int:
     return 0
 
 
+def cmd_full_screenshot(page: Page, args) -> int:
+    out = args.path
+    os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
+    try:
+        page.screenshot(path=out, full_page=True)
+        sz = os.path.getsize(out)
+        print(f"FULL_SCREENSHOT_SAVED: {out} ({sz} bytes)")
+    except Exception as e:
+        print(f"SCREENSHOT_FAILED: {e}")
+        return 2
+    return 0
+
+
+def cmd_hover(page: Page, args) -> int:
+    idx = int(args.target)
+    elements = _get_visible_elements(page)
+    if idx < 0 or idx >= len(elements):
+        print(f"HOVER_FAILED: index {idx} out of range (visible={len(elements)})")
+        return 2
+    js = f"""
+    (() => {{
+      const sel = 'a, button, input:not([type=hidden]), select, textarea, [role="button"], [onclick]';
+      const nodes = Array.from(document.querySelectorAll(sel));
+      const visible = nodes.filter(el => {{
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) return false;
+        const s = getComputedStyle(el);
+        if (s.visibility === 'hidden' || s.display === 'none' || Number(s.opacity) === 0) return false;
+        return true;
+      }});
+      const el = visible[{idx}];
+      if (!el) return null;
+      el.scrollIntoView({{block: 'center', inline: 'center'}});
+      const r = el.getBoundingClientRect();
+      return {{x: r.x + r.width/2, y: r.y + r.height/2}};
+    }})()
+    """
+    box = page.evaluate(js)
+    if box and isinstance(box, dict):
+        page.mouse.move(box["x"], box["y"])
+        _post_action(page, args.sleep)
+        print(f"HOVERED [{idx}]")
+        return 0
+    print(f"HOVER_FAILED: element not found")
+    return 2
+
+
+def cmd_select(page: Page, args) -> int:
+    idx = int(args.target)
+    value = args.value
+    elements = _get_visible_elements(page)
+    if idx < 0 or idx >= len(elements):
+        print(f"SELECT_FAILED: index {idx} out of range (visible={len(elements)})")
+        return 2
+    el = elements[idx]
+    if el.get("tag") != "select":
+        print(f"SELECT_FAILED: element at [{idx}] is not a <select> (got {el.get('tag')})")
+        return 2
+    try:
+        page.locator("select").nth(idx).select_option(value=value, timeout=5000)
+        _post_action(page, args.sleep)
+        print(f"SELECTED [{idx}] value={value}")
+        return 0
+    except Exception as e:
+        js = f"""
+        (() => {{
+          const sel = document.querySelectorAll('select')[{idx}];
+          if (!sel) return {{ok: false}};
+          sel.value = {json.dumps(value, ensure_ascii=False)};
+          sel.dispatchEvent(new Event('change', {{bubbles: true}}));
+          return {{ok: true, value: sel.value}};
+        }})()
+        """
+        res = page.evaluate(js)
+        if isinstance(res, dict) and res.get("ok"):
+            print(f"SELECTED [{idx}] value={res.get('value')}")
+            return 0
+        print(f"SELECT_FAILED: {e}")
+        return 2
+
+
+def cmd_keys(page: Page, args) -> int:
+    key = args.key
+    try:
+        page.keyboard.press(key)
+        _post_action(page, args.sleep)
+        print(f"KEYS: {key}")
+        return 0
+    except Exception as e:
+        print(f"KEYS_FAILED: {e}")
+        return 2
+
+
+def cmd_scroll(page: Page, args) -> int:
+    direction = args.direction
+    pixels = args.pixels
+    delta = pixels if direction == "down" else -pixels
+    page.mouse.wheel(0, delta)
+    time.sleep(0.5)
+    print(f"SCROLLED {direction} {pixels}px")
+    return 0
+
+
+def cmd_back(page: Page, args) -> int:
+    try:
+        page.go_back(timeout=10000)
+        _post_action(page, args.sleep)
+        print(f"URL: {page.url or ''}")
+        return 0
+    except Exception as e:
+        print(f"BACK_FAILED: {e}")
+        return 2
+
+
+def cmd_wait(page: Page, args) -> int:
+    condition = args.condition
+    value = args.value
+    try:
+        if condition == "text":
+            page.wait_for_selector(f"text={value}", timeout=15000)
+            print(f"WAIT_OK: text '{value}' found")
+        elif condition == "url":
+            import re
+            page.wait_for_url(f"**{value}**", timeout=15000)
+            print(f"WAIT_OK: url contains '{value}'")
+        else:
+            print(f"WAIT_FAILED: unknown condition '{condition}'")
+            return 2
+        return 0
+    except Exception as e:
+        print(f"WAIT_TIMEOUT: {e}")
+        return 1
+
+
+def cmd_cookies(page: Page, args) -> int:
+    context = page.context
+    cookies = context.cookies()
+    print(json.dumps(cookies, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _click_by_index(page: Page, idx: int) -> None:
     """Click an element by its visible-index using Playwright's mouse for real events."""
     # Get the element's bounding box, then click at its center with Playwright mouse.
@@ -503,6 +653,14 @@ def main(argv: list[str] | None = None) -> int:
     sp = sub.add_parser("fill"); sp.add_argument("target"); sp.add_argument("value")
     sp = sub.add_parser("open"); sp.add_argument("url")
     sp = sub.add_parser("screenshot"); sp.add_argument("path")
+    sp = sub.add_parser("full-screenshot"); sp.add_argument("path")
+    sp = sub.add_parser("hover"); sp.add_argument("target")
+    sp = sub.add_parser("select"); sp.add_argument("target"); sp.add_argument("value")
+    sp = sub.add_parser("keys"); sp.add_argument("key")
+    sp = sub.add_parser("scroll"); sp.add_argument("direction", choices=["down", "up"]); sp.add_argument("pixels", type=int, nargs="?", default=500)
+    sp = sub.add_parser("back")
+    sp = sub.add_parser("wait"); sp.add_argument("condition", choices=["text", "url"]); sp.add_argument("value")
+    sp = sub.add_parser("cookies")
     sp = sub.add_parser("new-tab"); sp.add_argument("url")
     sp = sub.add_parser("close-tab"); sp.add_argument("target_id")
 
@@ -535,7 +693,11 @@ def main(argv: list[str] | None = None) -> int:
             "state": cmd_state, "links": cmd_links, "url": cmd_url, "title": cmd_title,
             "text": cmd_text, "eval": cmd_eval, "click": cmd_click,
             "click-text": cmd_click_text, "click-href": cmd_click_href,
-            "fill": cmd_fill, "open": cmd_open, "screenshot": cmd_screenshot,
+            "hover": cmd_hover, "fill": cmd_fill, "select": cmd_select,
+            "keys": cmd_keys, "scroll": cmd_scroll, "back": cmd_back,
+            "wait": cmd_wait, "cookies": cmd_cookies,
+            "fill": cmd_fill, "open": cmd_open,
+            "screenshot": cmd_screenshot, "full-screenshot": cmd_full_screenshot,
         }
         fn = handlers[args.cmd]
         return fn(page, args)

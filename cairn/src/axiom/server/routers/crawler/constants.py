@@ -31,7 +31,7 @@ CRAWLER_VIEW_FILES = {
 
 # CDP helper paths — resolved relative to the project, not hardcoded.
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[5]
-_CDP_CTL_REL = pathlib.Path("cairn/src/axiom/dispatcher/skills/explore/scripts/cdp_ctl.py")
+_CDP_CTL_REL = pathlib.Path("cairn/src/axiom/dispatcher/skills/browser-control/scripts/cdp_ctl.py")
 _VENV_PY = pathlib.Path(os.environ.get("VIRTUAL_ENV", "")) / "bin" / "python"
 
 CDP_PY = str(_VENV_PY) if _VENV_PY.exists() else os.environ.get("CDP_PY", "python3")

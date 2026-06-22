@@ -33,20 +33,17 @@ Normal completion:
 `description` must summarize in Chinese: how many business pages discovered, how many API endpoints captured, and the paths of the three output files.
 
 # Environment
-- Browser automation: `browser-use --cdp-url http://localhost:9223 --session {intent_id} <command>`
-  (**Must use `--cdp-url http://localhost:9223`** to connect Chrome-SecTest which already has login session. Never use plain `browser-use` without `--cdp-url` or the page won't be authenticated.)
-- Traffic query: `python3 skills/explore/scripts/proxy_get_traffic.py`
+- Browser control: read the `browser-control` skill for cdp_ctl.py usage and proxy_get_traffic.py usage. Use `--tab-id {intent_id}` for multi-worker isolation.
 - Output directory: `{ai_dir}`
-- Activate venv before any command: `source ~/browser-use-env/bin/activate`
 
 Verify Chrome-SecTest is running (required — it has the login session):
 ```bash
-curl -s http://localhost:9223/json/list | python3 -c "import json,sys; tabs=json.load(sys.stdin); print(f'✅ Chrome-SecTest: {len(tabs)} tab(s)')" 2>/dev/null || echo "❌ Chrome-SecTest NOT running — start it first with: MITM_PROXY=1 bash skills/xss-verify/scripts/launch-chrome.sh"
+curl -s http://localhost:9223/json/list | python3 -c "import json,sys; tabs=json.load(sys.stdin); print(f'Chrome-SecTest: {len(tabs)} tab(s)')" 2>/dev/null || echo "Chrome-SecTest NOT running"
 ```
 
 If Chrome-SecTest is not running, start it:
 ```bash
-MITM_PROXY=1 bash skills/xss-verify/scripts/launch-chrome.sh
+MITM_PROXY=1 bash skills/browser-control/scripts/launch-chrome.sh
 sleep 3
 ```
 
@@ -93,14 +90,13 @@ mappings: []
 
 Clear any stale traffic log:
 ```bash
-python3 skills/explore/scripts/proxy_get_traffic.py --clear
+python3 skills/browser-control/scripts/proxy_get_traffic.py --clear
 ```
 
 Open the entry page and take a screenshot:
 ```bash
-source ~/browser-use-env/bin/activate
-browser-use --cdp-url http://localhost:9223 --session {intent_id} open <TARGET_URL>
-browser-use --cdp-url http://localhost:9223 --session {intent_id} screenshot {ai_dir}/page_entry.png
+python3 skills/browser-control/scripts/cdp_ctl.py --tab-id {intent_id} open <TARGET_URL>
+python3 skills/browser-control/scripts/cdp_ctl.py --tab-id {intent_id} screenshot {ai_dir}/page_entry.png
 ```
 
 Immediately write the entry page into `site_map.yaml` as the first concrete page record. Do not leave the file as skeleton-only after the entry page has loaded.
@@ -168,19 +164,19 @@ Record-before-continue rule:
 
 Seed the current page with all interactive elements visible on the entry page:
 ```bash
-browser-use --session {intent_id} state
+python3 skills/browser-control/scripts/cdp_ctl.py --tab-id {intent_id} state
 ```
 
 **Each iteration of the loop:**
 
 1. **Clear traffic log** (must do this before every single action):
    ```bash
-   python3 skills/explore/scripts/proxy_get_traffic.py --clear
+   python3 skills/browser-control/scripts/proxy_get_traffic.py --clear
    ```
 
 2. **Choose exactly one unexplored action for the current page** and act on it:
-   - Link/navigation → `browser-use --session {intent_id} open <URL>`
-   - Button/clickable element → `browser-use --session {intent_id} click <index>`
+   - Link/navigation → `python3 skills/browser-control/scripts/cdp_ctl.py --tab-id {intent_id} open <URL>`
+   - Button/clickable element → `python3 skills/browser-control/scripts/cdp_ctl.py --tab-id {intent_id} click <index>`
    - Tab/menu/accordion → click it and treat any newly exposed state as part of coverage
    - Form → fill with dummy data, then submit
    - If it causes a page navigation, wait for the new page to stabilize
@@ -188,12 +184,12 @@ browser-use --session {intent_id} state
 
 3. **Read the current page state:**
    ```bash
-   browser-use --cdp-url http://localhost:9223 --session {intent_id} state
+   python3 skills/browser-control/scripts/cdp_ctl.py --tab-id {intent_id} state
    ```
 
 4. **Capture traffic triggered by this action:**
     ```bash
-    python3 skills/explore/scripts/proxy_get_traffic.py \
+    python3 skills/browser-control/scripts/proxy_get_traffic.py \
       --type api --summary --last 50
     ```
 
@@ -242,7 +238,7 @@ browser-use --session {intent_id} state
 
 6. **Discover new elements** on the current page and add only unseen actions for this page:
     ```bash
-    browser-use --cdp-url http://localhost:9223 --session {intent_id} state
+    python3 skills/browser-control/scripts/cdp_ctl.py --tab-id {intent_id} state
     ```
 
 7. **Decide DFS next step:**
@@ -253,7 +249,7 @@ browser-use --session {intent_id} state
 
 8. **Take a screenshot** for any newly discovered page:
     ```bash
-    browser-use --cdp-url http://localhost:9223 --session {intent_id} screenshot {ai_dir}/page_<short_path>.png
+    python3 skills/browser-control/scripts/cdp_ctl.py --tab-id {intent_id} screenshot {ai_dir}/page_<short_path>.png
     ```
 
 Repeat until all reachable pages/actions are exhausted or a stop condition is met.
@@ -290,7 +286,7 @@ Stop the crawl when ANY of the following is true:
 
 Before stopping:
 ```bash
-browser-use --cdp-url http://localhost:9223 --session {intent_id} close
+python3 skills/browser-control/scripts/cdp_ctl.py --tab-id {intent_id} close
 ```
 
 # Output File Formats

@@ -81,7 +81,7 @@ For each API you discover, record as much detail as possible:
 
 To get response details, after an action triggers an API, run:
 ```
-python3 skills/explore/scripts/proxy_get_traffic.py --filter /api/ --type api --full --last 5
+python3 skills/browser-control/scripts/proxy_get_traffic.py --filter /api/ --type api --full --last 5
 ```
 
 # Important Constraints
@@ -90,41 +90,16 @@ python3 skills/explore/scripts/proxy_get_traffic.py --filter /api/ --type api --
 - Do not directly probe raw `/api/...` endpoints in the browser URL bar
 - Do not rely on updating physical YAML files yourself
 - Return structured incremental content only; the backend owns authoritative state
-- Do NOT use `browser-use`. Use only `cdp_ctl.py` as specified below.
 
 # Exhausted Marking
 - A page is `exhausted` only when: you have visited it AND operated all its functional buttons AND all its navigation links are in the discovered list
 - Set `"exhausted": true` only when truly done with a page
 
 # Environment
-- CDP helper (stateless, no daemon, no sessions): `python3 skills/explore/scripts/cdp_ctl.py`
-  - Use the project venv python explicitly: `python3 skills/explore/scripts/cdp_ctl.py`
-  - Always pass `--tab-id {intent_id}` so every command hits your dedicated tab.
-  - Commands:
-    - `state`                 — URL, title, readyState, and indexed interactive elements
-    - `links`                 — all links (index, text, href)
-    - `url` / `title`         — quick getters
-    - `text [--chars N]`      — document.body.innerText
-    - `eval "<js>"`           — evaluate JS, print return value
-    - `click <idx>`           — click element at state-index (real mouse event)
-    - `click-text "<text>"`   — click first element whose text contains
-    - `click-href "<sub>"`    — click first link whose href contains
-    - `fill <idx> "<value>"`  — fill an input at state-index with a value (React-compatible)
-    - `open "<url>"`          — navigate the tab, wait for load
-    - `screenshot "<path>"`   — save PNG
-  - Example: `python3 skills/explore/scripts/cdp_ctl.py --tab-id {intent_id} state`
-- Traffic query: `python3 skills/explore/scripts/proxy_get_traffic.py`
-  - Use `--filter /api/ --type api --full --last 5` to see full request/response details for recent API calls
+- Browser control: read the `browser-control` skill for cdp_ctl.py usage and proxy_get_traffic.py usage. Always pass `--tab-id {intent_id}` to target your dedicated tab.
 - Logical crawler views are maintained by the backend
 - Output directory for screenshots/artifacts: `{ai_dir}`
 - Schema reference: `docs/crawler-output-schema.md`
-
-## How to drive the browser
-1. Run `state` to see the current page and its interactive elements.
-2. Pick a meaningful action. Prefer `click-text` / `click-href` (robust) over `click <idx>`.
-3. After each click/open, wait briefly then run `state` again to confirm the new page. Check `proxy_get_traffic.py` for any API calls the action triggered.
-4. JS dialogs (alert/confirm/beforeunload) are auto-dismissed — you do not need to handle them.
-5. If a command returns `CDP_ERROR`, retry it once. If it fails again, return your best partial increment.
 
 # Increment Rules
 - Return only the incremental records discovered in this phase

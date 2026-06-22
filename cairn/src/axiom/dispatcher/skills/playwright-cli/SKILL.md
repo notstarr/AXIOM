@@ -39,13 +39,9 @@ page.close()                         # ← 只关 tab，不要 browser.close()
 
 ## 前置条件
 
-```bash
-source ~/browser-use-env/bin/activate
-```
-
 确保 Chrome-SecTest 已运行（模式 B 才需要）：
 ```bash
-curl -s http://localhost:9223/json/list | python3 -c "import json,sys; tabs=json.load(sys.stdin); print(f'Chrome-SecTest: {len(tabs)} tab(s)')" 2>/dev/null || echo "Chrome-SecTest 未运行"
+bash browser-control/scripts/launch-chrome.sh
 ```
 
 ---
@@ -117,7 +113,6 @@ with sync_playwright() as p:
 ### 运行脚本
 
 ```bash
-source ~/browser-use-env/bin/activate
 python3 my_script.py
 ```
 
@@ -136,7 +131,7 @@ python3 my_script.py
 
 | 问题 | 解决 |
 |------|------|
-| `connect_over_cdp` 失败 | Chrome-SecTest 未运行，用 xss-verify skill 的 `scripts/launch-chrome.sh` 启动 |
+| `connect_over_cdp` 失败 | Chrome-SecTest 未运行，用 `browser-control/scripts/launch-chrome.sh` 启动 |
 | 抢页面/tab 被其他人导航了 | 确认用了 `context.new_page()` 创建新 tab，不是复用已有 tab |
 | `browser.close()` 后其他 worker CDP 断开 | 模式 B 下只 `page.close()`，永远不要 `browser.close()` |
 | 截图空白 | 页面未加载完，加 `page.wait_for_load_state("networkidle")` |
