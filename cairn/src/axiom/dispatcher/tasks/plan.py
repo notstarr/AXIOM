@@ -54,6 +54,7 @@ def run_plan_task(
                 "origin": project.facts[0].description if project.facts else "",
                 "checklist_path": checklist_path,
                 "sequence_path": sequence_path,
+                "ai_dir": checklist_dir,
                 "blackboard": _format_blackboard(project.blackboard, project.project.parent_project_id or ""),
             },
         )
