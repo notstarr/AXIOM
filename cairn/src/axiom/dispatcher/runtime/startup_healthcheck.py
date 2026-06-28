@@ -29,7 +29,10 @@ def run_startup_healthchecks(
     *,
     show_commands: bool = False,
 ) -> list[StartupHealthcheckResult]:
-    workers = list(config.workers)
+    workers = [w for w in config.workers if not w.disabled]
+    if not workers:
+        LOG.info("[*] Startup healthcheck: no enabled workers")
+        return []
     parallelism = max(1, min(len(workers), config.runtime.max_workers, 8))
     LOG.info(
         "[*] Startup healthcheck: workers=%s parallelism=%s",

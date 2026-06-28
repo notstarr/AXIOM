@@ -338,6 +338,33 @@ def get_project(project_id: str):
         )
 
 
+@router.get("/projects/{project_id}/maintainer-status")
+def get_maintainer_status(project_id: str):
+    """Return intent IDs currently being processed by maintainer workers."""
+    with get_conn() as conn:
+        get_project_or_404(conn, project_id)
+        # Find intents that have a maintainer 'phase started' event in the last 5 minutes
+        # but no corresponding 'phase finished' event
+        started = set()
+        finished = set()
+        rows = conn.execute(
+            "SELECT message, payload_json FROM task_events WHERE project_id = ? AND task_type = 'maintainer' AND created_at > datetime('now', '-5 minutes') ORDER BY id DESC",
+            (project_id,),
+        ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except Exception:
+                payload = {}
+            intent_id = payload.get("intent_id") or ""
+            if row["message"] == "phase finished":
+                finished.add(intent_id)
+            elif "started" in (row["message"] or ""):
+                started.add(intent_id)
+        active = [iid for iid in started if iid and iid not in finished]
+        return {"maintaining_intent_ids": active}
+
+
 @router.get("/projects/{project_id}/events", response_model=list[TaskEvent])
 def list_project_events(project_id: str, after_id: int = Query(default=0, ge=0), limit: int = Query(default=200, ge=1, le=1000)):
     with get_conn() as conn:
@@ -546,6 +573,20 @@ def create_group_blackboard_item(group_id: str, body: CreateBlackboardItemReques
             related_vuln_id=body.related_vuln_id, creator=body.creator, updated_by=body.creator,
             created_at=now, updated_at=now,
         )
+
+
+@router.get("/project-groups/{group_id}/blackboard/{item_id}", response_model=BlackboardItem)
+def get_group_blackboard_item(group_id: str, item_id: str):
+    with get_conn() as conn:
+        get_project_group_or_404(conn, group_id)
+        row = conn.execute(
+            "SELECT * FROM blackboard_items WHERE id = ? AND group_id = ?",
+            (item_id, group_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "Blackboard item not found")
+        from axiom.server.services import _blackboard_item_from_row
+        return _blackboard_item_from_row(row)
 
 
 @router.put("/project-groups/{group_id}/blackboard/{item_id}", response_model=BlackboardItem)
@@ -1004,6 +1045,72 @@ def get_tool_executions(project_id: str, since: str = "", limit: int = 200):
             }
             for row in rows
         ],
+    }
+
+
+@router.get("/projects/{project_id}/skill-usage")
+def get_skill_usage(project_id: str):
+    """Count skill invocations by scanning read tool calls to SKILL.md files."""
+    import re
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT argv_json, created_at
+            FROM tool_executions
+            WHERE project_id = ? AND tool = 'read' AND argv_json LIKE '%SKILL.md%'
+            ORDER BY created_at ASC
+            """,
+            (project_id,),
+        ).fetchall()
+    pattern = re.compile(r'/skills/([^/]+)/SKILL\.md')
+    stats: dict[str, dict] = {}
+    for row in rows:
+        argv = json.loads(row["argv_json"] or "[]")
+        arg_str = " ".join(argv)
+        m = pattern.search(arg_str)
+        if not m:
+            continue
+        name = m.group(1)
+        if name not in stats:
+            stats[name] = {"skill": name, "count": 0, "last_used": row["created_at"]}
+        stats[name]["count"] += 1
+        stats[name]["last_used"] = row["created_at"]
+    return {
+        "project_id": project_id,
+        "items": sorted(stats.values(), key=lambda x: x["count"], reverse=True),
+        "total": sum(s["count"] for s in stats.values()),
+    }
+
+
+@router.get("/skill-usage")
+def get_global_skill_usage():
+    """Global skill invocation stats across all projects."""
+    import re
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT argv_json, created_at, project_id
+            FROM tool_executions
+            WHERE tool = 'read' AND argv_json LIKE '%SKILL.md%'
+            ORDER BY created_at ASC
+            """,
+        ).fetchall()
+    pattern = re.compile(r'/skills/([^/]+)/SKILL\.md')
+    stats: dict[str, dict] = {}
+    for row in rows:
+        argv = json.loads(row["argv_json"] or "[]")
+        arg_str = " ".join(argv)
+        m = pattern.search(arg_str)
+        if not m:
+            continue
+        name = m.group(1)
+        if name not in stats:
+            stats[name] = {"skill": name, "count": 0, "last_used": row["created_at"]}
+        stats[name]["count"] += 1
+        stats[name]["last_used"] = row["created_at"]
+    return {
+        "items": sorted(stats.values(), key=lambda x: x["count"], reverse=True),
+        "total": sum(s["count"] for s in stats.values()),
     }
 
 

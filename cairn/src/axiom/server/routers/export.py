@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from datetime import datetime
+import re
 import yaml
 
 from axiom.server.db import get_conn
@@ -25,7 +26,7 @@ def _load_project_data(conn, project_id: str):
     proj = get_project_or_404(conn, project_id)
 
     facts = conn.execute(
-        "SELECT id, description FROM facts WHERE project_id = ?", (project_id,)
+        "SELECT id, description, archived FROM facts WHERE project_id = ?", (project_id,)
     ).fetchall()
     hints = conn.execute(
         "SELECT content, creator, created_at FROM hints WHERE project_id = ? ORDER BY created_at",
@@ -45,6 +46,29 @@ def _load_project_data(conn, project_id: str):
         sources_by_intent[i["id"]] = [r["fact_id"] for r in rows]
 
     return proj, facts, hints, intents, sources_by_intent
+
+
+def _summarize_fact(fact, max_chars: int = 50) -> str:
+    """Truncate fact body, preserve evidence file paths in full."""
+    try:
+        desc = fact["description"]
+        fact_id = fact["id"]
+    except (KeyError, TypeError):
+        return ""
+    # origin and goal are never truncated
+    if fact_id in ("origin", "goal"):
+        return desc
+    text = desc.replace("\n", " ").strip()
+    # Extract evidence paths
+    path_pattern = r"(?:\{ai_dir\}|/tmp/axiom-files)/\S+\.md"
+    paths = re.findall(path_pattern, text)
+    # Remove paths and trailing connector text from body
+    body = re.sub(r"\s*(?:详细测试记录见|证据文件见|详见)\s*", "", re.sub(path_pattern, "", text)).strip()
+    if len(body) > max_chars:
+        body = body[:max_chars - 3].rstrip() + "..."
+    if paths:
+        body = f"{body} 证据: {', '.join(paths)}"
+    return body
 
 
 def _export_yaml(conn, project_id: str) -> str:
@@ -77,12 +101,21 @@ def _export_yaml(conn, project_id: str) -> str:
             for h in hints
         ]
 
-    data["facts"] = [{"id": f["id"], "description": f["description"]} for f in facts]
+    data["facts"] = [
+        {"id": f["id"], "description": _summarize_fact(f)}
+        for f in facts
+        if not f["archived"]
+    ]
+
+    # Build set of archived fact IDs for filtering intent sources
+    archived_fact_ids = {f["id"] for f in facts if f["archived"]}
 
     intent_list = []
     for i in intents:
+        if i["archived"]:
+            continue
         entry: dict = {
-            "from": sources_by_intent.get(i["id"], []),
+            "from": [fid for fid in sources_by_intent.get(i["id"], []) if fid not in archived_fact_ids],
             "to": i["to_fact_id"],
             "description": i["description"],
             "creator": i["creator"],
@@ -101,7 +134,10 @@ def _export_yaml(conn, project_id: str) -> str:
 def _export_timeline(conn, project_id: str) -> str:
     proj, facts, hints, intents, sources_by_intent = _load_project_data(conn, project_id)
 
-    facts_by_id = {f["id"]: f["description"] for f in facts}
+    facts_by_id = {
+        f["id"]: f["description"] if f["id"] in ("origin", "goal") else _summarize_fact(f)
+        for f in facts
+    }
 
     events: list[tuple[str, int, str]] = []  # (timestamp, order, text)
     order = 0

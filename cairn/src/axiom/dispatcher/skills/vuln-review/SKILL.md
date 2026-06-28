@@ -1,6 +1,7 @@
 ---
 name: vuln-review
 description: 审查已有漏洞声明——拉取漏洞列表，逐条核查证据，修正误报
+disable-model-invocation: true
 ---
 
 ## 用法

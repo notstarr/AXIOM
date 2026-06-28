@@ -188,6 +188,7 @@ def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str)
         last_heartbeat_at=row["last_heartbeat_at"],
         created_at=row["created_at"],
         concluded_at=row["concluded_at"],
+        archived=bool(row["archived"]) if "archived" in row.keys() else False,
     )
 
 
@@ -240,12 +241,8 @@ def build_blackboard_items_for_group(conn: sqlite3.Connection, group_id: str) ->
 
 
 def next_blackboard_item_id_for_group(conn: sqlite3.Connection, group_id: str) -> str:
-    row = conn.execute(
-        "SELECT MAX(CAST(SUBSTR(id, 2) AS INTEGER)) FROM blackboard_items WHERE group_id = ?",
-        (group_id,),
-    ).fetchone()
-    next_num = (row[0] or 0) + 1
-    return f"b{next_num:03d}"
+    import uuid
+    return f"b{uuid.uuid4().hex[:12]}"
 
 
 def _blackboard_item_from_row(row: sqlite3.Row) -> BlackboardItem:

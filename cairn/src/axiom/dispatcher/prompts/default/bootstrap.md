@@ -20,6 +20,7 @@ Only return the following after you have confirmed that Goal has been satisfied:
 ```
 
 # Rules
+- **Before taking any action, review the available_skills list in the system prompt. If any skill matches your current task, read it first.** Skills contain critical operational standards and quality gates — ignoring them leads to incorrect results.
 - If the problem is not yet solved but you already have a confirmed, helpful starting result, return the `fact`-only shape instead of rejecting.
 - If the problem is not yet solved and you do not have any confirmed useful result yet, keep working and do not stop on your own.
 - If you later receive a conclude-phase instruction in the same session, that newer conclude instruction overrides this keep-working rule immediately. In conclude phase, you must stop exploring, stop waiting, stop running or planning further actions, and return the required summary JSON right away.

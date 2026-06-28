@@ -14,9 +14,7 @@ LOG = logging.getLogger(__name__)
 from axiom.server.dispatch_config_store import (
     bump_dispatch_config_version,
     load_dispatch_config_snapshot,
-    read_dispatch_yaml,
     write_dispatch_settings,
-    write_dispatch_yaml,
 )
 from axiom.server.models import (
     DispatchSettings,
@@ -147,6 +145,7 @@ def get_dispatch_settings():
                 pi_model_context_window=env.get("PI_MODEL_CONTEXT_WINDOW", ""),
                 pi_api_key="",
                 pi_api_key_masked=_provider_key_hint(_worker_key_provider(worker_name)),
+                disabled=bool(item.get("disabled")),
             )
         )
     settings = get_settings()
@@ -159,6 +158,7 @@ def get_dispatch_settings():
                 task_types=[str(task_type) for task_type in (item.get("task_types") or [])],
                 max_running=max(1, int(item.get("max_running", 1) or 1)),
                 priority=max(0, int(item.get("priority", 0) or 0)),
+                disabled=bool(item.get("disabled")),
             )
         )
     proxy_url, proxy_username, proxy_password = _split_proxy_url(settings.proxy_url)
@@ -195,35 +195,7 @@ def get_dispatch_settings():
 
 @router.put("/settings/dispatch", response_model=DispatchSettings)
 def update_dispatch_settings(body: DispatchSettings):
-    current = read_dispatch_yaml(DISPATCH_YAML)
-    current["runtime"] = {
-        "interval": body.runtime_interval,
-        "max_workers": body.runtime_max_workers,
-        "max_running_projects": body.runtime_max_running_projects,
-        "max_project_workers": body.runtime_max_project_workers,
-        "healthcheck_timeout": body.runtime_healthcheck_timeout,
-        "worker_healthcheck": body.runtime_worker_healthcheck,
-        "prompt_group": body.runtime_prompt_group,
-    }
-    current["tasks"] = {
-        "bootstrap": {
-            "timeout": body.bootstrap_timeout,
-            "conclude_timeout": body.bootstrap_conclude_timeout,
-        },
-        "reason": {
-            "timeout": body.reason_timeout,
-            "max_intents": body.reason_max_intents,
-            "depth_max_intents": body.depth_reason_max_intents,
-        },
-        "explore": {
-            "timeout": body.explore_timeout,
-            "conclude_timeout": body.explore_conclude_timeout,
-        },
-    }
     proxy_url = _compose_proxy_url(body.proxy_url, body.proxy_username, body.proxy_password)
-    # Resolve every worker's effective API key: user-provided value, then
-    # the existing key from the dispatch_workers DB table, then the YAML
-    # value as last-resort fallback.
     db_worker_envs: dict[str, dict[str, str]] = {}
     try:
         with get_conn() as conn:
@@ -245,23 +217,16 @@ def update_dispatch_settings(body: DispatchSettings):
     for worker in body.workers:
         key = (worker.pi_api_key or "").strip()
         if not key:
-            # Try the existing DB env first, then YAML as fallback.
             db_env = db_worker_envs.get(worker.name, {})
             if db_env.get("PI_API_KEY"):
                 key = db_env["PI_API_KEY"]
-            else:
-                existing_env = None
-                for w in (current.get("workers") or []):
-                    if w.get("name") == worker.name:
-                        existing_env = w.get("env") or {}
-                        break
-                key = (existing_env or {}).get("PI_API_KEY", "")
         resolved_workers.append({
             "name": worker.name,
             "type": "pi",
             "task_types": worker.task_types,
             "max_running": worker.max_running,
             "priority": worker.priority,
+            "disabled": worker.disabled,
             "env": {
                 "PI_MODEL": worker.pi_model,
                 "PI_BASE_URL": worker.pi_base_url,
@@ -270,8 +235,6 @@ def update_dispatch_settings(body: DispatchSettings):
                 "PI_MODEL_CONTEXT_WINDOW": worker.pi_model_context_window,
             },
         })
-    current["workers"] = resolved_workers
-    write_dispatch_yaml(DISPATCH_YAML, current)
     write_dispatch_settings(
         {
             "runtime_interval": body.runtime_interval,
@@ -296,6 +259,24 @@ def update_dispatch_settings(body: DispatchSettings):
             "workers": resolved_workers,
         }
     )
+    return get_dispatch_settings()
+
+
+@router.put("/settings/dispatch/workers/{worker_name}/toggle", response_model=DispatchSettings)
+def toggle_worker_disabled(worker_name: str):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT disabled FROM dispatch_workers WHERE name = ?",
+            (worker_name,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, f"worker not found: {worker_name}")
+        new_disabled = 0 if row["disabled"] else 1
+        conn.execute(
+            "UPDATE dispatch_workers SET disabled = ? WHERE name = ?",
+            (new_disabled, worker_name),
+        )
+    bump_dispatch_config_version()
     return get_dispatch_settings()
 
 

@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from axiom.server.dispatch_config_store import load_dispatch_config_snapshot
 
 
-TaskType = Literal["reason", "explore", "bootstrap", "plan"]
+TaskType = Literal["reason", "explore", "bootstrap", "plan", "maintainer"]
 WorkerType = Literal["pi"]
 WorkerHealthcheckMode = Literal["startup_and_task", "startup_only", "disabled"]
 
@@ -87,6 +87,7 @@ class WorkerConfig(BaseModel):
     max_running: int = Field(gt=0)
     priority: int = Field(ge=0)
     env: dict[str, str] = Field(default_factory=dict)
+    disabled: bool = False
 
     @field_validator("task_types")
     @classmethod

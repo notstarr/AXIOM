@@ -149,6 +149,7 @@ GET /api/files/shared       → file_id (body[].file_id)   → GET /api/files/{i
 - Anomalies capture anything suspicious found in the intelligence
 
 # Rules
+- **Before taking any action, review the available_skills list in the system prompt. If any skill matches your current task, read it first.** Skills contain critical operational standards and quality gates — ignoring them leads to incorrect results.
 - Read ALL intelligence before writing. Your model quality determines the entire test campaign.
 - Attack hypotheses must be derived from the business model, not from a vulnerability checklist.
 - If the intelligence is sparse, still produce a model — mark assumptions clearly.

@@ -1,6 +1,7 @@
 ---
 name: xss-verify
 description: 当需要验证 XSS 是否在受害者浏览器中真实执行时使用
+disable-model-invocation: true
 ---
 
 ## 多 Worker 隔离

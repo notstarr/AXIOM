@@ -46,12 +46,14 @@ If there are unverified hypotheses, unexplored targets, or new directions:
 8. **Plan re-run trigger**: If explore agents discovered an entirely new business flow (not just a new API within a known flow), note this in the intent description with `[replan]` tag. The system may trigger a plan re-run to remodel.
 
 ## Rules
+- **Before taking any action, review the available_skills list in the system prompt. If any skill matches your current task, read it first.** Skills contain critical operational standards and quality gates — ignoring them leads to incorrect results.
 - Read the checklist and sequence diagram before deciding.
 - Compare each H/E item with completed intents in the graph. Unaddressed items must be explored.
 - If all H/E items are covered, review all facts for attack chains.
 - When proposing new intents, propose at most {max_intents} high-value and non-overlapping directions. Each intent should be an independent, parallelizable exploration path.
 - Each intent description should reference the hypothesis ID (e.g., "验证 H1: ...") so progress is trackable.
 - Different intents should cover different dimensions — avoid duplication.
+- **Each intent should focus on at most 2 related test actions on the same endpoint or attack surface (e.g., test IDOR + parameter tampering on the same API, not IDOR + SSRF + SQLi across different APIs).** Workers have limited time per intent; overloading causes timeouts and incomplete results. If a direction needs more than 2 actions, split into separate intents.
 - **All intent `description` text must be written in Chinese (中文). API paths, HTTP methods, parameter names, code snippets, and technical identifiers stay as-is; only human-readable narrative must be in Chinese.**
 - Before finishing, check the available_skills list in the system prompt. If any skill's description matches your current findings, read and follow it.
 

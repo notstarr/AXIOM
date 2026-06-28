@@ -39,8 +39,12 @@
   ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
   .overlay { background: rgba(15,23,42,0.25); backdrop-filter: blur(6px); }
   .timeline-flash { animation: timelineFlash 1s ease-out; }
+  .timeline-scroll::-webkit-scrollbar { height: 4px; }
+  .timeline-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
   .tool-card-enter { animation: toolCardIn 0.3s ease-out; }
   @keyframes toolCardIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .animate-spin { animation: spin 1s linear infinite; }
   .reason-chip-running { animation: reasonChipGlow 1.8s ease-in-out infinite; }
   .intent-chip-running { animation: intentChipGlow 1.8s ease-in-out infinite; }
   .reason-panel-running::before {
@@ -305,6 +309,14 @@
   .node-card--bootstrap_running { border: 2px solid #fb923c; background: #ffedd5; }
   .node-card--bootstrap_running .node-card__header { background: #fed7aa; color: #9a3412; }
   .node-card--bootstrap_running .node-card__body { color: #7c2d12; font-size: 9px; font-weight: 600; }
+  /* ── Archived nodes: faded + dashed border ── */
+  .node-card--archived {
+    opacity: 0.45;
+  }
+  .node-card--archived .node-card__body::after {
+    content: ' 📦';
+    font-size: 9px;
+  }
  </style>
 <script>
   tailwind.config = {
@@ -363,9 +375,13 @@
       :class="{ 'is-active': activePage === 'files' }" @click="navigateTo('files')">
       <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v11Z"/></svg>
     </button>
-    <button type="button" class="nav-item" data-tooltip="知识库"
-      :class="{ 'is-active': activePage === 'knowledge' }" @click="navigateTo('knowledge')">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2.5Z"/><path d="M8 7h7M8 11h7"/></svg>
+    <button type="button" class="nav-item" data-tooltip="资产管理"
+      :class="{ 'is-active': activePage === 'assets' }" @click="navigateTo('assets')">
+      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+    </button>
+    <button type="button" class="nav-item" data-tooltip="提示词备忘录"
+      :class="{ 'is-active': activePage === 'prompts' }" @click="navigateTo('prompts')">
+      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
     </button>
   </nav>
   <div class="sidebar-bottom">
@@ -611,6 +627,30 @@
             </template>
           </tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- Skill 调用统计 -->
+    <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div class="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <h3 class="text-sm font-semibold text-slate-700">Skill 调用统计</h3>
+          <span class="text-[11px] text-slate-400">全局</span>
+        </div>
+        <span class="text-[10px] text-slate-400" x-text="globalSkillUsage.length > 0 ? `共 ${globalSkillUsage.reduce((a,s)=>a+s.count,0)} 次` : ''"></span>
+      </div>
+      <div class="p-4">
+        <template x-if="globalSkillUsage.length === 0">
+          <div class="text-center text-sm text-slate-300 py-6">暂无 Skill 调用记录</div>
+        </template>
+        <div class="flex flex-wrap gap-2">
+          <template x-for="su in globalSkillUsage" :key="su.skill">
+            <div class="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50/60 flex items-center gap-2">
+              <span class="text-xs font-semibold text-slate-700" x-text="su.skill"></span>
+              <span class="px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums bg-brand-50 text-brand-600" x-text="su.count"></span>
+            </div>
+          </template>
+        </div>
       </div>
     </section>
 
@@ -887,22 +927,37 @@
       <option value="read">read</option>
       <option value="write">write</option>
       <option value="edit">edit</option>
-      <option value="grep">grep</option>
-      <option value="find">find</option>
-      <option value="ls">ls</option>
     </select>
     <input type="text" x-model="toolFilterSearch" placeholder="搜索参数或输出..." class="flex-1 h-7 px-2.5 rounded-md border border-slate-200 text-xs text-slate-600 placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-100">
     <span class="text-[11px] text-slate-400 tabular-nums" x-text="`${toolExecutions.length} 条`"></span>
   </div>
 
+  <!-- Skill usage stats bar -->
+  <div class="px-4 py-2 border-b border-slate-100 bg-slate-50/60" x-show="skillUsage.length > 0">
+    <div class="flex flex-wrap items-center gap-2">
+      <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Skill 调用</span>
+      <span class="text-[11px] text-slate-400 tabular-nums" x-text="`共 ${skillUsage.reduce((a,s)=>a+s.count,0)} 次`"></span>
+      <button x-show="skillUsageFilter" @click="skillUsageFilter = ''" class="px-2 py-0.5 rounded-md text-[10px] bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100">清除过滤</button>
+      <template x-for="su in skillUsage" :key="su.skill">
+        <button @click="skillUsageFilter = (skillUsageFilter === su.skill ? '' : su.skill)"
+          class="px-2.5 py-1 rounded-lg text-xs transition border"
+          :class="skillUsageFilter === su.skill ? 'bg-brand-500 text-white border-brand-500' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'">
+          <span x-text="su.skill"></span>
+          <span class="ml-1 tabular-nums opacity-70" x-text="su.count"></span>
+        </button>
+      </template>
+    </div>
+  </div>
+
   <div class="flex-1 min-h-0" style="display:flex;flex-direction:column;">
     <section class="flex-1 bg-white overflow-y-auto p-4 space-y-3" x-ref="actionReplayScroll">
       <!-- ═══════════ TOOL EXECUTION CARDS ═══════════ -->
-      <div x-show="!toolExecutions || toolExecutions.length === 0" class="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-5 py-14 text-center text-sm text-slate-400">
-        <p>暂无工具调用记录</p>
-        <p class="mt-1 text-xs text-slate-300">等待任务执行后自动采集</p>
+      <div x-show="!filteredToolExecutions() || filteredToolExecutions().length === 0" class="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 px-5 py-14 text-center text-sm text-slate-400">
+        <p x-show="skillUsageFilter">无「<span x-text="skillUsageFilter"></span>」调用记录</p>
+        <p x-show="!skillUsageFilter">暂无工具调用记录</p>
+        <p class="mt-1 text-xs text-slate-300" x-show="!skillUsageFilter">等待任务执行后自动采集</p>
       </div>
-      <template x-for="te in toolExecutions" :key="te.id">
+      <template x-for="te in filteredToolExecutions()" :key="te.id">
         <div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/80 flex items-center gap-2">
             <span class="px-2.5 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600" x-text="te.tool"></span>
@@ -1124,33 +1179,31 @@
       </button>
      </div>
 
-     <!-- Bottom timeline -->
-     <template x-if="timelineBarVisible && timelineEvents().length > 0">
-       <div class="h-10 shrink-0 border-t border-slate-200/60 bg-slate-50/60 backdrop-blur flex items-center px-2 gap-1 overflow-hidden">
-         <button @click="timelineBarVisible = false" class="shrink-0 text-slate-300 hover:text-slate-500 transition px-1" title="收起时间轴">
-           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
-         </button>
-         <div class="flex-1 relative h-6 flex items-center" x-ref="timelineBar">
-           <div class="absolute inset-x-0 top-1/2 h-px bg-slate-200"></div>
-           <template x-for="(entry, i) in bottomTimelineMarkers()" :key="entry.id">
-             <button @click="onTimelineMarkerClick(entry)"
-               class="absolute z-10 -translate-x-1/2 transition hover:scale-150"
-               :style="{ left: entry.pct + '%' }"
-               :title="entry.title"
-               :class="selectedTimelineEntryId === entry.id ? 'scale-150 z-20' : ''">
-               <span class="block w-2.5 h-2.5 rounded-full border-2 border-white shadow-sm"
-                 :class="entry.color"></span>
-             </button>
-           </template>
-         </div>
-       </div>
-     </template>
-     <template x-if="!timelineBarVisible && timelineEvents().length > 0">
-       <button @click="timelineBarVisible = true" class="h-6 shrink-0 border-t border-slate-200/60 text-[10px] text-slate-400 hover:text-slate-600 px-3 flex items-center gap-1 transition bg-slate-50/60">
-         <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
-         时间轴
-       </button>
-     </template>
+      <!-- Bottom timeline -->
+      <template x-if="timelineBarVisible && timelineEvents().length > 0">
+        <div class="h-14 shrink-0 border-t border-slate-200/60 bg-slate-50/60 backdrop-blur flex items-center px-2 gap-1">
+          <button @click="timelineBarVisible = false" class="shrink-0 text-slate-300 hover:text-slate-500 transition px-1 self-stretch flex items-center" title="收起">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
+          </button>
+          <div class="flex-1 h-10 flex items-center gap-1 overflow-x-auto overflow-y-hidden timeline-scroll" x-ref="timelineBar" @wheel.prevent="e => { $refs.timelineBar.scrollLeft += e.deltaY; }">
+            <template x-for="(entry, i) in timelineEvents()" :key="entry.id">
+              <button @click="onTimelineMarkerClick(entry)"
+                class="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold transition whitespace-nowrap"
+                :class="timelineEntryIsSelected(entry) ? 'ring-1 ring-brand-400 scale-105' : 'hover:scale-105'"
+                :style="timelineEntryStyle(entry)"
+                :title="entry.title">
+                <span x-text="entry.targetId || entry.type"></span>
+              </button>
+            </template>
+          </div>
+        </div>
+      </template>
+      <template x-if="!timelineBarVisible && timelineEvents().length > 0">
+        <button @click="timelineBarVisible = true" class="h-6 shrink-0 border-t border-slate-200/60 text-[10px] text-slate-400 hover:text-slate-600 px-3 flex items-center gap-1 transition bg-slate-50/60">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          时间轴
+        </button>
+      </template>
     </div>
 
     <div @pointerdown.prevent="startPanelResize($event)" class="w-2 shrink-0 cursor-col-resize group flex items-stretch justify-center touch-none relative z-20">
@@ -1221,7 +1274,7 @@
         </template>
         <template x-if="selectedNode && selectedNode.type === 'fact' && selectedFactRecord() && selectedFacts.length <= 1">
           <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-            <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/80">
+            <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between">
               <div class="flex items-center gap-2">
                 <span class="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold"
                   :class="{
@@ -1230,6 +1283,25 @@
                     'bg-brand-50 text-brand-700': selectedFactId() !== 'origin' && selectedFactId() !== 'goal'
                   }" x-text="selectedFactId()"></span>
                 <span class="text-[11px] text-slate-400 font-medium uppercase tracking-wider">事实</span>
+                <svg x-show="isMaintainerRunning(selectedFactId())" class="w-3.5 h-3.5 animate-spin text-emerald-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10" opacity="0.25"/>
+                  <path d="M22 12a10 10 0 0 0-10-10" opacity="0.75" stroke-linecap="round"/>
+                </svg>
+              </div>
+              <div class="flex items-center gap-1">
+                <button @click="openEditFact()" class="p-1 rounded-md hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition" title="编辑">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
+                </button>
+                <button x-show="selectedFactId() !== 'origin' && selectedFactId() !== 'goal'"
+                        @click="toggleArchiveFact(selectedFactId())"
+                        class="p-1 rounded-md transition" title="归档"
+                        :class="selectedFactRecord()?.archived ? 'bg-amber-100 text-amber-500 hover:bg-amber-200' : 'text-slate-400 hover:bg-slate-200 hover:text-slate-600'">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>
+                </button>
+                <button x-show="selectedFactId() !== 'origin' && selectedFactId() !== 'goal'"
+                        @click="deleteFact(selectedFactId())" class="p-1 rounded-md hover:bg-rose-100 text-slate-400 hover:text-rose-500 transition" title="删除">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14Z"/></svg>
+                </button>
               </div>
             </div>
             <div class="p-4 space-y-4">
@@ -1270,10 +1342,23 @@
         </template>
         <template x-if="selectedNode && selectedNode.type === 'intent' && selectedIntentRecord()">
           <section class="rounded-2xl border border-violet-200/80 bg-white shadow-sm overflow-hidden">
-            <div class="px-4 py-3 border-b border-violet-100 bg-violet-50/70">
+            <div class="px-4 py-3 border-b border-violet-100 bg-violet-50/70 flex items-center justify-between">
               <div class="flex items-center gap-2">
                 <span class="px-2 py-0.5 rounded-md bg-violet-100 text-violet-700 text-[10px] font-mono font-bold" x-text="selectedIntentId()"></span>
                 <span class="text-[11px] font-medium" :class="intentStatusClass(selectedIntentRecord())" x-text="intentStatusLabel(selectedIntentRecord())"></span>
+              </div>
+              <div class="flex items-center gap-1">
+                <button @click="openEditIntent()" class="p-1 rounded-md hover:bg-violet-200 text-slate-400 hover:text-violet-600 transition" title="编辑">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
+                </button>
+                <button @click="toggleArchiveIntent(selectedIntentId())"
+                        class="p-1 rounded-md transition" title="归档"
+                        :class="selectedIntentRecord()?.archived ? 'bg-amber-100 text-amber-500 hover:bg-amber-200' : 'text-slate-400 hover:bg-violet-200 hover:text-violet-600'">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>
+                </button>
+                <button @click="deleteIntent(selectedIntentId())" class="p-1 rounded-md hover:bg-rose-100 text-slate-400 hover:text-rose-500 transition" title="删除">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14Z"/></svg>
+                </button>
               </div>
             </div>
             <div class="p-4 space-y-4">
@@ -1302,21 +1387,24 @@
           </div>
         </template>
         <template x-for="h in project.hints" :key="h.id">
-          <button type="button" @click="openHintTimelineEntry(h.id)"
-            class="w-full text-left rounded-2xl border border-amber-200/80 bg-white shadow-sm overflow-hidden transition hover:bg-amber-50/40">
-            <div class="px-4 py-3 border-b border-amber-100 bg-amber-50/80">
-              <div class="flex items-center justify-between gap-3 text-[11px]">
-                <div class="flex items-center gap-2 min-w-0">
-                  <span class="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span>
-                  <span class="font-medium text-amber-800 truncate" x-text="h.creator"></span>
-                </div>
+          <div class="w-full text-left rounded-2xl border border-amber-200/80 bg-white shadow-sm overflow-hidden transition hover:bg-amber-50/40 cursor-pointer"
+               @click="openHintTimelineEntry(h.id)">
+            <div class="px-4 py-3 border-b border-amber-100 bg-amber-50/80 flex items-center justify-between">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span>
+                <span class="font-medium text-amber-800 truncate" x-text="h.creator"></span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button @click.stop="openEditHint(h)" class="p-1 rounded-md hover:bg-amber-200 text-amber-400 hover:text-amber-700 transition" title="编辑">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
+                </button>
                 <span class="text-amber-600/80 shrink-0 tabular-nums" x-text="formatTime(h.created_at)"></span>
               </div>
             </div>
             <div class="p-4">
               <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="h.content"></p>
             </div>
-          </button>
+          </div>
         </template>
       </div>
 
@@ -1611,9 +1699,12 @@
             <div class="px-4 py-10 text-sm text-center text-slate-400">暂无漏洞记录</div>
           </template>
           <template x-for="v in filteredVulnerabilities()" :key="`${v.project_id}-${v.id}`">
-          <button type="button" @click="selectedVulnerabilityKey = vulnerabilityKey(v)" class="w-full flex flex-col items-start text-left rounded-xl border p-3 transition overflow-hidden"
+           <button type="button" @click="selectedVulnerabilityKey = vulnerabilityKey(v)" class="w-full flex flex-col items-start text-left rounded-xl border p-3 transition overflow-hidden"
             :class="selectedVulnerabilityKey === vulnerabilityKey(v) ? 'border-rose-200 bg-rose-50/60' : 'border-slate-200 hover:bg-slate-50'">
-            <span class="px-1.5 py-0.5 rounded-md text-[9px] font-semibold whitespace-nowrap" :class="vulnStatusClass(v.status)" x-text="vulnStatusLabel(v.status)"></span>
+            <div class="flex items-center gap-1.5">
+              <span class="px-1.5 py-0.5 rounded-md text-[9px] font-semibold whitespace-nowrap" :class="vulnSeverityClass(v.severity)" x-text="vulnSeverityLabel(v.severity)"></span>
+              <span class="px-1.5 py-0.5 rounded-md text-[9px] font-semibold whitespace-nowrap" :class="vulnStatusClass(v.status)" x-text="vulnStatusLabel(v.status)"></span>
+            </div>
             <p class="mt-1.5 text-sm font-semibold text-slate-700 line-clamp-2" x-text="v.title"></p>
           </button>
           </template>
@@ -1625,8 +1716,9 @@
           <template x-if="selectedVulnerability()">
             <article>
               <div class="px-5 py-4 border-b border-rose-100 bg-rose-50/60">
-                <div class="flex flex-wrap items-center gap-2">
+                 <div class="flex flex-wrap items-center gap-2">
                   <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-mono font-bold" x-text="selectedVulnerability().id"></span>
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="vulnSeverityClass(selectedVulnerability().severity)" x-text="vulnSeverityLabel(selectedVulnerability().severity)"></span>
                   <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="vulnStatusClass(selectedVulnerability().status)" x-text="vulnStatusLabel(selectedVulnerability().status)"></span>
                   <span class="text-[11px] text-slate-400" x-text="`${selectedVulnerability().project_group_title || '未归属项目'} / ${selectedVulnerability().task_title || selectedVulnerability().project_id}`"></span>
                 </div>
@@ -1693,6 +1785,16 @@
     <div class="p-5 space-y-3">
       <input x-model="vulnEditor.project_id" placeholder="项目ID (如 proj_042)" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" :disabled="!vulnEditor.isNew">
       <input x-model="vulnEditor.title" placeholder="标题 *" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+      <div>
+        <label class="text-[11px] text-slate-400 mb-1 block font-medium">严重程度</label>
+        <div class="flex gap-2">
+          <template x-for="sev in ['critical','high','medium','low','info']" :key="sev">
+            <button type="button" @click="vulnEditor.severity = sev" class="px-3 py-1.5 rounded-lg text-[11px] font-semibold transition border"
+              :class="vulnEditor.severity === sev ? vulnSeverityClass(sev) : 'border-slate-200 text-slate-400 hover:bg-slate-50'"
+              x-text="vulnSeverityLabel(sev)"></button>
+          </template>
+        </div>
+      </div>
       <textarea x-model="vulnEditor.description" rows="3" placeholder="描述 *" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea>
       <textarea x-model="vulnEditor.prerequisites" rows="2" placeholder="利用前提" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea>
       <textarea x-model="vulnEditor.impact" rows="2" placeholder="影响 *" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea>
@@ -1788,7 +1890,7 @@
                 <h3 class="text-sm font-semibold text-slate-700">黑板</h3>
                 <p class="text-xs text-slate-400 mt-0.5" x-text="`${groupBlackboardItems().length} 条，自动注入到任务 prompt 中`"></p>
               </div>
-              <button @click="openBlackboardEditor(null, true)" x-show="selectedProjectManagementTaskId && projectCanWriteManagedBlackboard()"
+              <button @click="openBlackboardEditor(null, true)" x-show="selectedProjectManagementId"
                 class="px-3 py-1.5 text-xs bg-sky-500 text-white rounded-lg hover:bg-sky-600 transition">添加</button>
             </div>
             <template x-if="groupBlackboardItems().length === 0">
@@ -1804,7 +1906,7 @@
                 </p>
                 <div class="mt-3 flex items-center justify-between gap-2">
                   <span class="text-[11px] text-slate-400" x-text="`${item.creator} · ${formatTime(item.updated_at || item.created_at)}`"></span>
-                  <div class="flex gap-2" x-show="projectCanWriteManagedBlackboard()">
+                  <div class="flex gap-2" x-show="selectedProjectManagementId">
                     <button @click="openBlackboardEditor(item, true)" class="px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-50 rounded-md transition">编辑</button>
                     <button @click="deleteBlackboardItem(item.id)" class="px-2 py-1 text-[11px] text-rose-500 hover:bg-rose-50 rounded-md transition">删除</button>
                   </div>
@@ -1855,11 +1957,11 @@
       </template>
     </aside>
     <!-- File tree -->
-    <aside class="border-r border-slate-200 bg-white overflow-y-auto p-3 space-y-1" x-show="skillEditor.name">
-      <template x-if="!skillEditor.name">
+    <aside class="border-r border-slate-200 bg-white overflow-y-auto p-3 space-y-1" x-show="skillEditor.name || skillEditor.isNew">
+      <template x-if="!skillEditor.name && !skillEditor.isNew">
         <p class="text-xs text-slate-400 text-center py-10">← 选择一个 Skill</p>
       </template>
-      <template x-if="skillEditor.name">
+      <template x-if="skillEditor.name || skillEditor.isNew">
         <div>
           <div class="flex items-center justify-between mb-2">
             <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">文件</span>
@@ -1886,16 +1988,16 @@
       </template>
     </aside>
     <!-- Editor -->
-    <section class="overflow-hidden flex flex-col" x-show="skillEditor.name">
-      <template x-if="!skillEditor.name">
+    <section class="overflow-hidden flex flex-col" x-show="skillEditor.name || skillEditor.isNew">
+      <template x-if="!skillEditor.name && !skillEditor.isNew">
         <div class="flex items-center justify-center h-full text-slate-400 text-sm">← 选择一个 Skill 开始编辑</div>
       </template>
-      <template x-if="skillEditor.name">
+      <template x-if="skillEditor.name || skillEditor.isNew">
         <div class="flex flex-col h-full">
           <!-- Skill meta bar -->
           <div class="shrink-0 px-4 py-2 border-b border-slate-100 bg-white flex items-center gap-3">
             <div class="flex items-center gap-2">
-              <span class="text-sm font-semibold text-slate-700" x-text="skillEditor.name"></span>
+              <span class="text-sm font-semibold text-slate-700" x-text="skillEditor.name || '新 Skill'"></span>
               <span x-show="skillEditor.builtin" class="px-1 py-0.5 rounded text-[8px] font-semibold bg-brand-50 text-brand-600">内置</span>
             </div>
             <button @click="toggleSkillFromEditor()" class="ml-auto px-3 py-1 text-xs rounded-lg transition"
@@ -1910,12 +2012,12 @@
             <div class="flex-1 grid grid-cols-2 gap-3">
               <div>
                 <label class="text-[10px] font-semibold text-slate-400 block">name</label>
-                <input x-model="skillEditor.name" :disabled="!skillEditor.isNew" @input="skillEditor.name = skillEditor.name.replace(/[^a-z0-9-]/g, '-').replace(/--+/g, '-').replace(/^-|-$/g, '')"
+                <input x-model="skillEditor.name" :disabled="!skillEditor.isNew" @input="skillEditor.name = skillEditor.name.replace(/[^a-z0-9-]/g, '-').replace(/--+/g, '-').replace(/^-|-$/g, ''); skillEditor.fileDirty = true"
                   class="w-full px-2 py-1 text-xs border border-slate-200 rounded font-mono disabled:bg-slate-100 disabled:text-slate-400">
               </div>
               <div>
                 <label class="text-[10px] font-semibold text-slate-400 block">description</label>
-                <input x-model="skillEditor.description" placeholder="触发场景描述"
+                <input x-model="skillEditor.description" placeholder="触发场景描述" @input="skillEditor.fileDirty = true"
                   class="w-full px-2 py-1 text-xs border border-slate-200 rounded">
               </div>
             </div>
@@ -2083,6 +2185,192 @@
     </main>
   </div>
 </template>
+
+<!-- ═══════════ ASSET MANAGEMENT ═══════════ -->
+<div x-show="activePage === 'assets'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 shrink-0 flex items-center justify-between">
+    <div>
+      <h2 class="text-base font-semibold text-slate-800 tracking-tight">资产管理</h2>
+      <p class="text-xs text-slate-400 mt-0.5">API 端点资产台账 — 跨项目共享</p>
+    </div>
+    <button @click="openAssetAdd()" class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition">新增资产</button>
+  </header>
+
+  <!-- Stats cards -->
+  <div class="px-5 py-3 grid grid-cols-5 gap-3 shrink-0" x-show="assetStats.total > 0">
+    <div class="rounded-xl border border-slate-200 bg-white px-4 py-3 text-center">
+      <p class="text-[10px] text-slate-400 uppercase tracking-wider">总数</p>
+      <p class="text-xl font-bold text-slate-700" x-text="assetStats.total"></p>
+    </div>
+    <div class="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-center">
+      <p class="text-[10px] text-emerald-600 uppercase tracking-wider">safe</p>
+      <p class="text-xl font-bold text-emerald-700" x-text="assetStats.safe"></p>
+    </div>
+    <div class="rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-center">
+      <p class="text-[10px] text-slate-500 uppercase tracking-wider">blocked</p>
+      <p class="text-xl font-bold text-slate-600" x-text="assetStats.blocked"></p>
+    </div>
+    <div class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-center">
+      <p class="text-[10px] text-rose-600 uppercase tracking-wider">vulnerable</p>
+      <p class="text-xl font-bold text-rose-700" x-text="assetStats.vulnerable"></p>
+    </div>
+    <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center">
+      <p class="text-[10px] text-amber-600 uppercase tracking-wider">untested</p>
+      <p class="text-xl font-bold text-amber-700" x-text="assetStats.untested"></p>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="px-5 py-2 flex flex-wrap items-center gap-2 shrink-0 border-b border-slate-100">
+    <select x-model="assetFilterProject" @change="assetPage=0; loadAssets()" class="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+      <option value="">全部项目</option>
+      <template x-for="p in assetProjects" :key="p">
+        <option :value="p" x-text="p"></option>
+      </template>
+    </select>
+    <select x-model="assetFilterDomain" @change="assetPage=0; loadAssets()" class="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white max-w-[240px]">
+      <option value="">全部域名</option>
+      <template x-for="d in assetDomains" :key="d">
+        <option :value="d" x-text="d"></option>
+      </template>
+    </select>
+    <input x-model="assetSearch" @input="assetPage=0; loadAssets()" placeholder="搜索 API 路径…" class="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg w-36">
+    <select x-model="assetFilterStatus" @change="assetPage=0; loadAssets()" class="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+      <option value="">全部状态</option>
+      <option value="safe">safe</option>
+      <option value="blocked">blocked</option>
+      <option value="vulnerable">vulnerable</option>
+      <option value="untested">untested</option>
+    </select>
+    <select x-model="assetFilterMethod" @change="assetPage=0; loadAssets()" class="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+      <option value="">全部方法</option>
+      <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option><option>PATCH</option>
+    </select>
+    <button @click="assetFilterProject='';assetFilterDomain='';assetFilterStatus='';assetFilterMethod='';assetSearch='';assetPage=0;loadAssets()" class="px-2.5 py-1.5 text-xs text-slate-500 hover:bg-slate-100 rounded-lg transition">清除筛选</button>
+  </div>
+
+  <!-- Table -->
+  <main class="flex-1 overflow-hidden px-5 py-3">
+    <div class="rounded-xl border border-slate-200 bg-white overflow-auto">
+      <table class="w-full text-xs table-fixed">
+        <thead class="bg-slate-50/80 border-b border-slate-100">
+          <tr class="text-left text-[10px] text-slate-400 uppercase tracking-wider">
+            <th class="px-3 py-2" style="width:18%">域名</th>
+            <th class="px-3 py-2" style="width:24%">API 路径</th>
+            <th class="px-3 py-2" style="width:6%">方法</th>
+            <th class="px-3 py-2" style="width:18%">功能说明</th>
+            <th class="px-3 py-2" style="width:7%">认证</th>
+            <th class="px-3 py-2" style="width:7%">状态</th>
+            <th class="px-3 py-2" style="width:12%">来源</th>
+            <th class="px-3 py-2" style="width:8%">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="a in assets" :key="a.id">
+            <tr class="border-b border-slate-50 hover:bg-slate-50/50 transition"
+              :class="{
+                'bg-emerald-50/30': a.test_status === 'safe',
+                'bg-slate-50/50': a.test_status === 'blocked',
+                'bg-rose-50/30': a.test_status === 'vulnerable',
+                'bg-amber-50/30': a.test_status === 'untested',
+              }">
+              <td class="px-3 py-2 text-slate-500 truncate max-w-[180px]" :title="a.backend_domain" x-text="a.backend_domain || '—'"></td>
+              <td class="px-3 py-2 font-mono text-slate-700 truncate max-w-[220px]" :title="a.api_path" x-text="a.api_path"></td>
+              <td class="px-3 py-2">
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold" :class="methodBadge(a.api_method)" x-text="a.api_method"></span>
+                <span x-show="a.sample_body" class="ml-1 px-1 py-0.5 rounded text-[9px] bg-slate-100 text-slate-400 cursor-default relative group">
+                  B
+                  <span class="absolute left-0 top-full mt-1 hidden group-hover:block z-50 w-72 max-h-52 overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg text-[11px] p-2.5">
+                    <span x-show="a.content_type" class="block text-[10px] text-slate-400 mb-1" x-text="'Content-Type: ' + a.content_type"></span>
+                    <span class="block font-mono text-slate-700 whitespace-pre-wrap break-all" x-text="a.sample_body"></span>
+                  </span>
+                </span>
+              </td>
+              <td class="px-3 py-2 text-slate-500 truncate max-w-[130px]" :title="a.api_purpose" x-text="a.api_purpose || '—'"></td>
+              <td class="px-3 py-2 text-slate-500" x-text="a.auth_required === 'yes' ? a.auth_type || '需要' : a.auth_required"></td>
+              <td class="px-3 py-2">
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap" :class="statusBadge(a.test_status)" x-text="a.test_status"></span>
+              </td>
+              <td class="px-3 py-2 text-slate-400 truncate max-w-[90px]" :title="a.source_file" x-text="a.source_file ? a.source_file.split('/').pop() : '—'"></td>
+              <td class="px-3 py-2 flex gap-1">
+                <button @click="openAssetEdit(a)" class="p-1 rounded hover:bg-slate-200 text-slate-400 hover:text-blue-500 transition" title="编辑">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
+                </button>
+                <button @click="deleteAsset(a.id)" class="p-1 rounded hover:bg-rose-100 text-slate-400 hover:text-rose-500 transition" title="删除">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14Z"/></svg>
+                </button>
+              </td>
+            </tr>
+          </template>
+          <tr x-show="assets.length === 0">
+            <td colspan="8" class="px-3 py-8 text-center text-slate-400">暂无资产记录</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <!-- Pagination -->
+    <div class="flex items-center justify-between mt-3" x-show="assetTotal > assetPageSize">
+      <p class="text-xs text-slate-400" x-text="`${assetPage * assetPageSize + 1}–${Math.min((assetPage + 1) * assetPageSize, assetTotal)} / ${assetTotal}`"></p>
+      <div class="flex items-center gap-1">
+        <button @click="assetPage=Math.max(0,assetPage-1);loadAssets()" :disabled="assetPage === 0" class="px-2 py-1 text-xs border border-slate-200 rounded hover:bg-slate-50 disabled:opacity-30">上一页</button>
+        <button @click="assetPage++;loadAssets()" :disabled="(assetPage+1)*assetPageSize >= assetTotal" class="px-2 py-1 text-xs border border-slate-200 rounded hover:bg-slate-50 disabled:opacity-30">下一页</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Edit Asset Modal -->
+<div x-show="showAssetEdit" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showAssetEdit=false">
+  <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-6 w-[480px] max-h-[80vh] overflow-y-auto space-y-4">
+    <div class="flex items-center justify-between">
+      <h3 class="text-sm font-semibold text-slate-800">编辑资产</h3>
+      <button @click="showAssetEdit=false" class="p-1 rounded hover:bg-slate-100"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="space-y-3">
+      <div><label class="text-[10px] text-slate-400">功能说明</label><input x-model="editAssetForm.api_purpose" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      <div><label class="text-[10px] text-slate-400">测试状态</label>
+        <select x-model="editAssetForm.test_status" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+          <option value="untested">untested</option><option value="safe">safe</option><option value="blocked">blocked</option><option value="vulnerable">vulnerable</option>
+        </select>
+      </div>
+      <div><label class="text-[10px] text-slate-400">认证要求</label>
+        <select x-model="editAssetForm.auth_required" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+          <option value="unknown">unknown</option><option value="yes">yes</option><option value="no">no</option>
+        </select>
+      </div>
+      <div><label class="text-[10px] text-slate-400">认证类型</label><input x-model="editAssetForm.auth_type" placeholder="JWT / Cookie / none" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+    </div>
+    <div class="flex items-center justify-end gap-2 pt-2">
+      <button @click="showAssetEdit=false" class="px-4 py-2 text-xs text-slate-500 hover:bg-slate-50 rounded-lg">取消</button>
+      <button @click="saveAsset();showAssetEdit=false" class="px-4 py-2 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Asset Modal -->
+<div x-show="showAssetAdd" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showAssetAdd=false">
+  <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-6 w-[480px] max-h-[80vh] overflow-y-auto space-y-4">
+    <div class="flex items-center justify-between">
+      <h3 class="text-sm font-semibold text-slate-800">新增资产</h3>
+      <button @click="showAssetAdd=false" class="p-1 rounded hover:bg-slate-100"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="space-y-3">
+      <div><label class="text-[10px] text-slate-400">项目 ID *</label><input x-model="editAssetForm.project_id" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      <div><label class="text-[10px] text-slate-400">API 路径 *</label><input x-model="editAssetForm.api_path" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      <div><label class="text-[10px] text-slate-400">HTTP 方法 *</label>
+        <select x-model="editAssetForm.api_method" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+          <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option><option>PATCH</option>
+        </select>
+      </div>
+      <div><label class="text-[10px] text-slate-400">后端域名</label><input x-model="editAssetForm.backend_domain" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      <div><label class="text-[10px] text-slate-400">功能说明</label><input x-model="editAssetForm.api_purpose" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+    </div>
+    <div class="flex items-center justify-end gap-2 pt-2">
+      <button @click="showAssetAdd=false" class="px-4 py-2 text-xs text-slate-500 hover:bg-slate-50 rounded-lg">取消</button>
+      <button @click="addAsset();showAssetAdd=false" class="px-4 py-2 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600">新增</button>
+    </div>
+  </div>
+</div>
 
 <!-- ═══════════ CRAWLER MANAGEMENT PAGE ═══════════ -->
 <div x-show="activePage === 'crawler-results'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0" x-init="loadCrawlerTasks()">
@@ -2524,6 +2812,140 @@
   </div>
 </div>
 
+<!-- ═══════════ PROMPTS MEMO PAGE ═══════════ -->
+<div x-show="activePage === 'prompts'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0"
+     x-init="loadPrompts()" @keydown.meta.k.prevent="showPromptSearch = true">
+
+  <!-- Header -->
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center justify-between shrink-0">
+    <div>
+      <h1 class="text-lg font-semibold text-slate-800 flex items-center gap-2">
+        <svg class="w-5 h-5 text-brand-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/>
+        </svg>
+        提示词备忘录
+      </h1>
+      <p class="text-xs text-slate-400 mt-0.5">存放常用的提示词脚本，点击即可复制</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <div class="relative">
+        <input type="text" x-model="promptSearch" placeholder="搜索提示词…"
+               class="h-8 w-48 rounded-lg border border-slate-200 bg-white px-3 pl-8 text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500">
+        <svg class="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      </div>
+      <select x-model="promptFilter" class="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/30">
+        <option value="">全部分类</option>
+        <template x-for="cat in promptCategories()" :key="cat">
+          <option :value="cat" x-text="cat"></option>
+        </template>
+      </select>
+      <button @click="showPromptEditor = true; editingPrompt = null; newPrompt = { title: '', category: '通用', content: '' }"
+              class="h-8 px-3 rounded-lg bg-brand-500 text-white text-xs font-medium hover:bg-brand-600 transition flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        新建
+      </button>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <main class="flex-1 overflow-y-auto p-5">
+    <!-- Empty state -->
+    <div x-show="filteredPrompts().length === 0" class="flex flex-col items-center justify-center py-20 text-center">
+      <div class="w-16 h-16 rounded-2xl bg-brand-50 flex items-center justify-center mb-4">
+        <svg class="w-8 h-8 text-brand-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+          <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/>
+        </svg>
+      </div>
+      <p class="text-sm text-slate-500 font-medium" x-text="promptSearch || promptFilter ? '没有匹配的提示词' : '还没有保存的提示词'"></p>
+      <p class="text-xs text-slate-400 mt-1" x-show="!promptSearch && !promptFilter">点击上方「新建」开始添加</p>
+    </div>
+
+    <!-- Cards grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      <template x-for="prompt in filteredPrompts()" :key="prompt.id">
+        <div class="group rounded-2xl border border-slate-200 bg-white hover:border-brand-200 hover:shadow-md transition overflow-hidden">
+          <!-- Card header -->
+          <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="inline-flex items-center px-2 py-0.5 rounded-md bg-brand-50 text-brand-600 text-[10px] font-medium" x-text="prompt.category"></span>
+              <h3 class="text-sm font-medium text-slate-700 truncate" x-text="prompt.title"></h3>
+            </div>
+            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+              <button @click="editPrompt(prompt)" class="p-1 rounded-md hover:bg-slate-100 text-slate-400 hover:text-slate-600" title="编辑">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
+              </button>
+              <button @click="deletePrompt(prompt.id)" class="p-1 rounded-md hover:bg-rose-50 text-slate-400 hover:text-rose-500" title="删除">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14Z"/></svg>
+              </button>
+            </div>
+          </div>
+          <!-- Card content -->
+          <div class="p-4">
+            <pre class="text-[11px] text-slate-600 font-mono whitespace-pre-wrap break-words max-h-32 overflow-y-auto leading-relaxed" x-text="prompt.content"></pre>
+          </div>
+          <!-- Card footer -->
+          <div class="px-4 py-2 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
+            <span class="text-[10px] text-slate-400" x-text="'创建于 ' + formatShortDate(prompt.created_at)"></span>
+            <button @click="copyPromptContent(prompt)"
+                    class="text-[11px] text-brand-500 hover:text-brand-600 transition flex items-center gap-1"
+                    :class="{ 'text-emerald-500': prompt._copied }">
+              <svg x-show="!prompt._copied" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <svg x-show="prompt._copied" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+              <span x-text="prompt._copied ? '已复制' : '复制'"></span>
+            </button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </main>
+</div>
+
+<!-- ═══════════ PROMPT EDITOR MODAL ═══════════ -->
+<div x-show="showPromptEditor" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showPromptEditor = false">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden" @keyup.escape.window="showPromptEditor = false">
+    <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+      <h2 class="text-base font-semibold text-slate-800" x-text="editingPrompt ? '编辑提示词' : '新建提示词'"></h2>
+      <button @click="showPromptEditor = false" class="p-1 rounded-lg hover:bg-slate-100 text-slate-400">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div class="flex gap-3">
+        <div class="flex-1">
+          <label class="block text-xs font-medium text-slate-500 mb-1">标题</label>
+          <input type="text" x-model="newPrompt.title" placeholder="输入提示词标题…"
+                 class="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500">
+        </div>
+        <div class="w-36">
+          <label class="block text-xs font-medium text-slate-500 mb-1">分类</label>
+          <input type="text" x-model="newPrompt.category" placeholder="如：渗透测试" list="prompt-category-list"
+                 class="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500">
+          <datalist id="prompt-category-list">
+            <option value="通用"></option>
+            <option value="渗透测试"></option>
+            <option value="代码审查"></option>
+            <option value="漏洞分析"></option>
+            <option value="报告生成"></option>
+            <option value="爬虫"></option>
+          </datalist>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-500 mb-1">提示词内容</label>
+        <textarea x-model="newPrompt.content" rows="12" placeholder="输入提示词内容…"
+                  class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 placeholder-slate-400 font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 resize-y"></textarea>
+      </div>
+    </div>
+    <div class="px-5 py-4 border-t border-slate-100 bg-slate-50/50 flex justify-end gap-2">
+      <button @click="showPromptEditor = false" class="px-4 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition">取消</button>
+      <button @click="savePrompt()" :disabled="!newPrompt.title || !newPrompt.content"
+              class="px-4 py-2 rounded-lg bg-brand-500 text-white text-sm font-medium hover:bg-brand-600 transition disabled:opacity-40 disabled:cursor-not-allowed">
+        保存
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════ NOTIFICATIONS PANEL ═══════════ -->
 <div x-show="notifications.length > 0" x-cloak class="fixed top-3 right-3 z-[55] w-80 space-y-2 pointer-events-none">
   <template x-for="notif in notifications.slice(0, 5)" :key="notif.id">
@@ -2679,13 +3101,18 @@
       </div>
       <div class="mt-4 space-y-3">
         <template x-for="(worker, idx) in dispatchSettings.workers" :key="worker._draftId || idx">
-          <div class="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
+          <div class="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-4" :class="{ 'opacity-50': worker.disabled }">
             <div class="flex items-start justify-between gap-3">
               <div>
                 <p class="text-sm font-semibold text-slate-700" x-text="worker.name || `pi-worker-${idx + 1}`"></p>
                 <p class="text-[11px] text-slate-400">当前密钥：<span x-text="worker.pi_api_key_masked || '未设置'"></span></p>
               </div>
-              <button @click="removePiWorker(idx)" class="px-3 py-1.5 text-xs border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50 transition">删除</button>
+              <div class="flex items-center gap-2">
+                <button @click="toggleWorkerDisabled(worker)" class="px-3 py-1.5 text-xs border rounded-lg transition"
+                  :class="worker.disabled ? 'border-amber-200 text-amber-600 bg-amber-50 hover:bg-amber-100' : 'border-teal-200 text-teal-600 bg-teal-50 hover:bg-teal-100'"
+                  x-text="worker.disabled ? '已禁用' : '已启用'"></button>
+                <button @click="removePiWorker(idx)" class="px-3 py-1.5 text-xs border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50 transition">删除</button>
+              </div>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
               <div>
@@ -2712,6 +3139,11 @@
                       :class="worker.phase_reason ? 'bg-violet-500 text-white shadow-sm' : 'bg-slate-100 text-slate-400'">reason</button>
                     <button type="button" @click="worker.phase_explore = !worker.phase_explore" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition"
                       :class="worker.phase_explore ? 'bg-teal-500 text-white shadow-sm' : 'bg-slate-100 text-slate-400'">explore</button>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] text-slate-400 w-12 shrink-0">维护</span>
+                    <button type="button" @click="worker.phase_maintainer = !worker.phase_maintainer" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition"
+                      :class="worker.phase_maintainer ? 'bg-emerald-500 text-white shadow-sm' : 'bg-slate-100 text-slate-400'">maintainer</button>
                   </div>
                 </div>
               </div>
@@ -3036,6 +3468,22 @@
       <button @click="showRenameModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
       <button @click="renameProject()" :disabled="!renameForm.projectId || !renameForm.title"
         class="px-5 py-2 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition disabled:opacity-30 shadow-sm">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Fact/Intent/Hint -->
+<div x-show="showEditContentModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showEditContentModal = false">
+  <div class="bg-white rounded-2xl shadow-2xl modal-enter w-full max-w-2xl p-6 border border-slate-200/60" @click.stop>
+    <h3 class="text-base font-semibold text-slate-700 mb-1" x-text="editForm.title"></h3>
+    <p class="text-xs text-slate-400 mb-4 font-mono" x-text="editForm.id"></p>
+    <textarea x-ref="editContentInput" x-model="editForm.content" rows="14"
+              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300 resize-y"
+              placeholder="内容..."></textarea>
+    <div class="flex justify-end gap-2 mt-4">
+      <button @click="showEditContentModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
+      <button @click="saveEditContent()" :disabled="!editForm.content"
+              class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm">保存</button>
     </div>
   </div>
 </div>
@@ -3398,6 +3846,13 @@ function cairnApp() {
     crawlerResultsPageTab: 'pages',
     crawlerResultsPageData: null,
     treeExpanded: {},
+    // Prompt memo
+    prompts: [],
+    promptSearch: '',
+    promptFilter: '',
+    showPromptEditor: false,
+    editingPrompt: null,
+    newPrompt: { title: '', category: '通用', content: '' },
     crawlerTasks: [],
     selectedCrawlerTaskId: '',
     showCrawlerTaskForm: false,
@@ -3439,6 +3894,14 @@ function cairnApp() {
     showHintModal: false,
     showReopenModal: false,
     showRenameModal: false,
+    showEditContentModal: false,
+    editForm: { type: '', id: '', title: '', content: '' },
+    maintainingIntentIds: [],
+    showAssetEdit: false, showAssetAdd: false, editAssetId: null, editAssetForm: {},
+    assets: [], assetStats: { total: 0, safe: 0, blocked: 0, vulnerable: 0, untested: 0 },
+    assetFilterProject: '', assetFilterDomain: '', assetFilterStatus: '', assetFilterMethod: '',
+    assetPage: 0, assetPageSize: 15, assetTotal: 0,
+    assetDomains: [], assetProjects: [], assetSearch: '',
     showLocalPrefs: false,
     showYamlModal: false,
     exportTab: 'yaml',
@@ -3455,7 +3918,7 @@ function cairnApp() {
     blackboardEditorForManaged: false,
     blackboardEditor: { open: false, id: '', title: '', content: '', hint: '' },
     vulnFilter: { keyword: '', projectId: '' },
-    vulnEditor: { open: false, isNew: true, project_id: '', id: '', title: '', description: '', prerequisites: '', impact: '', evidence: '', reproduction_steps: '', status: 'confirmed' },
+    vulnEditor: { open: false, isNew: true, project_id: '', id: '', title: '', description: '', prerequisites: '', impact: '', evidence: '', reproduction_steps: '', severity: 'medium', status: 'confirmed' },
     reopenForm: { projectId: '', projectTitle: '', description: '' },
     renameForm: { projectId: '', originalTitle: '', title: '' },
     crawlerTargetUrl: '',
@@ -3524,6 +3987,9 @@ function cairnApp() {
     toolFilterType: '',
     toolFilterSearch: '',
     toolPollTimer: null,
+    skillUsage: [],
+    skillUsageFilter: '',
+    globalSkillUsage: [],
     skills: [],
     skillEditor: { name: '', description: '', content: '', isNew: false, builtin: false, enabled: true, activeFile: '', fileContent: '', fileDirty: false },
     skillFiles: [],
@@ -3586,6 +4052,7 @@ function cairnApp() {
       window.addEventListener('pointerup', this._panelResizeStop);
       this.loadLocalPrefs();
       this.initDarkMode();
+      this.loadPrompts();
       await this.loadProjectGroups();
       await this.loadProjects();
       await this.loadSettings();
@@ -3670,17 +4137,21 @@ function cairnApp() {
         return;
       }
       const page = (hash.replace(/^#\/?/, '') || 'dashboard').split('/')[0];
-      const allowed = ['dashboard', 'tasks', 'vulnerabilities', 'projects', 'skills', 'files', 'mcp', 'knowledge', 'settings', 'crawler-results'];
+      const allowed = ['dashboard', 'tasks', 'vulnerabilities', 'projects', 'skills', 'files', 'mcp', 'assets', 'settings', 'crawler-results', 'prompts'];
       this.activePage = allowed.includes(page) ? page : 'dashboard';
       if (this.activePage !== 'task-detail' && this.view !== 'list') this.backToList(true);
       if (this.activePage !== 'action-replay' && this.actionReplayProjectId) this.closeActionReplay();
       if (this.activePage === 'vulnerabilities' || this.activePage === 'projects' || this.activePage === 'dashboard') {
         this.loadAllProjectDetails();
       }
+      if (this.activePage === 'dashboard') {
+        this.loadGlobalSkillUsage();
+      }
       if (this.activePage === 'skills') {
         this.loadSkills();
       }
       if (this.activePage === 'settings') this.loadSettings();
+      if (this.activePage === 'assets') { this.loadAssets(); this.loadAssetStats(); this.loadAssetFilters(); }
     },
 
     navigateTo(page) {
@@ -3692,9 +4163,10 @@ function cairnApp() {
         skills: '#/skills',
         files: '#/files',
         mcp: '#/mcp',
-        knowledge: '#/knowledge',
+        assets: '#/assets',
         settings: '#/settings',
         'crawler-results': '#/crawler-results',
+        prompts: '#/prompts',
       };
       location.hash = routes[page] || '#/dashboard';
       this.handleRoute();
@@ -3983,7 +4455,18 @@ function cairnApp() {
       await this.loadProjectGroups();
       await this.loadProjects();
       await this.loadAllProjectDetails(true);
+      await this.loadGlobalSkillUsage();
       this.showToast('仪表盘已刷新');
+    },
+
+    async loadGlobalSkillUsage() {
+      try {
+        const resp = await fetch('/skill-usage');
+        if (resp.ok) {
+          const data = await resp.json();
+          this.globalSkillUsage = data.items || [];
+        }
+      } catch (e) { /* ignore */ }
     },
 
     allProjectDetails() {
@@ -4063,6 +4546,13 @@ function cairnApp() {
     filteredToolExecutions() {
       try {
         let items = Array.isArray(this.toolExecutions) ? this.toolExecutions : [];
+        if (this.skillUsageFilter) {
+          const skill = this.skillUsageFilter;
+          items = items.filter(t => {
+            if (!t || t.tool !== 'read') return false;
+            return Array.isArray(t.argv) && t.argv.some(a => String(a || '').includes(`/skills/${skill}/SKILL.md`));
+          });
+        }
         if (this.toolFilterType) {
           items = items.filter(t => t && t.tool === this.toolFilterType);
         }
@@ -4244,7 +4734,6 @@ function cairnApp() {
     placeholderPages() {
       return [
         { id: 'mcp', title: 'MCP 集成', subtitle: '外部能力接入预留', description: '后续将在这里配置 MCP Server、能力授权、连接状态和调用审计。' },
-        { id: 'knowledge', title: '知识库', subtitle: '经验与资料沉淀预留', description: '后续将在这里管理知识条目、检索索引、项目经验和报告素材。' },
       ];
     },
 
@@ -4314,7 +4803,8 @@ function cairnApp() {
     },
 
     async saveSkillFile() {
-      if (!this.skillEditor.activeFile || !this.skillEditor.name) return;
+      if (!this.skillEditor.activeFile) return;
+      if (!this.skillEditor.name) { this.showToast('name 不能为空', 'error'); return; }
       const path = this.skillEditor.activeFile;
       const content = this.skillEditor.fileContent || '';
       try {
@@ -4375,7 +4865,7 @@ function cairnApp() {
     },
 
     openSkillEditor() {
-      this.skillEditor = { name: '', description: '', content: '', isNew: true, builtin: false, enabled: true, activeFile: 'SKILL.md', fileContent: '', fileDirty: false };
+      this.skillEditor = { name: '', description: '', content: '', isNew: true, builtin: false, enabled: true, activeFile: 'SKILL.md', fileContent: '', fileDirty: true };
       this.skillFiles = [{ path: 'SKILL.md', size: 0 }];
       this.showNewSkillFileInput = false;
     },
@@ -4644,9 +5134,9 @@ function cairnApp() {
 
     openVulnEditor(v) {
       if (v) {
-        this.vulnEditor = { open: true, isNew: false, project_id: v.project_id, id: v.id, title: v.title, description: v.description, prerequisites: v.prerequisites || '', impact: v.impact, evidence: (v.evidence||[]).join('\n'), reproduction_steps: (v.reproduction_steps||[]).join('\n'), status: v.status };
+        this.vulnEditor = { open: true, isNew: false, project_id: v.project_id, id: v.id, title: v.title, description: v.description, prerequisites: v.prerequisites || '', impact: v.impact, evidence: (v.evidence||[]).join('\n'), reproduction_steps: (v.reproduction_steps||[]).join('\n'), severity: v.severity || 'medium', status: v.status };
       } else {
-        this.vulnEditor = { open: true, isNew: true, project_id: '', id: '', title: '', description: '', prerequisites: '', impact: '', evidence: '', reproduction_steps: '', status: 'confirmed' };
+        this.vulnEditor = { open: true, isNew: true, project_id: '', id: '', title: '', description: '', prerequisites: '', impact: '', evidence: '', reproduction_steps: '', severity: 'medium', status: 'confirmed' };
       }
     },
 
@@ -4862,7 +5352,7 @@ function cairnApp() {
     async saveVuln() {
       const ed = this.vulnEditor;
       if (!ed.title || !ed.project_id) { this.showToast('标题和项目必填', 'error'); return; }
-      const body = { title: ed.title, description: ed.description, prerequisites: ed.prerequisites, impact: ed.impact, evidence: ed.evidence.split('\n').filter(Boolean), reproduction_steps: ed.reproduction_steps.split('\n').filter(Boolean), status: ed.status, source: 'manual', reported_by: this.actorName() };
+      const body = { title: ed.title, severity: ed.severity || 'medium', description: ed.description, prerequisites: ed.prerequisites, impact: ed.impact, evidence: ed.evidence.split('\n').filter(Boolean), reproduction_steps: ed.reproduction_steps.split('\n').filter(Boolean), status: ed.status, source: 'manual', reported_by: this.actorName() };
       try {
         if (ed.isNew) {
           await this.api('POST', `/projects/${ed.project_id}/vulns`, body);
@@ -5453,6 +5943,7 @@ function cairnApp() {
         phase_reason: Array.isArray(worker.task_types) && worker.task_types.includes('reason'),
         phase_explore: Array.isArray(worker.task_types) && worker.task_types.includes('explore'),
         phase_plan: Array.isArray(worker.task_types) && worker.task_types.includes('plan'),
+        phase_maintainer: Array.isArray(worker.task_types) && worker.task_types.includes('maintainer'),
         pi_api_key: '',
         testing: false,
         test_result: null,
@@ -5516,6 +6007,18 @@ function cairnApp() {
           } else {
             this.toolExecutions = data.items || [];
           }
+        }
+      } catch (e) { /* ignore */ }
+      await this.loadSkillUsage();
+    },
+
+    async loadSkillUsage() {
+      if (!this.actionReplayProjectId) return;
+      try {
+        const resp = await fetch(`/projects/${this.actionReplayProjectId}/skill-usage`);
+        if (resp.ok) {
+          const data = await resp.json();
+          this.skillUsage = data.items || [];
         }
       } catch (e) { /* ignore */ }
     },
@@ -5588,6 +6091,84 @@ function cairnApp() {
       try {
         this.project = await this.api('GET', `/projects/${id}`);
         this.projectDetailsCache[id] = this.project;
+        this.loadMaintainerStatus(id);
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async loadMaintainerStatus(id) {
+      try {
+        const resp = await this.api('GET', `/projects/${id}/maintainer-status`);
+        this.maintainingIntentIds = resp.maintaining_intent_ids || [];
+      } catch { /* ignore */ }
+    },
+
+    isMaintainerRunning(factId) {
+      if (!factId || this.maintainingIntentIds.length === 0) return false;
+      const intent = this.project?.intents?.find(i => i.to === factId);
+      return intent && this.maintainingIntentIds.includes(intent.id);
+    },
+
+    // ── Asset Management ──
+    async loadAssetFilters() {
+      try {
+        this.assetDomains = await this.api('GET', '/assets/domains');
+        this.assetProjects = await this.api('GET', '/assets/projects');
+      } catch(e) { this.assetDomains = []; this.assetProjects = []; }
+    },
+    async loadAssets() {
+      const params = new URLSearchParams({ limit: String(this.assetPageSize), offset: String(this.assetPage * this.assetPageSize) });
+      if (this.assetFilterProject) params.set('project_id', this.assetFilterProject);
+      if (this.assetFilterDomain) params.set('backend_domain', this.assetFilterDomain);
+      if (this.assetFilterStatus) params.set('test_status', this.assetFilterStatus);
+      if (this.assetFilterMethod) params.set('api_method', this.assetFilterMethod);
+      if (this.assetSearch) params.set('search', this.assetSearch);
+      try {
+        this.assets = await this.api('GET', `/assets?${params}`);
+        this.assetTotal = this.assets.length < this.assetPageSize ? this.assetPage * this.assetPageSize + this.assets.length : 999;
+      } catch(e) { this.assets = []; }
+      await this.loadAssetStats();
+    },
+    async loadAssetStats() {
+      try {
+        const p = this.assetFilterProject ? `?project_id=${this.assetFilterProject}` : '';
+        this.assetStats = await this.api('GET', `/assets/stats${p}`);
+      } catch(e) {}
+    },
+    methodBadge(method) {
+      const m = { GET: 'bg-blue-50 text-blue-600', POST: 'bg-emerald-50 text-emerald-600', PUT: 'bg-amber-50 text-amber-600', DELETE: 'bg-rose-50 text-rose-600', PATCH: 'bg-violet-50 text-violet-600' };
+      return m[method] || 'bg-slate-100 text-slate-500';
+    },
+    statusBadge(status) {
+      const s = { safe: 'bg-emerald-50 text-emerald-600', blocked: 'bg-slate-100 text-slate-500', vulnerable: 'bg-rose-50 text-rose-600', untested: 'bg-amber-50 text-amber-600' };
+      return s[status] || 'bg-slate-100 text-slate-500';
+    },
+    openAssetEdit(asset) {
+      this.editAssetId = asset.id;
+      this.editAssetForm = { api_purpose: asset.api_purpose || '', test_status: asset.test_status, auth_required: asset.auth_required, auth_type: asset.auth_type || '' };
+      this.showAssetEdit = true;
+    },
+    async saveAsset() {
+      if (!this.editAssetId) return;
+      try {
+        await this.api('PUT', `/assets/${this.editAssetId}`, this.editAssetForm);
+        this.loadAssets();
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+    async deleteAsset(id) {
+      if (!confirm('确认删除此资产？')) return;
+      try {
+        await this.api('DELETE', `/assets/${id}`);
+        this.loadAssets();
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+    openAssetAdd() {
+      this.editAssetForm = { project_id: this.selectedProjectId || '', api_path: '', api_method: 'GET', backend_domain: '', api_purpose: '' };
+      this.showAssetAdd = true;
+    },
+    async addAsset() {
+      try {
+        await this.api('POST', '/assets', this.editAssetForm);
+        this.loadAssets();
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
@@ -5697,6 +6278,97 @@ function cairnApp() {
         this.renameForm = { projectId: '', originalTitle: '', title: '' };
         await this.loadProjects();
         this.showToast('项目已重命名');
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    openEditFact() {
+      const fact = this.selectedFactRecord();
+      if (!fact) return;
+      this.editForm = { type: 'fact', id: fact.id, title: `编辑 Fact ${fact.id}`, content: fact.description };
+      this.showEditContentModal = true;
+      this.$nextTick(() => { if (this.$refs.editContentInput) this.$refs.editContentInput.focus(); });
+    },
+    openEditIntent() {
+      const intent = this.selectedIntentRecord();
+      if (!intent) return;
+      this.editForm = { type: 'intent', id: intent.id, title: `编辑 Intent ${intent.id}`, content: intent.description };
+      this.showEditContentModal = true;
+      this.$nextTick(() => { if (this.$refs.editContentInput) this.$refs.editContentInput.focus(); });
+    },
+    openEditHint(h) {
+      if (!h) return;
+      this.editForm = { type: 'hint', id: h.id, title: `编辑 Hint ${h.id}`, content: h.content };
+      this.showEditContentModal = true;
+      this.$nextTick(() => { if (this.$refs.editContentInput) this.$refs.editContentInput.focus(); });
+    },
+    async saveEditContent() {
+      if (!this.editForm.content) return;
+      try {
+        let path, body;
+        if (this.editForm.type === 'fact') {
+          path = `/projects/${this.selectedProjectId}/facts/${this.editForm.id}`;
+          body = { description: this.editForm.content };
+        } else if (this.editForm.type === 'intent') {
+          path = `/projects/${this.selectedProjectId}/intents/${this.editForm.id}`;
+          body = { description: this.editForm.content };
+        } else if (this.editForm.type === 'hint') {
+          path = `/projects/${this.selectedProjectId}/hints/${this.editForm.id}`;
+          body = { content: this.editForm.content };
+        }
+        await this.api('PUT', path, body);
+        this.showEditContentModal = false;
+        this.editForm = { type: '', id: '', title: '', content: '' };
+        this.showToast('已更新', 'success');
+        // Refresh project data to reflect changes
+        await this.loadProjectDetails(this.selectedProjectId);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async deleteFact(factId) {
+      if (!factId || !confirm(`确定删除 Fact ${factId}？这将同时清理相关的 intent 引用。`)) return;
+      try {
+        await this.api('DELETE', `/projects/${this.selectedProjectId}/facts/${factId}`);
+        this.showToast('已删除', 'success');
+        this.clearGraphSelection();
+        await this.loadProjectDetails(this.selectedProjectId);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async deleteIntent(intentId) {
+      if (!intentId || !confirm(`确定删除 Intent ${intentId}？`)) return;
+      try {
+        await this.api('DELETE', `/projects/${this.selectedProjectId}/intents/${intentId}`);
+        this.showToast('已删除', 'success');
+        this.clearGraphSelection();
+        await this.loadProjectDetails(this.selectedProjectId);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async toggleArchiveFact(factId) {
+      if (!factId) return;
+      try {
+        await this.api('PUT', `/projects/${this.selectedProjectId}/facts/${factId}/archive`);
+        this.showToast('已切换归档状态', 'success');
+        await this.loadProjectDetails(this.selectedProjectId);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async toggleArchiveIntent(intentId) {
+      if (!intentId) return;
+      try {
+        await this.api('PUT', `/projects/${this.selectedProjectId}/intents/${intentId}/archive`);
+        this.showToast('已切换归档状态', 'success');
+        await this.loadProjectDetails(this.selectedProjectId);
       } catch (e) {
         this.showToast(e.message, 'error');
       }
@@ -6243,6 +6915,7 @@ function cairnApp() {
           iconType: this.nodeIconType(nodeType),
           width: size.width,
           height: size.height,
+          archived: f.archived || false,
         }});
       }
       for (const intent of this.project.intents) {
@@ -6251,7 +6924,7 @@ function cairnApp() {
           if (this.project.project.depth_mode && (intent.to === 'goal' || intent.from.includes('goal'))) continue;
           for (const src of intent.from) {
             if (this.project.project.depth_mode && src === 'goal') continue;
-            edges.push({ data: { id: `${intent.id}_${src}`, source: src, target: intent.to, intentId: intent.id, label: lbl, status: 'concluded' }});
+            edges.push({ data: { id: `${intent.id}_${src}`, source: src, target: intent.to, intentId: intent.id, label: lbl, status: 'concluded', archived: intent.archived || false }});
           }
         } else {
           if (this.project.project.depth_mode && intent.from.includes('goal')) continue;
@@ -6268,10 +6941,11 @@ function cairnApp() {
             intentId: intent.id,
             width: nodeSize.width,
             height: nodeSize.height,
+            archived: intent.archived || false,
           }});
           for (const src of intent.from) {
             if (this.project.project.depth_mode && src === 'goal') continue;
-            edges.push({ data: { id: `${intent.id}_${src}`, source: src, target: phId, intentId: intent.id, label: lbl, status: nodeType }});
+            edges.push({ data: { id: `${intent.id}_${src}`, source: src, target: phId, intentId: intent.id, label: lbl, status: nodeType, archived: intent.archived || false }});
           }
           if (this.isBootstrapIntent(intent) && !this.project.project.depth_mode) {
             edges.push({ data: { id: `${intent.id}_goal`, source: phId, target: 'goal', intentId: intent.id, label: '', status: nodeType, edgeType: 'bootstrap_scope' }});
@@ -6303,7 +6977,8 @@ function cairnApp() {
       const body = (data.label || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       const w = data.width || 60;
       const h = data.height || 40;
-      return `<div class="node-card node-card--${data.nodeType}" style="width:${w}px;height:${h}px">`
+      const archivedClass = data.archived ? ' node-card--archived' : '';
+      return `<div class="node-card node-card--${data.nodeType}${archivedClass}" style="width:${w}px;height:${h}px">`
         + `<div class="node-card__header">${icon}<span class="node-card__title">${title}</span></div>`
         + `<div class="node-card__body">${body}</div>`
         + `</div>`;
@@ -6839,6 +7514,13 @@ function cairnApp() {
       } else if (entry.targetType === 'hints') {
         this.sideTab = 'hints';
       }
+      this.$nextTick(() => {
+        const bar = this.$refs.timelineBar;
+        if (bar) {
+          const el = bar.querySelector(`[title="${entry.title}"]`);
+          if (el) el.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        }
+      });
     },
 
     searchGraphNodes() {
@@ -7379,6 +8061,28 @@ function cairnApp() {
       return labels[key] || status || '未知';
     },
 
+    vulnSeverityClass(severity) {
+      const key = String(severity || '').toLowerCase();
+      if (key === 'critical') return 'bg-red-100 text-red-700';
+      if (key === 'high') return 'bg-orange-100 text-orange-700';
+      if (key === 'medium') return 'bg-yellow-100 text-yellow-700';
+      if (key === 'low') return 'bg-blue-100 text-blue-700';
+      if (key === 'info') return 'bg-slate-100 text-slate-600';
+      return 'bg-slate-100 text-slate-600';
+    },
+
+    vulnSeverityLabel(severity) {
+      const labels = {
+        critical: '严重',
+        high: '高危',
+        medium: '中危',
+        low: '低危',
+        info: '信息',
+      };
+      const key = String(severity || '').toLowerCase();
+      return labels[key] || severity || '未知';
+    },
+
     timelineEvents() {
       if (this.replay.active) return this.replay.visibleEvents;
       if (!this.project) return [];
@@ -7608,6 +8312,18 @@ function cairnApp() {
         : base;
     },
 
+    timelineEntryStyle(entry) {
+      const styles = {
+        project_created: 'background:#dbeafe;color:#1d4ed8;',
+        hint_added: 'background:#fef3c7;color:#92400e;',
+        intent_declared: 'background:#ede9fe;color:#6d28d9;',
+        intent_running: 'background:#fef3c7;color:#b45309;',
+        intent_concluded: 'background:#d1fae5;color:#047857;',
+        project_completed: 'background:#fee2e2;color:#b91c1c;',
+      };
+      return styles[entry.type] || 'background:#f1f5f9;color:#475569;';
+    },
+
     timelineEntryDomId(entryId) {
       return `timeline-entry-${entryId}`;
     },
@@ -7743,6 +8459,7 @@ function cairnApp() {
 
     formatTime(ts) { if (!ts) return ''; return new Date(ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'}); },
     formatDate(ts) { if (!ts) return ''; const d = new Date(ts); return d.toLocaleDateString([],{year:'numeric',month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); },
+    formatShortDate(ts) { if (!ts) return ''; const d = new Date(ts); return d.toLocaleDateString([],{year:'numeric',month:'short',day:'numeric'}); },
     formatTimelineDate(ts) { if (!ts) return ''; return new Date(ts).toLocaleDateString([],{year:'numeric',month:'short',day:'numeric'}); },
     formatDurationMs(ms) {
       const totalSeconds = Math.max(0, Math.round(ms / 1000));
@@ -8088,6 +8805,7 @@ function cairnApp() {
       if (worker.phase_reason) taskTypes.push('reason');
       if (worker.phase_explore) taskTypes.push('explore');
       if (worker.phase_plan) taskTypes.push('plan');
+      if (worker.phase_maintainer) taskTypes.push('maintainer');
       if (taskTypes.length === 0) {
         throw new Error(`Worker ${worker.name || '未命名'} 至少要勾选一个参与阶段`);
       }
@@ -8102,6 +8820,7 @@ function cairnApp() {
         pi_model_context_window: worker.pi_model_context_window || '',
         pi_api_key: worker.pi_api_key || '',
         pi_api_key_masked: worker.pi_api_key_masked || '',
+        disabled: !!worker.disabled,
       };
     },
 
@@ -8152,6 +8871,7 @@ function cairnApp() {
         pi_model_context_window: '200000',
         pi_api_key: '',
         pi_api_key_masked: '',
+        disabled: false,
         testing: false,
         test_result: null,
       });
@@ -8159,6 +8879,16 @@ function cairnApp() {
 
     removePiWorker(index) {
       this.dispatchSettings.workers.splice(index, 1);
+    },
+
+    async toggleWorkerDisabled(worker) {
+      try {
+        const updated = await this.api('PUT', `/settings/dispatch/workers/${encodeURIComponent(worker.name)}/toggle`);
+        this.applyDispatchSettings(updated);
+        this.showToast(`Worker ${worker.name} ${worker.disabled ? '已启用' : '已禁用'}`);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
     },
 
     async savePiWorker(worker) {
@@ -8198,6 +8928,92 @@ function cairnApp() {
         this.applyDispatchSettings(updated);
         this.showToast('系统配置已保存');
       } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    // ─── Prompt Memo ─────────────────────────────────────────────
+    loadPrompts() {
+      try {
+        const raw = localStorage.getItem('axiom_prompts');
+        this.prompts = raw ? JSON.parse(raw) : [];
+      } catch { this.prompts = []; }
+    },
+    savePromptsToStorage() {
+      localStorage.setItem('axiom_prompts', JSON.stringify(this.prompts));
+    },
+    promptCategories() {
+      const cats = new Set();
+      this.prompts.forEach(p => { if (p.category) cats.add(p.category); });
+      return Array.from(cats).sort();
+    },
+    filteredPrompts() {
+      let list = this.prompts;
+      if (this.promptFilter) list = list.filter(p => p.category === this.promptFilter);
+      if (this.promptSearch) {
+        const q = this.promptSearch.toLowerCase();
+        list = list.filter(p =>
+          p.title.toLowerCase().includes(q) ||
+          p.content.toLowerCase().includes(q) ||
+          (p.category && p.category.toLowerCase().includes(q))
+        );
+      }
+      return list;
+    },
+    async copyPromptContent(prompt) {
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(prompt.content);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = prompt.content;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        prompt._copied = true;
+        this.showToast('已复制到剪贴板', 'success');
+        setTimeout(() => { prompt._copied = false; }, 2000);
+      } catch { this.showToast('复制失败', 'error'); }
+    },
+    editPrompt(prompt) {
+      this.editingPrompt = prompt;
+      this.newPrompt = { title: prompt.title, category: prompt.category || '通用', content: prompt.content };
+      this.showPromptEditor = true;
+    },
+    async savePrompt() {
+      if (!this.newPrompt.title || !this.newPrompt.content) return;
+      if (this.editingPrompt) {
+        // Update existing
+        const idx = this.prompts.findIndex(p => p.id === this.editingPrompt.id);
+        if (idx !== -1) {
+          this.prompts[idx].title = this.newPrompt.title;
+          this.prompts[idx].category = this.newPrompt.category;
+          this.prompts[idx].content = this.newPrompt.content;
+          this.prompts[idx].updated_at = new Date().toISOString();
+        }
+        this.showToast('提示词已更新', 'success');
+      } else {
+        // Create new
+        this.prompts.unshift({
+          id: 'pm_' + Date.now(),
+          title: this.newPrompt.title,
+          category: this.newPrompt.category || '通用',
+          content: this.newPrompt.content,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+        this.showToast('提示词已保存', 'success');
+      }
+      this.savePromptsToStorage();
+      this.showPromptEditor = false;
+      this.editingPrompt = null;
+      this.newPrompt = { title: '', category: '通用', content: '' };
+    },
+    deletePrompt(id) {
+      if (!confirm('确定删除这条提示词？')) return;
+      this.prompts = this.prompts.filter(p => p.id !== id);
+      this.savePromptsToStorage();
+      this.showToast('已删除');
     },
   };
 }

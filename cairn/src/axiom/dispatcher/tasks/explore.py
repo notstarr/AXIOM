@@ -28,9 +28,10 @@ from axiom.server.models import Intent, ProjectDetail
 
 LOG = logging.getLogger(__name__)
 
-# Track per-intent retry count so each retry gets +300s extra timeout.
+# Track per-intent retry count so each retry gets +500s extra timeout.
 # Keyed by (project_id, intent_id); cleared on success.
 _explore_retries: dict[tuple[str, str], int] = {}
+MAX_EXPLORE_RETRIES = 3
 
 
 def run_explore_task(
@@ -126,7 +127,17 @@ def run_explore_task(
         execute_started = time.perf_counter()
         retry_key = (project.project.id, intent.id)
         retries = _explore_retries.get(retry_key, 0)
-        timeout = config.tasks.explore.timeout + (retries * 300)
+        if retries >= MAX_EXPLORE_RETRIES:
+            LOG.warning(
+                "explore max retries reached project=%s intent=%s worker=%s retries=%s",
+                project.project.id,
+                intent.id,
+                worker.name,
+                retries,
+            )
+            best_effort_release(client, project.project.id, intent.id, worker.name)
+            return "needs_replan"
+        timeout = config.tasks.explore.timeout + (retries * 500)
         _explore_retries[retry_key] = retries + 1
         first = _run_process(
             client,

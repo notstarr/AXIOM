@@ -21,6 +21,12 @@ from axiom.server.services import (
     validate_intent_creator_worker,
     validate_goal_not_in_sources,
 )
+from pydantic import BaseModel
+
+
+class UpdateIntentRequest(BaseModel):
+    description: str
+
 
 router = APIRouter(tags=["intents"])
 
@@ -145,3 +151,75 @@ def conclude(project_id: str, intent_id: str, body: ConcludeRequest):
             fact=Fact(id=fid, description=body.description),
             intent=intent_to_model(conn, updated, project_id),
         )
+
+
+@router.put(
+    "/projects/{project_id}/intents/{intent_id}",
+    response_model=Intent,
+)
+def update_intent(project_id: str, intent_id: str, body: UpdateIntentRequest):
+    with get_conn() as conn:
+        check_project_active(conn, project_id)
+        row = conn.execute(
+            "SELECT * FROM intents WHERE id = ? AND project_id = ?",
+            (intent_id, project_id),
+        ).fetchone()
+        if row is None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Intent not found")
+
+        conn.execute(
+            "UPDATE intents SET description = ? WHERE id = ? AND project_id = ?",
+            (body.description, intent_id, project_id),
+        )
+
+        updated = conn.execute(
+            "SELECT * FROM intents WHERE id = ? AND project_id = ?",
+            (intent_id, project_id),
+        ).fetchone()
+        return intent_to_model(conn, updated, project_id)
+
+
+@router.delete(
+    "/projects/{project_id}/intents/{intent_id}",
+    status_code=204,
+)
+def delete_intent(project_id: str, intent_id: str):
+    with get_conn() as conn:
+        check_project_active(conn, project_id)
+        row = conn.execute(
+            "SELECT * FROM intents WHERE id = ? AND project_id = ?",
+            (intent_id, project_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Intent not found")
+
+        conn.execute(
+            "DELETE FROM intents WHERE id = ? AND project_id = ?",
+            (intent_id, project_id),
+        )
+
+
+@router.put(
+    "/projects/{project_id}/intents/{intent_id}/archive",
+    response_model=Intent,
+)
+def toggle_intent_archive(project_id: str, intent_id: str):
+    with get_conn() as conn:
+        check_project_active(conn, project_id)
+        row = conn.execute(
+            "SELECT * FROM intents WHERE id = ? AND project_id = ?",
+            (intent_id, project_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Intent not found")
+        new_val = 0 if row["archived"] else 1
+        conn.execute(
+            "UPDATE intents SET archived = ? WHERE id = ? AND project_id = ?",
+            (new_val, intent_id, project_id),
+        )
+        updated = conn.execute(
+            "SELECT * FROM intents WHERE id = ? AND project_id = ?",
+            (intent_id, project_id),
+        ).fetchone()
+        return intent_to_model(conn, updated, project_id)

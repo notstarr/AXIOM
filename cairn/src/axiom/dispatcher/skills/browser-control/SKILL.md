@@ -16,6 +16,13 @@ description: 当需要操作浏览器（导航、点击、填表、截图、提�
 
 ---
 
+## ⚠️注意⚠️
+
+**在任务完成后必须关闭 tab，否则会导致系统卡顿：**
+```bash
+python3 scripts/cdp_ctl.py close-tab {tab_id}
+```
+
 ## 多 Worker 隔离（必须遵守）
 
 多个 worker 可能同时运行。**每个 worker 必须使用独立的 CDP tab**，通过 `--tab-id` 参数指定：
@@ -28,11 +35,6 @@ python3 scripts/cdp_ctl.py --tab-id {intent_id} click 5
 
 # 错误：不加 --tab-id，会操作到其他 worker 的页面
 python3 scripts/cdp_ctl.py state
-```
-
-**任务完成后必须关闭 tab：**
-```bash
-python3 scripts/cdp_ctl.py close-tab {tab_id}
 ```
 
 ---

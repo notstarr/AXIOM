@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from axiom import __version__
 from axiom.server import db
-from axiom.server.routers import crawler, export, files, hints, intents, projects, settings, tools
+from axiom.server.routers import assets, crawler, export, facts, files, hints, intents, projects, settings, tools
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -31,8 +31,10 @@ app.include_router(crawler.router)
 app.include_router(tools.router)
 app.include_router(hints.router)
 app.include_router(intents.router)
+app.include_router(facts.router)
 app.include_router(export.router)
 app.include_router(files.router)
+app.include_router(assets.router)
 
 
 @app.get("/", include_in_schema=False)

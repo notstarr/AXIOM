@@ -5,7 +5,21 @@ import re
 from typing import Any
 
 
-FENCED_BLOCK_RE = re.compile(r"```(?:json)?\s*\n?(.*?)```", re.IGNORECASE | re.DOTALL)
+FENCED_BLOCK_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+FENCE_STRIP_RE = re.compile(r"^```(?:json)?\s*|```$", re.IGNORECASE)
+# Deepseek reasoning often wraps output like:  content ... ```json {...} ```
+# The regex above handles it, but also try stripping the outermost fence markers
+# from the raw text as a fallback.
+
+def _strip_outer_fence(text: str) -> str:
+    """Attempt to strip a single surrounding code fence from text."""
+    stripped = text.strip()
+    if stripped.startswith("```") and stripped.endswith("```"):
+        inner = stripped[3:-3].strip()
+        if inner.lower().startswith("json"):
+            inner = inner[4:].strip()
+        return inner
+    return text
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
@@ -38,8 +52,21 @@ def extract_json_object(text: str) -> dict[str, Any]:
 
 
 def _candidate_segments(text: str) -> list[str]:
-    segments = [match.group(1).strip() for match in FENCED_BLOCK_RE.finditer(text)]
+    segments: list[str] = []
+    # 1) Extract from code fences (handles both \n and inline)
+    for match in FENCED_BLOCK_RE.finditer(text):
+        segments.append(match.group(1).strip())
+    # 2) Strip single outermost fence as fallback (deepseek sometimes wraps the whole output)
+    stripped = _strip_outer_fence(text)
+    if stripped != text:
+        segments.append(stripped)
+    # 3) Raw text as last resort
     segments.append(text.strip())
+    # 4) Find last { ... } pair spanning the tail of the output (common for long reasoning outputs)
+    first_brace = text.rfind("\n{")
+    if first_brace >= 0:
+        tail = text[first_brace + 1:].strip()
+        segments.append(tail)
     return segments
 
 

@@ -1,0 +1,13 @@
+*.db
+*.pid
+.pids/
+__pycache__/
+*.pyc
+.venv/
+.env
+*.log
+logs/
+dispatch.yaml
+node_modules/
+.DS_Store
+/tmp/

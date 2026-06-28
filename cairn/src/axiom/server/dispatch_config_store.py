@@ -68,7 +68,7 @@ def load_dispatch_config_snapshot(fallback_path: Path) -> DispatchConfigSnapshot
         ).fetchone()
         workers = conn.execute(
             """
-            SELECT name, worker_type, task_types_json, max_running, priority, env_json
+            SELECT name, worker_type, task_types_json, max_running, priority, env_json, disabled
             FROM dispatch_workers
             ORDER BY name ASC
             """
@@ -206,8 +206,8 @@ def write_dispatch_settings(body: dict[str, Any]) -> DispatchConfigVersion:
             conn.executemany(
                 """
                 INSERT INTO dispatch_workers (
-                    name, worker_type, task_types_json, max_running, priority, env_json, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    name, worker_type, task_types_json, max_running, priority, env_json, disabled, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -217,6 +217,7 @@ def write_dispatch_settings(body: dict[str, Any]) -> DispatchConfigVersion:
                         worker["max_running"],
                         worker["priority"],
                         json.dumps(worker["env"], ensure_ascii=False, separators=(",", ":")),
+                        1 if worker.get("disabled") else 0,
                         now,
                     )
                     for worker in body["workers"]
@@ -389,6 +390,7 @@ def _worker_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "max_running": max(1, int(row["max_running"] or 1)),
         "priority": max(0, int(row["priority"] or 0)),
         "env": {str(key): str(value) for key, value in env.items()},
+        "disabled": bool(row["disabled"]),
     }
 
 

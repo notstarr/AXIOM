@@ -11,7 +11,7 @@ from axiom.dispatcher.workers.base import DriverResult, WorkerDriver
 from axiom.server.db import current_db_path
 
 LOG = logging.getLogger(__name__)
-DEFAULT_PI_TOOLS = ("read", "write", "edit", "bash", "grep", "find", "ls")
+DEFAULT_PI_TOOLS = ("read", "write", "bash", "edit")
 
 
 def _normalize_skill_phase(phase: str) -> str:

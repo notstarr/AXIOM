@@ -128,6 +128,13 @@ class CairnClient:
             json={"from": from_ids, "description": description, "creator": creator, "worker": None},
         )
 
+    def create_hint(self, project_id: str, content: str, creator: str) -> ApiResult:
+        return self._request_json(
+            "POST",
+            f"/projects/{project_id}/hints",
+            json={"content": content, "creator": creator},
+        )
+
     def create_vulnerability(
         self,
         project_id: str,

@@ -395,6 +395,7 @@ class DispatchWorkerSettings(BaseModel):
     pi_model_context_window: str = ""
     pi_api_key: str = ""
     pi_api_key_masked: str = ""
+    disabled: bool = False
 
 
 class DispatchRuntimeWorkerView(BaseModel):
@@ -402,6 +403,7 @@ class DispatchRuntimeWorkerView(BaseModel):
     task_types: list[str]
     max_running: int = Field(ge=1)
     priority: int = Field(ge=0)
+    disabled: bool = False
 
 
 class DispatchSettings(BaseModel):
@@ -483,6 +485,7 @@ class PiConnectionTestResponse(BaseModel):
 class Fact(BaseModel):
     id: str
     description: str
+    archived: bool = False
 
 
 class Intent(BaseModel):
@@ -495,6 +498,7 @@ class Intent(BaseModel):
     last_heartbeat_at: str | None = None
     created_at: str
     concluded_at: str | None = None
+    archived: bool = False
 
     model_config = {"populate_by_name": True}
 
@@ -793,3 +797,53 @@ class ExploreStatus(BaseModel):
     api_list_exists: bool = False
     api_page_map_exists: bool = False
     created_at: str | None = None
+
+
+class AssetRead(BaseModel):
+    id: int
+    project_id: str
+    frontend_domain: str | None = None
+    frontend_url: str | None = None
+    backend_domain: str | None = None
+    api_path: str
+    api_method: str
+    api_purpose: str | None = None
+    auth_required: str = "unknown"
+    auth_type: str | None = None
+    test_status: str = "untested"
+    tested_at: str | None = None
+    known_vulns: str | None = None
+    source_file: str | None = None
+    sample_body: str | None = None
+    content_type: str | None = None
+    discovered_at: str | None = None
+
+
+class AssetCreate(BaseModel):
+    project_id: str
+    api_path: str
+    api_method: str
+    backend_domain: str = ""
+    frontend_domain: str | None = None
+    frontend_url: str | None = None
+    api_purpose: str | None = None
+    auth_required: str = "unknown"
+    auth_type: str | None = None
+    test_status: str = "untested"
+    source_file: str | None = None
+
+
+class AssetUpdate(BaseModel):
+    api_purpose: str | None = None
+    test_status: str | None = None
+    auth_required: str | None = None
+    auth_type: str | None = None
+    known_vulns: str | None = None
+
+
+class AssetStats(BaseModel):
+    total: int
+    safe: int
+    blocked: int
+    vulnerable: int
+    untested: int

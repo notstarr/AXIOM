@@ -12,10 +12,13 @@ from axiom.dispatcher.config import DispatchConfig, WorkerConfig
 from axiom.dispatcher.models import ReasonCheckpoint, RunningTask
 from axiom.dispatcher.protocol.client import CairnClient
 from axiom.dispatcher.runtime.cancellation import TaskCancellation
+from axiom.dispatcher.runtime.heartbeat import HeartbeatLease
 from axiom.dispatcher.runtime.startup_healthcheck import format_failure_summary, run_startup_healthchecks
 from axiom.dispatcher.scheduler.worker_select import choose_worker
+from axiom.dispatcher import tasks  # imported for dispatch routing lookup
 from axiom.dispatcher.tasks.bootstrap import run_bootstrap_task
-from axiom.dispatcher.tasks.explore import run_explore_task
+from axiom.dispatcher.tasks.explore import MAX_EXPLORE_RETRIES, run_explore_task
+from axiom.dispatcher.tasks.maintainer import run_maintainer_task
 from axiom.dispatcher.tasks.plan import run_plan_task
 from axiom.dispatcher.tasks.reason import run_reason_task
 from axiom.server.dispatch_config_store import (
@@ -619,7 +622,10 @@ class DispatcherLoop:
             LOG.exception("failed to submit explore task project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
             self._best_effort_release(project.project.id, intent.id, worker.name)
             return False
-        self.futures[future] = RunningTask(project.project.id, "explore", worker.name, cancellation, intent_id=intent.id)
+        self.futures[future] = RunningTask(
+            project.project.id, "explore", worker.name, cancellation,
+            intent_id=intent.id, intent_description=intent.description,
+        )
         self.runtime_project_ids.add(project.project.id)
         self._clear_project_log_state(project.project.id)
         LOG.info("dispatched explore project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
@@ -639,6 +645,8 @@ class DispatcherLoop:
         if running_for_phase >= phase_limit:
             blocked_phase_limit = f"{running_for_phase}/{phase_limit}"
         for worker in self.config.workers:
+            if worker.disabled:
+                continue
             if task_type not in worker.task_types:
                 blocked_task_type.append(worker.name)
                 continue
@@ -849,6 +857,13 @@ class DispatcherLoop:
             changes.append(f"hints:{checkpoint.hint_count}->{len(project.hints)}")
         if checkpoint.open_intent_count > 0 and open_intent_count == 0:
             changes.append(f"open_intents:{checkpoint.open_intent_count}->0")
+        # Stale: all open intents done but facts haven't changed — no other
+        # trigger will fire.  Re-run reason after a cooldown to let the model
+        # either create new intents or mark the project complete.
+        if open_intent_count == 0 and not changes:
+            now = time.time()
+            if now - checkpoint.last_triggered_at >= self.config.tasks.reason.timeout:
+                changes.append("stale")
         if not changes:
             return None
         return ",".join(changes)
@@ -953,6 +968,7 @@ class DispatcherLoop:
                     "task_types": list(worker.task_types),
                     "max_running": worker.max_running,
                     "priority": worker.priority,
+                    "disabled": worker.disabled,
                 }
                 for worker in self.config.workers
             ],
@@ -1008,6 +1024,8 @@ class DispatcherLoop:
                         task.worker_name,
                         retry_after_seconds,
                     )
+                elif outcome == "needs_replan":
+                    self._handle_needs_replan(task)
                 else:
                     self.worker_unhealthy_until.pop(task.worker_name, None)
                 rejection_key = (task.project_id, task.task_type, task.worker_name)
@@ -1025,6 +1043,8 @@ class DispatcherLoop:
                     self.worker_rejected_until.pop(rejection_key, None)
                 if task.task_type == "bootstrap" and task.intent_id is not None:
                     self._update_bootstrap_retry_state(task, outcome)
+                if outcome == "success" and task.task_type == "explore" and task.intent_id is not None:
+                    self._enqueue_maintainer(task.project_id, task.intent_id)
                 if outcome == "success" and task.task_type == "reason":
                     assert task.fact_count is not None
                     assert task.hint_count is not None
@@ -1033,6 +1053,7 @@ class DispatcherLoop:
                         fact_count=task.fact_count,
                         hint_count=task.hint_count,
                         open_intent_count=task.open_intent_count,
+                        last_triggered_at=time.time(),
                     )
                     LOG.debug(
                         "reason checkpoint updated project=%s facts=%s hints=%s open_intents=%s",
@@ -1044,9 +1065,59 @@ class DispatcherLoop:
             except Exception:
                 LOG.exception("task crashed project=%s task=%s worker=%s", task.project_id, task.task_type, task.worker_name)
 
+    def _handle_needs_replan(self, task) -> None:
+        """Handle an explore task that exceeded max retries.
+        Conclude the intent with a failure note so it won't be re-dispatched."""
+        if task.intent_id is None:
+            return
+
+        try:
+            self.client.conclude(
+                task.project_id,
+                task.intent_id,
+                task.worker_name,
+                description=f"超时重试 {MAX_EXPLORE_RETRIES} 次未完成。",
+            )
+        except Exception:
+            LOG.exception("failed to conclude replanned intent project=%s intent=%s", task.project_id, task.intent_id)
+
     def _refresh_runtime_projects(self, summaries: list[ProjectSummary]) -> None:
         active_ids = {summary.id for summary in summaries if summary.status == "active"}
         self.runtime_project_ids.intersection_update(active_ids)
+
+    def _enqueue_maintainer(self, project_id: str, intent_id: str) -> None:
+        """Submit a maintainer task to scan findings after explore succeeds."""
+        worker = next((w for w in self.config.workers if w.name == "stepfun-flash" and not w.disabled), None)
+        if worker is None:
+            return
+        parent = ""
+        try:
+            summary = self.client.get_project(project_id)
+            parent = summary.project.parent_project_id or ""
+        except Exception:
+            pass
+        findings_path = f"/tmp/axiom-files/{parent or 'unknown'}/{project_id}/ai/{intent_id}_findings.md"
+        if not Path(findings_path).exists():
+            LOG.info("maintainer skipped: findings file not found project=%s intent=%s", project_id, intent_id)
+            return
+        try:
+            project = self.client.get_project(project_id)
+            export = self.client.export_project(project_id)
+            cancellation = TaskCancellation()
+            future = self.executor.submit(
+                run_maintainer_task,
+                self.config,
+                self.client,
+                worker,
+                project,
+                export,
+                cancellation,
+                {"intent_id": intent_id, "findings_path": findings_path},
+            )
+            self.futures[future] = RunningTask(project_id, "maintainer", worker.name, cancellation, intent_id=intent_id)
+            LOG.info("maintainer submitted project=%s intent=%s", project_id, intent_id)
+        except Exception:
+            LOG.exception("maintainer submit failed project=%s intent=%s", project_id, intent_id)
 
     def _cancel_inactive_tasks(self, summaries: list[ProjectSummary]) -> None:
         status_by_project = {summary.id: summary.status for summary in summaries}

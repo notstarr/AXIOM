@@ -44,24 +44,6 @@ PI_BUILTIN_TOOLS: tuple[dict[str, object], ...] = (
         "description": "执行本地 shell 命令，受策略和黑名单约束。",
         "schema": {"type": "object", "properties": {"command": {"type": "string"}}},
     },
-    {
-        "name": "grep",
-        "display_name": "Grep",
-        "description": "搜索文本内容。",
-        "schema": {"type": "object", "properties": {"pattern": {"type": "string"}}},
-    },
-    {
-        "name": "find",
-        "display_name": "Find",
-        "description": "查找文件路径。",
-        "schema": {"type": "object", "properties": {"path": {"type": "string"}, "name": {"type": "string"}}},
-    },
-    {
-        "name": "ls",
-        "display_name": "List",
-        "description": "列出目录内容。",
-        "schema": {"type": "object", "properties": {"path": {"type": "string"}}},
-    },
 )
 
 

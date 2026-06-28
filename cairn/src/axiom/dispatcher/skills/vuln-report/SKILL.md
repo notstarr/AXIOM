@@ -1,7 +1,16 @@
 ---
 name: vuln-report
-description: 当成功利用安全漏洞并证明实际危害后，使用 curl POST 上报漏洞数据
+description: 通过 API 上报漏洞前必须阅读，包含去重检查、证据规范和上报格式
+disable-model-invocation: true
 ---
+
+## 漏洞等级（severity）
+
+上报时必须指定 severity，可选值：
+
+critical, high, medium, low, info
+
+具体评估标准见另一个技能：whatisvul
 
 ## 去重检查（上报前必做）
 
@@ -40,6 +49,7 @@ curl -X POST "${AXIOM_SERVER}/projects/${PROJECT_ID}/vulns" \
   -H "Content-Type: application/json" \
   -d '{
     "title": "SQL 注入 - /api/search 可读取全量用户数据",
+    "severity": "critical",
     "description": "参数 keyword 存在时间盲注。使用 payload admin'\'' OR 1=1-- 成功绕过登录，确认可读取 users 表全部 1.2 万行数据。",
     "prerequisites": "需要目标系统使用 MySQL 数据库且 keyword 参数未做参数化处理。",
     "impact": "攻击者可通过注入读取数据库中所有用户数据，包括密码哈希、手机号、身份证号。",

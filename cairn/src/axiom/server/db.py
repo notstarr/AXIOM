@@ -165,6 +165,7 @@ CREATE TABLE IF NOT EXISTS dispatch_workers (
     max_running INTEGER NOT NULL DEFAULT 1,
     priority INTEGER NOT NULL DEFAULT 0,
     env_json TEXT NOT NULL DEFAULT '{}',
+    disabled INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL
 );
 
@@ -274,6 +275,7 @@ def configure(path: Path) -> None:
         _ensure_pi_tools_schema(conn)
         _ensure_plan_settings_columns(conn)
         _ensure_crawler_schema(conn)
+        _ensure_dispatch_workers_columns(conn)
 
 
 def current_db_path() -> Path:
@@ -391,6 +393,12 @@ def _ensure_plan_settings_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE settings ADD COLUMN plan_worker_count INTEGER NOT NULL DEFAULT 1")
     conn.execute("UPDATE settings SET plan_timeout = 600 WHERE plan_timeout IS NULL OR plan_timeout < 1")
     conn.execute("UPDATE settings SET plan_worker_count = 1 WHERE plan_worker_count IS NULL OR plan_worker_count < 1")
+
+
+def _ensure_dispatch_workers_columns(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(dispatch_workers)")}
+    if "disabled" not in columns:
+        conn.execute("ALTER TABLE dispatch_workers ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0")
 
 
 def _ensure_project_group_schema(conn: sqlite3.Connection) -> None:

@@ -16,6 +16,7 @@ class RunningTask:
     hint_count: int | None = None
     open_intent_count: int | None = None
     bootstrap_signature: str | None = None
+    intent_description: str | None = None
 
 
 @dataclass(slots=True)
@@ -23,3 +24,4 @@ class ReasonCheckpoint:
     fact_count: int
     hint_count: int
     open_intent_count: int
+    last_triggered_at: float = 0.0
