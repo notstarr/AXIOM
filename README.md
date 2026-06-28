@@ -18,7 +18,7 @@
 
 </div>
 
-> **Fork of [oritera/Cairn](https://github.com/oritera/Cairn)** — restructured for local-only deployment with a major frontend overhaul, crawler system, and architecture cleanup.
+> **Fork of [oritera/Cairn](https://github.com/oritera/Cairn)** — restructured for local-only deployment with a major frontend overhaul, maintainer phase, asset database, and architecture cleanup.
 
 ---
 
@@ -36,84 +36,120 @@ AI Penetration Testing is the first validated domain. The engine is domain-agnos
 | **Intent** | A declared direction of exploration, not yet executed |
 | **Hint** | Human judgment injected at any time; absorbed by agents on the next read |
 
-The graph grows from `origin` toward `goal`. Agent Workers run an OODA loop (Observe → Orient → Decide → Act) and coordinate exclusively through the shared board (Stigmergy) — no direct communication, no information silos.
-
----
-
-## What's Different from Upstream
-
-This fork removes Docker/container dependencies entirely and runs locally with significant new features:
-
-### Frontend Overhaul
-- **Single-file Alpine.js SPA** (~7800 lines) replacing the original multi-page UI
-- **Knowledge graph visualization** using Cytoscape.js + ELK layout engine
-  - Card-style nodes with SVG icons + type headers + body text (via `cytoscape-html-label`)
-  - White background, light card design (not dark-themed like upstream)
-  - Double-tap to focus subgraph (upstream + downstream lineage)
-  - Self-drawn canvas minimap with viewport indicator
-  - Bottom timeline scrubber with event markers
-  - Curved bezier edges with status-colored arrows
-- **Design system** (`apple.css`, ~1770 lines) — Apple-inspired UI with consistent components
-- Legacy frontend preserved at `/legacy` route for reference
-
-### Crawler System
-- **Playwright CDP integration** — controls Chrome via DevTools Protocol for authenticated crawling
-- **mitmproxy addon** — records HTTP traffic filtered by target domain
-- **Action-oriented crawler prompts** — dedup, business-tree view, phased execute/flush loops
-- **Crawler results page** with snapshot preview
-- Refactored from monolithic `crawler.py` into modular `crawler/` package (8 modules)
-
-### Architecture Changes
-- **Removed Docker/container layer** — runs entirely locally via `start.sh`
-- **Decoupled server from dispatcher** via `shared/` package (output_parser, keyring)
-- **Cleaned dead code** — removed Claude Code, Codex, Mock drivers; Klay layout; container manager
-- **PI worker only** — streamlined to a single worker backend
-- **Depth mode** — straggler-tolerant reason triggering, deferred until local explores complete
-- **Token tracking** — end-to-end from PI session files
-- **Blackboard system** — structured prompt injection, lazy loading, hint metadata
-
-### Project Management
-- Project groups with modal-based creation and deletion
-- Tree view for business scope navigation
-- Global search (Cmd+K)
-- Dark mode toggle
-- Notification system with error detail popups
+The graph grows from `origin` toward `goal`. Agent Workers coordinate exclusively through the shared board (Stigmergy) — no direct communication, no information silos.
 
 ---
 
 ## System Architecture
 
 ```
-          ┌──────────────────────────────────┐
-          │           AXIOM Server           │
-          │    Facts + Intents + Hints       │
-          │    (FastAPI + SQLite)            │
-          └─────────────────┬────────────────┘
-                            │
-                     Read / Write API
-                            │
-          ┌─────────────────┴────────────────┐
-          │             Dispatcher           │
-          │   Schedules tasks, manages       │
-          │   workers, writes protocol       │
-          └──────────┬───────────────────────┘
-                     │
-      ┌──────────────┴──────────────┐
-      │       PI Worker (Local)      │
-      │   Bootstrap / Reason / Explore│
-      │   ┌─────┐  ┌─────┐  ┌─────┐  │
-      │   │ W.  │  │ W.  │  │ W.  │  │
-      │   └─────┘  └─────┘  └─────┘  │
-      └──────────────────────────────┘
+                         ┌──────────────┐
+                         │   Browser    │
+                         │  Frontend UI │
+                         └──────┬───────┘
+                                │
+                    ┌───────────┴───────────┐
+                    │   AXIOM Server        │
+                    │   (FastAPI + SQLite)   │
+                    │   Projects · Intents   │
+                    │   Facts · Hints · Vulns│
+                    └───────────┬───────────┘
+                                │
+                    ┌───────────┴───────────┐
+                    │    Dispatcher Loop    │
+                    │  3s tick · claim mgmt │
+                    │  worker selection     │
+                    │  phase limits         │
+                    └───────────┬───────────┘
+                                │
+        ┌───────────────────────┼───────────────────────┐
+        │                       │                       │
+        ▼                       ▼                       ▼
+  ┌──────────┐          ┌──────────┐          ┌──────────────┐
+  │  Reason  │ ──intents→ │ Explore  │ ──findings→ │  Maintainer  │
+  │  Phase   │          │  Phase   │          │   Phase      │
+  │qwen3.6+  │          │deepseek  │          │ stepfun-flash│
+  │          │          │ / qwen   │          │              │
+  └──────────┘          └──────────┘          └──────┬───────┘
+        ▲                                           │
+        │          new facts (trigger next reason)   │
+        └───────────────────────────────────────────┘
+                                                     │
+                                              ┌──────┴───────┐
+                                              │  Asset DB    │
+                                              │  (SQLite)    │
+                                              │ APIs · params│
+                                              │ test_status  │
+                                              └──────────────┘
 ```
 
-### Task Types
+### Phase Pipeline
 
-| Task | What it does | Output |
-|------|-------------|--------|
-| **Bootstrap** | At project start, attempts to solve the problem directly | Fact + possible Complete |
-| **Reason** | Reads the full graph: is the goal met? What should be explored next? | Complete / new Intents / no-op |
-| **Explore** | Claims one Intent, executes the exploration, reports findings | One Fact |
+The dispatcher orchestrates a continuous loop across three phases:
+
+| Phase | Worker | What it does | Output |
+|-------|--------|-------------|--------|
+| **Reason** | qwen3.6-plus | Reads the full fact graph + asset DB; judges whether goal is met or new intents needed | Complete / new Intents / no-op |
+| **Explore** | deepseekv4-pro / qwen3.6-plus | Claims one Intent, executes the exploration plan, runs security tools | Findings file + new Fact |
+| **Maintainer** | stepfun-flash | Reads explore findings, extracts API endpoints + request bodies, reports vulnerabilities | Assets in DB · Vulns via API |
+
+The loop: **Reason → Intents → Explore → Findings → Maintainer → new Facts → Reason** (cycles until goal is reached).
+
+### Trigger Logic
+
+Reason is triggered by one of:
+- **Initial** — first dispatch of a new project
+- **Facts change** — new facts arrived from explore workers
+- **Open intents → 0** — all active intents concluded
+- **Stale timeout** — no activity for `reason.timeout` seconds (prevents infinite idle state)
+
+---
+
+## What's Different from Upstream
+
+### Maintainer Phase & Asset Database
+- **New phase** dedicated to findings processing (stepfun-flash worker)
+- SQLite asset database (`/tmp/axiom-assets.db`) tracking all discovered API endpoints
+- Maintainer auto-extracts endpoints, request bodies, Content-Type, and test status
+- Deduplication via unique constraint (project, domain, path, method)
+- 180s timeout with automatic retry on failure
+- Concurrent execution — multiple maintainers run in parallel
+
+### Worker Task Assignment
+- Workers have explicit `task_types` (bootstrap / reason / explore / plan / maintainer)
+- Reason phase pinned to qwen3.6-plus (deepseek unreliable on large-fact reasoning)
+- stepfun-flash dedicated to maintainer only
+- Phase limits prevent overloading
+
+### Frontend Overhaul
+- Single-file Alpine.js SPA replacing the original multi-page UI
+- **Asset management page** — filterable/searchable table of all API endpoints with hover tooltips for request bodies
+- **Knowledge graph visualization** using Cytoscape.js + ELK layout engine
+  - Card-style nodes with SVG icons + type headers + body text
+  - Double-tap to focus subgraph (upstream + downstream lineage)
+  - Self-drawn canvas minimap with viewport indicator
+  - Bottom timeline scrubber with event markers
+- **Design system** (`apple.css`) — Apple-inspired UI with consistent components
+- Legacy frontend preserved at `/legacy` route
+
+### Stale Reason Handling
+- When all intents conclude but the reason model returns "no-op" (nothing to explore), the dispatcher previously entered infinite idle
+- **Fixed**: after `reason.timeout` seconds of inactivity with 0 open intents, reason is force-retriggered
+
+### Architecture Changes
+- Removed Docker/container layer — runs entirely locally via `start.sh`
+- Decoupled server from dispatcher via `shared/` package
+- Cleaned dead code — Claude Code, Codex, Mock drivers; container manager
+- PI worker only — streamlined to a single worker backend
+- Depth mode — straggler-tolerant reason triggering
+- Token tracking — end-to-end from PI session files
+- Blackboard system — structured prompt injection, lazy loading, hint metadata
+
+### Project Management
+- Project groups with modal-based creation and deletion
+- Global search (Cmd+K)
+- Dark mode toggle
+- Notification system with error detail popups
 
 ---
 
@@ -169,56 +205,38 @@ uv run --project cairn cairn serve
 uv run --project cairn cairn dispatch --config dispatch.yaml
 ```
 
-### Tests
-
-```bash
-cd cairn
-uv run pytest tests/ -q
-```
-
 ---
 
 ## Project Structure
 
 ```
 AXIOM/
-├── cairn/                          # Main application
+├── cairn/                            # Main application
 │   ├── src/axiom/
-│   │   ├── server/                 # FastAPI server
-│   │   │   ├── routers/            # API routes (projects, intents, hints, crawler, ...)
-│   │   │   ├── static/             # Frontend SPA (index.html, apple.css, vendor/)
-│   │   │   ├── app.py              # FastAPI app + routes
-│   │   │   ├── db.py               # SQLite database layer
-│   │   │   └── models.py           # Pydantic models
-│   │   ├── dispatcher/             # Task scheduling engine
-│   │   │   ├── scheduler/          # Scheduling loop
-│   │   │   ├── tasks/              # Bootstrap, Reason, Explore task runners
-│   │   │   ├── workers/            # PI worker adapter
-│   │   │   ├── prompts/            # LLM prompt templates (default, depth, other)
-│   │   │   └── tools/              # Gateway, tracker
-│   │   └── shared/                 # Shared utilities (keyring, output_parser)
+│   │   ├── server/                   # FastAPI server
+│   │   │   ├── routers/              # API routes (projects, intents, hints, assets, facts, vulns, ...)
+│   │   │   ├── static/               # Frontend SPA (index.html, apple.css, vendor/)
+│   │   │   ├── app.py                # FastAPI app + routes
+│   │   │   ├── db.py                 # SQLite database layer
+│   │   │   └── models.py             # Pydantic models
+│   │   ├── dispatcher/               # Task scheduling engine
+│   │   │   ├── scheduler/            # Scheduling loop
+│   │   │   ├── tasks/                # Bootstrap, Reason, Explore, Plan, Maintainer
+│   │   │   ├── workers/              # PI worker adapter
+│   │   │   ├── prompts/              # LLM prompt templates (default, depth)
+│   │   │   ├── skills/               # Worker skills (browser, nuclei, katana, whatisvul, ...)
+│   │   │   └── tools/                # Gateway, tracker
+│   │   └── shared/                   # Shared utilities (keyring, output_parser)
 │   └── pyproject.toml
-├── tools/                          # External tooling
-│   ├── crawler/                    # Playwright CDP CLI helper
-│   ├── mitm/                       # mitmproxy traffic recording addon
-│   └── xss-verify/                 # XSS detection tool
-├── docs/                           # Documentation
-├── dispatch.example.yaml           # Example dispatcher config
-├── start.sh                        # One-command start/stop script
+├── tools/                            # External tooling
+│   ├── crawler/                      # Playwright CDP CLI helper
+│   ├── mitm/                         # mitmproxy traffic recording addon
+│   └── xss-verify/                   # XSS detection tool
+├── docs/                             # Documentation
+├── dispatch.example.yaml             # Example dispatcher config template
+├── start.sh                          # One-command start/stop script
 └── .gitignore
 ```
-
----
-
-## Crawler Tools (Optional)
-
-AXIOM includes a crawler system for authenticated web application testing:
-
-- **CDP Helper** (`tools/crawler/cdp_ctl.py`) — Playwright-based Chrome DevTools Protocol CLI
-- **MITM Proxy** (`tools/mitm/mitm_addon.py`) — Records HTTP traffic to JSONL, filtered by target domain
-- **XSS Verify** (`tools/xss-verify/`) — Automated XSS detection with headless browser
-
-These integrate with the crawler router (`cairn/src/axiom/server/routers/crawler/`) for phased execute/flush workflows.
 
 ---
 
@@ -234,28 +252,60 @@ runtime:
   max_workers: 8
   max_running_projects: 3
   max_project_workers: 4
+  healthcheck_timeout: 60
   worker_healthcheck: "startup_only"
   prompt_group: "default"
 
 tasks:
   bootstrap: { timeout: 300, conclude_timeout: 90 }
-  reason:    { timeout: 300, max_intents: 2 }
-  explore:   { timeout: 300, conclude_timeout: 90 }
+  reason:    { timeout: 300, max_intents: 3, depth_max_intents: 5 }
+  explore:   { timeout: 600, conclude_timeout: 150 }
 
 workers:
-  - name: "pi_worker_1"
+  - name: "deepseek-worker"
     type: "pi"
-    task_types: [bootstrap, reason, explore]
+    task_types: [bootstrap, explore, plan]
     max_running: 2
     env:
-      PI_MODEL: "your-model-name"
-      PI_BASE_URL: "https://api.your-provider.com/v1"
+      PI_MODEL: "your-model"
+      PI_BASE_URL: "https://your-proxy/v1"
       PI_API_KEY: "sk-xxx"
       PI_PROVIDER_API: "openai-completions"
-      PI_MODEL_CONTEXT_WINDOW: "128000"
+
+  - name: "qwen-worker"
+    type: "pi"
+    task_types: [bootstrap, reason, explore, plan]
+    max_running: 2
+    env:
+      PI_MODEL: "your-model"
+      PI_BASE_URL: "https://your-proxy/v1"
+      PI_API_KEY: "sk-xxx"
+      PI_PROVIDER_API: "openai-completions"
+
+  - name: "maintainer-worker"
+    type: "pi"
+    task_types: [maintainer]
+    max_running: 2
+    env:
+      PI_MODEL: "your-model"
+      PI_BASE_URL: "https://your-proxy/v1"
+      PI_API_KEY: "sk-xxx"
+      PI_PROVIDER_API: "openai-completions"
 ```
 
 API keys are encrypted at rest using a `MASTER_KEY` (auto-generated on first run, stored at `~/.config/cairn/master.key`).
+
+---
+
+## Crawler Tools (Optional)
+
+AXIOM includes a crawler system for authenticated web application testing:
+
+- **CDP Helper** (`tools/crawler/cdp_ctl.py`) — Playwright-based Chrome DevTools Protocol CLI
+- **MITM Proxy** (`tools/mitm/mitm_addon.py`) — Records HTTP traffic to JSONL, filtered by target domain
+- **XSS Verify** (`tools/xss-verify/`) — Automated XSS detection with headless browser
+
+These integrate with the crawler router for phased execute/flush workflows.
 
 ---
 
