@@ -48,7 +48,7 @@ import time
 import urllib.request
 from typing import Any
 
-from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
+from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext, Playwright
 
 
 class CTLError(RuntimeError):
@@ -94,14 +94,14 @@ def _resolve_tab_url(cdp: str, tab_id: str) -> str:
 # Playwright connection + page matching
 # ---------------------------------------------------------------------------
 
-def _connect(cdp: str) -> Browser:
+def _connect(cdp: str) -> tuple[Playwright, Browser]:
     pw = sync_playwright().start()
     try:
         browser = pw.chromium.connect_over_cdp(cdp)
     except Exception as e:
         pw.stop()
         raise CTLError(f"connect_over_cdp failed: {e}")
-    return browser
+    return pw, browser
 
 
 def _find_page(browser: Browser, tab_id: str | None, cdp: str) -> tuple[Page, Browser]:
@@ -674,7 +674,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Connect to Chrome via CDP.
     try:
-        browser = _connect(args.cdp)
+        pw, browser = _connect(args.cdp)
     except CTLError as e:
         print(f"CDP_ERROR: {e}")
         return 3
@@ -711,7 +711,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     finally:
         try:
-            browser.close()
+            # IMPORTANT: when connected over CDP, we only detach Playwright.
+            # Do NOT close the remote browser process, otherwise user tabs may be closed.
+            pw.stop()
         except Exception:
             pass
 

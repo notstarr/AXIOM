@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timezone
+import fnmatch
 import json
+import logging
+import os
+from urllib.parse import urlparse
 
 from fastapi import HTTPException
 
 from axiom.server.models import BlackboardItem, Intent, ProjectMeta, ProjectReason, Vulnerability
+
+LOG = logging.getLogger(__name__)
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -140,6 +146,8 @@ def get_claimable_open_intent_or_404(
 ) -> sqlite3.Row:
     expire_workers(conn, project_id)
     row = get_intent_or_404(conn, project_id, intent_id)
+    if row["concluded_at"] is not None:
+        raise HTTPException(409, "Intent already concluded")
     if row["to_fact_id"] is not None:
         raise HTTPException(409, "Intent already concluded")
     if row["worker"] is not None and row["worker"] != worker:
@@ -152,6 +160,8 @@ def get_releasable_open_intent_or_404(
 ) -> sqlite3.Row:
     expire_workers(conn, project_id)
     row = get_intent_or_404(conn, project_id, intent_id)
+    if row["concluded_at"] is not None:
+        raise HTTPException(409, "Intent already concluded")
     if row["to_fact_id"] is not None:
         raise HTTPException(409, "Intent already concluded")
     if row["worker"] is None:
@@ -183,6 +193,7 @@ def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str)
         **{"from": [s["fact_id"] for s in sources]},
         to=row["to_fact_id"],
         description=row["description"],
+        timeouts=_intent_timeouts_from_row(row),
         creator=row["creator"],
         worker=row["worker"],
         last_heartbeat_at=row["last_heartbeat_at"],
@@ -190,6 +201,22 @@ def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str)
         concluded_at=row["concluded_at"],
         archived=bool(row["archived"]) if "archived" in row.keys() else False,
     )
+
+
+def _intent_timeouts_from_row(row: sqlite3.Row) -> dict[str, int] | None:
+    keys = row.keys()
+    if "execute_timeout_seconds" not in keys and "conclude_timeout_seconds" not in keys:
+        return None
+    execute_seconds = row["execute_timeout_seconds"] if "execute_timeout_seconds" in keys else None
+    conclude_seconds = row["conclude_timeout_seconds"] if "conclude_timeout_seconds" in keys else None
+    if execute_seconds is None and conclude_seconds is None:
+        return None
+    if execute_seconds is None or conclude_seconds is None:
+        return None
+    return {
+        "execute_seconds": int(execute_seconds),
+        "conclude_seconds": int(conclude_seconds),
+    }
 
 
 def build_intents(conn: sqlite3.Connection, project_id: str) -> list[Intent]:
@@ -223,13 +250,28 @@ def build_vulns(conn: sqlite3.Connection, project_id: str) -> list[Vulnerability
                 reproduction_steps=steps,
                 recommendation=row["recommendation"] if "recommendation" in keys else "",
                 affected_scope=row["affected_scope"] if "affected_scope" in keys else "",
-                status=row["status"],
+                status=_normalize_vuln_status(row["status"]),
                 source=row["source"],
                 reported_by=row["reported_by"],
                 created_at=row["created_at"],
             )
         )
     return vulns
+
+
+def _normalize_vuln_status(value: str | None) -> str:
+    text = str(value or "").strip()
+    mapping = {
+        "pending": "待确认",
+        "confirmed": "已验证",
+        "ignored": "忽略",
+        "rejected": "重复",
+        "待审核": "待确认",
+        "已确认": "已验证",
+        "已忽略": "忽略",
+        "已拒绝": "重复",
+    }
+    return mapping.get(text.lower(), mapping.get(text, text or "待确认"))
 
 
 def build_blackboard_items_for_group(conn: sqlite3.Connection, group_id: str) -> list[BlackboardItem]:
@@ -345,6 +387,7 @@ def expire_workers(conn: sqlite3.Connection, project_id: str | None = None) -> N
         UPDATE intents
         SET worker = NULL
         WHERE to_fact_id IS NULL
+          AND concluded_at IS NULL
           AND worker IS NOT NULL
           AND last_heartbeat_at IS NOT NULL
           AND (julianday(?) - julianday(last_heartbeat_at)) * 86400 > ?
@@ -374,3 +417,108 @@ def expire_reason_leases(conn: sqlite3.Connection, project_id: str | None = None
         query = query.replace("WHERE ", "WHERE id = ? AND ", 1)
         params = (project_id, now, timeout)
     conn.execute(query, params)
+
+
+def _env_truthy(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _extract_host(value: str) -> str | None:
+    text = value.strip()
+    if not text:
+        return None
+    if "://" in text:
+        parsed = urlparse(text)
+        return (parsed.hostname or "").strip().lower() or None
+    host = text.split("/", 1)[0].split(":", 1)[0].strip().strip(".").lower()
+    return host or None
+
+
+def _unique_list(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for raw in items:
+        item = raw.strip().lower()
+        if item and item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+def _match_scope(host: str, scope_rule: str) -> bool:
+    pattern_host = _extract_host(scope_rule)
+    if not pattern_host:
+        return False
+    if host == pattern_host:
+        return True
+    if fnmatch.fnmatch(host, pattern_host):
+        return True
+    return host.endswith(f".{pattern_host}")
+
+
+def _resolve_targets_for_scope(
+    *,
+    targets: list[str] | None,
+    require_targets: bool,
+) -> list[str]:
+    if not targets and require_targets:
+        raise HTTPException(status_code=400, detail="intent.targets is required by server policy.")
+    if not targets:
+        return []
+    normalized = _unique_list([_extract_host(item) or "" for item in targets])
+    normalized = [item for item in normalized if item]
+    if not normalized:
+        raise HTTPException(status_code=400, detail="intent.targets must contain at least one valid host/ip.")
+    return normalized
+
+
+def validate_intent_scope(
+    conn: sqlite3.Connection,
+    project_id: str,
+    *,
+    description: str,
+    targets: list[str] | None,
+) -> None:
+    project_row = conn.execute("SELECT parent_project_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if not project_row or not project_row["parent_project_id"]:
+        return
+    group_row = conn.execute(
+        "SELECT scope_json FROM project_groups WHERE id = ?",
+        (project_row["parent_project_id"],),
+    ).fetchone()
+    if not group_row or not group_row["scope_json"]:
+        return
+    try:
+        scope_data = json.loads(group_row["scope_json"])
+    except Exception:
+        return
+
+    allow_list = _unique_list([_extract_host(item) or "" for item in scope_data.get("targets", [])])
+    deny_list = _unique_list([_extract_host(item) or "" for item in scope_data.get("exclude", [])])
+    allow_list = [item for item in allow_list if item]
+    deny_list = [item for item in deny_list if item]
+
+    require_targets = _env_truthy("AXIOM_REQUIRE_INTENT_TARGETS", default=True)
+    intent_targets = _resolve_targets_for_scope(targets=targets, require_targets=require_targets)
+    if not intent_targets:
+        return
+
+    for host in intent_targets:
+        for denied in deny_list:
+            if _match_scope(host, denied):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Intent target '{host}' matched blacklist rule '{denied}'.",
+                )
+
+    if allow_list:
+        for host in intent_targets:
+            if any(_match_scope(host, allowed) for allowed in allow_list):
+                return
+        raise HTTPException(
+            status_code=400,
+            detail=f"Intent targets {intent_targets} do not match whitelist {allow_list}.",
+        )

@@ -121,11 +121,25 @@ class CairnClient:
             json={"from": from_ids, "description": description, "worker": worker},
         )
 
-    def create_intent(self, project_id: str, from_ids: list[str], description: str, creator: str) -> ApiResult:
+    def create_intent(
+        self,
+        project_id: str,
+        from_ids: list[str],
+        description: str,
+        creator: str,
+        *,
+        targets: list[str] | None = None,
+        timeouts: dict[str, int] | None = None,
+    ) -> ApiResult:
+        payload: dict[str, Any] = {"from": from_ids, "description": description, "creator": creator, "worker": None}
+        if targets is not None:
+            payload["targets"] = targets
+        if timeouts is not None:
+            payload["timeouts"] = timeouts
         return self._request_json(
             "POST",
             f"/projects/{project_id}/intents",
-            json={"from": from_ids, "description": description, "creator": creator, "worker": None},
+            json=payload,
         )
 
     def create_hint(self, project_id: str, content: str, creator: str) -> ApiResult:

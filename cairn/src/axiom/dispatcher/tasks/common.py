@@ -52,7 +52,11 @@ def preview(text: str, limit: int = LOG_PREVIEW_LIMIT) -> str:
 
 
 def did_timeout(result: ProcessResult) -> bool:
-    return not result.cancelled and (result.timed_out or result.returncode in (124, 137))
+    # Some providers terminate child processes with raw POSIX signals
+    # (for example SIGKILL=-9) when internal timeout/memory guards fire.
+    # Treat these as timeout-like so explore can go through conclude fallback/retry path.
+    timeout_like_codes = {124, 137, -9, -15}
+    return not result.cancelled and (result.timed_out or result.returncode in timeout_like_codes)
 
 
 def cancel_reason(result: ProcessResult, cancellation: TaskCancellation | None = None) -> str | None:

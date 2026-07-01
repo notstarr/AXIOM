@@ -41,8 +41,18 @@ def test_reason_payload_limits_number_of_intents() -> None:
             "accepted": True,
             "data": {
                 "intents": [
-                    {"from": ["f001"], "description": "one"},
-                    {"from": ["f001"], "description": "two"},
+                    {
+                        "from": ["f001"],
+                        "description": "one",
+                        "targets": ["api.example.com"],
+                        "timeouts": {"execute_seconds": 120, "conclude_seconds": 45},
+                    },
+                    {
+                        "from": ["f001"],
+                        "description": "two",
+                        "targets": ["pay.example.com"],
+                        "timeouts": {"execute_seconds": 180, "conclude_seconds": 60},
+                    },
                 ]
             },
         },
@@ -51,21 +61,132 @@ def test_reason_payload_limits_number_of_intents() -> None:
     )
 
     assert kind == "intents"
-    assert intents == [{"from": ["f001"], "description": "one"}]
+    assert intents == [
+        {
+            "from": ["f001"],
+            "description": "one",
+            "targets": ["api.example.com"],
+            "timeouts": {"execute_seconds": 120, "conclude_seconds": 45},
+        }
+    ]
+
+
+def test_reason_payload_requires_targets_when_enabled() -> None:
+    with pytest.raises(ValueError, match="intent\\[0\\]\\.targets is required"):
+        validate_reason_payload(
+            {
+                "accepted": True,
+                "data": {"intents": [{"from": ["f001"], "description": "probe"}]},
+            },
+            open_intents_empty=True,
+            max_intents=2,
+            require_intent_targets=True,
+        )
+
+
+def test_reason_payload_requires_timeouts_when_enabled() -> None:
+    with pytest.raises(ValueError, match="intent\\[0\\]\\.timeouts is required"):
+        validate_reason_payload(
+            {
+                "accepted": True,
+                "data": {"intents": [{"from": ["f001"], "description": "probe", "targets": ["api.example.com"]}]},
+            },
+            open_intents_empty=True,
+            max_intents=2,
+            require_intent_targets=True,
+            require_intent_timeouts=True,
+        )
+
+
+def test_reason_payload_rejects_empty_targets() -> None:
+    with pytest.raises(ValueError, match="intent\\[0\\]\\.targets must not be empty"):
+        validate_reason_payload(
+            {
+                "accepted": True,
+                "data": {"intents": [{"from": ["f001"], "description": "probe", "targets": []}]},
+            },
+            open_intents_empty=True,
+            max_intents=2,
+            require_intent_targets=True,
+        )
+
+
+def test_reason_payload_rejects_invalid_timeouts() -> None:
+    with pytest.raises(ValueError, match="timeouts.execute_seconds must be a positive integer"):
+        validate_reason_payload(
+            {
+                "accepted": True,
+                "data": {
+                    "intents": [
+                        {
+                            "from": ["f001"],
+                            "description": "probe",
+                            "targets": ["api.example.com"],
+                            "timeouts": {"execute_seconds": 0, "conclude_seconds": 30},
+                        }
+                    ]
+                },
+            },
+            open_intents_empty=True,
+            max_intents=2,
+            require_intent_targets=True,
+            require_intent_timeouts=True,
+        )
 
 
 def test_reason_payload_requires_intent_when_none_are_open() -> None:
-    with pytest.raises(ValueError, match="intents is required"):
-        validate_reason_payload(
-            {"accepted": True, "data": {}},
-            open_intents_empty=True,
-            max_intents=3,
-        )
+    kind, data = validate_reason_payload(
+        {"accepted": True, "data": {}},
+        open_intents_empty=True,
+        max_intents=3,
+    )
+    assert kind == "noop"
+    assert data is None
 
 
 def test_explore_payload_rejects_planning_text() -> None:
     with pytest.raises(ValueError):
         validate_explore_payload(parse_json_output("Need inspect files and keep working."))
+
+
+def test_explore_payload_requires_evidence_references_when_enabled() -> None:
+    with pytest.raises(ValueError, match="description must reference required evidence files"):
+        validate_explore_payload(
+            {"accepted": True, "data": {"description": "confirmed finding only"}},
+            required_reference_groups=[
+                ("/tmp/axiom-files/g/p/ai/i001_findings.md", "{ai_dir}/i001_findings.md"),
+                ("/tmp/axiom-files/g/p/ai/i001_leads.md", "{ai_dir}/i001_leads.md"),
+            ],
+        )
+
+    kind, description = validate_explore_payload(
+        {
+            "accepted": True,
+            "data": {
+                "description": "见 {ai_dir}/i001_findings.md，未测试线索见 {ai_dir}/i001_leads.md",
+            },
+        },
+        required_reference_groups=[
+            ("/tmp/axiom-files/g/p/ai/i001_findings.md", "{ai_dir}/i001_findings.md"),
+            ("/tmp/axiom-files/g/p/ai/i001_leads.md", "{ai_dir}/i001_leads.md"),
+        ],
+    )
+    assert kind == "fact"
+    assert "{ai_dir}/i001_findings.md" in description
+
+
+def test_explore_payload_rejects_overlong_description_when_enabled() -> None:
+    with pytest.raises(ValueError, match="description is too long"):
+        validate_explore_payload(
+            {"accepted": True, "data": {"description": "A" * 100}},
+            max_description_chars=60,
+        )
+
+    with pytest.raises(ValueError, match="description has too many lines"):
+        validate_explore_payload(
+            {"accepted": True, "data": {"description": "a\nb\nc\nd"}},
+            max_description_lines=3,
+        )
 
 
 def test_bootstrap_execute_payload_accepts_fact_only_result() -> None:

@@ -1,0 +1,363 @@
+<!-- ═══════════ SETTINGS PAGE ═══════════ -->
+<div x-show="activePage === 'settings'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 shrink-0">
+    <h2 class="text-base font-semibold text-slate-800 tracking-tight">系统设置</h2>
+    <p class="text-xs text-slate-400 mt-0.5">按配置类型分区管理，后续可以继续扩展新的子配置。</p>
+  </header>
+  <main class="flex-1 overflow-hidden p-5">
+    <div class="h-full grid grid-cols-[220px_minmax(0,1fr)] gap-5">
+      <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3 overflow-y-auto">
+        <p class="px-3 py-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">设置分类</p>
+        <div class="space-y-1">
+          <template x-for="tab in settingsTabs()" :key="tab.id">
+            <button type="button" @click="activeSettingsTab = tab.id" class="w-full text-left rounded-xl px-3 py-2.5 transition"
+              :class="activeSettingsTab === tab.id ? 'bg-brand-50 text-brand-700 border border-brand-100' : 'text-slate-500 hover:bg-slate-50 border border-transparent'">
+              <span class="block text-sm font-semibold" x-text="tab.title"></span>
+              <span class="block mt-0.5 text-[11px] opacity-70" x-text="tab.description"></span>
+            </button>
+          </template>
+        </div>
+      </aside>
+      <section class="overflow-y-auto space-y-5 pr-1">
+    <section x-show="activeSettingsTab === 'config'" x-cloak class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
+        <h3 class="text-sm font-semibold text-slate-700">调度并发</h3>
+        <div class="mt-4 space-y-3">
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">全局最大 worker 数量</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.runtime_max_workers" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+            <p class="text-[11px] text-slate-400 mt-1">所有任务和所有 worker 加起来最多同时跑多少个。</p>
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">最大运行任务数量</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.runtime_max_running_projects" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+            <p class="text-[11px] text-slate-400 mt-1">同一时间最多调度多少个任务。</p>
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">单任务最大 worker 数量</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.runtime_max_project_workers" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+            <p class="text-[11px] text-slate-400 mt-1">防止一个任务占满全部 worker。</p>
+          </div>
+        </div>
+      </div>
+      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
+        <h3 class="text-sm font-semibold text-slate-700">阶段并发数 — 广度模式</h3>
+        <div class="mt-4 space-y-3">
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">Bootstrap</label>
+            <input type="number" min="1" x-model.number="settingsForm.bootstrap_worker_count" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">Explore</label>
+            <input type="number" min="1" x-model.number="settingsForm.explore_worker_count" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason</label>
+            <input type="number" min="1" x-model.number="settingsForm.reason_worker_count" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+          </div>
+        </div>
+      </div>
+      <div class="rounded-2xl border border-amber-200 bg-amber-50/30 shadow-sm p-5">
+        <h3 class="text-sm font-semibold text-slate-700">阶段并发数 — 深度模式</h3>
+        <div class="mt-4 space-y-3">
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">Plan</label>
+            <input type="number" min="1" x-model.number="settingsForm.plan_worker_count" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">Explore</label>
+            <input type="number" min="1" x-model.number="settingsForm.explore_worker_count" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason</label>
+            <input type="number" min="1" x-model.number="settingsForm.reason_worker_count" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+          </div>
+        </div>
+      </div>
+      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
+        <h3 class="text-sm font-semibold text-slate-700">心跳与健康检查</h3>
+        <div class="mt-4 space-y-3">
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">调度/心跳间隔（秒）</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.runtime_interval" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+            <p class="text-[11px] text-slate-400 mt-1">worker 心跳发送间隔；连续失败宽限约为该值的 2 倍。</p>
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">健康检查超时时间（秒）</label>
+            <input type="number" min="1" x-model.number="dispatchSettings.runtime_healthcheck_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+            <p class="text-[11px] text-slate-400 mt-1">worker 启动或执行前健康检查最多等待多久。</p>
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">健康检查策略</label>
+            <select x-model="dispatchSettings.runtime_worker_healthcheck" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white">
+              <option value="startup_only">只在启动时检查</option>
+              <option value="startup_and_task">启动和每个任务前都检查</option>
+              <option value="disabled">关闭自动检查</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
+        <h3 class="text-sm font-semibold text-slate-700">阶段超时 — 广度模式</h3>
+        <div class="mt-4 grid grid-cols-2 gap-3">
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">boot 超时</label><input type="number" min="1" x-model.number="dispatchSettings.bootstrap_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">boot 总结超时</label><input type="number" min="1" x-model.number="dispatchSettings.bootstrap_conclude_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">explore 超时</label><input type="number" min="1" x-model.number="dispatchSettings.explore_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">explore 总结超时</label><input type="number" min="1" x-model.number="dispatchSettings.explore_conclude_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">reason 超时</label><input type="number" min="1" x-model.number="dispatchSettings.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">reason 最大 intent</label><input type="number" min="1" x-model.number="dispatchSettings.reason_max_intents" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+        </div>
+      </div>
+      <div class="rounded-2xl border border-amber-200 bg-amber-50/30 shadow-sm p-5">
+        <h3 class="text-sm font-semibold text-slate-700">阶段超时 — 深度模式</h3>
+        <div class="mt-4 grid grid-cols-2 gap-3">
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">plan 超时</label><input type="number" min="1" x-model.number="settingsForm.plan_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">explore 超时</label><input type="number" min="1" x-model.number="dispatchSettings.explore_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">explore 总结超时</label><input type="number" min="1" x-model.number="dispatchSettings.explore_conclude_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">reason 超时</label><input type="number" min="1" x-model.number="dispatchSettings.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">reason 最大 intent</label><input type="number" min="1" x-model.number="dispatchSettings.depth_reason_max_intents" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+        </div>
+      </div>
+    </section>
+
+    <section x-show="activeSettingsTab === 'workers'" x-cloak class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-sm font-semibold text-slate-700">PI Workers</h3>
+          <p class="text-xs text-slate-400 mt-0.5">每个 worker 独立配置 Base URL、模型、API Key、并发和可运行阶段。</p>
+        </div>
+        <button @click="addPiWorker()" class="h-8 px-3 rounded-lg bg-slate-800 text-white text-xs hover:bg-slate-900 transition">新增 PI Worker</button>
+      </div>
+      <div class="mt-4 space-y-3">
+        <template x-for="(worker, idx) in dispatchSettings.workers" :key="worker._draftId || idx">
+          <div class="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-4" :class="{ 'opacity-50': worker.disabled }">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <p class="text-sm font-semibold text-slate-700" x-text="worker.name || `pi-worker-${idx + 1}`"></p>
+              </div>
+              <div class="flex items-center gap-2">
+                <button @click="toggleWorkerDisabled(worker)" class="px-3 py-1.5 text-xs border rounded-lg transition"
+                  :class="worker.disabled ? 'border-amber-200 text-amber-600 bg-amber-50 hover:bg-amber-100' : 'border-teal-200 text-teal-600 bg-teal-50 hover:bg-teal-100'"
+                  x-text="worker.disabled ? '已禁用' : '已启用'"></button>
+                <button @click="removePiWorker(idx)" class="px-3 py-1.5 text-xs border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50 transition">删除</button>
+              </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">Worker 名称</label>
+                <input x-model="worker.name" placeholder="deepseek-v4-pro" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">参与阶段</label>
+                <div class="space-y-2">
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] text-slate-400 w-12 shrink-0">广度</span>
+                    <button type="button" @click="toggleWorkerPhase(worker, 'phase_bootstrap')" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition"
+                      :class="phaseToggleClass(worker.phase_bootstrap)" :style="phaseToggleStyle(worker.phase_bootstrap)" x-text="worker.phase_bootstrap ? '✓ boot' : 'boot'"></button>
+                    <button type="button" @click="toggleWorkerPhase(worker, 'phase_reason')" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition"
+                      :class="phaseToggleClass(worker.phase_reason)" :style="phaseToggleStyle(worker.phase_reason)" x-text="worker.phase_reason ? '✓ reason' : 'reason'"></button>
+                    <button type="button" @click="toggleWorkerPhase(worker, 'phase_explore')" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition"
+                      :class="phaseToggleClass(worker.phase_explore)" :style="phaseToggleStyle(worker.phase_explore)" x-text="worker.phase_explore ? '✓ explore' : 'explore'"></button>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] text-slate-400 w-12 shrink-0">深度</span>
+                    <button type="button" @click="toggleWorkerPhase(worker, 'phase_plan')" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition"
+                      :class="phaseToggleClass(worker.phase_plan)" :style="phaseToggleStyle(worker.phase_plan)" x-text="worker.phase_plan ? '✓ plan' : 'plan'"></button>
+                    <button type="button" @click="toggleWorkerPhase(worker, 'phase_reason')" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition"
+                      :class="phaseToggleClass(worker.phase_reason)" :style="phaseToggleStyle(worker.phase_reason)" x-text="worker.phase_reason ? '✓ reason' : 'reason'"></button>
+                    <button type="button" @click="toggleWorkerPhase(worker, 'phase_explore')" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition"
+                      :class="phaseToggleClass(worker.phase_explore)" :style="phaseToggleStyle(worker.phase_explore)" x-text="worker.phase_explore ? '✓ explore' : 'explore'"></button>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] text-slate-400 w-12 shrink-0">维护</span>
+                    <button type="button" @click="toggleWorkerPhase(worker, 'phase_maintainer')" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition"
+                      :class="phaseToggleClass(worker.phase_maintainer)" :style="phaseToggleStyle(worker.phase_maintainer)" x-text="worker.phase_maintainer ? '✓ maintainer' : 'maintainer'"></button>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">最大并发</label>
+                <input type="number" x-model.number="worker.max_running" min="1" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">优先级</label>
+                <input type="number" x-model.number="worker.priority" min="0" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+              </div>
+              <div class="md:col-span-2">
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">Base URL</label>
+                <input x-model="worker.pi_base_url" placeholder="https://api.example.com/v1" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">模型名称</label>
+                <div class="space-y-2 relative">
+                  <div class="flex gap-2">
+                    <input x-model="worker.pi_model" placeholder="模型 ID（可手动输入）" class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm">
+                    <button @click="fetchPiModels(worker)" :disabled="worker.models_loading || !worker.pi_base_url" class="px-3 py-2 text-xs border border-slate-200 rounded-xl hover:bg-white transition disabled:opacity-40 whitespace-nowrap" x-text="worker.models_loading ? '获取中...' : '获取模型'"></button>
+                    <button @click="toggleWorkerModelDropdown(worker)" type="button" class="w-9 h-9 border border-slate-200 rounded-xl text-slate-500 hover:bg-white transition flex items-center justify-center" title="展开模型下拉">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+                    </button>
+                  </div>
+                  <div x-show="worker.show_model_dropdown && (worker.available_models || []).length > 0" x-cloak class="absolute z-20 mt-1 right-0 w-80 max-h-56 overflow-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+                    <template x-for="model in (worker.available_models || [])" :key="model.id">
+                      <button type="button" @click="chooseWorkerModel(worker, model.id)" class="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 border-b last:border-b-0 border-slate-100">
+                        <div class="font-medium text-slate-700" x-text="model.id"></div>
+                        <div class="text-[11px] text-slate-400" x-text="`${((model.context_window || 0) / 1000).toFixed(0)}k context`"></div>
+                      </button>
+                    </template>
+                  </div>
+                  <p x-show="worker.models_error" class="text-[11px] text-rose-500" x-text="worker.models_error"></p>
+                </div>
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">上下文窗口</label>
+                <input x-model="worker.pi_model_context_window" placeholder="200000" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+                <p class="text-[11px] text-slate-400 mt-1">支持 200000 / 500k / 1m，保存时会自动换算为整数。</p>
+              </div>
+              <div class="md:col-span-2">
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">API Key</label>
+                <input type="password" x-model="worker.pi_api_key" :placeholder="worker.pi_api_key_masked ? `已保存：${worker.pi_api_key_masked}（留空不改）` : '留空则保持当前 worker 的密钥'" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+              </div>
+              <div class="md:col-span-4 flex flex-wrap items-center justify-end gap-2">
+                <span class="text-xs" :class="worker.test_result?.ok ? 'text-teal-600' : 'text-rose-600'" x-show="worker.test_result?.message" x-text="worker.test_result.message"></span>
+                <button @click="testPiWorkerConnection(worker)" :disabled="worker.testing || !worker.pi_base_url || !worker.pi_model" class="px-4 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl hover:bg-white transition disabled:opacity-40" x-text="worker.testing ? '测试中...' : '测试连接'"></button>
+                <button @click="savePiWorker(worker)" :disabled="!worker.name || !worker.pi_base_url || !worker.pi_model" class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-40">保存此 Worker</button>
+              </div>
+            </div>
+          </div>
+        </template>
+        <template x-if="dispatchSettings.workers.length === 0">
+          <p class="text-sm text-slate-400 text-center py-8">暂无 PI Worker，点击右上角新增。</p>
+        </template>
+      </div>
+    </section>
+
+    <section x-show="activeSettingsTab === 'proxy'" x-cloak class="grid grid-cols-1 gap-5">
+      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
+        <h3 class="text-sm font-semibold text-slate-700">代理</h3>
+        <input type="text" x-model="settingsForm.proxy_url" placeholder="socks5://127.0.0.1:1080" class="mt-4 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+        <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <input x-model="settingsForm.proxy_username" placeholder="代理账号（可选）" class="px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+          <input type="password" x-model="settingsForm.proxy_password" placeholder="代理密码（可选）" class="px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+        </div>
+        <div class="mt-3 flex flex-wrap gap-4">
+          <label class="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" x-model="settingsForm.proxy_enabled" class="rounded border-slate-300 text-brand-500 focus:ring-brand-300">启用代理（所有阶段：bootstrap / reason / explore）</label>
+        </div>
+      </div>
+    </section>
+
+    <!-- 爬虫 Worker 设置 -->
+    <section x-show="activeSettingsTab === 'crawler'" x-cloak
+      x-init="loadCrawlerWorkerSettings()"
+      class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-4">
+      <div>
+        <h3 class="text-sm font-semibold text-slate-700">爬虫 Worker 配置</h3>
+        <p class="text-xs text-slate-400 mt-0.5">爬虫独立于 dispatcher，使用专属模型配置直接 spawn 进程</p>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">爬取阶段时长（秒）</label>
+          <input type="number" min="15" x-model.number="settingsForm.crawler_active_window_seconds"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+          <p class="text-[11px] text-slate-400">每轮 crawler 主动探索页面和动作的时长。</p>
+        </div>
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">整理阶段时长（秒）</label>
+          <input type="number" min="5" x-model.number="settingsForm.crawler_flush_window_seconds"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+          <p class="text-[11px] text-slate-400">每轮结束后强制把发现写入 YAML 的时长。</p>
+        </div>
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">总超时时长（秒）</label>
+          <input type="number" min="60" x-model.number="settingsForm.crawler_total_timeout_seconds"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+          <p class="text-[11px] text-slate-400">整个 crawler 运行上限，超时后进入最终整理阶段。</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Base URL -->
+        <div class="space-y-1 md:col-span-2">
+          <label class="text-[11px] font-medium text-slate-500">PI_BASE_URL</label>
+          <div class="flex gap-2">
+            <input x-model="crawlerWorkerForm.pi_base_url" @blur="crawlerFetchModels()" placeholder="https://api.example.com/v1"
+              class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+            <button @click="crawlerFetchModels()" :disabled="!crawlerWorkerForm.pi_base_url || crawlerLoadingModels"
+              class="px-3 py-2 text-xs border border-slate-200 rounded-xl hover:bg-slate-50 disabled:opacity-40 transition whitespace-nowrap"
+              x-text="crawlerLoadingModels ? '获取中...' : '获取模型'">
+            </button>
+          </div>
+          <p x-show="crawlerModelsError" class="text-[11px] text-rose-500" x-text="crawlerModelsError"></p>
+        </div>
+
+        <!-- API Key -->
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">PI_API_KEY（留空保持不变）</label>
+          <input x-model="crawlerWorkerForm.pi_api_key" type="password" placeholder="sk-..."
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+        </div>
+
+        <!-- Provider API -->
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">PI_PROVIDER_API</label>
+          <select x-model="crawlerWorkerForm.pi_provider_api"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+            <option value="openai-completions">openai-completions</option>
+            <option value="openai-responses">openai-responses</option>
+          </select>
+        </div>
+
+        <!-- Model 下拉（有模型列表时显示下拉，否则手动输入） -->
+        <div class="space-y-1 md:col-span-2">
+          <label class="text-[11px] font-medium text-slate-500">PI_MODEL</label>
+          <template x-if="crawlerAvailableModels.length > 0">
+            <select x-model="crawlerWorkerForm.pi_model"
+              @change="crawlerAutoFillContext()"
+              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+              <option value="">-- 选择模型 --</option>
+              <template x-for="m in crawlerAvailableModels" :key="m.id">
+                <option :value="m.id" x-text="`${m.id}  (${(m.context_window/1000).toFixed(0)}k ctx)`"></option>
+              </template>
+            </select>
+          </template>
+          <template x-if="crawlerAvailableModels.length === 0">
+            <input x-model="crawlerWorkerForm.pi_model" placeholder="deepseek-v4-pro"
+              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+          </template>
+        </div>
+
+        <!-- Context Window（自动填充，可手动覆盖） -->
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">Context Window</label>
+          <input x-model="crawlerWorkerForm.pi_context_window" placeholder="128000"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+        </div>
+
+        <!-- 测试连接 -->
+        <div class="space-y-1 flex flex-col justify-end">
+          <label class="text-[11px] font-medium text-slate-500 opacity-0">.</label>
+          <div class="flex items-center gap-3">
+            <button @click="crawlerTestConnection()"
+              :disabled="!crawlerWorkerForm.pi_base_url || !crawlerWorkerForm.pi_model || crawlerTesting"
+              class="px-4 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl hover:bg-white transition disabled:opacity-40"
+              x-text="crawlerTesting ? '测试中...' : '测试连接'">
+            </button>
+            <template x-if="crawlerTestResult">
+              <span class="text-xs" :class="crawlerTestResult.ok ? 'text-teal-600' : 'text-rose-600'"
+                x-text="crawlerTestResult.message"></span>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end">
+        <button @click="saveCrawlerWorkerSettings()" class="px-5 py-2.5 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition">保存爬虫配置</button>
+      </div>
+    </section>
+
+    <div class="flex justify-end">
+      <button @click="saveServerSettings()" class="px-5 py-2.5 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200">保存系统设置</button>
+    </div>
+      </section>
+    </div>
+  </main>
+</div>
+</div><!-- /main-content -->

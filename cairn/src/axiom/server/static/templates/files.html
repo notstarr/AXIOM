@@ -1,0 +1,121 @@
+<!-- ═══════════ FILES PAGE ═══════════ -->
+<div x-show="activePage === 'files'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0" x-init="loadFileTree()">
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
+    <h2 class="text-base font-semibold text-slate-800">Files</h2>
+    <div class="flex-1"></div>
+    <label x-show="fileFolder === 'human' && !fileIsGroupLevel" class="px-2.5 py-1.5 text-xs rounded-lg bg-brand-500 text-white cursor-pointer hover:bg-brand-600">上传
+      <input type="file" @change="uploadFileToTask($event)" class="hidden">
+    </label>
+    <button @click="loadFileTree()" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">刷新</button>
+  </header>
+  <div class="flex-1 min-h-0 grid grid-cols-[240px_260px_minmax(0,1fr)]">
+    <!-- Left tree: project/group/folder tree -->
+    <aside class="border-r border-slate-200 bg-slate-50/40 overflow-y-auto p-2 text-xs select-none">
+      <template x-for="g in fileGroups" :key="g.id">
+        <div>
+          <button @click="fileGroupOpen = (fileGroupOpen === g.id ? '' : g.id)"
+            class="w-full text-left px-2 py-1 rounded hover:bg-slate-100 font-semibold text-slate-600 flex items-center gap-1">
+            <span x-text="fileGroupOpen === g.id ? '▾' : '▸'" class="text-slate-400 text-[10px] w-3 shrink-0"></span>
+            <span x-text="g.title || g.id" class="truncate"></span>
+          </button>
+          <div x-show="fileGroupOpen === g.id" class="ml-3">
+            <!-- Group-level crawler folder (at project level, not task level) -->
+            <template x-if="g.hasCrawler">
+              <button @click="selectFolder(g.id, '', 'crawler', true)"
+                class="w-full text-left px-2 py-0.5 rounded hover:bg-slate-100 flex items-center gap-1"
+                :class="fileIsGroupLevel && fileGroupId === g.id ? 'bg-slate-200 font-semibold text-slate-700' : 'text-slate-500'">
+                <span class="text-slate-300 text-[10px] w-3 shrink-0">—</span>
+                <span>crawler</span>
+              </button>
+            </template>
+            <!-- Tasks -->
+            <template x-for="t in g.tasks" :key="t.id">
+              <div>
+                <button @click="fileGroupOpen2 = (fileGroupOpen2 === t.id ? '' : t.id)"
+                  class="w-full text-left px-2 py-0.5 rounded hover:bg-slate-100 flex items-center gap-1 text-slate-500">
+                  <span x-text="fileGroupOpen2 === t.id ? '▾' : '▸'" class="text-slate-400 text-[10px] w-3 shrink-0"></span>
+                  <span x-text="t.title || t.id" class="truncate"></span>
+                </button>
+                <div x-show="fileGroupOpen2 === t.id" class="ml-3">
+                  <template x-for="fd in t.folders" :key="fd">
+                    <button @click="selectFolder(g.id, t.id, fd, false)"
+                      class="w-full text-left px-2 py-0.5 rounded hover:bg-slate-100 flex items-center gap-1"
+                      :class="!fileIsGroupLevel && fileTaskId === t.id && fileFolder === fd ? 'bg-slate-200 font-semibold text-slate-700' : 'text-slate-500'">
+                      <span class="text-slate-300 text-[10px] w-3 shrink-0">—</span>
+                      <span x-text="fd"></span>
+                    </button>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </aside>
+    <!-- Middle: file tree (recursive) -->
+    <aside class="border-r border-slate-200 bg-white overflow-y-auto p-2 select-none">
+      <template x-if="!fileFolder">
+        <p class="text-xs text-slate-400 text-center py-10">← 选择左侧文件夹</p>
+      </template>
+      <template x-if="fileFolder">
+        <div>
+          <p class="text-[10px] text-slate-400 font-mono px-2 py-1 mb-1"
+            x-text="fileIsGroupLevel ? fileGroupId + ' / ' + fileFolder : fileTaskId + ' / ' + fileFolder"></p>
+          <template x-for="node in flattenFileTree(buildFileTree(fileList))" :key="node.path">
+            <div class="group flex items-center gap-1 rounded-lg px-1 py-1 cursor-pointer transition"
+              :style="'padding-left: ' + (4 + node.depth * 14) + 'px'"
+              :class="filePreview.path === node.path ? 'bg-brand-50 text-brand-700' : 'hover:bg-slate-50 text-slate-600'"
+              @click="node.type === 'dir' ? toggleDir(node.path) : previewFile(node.path, node.size)">
+              <template x-if="node.type === 'dir'">
+                <span class="text-slate-400 text-[10px] w-3 shrink-0" x-text="expandedDirs[node.path] ? '▾' : '▸'"></span>
+              </template>
+              <template x-if="node.type === 'file'">
+                <span class="w-3 shrink-0" x-text="isImageFile(node.name) ? '🖼' : (isMdFile(node.name) ? '📝' : '📄')" :class="{'opacity-40': !isImageFile(node.name) && !isMdFile(node.name)}"></span>
+              </template>
+              <span class="text-xs truncate flex-1" x-text="node.name"></span>
+              <button x-show="node.type === 'file'" @click.stop="deleteCurrentFile(node.path)"
+                class="opacity-0 group-hover:opacity-100 text-rose-400 hover:text-rose-600 text-[10px] shrink-0">×</button>
+            </div>
+          </template>
+          <div x-show="fileList.length === 0" class="text-xs text-slate-400 text-center py-8">暂无文件</div>
+        </div>
+      </template>
+    </aside>
+    <!-- Right: preview pane -->
+    <section class="overflow-hidden flex flex-col">
+      <template x-if="!filePreview.open">
+        <div class="flex items-center justify-center h-full text-slate-400 text-sm">选择文件预览</div>
+      </template>
+      <template x-if="filePreview.open">
+        <div class="flex flex-col h-full">
+          <div class="shrink-0 px-4 py-2 border-b border-slate-100 bg-white flex items-center gap-2">
+            <span class="text-xs font-mono text-slate-600 truncate" x-text="filePreview.name"></span>
+            <span x-show="filePreview.isImage" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-blue-50 text-blue-600">图片</span>
+            <span x-show="filePreview.isMarkdown" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-50 text-emerald-600">Markdown</span>
+            <div class="flex-1"></div>
+            <a :href="filePreview.rawUrl" download x-show="filePreview.rawUrl"
+              class="px-2 py-1 text-[10px] rounded border border-slate-200 text-slate-500 hover:bg-slate-50">下载</a>
+          </div>
+          <div class="flex-1 overflow-auto">
+            <!-- Image preview -->
+            <template x-if="filePreview.isImage">
+              <div class="flex items-center justify-center min-h-full p-6 bg-slate-50/50">
+                <img :src="filePreview.rawUrl" :alt="filePreview.name"
+                  class="max-w-full max-h-full rounded-lg shadow-sm object-contain" @error="filePreview.content = '图片加载失败'; filePreview.isImage = false">
+              </div>
+            </template>
+            <!-- Markdown preview -->
+            <template x-if="!filePreview.isImage && filePreview.isMarkdown">
+              <div class="md-preview p-5 text-sm text-slate-700 max-w-3xl" x-html="filePreview.rendered"></div>
+            </template>
+            <!-- Text/code preview -->
+            <template x-if="!filePreview.isImage && !filePreview.isMarkdown">
+              <pre class="text-xs text-slate-700 whitespace-pre-wrap font-mono p-4" x-text="filePreview.content"></pre>
+            </template>
+          </div>
+        </div>
+      </template>
+    </section>
+  </div>
+</div>
+

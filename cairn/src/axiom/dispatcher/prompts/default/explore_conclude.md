@@ -23,6 +23,13 @@ Normal return example:
 - This JSON summary is your final output for this phase. After outputting it, stop.
 - `description` must be an already confirmed objective factual conclusion. Do not output plans, guesses, or explanatory filler. Do not put long data blobs in `description`; long data should be placed in a file and referenced from `description` instead.
 - `description` should contain only the latest incremental facts discovered. Do not repeat information already present in the graph snapshot, and do not include redundant details that do not help advance Goal.
+- `description` MUST only summarize what this same intent session actually executed/observed in this run. Do NOT copy or restate conclusions from other intents/facts.
+- Do NOT cite other intent IDs or fact IDs as evidence in `description` (for example `i099`, `f100`, `基于 iXXX/fXXX`). If this session has only partial progress, summarize only that partial progress.
+- If execute timed out, you MUST still summarize any confirmed commands/results already produced before timeout based on this session content; only write "未执行测试" when truly no test command ran in this session.
+- In conclude phase, you MUST still maintain evidence files under `{ai_dir}`:
+  - `{ai_dir}/{intent_id}_findings.md` (append/补充已确认测试证据)
+  - `{ai_dir}/{intent_id}_leads.md` (记录未测试线索；若无则写 `无新增未测试线索`)
+- `description` MUST reference both files explicitly. Missing file or missing reference is invalid.
 
 # Context
 ## Graph
@@ -39,3 +46,10 @@ Normal return example:
 ```
 {intent_description}
 ```
+
+## Execute Phase Snapshot (same session)
+- execute_timed_out: `{execute_timed_out}`
+- execute_returncode: `{execute_returncode}`
+- recorded_tool_count: `{recorded_tool_count}`
+- execute_stdout_preview: `{execute_stdout_preview}`
+- execute_stderr_preview: `{execute_stderr_preview}`

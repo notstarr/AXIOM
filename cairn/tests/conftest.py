@@ -102,7 +102,7 @@ class FakeClient:
     project: ProjectDetail
     concluded: list[tuple[str, str, str, str]] = field(default_factory=list)
     completed: list[tuple[str, list[str], str, str]] = field(default_factory=list)
-    created_intents: list[tuple[str, list[str], str, str]] = field(default_factory=list)
+    created_intents: list[tuple[str, list[str], str, str, list[str] | None, dict | None]] = field(default_factory=list)
     released: list[tuple[str, str, str]] = field(default_factory=list)
     released_reasons: list[tuple[str, str]] = field(default_factory=list)
     created_vulns: list[tuple[str, str, str]] = field(default_factory=list)
@@ -119,8 +119,17 @@ class FakeClient:
         self.completed.append((project_id, from_ids, description, worker))
         return ApiResult(200, {})
 
-    def create_intent(self, project_id: str, from_ids: list[str], description: str, creator: str) -> ApiResult:
-        self.created_intents.append((project_id, from_ids, description, creator))
+    def create_intent(
+        self,
+        project_id: str,
+        from_ids: list[str],
+        description: str,
+        creator: str,
+        *,
+        targets: list[str] | None = None,
+        timeouts: dict | None = None,
+    ) -> ApiResult:
+        self.created_intents.append((project_id, from_ids, description, creator, targets, timeouts))
         return ApiResult(201, {})
 
     def create_vulnerability(self, project_id: str, **payload) -> ApiResult:

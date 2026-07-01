@@ -54,6 +54,13 @@ def _load_enabled_pi_skills(phase: str = "") -> tuple[str, ...]:
 class PiDriver(WorkerDriver):
     type_name = "pi"
 
+    def prepare_session(self) -> str | None:
+        # Pre-allocate a deterministic session id per task execution so
+        # conclude fallback can reliably resume the same intent session
+        # even when execute phase times out and stdout is empty.
+        import uuid as _uuid
+        return str(_uuid.uuid4())
+
     def build_healthcheck(self, worker: WorkerConfig, phase: str = "") -> list[str]:
         env = worker.env
         return self._wrap_with_models(
@@ -84,13 +91,22 @@ class PiDriver(WorkerDriver):
             "--session-dir",
             self._session_dir(worker),
         ]
-        if session:
+        # Only pass --session if the session file already exists (resume).
+        # For new sessions, let PI auto-generate the session ID.
+        if session and self._session_file_exists(worker, session):
             argv.extend(["--session", session])
         argv.extend(["-p", prompt])
         return DriverResult(argv=self._wrap_with_models(worker, argv, phase=_normalize_skill_phase(phase)), session=session)
 
     def build_conclude(self, worker: WorkerConfig, prompt: str, session: str, phase: str = "") -> list[str]:
         env = worker.env
+        # Try to find the actual session ID that PI created during execute.
+        # The pre-allocated UUID may not match if execute didn't use --session.
+        actual_session = session
+        if not self._session_file_exists(worker, session):
+            fallback = self.find_session_from_files(worker.name)
+            if fallback:
+                actual_session = fallback
         argv = [
             "--provider",
             "axiom",
@@ -99,22 +115,52 @@ class PiDriver(WorkerDriver):
             "--session-dir",
             self._session_dir(worker),
             "--session",
-            session,
+            actual_session,
             "-p",
             prompt,
         ]
         return self._wrap_with_models(worker, argv, phase=_normalize_skill_phase(phase))
 
     def extract_session(self, session: str | None, stdout: str, stderr: str) -> str | None:
-        if session:
-            return session
+        # Try to parse the actual session ID from PI stdout first.
+        # This handles the case where PI auto-generated a session (because
+        # the pre-allocated UUID didn't have a file yet).
         for event in self._iter_events(stdout):
             if event.get("type") != "session":
                 continue
             session_id = event.get("id")
             if isinstance(session_id, str) and session_id:
                 return session_id
+        # Fall back only when the pre-allocated session ID actually exists.
+        # This prevents using a UUID that PI never created.
+        if session and self._session_id_exists_globally(session):
+            return session
         return None
+
+    def session_exists(self, worker: WorkerConfig, session_id: str | None) -> bool:
+        if not session_id:
+            return False
+        return self._session_file_exists(worker, session_id)
+
+    @staticmethod
+    def _session_file_exists(worker: WorkerConfig, session_id: str) -> bool:
+        """Check if a session file exists in the worker's session directory."""
+        from pathlib import Path as _Path
+        session_dir = _Path("/tmp/axiom-pi") / worker.name / "sessions"
+        # PI stores sessions as <timestamp>_<uuid>.jsonl
+        matches = list(session_dir.glob(f"*{session_id}*.jsonl"))
+        return len(matches) > 0
+
+    @staticmethod
+    def _session_id_exists_globally(session_id: str) -> bool:
+        """Check whether any PI worker session file contains this session ID."""
+        root = Path("/tmp/axiom-pi")
+        if not root.exists():
+            return False
+        for candidate in root.glob(f"*/sessions/*{session_id}*.jsonl"):
+            if candidate.is_file():
+                return True
+        return False
 
     @staticmethod
     def find_session_from_files(worker_name: str) -> str | None:

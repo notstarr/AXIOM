@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 from typing import Literal
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Settings(BaseModel):
@@ -151,7 +152,7 @@ class TaskEventCreateRequest(BaseModel):
 
 
 VulnSeverity = Literal["info", "low", "medium", "high", "critical"]
-VulnStatus = Literal["confirmed", "pending", "rejected", "ignored"]
+VulnStatus = Literal["待确认", "已验证", "忽略", "重复"]
 BlackboardStatus = Literal["open", "in_progress", "resolved", "archived"]
 BlackboardPriority = Literal["low", "medium", "high"]
 
@@ -168,7 +169,7 @@ class Vulnerability(BaseModel):
     reproduction_steps: list[str] = Field(default_factory=list)
     recommendation: str = ""
     affected_scope: str = ""
-    status: VulnStatus = "confirmed"
+    status: VulnStatus = "待确认"
     source: str = "reason"
     reported_by: str
     created_at: str
@@ -185,7 +186,7 @@ class CreateVulnerabilityRequest(BaseModel):
     reproduction_steps: list[str] = Field(default_factory=list)
     recommendation: str = ""
     affected_scope: str = ""
-    status: VulnStatus = "confirmed"
+    status: VulnStatus = "待确认"
     source: str = "reason"
     reported_by: str
 
@@ -206,6 +207,22 @@ class CreateVulnerabilityRequest(BaseModel):
             if text:
                 cleaned.append(text)
         return cleaned
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_vuln_status(cls, value: str) -> str:
+        text = str(value or "").strip()
+        mapping = {
+            "pending": "待确认",
+            "confirmed": "已验证",
+            "ignored": "忽略",
+            "rejected": "重复",
+            "待审核": "待确认",
+            "已确认": "已验证",
+            "已忽略": "忽略",
+            "已拒绝": "重复",
+        }
+        return mapping.get(text.lower(), mapping.get(text, text or "待确认"))
 
 
 class BlackboardItem(BaseModel):
@@ -482,10 +499,27 @@ class PiConnectionTestResponse(BaseModel):
     message: str
 
 
+class DispatchModelItem(BaseModel):
+    id: str
+    context_window: int = Field(default=128000, ge=1)
+
+
+class DispatchModelsResponse(BaseModel):
+    models: list[DispatchModelItem] = Field(default_factory=list)
+    error: str = ""
+
+
 class Fact(BaseModel):
     id: str
     description: str
     archived: bool = False
+    status: str | None = None
+    lookup_path: str | None = None
+
+
+class IntentTimeouts(BaseModel):
+    execute_seconds: int = Field(ge=1)
+    conclude_seconds: int = Field(ge=1)
 
 
 class Intent(BaseModel):
@@ -493,12 +527,15 @@ class Intent(BaseModel):
     from_: list[str] = Field(alias="from")
     to: str | None = None
     description: str
+    timeouts: IntentTimeouts | None = None
     creator: str
     worker: str | None = None
     last_heartbeat_at: str | None = None
     created_at: str
     concluded_at: str | None = None
     archived: bool = False
+    status: str | None = None
+    lookup_path: str | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -552,6 +589,12 @@ class CreateProjectGroupRequest(BaseModel):
     @classmethod
     def validate_description(cls, value: str) -> str:
         return value.strip()
+
+    @model_validator(mode="after")
+    def validate_scope_mode(self) -> "CreateProjectGroupRequest":
+        if self.scope.targets and self.scope.exclude:
+            raise ValueError("scope.targets and scope.exclude cannot both be set")
+        return self
 
 
 class UpdateProjectGroupRequest(CreateProjectGroupRequest):
@@ -641,6 +684,8 @@ class CreateHintRequest(BaseModel):
 class CreateIntentRequest(BaseModel):
     from_: list[str] = Field(alias="from", min_length=1)
     description: str
+    targets: list[str] | None = None
+    timeouts: IntentTimeouts | None = None
     creator: str
     worker: str | None = None
 
@@ -665,6 +710,21 @@ class CreateIntentRequest(BaseModel):
             if not text:
                 raise ValueError("fact ids must not be empty")
             cleaned.append(text)
+        return cleaned
+
+    @field_validator("targets")
+    @classmethod
+    def validate_targets(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        cleaned: list[str] = []
+        for item in value:
+            text = item.strip()
+            if not text:
+                raise ValueError("targets must not contain empty values")
+            cleaned.append(text)
+        if not cleaned:
+            raise ValueError("targets must not be empty")
         return cleaned
 
 
@@ -802,6 +862,7 @@ class ExploreStatus(BaseModel):
 class AssetRead(BaseModel):
     id: int
     project_id: str
+    group_id: str = ""
     frontend_domain: str | None = None
     frontend_url: str | None = None
     backend_domain: str | None = None
@@ -816,6 +877,7 @@ class AssetRead(BaseModel):
     source_file: str | None = None
     sample_body: str | None = None
     content_type: str | None = None
+    login_config_json: str | None = None
     discovered_at: str | None = None
 
 
@@ -823,22 +885,27 @@ class AssetCreate(BaseModel):
     project_id: str
     api_path: str
     api_method: str
+    group_id: str = ""
     backend_domain: str = ""
     frontend_domain: str | None = None
     frontend_url: str | None = None
     api_purpose: str | None = None
     auth_required: str = "unknown"
     auth_type: str | None = None
-    test_status: str = "untested"
+    test_status: Literal["untested", "safe", "vulnerable", "blocked"] = "untested"
     source_file: str | None = None
+    sample_body: str | None = None
+    content_type: str | None = None
+    login_config_json: str | None = None
 
 
 class AssetUpdate(BaseModel):
     api_purpose: str | None = None
-    test_status: str | None = None
+    test_status: Literal["untested", "safe", "vulnerable", "blocked"] | None = None
     auth_required: str | None = None
     auth_type: str | None = None
     known_vulns: str | None = None
+    login_config_json: str | None = None
 
 
 class AssetStats(BaseModel):
@@ -847,3 +914,126 @@ class AssetStats(BaseModel):
     blocked: int
     vulnerable: int
     untested: int
+
+
+AssetAuthType = Literal["cookie", "jwt", "bearer", "basic", "custom_header", "none"]
+
+
+class CredentialRead(BaseModel):
+    id: str
+    group_id: str
+    label: str = ""
+    auth_type: str = "cookie"
+    credentials_json: str = "{}"
+    domains_json: str = "[]"
+    source_task_id: str = ""
+    captured_at: str = ""
+    expires_at: str | None = None
+    active: int = 1
+    asset_id: int | None = None
+
+
+class CredentialCreate(BaseModel):
+    group_id: str
+    label: str = ""
+    auth_type: AssetAuthType = "cookie"
+    credentials_json: str = "{}"
+    domains_json: str = "[]"
+    source_task_id: str = ""
+    expires_at: str | None = None
+    asset_id: int | None = None
+
+    @field_validator("group_id")
+    @classmethod
+    def validate_group_id(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("group_id must not be empty")
+        return text
+
+    @field_validator("label")
+    @classmethod
+    def normalize_label(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("credentials_json")
+    @classmethod
+    def validate_credentials_json(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("credentials_json must not be empty")
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("credentials_json must be valid JSON object") from exc
+        if not isinstance(parsed, dict) or not parsed:
+            raise ValueError("credentials_json must be a non-empty JSON object")
+        return text
+
+    @field_validator("domains_json")
+    @classmethod
+    def validate_domains_json(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            return "[]"
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("domains_json must be valid JSON array") from exc
+        if not isinstance(parsed, list):
+            raise ValueError("domains_json must be a JSON array")
+        return text
+
+    @field_validator("source_task_id")
+    @classmethod
+    def normalize_source_task_id(cls, value: str) -> str:
+        return value.strip()
+
+
+class CredentialUpdate(BaseModel):
+    label: str | None = None
+    auth_type: AssetAuthType | None = None
+    credentials_json: str | None = None
+    domains_json: str | None = None
+    expires_at: str | None = None
+    active: bool | None = None
+    asset_id: int | None = None
+
+    @field_validator("label")
+    @classmethod
+    def normalize_update_label(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
+
+    @field_validator("credentials_json")
+    @classmethod
+    def validate_update_credentials_json(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("credentials_json must not be empty")
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("credentials_json must be valid JSON object") from exc
+        if not isinstance(parsed, dict) or not parsed:
+            raise ValueError("credentials_json must be a non-empty JSON object")
+        return text
+
+    @field_validator("domains_json")
+    @classmethod
+    def validate_update_domains_json(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return "[]"
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("domains_json must be valid JSON array") from exc
+        if not isinstance(parsed, list):
+            raise ValueError("domains_json must be a JSON array")
+        return text

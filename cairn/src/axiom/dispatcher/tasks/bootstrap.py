@@ -16,6 +16,7 @@ from axiom.dispatcher.runtime.cancellation import TaskCancellation
 from axiom.dispatcher.runtime.heartbeat import HeartbeatLease
 from axiom.dispatcher.tasks.common import (
     _format_blackboard,
+    _report_event,
     best_effort_release,
     cancel_reason,
     did_timeout,
@@ -123,6 +124,7 @@ def run_bootstrap_task(
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         session = driver.extract_session(session, first.stdout, first.stderr)
+        session = _resolve_valid_session(driver, worker, session)
         try:
             recorded, token_usage = record_session_tools(
                 session_id=session or "",
@@ -200,7 +202,7 @@ def run_bootstrap_task(
                     driver,
                     project,
                     intent,
-                    session,
+                    _resolve_valid_session(driver, worker, session),
                     lease,
                     cancellation,
                 )
@@ -274,8 +276,7 @@ def run_bootstrap_task(
                 execute_ms,
                 int((time.perf_counter() - task_started) * 1000),
             )
-            if not session:
-                session = driver.find_session_from_files(worker.name)
+            session = _resolve_valid_session(driver, worker, session)
             fallback = _try_conclude_fallback(
                 config, client, worker, driver, project, intent, session, lease, cancellation,
             )
@@ -477,6 +478,37 @@ def _try_conclude_fallback(
         source="bootstrap_conclude",
         phase_ms=conclude_ms,
     )
+
+
+def _resolve_valid_session(driver, worker: WorkerConfig, session: str | None) -> str | None:
+    if not session:
+        return _find_latest_session(driver, worker)
+    exists_checker = getattr(driver, "session_exists", None)
+    if not callable(exists_checker):
+        return session
+    try:
+        if exists_checker(worker, session):
+            return session
+    except Exception:
+        LOG.exception("bootstrap session validation crashed worker=%s session=%s", worker.name, session)
+    LOG.warning(
+        "bootstrap invalid session id worker=%s session=%s; "
+        "falling back to latest worker session (cross-intent risk)",
+        worker.name,
+        session,
+    )
+    return _find_latest_session(driver, worker)
+
+
+def _find_latest_session(driver, worker: WorkerConfig) -> str | None:
+    finder = getattr(driver, "find_session_from_files", None)
+    if not callable(finder):
+        return None
+    try:
+        return finder(worker.name)
+    except Exception:
+        LOG.exception("bootstrap session file lookup crashed worker=%s", worker.name)
+        return None
 
 
 def _bootstrap_prompt_replacements(project: ProjectDetail) -> dict[str, str]:

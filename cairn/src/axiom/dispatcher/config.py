@@ -17,15 +17,14 @@ WORKER_ENV_KEYS: dict[WorkerType, tuple[str, ...]] = {
     "pi": (
         "PI_MODEL",
         "PI_BASE_URL",
-        "PI_API_KEY",
         "PI_PROVIDER_API",
     ),
 }
 
 DEFAULT_PROMPT_REQUIRED_TOKENS: dict[str, tuple[str, ...]] = {
     "reason.md": ("{graph_yaml}", "{fact_ids}", "{open_intents}", "{max_intents}", "{blackboard}"),
-    "explore.md": ("{graph_yaml}", "{intent_id}", "{intent_description}", "{blackboard}"),
-    "explore_conclude.md": ("{graph_yaml}", "{intent_id}", "{intent_description}"),
+    "explore.md": ("{graph_yaml}", "{intent_id}", "{intent_description}", "{blackboard}", "{ai_dir}"),
+    "explore_conclude.md": ("{graph_yaml}", "{intent_id}", "{intent_description}", "{ai_dir}"),
     "bootstrap.md": ("{origin}", "{goal}", "{hints}"),
     "bootstrap_conclude.md": ("{origin}", "{goal}", "{hints}"),
 }

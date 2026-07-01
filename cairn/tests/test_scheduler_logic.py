@@ -122,6 +122,68 @@ def test_new_fact_dispatches_reason_before_unclaimed_explore_intent() -> None:
     assert dispatched == [("reason", "facts:3->4")]
 
 
+def test_dispatch_explore_prefers_oldest_unclaimed_intent() -> None:
+    loop = _loop()
+    loop.config = make_config()
+    loop.futures = {}
+    older = make_intent("i001")
+    newer = make_intent("i002")
+    older.worker = None
+    newer.worker = None
+    older.created_at = "2026-01-01T00:00:01Z"
+    newer.created_at = "2026-01-01T00:00:10Z"
+    project = make_project(intents=[newer, older])
+    loop.reason_checkpoints["proj_001"] = ReasonCheckpoint(
+        fact_count=3,
+        hint_count=1,
+        open_intent_count=2,
+    )
+    loop.client = type(
+        "Client",
+        (),
+        {
+            "get_project": lambda _self, _project_id: project,
+            "export_project": lambda _self, _project_id: "graph",
+        },
+    )()
+    picked: list[str] = []
+    loop._dispatch_explore = lambda _project, _graph, intent: picked.append(intent.id) or True
+    loop._dispatch_reason = lambda *_args, **_kwargs: False
+
+    assert loop._try_dispatch_project(_summary("proj_001", "active"))
+    assert picked == ["i001"]
+
+
+def test_dispatch_explore_skips_intent_marked_concluded_even_if_to_is_null() -> None:
+    loop = _loop()
+    loop.config = make_config()
+    loop.futures = {}
+    stale = make_intent("i001")
+    stale.worker = None
+    stale.to = None
+    stale.concluded_at = "2026-01-01T00:00:11Z"
+    project = make_project(intents=[stale])
+    loop.reason_checkpoints["proj_001"] = ReasonCheckpoint(
+        fact_count=3,
+        hint_count=1,
+        open_intent_count=0,
+    )
+    loop.client = type(
+        "Client",
+        (),
+        {
+            "get_project": lambda _self, _project_id: project,
+            "export_project": lambda _self, _project_id: "graph",
+        },
+    )()
+    dispatched: list[tuple[str, str]] = []
+    loop._dispatch_explore = lambda *_args: dispatched.append(("explore", "")) or True
+    loop._dispatch_reason = lambda *_args, **_kwargs: False
+
+    assert not loop._try_dispatch_project(_summary("proj_001", "active"))
+    assert dispatched == []
+
+
 def test_initial_enabled_project_without_bootstrap_worker_dispatches_reason() -> None:
     loop = _loop()
     config = make_config()

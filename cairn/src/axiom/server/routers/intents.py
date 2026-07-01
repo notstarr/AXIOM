@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from axiom.server.db import get_conn
 from axiom.server.models import (
@@ -20,6 +20,7 @@ from axiom.server.services import (
     validate_facts_exist,
     validate_intent_creator_worker,
     validate_goal_not_in_sources,
+    validate_intent_scope,
 )
 from pydantic import BaseModel
 
@@ -42,16 +43,19 @@ def create_intent(project_id: str, body: CreateIntentRequest):
         validate_facts_exist(conn, project_id, body.from_)
         validate_goal_not_in_sources(body.from_)
         validate_intent_creator_worker(body.creator, body.worker)
+        validate_intent_scope(conn, project_id, description=body.description, targets=body.targets)
 
         now = utcnow()
         iid = next_intent_id(conn, project_id)
         claimed = body.worker is not None
         conn.execute(
-            "INSERT INTO intents (id, project_id, to_fact_id, description, creator, worker, last_heartbeat_at, created_at, concluded_at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL)",
+            "INSERT INTO intents (id, project_id, to_fact_id, description, execute_timeout_seconds, conclude_timeout_seconds, creator, worker, last_heartbeat_at, created_at, concluded_at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL)",
             (
                 iid,
                 project_id,
                 body.description,
+                body.timeouts.execute_seconds if body.timeouts else None,
+                body.timeouts.conclude_seconds if body.timeouts else None,
                 body.creator,
                 body.worker,
                 now if claimed else None,
@@ -69,6 +73,7 @@ def create_intent(project_id: str, body: CreateIntentRequest):
             **{"from": body.from_},
             to=None,
             description=body.description,
+            timeouts=body.timeouts,
             creator=body.creator,
             worker=body.worker,
             last_heartbeat_at=now if claimed else None,
@@ -165,7 +170,6 @@ def update_intent(project_id: str, intent_id: str, body: UpdateIntentRequest):
             (intent_id, project_id),
         ).fetchone()
         if row is None:
-            from fastapi import HTTPException
             raise HTTPException(status_code=404, detail="Intent not found")
 
         conn.execute(

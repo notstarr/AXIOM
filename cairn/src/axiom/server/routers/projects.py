@@ -313,7 +313,13 @@ def create_project(body: CreateProjectRequest):
 
 
 @router.get("/projects/{project_id}", response_model=ProjectDetail)
-def get_project(project_id: str):
+def get_project(
+    project_id: str,
+    intent_id: str = Query(default=""),
+    fact_id: str = Query(default=""),
+):
+    intent_id = intent_id.strip()
+    fact_id = fact_id.strip()
     with get_conn() as conn:
         expire_workers(conn, project_id)
         expire_reason_leases(conn, project_id)
@@ -322,19 +328,50 @@ def get_project(project_id: str):
         facts = conn.execute(
             "SELECT * FROM facts WHERE project_id = ?", (project_id,)
         ).fetchall()
+        if fact_id:
+            facts = [row for row in facts if row["id"] == fact_id]
+            if not facts:
+                raise HTTPException(404, "Fact not found")
         hints = conn.execute(
             "SELECT * FROM hints WHERE project_id = ? ORDER BY created_at",
             (project_id,),
         ).fetchall()
 
+        intents = build_intents(conn, project_id)
+        if intent_id:
+            intents = [item for item in intents if item.id == intent_id]
+            if not intents:
+                raise HTTPException(404, "Intent not found")
+
+        fact_models = []
+        for f in facts:
+            fact_payload = dict(f)
+            fact_payload["status"] = "archived" if bool(f["archived"]) else "active"
+            fact_payload["lookup_path"] = f"/projects/{project_id}?fact_id={f['id']}"
+            fact_models.append(Fact(**fact_payload))
+        intent_models = []
+        for item in intents:
+            payload = item.model_dump(by_alias=True)
+            payload["status"] = "concluded" if item.concluded_at else "open"
+            payload["lookup_path"] = f"/projects/{project_id}?intent_id={item.id}"
+            intent_models.append(Intent.model_validate(payload))
+
+        # Filter mode returns only explicitly requested resources.
+        # Avoid returning large unrelated sections (e.g. all vulns) for pinpoint queries.
+        is_filtered_query = bool(intent_id or fact_id)
+        if intent_id and not fact_id:
+            fact_models = []
+        if fact_id and not intent_id:
+            intent_models = []
+
         group_id = row["parent_project_id"] or ""
         return ProjectDetail(
             project=project_meta_from_row(row),
-            facts=[Fact(**dict(f)) for f in facts],
-            intents=build_intents(conn, project_id),
-            hints=[Hint(**dict(h)) for h in hints],
-            vulns=build_vulns(conn, project_id),
-            blackboard=build_blackboard_items_for_group(conn, group_id) if group_id else [],
+            facts=fact_models,
+            intents=intent_models,
+            hints=[] if is_filtered_query else [Hint(**dict(h)) for h in hints],
+            vulns=[] if is_filtered_query else build_vulns(conn, project_id),
+            blackboard=[] if is_filtered_query else (build_blackboard_items_for_group(conn, group_id) if group_id else []),
         )
 
 

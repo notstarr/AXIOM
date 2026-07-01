@@ -63,9 +63,11 @@ def delete_fact(project_id: str, fact_id: str):
             "DELETE FROM intent_sources WHERE project_id = ? AND fact_id = ?",
             (project_id, fact_id),
         )
-        # Clear to_fact_id for intents that produced this fact
+        # Reopen intents that produced this fact so dispatcher can re-run them.
+        # This keeps "delete fact to retrigger intent" as an explicit workflow.
         conn.execute(
-            "UPDATE intents SET to_fact_id = NULL WHERE project_id = ? AND to_fact_id = ?",
+            "UPDATE intents SET to_fact_id = NULL, concluded_at = NULL, worker = NULL, last_heartbeat_at = NULL "
+            "WHERE project_id = ? AND to_fact_id = ?",
             (project_id, fact_id),
         )
         # Delete the fact

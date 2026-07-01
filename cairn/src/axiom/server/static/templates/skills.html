@@ -1,0 +1,125 @@
+<!-- ═══════════ SKILL PAGE ═══════════ -->
+<div x-show="activePage === 'skills'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0" x-init="loadSkills()">
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
+    <h2 class="text-base font-semibold text-slate-800">Skill 管理</h2>
+    <span class="text-xs text-slate-400">多文件结构 · 渐进式注入 · Markdown 格式</span>
+    <div class="flex-1"></div>
+    <button @click="openSkillEditor()" class="px-3 py-1.5 text-xs rounded-lg bg-brand-500 text-white hover:bg-brand-600">新建 Skill</button>
+    <label class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 cursor-pointer transition">
+      上传文件夹/MD
+      <input type="file" accept=".md,.txt,.sh,.py,.json,.yaml,.yml" multiple webkitdirectory @change="uploadSkillFiles($event)" class="hidden">
+    </label>
+    <button @click="loadSkills()" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">刷新</button>
+  </header>
+  <main class="flex-1 overflow-hidden grid grid-cols-[260px_200px_minmax(0,1fr)]">
+    <!-- Skill list -->
+    <aside class="border-r border-slate-200 bg-white overflow-y-auto p-3 space-y-2">
+      <template x-if="!skills || skills.length === 0">
+        <p class="text-sm text-slate-400 text-center py-10">暂无 Skill</p>
+      </template>
+      <template x-for="sk in (skills || [])" :key="sk.name">
+        <button type="button" @click="selectSkill(sk)" class="w-full flex flex-col items-start text-left rounded-xl border p-3 transition"
+          :class="skillEditor.name === sk.name ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'">
+          <div class="flex items-center gap-1.5 w-full">
+            <span class="text-sm font-semibold text-slate-700 truncate" x-text="sk.name"></span>
+            <span x-show="sk.builtin" class="px-1 py-0.5 rounded text-[8px] font-semibold bg-brand-50 text-brand-600 shrink-0">内置</span>
+          </div>
+          <p class="mt-0.5 text-[10px] text-slate-400 line-clamp-2" x-text="sk.description || ''"></p>
+          <div class="mt-1 flex items-center gap-2">
+            <span class="px-1 py-0.5 rounded text-[8px] font-semibold"
+              :class="sk.enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'"
+              x-text="sk.enabled ? '启用' : '禁用'"></span>
+          </div>
+        </button>
+      </template>
+    </aside>
+    <!-- File tree -->
+    <aside class="border-r border-slate-200 bg-white overflow-y-auto p-3 space-y-1" x-show="skillEditor.name || skillEditor.isNew">
+      <template x-if="!skillEditor.name && !skillEditor.isNew">
+        <p class="text-xs text-slate-400 text-center py-10">← 选择一个 Skill</p>
+      </template>
+      <template x-if="skillEditor.name || skillEditor.isNew">
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">文件</span>
+            <button @click="showNewSkillFileInput = !showNewSkillFileInput" class="text-[10px] text-brand-500 hover:text-brand-700">+ 新建</button>
+          </div>
+          <div x-show="showNewSkillFileInput" class="mb-2">
+            <input x-model="newSkillFilePath" placeholder="references/notes.md" @keydown.enter="createSkillFile()"
+              class="w-full px-2 py-1 text-[11px] border border-slate-200 rounded text-sm font-mono">
+            <button @click="createSkillFile()" :disabled="!newSkillFilePath"
+              class="mt-1 w-full px-2 py-1 text-[10px] rounded bg-brand-500 text-white hover:bg-brand-600 disabled:opacity-40">创建</button>
+          </div>
+          <template x-for="f in skillFiles" :key="f.path">
+            <div class="group flex items-center gap-1 rounded-lg px-2 py-1.5 cursor-pointer transition"
+              :class="skillEditor.activeFile === f.path ? 'bg-brand-50 text-brand-700' : 'hover:bg-slate-50 text-slate-600'"
+              @click="openSkillFile(f.path)">
+              <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+              <span class="text-xs truncate flex-1" x-text="f.path"></span>
+              <button x-show="f.path !== 'SKILL.md'" @click.stop="deleteSkillFile(f.path)"
+                class="opacity-0 group-hover:opacity-100 text-rose-400 hover:text-rose-600 text-[10px] shrink-0">×</button>
+            </div>
+          </template>
+          <div x-show="skillFiles.length === 0" class="text-xs text-slate-400 text-center py-4">无文件</div>
+        </div>
+      </template>
+    </aside>
+    <!-- Editor -->
+    <section class="overflow-hidden flex flex-col" x-show="skillEditor.name || skillEditor.isNew">
+      <template x-if="!skillEditor.name && !skillEditor.isNew">
+        <div class="flex items-center justify-center h-full text-slate-400 text-sm">← 选择一个 Skill 开始编辑</div>
+      </template>
+      <template x-if="skillEditor.name || skillEditor.isNew">
+        <div class="flex flex-col h-full">
+          <!-- Skill meta bar -->
+          <div class="shrink-0 px-4 py-2 border-b border-slate-100 bg-white flex items-center gap-3">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-semibold text-slate-700" x-text="skillEditor.name || '新 Skill'"></span>
+              <span x-show="skillEditor.builtin" class="px-1 py-0.5 rounded text-[8px] font-semibold bg-brand-50 text-brand-600">内置</span>
+            </div>
+            <button @click="toggleSkillFromEditor()" class="ml-auto px-3 py-1 text-xs rounded-lg transition"
+              :class="skillEditor.enabled ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-slate-100 text-slate-400 border border-slate-200 hover:bg-slate-200'">
+              <span x-show="skillEditor.enabled">✓ 已启用</span>
+              <span x-show="!skillEditor.enabled">已禁用</span>
+            </button>
+            <button @click="deleteSkill({name: skillEditor.name})" class="px-2 py-1 text-xs rounded border border-rose-200 text-rose-500 hover:bg-rose-50">删除</button>
+          </div>
+          <!-- SKILL.md frontmatter (name + description) -->
+          <div class="shrink-0 px-4 py-2 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3" x-show="skillEditor.activeFile === 'SKILL.md'">
+            <div class="flex-1 grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-[10px] font-semibold text-slate-400 block">name</label>
+                <input x-model="skillEditor.name" :disabled="!skillEditor.isNew" @input="skillEditor.name = skillEditor.name.replace(/[^a-z0-9-]/g, '-').replace(/--+/g, '-').replace(/^-|-$/g, ''); skillEditor.fileDirty = true"
+                  class="w-full px-2 py-1 text-xs border border-slate-200 rounded font-mono disabled:bg-slate-100 disabled:text-slate-400">
+              </div>
+              <div>
+                <label class="text-[10px] font-semibold text-slate-400 block">description</label>
+                <input x-model="skillEditor.description" placeholder="触发场景描述" @input="skillEditor.fileDirty = true"
+                  class="w-full px-2 py-1 text-xs border border-slate-200 rounded">
+              </div>
+            </div>
+            <button @click="fillSkillPreset()" class="px-2 py-1 text-[10px] rounded border border-slate-200 text-slate-500 hover:bg-slate-100 shrink-0">预设</button>
+          </div>
+          <!-- File editor -->
+          <div class="flex-1 overflow-hidden p-4">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs font-mono text-slate-400" x-text="skillEditor.activeFile || ''"></span>
+              <span x-show="skillEditor.fileDirty" class="text-[10px] text-amber-500">未保存</span>
+            </div>
+            <textarea x-model="skillEditor.fileContent" @input="skillEditor.fileDirty = true"
+              :placeholder="skillEditor.activeFile ? '文件内容...' : '← 选择左侧文件'"
+              :disabled="!skillEditor.activeFile"
+              class="w-full h-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 resize-none disabled:bg-slate-50 disabled:cursor-not-allowed"></textarea>
+          </div>
+          <!-- Save bar -->
+          <div class="shrink-0 px-4 py-2 border-t border-slate-100 bg-white flex items-center justify-end gap-2">
+            <span class="text-[10px] text-slate-400 mr-auto" x-show="skillEditor.builtin && skillEditor.activeFile !== 'SKILL.md'">辅助文件从磁盘管理，直接保存到源码目录</span>
+            <button @click="saveSkillFile()" :disabled="!skillEditor.activeFile || !skillEditor.fileDirty"
+              class="px-4 py-1.5 text-sm rounded-xl bg-brand-500 text-white hover:bg-brand-600 disabled:opacity-40">保存</button>
+          </div>
+        </div>
+      </template>
+    </section>
+  </main>
+</div>
+

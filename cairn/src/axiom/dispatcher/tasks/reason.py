@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 
 from axiom.dispatcher.config import DispatchConfig, WorkerConfig
 from axiom.dispatcher.contracts import (
@@ -19,6 +20,7 @@ from axiom.dispatcher.runtime.cancellation import TaskCancellation
 from axiom.dispatcher.runtime.heartbeat import HeartbeatLease
 from axiom.dispatcher.tasks.common import (
     _format_blackboard,
+    _report_event,
     best_effort_release_reason,
     cancel_reason,
     did_timeout,
@@ -30,6 +32,7 @@ from axiom.dispatcher.tasks.common import (
     write_graph_snapshot_file,
 )
 from axiom.dispatcher.workers.registry import get_driver
+from axiom.server.db import current_db_path
 from axiom.server.models import ProjectDetail
 
 LOG = logging.getLogger(__name__)
@@ -100,7 +103,7 @@ def run_reason_task(
                 "worker": intent.worker,
             }
             for intent in project.intents
-            if intent.to is None
+            if intent.to is None and intent.concluded_at is None
         ]
         allowed_fact_ids = [fact.id for fact in project.facts if fact.id != "goal"]
         LOG.debug(
@@ -119,6 +122,7 @@ def run_reason_task(
                 export_yaml.strip(),
                 phase="reason_execute",
             ),
+            "project_id": project.project.id,
             "fact_ids": format_fact_ids(allowed_fact_ids),
             "open_intents": format_open_intents(open_intents),
             "max_intents": str(
@@ -127,6 +131,14 @@ def run_reason_task(
                 else config.tasks.reason.max_intents
             ),
             "blackboard": _format_blackboard(project.blackboard, project.project.parent_project_id or ""),
+            "db_path": str(current_db_path()),
+            "group_id": project.project.parent_project_id or "",
+            "vuln_baseline_script": str(
+                (Path(__file__).resolve().parent.parent / "tools" / "vuln_baseline.py")
+            ),
+            "asset_baseline_script": str(
+                (Path(__file__).resolve().parent.parent / "tools" / "asset_baseline.py")
+            ),
         }
         # Depth mode: inject checklist path and plan fact ID.
         if project.project.depth_mode:
@@ -226,6 +238,8 @@ def run_reason_task(
                 payload,
                 open_intents_empty=not open_intents,
                 max_intents=config.tasks.reason.depth_max_intents if project.project.depth_mode else config.tasks.reason.max_intents,
+                require_intent_targets=True,
+                require_intent_timeouts=True,
             )
         except RuntimeError:
             LOG.warning(
@@ -286,12 +300,28 @@ def run_reason_task(
         if kind == "intents":
             created = 0
             for intent_data in data:
-                response = client.create_intent(project.project.id, intent_data["from"], intent_data["description"], worker.name)
+                response = client.create_intent(
+                    project.project.id,
+                    intent_data["from"],
+                    intent_data["description"],
+                    worker.name,
+                    targets=intent_data.get("targets"),
+                    timeouts=intent_data.get("timeouts"),
+                )
                 if response.status_code == 403:
                     LOG.info("project became inactive during reason intent create project=%s worker=%s created=%s", project.project.id, worker.name, created)
                     return "success"
                 if response.status_code == 409:
                     LOG.info("reason intent lost race project=%s worker=%s from=%s", project.project.id, worker.name, intent_data["from"])
+                    continue
+                if response.status_code == 400:
+                    LOG.warning(
+                        "reason intent rejected by scope filter project=%s worker=%s description=%s detail=%s",
+                        project.project.id,
+                        worker.name,
+                        intent_data["description"],
+                        response.text,
+                    )
                     continue
                 if not response.ok:
                     LOG.warning(

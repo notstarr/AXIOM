@@ -48,6 +48,37 @@ def _looks_like_reason_data(payload: dict[str, Any]) -> bool:
     return False
 
 
+def _validate_intent_targets(intent: dict[str, Any], index: int, *, required: bool) -> None:
+    targets = intent.get("targets")
+    if targets is None:
+        if required:
+            raise ValueError(f"intent[{index}].targets is required")
+        return
+    if not isinstance(targets, list):
+        raise ValueError(f"intent[{index}].targets must be an array")
+    if len(targets) == 0:
+        raise ValueError(f"intent[{index}].targets must not be empty")
+    for item_idx, target in enumerate(targets):
+        if not isinstance(target, str) or not target.strip():
+            raise ValueError(f"intent[{index}].targets[{item_idx}] must be a non-empty string")
+
+
+def _validate_intent_timeouts(intent: dict[str, Any], index: int, *, required: bool) -> None:
+    timeouts = intent.get("timeouts")
+    if timeouts is None:
+        if required:
+            raise ValueError(f"intent[{index}].timeouts is required")
+        return
+    if not isinstance(timeouts, dict):
+        raise ValueError(f"intent[{index}].timeouts must be an object")
+    execute_seconds = timeouts.get("execute_seconds")
+    conclude_seconds = timeouts.get("conclude_seconds")
+    if not isinstance(execute_seconds, int) or execute_seconds <= 0:
+        raise ValueError(f"intent[{index}].timeouts.execute_seconds must be a positive integer")
+    if not isinstance(conclude_seconds, int) or conclude_seconds <= 0:
+        raise ValueError(f"intent[{index}].timeouts.conclude_seconds must be a positive integer")
+
+
 def _looks_like_bootstrap_execute_data(payload: dict[str, Any]) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -74,7 +105,12 @@ def _looks_like_explore_data(payload: dict[str, Any]) -> bool:
 
 
 def validate_reason_payload(
-    payload: dict[str, Any], open_intents_empty: bool, max_intents: int,
+    payload: dict[str, Any],
+    open_intents_empty: bool,
+    max_intents: int,
+    *,
+    require_intent_targets: bool = False,
+    require_intent_timeouts: bool = False,
 ) -> tuple[str, dict[str, Any] | list[dict[str, Any]] | None]:
     accepted, data = _unwrap_wrapped_payload(payload)
     if accepted is False:
@@ -113,6 +149,8 @@ def validate_reason_payload(
         for i, intent in enumerate(intents):
             if not isinstance(intent, dict) or "from" not in intent or "description" not in intent:
                 raise ValueError(f"invalid intent at index {i}")
+            _validate_intent_targets(intent, i, required=require_intent_targets)
+            _validate_intent_timeouts(intent, i, required=require_intent_timeouts)
         if not intents and open_intents_empty:
             raise ValueError("intents must not be empty when open_intents is empty")
         intents = intents[:max_intents]
@@ -149,11 +187,11 @@ def extract_reason_vulns(payload: dict[str, Any]) -> list[dict[str, Any]]:
         steps = item.get("reproduction_steps", [])
         if not isinstance(steps, list):
             raise ValueError(f"vulns[{index}].reproduction_steps must be an array")
-        status = item.get("status", "confirmed")
+        status = item.get("status", "待确认")
         if not isinstance(status, str):
             raise ValueError(f"vulns[{index}].status must be a string")
-        status = status.strip().lower() or "confirmed"
-        if status not in {"confirmed", "pending", "rejected", "ignored"}:
+        status = _normalize_vuln_status(status)
+        if status not in {"待确认", "已验证", "忽略", "重复"}:
             raise ValueError(f"vulns[{index}].status is invalid")
         normalized.append(
             {
@@ -168,6 +206,21 @@ def extract_reason_vulns(payload: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return normalized
+
+
+def _normalize_vuln_status(value: str) -> str:
+    text = value.strip()
+    mapping = {
+        "pending": "待确认",
+        "confirmed": "已验证",
+        "ignored": "忽略",
+        "rejected": "重复",
+        "待审核": "待确认",
+        "已确认": "已验证",
+        "已忽略": "忽略",
+        "已拒绝": "重复",
+    }
+    return mapping.get(text.lower(), mapping.get(text, text or "待确认"))
 
 
 def validate_bootstrap_execute_payload(payload: dict[str, Any]) -> tuple[str, dict[str, str] | None]:
@@ -223,7 +276,13 @@ def validate_bootstrap_conclude_payload(payload: dict[str, Any]) -> tuple[str, s
     return "fact", fact_description.strip()
 
 
-def validate_explore_payload(payload: dict[str, Any]) -> tuple[str, str | None]:
+def validate_explore_payload(
+    payload: dict[str, Any],
+    *,
+    required_reference_groups: list[tuple[str, ...]] | None = None,
+    max_description_chars: int | None = None,
+    max_description_lines: int | None = None,
+) -> tuple[str, str | None]:
     accepted, data = _unwrap_wrapped_payload(payload)
     if accepted is False:
         return "rejected", None
@@ -236,7 +295,22 @@ def validate_explore_payload(payload: dict[str, Any]) -> tuple[str, str | None]:
     description = data.get("description")
     if not isinstance(description, str) or not description.strip():
         raise ValueError("description is required")
-    return "fact", description.strip()
+    normalized_description = description.strip()
+    if max_description_chars is not None and len(normalized_description) > max_description_chars:
+        raise ValueError(f"description is too long (>{max_description_chars} chars), move details to findings/leads files")
+    if max_description_lines is not None and normalized_description.count("\n") + 1 > max_description_lines:
+        raise ValueError(f"description has too many lines (>{max_description_lines}), keep summary concise")
+    if required_reference_groups:
+        missing_groups: list[str] = []
+        for group in required_reference_groups:
+            if not any(ref and ref in normalized_description for ref in group):
+                missing_groups.append(" / ".join(ref for ref in group if ref))
+        if missing_groups:
+            raise ValueError(
+                "description must reference required evidence files: "
+                + "; ".join(missing_groups)
+            )
+    return "fact", normalized_description
 
 
 def validate_plan_payload(payload: dict[str, Any]) -> tuple[str, list[str] | None]:

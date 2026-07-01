@@ -1,0 +1,222 @@
+<div x-show="activePage === 'tasks'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
+    <div class="flex items-center gap-2.5 min-w-0">
+      <span class="text-base font-semibold text-slate-800 tracking-tight">任务管理</span>
+    </div>
+    <div class="flex-1"></div>
+    <div class="flex items-center gap-3 text-[11px] text-slate-400">
+      <span class="inline-flex items-center gap-1.5 shrink-0" title="全部任务">
+        <span class="font-medium uppercase tracking-[0.12em] text-slate-400">全部</span>
+        <span class="font-semibold text-slate-600 tabular-nums" x-text="projects.length"></span>
+      </span>
+      <span class="inline-flex items-center gap-1.5 shrink-0" title="运行中任务">
+        <span class="h-1.5 w-1.5 rounded-full bg-teal-500"></span>
+        <span class="font-semibold text-teal-700 tabular-nums" x-text="countProjectsByStatus('active')"></span>
+      </span>
+      <span class="inline-flex items-center gap-1.5 shrink-0" title="已暂停任务">
+        <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+        <span class="font-semibold text-amber-700 tabular-nums" x-text="countProjectsByStatus('stopped')"></span>
+      </span>
+      <span class="inline-flex items-center gap-1.5 shrink-0" title="已完成任务">
+        <span class="h-1.5 w-1.5 rounded-full bg-slate-400"></span>
+        <span class="font-semibold text-slate-600 tabular-nums" x-text="countProjectsByStatus('completed')"></span>
+      </span>
+      <button type="button"
+        @click="stopAllActiveProjects()"
+        :disabled="!hasActiveProjects() || isStoppingAllProjects"
+        class="h-7 px-2.5 rounded-lg border border-amber-200 text-xs text-amber-700 hover:bg-amber-50 transition inline-flex items-center gap-1.5 shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
+        title="暂停全部运行中任务">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
+        <span x-text="isStoppingAllProjects ? '暂停中...' : '暂停运行中'"></span>
+      </button>
+    </div>
+    <div class="flex items-center gap-1.5">
+      <button @click="showTaskComposer = !showTaskComposer" class="h-7 px-2.5 rounded-lg border border-brand-200 text-xs text-brand-600 hover:bg-brand-50 transition inline-flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        新建任务
+      </button>
+    </div>
+    <div class="flex items-center gap-1.5 ml-1">
+      <button @click="showLocalPrefs = true" class="h-7 max-w-40 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center shrink-0">
+        <span class="truncate block" x-text="actorName()"></span>
+      </button>
+    </div>
+  </header>
+
+  <div x-ref="projectListScroll" class="flex-1 min-h-0 p-4 flex flex-col">
+    <!-- New Task overlay -->
+    <div x-show="showTaskComposer" x-cloak class="fixed inset-0 z-50 flex items-start justify-center overlay pt-10" @click.self="showTaskComposer = false">
+      <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto mx-4" @click.stop>
+        <div class="sticky top-0 bg-white px-6 py-4 border-b border-slate-200 flex items-center justify-between z-10 rounded-t-2xl">
+          <h3 class="text-base font-semibold text-slate-800">新建任务</h3>
+          <button @click="showTaskComposer = false" class="text-slate-400 hover:text-slate-600 text-lg">&times;</button>
+        </div>
+        <div class="p-6 space-y-5">
+          <!-- Mode selection -->
+          <div>
+            <label class="text-xs font-semibold text-slate-500 mb-2 block">模式</label>
+            <div class="grid grid-cols-2 gap-3">
+              <button type="button" @click="newProject.depth_mode = false; newProject.bootstrap = true"
+                class="rounded-2xl border-2 p-4 text-left transition"
+                :class="!newProject.depth_mode ? 'border-brand-400 bg-brand-50/60' : 'border-slate-200 hover:border-slate-300'">
+                <div class="text-sm font-semibold text-slate-700">广度模式</div>
+                <div class="text-[11px] text-slate-400 mt-1">boot → reason → explore<br>从 URL 出发，自由探索</div>
+              </button>
+              <button type="button" @click="newProject.depth_mode = true; newProject.bootstrap = false"
+                class="rounded-2xl border-2 p-4 text-left transition"
+                :class="newProject.depth_mode ? 'border-amber-400 bg-amber-50/60' : 'border-slate-200 hover:border-slate-300'">
+                <div class="text-sm font-semibold text-slate-700">深度模式</div>
+                <div class="text-[11px] text-slate-400 mt-1">plan → reason → explore<br>基于流量数据，逐条测试</div>
+              </button>
+            </div>
+          </div>
+          <!-- Project group -->
+          <div>
+            <label class="text-xs font-semibold text-slate-500 mb-1 block">所属项目</label>
+            <select x-model="newProject.parent_project_id" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+              <option value="">选择所属项目</option>
+              <template x-for="group in projectGroups" :key="`new-task-group-${group.id}`">
+                <option :value="group.id" x-text="group.title"></option>
+              </template>
+            </select>
+          </div>
+          <!-- Title -->
+          <div>
+            <label class="text-xs font-semibold text-slate-500 mb-1 block">任务名称</label>
+            <input x-model="newProject.title" placeholder="例: 第一轮渗透测试" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+          </div>
+          <!-- Origin -->
+          <div>
+            <label class="text-xs font-semibold text-slate-500 mb-1 block" x-text="newProject.depth_mode ? '流量数据' : '起点（已知信息）'"></label>
+            <template x-if="newProject.depth_mode">
+              <div class="space-y-2">
+                <div class="flex items-center gap-2">
+                  <button @click="newProject.depthInputMode = 'har'" class="px-3 py-1 text-xs rounded-lg transition"
+                    :class="newProject.depthInputMode !== 'crawler' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'text-slate-400 border border-slate-200 hover:bg-slate-50'">导入 HAR</button>
+                  <button @click="newProject.depthInputMode = 'crawler'" class="px-3 py-1 text-xs rounded-lg transition"
+                    :class="newProject.depthInputMode === 'crawler' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'text-slate-400 border border-slate-200 hover:bg-slate-50'">选择爬虫任务</button>
+                </div>
+                <template x-if="newProject.depthInputMode !== 'crawler'">
+                  <div>
+                    <div class="flex items-center gap-2 mb-1">
+                      <label class="px-2 py-0.5 text-[10px] rounded border border-amber-200 text-amber-600 hover:bg-amber-50 cursor-pointer">
+                        上传 HAR
+                        <input type="file" accept=".har,.json" @change="uploadHarFile($event)" class="hidden">
+                      </label>
+                    </div>
+                    <textarea x-model="newProject.origin" rows="4" placeholder="/tmp/axiom-uploads/traffic.har"
+                      class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+                  </div>
+                </template>
+                <template x-if="newProject.depthInputMode === 'crawler'">
+                  <div>
+                    <select x-model="newProject.crawlerTaskId" @change="onCrawlerTaskSelectForProject()"
+                      class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-400">
+                      <option value="">选择爬虫任务…</option>
+                      <template x-for="t in crawlerTasks" :key="t.id">
+                        <option :value="t.id" x-text="`${t.id} — ${t.title} (${t.page_count}页/${t.api_count}API)`"></option>
+                      </template>
+                    </select>
+                    <p x-show="newProject.crawlerTaskId" class="mt-1 text-[11px] text-emerald-600">将使用该爬虫任务的 YAML 产出作为 plan 输入</p>
+                    <p x-show="!newProject.crawlerTaskId" class="mt-1 text-[10px] text-slate-400">请先在爬虫管理页面创建并运行爬虫任务</p>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <template x-if="!newProject.depth_mode">
+              <textarea x-model="newProject.origin" rows="6" placeholder="https://example.com"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+            </template>
+          </div>
+          <!-- Goal (only for breadth mode) -->
+          <div x-show="!newProject.depth_mode">
+            <label class="text-xs font-semibold text-slate-500 mb-1 block">目标</label>
+            <textarea x-model="newProject.goal" rows="2" placeholder="对这个系统进行全面渗透测试"
+              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+          </div>
+          <!-- Blackboard -->
+          <div>
+            <label class="text-xs font-semibold text-slate-500 mb-1 block">黑板（可选，测试账号、业务逻辑等通用信息）</label>
+            <textarea x-model="newProject.blackboard" rows="4" placeholder="项目下所有任务共享的参考信息&#10;例: 测试账号 admin / 123456&#10;例: 系统使用 JWT 认证，token 在 Header Authorization 中"
+              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+          </div>
+        </div>
+        <div class="sticky bottom-0 bg-white px-6 py-4 border-t border-slate-200 flex items-center justify-end gap-2 rounded-b-2xl">
+          <button @click="showTaskComposer = false" class="px-4 py-2 text-sm rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50">取消</button>
+          <button @click="createProject()" :disabled="!newProject.parent_project_id || !newProject.title || !newProject.origin"
+            class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">创建任务</button>
+        </div>
+      </div>
+    </div>
+    <template x-if="projects.length === 0">
+      <div class="flex flex-col items-center justify-center h-full text-slate-400">
+        <img src="/static/favicon.svg" alt="" class="w-20 h-20 mb-5 opacity-30">
+        <p class="text-lg font-medium text-slate-500">还没有任务</p>
+        <p class="text-sm mt-1">新建一个任务开始测试</p>
+      </div>
+    </template>
+
+    <div class="grid grid-cols-[320px_minmax(0,1fr)] gap-4 flex-1 min-h-0">
+      <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3 overflow-y-auto overflow-x-hidden space-y-2">
+        <template x-for="p in projects" :key="p.id">
+          <button type="button" @click="selectedTaskManagementId = p.id" class="w-full text-left rounded-xl border p-3 transition"
+            :class="selectedTaskManagementId === p.id ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 hover:bg-slate-50'">
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-mono text-[11px] text-slate-400" x-text="p.id"></span>
+              <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="projectStatusBadgeClass(p.status)" x-text="projectStatusLabel(p.status)"></span>
+            </div>
+            <p class="mt-2 text-sm font-semibold text-slate-700 break-words" x-text="p.title"></p>
+            <p class="mt-1 text-xs text-slate-400 truncate" x-text="projectGroupTitle(p.parent_project_id)"></p>
+          </button>
+        </template>
+      </aside>
+      <section class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 overflow-y-auto">
+        <template x-if="!selectedTaskSummary()">
+          <div class="h-full min-h-[420px] flex items-center justify-center text-sm text-slate-400">请选择左侧任务查看详情</div>
+        </template>
+        <template x-if="selectedTaskSummary()">
+          <div class="space-y-5">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-xs text-slate-400" x-text="selectedTaskSummary().id"></span>
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="projectStatusBadgeClass(selectedTaskSummary().status)" x-text="projectStatusLabel(selectedTaskSummary().status)"></span>
+                </div>
+                <h3 class="mt-2 text-xl font-semibold text-slate-800 break-words" x-text="selectedTaskSummary().title"></h3>
+                <p class="mt-1 text-xs text-brand-600" x-text="`所属项目：${projectGroupTitle(selectedTaskSummary().parent_project_id)}`"></p>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button @click="openProject(selectedTaskSummary().id)" class="px-4 py-2 text-sm rounded-xl bg-brand-500 text-white hover:bg-brand-600 transition">打开图谱</button>
+                <button @click="openRenameProject(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">重命名</button>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div class="rounded-xl bg-slate-50 p-3"><p class="text-xs text-slate-400">事实</p><p class="mt-1 text-xl font-semibold tabular-nums" x-text="selectedTaskSummary().fact_count"></p></div>
+              <div class="rounded-xl bg-violet-50 p-3"><p class="text-xs text-violet-600">意图</p><p class="mt-1 text-xl font-semibold text-violet-700 tabular-nums" x-text="selectedTaskSummary().intent_count"></p></div>
+              <div class="rounded-xl bg-amber-50 p-3"><p class="text-xs text-amber-600">执行中</p><p class="mt-1 text-xl font-semibold text-amber-700 tabular-nums" x-text="selectedTaskSummary().working_intent_count"></p></div>
+              <div class="rounded-xl bg-sky-50 p-3"><p class="text-xs text-sky-600">Hints</p><p class="mt-1 text-xl font-semibold text-sky-700 tabular-nums" x-text="selectedTaskSummary().hint_count"></p></div>
+            </div>
+            <div class="rounded-xl border border-slate-200 p-4">
+              <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">操作</p>
+              <div class="flex flex-wrap gap-2">
+                <button @click="viewProjectYaml(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">查看快照</button>
+                <button @click="openActionReplay(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-brand-200 text-brand-600 hover:bg-brand-50 transition inline-flex items-center gap-1.5">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 7.5h18"/><path d="M6.75 4.5h10.5A2.25 2.25 0 0 1 19.5 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 17.25V6.75A2.25 2.25 0 0 1 6.75 4.5Z"/><path d="M8 11h8M8 15h5"/></svg>
+                  <span>操作回溯</span>
+                </button>
+                <template x-if="selectedTaskSummary().status !== 'completed'">
+                  <button @click="toggleProjectStopById(selectedTaskSummary().id, selectedTaskSummary().status)" class="px-3 py-2 text-sm rounded-xl border border-amber-200 text-amber-700 hover:bg-amber-50 transition" x-text="selectedTaskSummary().status === 'active' ? '暂停任务' : '继续任务'"></button>
+                </template>
+                <template x-if="selectedTaskSummary().status === 'completed'">
+                  <button @click="openReopenProject(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-sky-200 text-sky-600 hover:bg-sky-50 transition">重新打开</button>
+                </template>
+                <button @click="deleteProjectById(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-rose-200 text-rose-500 hover:bg-rose-50 transition">删除任务</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </section>
+    </div>
+  </div>
+</div>
+

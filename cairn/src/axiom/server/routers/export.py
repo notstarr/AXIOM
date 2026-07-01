@@ -48,15 +48,21 @@ def _load_project_data(conn, project_id: str):
     return proj, facts, hints, intents, sources_by_intent
 
 
-def _summarize_fact(fact, max_chars: int = 50) -> str:
+def _summarize_fact(
+    fact,
+    max_chars: int = 50,
+    preserve_fact_ids: set[str] | None = None,
+) -> str:
     """Truncate fact body, preserve evidence file paths in full."""
     try:
         desc = fact["description"]
         fact_id = fact["id"]
     except (KeyError, TypeError):
         return ""
-    # origin and goal are never truncated
-    if fact_id in ("origin", "goal"):
+    # origin/goal and bootstrap-produced facts are never truncated
+    if fact_id in ("origin", "goal") or (
+        preserve_fact_ids is not None and fact_id in preserve_fact_ids
+    ):
         return desc
     text = desc.replace("\n", " ").strip()
     # Extract evidence paths
@@ -71,8 +77,20 @@ def _summarize_fact(fact, max_chars: int = 50) -> str:
     return body
 
 
+def _summarize_intent_description(text: str, max_chars: int = 80) -> str:
+    compact = (text or "").replace("\n", " ").strip()
+    if len(compact) <= max_chars:
+        return compact
+    return compact[: max_chars - 3].rstrip() + "..."
+
+
 def _export_yaml(conn, project_id: str) -> str:
     proj, facts, hints, intents, sources_by_intent = _load_project_data(conn, project_id)
+    bootstrap_fact_ids = {
+        i["to_fact_id"]
+        for i in intents
+        if i["creator"] == "dispatcher.bootstrap" and i["to_fact_id"]
+    }
 
     origin_desc = ""
     goal_desc = ""
@@ -84,6 +102,7 @@ def _export_yaml(conn, project_id: str) -> str:
 
     data: dict = {
         "project": {
+            "id": proj["id"],
             "title": proj["title"],
             "origin": origin_desc,
             "goal": goal_desc,
@@ -102,7 +121,11 @@ def _export_yaml(conn, project_id: str) -> str:
         ]
 
     data["facts"] = [
-        {"id": f["id"], "description": _summarize_fact(f)}
+        {
+            "id": f["id"],
+            "description": _summarize_fact(f, preserve_fact_ids=bootstrap_fact_ids),
+            "lookup_path": f"/projects/{project_id}?fact_id={f['id']}",
+        }
         for f in facts
         if not f["archived"]
     ]
@@ -114,14 +137,14 @@ def _export_yaml(conn, project_id: str) -> str:
     for i in intents:
         if i["archived"]:
             continue
+        summarized_description = _summarize_intent_description(i["description"])
         entry: dict = {
+            "id": i["id"],
             "from": [fid for fid in sources_by_intent.get(i["id"], []) if fid not in archived_fact_ids],
             "to": i["to_fact_id"],
-            "description": i["description"],
-            "creator": i["creator"],
-            "worker": i["worker"],
-            "created_at": format_export_timestamp(i["created_at"]),
-            "concluded_at": format_export_timestamp(i["concluded_at"]),
+            "description": summarized_description,
+            "status": "concluded" if i["concluded_at"] else "open",
+            "lookup_path": f"/projects/{project_id}?intent_id={i['id']}",
         }
         intent_list.append(entry)
 
@@ -133,9 +156,14 @@ def _export_yaml(conn, project_id: str) -> str:
 
 def _export_timeline(conn, project_id: str) -> str:
     proj, facts, hints, intents, sources_by_intent = _load_project_data(conn, project_id)
+    bootstrap_fact_ids = {
+        i["to_fact_id"]
+        for i in intents
+        if i["creator"] == "dispatcher.bootstrap" and i["to_fact_id"]
+    }
 
     facts_by_id = {
-        f["id"]: f["description"] if f["id"] in ("origin", "goal") else _summarize_fact(f)
+        f["id"]: _summarize_fact(f, preserve_fact_ids=bootstrap_fact_ids)
         for f in facts
     }
 
@@ -196,11 +224,15 @@ _SEVERITY_EMOJI = {
 }
 
 _STATUS_LABEL = {
+    "待确认": "待确认",
+    "已验证": "已验证",
+    "忽略": "忽略",
+    "重复": "重复",
+    # backward compatibility for historical records
     "pending": "待确认",
-    "confirmed": "已确认",
-    "fixing": "修复中",
-    "fixed": "已修复",
-    "false_positive": "误报",
+    "confirmed": "已验证",
+    "ignored": "忽略",
+    "rejected": "重复",
 }
 
 

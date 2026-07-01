@@ -26,10 +26,10 @@ curl -s "${AXIOM_SERVER}/projects/${PROJECT_ID}/vulns"
 
 ### 3. 提交修正
 
-证据不足 → POST 同 title，`status: "pending"`  
-确认为误报 → POST 同 title，`status: "rejected"`，description 说明原因  
+证据不足 → POST 同 title，`status: "待确认"`  
+确认为误报/重复根因 → POST 同 title，`status: "重复"`，description 说明原因  
 严重程度不匹配 → POST 同 title，修正 `severity`  
-证据充分且无问题 → 无需操作，保持 `status: "confirmed"`
+证据充分且无问题 → 无需操作，保持 `status: "已验证"`
 
 ```bash
 curl -X POST "${AXIOM_SERVER}/projects/${PROJECT_ID}/vulns" \
@@ -44,7 +44,7 @@ curl -X POST "${AXIOM_SERVER}/projects/${PROJECT_ID}/vulns" \
     "reproduction_steps": ["..."],
     "recommendation": "...",
     "affected_scope": "/api/search",
-    "status": "rejected",
+    "status": "重复",
     "source": "reason",
     "reported_by": "worker-name"
   }'
@@ -54,5 +54,5 @@ curl -X POST "${AXIOM_SERVER}/projects/${PROJECT_ID}/vulns" \
 
 - 必须先 GET 再审查，不要凭记忆判断
 - 每轮 reason 都应该审查上一轮上报的漏洞
-- 误报必须 POST `status: "rejected"`，不要置之不理
+- 误报或重复根因必须 POST `status: "重复"`，不要置之不理
 - 同标题多次 POST 会新增多条记录，前端以最新一条的 status 为准

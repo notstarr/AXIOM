@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
+
+LOG_IMPORT = logging.getLogger(__name__)
 
 _NEW_DB = Path.home() / ".local" / "share" / "axiom" / "axiom.db"
 _OLD_DB = Path.home() / ".local" / "share" / "cairn" / "cairn.db"
@@ -95,6 +98,8 @@ CREATE TABLE IF NOT EXISTS intents (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     to_fact_id TEXT,
     description TEXT NOT NULL,
+    execute_timeout_seconds INTEGER,
+    conclude_timeout_seconds INTEGER,
     creator TEXT NOT NULL,
     worker TEXT,
     last_heartbeat_at TEXT,
@@ -193,7 +198,7 @@ CREATE TABLE IF NOT EXISTS vulns (
     reproduction_steps_json TEXT NOT NULL DEFAULT '[]',
     recommendation TEXT NOT NULL DEFAULT '',
     affected_scope TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'confirmed',
+    status TEXT NOT NULL DEFAULT '待确认',
     source TEXT NOT NULL DEFAULT 'reason',
     reported_by TEXT NOT NULL,
     created_at TEXT NOT NULL,
@@ -256,6 +261,50 @@ CREATE TABLE IF NOT EXISTS pi_tools (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pi_tools_enabled_name ON pi_tools(enabled, name);
+
+CREATE TABLE IF NOT EXISTS assets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL,
+    group_id TEXT NOT NULL DEFAULT '',
+    frontend_domain TEXT,
+    frontend_url TEXT,
+    backend_domain TEXT,
+    api_path TEXT NOT NULL,
+    api_method TEXT NOT NULL,
+    api_purpose TEXT,
+    auth_required TEXT NOT NULL DEFAULT 'unknown',
+    auth_type TEXT,
+    test_status TEXT NOT NULL DEFAULT 'untested',
+    tested_at TEXT,
+    known_vulns TEXT,
+    source_file TEXT,
+    sample_body TEXT,
+    content_type TEXT,
+    login_config_json TEXT,
+    discovered_at TEXT NOT NULL DEFAULT '',
+    UNIQUE(project_id, backend_domain, api_path, api_method)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assets_project_id ON assets(project_id);
+CREATE INDEX IF NOT EXISTS idx_assets_group_id ON assets(group_id);
+CREATE INDEX IF NOT EXISTS idx_assets_test_status ON assets(test_status);
+
+CREATE TABLE IF NOT EXISTS credentials (
+    id TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    auth_type TEXT NOT NULL DEFAULT 'cookie',
+    credentials_json TEXT NOT NULL DEFAULT '{}',
+    domains_json TEXT NOT NULL DEFAULT '[]',
+    source_task_id TEXT NOT NULL DEFAULT '',
+    captured_at TEXT NOT NULL DEFAULT '',
+    expires_at TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    asset_id INTEGER,
+    UNIQUE(group_id, label)
+);
+
+CREATE INDEX IF NOT EXISTS idx_credentials_group_id ON credentials(group_id);
 """
 
 
@@ -270,12 +319,18 @@ def configure(path: Path) -> None:
         _ensure_settings_columns(conn)
         _ensure_project_group_schema(conn)
         _ensure_project_columns(conn)
+        _ensure_fact_columns(conn)
+        _ensure_intent_columns(conn)
         _ensure_blackboard_columns(conn)
         _ensure_vuln_columns(conn)
         _ensure_pi_tools_schema(conn)
         _ensure_plan_settings_columns(conn)
         _ensure_crawler_schema(conn)
         _ensure_dispatch_workers_columns(conn)
+        _ensure_assets_schema(conn)
+        _ensure_credentials_schema(conn)
+        _migrate_assets_from_tmp(conn)
+        _fix_asset_group_ids(conn)
 
 
 def current_db_path() -> Path:
@@ -383,6 +438,22 @@ def _ensure_project_columns(conn: sqlite3.Connection) -> None:
     if "depth_mode" not in columns:
         conn.execute("ALTER TABLE projects ADD COLUMN depth_mode INTEGER NOT NULL DEFAULT 0")
     _assign_default_project_group(conn)
+
+
+def _ensure_fact_columns(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(facts)")}
+    if "archived" not in columns:
+        conn.execute("ALTER TABLE facts ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+
+
+def _ensure_intent_columns(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(intents)")}
+    if "archived" not in columns:
+        conn.execute("ALTER TABLE intents ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+    if "execute_timeout_seconds" not in columns:
+        conn.execute("ALTER TABLE intents ADD COLUMN execute_timeout_seconds INTEGER")
+    if "conclude_timeout_seconds" not in columns:
+        conn.execute("ALTER TABLE intents ADD COLUMN conclude_timeout_seconds INTEGER")
 
 
 def _ensure_plan_settings_columns(conn: sqlite3.Connection) -> None:
@@ -505,6 +576,119 @@ def get_conn() -> Generator[sqlite3.Connection, None, None]:
     finally:
         conn.close()
 
+
+
+def _ensure_assets_schema(conn: sqlite3.Connection) -> None:
+    """Ensure assets table has all required columns (for upgrades)."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(assets)")}
+    if not columns:
+        return  # Table created fresh by SCHEMA
+    if "group_id" not in columns:
+        conn.execute("ALTER TABLE assets ADD COLUMN group_id TEXT NOT NULL DEFAULT ''")
+    if "discovered_at" not in columns:
+        conn.execute("ALTER TABLE assets ADD COLUMN discovered_at TEXT NOT NULL DEFAULT ''")
+    if "tested_at" not in columns:
+        conn.execute("ALTER TABLE assets ADD COLUMN tested_at TEXT")
+    if "sample_body" not in columns:
+        conn.execute("ALTER TABLE assets ADD COLUMN sample_body TEXT")
+    if "content_type" not in columns:
+        conn.execute("ALTER TABLE assets ADD COLUMN content_type TEXT")
+    if "login_config_json" not in columns:
+        conn.execute("ALTER TABLE assets ADD COLUMN login_config_json TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_assets_group_id ON assets(group_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_assets_test_status ON assets(test_status)")
+
+
+def _ensure_credentials_schema(conn: sqlite3.Connection) -> None:
+    """Ensure credentials table exists (for upgrades)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS credentials (
+            id TEXT PRIMARY KEY,
+            group_id TEXT NOT NULL,
+            label TEXT NOT NULL DEFAULT '',
+            auth_type TEXT NOT NULL DEFAULT 'cookie',
+            credentials_json TEXT NOT NULL DEFAULT '{}',
+            domains_json TEXT NOT NULL DEFAULT '[]',
+            source_task_id TEXT NOT NULL DEFAULT '',
+            captured_at TEXT NOT NULL DEFAULT '',
+            expires_at TEXT,
+            active INTEGER NOT NULL DEFAULT 1,
+            UNIQUE(group_id, label)
+        )
+        """
+    )
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(credentials)")}
+    if "domains_json" not in columns:
+        conn.execute("ALTER TABLE credentials ADD COLUMN domains_json TEXT NOT NULL DEFAULT '[]'")
+    conn.execute("UPDATE credentials SET domains_json = '[]' WHERE domains_json IS NULL")
+    if "asset_id" not in columns:
+        conn.execute("ALTER TABLE credentials ADD COLUMN asset_id INTEGER")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_credentials_group_id ON credentials(group_id)")
+
+
+def _migrate_assets_from_tmp(conn: sqlite3.Connection) -> None:
+    """One-time migration: import rows from /tmp/axiom-assets.db if it exists."""
+    tmp_db = Path("/tmp/axiom-assets.db")
+    if not tmp_db.exists():
+        return
+    # Check if we already migrated (main DB has more than a handful of rows)
+    row = conn.execute("SELECT COUNT(*) AS n FROM assets").fetchone()
+    if row and row["n"] > 10:
+        return
+    try:
+        src = sqlite3.connect(str(tmp_db))
+        src.row_factory = sqlite3.Row
+        rows = src.execute("SELECT * FROM assets").fetchall()
+        # Build project_id → parent_project_id lookup from main DB
+        parent_map: dict[str, str] = {}
+        try:
+            for pr in conn.execute("SELECT id, parent_project_id FROM projects WHERE parent_project_id IS NOT NULL AND parent_project_id != ''").fetchall():
+                parent_map[pr["id"]] = pr["parent_project_id"]
+        except Exception:
+            pass
+        # Columns to skip: params_json exists in old DB but not in new
+        skip_cols = {"params_json"}
+        migrated = 0
+        for r in rows:
+            cols = [c for c in r.keys() if c not in skip_cols]
+            values = [r[c] for c in cols]
+            # Add group_id = parent_project_id (falls back to project_id)
+            pid_idx = r.keys().index("project_id")
+            pid = r[pid_idx]
+            group_id = parent_map.get(pid, pid)
+            cols.append("group_id")
+            values.append(group_id)
+            placeholders = ", ".join("?" for _ in cols)
+            col_names = ", ".join(cols)
+            try:
+                conn.execute(
+                    f"INSERT OR IGNORE INTO assets ({col_names}) VALUES ({placeholders})",
+                    values,
+                )
+                migrated += 1
+            except Exception:
+                pass
+        conn.commit()
+        src.close()
+        LOG_IMPORT.info("migrated %d assets from %s", migrated, tmp_db)
+    except Exception:
+        LOG_IMPORT.exception("failed to migrate assets from %s", tmp_db)
+
+
+def _fix_asset_group_ids(conn: sqlite3.Connection) -> None:
+    """One-time fix: update group_id from parent_project_id for migrated assets."""
+    try:
+        rows = conn.execute(
+            "SELECT id, parent_project_id FROM projects WHERE parent_project_id IS NOT NULL AND parent_project_id != ''"
+        ).fetchall()
+        for r in rows:
+            conn.execute(
+                "UPDATE assets SET group_id = ? WHERE group_id = ? AND group_id != ?",
+                (r["parent_project_id"], r["id"], r["parent_project_id"]),
+            )
+    except Exception:
+        pass
 
 
 def _ensure_crawler_schema(conn: sqlite3.Connection) -> None:

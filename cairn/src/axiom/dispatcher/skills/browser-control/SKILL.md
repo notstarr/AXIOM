@@ -11,6 +11,7 @@ description: 当需要操作浏览器（导航、点击、填表、截图、提�
 |------|------|
 | `cdp_ctl.py` | Playwright-over-CDP 浏览器控制 CLI（主力工具） |
 | `launch-chrome.sh` | 启动 Chrome-SecTest（已登录目标系统的 Chrome 实例） |
+| `stop-chrome.sh` | 只停止 Chrome-SecTest，不影响个人 Chrome |
 | `proxy_get_traffic.py` | 查询 mitmproxy 捕获的 HTTP 流量 |
 | `mitm_addon.py` | mitmproxy addon，录制流量到 JSONL |
 
@@ -51,6 +52,11 @@ launch-chrome.sh 是幂等的——已运行则直接返回。多 worker 可各�
 验证是否就绪：
 ```bash
 curl -s http://localhost:9223/json/list | python3 -c "import json,sys; print(f'Chrome-SecTest: {len(json.load(sys.stdin))} tab(s)')" 2>/dev/null || echo "未运行"
+```
+
+停止 Chrome-SecTest（安全，不影响个人 Chrome）：
+```bash
+bash scripts/stop-chrome.sh
 ```
 
 ---
@@ -215,8 +221,17 @@ python3 scripts/proxy_get_traffic.py --type api --summary          # 查看触�
 | 问题 | 解决 |
 |------|------|
 | `CDP_ERROR: connect failed` | Chrome-SecTest 未运行，执行 `bash scripts/launch-chrome.sh` |
+| 启动提示 `Port 9223 is occupied by a non-SecTest Chrome instance` | 9223 端口被你的个人 Chrome 占用。脚本会拒绝接管，避免误关你的页面。请改用其他 `CDP_PORT` 或释放 9223 |
 | 抢页面/被其他 worker 导航 | 确认每次都带了 `--tab-id {你的ID}` |
 | click 报 index out of range | 先执行 `state` 获取最新元素编号 |
 | 页面没加载完就操作 | 用 `wait text "xxx"` 或 `wait url "xxx"` 等待 |
 | 截图空白 | 用 `full-screenshot` 替代 `screenshot`，或加 `wait` |
 | `scroll` 没效果 | 页面可能用了虚拟滚动，用 `eval "window.scrollTo(0, 99999)"` |
+
+---
+
+## 安全约束（避免误关个人浏览器）
+
+- `cdp_ctl.py` 只做 CDP 连接/断开，不应关闭整个浏览器进程。
+- `launch-chrome.sh` 只会复用带 `Chrome-SecTest` user-data-dir 的实例。
+- 若 9223 被非 SecTest Chrome 占用，会直接报错退出（fail-fast），不会附着到你的个人浏览器。
