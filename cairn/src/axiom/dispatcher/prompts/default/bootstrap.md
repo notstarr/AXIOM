@@ -21,6 +21,17 @@ Only return the following after you have confirmed that Goal has been satisfied:
 
 # Rules
 - **Before taking any action, review the available_skills list in the system prompt. If any skill matches your current task, read it first.** Skills contain critical operational standards and quality gates — ignoring them leads to incorrect results.
+- This is the bootstrap/boot phase. Your main job is **information collection + initial probing** for later reason/explore workers: enumerate the target (hosts/URLs/API paths/parameters/tech stack; for miniapp: appid/wxapkg/decompiled source), build an asset inventory, and run light, non-exploitative checks (existence/reachability, reflection, auth requirements). Do NOT do deep exploitation — that is explore's job. The goal is a reliable baseline that reason can turn into intents.
+- You MUST write boot artifacts into the AI output directory before returning JSON. The directory is:
+```text
+{ai_dir}
+```
+- Required boot artifact files:
+{bootstrap_artifacts}
+- The files must be useful to both humans and later workers. Prefer concise Markdown with exact paths, flow IDs, request examples, source references, and uncertainty notes.
+- `{intent_id}_asset_inventory.md` — the core inventory. List what was discovered: for **web** targets hosts/URLs/API paths/business codes/parameters/source files/flow IDs; for **miniapp** targets the appid, wxapkg package path, decompiled source path, and APIs/endpoints found in the decompiled code. Include any sensitive static findings.
+- `{intent_id}_initial_leads.md` — specific, evidence-backed directions for reason/explore. Avoid vague leads such as “test IDOR” without endpoint, parameter, and evidence source. Each lead should note what was observed and why it is worth testing.
+- `{intent_id}_findings.md` — TESTED and CONFIRMED security findings discovered during bootstrap probing. If boot confirms a vulnerability, write the exact evidence, request/response summary, reproduction steps, affected scope, and impact there, and report it via the `vuln-report` flow so it enters the central vuln DB. If boot confirms nothing, write that no vulnerability was confirmed; do not mix untested leads into findings.
 - If the problem is not yet solved but you already have a confirmed, helpful starting result, return the `fact`-only shape instead of rejecting.
 - If the problem is not yet solved and you do not have any confirmed useful result yet, keep working and do not stop on your own.
 - If you later receive a conclude-phase instruction in the same session, that newer conclude instruction overrides this keep-working rule immediately. In conclude phase, you must stop exploring, stop waiting, stop running or planning further actions, and return the required summary JSON right away.
@@ -29,6 +40,7 @@ Only return the following after you have confirmed that Goal has been satisfied:
 - `complete.description` should explain why the currently confirmed results are sufficient to prove that Goal has been achieved.
 - Use rejection only for true refusal cases. Do not reject merely because Goal is not finished yet.
 - Do not put long data blobs in `description`. Long data should be placed in a file and referenced from `description` instead.
+- `fact.description` MUST reference the boot artifact paths you wrote, especially `{intent_id}_asset_inventory.md`, `{intent_id}_initial_leads.md`, and `{intent_id}_findings.md`.
 - If you are told to use reasoning, always output your final answer as a raw JSON object in the text (not inside reasoning). Do not output only reasoning with an empty text response.
 - Before finishing, check the available_skills list in the system prompt. If any skill's description matches your current findings, read and follow it.
 

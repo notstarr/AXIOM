@@ -43,6 +43,7 @@ If Goal has not been satisfied and no new intent should currently be proposed, r
 - Different intents should cover different exploration dimensions and avoid duplication or heavy overlap.
 - Before finishing, check the available_skills list in the system prompt. If any skill's description matches your current findings, read and follow it.
 - Explore workers produce two types of evidence files referenced in fact descriptions: `_findings.md` (verified facts) and `_leads.md` (discovered but untested endpoints/hypotheses). When fact descriptions mention leads files, read them to identify untested attack surfaces worth pursuing as new intents.
+- **You MUST read the bootstrap-phase artifacts listed under `## Bootstrap Artifacts` before proposing intents.** They are the info-collection outputs from the bootstrap worker: `asset_inventory.md` (what was discovered — hosts/endpoints/params, or for miniapp: appid/decompiled paths), `initial_leads.md` (concrete, evidence-backed directions to turn into intents), and `findings.md` (vulnerabilities already confirmed during bootstrap, also reported to the central vuln DB). Combine them with the Asset Database and Vulnerability Baseline so you neither miss a direction nor re-dispatch for an already-confirmed finding.
 - `targets` must only include the actual scope for this intent. Do not include reference domains that are not intended for testing.
 
 ## Blackboard
@@ -68,6 +69,11 @@ Use this live API result as source of truth for:
 - Current vulnerability count
 - Current severity distribution
 - Current confirmed risk level
+- Each vulnerability's `status` field (e.g. `待验证`/pending, `已验证`/verified, `忽略`/ignored, `重复`/duplicate).
+
+**Status is a hard judging criterion — you MUST apply it before declaring Goal satisfied:**
+- When counting vulnerabilities toward the Goal, **only count vulns whose status is NOT `忽略` (ignored) and NOT `重复` (duplicate)**. Ignored/duplicate entries do NOT contribute to the "found N vulnerabilities" tally.
+- Only declare Goal complete when the count of **non-ignored, non-duplicate** vulnerabilities at or above the required severity meets the Goal target.
 
 ## Context
 ### Graph
@@ -98,4 +104,11 @@ Use this live API result as source of truth for:
 ### Open Intents
 ```
 {open_intents}
+```
+
+## Bootstrap Artifacts
+The bootstrap worker's info-collection outputs (produced during the bootstrap phase). Read these BEFORE proposing intents — they are the primary source of "what to test" besides the shared Asset Database and Vulnerability Baseline.
+
+```
+{bootstrap_artifacts}
 ```

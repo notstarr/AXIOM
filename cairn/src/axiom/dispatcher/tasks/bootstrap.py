@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
+import uuid
 from pathlib import Path
 
 from axiom.dispatcher.config import DispatchConfig, WorkerConfig
@@ -27,14 +29,32 @@ from axiom.dispatcher.tasks.common import (
     run_healthcheck,
     run_worker_process,
     task_healthcheck_enabled,
+    worker_with_project_guard,
     write_conclude_result,
     write_conclude_result_with_fact_id,
     write_graph_snapshot_file,
 )
 from axiom.dispatcher.workers.registry import get_driver
+from axiom.runtime_paths import project_ai_dir
 from axiom.server.models import Intent, ProjectDetail
 
 LOG = logging.getLogger(__name__)
+
+BOOTSTRAP_ARTIFACT_FILENAMES = (
+    "{intent_id}_asset_inventory.md",
+    "{intent_id}_initial_leads.md",
+    "{intent_id}_findings.md",
+)
+
+BOOTSTRAP_PLACEHOLDER_MARKERS = (
+    "Boot worker 未写入",
+    "Boot artifacts pending write",
+    "未由 worker 写入",
+)
+
+
+class BootstrapArtifactError(RuntimeError):
+    pass
 
 
 def run_bootstrap_task(
@@ -51,6 +71,8 @@ def run_bootstrap_task(
     lease = HeartbeatLease.for_intent(client, project.project.id, intent.id, worker.name, config.runtime.interval)
     lease.start()
     try:
+        ai_dir_path = _bootstrap_ai_dir(project)
+        ai_dir = str(ai_dir_path)
         if task_healthcheck_enabled(config):
             LOG.info(
                 "starting local exec project=%s intent=%s worker=%s phase=bootstrap_healthcheck timeout=%ss",
@@ -104,15 +126,23 @@ def run_bootstrap_task(
 
         prompt = render_prompt(
             load_prompt(config.runtime.prompt_group, "bootstrap.md"),
-            _bootstrap_prompt_replacements(project),
+            _bootstrap_prompt_replacements(project, ai_dir=ai_dir, intent_id=intent.id),
         )
 
         session = driver.prepare_session()
-        execute = driver.build_execute(worker, prompt, session, phase="bootstrap")
+        execute_worker = worker_with_project_guard(worker, guard_enabled=bool(getattr(project.project, "guard_enabled", False)))
+        execute = driver.build_execute(execute_worker, prompt, session, phase="bootstrap")
         session = execute.session
+        execute_metadata = {
+            "logical_thread_id": f"intent:{project.project.id}:{intent.id}",
+            "attempt_id": f"bootstrap:{project.project.id}:{intent.id}:{worker.name}:{uuid.uuid4().hex[:8]}",
+            "attempt_role": "bootstrap",
+            "intent_id": intent.id,
+            "session_id": session or "",
+        }
         execute_started = time.perf_counter()
         first = run_worker_process(
-            worker,
+            execute_worker,
             execute.argv,
             phase="bootstrap",
             timeout_seconds=config.tasks.bootstrap.timeout,
@@ -121,6 +151,8 @@ def run_bootstrap_task(
             cancellation=cancellation,
             client=client,
             task_type="bootstrap",
+            ai_dir=ai_dir,
+            event_metadata=execute_metadata,
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         session = driver.extract_session(session, first.stdout, first.stderr)
@@ -130,12 +162,15 @@ def run_bootstrap_task(
                 session_id=session or "",
                 worker_name=worker.name,
                 project_id=project.project.id,
+                task_type="bootstrap",
+                phase="bootstrap",
+                event_metadata={**execute_metadata, "session_id": session or execute_metadata.get("session_id", "")},
             )
             LOG.info("recorded %d tool executions session=%s worker=%s", recorded, session, worker.name)
             if token_usage:
                 _report_event(client, project.project.id, task_type="bootstrap", phase="bootstrap_execute",
                               worker=worker.name, level="info", message="token usage",
-                              payload={"token_usage": token_usage})
+                              payload={"token_usage": token_usage, **execute_metadata, "session_id": session or execute_metadata.get("session_id", "")})
         except Exception:
             LOG.exception("failed to record tool executions session=%s", session)
         cancelled = cancel_reason(first, cancellation)
@@ -228,6 +263,18 @@ def run_bootstrap_task(
                 best_effort_release(client, project.project.id, intent.id, worker.name)
                 return "rejected"
             if kind == "fact":
+                try:
+                    fact_description = _finalize_bootstrap_artifacts(
+                        project,
+                        intent,
+                        data["fact_description"],
+                        ai_dir_path,
+                        source="bootstrap",
+                    )
+                except BootstrapArtifactError as exc:
+                    LOG.warning("bootstrap incomplete artifacts project=%s intent=%s worker=%s error=%s", project.project.id, intent.id, worker.name, exc)
+                    best_effort_release(client, project.project.id, intent.id, worker.name)
+                    return "failed"
                 _report_bootstrap_outcome(
                     client,
                     project.project.id,
@@ -242,7 +289,7 @@ def run_bootstrap_task(
                     project.project.id,
                     intent.id,
                     worker.name,
-                    data["fact_description"],
+                    fact_description,
                     source="bootstrap",
                     phase_ms=execute_ms,
                     total_ms=int((time.perf_counter() - task_started) * 1000),
@@ -256,12 +303,24 @@ def run_bootstrap_task(
                 detail="bootstrap completed goal directly",
                 extra={"intent_id": intent.id, "execute_ms": execute_ms},
             )
+            try:
+                fact_description = _finalize_bootstrap_artifacts(
+                    project,
+                    intent,
+                    data["fact_description"],
+                    ai_dir_path,
+                    source="bootstrap_complete",
+                )
+            except BootstrapArtifactError as exc:
+                LOG.warning("bootstrap incomplete artifacts project=%s intent=%s worker=%s error=%s", project.project.id, intent.id, worker.name, exc)
+                best_effort_release(client, project.project.id, intent.id, worker.name)
+                return "failed"
             return _write_bootstrap_complete_result(
                 client,
                 project.project.id,
                 intent.id,
                 worker.name,
-                data["fact_description"],
+                fact_description,
                 data["complete_description"],
                 source="bootstrap",
                 phase_ms=execute_ms,
@@ -314,6 +373,8 @@ def _try_conclude_fallback(
     lease: HeartbeatLease,
     cancellation: TaskCancellation,
 ) -> str:
+    ai_dir_path = _bootstrap_ai_dir(project)
+    ai_dir = str(ai_dir_path)
     if not driver.supports_conclude() or not session:
         LOG.info(
             "bootstrap conclude fallback unavailable project=%s intent=%s worker=%s supports_conclude=%s has_session=%s",
@@ -356,7 +417,7 @@ def _try_conclude_fallback(
 
     prompt = render_prompt(
         load_prompt(config.runtime.prompt_group, "bootstrap_conclude.md"),
-        _bootstrap_prompt_replacements(project),
+        _bootstrap_prompt_replacements(project, ai_dir=ai_dir, intent_id=intent.id),
     )
     conclude_argv = driver.build_conclude(worker, prompt, session, phase="bootstrap")
     LOG.info("starting bootstrap conclude fallback project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
@@ -371,6 +432,7 @@ def _try_conclude_fallback(
         cancellation=cancellation,
         client=client,
         task_type="bootstrap",
+        ai_dir=ai_dir,
     )
     conclude_ms = int((time.perf_counter() - conclude_started) * 1000)
     cancelled = cancel_reason(result, cancellation)
@@ -469,6 +531,18 @@ def _try_conclude_fallback(
         detail="bootstrap conclude fallback wrote fact",
         extra={"intent_id": intent.id, "conclude_ms": conclude_ms},
     )
+    try:
+        fact_description = _finalize_bootstrap_artifacts(
+            project,
+            intent,
+            fact_description,
+            ai_dir_path,
+            source="bootstrap_conclude",
+        )
+    except BootstrapArtifactError as exc:
+        LOG.warning("bootstrap conclude incomplete artifacts project=%s intent=%s worker=%s error=%s", project.project.id, intent.id, worker.name, exc)
+        best_effort_release(client, project.project.id, intent.id, worker.name)
+        return "failed"
     return write_conclude_result(
         client,
         project.project.id,
@@ -482,7 +556,7 @@ def _try_conclude_fallback(
 
 def _resolve_valid_session(driver, worker: WorkerConfig, session: str | None) -> str | None:
     if not session:
-        return _find_latest_session(driver, worker)
+        return None
     exists_checker = getattr(driver, "session_exists", None)
     if not callable(exists_checker):
         return session
@@ -493,25 +567,14 @@ def _resolve_valid_session(driver, worker: WorkerConfig, session: str | None) ->
         LOG.exception("bootstrap session validation crashed worker=%s session=%s", worker.name, session)
     LOG.warning(
         "bootstrap invalid session id worker=%s session=%s; "
-        "falling back to latest worker session (cross-intent risk)",
+        "skipping conclude session resume to avoid cross-intent contamination",
         worker.name,
         session,
     )
-    return _find_latest_session(driver, worker)
+    return None
 
 
-def _find_latest_session(driver, worker: WorkerConfig) -> str | None:
-    finder = getattr(driver, "find_session_from_files", None)
-    if not callable(finder):
-        return None
-    try:
-        return finder(worker.name)
-    except Exception:
-        LOG.exception("bootstrap session file lookup crashed worker=%s", worker.name)
-        return None
-
-
-def _bootstrap_prompt_replacements(project: ProjectDetail) -> dict[str, str]:
+def _bootstrap_prompt_replacements(project: ProjectDetail, *, ai_dir: str, intent_id: str) -> dict[str, str]:
     facts = {fact.id: fact.description for fact in project.facts}
     hints = [
         {
@@ -527,7 +590,117 @@ def _bootstrap_prompt_replacements(project: ProjectDetail) -> dict[str, str]:
         "goal": facts.get("goal", ""),
         "hints": format_hints(hints) if hints else "No hints provided.",
         "blackboard": _format_blackboard(project.blackboard, project.project.parent_project_id or ""),
+        "ai_dir": ai_dir,
+        "intent_id": intent_id,
+        "bootstrap_artifacts": _format_bootstrap_artifact_list(intent_id, ai_dir),
     }
+
+
+def _bootstrap_ai_dir(project: ProjectDetail) -> Path:
+    path = project_ai_dir(project.project.parent_project_id, project.project.id)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _format_bootstrap_artifact_list(intent_id: str, ai_dir: str) -> str:
+    return "\n".join(f"- {ai_dir}/{name.format(intent_id=intent_id)}" for name in BOOTSTRAP_ARTIFACT_FILENAMES)
+
+
+def _finalize_bootstrap_artifacts(
+    project: ProjectDetail,
+    intent: Intent,
+    fact_description: str,
+    ai_dir: Path,
+    *,
+    source: str,
+) -> str:
+    _validate_bootstrap_artifacts(ai_dir, intent.id)
+    paths = _ensure_bootstrap_artifacts(project, intent, fact_description, ai_dir, source=source)
+    return _append_bootstrap_artifact_refs(fact_description, paths)
+
+
+def _validate_bootstrap_artifacts(ai_dir: Path, intent_id: str) -> None:
+    missing = []
+    placeholder = []
+    empty = []
+    for name in BOOTSTRAP_ARTIFACT_FILENAMES:
+        path = ai_dir / name.format(intent_id=intent_id)
+        if not path.exists():
+            missing.append(str(path))
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            missing.append(str(path))
+            continue
+        stripped = content.strip()
+        if len(stripped) < 40:
+            empty.append(str(path))
+        if any(marker in content for marker in BOOTSTRAP_PLACEHOLDER_MARKERS):
+            placeholder.append(str(path))
+    if missing or empty or placeholder:
+        parts = []
+        if missing:
+            parts.append("missing=" + ", ".join(missing))
+        if empty:
+            parts.append("empty=" + ", ".join(empty))
+        if placeholder:
+            parts.append("placeholder=" + ", ".join(placeholder))
+        raise BootstrapArtifactError("incomplete bootstrap artifacts: " + "; ".join(parts))
+
+
+def _ensure_bootstrap_artifacts(
+    project: ProjectDetail,
+    intent: Intent,
+    fact_description: str,
+    ai_dir: Path,
+    *,
+    source: str,
+) -> dict[str, Path]:
+    ai_dir.mkdir(parents=True, exist_ok=True)
+    paths = {
+        "assets": ai_dir / f"{intent.id}_asset_inventory.md",
+        "leads": ai_dir / f"{intent.id}_initial_leads.md",
+        "findings": ai_dir / f"{intent.id}_findings.md",
+    }
+    if not paths["assets"].exists():
+        paths["assets"].write_text(
+            "# 资产与接口基线\n\n"
+            "Boot worker 未写入详细资产清单。后续 worker 应优先从真实流量、反编译结果、用户输入和凭证库补齐：\n\n"
+            "- host / domain\n- API path / business code\n- miniapp appid / decompiled path\n- key parameters\n- source file or flow id\n",
+            encoding="utf-8",
+        )
+    if not paths["leads"].exists():
+        paths["leads"].write_text(
+            "# 初始测试线索\n\n"
+            "## 来自 Boot fact 的线索\n"
+            f"{fact_description.strip() or '暂无。'}\n\n"
+            "## Reason 阶段建议\n"
+            "- 基于已确认事实拆分可并行 intent。\n"
+            "- 优先选择有真实请求、明确参数和可验证影响的方向。\n"
+            "- 不要把缺少凭证、缺少请求模板的问题伪装成漏洞。\n",
+            encoding="utf-8",
+        )
+    if not paths["findings"].exists():
+        paths["findings"].write_text(
+            "# Boot 已确认安全发现\n\n"
+            "Boot worker 未写入已确认漏洞。仅当 boot 阶段已经完成真实验证、具备可复现证据时，才应在本文件记录漏洞，并同步通过 vuln-report 上报中央漏洞库。\n",
+            encoding="utf-8",
+        )
+    return paths
+
+
+def _append_bootstrap_artifact_refs(description: str, paths: dict[str, Path]) -> str:
+    refs = [
+        str(paths["assets"]),
+        str(paths["leads"]),
+        str(paths["findings"]),
+    ]
+    existing = description or "Boot 阶段已完成。"
+    missing_refs = [ref for ref in refs if ref not in existing]
+    if not missing_refs:
+        return existing
+    return existing.rstrip() + "\n\nBoot 产物：" + " ".join(missing_refs)
 
 
 def _write_bootstrap_complete_result(

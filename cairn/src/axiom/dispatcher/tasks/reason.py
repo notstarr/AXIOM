@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from pathlib import Path
 
 from axiom.dispatcher.config import DispatchConfig, WorkerConfig
@@ -32,6 +33,7 @@ from axiom.dispatcher.tasks.common import (
     write_graph_snapshot_file,
 )
 from axiom.dispatcher.workers.registry import get_driver
+from axiom.runtime_paths import project_ai_dir
 from axiom.server.db import current_db_path
 from axiom.server.models import ProjectDetail
 
@@ -116,6 +118,12 @@ def run_reason_task(
             len(open_intents),
         )
         prompt_group = "depth" if project.project.depth_mode else config.runtime.prompt_group
+        bootstrap_ai_dir = project_ai_dir(project.project.parent_project_id, project.project.id)
+        bootstrap_artifact_files = (
+            sorted(bootstrap_ai_dir.glob("*_asset_inventory.md"))
+            + sorted(bootstrap_ai_dir.glob("*_initial_leads.md"))
+            + [p for p in sorted(bootstrap_ai_dir.glob("*_findings.md")) if not p.name.startswith("_")]
+        )
         replacements: dict[str, str] = {
             "graph_yaml": write_graph_snapshot_file(
                 project.project.id,
@@ -139,6 +147,9 @@ def run_reason_task(
             "asset_baseline_script": str(
                 (Path(__file__).resolve().parent.parent / "tools" / "asset_baseline.py")
             ),
+            "bootstrap_artifacts": "\n".join(f"- {p}" for p in bootstrap_artifact_files)
+            if bootstrap_artifact_files
+            else "（当前无 bootstrap 产物文件）",
         }
         # Depth mode: inject checklist path and plan fact ID.
         if project.project.depth_mode:
@@ -161,6 +172,11 @@ def run_reason_task(
 
         session = driver.prepare_session()
         command = driver.build_execute(worker, prompt, session, phase="reason")
+        reason_metadata = {
+            "attempt_id": f"reason:{project.project.id}:{worker.name}:{uuid.uuid4().hex[:8]}",
+            "attempt_role": "reason",
+            "session_id": session or "",
+        }
         execute_started = time.perf_counter()
         result = run_worker_process(
             worker,
@@ -172,6 +188,7 @@ def run_reason_task(
             cancellation=cancellation,
             client=client,
             task_type="reason",
+            event_metadata=reason_metadata,
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         total_ms = int((time.perf_counter() - task_started) * 1000)
@@ -181,12 +198,15 @@ def run_reason_task(
                 session_id=session or "",
                 worker_name=worker.name,
                 project_id=project.project.id,
+                task_type="reason",
+                phase="reason_execute",
+                event_metadata={**reason_metadata, "session_id": session or reason_metadata.get("session_id", "")},
             )
             LOG.info("recorded %d tool executions session=%s worker=%s", recorded, session, worker.name)
             if token_usage:
                 _report_event(client, project.project.id, task_type="reason", phase="reason_execute",
                               worker=worker.name, level="info", message="token usage",
-                              payload={"token_usage": token_usage})
+                              payload={"token_usage": token_usage, **reason_metadata, "session_id": session or reason_metadata.get("session_id", "")})
         except Exception:
             LOG.exception("failed to record tool executions session=%s", session)
         cancelled = cancel_reason(result, cancellation)
@@ -299,6 +319,8 @@ def run_reason_task(
             return "success"
         if kind == "intents":
             created = 0
+            created_intents: list[dict] = []
+            project_pool = list(getattr(project.project, "worker_pool", []) or [])
             for intent_data in data:
                 response = client.create_intent(
                     project.project.id,
@@ -307,6 +329,7 @@ def run_reason_task(
                     worker.name,
                     targets=intent_data.get("targets"),
                     timeouts=intent_data.get("timeouts"),
+                    worker_pool=project_pool,
                 )
                 if response.status_code == 403:
                     LOG.info("project became inactive during reason intent create project=%s worker=%s created=%s", project.project.id, worker.name, created)
@@ -333,6 +356,17 @@ def run_reason_task(
                     )
                     continue
                 created += 1
+                created_id = ""
+                created_fact_id = ""
+                if isinstance(response.data, dict):
+                    created_id = str(response.data.get("id") or "")
+                    created_fact_id = str(response.data.get("to") or response.data.get("to_fact_id") or "")
+                created_intents.append({
+                    "id": created_id,
+                    "fact_id": created_fact_id,
+                    "description": intent_data["description"],
+                    "from": intent_data["from"],
+                })
                 LOG.info(
                     "reason created intent project=%s worker=%s from=%s description=%s",
                     project.project.id,
@@ -359,6 +393,22 @@ def run_reason_task(
                     total_ms,
                 )
                 return "failed"
+            _report_event(
+                client,
+                project.project.id,
+                task_type="reason",
+                phase="reason_execute",
+                worker=worker.name,
+                level="info",
+                message="created intents",
+                payload={
+                    **reason_metadata,
+                    "session_id": session or reason_metadata.get("session_id", ""),
+                    "created_intents": created_intents,
+                    "created_count": created,
+                    "attempted_count": len(data),
+                },
+            )
             return "success"
         # Depth mode: no-op means plan checklist is fully covered.
         if kind == "noop" and project.project.depth_mode:
