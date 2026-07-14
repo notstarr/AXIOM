@@ -4,11 +4,26 @@ window.AxiomModules.actions = {
     async createIntent(claim = false) {
       try {
         const actor = this.actorName();
+        // 解析用户填写的 targets（支持逗号/分号/换行/空格分隔的 host/ip）
+        let targets = [];
+        const raw = (this.intentForm.targets || '').trim();
+        if (raw) {
+          targets = raw.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
+        }
+        // 用户未填时，回退到当前项目组的授权白名单，以保证通过后端范围校验
+        if (targets.length === 0) {
+          const gid = this.project?.project?.parent_project_id || '';
+          const group = this.projectGroups.find(g => g.id === gid);
+          const scope = group?.scope || {};
+          const allow = scope.targets || [];
+          if (allow.length > 0) targets = allow.slice();
+        }
         await this.api('POST', `/projects/${this.selectedProjectId}/intents`, {
           from: this.selectedFacts,
           description: this.intentForm.description,
           creator: actor,
           worker: claim ? actor : null,
+          targets,
         });
         this.showIntentModal = false;
         await this.loadProject(this.selectedProjectId);

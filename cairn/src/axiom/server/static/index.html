@@ -36,13 +36,17 @@
   <div class="sidebar-logo">
     <img src="/static/logo.jpg" alt="axiom">
   </div>
+  <button type="button" class="nav-item nav-back" data-tooltip="返回上一页"
+    x-show="pageHistory.length > 0" @click="goBack()" style="margin-bottom:4px">
+    <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+  </button>
   <nav class="sidebar-nav">
     <button type="button" class="nav-item" data-tooltip="仪表盘"
       :class="{ 'is-active': activePage === 'dashboard' }" @click="navigateTo('dashboard')">
       <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6V4h-6v16ZM4 20h6v-4H4v4Z"/></svg>
     </button>
     <button type="button" class="nav-item" data-tooltip="任务管理"
-      :class="{ 'is-active': activePage === 'tasks' || activePage === 'task-detail' || activePage === 'action-replay' }" @click="navigateTo('tasks')">
+      :class="{ 'is-active': activePage === 'tasks' || activePage === 'task-detail' }" @click="navigateTo('tasks')">
       <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
     </button>
     <button type="button" class="nav-item" data-tooltip="漏洞管理"
@@ -52,6 +56,14 @@
     <button type="button" class="nav-item" data-tooltip="项目管理"
       :class="{ 'is-active': activePage === 'projects' }" @click="navigateTo('projects')">
       <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Z"/><path d="m4 12 8 4.5 8-4.5"/><path d="m4 16.5 8 4.5 8-4.5"/></svg>
+    </button>
+    <button type="button" class="nav-item" data-tooltip="守门审计日志"
+      :class="{ 'is-active': activePage === 'guard-audit' }" @click="navigateTo('guard-audit')">
+      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.2 2.8 7.9 7 9.5 4.2-1.6 7-5.3 7-9.5V6l-7-3Z"/><path d="M9 12h6"/><path d="M9 15h4"/><path d="M9 9h6"/></svg>
+    </button>
+    <button type="button" class="nav-item" data-tooltip="URL 守门测试"
+      :class="{ 'is-active': activePage === 'batch-url-judge' }" @click="navigateTo('batch-url-judge')">
+      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
     </button>
     <button type="button" class="nav-item" data-tooltip="爬虫管理"
       :class="{ 'is-active': activePage === 'crawler-results' }" @click="navigateTo('crawler-results')">
@@ -105,56 +117,66 @@
 
 <div class="main-content">
 <div x-show="activePage === 'dashboard'" x-cloak
-     x-init="loadPageTemplate('dashboard')"
+     data-page="dashboard" x-init="loadPageTemplate('dashboard')"
      class="flex-1 flex flex-col overflow-hidden min-w-0">
 </div>
 
 <div x-show="activePage === 'tasks'" x-cloak
-     x-init="loadPageTemplate('task-list')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0">
-</div>
-
-<div x-show="activePage === 'action-replay'" x-cloak
-     x-init="loadPageTemplate('action-replay')"
+     data-page="task-list" x-init="loadPageTemplate('task-list')"
      class="flex-1 flex flex-col overflow-hidden min-w-0">
 </div>
 
 <div x-show="activePage === 'task-detail' && view === 'graph'" x-cloak
-     x-init="loadPageTemplate('graph-view')"
+     data-page="graph-view" x-init="loadPageTemplate('graph-view')"
      class="flex-1 flex flex-col overflow-hidden min-w-0">
 </div>
 
 <div x-show="activePage === 'vulnerabilities'" x-cloak
-     x-init="loadPageTemplate('vulnerabilities')"
+     data-page="vulnerabilities" x-init="loadPageTemplate('vulnerabilities')"
      class="flex-1 flex flex-col overflow-hidden min-w-0">
 </div>
 
 <div x-show="activePage === 'projects'" x-cloak
-     x-init="loadPageTemplate('project-mgmt')"
+     data-page="project-mgmt" x-init="loadPageTemplate('project-mgmt')"
+     class="flex-1 flex flex-col overflow-hidden min-w-0">
+</div>
+
+<div x-show="activePage === 'guard-audit'" x-cloak
+     data-page="guard-audit" x-init="loadPageTemplate('guard-audit')"
+     class="flex-1 flex flex-col overflow-hidden min-w-0">
+</div>
+
+<div x-show="activePage === 'batch-url-judge'" x-cloak
+     data-page="batch-url-judge" x-init="loadPageTemplate('batch-url-judge')"
      class="flex-1 flex flex-col overflow-hidden min-w-0">
 </div>
 
 <div x-show="activePage === 'skills'" x-cloak
-     x-init="loadPageTemplate('skills')"
+     data-page="skills" x-init="loadPageTemplate('skills')"
      class="flex-1 flex flex-col overflow-hidden min-w-0">
 </div>
 
 <div x-show="activePage === 'files'" x-cloak
-     x-init="loadPageTemplate('files')"
+     data-page="files" x-init="loadPageTemplate('files')"
      class="flex-1 flex flex-col overflow-hidden min-w-0">
 </div>
 
 <div x-show="activePage === 'assets'" x-cloak
-     x-init="loadPageTemplate('assets')"
+     data-page="assets" x-init="loadPageTemplate('assets')"
      class="flex-1 flex flex-col overflow-hidden min-w-0">
 </div>
 
 <div x-show="activePage === 'crawler-results'" x-cloak
-     x-init="loadPageTemplate('crawler')"
+     data-page="crawler" x-init="loadPageTemplate('crawler')"
      class="flex-1 flex flex-col overflow-hidden min-w-0">
 </div>
 
-<!-- Placeholder Pages (MCP etc.) -->
+<div x-show="activePage === 'mcp'" x-cloak
+     data-page="mcp" x-init="loadPageTemplate('mcp')"
+     class="flex-1 flex flex-col overflow-hidden min-w-0">
+</div>
+
+<!-- Placeholder Pages -->
 <template x-for="page in placeholderPages()" :key="page.id">
   <div x-show="activePage === page.id" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
     <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 shrink-0">
@@ -172,12 +194,12 @@
 </template>
 
 <div x-show="activePage === 'prompts'" x-cloak
-     x-init="loadPageTemplate('prompts')" @keydown.meta.k.prevent="showPromptSearch = true"
+     data-page="prompts" x-init="loadPageTemplate('prompts')" @keydown.meta.k.prevent="showPromptSearch = true"
      class="flex-1 flex flex-col overflow-hidden min-w-0">
 </div>
 
 <div x-show="activePage === 'settings'" x-cloak
-     x-init="loadPageTemplate('settings')"
+     data-page="settings" x-init="loadPageTemplate('settings')"
      class="flex-1 flex flex-col overflow-hidden min-w-0">
 </div>
 
@@ -199,6 +221,11 @@
     </div>
     <div class="space-y-3">
       <textarea x-model="intentForm.description" placeholder="本轮准备探索什么？" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <div>
+        <label class="text-[11px] text-slate-400 mb-1 block font-medium">目标主机/IP（可留空，留空时默认套用项目组授权范围；多个用换行或逗号分隔）</label>
+        <textarea x-model="intentForm.targets" placeholder="例如：api.example.com 或 10.0.0.1" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      </div>
+      <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-500" x-show="intentScopeHint" x-text="intentScopeHint"></div>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
         操作者：<span class="font-medium text-slate-700" x-text="actorName()"></span>
       </div>
@@ -417,7 +444,7 @@
         </template>
       </div>
       <div class="flex items-center gap-2">
-        <button @click="refreshCrawlerResults()" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">刷新</button>
+        <button @click="refreshCrawlerResults()" :disabled="crawlerResultsLoading" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40">刷新</button>
         <button @click="crawlerResultsOpen = false" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
       </div>
     </div>
@@ -704,6 +731,7 @@
 <script src="/static/js/actions.js"></script>
 <script src="/static/js/dispatch.js"></script>
 <script src="/static/js/prompts.js"></script>
+<script src="/static/js/batch-url-judge.js"></script>
 <script src="/static/js/app.js"></script>
 </body>
 </html>

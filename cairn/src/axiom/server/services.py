@@ -188,6 +188,15 @@ def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str)
         "SELECT fact_id FROM intent_sources WHERE intent_id = ? AND project_id = ? ORDER BY rowid",
         (row["id"], project_id),
     ).fetchall()
+    import json as _json
+    worker_pool: list[str] = []
+    if "worker_pool" in row.keys() and row["worker_pool"]:
+        try:
+            parsed = _json.loads(row["worker_pool"])
+            if isinstance(parsed, list):
+                worker_pool = [str(item) for item in parsed if isinstance(item, str)]
+        except Exception:
+            pass
     return Intent(
         id=row["id"],
         **{"from": [s["fact_id"] for s in sources]},
@@ -196,6 +205,7 @@ def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str)
         timeouts=_intent_timeouts_from_row(row),
         creator=row["creator"],
         worker=row["worker"],
+        worker_pool=worker_pool,
         last_heartbeat_at=row["last_heartbeat_at"],
         created_at=row["created_at"],
         concluded_at=row["concluded_at"],
@@ -251,7 +261,9 @@ def build_vulns(conn: sqlite3.Connection, project_id: str) -> list[Vulnerability
                 recommendation=row["recommendation"] if "recommendation" in keys else "",
                 affected_scope=row["affected_scope"] if "affected_scope" in keys else "",
                 status=_normalize_vuln_status(row["status"]),
+                status_reason=row["status_reason"] if "status_reason" in keys else "",
                 source=row["source"],
+                source_file=row["source_file"] if "source_file" in keys else "",
                 reported_by=row["reported_by"],
                 created_at=row["created_at"],
             )
@@ -262,16 +274,18 @@ def build_vulns(conn: sqlite3.Connection, project_id: str) -> list[Vulnerability
 def _normalize_vuln_status(value: str | None) -> str:
     text = str(value or "").strip()
     mapping = {
-        "pending": "待确认",
+        "pending": "待验证",
         "confirmed": "已验证",
         "ignored": "忽略",
         "rejected": "重复",
-        "待审核": "待确认",
+        "待审核": "待验证",
+        "待确认": "待验证",
         "已确认": "已验证",
         "已忽略": "忽略",
         "已拒绝": "重复",
+        "已上报外部": "待验证",
     }
-    return mapping.get(text.lower(), mapping.get(text, text or "待确认"))
+    return mapping.get(text.lower(), mapping.get(text, text or "待验证"))
 
 
 def build_blackboard_items_for_group(conn: sqlite3.Connection, group_id: str) -> list[BlackboardItem]:
@@ -354,13 +368,24 @@ def project_reason_from_row(row: sqlite3.Row) -> ProjectReason | None:
 
 
 def project_meta_from_row(row: sqlite3.Row) -> ProjectMeta:
+    worker_pool: list[str] = []
+    if "worker_pool" in row.keys() and row["worker_pool"]:
+        try:
+            parsed = json.loads(row["worker_pool"])
+            if isinstance(parsed, list):
+                worker_pool = [str(item) for item in parsed if isinstance(item, str)]
+        except json.JSONDecodeError:
+            worker_pool = []
     return ProjectMeta(
         id=row["id"],
         parent_project_id=row["parent_project_id"],
         title=row["title"],
         status=row["status"],
         bootstrap_enabled=bool(row["bootstrap_enabled"]),
+        kk_report_enabled=bool(row["kk_report_enabled"]) if "kk_report_enabled" in row.keys() else True,
         depth_mode=bool(row["depth_mode"]) if "depth_mode" in row.keys() else False,
+        guard_enabled=bool(row["guard_enabled"]) if "guard_enabled" in row.keys() else False,
+        worker_pool=worker_pool,
         created_at=row["created_at"],
         reason=project_reason_from_row(row),
     )
@@ -502,6 +527,9 @@ def validate_intent_scope(
     deny_list = [item for item in deny_list if item]
 
     require_targets = _env_truthy("AXIOM_REQUIRE_INTENT_TARGETS", default=True)
+    # 仅当项目组配置了范围策略（白名单或黑名单非空）时才强制 intent 声明 targets；
+    # 无任何范围策略时不需要 targets，否则会无谓地阻断正常的人工派发。
+    require_targets = require_targets and bool(allow_list or deny_list)
     intent_targets = _resolve_targets_for_scope(targets=targets, require_targets=require_targets)
     if not intent_targets:
         return

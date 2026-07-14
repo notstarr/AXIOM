@@ -69,6 +69,27 @@ window.AxiomModules.projects = {
       this.showGroupModal = true;
     },
 
+    async openTaskComposer(preselectParentProjectId = '') {
+      try {
+        if (!this.dispatchSettings || !Array.isArray(this.dispatchSettings.workers)) {
+          await this.loadDispatchSettings();
+        }
+        await this.loadJudgeSettings();
+      } catch(e) { console.error('load settings failed', e); }
+      const workers = (this.dispatchSettings && this.dispatchSettings.workers) || [];
+      const defaults = workers
+        .filter(w => w && w.name && !w.disabled && !!w.mcp_enabled)
+        .map(w => w.name);
+      if (preselectParentProjectId) {
+        this.newProject.parent_project_id = preselectParentProjectId;
+      } else if (!this.newProject.parent_project_id && this.projectGroups.length > 0) {
+        this.newProject.parent_project_id = this.projectGroups[0].id;
+      }
+      this.newProject.worker_pool = defaults;
+      if (!this.newProject._guardTouched) this.newProject.guard_enabled = !!this.judgeSettings?.enabled_default;
+      this.showTaskComposer = true;
+    },
+
     deleteProjectGroup(id, title) {
       this.deleteGroupConfirm = { id, title };
       this.showDeleteGroupModal = true;
@@ -118,12 +139,12 @@ window.AxiomModules.projects = {
       }
     },
 
-    async refreshDashboardPage() {
+    async refreshDashboardPage(options = {}) {
       await this.loadProjectGroups();
       await this.loadProjects();
       await this.loadAllProjectDetails(true);
       await this.loadGlobalSkillUsage();
-      this.showToast('仪表盘已刷新');
+      if (!options.silent) this.showToast('仪表盘已刷新');
     },
 
     async loadGlobalSkillUsage() {
@@ -148,7 +169,195 @@ window.AxiomModules.projects = {
     selectedTaskSummary() {
       const tasks = this.projects || [];
       if (!this.selectedTaskManagementId && tasks.length > 0) this.selectedTaskManagementId = tasks[0].id;
-      return tasks.find(task => task.id === this.selectedTaskManagementId) || tasks[0] || null;
+      const selected = tasks.find(task => task.id === this.selectedTaskManagementId) || tasks[0] || null;
+      if (selected && this.taskWorkerPoolEditor.projectId !== selected.id) {
+        this.syncTaskWorkerPoolEditor(selected);
+      }
+      if (selected && !this.taskDiagnostics[selected.id] && !this.taskDiagnosticsLoading[selected.id]) {
+        this.loadTaskDiagnostics(selected.id, true);
+      }
+      return selected;
+    },
+
+    selectedTaskDiagnostics() {
+      const selected = this.selectedTaskSummary();
+      if (!selected) return null;
+      return this.taskDiagnostics[selected.id] || null;
+    },
+
+    async loadTaskDiagnostics(projectId = '', silent = false) {
+      const id = projectId || this.selectedTaskSummary()?.id || '';
+      if (!id) return null;
+      try {
+        this.taskDiagnosticsLoading[id] = true;
+        const data = await this.api('GET', `/projects/${id}/diagnostics`);
+        this.taskDiagnostics = { ...(this.taskDiagnostics || {}), [id]: data };
+        if (!silent) this.showToast('任务诊断已刷新');
+        return data;
+      } catch (e) {
+        if (!silent) this.showToast(e.message || '加载任务诊断失败', 'error');
+        return null;
+      } finally {
+        this.taskDiagnosticsLoading[id] = false;
+      }
+    },
+
+    taskHealthClass(status) {
+      if (status === 'danger') return 'bg-rose-50 text-rose-700 border-rose-100';
+      if (status === 'warning') return 'bg-amber-50 text-amber-700 border-amber-100';
+      return 'bg-emerald-50 text-emerald-700 border-emerald-100';
+    },
+
+    taskHealthLabel(status) {
+      if (status === 'danger') return '异常';
+      if (status === 'warning') return '需关注';
+      return '正常';
+    },
+
+    configEffectiveLabel(diag = null) {
+      const status = diag?.config_status || {};
+      if (!status.configured_version) return '未加载配置版本';
+      if (status.is_current) return `已生效 v${status.applied_version}`;
+      return `待应用：配置 v${status.configured_version} / dispatcher v${status.applied_version || 0}`;
+    },
+
+    workerCapabilityLine(worker) {
+      const phases = (worker.task_types || []).join('/') || '无阶段';
+      const mcp = worker.mcp_enabled ? `MCP ${this.workerVisibleMcpToolCount(worker)} 工具` : 'MCP 关';
+      const model = worker.model || '未配置模型';
+      return `${phases} · ${model} · ${mcp}`;
+    },
+
+    workerVisibleMcpToolCount(worker) {
+      return (worker.mcp_servers || []).reduce((total, server) => total + Number(server.visible_enabled_tool_count || 0), 0);
+    },
+
+    blockerLabel(blocker) {
+      if (!blocker) return '';
+      return `${blocker.label || blocker.code} · ${blocker.count || 0}`;
+    },
+
+    diagnosticPhaseLabel(phase) {
+      const labels = {
+        bootstrap: 'Bootstrap 榜',
+        explore: 'Explore 榜',
+        reason: 'Reason 榜',
+        maintainer: 'Maintainer 榜',
+      };
+      return labels[phase] || phase || '未知阶段';
+    },
+
+    diagnosticPhaseBoard(phase) {
+      const rankings = this.selectedTaskDiagnostics()?.worker_rankings || {};
+      return rankings.boards?.[phase] || { task_type: phase, total: 0, success: 0, failed: 0, timed_out: 0, other: 0, workers: [], reasons: [] };
+    },
+
+    diagnosticCompletionRate(worker) {
+      const rate = Number(worker?.completion_rate || 0) * 100;
+      return `${rate.toFixed(rate === 100 || rate === 0 ? 0 : 1)}%`;
+    },
+
+    diagnosticFailureRate(worker) {
+      const rate = Number(worker?.failure_timeout_rate || 0) * 100;
+      return `${rate.toFixed(rate === 100 || rate === 0 ? 0 : 1)}%`;
+    },
+
+    diagnosticReasonText(reason) {
+      if (!reason) return '无原因';
+      return `${reason.label || reason.code || '未归类'} · ${reason.count || 0}`;
+    },
+
+    diagnosticWorkerTopReasons(worker) {
+      const reasons = (worker?.reasons || []).slice(0, 2).map(reason => this.diagnosticReasonText(reason));
+      return reasons.length ? reasons.join(' / ') : '暂无失败或超时';
+    },
+
+    tokenRankings() {
+      return this.selectedTaskDiagnostics()?.token_rankings || { totals: {}, by_worker: [], by_phase: [] };
+    },
+
+    formatTokenCount(value) {
+      const num = Number(value || 0);
+      if (num >= 1000000) return `${(num / 1000000).toFixed(2)}M`;
+      if (num >= 10000) return `${(num / 1000).toFixed(1)}K`;
+      return `${Math.round(num)}`;
+    },
+
+    tokenWorkerMeta(row) {
+      const phases = (row?.phases || []).map(phase => this.diagnosticPhaseLabel(phase).replace(' 榜', '')).join(' / ');
+      return `${row?.calls || 0} 次调用${phases ? ` · ${phases}` : ''}`;
+    },
+
+    tokenPhaseMeta(row) {
+      return `${row?.calls || 0} 次调用 · ${row?.worker_count || 0} 个 worker`;
+    },
+
+    tokenBreakdownText(row) {
+      return `输入 ${this.formatTokenCount(row?.input_tokens)} · 输出 ${this.formatTokenCount(row?.output_tokens)} · 缓存 ${this.formatTokenCount((row?.cache_read_tokens || 0) + (row?.cache_write_tokens || 0))} · 推理 ${this.formatTokenCount(row?.reasoning_tokens)}`;
+    },
+
+    enabledDispatchWorkers() {
+      return ((this.dispatchSettings && this.dispatchSettings.workers) || [])
+        .filter(worker => worker && worker.name && !worker.disabled);
+    },
+
+    mcpEnabledDispatchWorkers() {
+      return this.enabledDispatchWorkers().filter(worker => !!worker.mcp_enabled);
+    },
+
+    syncTaskWorkerPoolEditor(task = null) {
+      const selected = task || this.selectedTaskSummary();
+      if (!selected) {
+        this.taskWorkerPoolEditor = { projectId: '', worker_pool: [], saving: false };
+        return;
+      }
+      this.taskWorkerPoolEditor = {
+        projectId: selected.id,
+        worker_pool: Array.isArray(selected.worker_pool) ? [...selected.worker_pool] : [],
+        saving: false,
+      };
+    },
+
+    setTaskWorkerPool(mode) {
+      if (mode === 'all') {
+        this.taskWorkerPoolEditor.worker_pool = this.enabledDispatchWorkers().map(worker => worker.name);
+      } else if (mode === 'mcp') {
+        this.taskWorkerPoolEditor.worker_pool = this.mcpEnabledDispatchWorkers().map(worker => worker.name);
+      } else if (mode === 'clear') {
+        this.taskWorkerPoolEditor.worker_pool = [];
+      }
+    },
+
+    taskWorkerPoolChanged(task = null) {
+      const selected = task || this.selectedTaskSummary();
+      if (!selected || this.taskWorkerPoolEditor.projectId !== selected.id) return false;
+      const original = Array.isArray(selected.worker_pool) ? selected.worker_pool : [];
+      const edited = Array.isArray(this.taskWorkerPoolEditor.worker_pool) ? this.taskWorkerPoolEditor.worker_pool : [];
+      return original.join('\u0000') !== edited.join('\u0000');
+    },
+
+    async saveTaskWorkerPool() {
+      const selected = this.selectedTaskSummary();
+      if (!selected || this.taskWorkerPoolEditor.saving) return;
+      try {
+        this.taskWorkerPoolEditor.saving = true;
+        const workerPool = Array.isArray(this.taskWorkerPoolEditor.worker_pool)
+          ? this.taskWorkerPoolEditor.worker_pool
+          : [];
+        const response = await this.api('PUT', `/projects/${selected.id}/worker-pool`, {
+          worker_pool: workerPool,
+        });
+        const idx = this.projects.findIndex(project => project.id === selected.id);
+        if (idx >= 0) this.projects.splice(idx, 1, { ...this.projects[idx], ...response.project });
+        if (this.project?.project?.id === selected.id) this.project.project = response.project;
+        if (this.projectDetailsCache[selected.id]?.project) this.projectDetailsCache[selected.id].project = response.project;
+        this.syncTaskWorkerPoolEditor(response.project);
+        this.showToast(`Worker 配置已保存，已同步 ${response.updated_unclaimed_intents || 0} 个未领取意图`);
+      } catch (e) {
+        this.showToast(e.message || '保存 Worker 配置失败', 'error');
+      } finally {
+        this.taskWorkerPoolEditor.saving = false;
+      }
     },
 
     selectedVulnerability() {
@@ -166,6 +375,178 @@ window.AxiomModules.projects = {
         this.projectDetailsCache[id] = this.project;
         this.loadMaintainerStatus(id);
       } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async loadConversation(projectId = '', options = {}) {
+      const id = projectId || this.selectedProjectId;
+      if (!id) return null;
+      const filter = options.reset ? { thread_type: '' } : (this.conversationFilter || {});
+      if (options.reset) this.conversationFilter = filter;
+      const params = new URLSearchParams();
+      for (const key of ['thread_type']) {
+        if (filter[key]) params.set(key, filter[key]);
+      }
+      try {
+        this.conversationLoading = true;
+        const suffix = params.toString() ? `?${params.toString()}` : '';
+        const data = await this.api('GET', `/projects/${id}/conversation/index${suffix}`);
+        this.conversation = {
+          project_id: data.project_id || id,
+          threads: data.threads || [],
+          items: [],
+          stats: data.stats || { workers: [], intents: [], thread_types: { intent: 0, reason: 0, maintainer: 0 }, timeout_count: 0, thread_count: 0, item_count: 0 },
+          filters: data.filters || {},
+        };
+        this.conversationThreadItems = {};
+        this.conversationThreadLoading = {};
+        if (!this.conversationFilter.thread_type) {
+          const firstProblem = (this.conversation.threads || []).find(t => t.status === 'timeout' || t.status === 'failed');
+          if (firstProblem) {
+            this.expandedConversationThreads[firstProblem.id] = true;
+            this.loadConversationThread(firstProblem.id, { silent: true });
+          }
+        }
+        return this.conversation;
+      } catch (e) {
+        if (!options.silent) this.showToast(e.message || '加载对话失败', 'error');
+        return null;
+      } finally {
+        this.conversationLoading = false;
+      }
+    },
+
+    async applyConversationFilter(patch = {}) {
+      this.conversationFilter = { ...(this.conversationFilter || {}), ...patch };
+      await this.loadConversation(this.selectedProjectId, { silent: true });
+      this.sideTab = 'conversation';
+    },
+
+    clearConversationFilter() {
+      this.conversationFilter = { thread_type: '' };
+      return this.loadConversation(this.selectedProjectId, { silent: true });
+    },
+
+    conversationThreads() {
+      return (this.conversation && this.conversation.threads) || [];
+    },
+
+    conversationItems() {
+      return (this.conversation && this.conversation.items) || [];
+    },
+
+    conversationItemsForThread(threadId) {
+      return this.conversationThreadItems?.[threadId] || this.conversationItems().filter(item => item.thread_id === threadId);
+    },
+
+    conversationItemsForWorker(threadId, workerName) {
+      return this.conversationItemsForThread(threadId).filter(item => (item.worker || 'unknown') === workerName);
+    },
+
+    async toggleConversationThread(threadId) {
+      const willExpand = !this.expandedConversationThreads?.[threadId];
+      this.expandedConversationThreads = {
+        ...(this.expandedConversationThreads || {}),
+        [threadId]: willExpand,
+      };
+      if (willExpand) await this.loadConversationThread(threadId);
+    },
+
+    async loadConversationThread(threadId, options = {}) {
+      const id = this.selectedProjectId;
+      if (!id || !threadId) return null;
+      if (!options.force && this.conversationThreadItems?.[threadId]) return this.conversationThreadItems[threadId];
+      this.conversationThreadLoading = { ...(this.conversationThreadLoading || {}), [threadId]: true };
+      try {
+        const params = new URLSearchParams({ thread_id: threadId, limit: '3000' });
+        const data = await this.api('GET', `/projects/${id}/conversation?${params.toString()}`);
+        const loadedThread = (data.threads || []).find(t => t.id === threadId);
+        if (loadedThread && this.conversation?.threads) {
+          this.conversation.threads = this.conversation.threads.map(t => t.id === threadId ? { ...t, ...loadedThread } : t);
+        }
+        this.conversationThreadItems = { ...(this.conversationThreadItems || {}), [threadId]: data.items || [] };
+        return data.items || [];
+      } catch (e) {
+        if (!options.silent) this.showToast(e.message || '加载对话内容失败', 'error');
+        return null;
+      } finally {
+        this.conversationThreadLoading = { ...(this.conversationThreadLoading || {}), [threadId]: false };
+      }
+    },
+
+    conversationThreadLoadingState(threadId) {
+      return !!this.conversationThreadLoading?.[threadId];
+    },
+
+    conversationThreadExpanded(thread) {
+      if (!thread) return false;
+      return !!this.expandedConversationThreads?.[thread.id];
+    },
+
+    toggleConversationWorker(threadId, workerName) {
+      const key = `${threadId}::${workerName || 'unknown'}`;
+      this.expandedConversationWorkers = {
+        ...(this.expandedConversationWorkers || {}),
+        [key]: !this.expandedConversationWorkers?.[key],
+      };
+    },
+
+    conversationWorkerExpanded(threadId, workerName) {
+      return !!this.expandedConversationWorkers?.[`${threadId}::${workerName || 'unknown'}`];
+    },
+
+    conversationStatusClass(status) {
+      if (status === 'success') return 'bg-emerald-50 text-emerald-700 border-emerald-100';
+      if (status === 'recovered') return 'bg-sky-50 text-sky-700 border-sky-100';
+      if (status === 'timeout') return 'bg-amber-50 text-amber-700 border-amber-100';
+      if (status === 'failed') return 'bg-rose-50 text-rose-700 border-rose-100';
+      if (status === 'running') return 'bg-violet-50 text-violet-700 border-violet-100';
+      if (status === 'pending') return 'bg-slate-50 text-slate-500 border-slate-200';
+      return 'bg-slate-100 text-slate-600 border-slate-200';
+    },
+
+    conversationKindClass(kind) {
+      if (kind === 'thinking') return 'bg-violet-50 text-violet-700 border-violet-100';
+      if (kind === 'assistant') return 'bg-brand-50 text-brand-700 border-brand-100';
+      if (kind === 'tool') return 'bg-slate-50 text-slate-700 border-slate-200';
+      if (kind === 'timeout') return 'bg-amber-50 text-amber-700 border-amber-100';
+      if (kind === 'token') return 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-100';
+      return 'bg-white text-slate-600 border-slate-200';
+    },
+
+    conversationKindLabel(kind) {
+      return ({ thinking: '思考', assistant: '回复', tool: '工具', timeout: '超时', token: 'Token', system: '系统' })[kind] || kind || '事件';
+    },
+
+    conversationStatusLabel(status) {
+      return ({ success: '成功', recovered: '已接替', timeout: '超时', failed: '失败', running: '运行中', cancelled: '取消', pending: '待执行' })[status] || status || '未知';
+    },
+
+    conversationActiveFilterLabel() {
+      const f = this.conversationFilter || {};
+      const parts = [];
+      if (f.thread_type) parts.push(this.conversationThreadTypeLabel(f.thread_type));
+      return parts.join(' · ');
+    },
+
+    conversationThreadTypeLabel(type) {
+      return ({ intent: 'Intent', reason: 'Reason', maintainer: 'Maintainer' })[type] || type || '';
+    },
+
+    conversationItemPreview(item) {
+      const text = item?.content || item?.payload?.stderr || item?.payload?.stdout || '';
+      return String(text || '').slice(0, 600);
+    },
+
+    conversationTokenLabel(item) {
+      const usage = item?.payload?.token_usage || {};
+      const total = usage.total_tokens || usage.totalTokens || usage.total || 0;
+      const reasoning = usage.reasoning_tokens || usage.reasoningTokens || usage.reasoning || 0;
+      if (!total && !reasoning) return '';
+      return `total ${Number(total || 0).toLocaleString()}${reasoning ? ` · reasoning ${Number(reasoning).toLocaleString()}` : ''}`;
+    },
+
+    conversationTimeoutSuggestions(item) {
+      return item?.diagnostic?.suggestions || [];
     },
 
     async createProject() {
@@ -199,8 +580,11 @@ window.AxiomModules.projects = {
           origin: origin,
           goal: this.newProject.depth_mode ? '深度模式' : this.newProject.goal,
           bootstrap_enabled: this.newProject.bootstrap && !this.newProject.depth_mode,
+          kk_report_enabled: !!this.newProject.kk_report_enabled,
           depth_mode: !!this.newProject.depth_mode,
+          guard_enabled: !!this.newProject.guard_enabled,
           blackboard: this.newProject.blackboard || '',
+          worker_pool: Array.isArray(this.newProject.worker_pool) ? this.newProject.worker_pool : [],
         };
         const data = await this.api('POST', '/projects', body);
         const pid = data.project.id;
@@ -226,8 +610,8 @@ window.AxiomModules.projects = {
         this.newProject = {
           parent_project_id: parentProjectId || this.projectGroups[0]?.id || '',
           title:'', origin:'', goal:'',
-          bootstrap: true, depth_mode: false, blackboard: '',
-          depthInputMode: 'har', crawlerTaskId: '',
+          bootstrap: true, kk_report_enabled: false, depth_mode: false, guard_enabled: !!this.judgeSettings?.enabled_default, blackboard: '',
+          depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], _guardTouched: false,
         };
         await this.loadProjectGroups();
         await this.loadProjects();
@@ -238,7 +622,19 @@ window.AxiomModules.projects = {
 
     openCreateIntent() {
       if (!this.canActOnSelectedFacts()) return;
-      this.intentForm = { description:'' };
+      // 预填范围：取当前项目所属项目组的授权范围作为 targets 默认值，
+      // 这样后端按范围策略校验时（白名单/黑名单）能直接通过，避免人工派发被 400 阻断。
+      const gid = this.project?.project?.parent_project_id || '';
+      const group = this.projectGroups.find(g => g.id === gid);
+      const scope = group?.scope || {};
+      const allow = scope.targets || [];
+      const deny = scope.exclude || [];
+      let targetsDefault = '';
+      if (allow.length > 0) targetsDefault = allow.join('\n');
+      this.intentForm = { description: '', targets: targetsDefault };
+      this.intentScopeHint = deny.length > 0
+        ? (allow.length > 0 ? `白名单+黑名单约束：${allow.join(', ')}（排除 ${deny.join(', ')}）` : `黑名单约束（不得包含：${deny.join(', ')}）`)
+        : (allow.length > 0 ? `授权白名单：${allow.join(', ')}` : '无范围限制');
       this.showIntentModal = true;
     },
 
@@ -579,6 +975,7 @@ window.AxiomModules.projects = {
       this.selectedTimelineEntryId = null;
       await this.loadProject(id);
       await this.loadSeeEvents(true);
+      await this.loadConversation(id, { reset: true, silent: true });
       await this.loadDispatchSettings();
       this.view = 'graph';
       this.activePage = 'task-detail';
@@ -596,7 +993,6 @@ window.AxiomModules.projects = {
     },
 
     backToList(fromRoute) {
-      this.closeActionReplay();
       if (this.replay.active) {
         this.stopReplayTimer();
         this.replay.active = false;
@@ -628,9 +1024,6 @@ window.AxiomModules.projects = {
     startPolling() {
       this.pollTimer = setInterval(async () => {
         if (!this.polling) return;
-        if (this.activePage === 'action-replay' && this.actionReplayProjectId) {
-          await Promise.all([this.loadActionReplayEvents(false), this.loadDispatchSettings()]);
-        }
         if (this.selectedProjectId && this.view === 'graph' && this.activePage === 'task-detail') {
           await Promise.all([
             this.loadProject(this.selectedProjectId),
@@ -740,13 +1133,15 @@ window.AxiomModules.projects = {
       } catch(e) { this.credentials = []; }
     },
     openCredAdd() {
-      this.editCredForm = { group_id: '', label: '', auth_type: 'cookie', credentials_json: '{}', domains_text: '', source_task_id: '', expires_at: '', asset_id: '' };
+      this.editCredForm = { group_id: '', label: '', auth_type: 'header', credentials_json: '', domains_text: '', source_task_id: '', expires_at: '', asset_id: '', active: true, captured_at: '' };
       this.showCredAdd = true;
     },
     async addCredential() {
       try {
         const body = { ...this.editCredForm, domains_json: JSON.stringify(this._parseDomainText(this.editCredForm.domains_text)) };
         delete body.domains_text;
+        delete body.captured_at;
+        body.active = body.active ? 1 : 0;
         if (body.asset_id !== '' && body.asset_id !== null && body.asset_id !== undefined) {
           body.asset_id = parseInt(body.asset_id) || null;
         } else {
@@ -758,7 +1153,17 @@ window.AxiomModules.projects = {
     },
     openCredEdit(cred) {
       this.editCredId = cred.id;
-      this.editCredForm = { label: cred.label, auth_type: cred.auth_type, credentials_json: cred.credentials_json, domains_text: this.parseDomains(cred.domains_json).join(', '), expires_at: cred.expires_at || '', asset_id: cred.asset_id || '' };
+      this.editCredForm = {
+        label: cred.label,
+        auth_type: cred.auth_type,
+        credentials_json: this.credToEditText(cred.credentials_json),
+        domains_text: this.parseDomains(cred.domains_json).join(', '),
+        expires_at: cred.expires_at || '',
+        asset_id: cred.asset_id || '',
+        source_task_id: cred.source_task_id || '',
+        active: cred.active === 1,
+        captured_at: cred.captured_at || '',
+      };
       this.showCredEdit = true;
     },
     async saveCredential() {
@@ -766,6 +1171,8 @@ window.AxiomModules.projects = {
       try {
         const body = { ...this.editCredForm, domains_json: JSON.stringify(this._parseDomainText(this.editCredForm.domains_text)) };
         delete body.domains_text;
+        delete body.captured_at;
+        body.active = body.active ? 1 : 0;
         if (body.asset_id !== '' && body.asset_id !== null && body.asset_id !== undefined) {
           body.asset_id = parseInt(body.asset_id) || null;
         } else {
@@ -781,9 +1188,6 @@ window.AxiomModules.projects = {
         await this.api('DELETE', `/credentials/${id}`);
         this.loadCredentials();
       } catch(e) { this.showToast(e.message, 'error'); }
-    },
-    toggleCredActive(cred) {
-      this.api('PUT', `/credentials/${cred.id}`, { active: cred.active !== 1 }).then(() => this.loadCredentials());
     },
     parseDomains(json) {
       try { return JSON.parse(json || '[]'); } catch(e) { return []; }
@@ -851,6 +1255,40 @@ window.AxiomModules.projects = {
         }
         return lines.join('\n');
       } catch(e) { return jsonStr; }
+    },
+    // 凭证类型 → 中文显示名
+    authTypeLabel(type) {
+      const map = {
+        header: '请求头', url: 'URL', body: '请求体',
+        cookie: 'cookie', jwt: 'jwt', bearer: 'bearer',
+        basic: 'basic', custom_header: 'custom', none: 'none',
+      };
+      return map[type] || (type || '—');
+    },
+    // 凭证类型 → 表格徽章配色
+    authTypeBadgeClass(type) {
+      const map = {
+        header: 'bg-sky-50 text-sky-600',
+        url: 'bg-teal-50 text-teal-600',
+        body: 'bg-indigo-50 text-indigo-600',
+        cookie: 'bg-amber-50 text-amber-600',
+        jwt: 'bg-blue-50 text-blue-600',
+        bearer: 'bg-purple-50 text-purple-600',
+        basic: 'bg-slate-100 text-slate-500',
+        custom_header: 'bg-slate-100 text-slate-500',
+        none: 'bg-slate-100 text-slate-400',
+      };
+      return map[type] || 'bg-slate-100 text-slate-500';
+    },
+    // 存储的 credentials_json → 弹窗编辑用自由文本。
+    // 扁平 dict（值均为标量）→ key: value 行；复杂/嵌套 JSON → 保留 pretty JSON 以便原样保存。
+    credToEditText(jsonStr) {
+      try {
+        const obj = JSON.parse(jsonStr);
+        if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) return this.prettyJson(jsonStr);
+        const allFlat = Object.values(obj).every(v => v === null || typeof v !== 'object');
+        return allFlat ? this.credKeyValueFormat(jsonStr) : this.prettyJson(jsonStr);
+      } catch(e) { return jsonStr || ''; }
     },
 
     openEditFact() {
@@ -960,6 +1398,7 @@ window.AxiomModules.projects = {
         this.settingsForm.proxy_url = s.proxy_url || '';
         this.settingsForm.proxy_enabled = !!s.proxy_enabled;
         await this.loadDispatchSettings();
+        await this.loadJudgeSettings();
       } catch(e) { console.error(e); }
     },
   }
