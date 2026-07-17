@@ -180,6 +180,23 @@ def reason_commit() -> None:
 
 
 @main.group()
+def task() -> None:
+    """Task-level Reason decisions."""
+
+
+@task.command("complete")
+@click.option("--description", required=True)
+def task_complete(description: str) -> None:
+    _emit(
+        _request(
+            "POST",
+            f"/api/v1/internal/tasks/{_task_id()}/complete",
+            {"description": description},
+        )
+    )
+
+
+@main.group()
 def credential() -> None:
     """Read Project credentials for Explore."""
 

@@ -19,7 +19,7 @@ function guardMode(): string | undefined {
 }
 
 function baseUrl(): string {
-  return (process.env.AXIOM_GUARD_SERVER_URL || process.env.AXIOM_SERVER_URL || "http://127.0.0.1:8888").replace(/\/$/, "");
+  return (process.env.AXIOM_GUARD_SERVER_URL || process.env.AXIOM_SERVER || process.env.AXIOM_SERVER_URL || "http://127.0.0.1:8888").replace(/\/$/, "");
 }
 
 function timeoutMs(): number {
@@ -31,9 +31,13 @@ async function postDecision(payload: Record<string, unknown>): Promise<GuardDeci
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs());
   try {
-    const response = await fetch(`${baseUrl()}/tool-hooks/pre`, {
+    const token = (process.env.AXIOM_SERVICE_TOKEN || "").trim();
+    const response = await fetch(`${baseUrl()}/api/v1/internal/guard/pre`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
@@ -56,11 +60,11 @@ export function createAxiomGuard() {
     pi.on("tool_call", async (event, ctx) => {
       const mode = guardMode();
       const guardEnabled = truthy(process.env.AXIOM_GUARD_ENABLED);
-      const taskScopeEnabled = truthy(process.env.AXIOM_TASK_SCOPE_ENABLED);
-      if ((!guardEnabled && !taskScopeEnabled) || (mode === "off" && !taskScopeEnabled)) return;
+      if (!guardEnabled || mode === "off") return;
 
       const payload: Record<string, unknown> = {
         project_id: process.env.AXIOM_PROJECT_ID || process.env.PROJECT_ID || "",
+        task_id: process.env.AXIOM_TASK_ID || "",
         intent_id: process.env.AXIOM_INTENT_ID || "",
         phase: process.env.AXIOM_GUARD_PHASE || process.env.AXIOM_PHASE || "",
         worker: process.env.AXIOM_WORKER || "",
@@ -69,19 +73,9 @@ export function createAxiomGuard() {
         input: event.input,
         cwd: ctx.cwd,
       };
-      // Scope enforcement is deterministic and must remain active even when
-      // the optional judge is disabled for this project.  Tell the backend to
-      // skip model/hard-rule evaluation in that case.
       if (guardEnabled && mode) payload.mode = mode;
-      if (!guardEnabled) payload.mode = "off";
 
       const decision = await postDecision(payload);
-      if (!decision && taskScopeEnabled) {
-        return {
-          block: true,
-          reason: "任务级 Scope 校验不可用，已按 fail-closed 阻止工具调用",
-        };
-      }
       if (decision?.decision === "BLOCK") {
         return {
           block: true,

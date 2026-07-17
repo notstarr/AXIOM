@@ -87,6 +87,21 @@ def dispatch(config_path: Path, once: bool, startup_healthcheck_only: bool, log_
         raise click.ClickException(str(exc)) from exc
 
 
+@main.command("dispatch-v2")
+@click.option("--server", default="http://127.0.0.1:8889", show_default=True)
+@click.option("--service-token", default=lambda: os.getenv("AXIOM_SERVICE_TOKEN", ""))
+@click.option("--once", is_flag=True)
+@click.option("--log-level", default="INFO", show_default=True)
+def dispatch_v2(server: str, service_token: str, once: bool, log_level: str):
+    """Run the database-backed V2 reconciliation dispatcher."""
+    from axiom.dispatcher.v2.loop import V2DispatcherLoop
+
+    configure_logging(log_level)
+    if not service_token.strip():
+        raise click.ClickException("AXIOM Service Token is not configured")
+    V2DispatcherLoop(server=server, service_token=service_token).run(once=once)
+
+
 @main.command("crawler-supervisor")
 @click.option("--project-id", required=True, help="Crawler project group id")
 @click.option(

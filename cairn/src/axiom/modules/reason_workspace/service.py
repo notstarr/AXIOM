@@ -52,6 +52,26 @@ class ReasonWorkspaceService:
                 now=utcnow(),
             )
 
+    def get(self, workspace_id: str) -> ReasonWorkspace:
+        with self.engine.connect() as conn:
+            workspace = self.repository.get(conn, workspace_id)
+        if workspace is None:
+            raise ValueError(f"Reason Workspace not found: {workspace_id}")
+        return workspace
+
+    def abandon(self, workspace_id: str, *, worker: str, failure_reason: str) -> ReasonWorkspace:
+        with self.engine.begin() as conn:
+            workspace = self._require_open(conn, workspace_id)
+            if workspace.worker != worker:
+                raise ValueError(f"Reason Workspace is owned by {workspace.worker}")
+            reason = failure_reason.strip() or "Reason execution failed"
+            return self.repository.abandon(
+                conn,
+                workspace_id,
+                failure_reason=reason,
+                now=utcnow(),
+            )
+
     def add_todo(self, workspace_id: str, todo: DraftTodo) -> ReasonWorkspace:
         with self.engine.begin() as conn:
             workspace = self._require_open(conn, workspace_id)

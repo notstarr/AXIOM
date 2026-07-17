@@ -33,6 +33,11 @@ class OpenWorkspaceRequest(BaseModel):
         return text
 
 
+class AbandonWorkspaceRequest(BaseModel):
+    worker: str
+    failure_reason: str
+
+
 def get_workspace_service(engine=Depends(get_v2_engine)) -> ReasonWorkspaceService:
     return ReasonWorkspaceService(engine)
 
@@ -55,6 +60,33 @@ def open_workspace(
 ) -> ReasonWorkspace:
     try:
         return service.open(task_id, worker=body.worker, context_revision=body.context_revision)
+    except ValueError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get("/reason-workspaces/{workspace_id}", response_model=ReasonWorkspace)
+def get_workspace(
+    workspace_id: str,
+    service: ReasonWorkspaceService = Depends(get_workspace_service),
+) -> ReasonWorkspace:
+    try:
+        return service.get(workspace_id)
+    except ValueError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post("/reason-workspaces/{workspace_id}/abandon", response_model=ReasonWorkspace)
+def abandon_workspace(
+    workspace_id: str,
+    body: AbandonWorkspaceRequest,
+    service: ReasonWorkspaceService = Depends(get_workspace_service),
+) -> ReasonWorkspace:
+    try:
+        return service.abandon(
+            workspace_id,
+            worker=body.worker,
+            failure_reason=body.failure_reason,
+        )
     except ValueError as exc:
         raise _http_error(exc) from exc
 

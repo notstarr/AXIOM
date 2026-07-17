@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from axiom.api.v1.dependencies import get_v2_engine, require_service_token
 from axiom.dispatcher.v2.schemas import DispatcherSnapshot
+from axiom.dispatcher.v2.recovery import LeaseRecoveryService, RecoveryResult
 from axiom.dispatcher.v2.snapshot import DispatcherSnapshotService
 from axiom.modules.settings.schemas import RuntimeConfig, RuntimeSettings
 from axiom.modules.settings.service import RuntimeSettingsService
@@ -17,6 +19,15 @@ internal = APIRouter(
     tags=["v1-internal-dispatcher"],
     dependencies=[Depends(require_service_token)],
 )
+
+
+class WorkerCooldownCommand(BaseModel):
+    failure_kind: str = ""
+    cooldown_until: str | None = None
+
+
+class RecoverLeasesCommand(BaseModel):
+    timeout_seconds: int
 
 
 @router.get("/settings/runtime", response_model=RuntimeSettings)
@@ -43,3 +54,21 @@ def upsert_worker(worker_name: str, body: UpsertWorker, engine=Depends(get_v2_en
 @internal.get("/snapshot", response_model=DispatcherSnapshot)
 def dispatcher_snapshot(engine=Depends(get_v2_engine)):
     return DispatcherSnapshotService(engine).build()
+
+
+@internal.post("/workers/{worker_name}/cooldown", response_model=Worker)
+def set_worker_cooldown(
+    worker_name: str,
+    body: WorkerCooldownCommand,
+    engine=Depends(get_v2_engine),
+):
+    return WorkerService(engine).set_cooldown(
+        worker_name,
+        failure_kind=body.failure_kind,
+        cooldown_until=body.cooldown_until,
+    )
+
+
+@internal.post("/recover-stale-leases", response_model=RecoveryResult)
+def recover_stale_leases(body: RecoverLeasesCommand, engine=Depends(get_v2_engine)):
+    return LeaseRecoveryService(engine).recover(timeout_seconds=max(1, body.timeout_seconds))

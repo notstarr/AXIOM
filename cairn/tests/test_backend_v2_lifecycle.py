@@ -6,7 +6,8 @@ from fastapi.testclient import TestClient
 
 from axiom.api.v1.router import router
 from axiom.infrastructure.database.engine import create_sqlite_engine
-from axiom.infrastructure.database.metadata import metadata
+from axiom.infrastructure.database.metadata import artifacts, metadata
+from axiom.modules.common.time import utcnow
 from axiom.modules.graph.service import IntentService
 from axiom.modules.projects.schemas import CreateProject
 from axiom.modules.projects.service import ProjectService
@@ -23,6 +24,31 @@ def make_domain(tmp_path):
         CreateTask(project_id=project.id, title="Task", origin="example.com", goal="finish")
     )
     return engine, task
+
+
+def register_bootstrap_artifacts(engine, task_id: str) -> None:
+    now = utcnow()
+    with engine.begin() as conn:
+        conn.execute(
+            artifacts.insert(),
+            [
+                {
+                    "id": f"a{index:03d}",
+                    "task_id": task_id,
+                    "intent_id": "i001",
+                    "artifact_type": artifact_type,
+                    "path": f"/tmp/{task_id}-{artifact_type}.md",
+                    "summary": artifact_type,
+                    "content_hash": str(index) * 64,
+                    "size": 1,
+                    "created_by": "test",
+                    "created_at": now,
+                }
+                for index, artifact_type in enumerate(
+                    ["asset_inventory", "initial_leads", "findings"], start=1
+                )
+            ],
+        )
 
 
 def test_intent_claim_heartbeat_release_and_conclude(tmp_path) -> None:
@@ -45,6 +71,9 @@ def test_intent_claim_heartbeat_release_and_conclude(tmp_path) -> None:
     assert released.retry_count == 1
 
     service.claim(task.id, "i001", worker="worker-b")
+    with pytest.raises(ValueError, match="required artifacts"):
+        service.conclude(task.id, "i001", worker="worker-b", description="not ready")
+    register_bootstrap_artifacts(engine, task.id)
     result = service.conclude(
         task.id,
         "i001",
@@ -103,6 +132,7 @@ def test_internal_lifecycle_api_requires_token_and_runs_commands(tmp_path) -> No
         claimed = client.post(path, json={"worker": "worker-a"}, headers=headers)
         assert claimed.status_code == 200
         assert claimed.json()["status"] == "claimed"
+        register_bootstrap_artifacts(engine, task.id)
         concluded = client.post(
             f"/api/v1/internal/tasks/{task.id}/intents/i001/conclude",
             json={"worker": "worker-a", "description": "bootstrap done"},

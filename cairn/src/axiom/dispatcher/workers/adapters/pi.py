@@ -629,6 +629,17 @@ def _has_skill_files(skill_dir: str) -> bool:
 
 def _load_enabled_pi_tools(worker: WorkerConfig | None = None) -> tuple[str, ...]:
     mcp_enabled = bool(worker and _is_truthy(worker.env.get("PI_MCP_ENABLED", "")))
+    if worker and _is_truthy(worker.env.get("AXIOM_V2", "")):
+        raw = worker.env.get("AXIOM_PI_TOOLS_JSON", "")
+        try:
+            configured = json.loads(raw) if raw else list(DEFAULT_PI_TOOLS)
+        except json.JSONDecodeError:
+            configured = list(DEFAULT_PI_TOOLS)
+        names = tuple(str(item) for item in configured if str(item).strip())
+        normalized = [name for name in names if name != MCP_TOOL_NAME]
+        if mcp_enabled:
+            normalized.append(MCP_TOOL_NAME)
+        return tuple(dict.fromkeys(normalized))
     db_path = current_db_path()
     names: tuple[str, ...] = ()
     if not db_path.exists():
@@ -812,6 +823,9 @@ def _guard_enabled_for_phase(worker: WorkerConfig, phase: str) -> bool:
     normalized = _normalize_skill_phase(phase or "")
     if normalized not in {"bootstrap", "explore"}:
         return False
+    # Keep loading the extension for legacy scoped workers until the legacy
+    # dispatcher is removed. V2 always sets AXIOM_TASK_SCOPE_ENABLED=0, so
+    # Scope never becomes a network guard in the new runtime.
     return _is_truthy(worker.env.get("AXIOM_GUARD_ENABLED", "")) or _is_truthy(
         worker.env.get("AXIOM_TASK_SCOPE_ENABLED", "")
     )

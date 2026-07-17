@@ -68,6 +68,25 @@ class ReasonWorkspaceRepository:
         )
         return self.get(conn, workspace_id)  # type: ignore[return-value]
 
+    def abandon(
+        self,
+        conn: Connection,
+        workspace_id: str,
+        *,
+        failure_reason: str,
+        now: str,
+    ) -> ReasonWorkspace:
+        conn.execute(
+            update(reason_workspaces)
+            .where(reason_workspaces.c.id == workspace_id)
+            .values(
+                status="abandoned",
+                failure_reason=failure_reason,
+                updated_at=now,
+            )
+        )
+        return self.get(conn, workspace_id)  # type: ignore[return-value]
+
     @staticmethod
     def _to_model(row) -> ReasonWorkspace:
         return ReasonWorkspace(

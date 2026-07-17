@@ -70,12 +70,14 @@ class DispatcherSnapshotService:
             worker_snapshots = [
                 WorkerSnapshot(
                     name=row["name"],
+                    worker_type=row["worker_type"],
                     capabilities=json.loads(row["capabilities_json"]),
                     max_running=row["max_running"],
                     running=running_by_worker[row["name"]],
                     priority=row["priority"],
                     disabled=bool(row["disabled"]),
                     cooldown_until=row["cooldown_until"],
+                    config=json.loads(row["config_json"] or "{}"),
                 )
                 for row in worker_rows
             ]

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -34,12 +34,14 @@ class DispatchAction(BaseModel):
 
 class WorkerSnapshot(BaseModel):
     name: str
+    worker_type: str = "pi"
     capabilities: list[Literal["bootstrap", "reason", "explore"]]
     max_running: int
     running: int
     priority: int
     disabled: bool = False
     cooldown_until: str | None = None
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class DispatcherSnapshot(BaseModel):

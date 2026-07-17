@@ -4,7 +4,7 @@ import json
 
 from sqlalchemy import Engine, select, update
 
-from axiom.infrastructure.database.metadata import facts, intent_sources, intents, tasks
+from axiom.infrastructure.database.metadata import artifacts, facts, intent_sources, intents, tasks
 from axiom.modules.common.ids import allocate_readable_id
 from axiom.modules.common.time import utcnow
 from axiom.modules.graph.schemas import ConcludeResult, Fact, Intent
@@ -12,6 +12,10 @@ from axiom.modules.tasks.repository import TaskRepository
 
 
 ACTIVE_INTENT_STATUSES = {"claimed", "running", "concluding"}
+REQUIRED_ARTIFACTS = {
+    "bootstrap": {"asset_inventory", "initial_leads", "findings"},
+    "explore": {"findings", "leads"},
+}
 
 
 class IntentService:
@@ -110,6 +114,21 @@ class IntentService:
             self._require_running_task(conn, task_id)
             intent = self._require_intent(conn, task_id, intent_id)
             self._require_owner(intent, worker)
+            phase = "bootstrap" if intent_id == "i001" else "explore"
+            artifact_types = set(
+                conn.execute(
+                    select(artifacts.c.artifact_type).where(
+                        artifacts.c.task_id == task_id,
+                        artifacts.c.intent_id == intent_id,
+                        artifacts.c.archived.is_(False),
+                    )
+                ).scalars()
+            )
+            missing = sorted(REQUIRED_ARTIFACTS[phase] - artifact_types)
+            if missing:
+                raise ValueError(
+                    f"Intent cannot conclude before required artifacts are registered: {', '.join(missing)}"
+                )
             fact_id = allocate_readable_id(
                 conn, scope=task_id, kind="fact", prefix="f"
             )
@@ -146,6 +165,33 @@ class IntentService:
                 ),
                 intent=self._require_intent(conn, task_id, intent_id),
             )
+
+    def needs_replan(self, task_id: str, intent_id: str, *, reason: str) -> Intent:
+        reason = reason.strip() or "retry budget exhausted"
+        with self.engine.begin() as conn:
+            self._require_running_task(conn, task_id)
+            intent = self._require_intent(conn, task_id, intent_id)
+            if intent.status != "pending":
+                raise ValueError(f"Intent cannot be marked for replan: {intent.status}")
+            now = utcnow()
+            conn.execute(
+                update(intents)
+                .where(intents.c.task_id == task_id, intents.c.id == intent_id)
+                .values(
+                    status="failed",
+                    worker=None,
+                    last_heartbeat_at=None,
+                    next_retry_at=None,
+                    last_failure_kind="retry_exhausted",
+                    concluded_at=now,
+                )
+            )
+            conn.execute(
+                update(tasks)
+                .where(tasks.c.id == task_id)
+                .values(phase="reason", updated_at=now)
+            )
+            return self._require_intent(conn, task_id, intent_id)
 
     def _require_running_task(self, conn, task_id: str):
         task = self.tasks.get(conn, task_id)

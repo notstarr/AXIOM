@@ -43,6 +43,10 @@ class CompleteTaskCommand(BaseModel):
     description: str
 
 
+class NeedsReplanCommand(BaseModel):
+    reason: str = "retry budget exhausted"
+
+
 def intent_service(engine=Depends(get_v2_engine)) -> IntentService:
     return IntentService(engine)
 
@@ -100,6 +104,19 @@ def conclude_intent(task_id: str, intent_id: str, body: ConcludeIntentCommand, s
             worker=body.worker,
             description=body.description,
         )
+    except ValueError as exc:
+        _raise(exc)
+
+
+@internal.post("/tasks/{task_id}/intents/{intent_id}/needs-replan", response_model=Intent)
+def needs_replan(
+    task_id: str,
+    intent_id: str,
+    body: NeedsReplanCommand,
+    service=Depends(intent_service),
+):
+    try:
+        return service.needs_replan(task_id, intent_id, reason=body.reason)
     except ValueError as exc:
         _raise(exc)
 
