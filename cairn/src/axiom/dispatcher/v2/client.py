@@ -44,6 +44,12 @@ class V2Client:
             {"timeout_seconds": timeout_seconds},
         )
 
+    def retry_failed_external_reports(self, limit: int = 1) -> list[dict[str, Any]]:
+        return self._request(
+            "POST",
+            f"/internal/external-report-attempts/retry-failed?limit={limit}",
+        )
+
     def runtime_settings(self) -> RuntimeSettings:
         return RuntimeSettings.model_validate(self._request("GET", "/settings/runtime", internal=False))
 
@@ -195,6 +201,7 @@ class V2Client:
         if session is not None:
             return session
         session = requests.Session()
+        session.trust_env = False
         adapter = HTTPAdapter(pool_connections=32, pool_maxsize=32, pool_block=False)
         session.mount("http://", adapter)
         session.mount("https://", adapter)

@@ -6,6 +6,8 @@ from sqlalchemy import Engine, select, update
 
 from axiom.infrastructure.database.metadata import artifacts, facts, intent_sources, intents, tasks
 from axiom.modules.common.ids import allocate_readable_id
+from axiom.modules.audit.schemas import RecordAuditEvent
+from axiom.modules.audit.service import AuditService
 from axiom.modules.common.time import utcnow
 from axiom.modules.graph.schemas import ConcludeResult, Fact, Intent
 from axiom.modules.tasks.repository import TaskRepository
@@ -22,6 +24,7 @@ class IntentService:
     def __init__(self, engine: Engine):
         self.engine = engine
         self.tasks = TaskRepository()
+        self.audit = AuditService(engine)
 
     def get(self, task_id: str, intent_id: str) -> Intent:
         with self.engine.connect() as conn:
@@ -40,7 +43,7 @@ class IntentService:
         worker = self._worker(worker)
         now = utcnow()
         with self.engine.begin() as conn:
-            self._require_running_task(conn, task_id)
+            task = self._require_running_task(conn, task_id)
             intent = self._require_intent(conn, task_id, intent_id)
             if intent.status in ACTIVE_INTENT_STATUSES:
                 if intent.worker != worker:
@@ -52,6 +55,17 @@ class IntentService:
                 update(intents)
                 .where(intents.c.task_id == task_id, intents.c.id == intent_id)
                 .values(status="claimed", worker=worker, last_heartbeat_at=now)
+            )
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=task.project_id,
+                    task_id=task_id,
+                    intent_id=intent_id,
+                    worker=worker,
+                    event_type="intent.claimed",
+                    message=f"Intent {intent_id} claimed by {worker}",
+                ),
             )
             return self._require_intent(conn, task_id, intent_id)
 
@@ -81,6 +95,7 @@ class IntentService:
         with self.engine.begin() as conn:
             intent = self._require_intent(conn, task_id, intent_id)
             self._require_owner(intent, worker)
+            task = self.tasks.get(conn, task_id)
             values = {
                 "status": "pending",
                 "worker": None,
@@ -94,6 +109,19 @@ class IntentService:
                 update(intents)
                 .where(intents.c.task_id == task_id, intents.c.id == intent_id)
                 .values(**values)
+            )
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=task.project_id if task else None,
+                    task_id=task_id,
+                    intent_id=intent_id,
+                    worker=worker,
+                    event_type="intent.released",
+                    level="warning" if failure_kind else "info",
+                    message=f"Intent {intent_id} released",
+                    payload={"failure_kind": failure_kind, "next_retry_at": next_retry_at},
+                ),
             )
             return self._require_intent(conn, task_id, intent_id)
 
@@ -111,7 +139,7 @@ class IntentService:
             raise ValueError("description must not be empty")
         now = utcnow()
         with self.engine.begin() as conn:
-            self._require_running_task(conn, task_id)
+            task = self._require_running_task(conn, task_id)
             intent = self._require_intent(conn, task_id, intent_id)
             self._require_owner(intent, worker)
             phase = "bootstrap" if intent_id == "i001" else "explore"
@@ -156,6 +184,18 @@ class IntentService:
                 .where(tasks.c.id == task_id)
                 .values(phase="reason", updated_at=now)
             )
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=task.project_id,
+                    task_id=task_id,
+                    intent_id=intent_id,
+                    worker=worker,
+                    event_type="intent.completed",
+                    message=f"Intent {intent_id} concluded into {fact_id}",
+                    payload={"fact_id": fact_id},
+                ),
+            )
             return ConcludeResult(
                 fact=Fact(
                     id=fact_id,
@@ -169,7 +209,7 @@ class IntentService:
     def needs_replan(self, task_id: str, intent_id: str, *, reason: str) -> Intent:
         reason = reason.strip() or "retry budget exhausted"
         with self.engine.begin() as conn:
-            self._require_running_task(conn, task_id)
+            task = self._require_running_task(conn, task_id)
             intent = self._require_intent(conn, task_id, intent_id)
             if intent.status != "pending":
                 raise ValueError(f"Intent cannot be marked for replan: {intent.status}")
@@ -190,6 +230,18 @@ class IntentService:
                 update(tasks)
                 .where(tasks.c.id == task_id)
                 .values(phase="reason", updated_at=now)
+            )
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=task.project_id,
+                    task_id=task_id,
+                    intent_id=intent_id,
+                    event_type="intent.retry_exhausted",
+                    level="warning",
+                    message=f"Intent {intent_id} requires replanning",
+                    payload={"reason": reason},
+                ),
             )
             return self._require_intent(conn, task_id, intent_id)
 

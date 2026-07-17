@@ -34,9 +34,15 @@ def report_vulnerability(
     task_id: str,
     body: ReportVulnerability,
     service: VulnerabilityService = Depends(get_service),
+    external: ExternalReportService = Depends(get_external_service),
 ) -> Vulnerability:
     try:
-        return service.report(task_id, body)
+        vulnerability = service.report(task_id, body)
+        with external.engine.connect() as conn:
+            task = external.tasks.get(conn, task_id)
+        if task and task.external_report_enabled:
+            external.report(task_id, vulnerability.id)
+        return vulnerability
     except ValueError as exc:
         detail = str(exc)
         raise HTTPException(404 if "not found:" in detail.lower() else 409, detail) from exc
@@ -51,9 +57,15 @@ def report_vulnerability_from_ui(
     task_id: str,
     body: ReportVulnerability,
     service: VulnerabilityService = Depends(get_service),
+    external: ExternalReportService = Depends(get_external_service),
 ) -> Vulnerability:
     try:
-        return service.report(task_id, body)
+        vulnerability = service.report(task_id, body)
+        with external.engine.connect() as conn:
+            task = external.tasks.get(conn, task_id)
+        if task and task.external_report_enabled:
+            external.report(task_id, vulnerability.id)
+        return vulnerability
     except ValueError as exc:
         detail = str(exc)
         raise HTTPException(404 if "not found:" in detail.lower() else 409, detail) from exc
@@ -121,3 +133,15 @@ def retry_external_report(
         return service.retry(attempt_id)
     except ValueError as exc:
         raise HTTPException(404 if "not found:" in str(exc).lower() else 409, str(exc)) from exc
+
+
+@router.post(
+    "/internal/external-report-attempts/retry-failed",
+    response_model=list[ExternalReportAttempt],
+    dependencies=[Depends(require_service_token)],
+)
+def retry_failed_external_reports(
+    limit: int = 1,
+    service: ExternalReportService = Depends(get_external_service),
+) -> list[ExternalReportAttempt]:
+    return service.retry_failed(limit=limit)

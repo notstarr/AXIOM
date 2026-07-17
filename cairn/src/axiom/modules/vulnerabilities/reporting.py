@@ -209,6 +209,20 @@ class ExternalReportService:
             ).mappings()
             return [self._model(row) for row in rows]
 
+    def retry_failed(self, *, limit: int = 1) -> list[ExternalReportAttempt]:
+        max_attempts = RuntimeSettingsService(self.engine).get().config.external_report_max_attempts
+        with self.engine.connect() as conn:
+            ids = conn.execute(
+                select(external_report_attempts.c.id)
+                .where(
+                    external_report_attempts.c.status == "failed",
+                    external_report_attempts.c.attempt_count < max_attempts,
+                )
+                .order_by(external_report_attempts.c.updated_at, external_report_attempts.c.id)
+                .limit(max(1, min(limit, 20)))
+            ).scalars().all()
+        return [self.retry(attempt_id) for attempt_id in ids]
+
     def _load(self, task_id: str, vulnerability_id: str):
         with self.engine.connect() as conn:
             task = self.tasks.get(conn, task_id)

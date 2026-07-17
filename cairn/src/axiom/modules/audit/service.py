@@ -15,6 +15,10 @@ class AuditService:
         self.engine = engine
 
     def record(self, body: RecordAuditEvent) -> AuditEvent:
+        with self.engine.begin() as conn:
+            return self.record_in(conn, body)
+
+    def record_in(self, conn, body: RecordAuditEvent) -> AuditEvent:
         values = {
             "id": f"evt_{uuid.uuid4().hex}",
             "project_id": body.project_id,
@@ -28,8 +32,7 @@ class AuditService:
             "payload_json": json.dumps(body.payload, ensure_ascii=False),
             "created_at": utcnow(),
         }
-        with self.engine.begin() as conn:
-            conn.execute(audit_events.insert().values(**values))
+        conn.execute(audit_events.insert().values(**values))
         return self._model(values)
 
     def list(

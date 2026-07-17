@@ -57,6 +57,14 @@ class LeaseHeartbeat:
 class PhaseRunners:
     def __init__(self, client: V2Client):
         self.client = client
+        self._process_lock = threading.Lock()
+        self._processes: set[ManagedProcess] = set()
+
+    def cancel_all(self, reason: str = "dispatcher shutdown") -> None:
+        with self._process_lock:
+            processes = list(self._processes)
+        for process in processes:
+            process.cancel(reason)
 
     def run(
         self,
@@ -288,12 +296,14 @@ class PhaseRunners:
         prepared_session = driver.prepare_session()
         command = driver.build_execute(worker, prompt, prepared_session, phase=phase)
         process = ManagedProcess(command.argv, worker.env)
-        process.start()
-        lease.attach(process)
+        self._track(process)
         try:
+            process.start()
+            lease.attach(process)
             result = process.communicate(timeout=timeout)
         finally:
             lease.attach(None)
+            self._untrack(process)
         session = driver.extract_session(command.session, result.stdout, result.stderr)
         response = driver.extract_response_text(result.stdout, result.stderr)
         return result, session, response
@@ -311,12 +321,14 @@ class PhaseRunners:
         driver = get_driver(worker.type)
         command = driver.build_conclude(worker, prompt, session, phase=phase)
         process = ManagedProcess(command, worker.env)
-        process.start()
-        lease.attach(process)
+        self._track(process)
         try:
+            process.start()
+            lease.attach(process)
             result = process.communicate(timeout=timeout)
         finally:
             lease.attach(None)
+            self._untrack(process)
         return result, driver.extract_response_text(result.stdout, result.stderr)
 
     def _release_intent(
@@ -373,6 +385,14 @@ class PhaseRunners:
             )
         except Exception:
             LOG.exception("failed to write audit event type=%s", event_type)
+
+    def _track(self, process: ManagedProcess) -> None:
+        with self._process_lock:
+            self._processes.add(process)
+
+    def _untrack(self, process: ManagedProcess) -> None:
+        with self._process_lock:
+            self._processes.discard(process)
 
     def _phase_env(
         self,

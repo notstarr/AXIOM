@@ -30,6 +30,9 @@ class FakeClient:
     def recover_stale_leases(self, timeout_seconds):
         return {"intents_released": 0, "reasons_released": 0}
 
+    def retry_failed_external_reports(self, limit=1):
+        return []
+
     def close(self):
         self.closed = True
 

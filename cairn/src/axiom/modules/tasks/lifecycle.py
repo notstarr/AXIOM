@@ -3,6 +3,8 @@ from __future__ import annotations
 from sqlalchemy import Engine, select, update
 
 from axiom.infrastructure.database.metadata import intents, tasks
+from axiom.modules.audit.schemas import RecordAuditEvent
+from axiom.modules.audit.service import AuditService
 from axiom.modules.common.time import utcnow
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.tasks.schemas import Task
@@ -12,6 +14,7 @@ class TaskLifecycleService:
     def __init__(self, engine: Engine):
         self.engine = engine
         self.repository = TaskRepository()
+        self.audit = AuditService(engine)
 
     def claim_reason(self, task_id: str, *, worker: str) -> Task:
         worker = self._worker(worker)
@@ -25,6 +28,7 @@ class TaskLifecycleService:
                 .where(tasks.c.id == task_id)
                 .values(reason_worker=worker, reason_heartbeat_at=now, phase="reason", updated_at=now)
             )
+            self.audit.record_in(conn, RecordAuditEvent(project_id=task.project_id, task_id=task_id, worker=worker, event_type="reason.claimed", message=f"Reason claimed by {worker}"))
             return self.repository.get(conn, task_id)  # type: ignore[return-value]
 
     def heartbeat_reason(self, task_id: str, *, worker: str) -> Task:
@@ -51,6 +55,7 @@ class TaskLifecycleService:
                 .where(tasks.c.id == task_id)
                 .values(reason_worker=None, reason_heartbeat_at=None, updated_at=utcnow())
             )
+            self.audit.record_in(conn, RecordAuditEvent(project_id=task.project_id, task_id=task_id, worker=worker, event_type="reason.released", message=f"Reason released by {worker}"))
             return self.repository.get(conn, task_id)  # type: ignore[return-value]
 
     def stop(self, task_id: str) -> Task:
@@ -82,6 +87,7 @@ class TaskLifecycleService:
                     updated_at=now,
                 )
             )
+            self.audit.record_in(conn, RecordAuditEvent(project_id=task.project_id, task_id=task_id, event_type="task.stopped", message="Task stopped"))
             return self.repository.get(conn, task_id)  # type: ignore[return-value]
 
     def resume(self, task_id: str) -> Task:
@@ -103,6 +109,7 @@ class TaskLifecycleService:
                 .where(tasks.c.id == task_id)
                 .values(status="running", phase=phase, updated_at=now)
             )
+            self.audit.record_in(conn, RecordAuditEvent(project_id=task.project_id, task_id=task_id, event_type="task.resumed", message=f"Task resumed at {phase}"))
             return self.repository.get(conn, task_id)  # type: ignore[return-value]
 
     def complete(self, task_id: str, *, description: str) -> Task:
@@ -131,6 +138,7 @@ class TaskLifecycleService:
                     updated_at=now,
                 )
             )
+            self.audit.record_in(conn, RecordAuditEvent(project_id=task.project_id, task_id=task_id, event_type="task.completed", message="Task Goal achieved", payload={"description": description}))
             return self.repository.get(conn, task_id)  # type: ignore[return-value]
 
     def _writable_running(self, conn, task_id: str) -> Task:

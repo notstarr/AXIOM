@@ -1,4 +1,5 @@
 import os
+import signal
 from pathlib import Path
 
 import click
@@ -130,7 +131,19 @@ def dispatch(server: str, service_token: str, once: bool, log_level: str):
     configure_logging(log_level)
     if not service_token.strip():
         raise click.ClickException("AXIOM Service Token is not configured")
-    V2DispatcherLoop(server=server, service_token=service_token).run(once=once)
+    loop = V2DispatcherLoop(server=server, service_token=service_token)
+    previous_handlers = {}
+
+    def stop_dispatcher(_signum, _frame):
+        loop.stop()
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        previous_handlers[signum] = signal.signal(signum, stop_dispatcher)
+    try:
+        loop.run(once=once)
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
 
 
 @main.command("migrate-v2")

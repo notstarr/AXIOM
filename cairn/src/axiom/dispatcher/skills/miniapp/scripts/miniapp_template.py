@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Any
 from urllib.parse import urlparse
@@ -30,18 +31,30 @@ def redact_value(key: str, value: Any) -> Any:
     return value
 
 
-def load_credentials(server: str, group_id: str | None, cred_id: str | None) -> list[dict]:
+def load_credentials(server: str, project_id: str | None, cred_id: str | None) -> list[dict]:
+    token = os.getenv("AXIOM_SERVICE_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     if cred_id:
-        url = server.rstrip("/") + "/credentials/" + cred_id
-        resp = requests.get(url, timeout=10)
+        url = server.rstrip("/") + "/api/v1/internal/credentials/" + cred_id
+        resp = requests.get(url, headers=headers, timeout=10)
         resp.raise_for_status()
         return [resp.json()]
-    if not group_id:
-        raise SystemExit("--group-id is required when --cred-id is not provided")
-    url = server.rstrip("/") + "/credentials"
-    resp = requests.get(url, params={"group_id": group_id}, timeout=10)
+    if not project_id:
+        raise SystemExit("--project-id is required when --cred-id is not provided")
+    url = server.rstrip("/") + f"/api/v1/projects/{project_id}/credentials"
+    resp = requests.get(url, timeout=10)
     resp.raise_for_status()
-    return resp.json()
+    summaries = resp.json()
+    credentials = []
+    for summary in summaries:
+        secret = requests.get(
+            server.rstrip("/") + "/api/v1/internal/credentials/" + summary["id"],
+            headers=headers,
+            timeout=10,
+        )
+        secret.raise_for_status()
+        credentials.append(secret.json())
+    return credentials
 
 
 def parse_json_field(raw: Any) -> Any:
@@ -59,7 +72,7 @@ def domain_matches(credential: dict, profile: dict) -> bool:
     profile_hosts = {str(host).lower() for host in profile.get("hosts", [])}
     if not profile_hosts:
         return True
-    domains = parse_json_field(credential.get("domains_json") or credential.get("domains") or [])
+    domains = parse_json_field(credential.get("domains") or [])
     if isinstance(domains, str):
         domains = [domains]
     for item in domains or []:
@@ -75,7 +88,7 @@ def domain_matches(credential: dict, profile: dict) -> bool:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Print redacted miniapp request templates from AXIOM credentials")
     parser.add_argument("--server", default="http://127.0.0.1:8888", help="AXIOM server URL")
-    parser.add_argument("--group-id", help="project group id")
+    parser.add_argument("--project-id", default=os.getenv("AXIOM_PROJECT_ID", ""), help="V2 Project id")
     parser.add_argument("--cred-id", help="specific credential id")
     parser.add_argument("--profile", help="profile JSON path")
     parser.add_argument("--show-secret", action="store_true", help="print secrets without redaction; use only in private scratch files")
@@ -85,27 +98,27 @@ def main(argv: list[str]) -> int:
     if args.profile:
         with open(args.profile, "r", encoding="utf-8") as fh:
             profile = json.load(fh)
-    credentials = load_credentials(args.server, args.group_id, args.cred_id)
+    credentials = load_credentials(args.server, args.project_id, args.cred_id)
     selected = []
     for cred in credentials:
-        cj = parse_json_field(cred.get("credentials_json") or cred.get("credentials") or {})
+        cj = parse_json_field(cred.get("data") or {})
         if isinstance(cj, dict) and cj.get("type") != "miniapp_request_template":
             continue
         if not domain_matches(cred, profile):
             continue
         item = dict(cred)
-        item["credentials_json"] = cj
+        item["data"] = cj
         selected.append(item)
 
     output = []
     for cred in selected:
         item = {
             "id": cred.get("id"),
-            "name": cred.get("name"),
+            "name": cred.get("label"),
             "active": cred.get("active"),
             "auth_type": cred.get("auth_type"),
-            "domains_json": parse_json_field(cred.get("domains_json") or []),
-            "credentials_json": cred.get("credentials_json"),
+            "domains": parse_json_field(cred.get("domains") or []),
+            "data": cred.get("data"),
         }
         if not args.show_secret:
             item = redact_value("", item)

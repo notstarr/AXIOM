@@ -5,6 +5,8 @@ import json
 from sqlalchemy import Engine, func, select, update
 
 from axiom.infrastructure.database.metadata import facts, intent_sources, intents, tasks, todos
+from axiom.modules.audit.schemas import RecordAuditEvent
+from axiom.modules.audit.service import AuditService
 from axiom.modules.common.ids import allocate_readable_id
 from axiom.modules.common.time import utcnow
 from axiom.modules.reason_workspace.repository import ReasonWorkspaceRepository
@@ -27,6 +29,7 @@ class ReasonWorkspaceService:
         self.repository = ReasonWorkspaceRepository()
         self.task_repository = TaskRepository()
         self.todo_repository = TodoRepository()
+        self.audit = AuditService(engine)
 
     def open(self, task_id: str, *, worker: str, context_revision: int) -> ReasonWorkspace:
         worker = worker.strip()
@@ -44,13 +47,25 @@ class ReasonWorkspaceService:
                 if task.reason_worker:
                     raise ValueError(f"Task Reason is currently claimed by {task.reason_worker}")
                 raise ValueError("Task Reason is not currently claimed")
-            return self.repository.open(
+            workspace = self.repository.open(
                 conn,
                 task_id=task_id,
                 worker=worker,
                 context_revision=context_revision,
                 now=utcnow(),
             )
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=task.project_id,
+                    task_id=task_id,
+                    workspace_id=workspace.id,
+                    worker=worker,
+                    event_type="reason_workspace.opened",
+                    message=f"Reason Workspace {workspace.id} opened",
+                ),
+            )
+            return workspace
 
     def get(self, workspace_id: str) -> ReasonWorkspace:
         with self.engine.connect() as conn:
@@ -65,12 +80,27 @@ class ReasonWorkspaceService:
             if workspace.worker != worker:
                 raise ValueError(f"Reason Workspace is owned by {workspace.worker}")
             reason = failure_reason.strip() or "Reason execution failed"
-            return self.repository.abandon(
+            abandoned = self.repository.abandon(
                 conn,
                 workspace_id,
                 failure_reason=reason,
                 now=utcnow(),
             )
+            task = self.task_repository.get(conn, workspace.task_id)
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=task.project_id if task else None,
+                    task_id=workspace.task_id,
+                    workspace_id=workspace_id,
+                    worker=worker,
+                    event_type="reason_workspace.abandoned",
+                    level="warning",
+                    message=f"Reason Workspace {workspace_id} abandoned",
+                    payload={"failure_reason": reason},
+                ),
+            )
+            return abandoned
 
     def add_todo(self, workspace_id: str, todo: DraftTodo) -> ReasonWorkspace:
         with self.engine.begin() as conn:
@@ -203,6 +233,21 @@ class ReasonWorkspaceService:
                 )
             )
             committed = self.repository.mark_committed(conn, workspace_id, now=now)
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=task.project_id,
+                    task_id=workspace.task_id,
+                    workspace_id=workspace_id,
+                    worker=workspace.worker,
+                    event_type="reason_workspace.committed",
+                    message=f"Reason Workspace {workspace_id} committed",
+                    payload={
+                        "created_todo_ids": created_todo_ids,
+                        "created_intent_ids": created_intent_ids,
+                    },
+                ),
+            )
             return CommitResult(
                 workspace=committed,
                 created_todo_ids=created_todo_ids,

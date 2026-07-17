@@ -36,6 +36,7 @@ class V2DispatcherLoop:
         self.reconciler = Reconciler()
         self.allocator = WorkerAllocator()
         self.executor: ThreadPoolExecutor | None = None
+        self.executor_size = 0
         self.futures: dict[Future, LiveRun] = {}
         self.stop_event = Event()
 
@@ -43,11 +44,12 @@ class V2DispatcherLoop:
         try:
             while not self.stop_event.is_set():
                 runtime = self.client.runtime_settings().config
-                self._ensure_executor(runtime.max_workers)
                 self._reap()
+                self._ensure_executor(runtime.max_workers)
                 recovered = self.client.recover_stale_leases(runtime.lease_timeout_seconds)
                 if recovered.get("intents_released") or recovered.get("reasons_released"):
                     LOG.warning("recovered stale leases %s", recovered)
+                self.client.retry_failed_external_reports(limit=1)
                 snapshot = self.client.snapshot()
                 actions = self.reconciler.calculate(snapshot.tasks)
                 self._dispatch(actions, snapshot.tasks, snapshot.workers, runtime)
@@ -61,14 +63,24 @@ class V2DispatcherLoop:
         self.stop_event.set()
 
     def close(self) -> None:
+        cancel_all = getattr(self.runners, "cancel_all", None)
+        if callable(cancel_all):
+            cancel_all("dispatcher shutdown")
         if self.executor is not None:
             self.executor.shutdown(wait=True)
             self.executor = None
+            self.executor_size = 0
         self.client.close()
 
     def _ensure_executor(self, max_workers: int) -> None:
-        if self.executor is None:
-            self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="axiom-v2")
+        if self.executor is not None and self.executor_size == max_workers:
+            return
+        if self.executor is not None and self.futures:
+            return
+        if self.executor is not None:
+            self.executor.shutdown(wait=True)
+        self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="axiom-v2")
+        self.executor_size = max_workers
 
     def _reap(self) -> None:
         for future, live in list(self.futures.items()):

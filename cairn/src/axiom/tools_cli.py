@@ -259,6 +259,11 @@ def vulnerability() -> None:
     """Report confirmed vulnerabilities."""
 
 
+@vulnerability.command("list")
+def vulnerability_list() -> None:
+    _emit(_request("GET", f"/api/v1/tasks/{_task_id()}/vulnerabilities"))
+
+
 @vulnerability.command("report")
 @click.option("--file", "json_file", type=click.Path(exists=True, dir_okay=False), required=True)
 def vulnerability_report(json_file: str) -> None:
