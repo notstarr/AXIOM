@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import click
@@ -37,6 +38,25 @@ def serve(host: str, port: int, db_path: str, log_level: str, access_log: bool):
         log_level=log_level.lower(),
         access_log=access_log,
     )
+
+
+@main.command("serve-v2")
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=8889, show_default=True)
+@click.option("--db-path", type=click.Path(path_type=Path), required=True)
+@click.option("--data-dir", type=click.Path(path_type=Path), required=True)
+@click.option("--log-level", default="info", show_default=True)
+def serve_v2(host: str, port: int, db_path: Path, data_dir: Path, log_level: str):
+    """Start the isolated AXIOM V2 API during migration development."""
+    from axiom.infrastructure.database.engine import create_sqlite_engine
+    from axiom.server.v2_app import create_v2_app
+
+    application = create_v2_app(
+        engine=create_sqlite_engine(db_path),
+        data_dir=data_dir,
+        service_token=os.getenv("AXIOM_SERVICE_TOKEN", ""),
+    )
+    uvicorn.run(application, host=host, port=port, log_level=log_level.lower())
 
 
 @main.command()
