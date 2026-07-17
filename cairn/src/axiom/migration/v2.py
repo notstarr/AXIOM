@@ -24,9 +24,13 @@ from axiom.infrastructure.database.metadata import (
     task_hints,
     tasks,
     vulnerabilities,
+    dispatch_workers,
+    runtime_settings,
 )
 from axiom.modules.common.time import utcnow
 from axiom.modules.tasks.origin import parse_origin
+from axiom.modules.settings.schemas import RuntimeConfig
+from axiom.shared.keyring import KeyringError, decrypt_secret
 
 
 V2_SCHEMA_REVISION = "51313e2f15db"
@@ -42,6 +46,8 @@ class MigrationReport(BaseModel):
     vulnerabilities: int = 0
     credentials: int = 0
     assets: int = 0
+    workers: int = 0
+    runtime_settings: int = 0
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -50,6 +56,7 @@ def migrate_legacy_database(
     target_path: str | Path,
     *,
     data_dir: str | Path,
+    mozzie_token: str = "",
 ) -> MigrationReport:
     source_path = Path(source_path).expanduser().resolve()
     target_path = Path(target_path).expanduser().resolve()
@@ -316,6 +323,13 @@ def migrate_legacy_database(
                 report=report,
                 now=now,
             )
+            _migrate_runtime_configuration(
+                conn,
+                source,
+                report=report,
+                now=now,
+                mozzie_token=mozzie_token,
+            )
             _initialize_counters(
                 conn,
                 project_map=all_project_map,
@@ -581,6 +595,140 @@ def _next_prefixed_numeric(values, prefix: str) -> int:
         if match:
             numbers.append(int(match.group(1)))
     return max(numbers, default=0) + 1
+
+
+def _migrate_runtime_configuration(conn, source, *, report, now, mozzie_token: str) -> None:
+    settings_rows = _rows(source, "settings")
+    settings = settings_rows[0] if settings_rows else {}
+    judge_rows = _rows(source, "judge_settings")
+    judge = judge_rows[0] if judge_rows else {}
+    defaults = RuntimeConfig()
+
+    def positive(name: str, default: int) -> int:
+        try:
+            value = int(settings.get(name) or default)
+        except (TypeError, ValueError):
+            value = default
+        return max(1, value)
+
+    max_workers = positive("dispatch_runtime_max_workers", defaults.max_workers)
+    max_task_workers = min(
+        max_workers,
+        positive("dispatch_runtime_max_project_workers", defaults.max_task_workers),
+    )
+    guard_key = _legacy_provider_key(source, "judge", report)
+    config = RuntimeConfig(
+        interval_seconds=positive("dispatch_runtime_interval", defaults.interval_seconds),
+        max_workers=max_workers,
+        max_running_tasks=positive(
+            "dispatch_runtime_max_running_projects", defaults.max_running_tasks
+        ),
+        max_task_workers=max_task_workers,
+        bootstrap_limit=positive("bootstrap_worker_count", defaults.bootstrap_limit),
+        reason_limit=positive("reason_worker_count", defaults.reason_limit),
+        explore_limit=positive("explore_worker_count", defaults.explore_limit),
+        bootstrap_execute_seconds=positive(
+            "dispatch_bootstrap_timeout", defaults.bootstrap_execute_seconds
+        ),
+        bootstrap_conclude_seconds=positive(
+            "dispatch_bootstrap_conclude_timeout", defaults.bootstrap_conclude_seconds
+        ),
+        reason_execute_seconds=positive("reason_timeout", defaults.reason_execute_seconds),
+        explore_execute_seconds=positive("intent_timeout", defaults.explore_execute_seconds),
+        explore_conclude_seconds=positive(
+            "dispatch_explore_conclude_timeout", defaults.explore_conclude_seconds
+        ),
+        mozzie_token=mozzie_token.strip(),
+        guard_mode=str(judge.get("mode") or defaults.guard_mode),
+        guard_model_base_url=str(judge.get("base_url") or defaults.guard_model_base_url),
+        guard_model_name=str(judge.get("model") or defaults.guard_model_name),
+        guard_api_key=guard_key,
+        guard_timeout_seconds=max(
+            1, int(judge.get("timeout_seconds") or defaults.guard_timeout_seconds)
+        ),
+        guard_whitelist_tools=_json_list(
+            judge.get("whitelist_tools_json"), defaults.guard_whitelist_tools
+        ),
+        guard_whitelist_bash_verbs=_json_list(
+            judge.get("whitelist_bash_verbs_json"), defaults.guard_whitelist_bash_verbs
+        ),
+        guard_hard_block_rules=_json_value(
+            judge.get("hard_block_rules_json"), defaults.guard_hard_block_rules
+        ),
+        crawler_enabled=False,
+    )
+    conn.execute(
+        runtime_settings.insert().values(
+            id="dispatcher",
+            config_json=config.model_dump_json(),
+            version=max(1, int(settings.get("dispatch_config_version") or 1)),
+            updated_by="migration.v2",
+            updated_at=settings.get("dispatch_config_updated_at") or now,
+        )
+    )
+    report.runtime_settings = 1
+
+    pi_tools = [
+        row.get("name")
+        for row in _rows(source, "pi_tools")
+        if row.get("enabled") and row.get("name")
+    ]
+    for row in _rows(source, "dispatch_workers"):
+        capabilities = [
+            item
+            for item in _json_list(row.get("task_types_json"), [])
+            if item in {"bootstrap", "reason", "explore"}
+        ]
+        if not capabilities:
+            continue
+        env = _json_value(row.get("env_json"), {})
+        conn.execute(
+            dispatch_workers.insert().values(
+                name=row["name"],
+                worker_type=row.get("worker_type") or "pi",
+                capabilities_json=json.dumps(capabilities),
+                max_running=max(1, int(row.get("max_running") or 1)),
+                priority=max(0, int(row.get("priority") or 0)),
+                config_json=json.dumps(
+                    {"env": env, "pi_tools": pi_tools}, ensure_ascii=False
+                ),
+                disabled=bool(row.get("disabled", 0)),
+                updated_at=row.get("updated_at") or now,
+            )
+        )
+        report.workers += 1
+
+
+def _legacy_provider_key(source, provider: str, report: MigrationReport) -> str:
+    row = next(
+        (
+            item
+            for item in _rows(source, "provider_keys")
+            if item.get("provider") == provider and item.get("is_active")
+        ),
+        None,
+    )
+    if not row or not row.get("key_ciphertext"):
+        return ""
+    try:
+        return decrypt_secret(row["key_ciphertext"])
+    except KeyringError as exc:
+        report.warnings.append(f"Could not decrypt legacy provider key {provider}: {exc}")
+        return ""
+
+
+def _json_value(raw, default):
+    if raw is None or raw == "":
+        return default
+    try:
+        return json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, json.JSONDecodeError):
+        return default
+
+
+def _json_list(raw, default: list) -> list:
+    value = _json_value(raw, default)
+    return value if isinstance(value, list) else list(default)
 
 
 def _stamp_schema(conn) -> None:

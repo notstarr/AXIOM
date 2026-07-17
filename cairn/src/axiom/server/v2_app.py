@@ -44,7 +44,7 @@ def create_v2_app(
     def health() -> dict[str, str]:
         return {"status": "ok", "api": "v2"}
 
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR / "v2")), name="static")
 
     return app
 

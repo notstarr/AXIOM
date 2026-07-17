@@ -37,7 +37,7 @@ esac
 if [[ "$TARGET" != "dispatcher" ]]; then
   echo -n "[axiom] 等待 API 就绪"
   for i in $(seq 1 20); do
-    if curl -s -o /dev/null "http://$HOST:$PORT/projects"; then
+    if curl -s -o /dev/null "http://$HOST:$PORT/health"; then
       echo " 就绪 ✓"
       break
     fi

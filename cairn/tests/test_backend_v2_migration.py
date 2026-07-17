@@ -9,11 +9,13 @@ from axiom.infrastructure.database.engine import create_sqlite_engine
 from axiom.infrastructure.database.metadata import (
     artifacts,
     credentials,
+    dispatch_workers,
     facts,
     id_counters,
     intents,
     project_knowledge,
     projects,
+    runtime_settings,
     task_hints,
     tasks,
     vulnerabilities,
@@ -35,6 +37,9 @@ def create_legacy_db(path) -> None:
             CREATE TABLE vulns (id TEXT, project_id TEXT, title TEXT, type TEXT, severity TEXT, description TEXT, prerequisites TEXT, impact TEXT, evidence_json TEXT, reproduction_steps_json TEXT, recommendation TEXT, affected_scope TEXT, status TEXT, source TEXT, reported_by TEXT, created_at TEXT);
             CREATE TABLE credentials (id TEXT, group_id TEXT, label TEXT, auth_type TEXT, credentials_json TEXT, domains_json TEXT, active INTEGER, captured_at TEXT);
             CREATE TABLE assets (id INTEGER, project_id TEXT, group_id TEXT, backend_domain TEXT, api_path TEXT, api_method TEXT, api_purpose TEXT, test_status TEXT, discovered_at TEXT);
+            CREATE TABLE settings (dispatch_runtime_interval INTEGER, dispatch_runtime_max_workers INTEGER, dispatch_runtime_max_running_projects INTEGER, dispatch_runtime_max_project_workers INTEGER, bootstrap_worker_count INTEGER, reason_worker_count INTEGER, explore_worker_count INTEGER, dispatch_bootstrap_timeout INTEGER, dispatch_bootstrap_conclude_timeout INTEGER, reason_timeout INTEGER, intent_timeout INTEGER, dispatch_explore_conclude_timeout INTEGER, dispatch_config_version INTEGER, dispatch_config_updated_at TEXT);
+            CREATE TABLE dispatch_workers (name TEXT, worker_type TEXT, task_types_json TEXT, max_running INTEGER, priority INTEGER, env_json TEXT, updated_at TEXT, disabled INTEGER);
+            CREATE TABLE pi_tools (name TEXT, enabled INTEGER);
             """
         )
         now = "2026-07-17T00:00:00Z"
@@ -60,6 +65,9 @@ def create_legacy_db(path) -> None:
         )
         conn.execute("INSERT INTO credentials VALUES (?,?,?,?,?,?,?,?)", ("c001", "pg_001", "jwt", "jwt", '{"Authorization":"Bearer x"}', '["example.com"]', 1, now))
         conn.execute("INSERT INTO assets VALUES (?,?,?,?,?,?,?,?,?)", (1, "proj_093", "pg_001", "example.com", "/api/users", "GET", "users", "untested", now))
+        conn.execute("INSERT INTO settings VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (2, 6, 3, 3, 1, 1, 4, 500, 120, 300, 600, 90, 9, now))
+        conn.execute("INSERT INTO dispatch_workers VALUES (?,?,?,?,?,?,?,?)", ("worker-a", "pi", '["bootstrap","reason","explore","plan"]', 2, 0, '{"PI_MODEL":"test","PI_BASE_URL":"http://model","PI_PROVIDER_API":"openai-completions"}', now, 0))
+        conn.execute("INSERT INTO pi_tools VALUES (?,?)", ("read", 1))
 
 
 def test_legacy_migration_preserves_history_as_read_only_and_archives_assets(tmp_path) -> None:
@@ -97,10 +105,17 @@ def test_legacy_migration_preserves_history_as_read_only_and_archives_assets(tmp
         assert counters[("t_093", "artifact")] == 2
         assert counters[("t_093", "vulnerability")] == 2
         assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "51313e2f15db"
+        runtime = json.loads(conn.execute(select(runtime_settings.c.config_json)).scalar_one())
+        assert runtime["max_workers"] == 6
+        assert runtime["explore_limit"] == 4
+        worker = conn.execute(select(dispatch_workers)).mappings().one()
+        assert json.loads(worker["capabilities_json"]) == ["bootstrap", "reason", "explore"]
+        assert json.loads(worker["config_json"])["pi_tools"] == ["read"]
 
     assert report.projects == 1
     assert report.tasks == 1
     assert report.assets == 1
+    assert report.workers == 1
 
 
 def test_migration_handles_colliding_ids_orphans_and_broken_references(tmp_path) -> None:

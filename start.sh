@@ -14,8 +14,9 @@ PID_DIR="$CAIRN_DIR/.pids"
 LOG_DIR="$CAIRN_DIR/logs"
 MASTER_KEY_FILE="$HOME/.config/cairn/master.key"
 MOZZIE_TOKEN_FILE="$HOME/.config/cairn/mozzie.token"
+SERVICE_TOKEN_FILE="$HOME/.config/axiom/service.token"
 LAUNCH_AGENT_DIR="$HOME/Library/LaunchAgents"
-SERVER_LABEL="com.xrayai.cairn.server"
+SERVER_LABEL="com.xrayai.cairn"
 DISPATCHER_LABEL="com.xrayai.cairn.dispatcher"
 LEGACY_DISPATCHER_LABEL="com.axiom.dispatcher"
 SERVER_PLIST="$LAUNCH_AGENT_DIR/$SERVER_LABEL.plist"
@@ -25,6 +26,10 @@ LEGACY_DISPATCHER_PLIST="$LAUNCH_AGENT_DIR/$LEGACY_DISPATCHER_LABEL.plist"
 HOST="${CAIRN_HOST:-127.0.0.1}"
 PORT="${CAIRN_PORT:-8888}"
 CONFIG="${CAIRN_CONFIG:-$SCRIPT_DIR/dispatch.yaml}"
+LEGACY_DB="${AXIOM_LEGACY_DB:-$HOME/.local/share/cairn/cairn.db}"
+AXIOM_DATA_DIR="${AXIOM_DATA_DIR:-$HOME/.local/share/axiom}"
+AXIOM_DB="${AXIOM_DB:-$AXIOM_DATA_DIR/axiom.db}"
+LEGACY_ARTIFACT_DIR="${AXIOM_LEGACY_ARTIFACT_DIR:-/tmp/axiom-files}"
 
 mkdir -p "$PID_DIR" "$LOG_DIR"
 
@@ -73,7 +78,7 @@ dispatcher_pid() {
         cat "$PID_DIR/dispatcher.pid"
         return
     fi
-    pgrep -f "$CAIRN_DIR/.venv/bin/axiom dispatch.*--config" | head -1 || true
+    pgrep -f "$CAIRN_DIR/.venv/bin/axiom dispatch.*--server" | head -1 || true
 }
 
 write_launch_agent() {
@@ -83,17 +88,19 @@ write_launch_agent() {
     local log_path="$4"
     shift 4
     mkdir -p "$LAUNCH_AGENT_DIR"
-    python3 - "$plist" "$label" "$workdir" "$log_path" "$MASTER_KEY" "${MOZZIE_TOKEN:-}" "$@" <<'PY'
+    python3 - "$plist" "$label" "$workdir" "$log_path" "$MASTER_KEY" "${MOZZIE_TOKEN:-}" "$AXIOM_SERVICE_TOKEN" "$@" <<'PY'
 import plistlib
 import sys
 
-plist, label, workdir, log_path, master_key, mozzie_token, *argv = sys.argv[1:]
+plist, label, workdir, log_path, master_key, mozzie_token, service_token, *argv = sys.argv[1:]
 env = {
     "MASTER_KEY": master_key,
     "PATH": "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
 }
 if mozzie_token:
     env["MOZZIE_TOKEN"] = mozzie_token
+env["AXIOM_SERVICE_TOKEN"] = service_token
+env["AXIOM_DATA_DIR"] = str(__import__('pathlib').Path.home() / '.local/share/axiom')
 payload = {
     "Label": label,
     "ProgramArguments": argv,
@@ -141,6 +148,53 @@ if [ -z "${MOZZIE_TOKEN:-}" ] && [ -f "$MOZZIE_TOKEN_FILE" ]; then
     export MOZZIE_TOKEN="$(cat "$MOZZIE_TOKEN_FILE")"
 fi
 
+if [ -n "${AXIOM_SERVICE_TOKEN:-}" ]; then
+    export AXIOM_SERVICE_TOKEN
+elif [ -f "$SERVICE_TOKEN_FILE" ]; then
+    export AXIOM_SERVICE_TOKEN="$(cat "$SERVICE_TOKEN_FILE")"
+else
+    mkdir -p "$(dirname "$SERVICE_TOKEN_FILE")"
+    AXIOM_SERVICE_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+    printf '%s\n' "$AXIOM_SERVICE_TOKEN" > "$SERVICE_TOKEN_FILE"
+    chmod 600 "$SERVICE_TOKEN_FILE"
+    export AXIOM_SERVICE_TOKEN
+    echo "[xrayAI] Generated AXIOM service token at $SERVICE_TOKEN_FILE"
+fi
+
+prepare_v2_database() {
+    if [ -s "$AXIOM_DB" ]; then
+        return
+    fi
+    if [ ! -s "$LEGACY_DB" ]; then
+        echo "[xrayAI] ERROR: neither V2 nor legacy database exists."
+        exit 1
+    fi
+    local stamp backup_dir backup_db
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    backup_dir="$AXIOM_DATA_DIR/backups/$stamp"
+    backup_db="$backup_dir/cairn.db"
+    mkdir -p "$backup_dir" "$AXIOM_DATA_DIR"
+    echo "[xrayAI] Backing up legacy database to $backup_db"
+    python3 - "$LEGACY_DB" "$backup_db" <<'PY'
+import sqlite3, sys
+source, target = sys.argv[1:]
+with sqlite3.connect(source) as src, sqlite3.connect(target) as dst:
+    src.backup(dst)
+PY
+    if [ -d "$LEGACY_ARTIFACT_DIR" ]; then
+        echo "[xrayAI] Backing up legacy Artifact directory"
+        tar -czf "$backup_dir/axiom-files.tar.gz" -C "$(dirname "$LEGACY_ARTIFACT_DIR")" "$(basename "$LEGACY_ARTIFACT_DIR")"
+    fi
+    echo "[xrayAI] Migrating legacy data to Backend V2"
+    "$CAIRN_DIR/.venv/bin/axiom" migrate-v2 \
+        --source "$backup_db" \
+        --target "$AXIOM_DB" \
+        --data-dir "$AXIOM_DATA_DIR" \
+        --mozzie-token-file "$MOZZIE_TOKEN_FILE" \
+        > "$backup_dir/migration-report.json"
+    echo "[xrayAI] Migration report: $backup_dir/migration-report.json"
+}
+
 stop_all() {
     echo "[xrayAI] Stopping..."
     if use_launchctl; then
@@ -181,6 +235,7 @@ status_all() {
 }
 
 start_all() {
+    prepare_v2_database
     # Check if already running
     SERVER_PID="$(server_pid)"
     if [ -n "$SERVER_PID" ]; then
@@ -190,7 +245,7 @@ start_all() {
         echo "[xrayAI] Starting Cairn server on $HOST:$PORT..."
         if use_launchctl; then
             write_launch_agent "$SERVER_PLIST" "$SERVER_LABEL" "$CAIRN_DIR" "$LOG_DIR/server.log" \
-                /bin/bash -lc "cd '$CAIRN_DIR' && exec uv run --project '$CAIRN_DIR' axiom serve --host '$HOST' --port '$PORT' --no-access-log --log-level info"
+                /bin/bash -lc "cd '$CAIRN_DIR' && exec uv run --project '$CAIRN_DIR' axiom serve --host '$HOST' --port '$PORT' --db-path '$AXIOM_DB' --data-dir '$AXIOM_DATA_DIR' --no-access-log --log-level info"
             start_launch_agent "$SERVER_PLIST" "$SERVER_LABEL"
             sleep 1
             SERVER_PID="$(launch_pid "$SERVER_LABEL")"
@@ -198,6 +253,8 @@ start_all() {
             nohup uv run --project "$CAIRN_DIR" axiom serve \
                 --host "$HOST" \
                 --port "$PORT" \
+                --db-path "$AXIOM_DB" \
+                --data-dir "$AXIOM_DATA_DIR" \
                 --no-access-log \
                 --log-level info \
                 > "$LOG_DIR/server.log" 2>&1 &
@@ -209,7 +266,7 @@ start_all() {
         # Wait for server to be ready
         echo -n "[xrayAI] Waiting for server"
         for i in $(seq 1 30); do
-            if curl -s "http://$HOST:$PORT/projects" > /dev/null 2>&1; then
+            if curl -s "http://$HOST:$PORT/health" > /dev/null 2>&1; then
                 echo " ready."
                 break
             fi
@@ -236,16 +293,17 @@ start_all() {
         echo "$DISPATCHER_PID" > "$PID_DIR/dispatcher.pid"
         echo "[xrayAI] Dispatcher is already running."
     else
-        echo "[xrayAI] Starting dispatcher (config=$CONFIG)..."
+        echo "[xrayAI] Starting V2 dispatcher..."
         if use_launchctl; then
             write_launch_agent "$DISPATCHER_PLIST" "$DISPATCHER_LABEL" "$CAIRN_DIR" "$LOG_DIR/dispatcher.log" \
-                /bin/bash -lc "cd '$CAIRN_DIR' && exec uv run --project '$CAIRN_DIR' axiom dispatch --config '$CONFIG' --log-level info"
+                /bin/bash -lc "cd '$CAIRN_DIR' && exec uv run --project '$CAIRN_DIR' axiom dispatch --server 'http://$HOST:$PORT' --service-token '$AXIOM_SERVICE_TOKEN' --log-level info"
             start_launch_agent "$DISPATCHER_PLIST" "$DISPATCHER_LABEL"
             sleep 2
             DISPATCHER_PID="$(launch_pid "$DISPATCHER_LABEL")"
         else
             nohup uv run --project "$CAIRN_DIR" axiom dispatch \
-                --config "$CONFIG" \
+                --server "http://$HOST:$PORT" \
+                --service-token "$AXIOM_SERVICE_TOKEN" \
                 --log-level info \
                 > "$LOG_DIR/dispatcher.log" 2>&1 &
             DISPATCHER_PID=$!
