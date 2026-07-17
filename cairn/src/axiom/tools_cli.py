@@ -235,3 +235,22 @@ def artifact_register(
             },
         )
     )
+
+
+@main.group()
+def vulnerability() -> None:
+    """Report confirmed vulnerabilities."""
+
+
+@vulnerability.command("report")
+@click.option("--file", "json_file", type=click.Path(exists=True, dir_okay=False), required=True)
+def vulnerability_report(json_file: str) -> None:
+    with open(json_file, encoding="utf-8") as handle:
+        payload = json.load(handle)
+    _emit(
+        _request(
+            "POST",
+            f"/api/v1/internal/tasks/{_task_id()}/vulnerabilities",
+            payload,
+        )
+    )
