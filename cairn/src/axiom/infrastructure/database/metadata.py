@@ -270,7 +270,7 @@ artifacts = Table(
     ForeignKeyConstraint(
         ["task_id", "intent_id"],
         ["intents.task_id", "intents.id"],
-        ondelete="SET NULL",
+        ondelete="RESTRICT",
     ),
     UniqueConstraint("task_id", "path"),
 )
@@ -320,7 +320,7 @@ vulnerabilities = Table(
     ForeignKeyConstraint(
         ["task_id", "intent_id"],
         ["intents.task_id", "intents.id"],
-        ondelete="SET NULL",
+        ondelete="RESTRICT",
     ),
 )
 
