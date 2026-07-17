@@ -4,10 +4,15 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import Engine
 
 from axiom.api.v1.router import router as v1_router
 from axiom.infrastructure.database.engine import create_sqlite_engine
+
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 def create_v2_app(
@@ -31,9 +36,15 @@ def create_v2_app(
     app.state.service_token = service_token or os.getenv("AXIOM_SERVICE_TOKEN", "")
     app.include_router(v1_router)
 
+    @app.get("/", include_in_schema=False)
+    def index():
+        return FileResponse(STATIC_DIR / "v2" / "index.html")
+
     @app.get("/health", include_in_schema=True)
     def health() -> dict[str, str]:
         return {"status": "ok", "api": "v2"}
+
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     return app
 

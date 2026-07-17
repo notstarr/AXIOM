@@ -17,6 +17,8 @@ def test_v2_app_exposes_only_versioned_business_api(tmp_path) -> None:
     )
 
     with TestClient(app) as client:
+        assert "AXIOM" in client.get("/").text
+        assert client.get("/static/v2/app.js").status_code == 200
         assert client.get("/health").json()["status"] == "ok"
         assert client.get("/api/v1/projects").status_code == 200
         assert client.get("/projects").status_code == 404

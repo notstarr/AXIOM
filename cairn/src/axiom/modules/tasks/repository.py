@@ -31,7 +31,9 @@ class TaskRepository:
             kind="task",
             prefix="t_",
         )
-        scope = TaskScope(enabled=True, targets=[origin.host])
+        scope = command.scope or TaskScope(enabled=True, targets=[origin.host])
+        if scope.enabled and not scope.targets:
+            scope = scope.model_copy(update={"targets": [origin.host]})
         task_values = {
             "id": task_id,
             "project_id": command.project_id,

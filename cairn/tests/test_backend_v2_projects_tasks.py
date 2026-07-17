@@ -11,7 +11,7 @@ from axiom.infrastructure.database.metadata import facts, intents, metadata, tas
 from axiom.modules.projects.schemas import CreateProject
 from axiom.modules.projects.service import ProjectService
 from axiom.modules.tasks.origin import parse_origin
-from axiom.modules.tasks.schemas import CreateTask
+from axiom.modules.tasks.schemas import CreateTask, TaskScope
 from axiom.modules.tasks.service import TaskService
 
 
@@ -95,6 +95,31 @@ def test_task_requires_existing_project(tmp_path) -> None:
                 goal="finish",
             )
         )
+
+
+def test_task_accepts_and_updates_task_level_scope(tmp_path) -> None:
+    _engine, project_service, task_service = make_services(tmp_path)
+    project = project_service.create(CreateProject(title="Demo"))
+    task = task_service.create(
+        CreateTask(
+            project_id=project.id,
+            title="Scoped",
+            origin="api.example.com",
+            goal="finish",
+            scope=TaskScope(
+                enabled=True,
+                targets=["api.example.com", "*.example.com"],
+                exclude=["admin.example.com"],
+                notes="Task-local only",
+            ),
+        )
+    )
+    assert task.scope.targets == ["api.example.com", "*.example.com"]
+    updated = task_service.update_scope(
+        task.id,
+        task.scope.model_copy(update={"enabled": False}),
+    )
+    assert updated.scope.enabled is False
 
 
 def test_create_models_trim_and_validate_required_text() -> None:

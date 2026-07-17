@@ -42,6 +42,23 @@ def report_vulnerability(
         raise HTTPException(404 if "not found:" in detail.lower() else 409, detail) from exc
 
 
+@router.post(
+    "/tasks/{task_id}/vulnerabilities",
+    response_model=Vulnerability,
+    status_code=201,
+)
+def report_vulnerability_from_ui(
+    task_id: str,
+    body: ReportVulnerability,
+    service: VulnerabilityService = Depends(get_service),
+) -> Vulnerability:
+    try:
+        return service.report(task_id, body)
+    except ValueError as exc:
+        detail = str(exc)
+        raise HTTPException(404 if "not found:" in detail.lower() else 409, detail) from exc
+
+
 @router.get("/tasks/{task_id}/vulnerabilities", response_model=list[Vulnerability])
 def list_vulnerabilities(
     task_id: str,

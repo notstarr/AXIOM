@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from axiom.api.v1.dependencies import get_task_service
-from axiom.modules.tasks.schemas import CreateTask, Task
+from axiom.modules.tasks.schemas import CreateTask, Task, TaskScope
 from axiom.modules.tasks.service import TaskService
 
 
@@ -36,3 +36,16 @@ def get_task(
     if task is None:
         raise HTTPException(404, "Task not found")
     return task
+
+
+@router.patch("/{task_id}/scope", response_model=Task)
+def update_task_scope(
+    task_id: str,
+    body: TaskScope,
+    service: TaskService = Depends(get_task_service),
+) -> Task:
+    try:
+        return service.update_scope(task_id, body)
+    except ValueError as exc:
+        detail = str(exc)
+        raise HTTPException(404 if "not found:" in detail.lower() else 409, detail) from exc

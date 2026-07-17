@@ -28,6 +28,7 @@ class CreateTask(BaseModel):
     guard_enabled: bool = False
     external_report_enabled: bool = False
     worker_pool: list[str] = Field(default_factory=list)
+    scope: TaskScope | None = None
 
     @field_validator("project_id", "title", "origin", "goal")
     @classmethod
