@@ -29,6 +29,17 @@ NAMING_CONVENTION = {
 metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
+id_counters = Table(
+    "id_counters",
+    metadata,
+    Column("scope", String, nullable=False),
+    Column("kind", String, nullable=False),
+    Column("next_value", Integer, nullable=False, server_default=text("1")),
+    PrimaryKeyConstraint("scope", "kind"),
+    CheckConstraint("next_value > 0", name="next_value"),
+)
+
+
 projects = Table(
     "projects",
     metadata,

@@ -14,6 +14,7 @@ from axiom.infrastructure.database.metadata import metadata, projects, tasks
 
 
 EXPECTED_CORE_TABLES = {
+    "id_counters",
     "projects",
     "tasks",
     "facts",
