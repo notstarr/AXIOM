@@ -63,5 +63,8 @@ class Task(BaseModel):
     external_report_enabled: bool
     worker_pool: list[str]
     legacy_readonly: bool = False
+    reason_worker: str | None = None
+    reason_heartbeat_at: str | None = None
     created_at: str
     updated_at: str
+    completed_at: str | None = None

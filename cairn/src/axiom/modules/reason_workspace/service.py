@@ -40,6 +40,10 @@ class ReasonWorkspaceService:
                 raise ValueError("Legacy task is read-only")
             if task.status != "running":
                 raise ValueError("Task is not running")
+            if task.reason_worker != worker:
+                if task.reason_worker:
+                    raise ValueError(f"Task Reason is currently claimed by {task.reason_worker}")
+                raise ValueError("Task Reason is not currently claimed")
             return self.repository.open(
                 conn,
                 task_id=task_id,

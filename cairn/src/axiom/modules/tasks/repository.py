@@ -58,6 +58,9 @@ class TaskRepository:
             id_counters.insert().values(scope=task_id, kind="intent", next_value=2)
         )
         conn.execute(
+            id_counters.insert().values(scope=task_id, kind="fact", next_value=1)
+        )
+        conn.execute(
             facts.insert(),
             [
                 {
@@ -114,8 +117,11 @@ class TaskRepository:
             external_report_enabled=command.external_report_enabled,
             worker_pool=command.worker_pool,
             legacy_readonly=False,
+            reason_worker=None,
+            reason_heartbeat_at=None,
             created_at=now,
             updated_at=now,
+            completed_at=None,
         )
 
     def get(self, conn: Connection, task_id: str) -> Task | None:
@@ -146,6 +152,9 @@ class TaskRepository:
             external_report_enabled=bool(row["external_report_enabled"]),
             worker_pool=json.loads(row["worker_pool_json"] or "[]"),
             legacy_readonly=bool(row["legacy_readonly"]),
+            reason_worker=row["reason_worker"],
+            reason_heartbeat_at=row["reason_heartbeat_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            completed_at=row["completed_at"],
         )

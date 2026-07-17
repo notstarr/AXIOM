@@ -15,6 +15,7 @@ from axiom.modules.projects.service import ProjectService
 from axiom.modules.reason_workspace.schemas import DraftIntent, DraftTodo
 from axiom.modules.reason_workspace.service import ReasonWorkspaceService
 from axiom.modules.tasks.schemas import CreateTask
+from axiom.modules.tasks.lifecycle import TaskLifecycleService
 from axiom.modules.tasks.service import TaskService
 from axiom.modules.todos.schemas import TodoSource
 
@@ -26,6 +27,7 @@ def make_workspace_service(tmp_path):
     task = TaskService(engine).create(
         CreateTask(project_id=project.id, title="Task", origin="api.example.com", goal="finish")
     )
+    TaskLifecycleService(engine).claim_reason(task.id, worker="reasoner")
     return engine, task, ReasonWorkspaceService(engine)
 
 
