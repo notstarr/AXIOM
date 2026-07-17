@@ -177,3 +177,23 @@ def reason_commit() -> None:
             f"/api/v1/reason-workspaces/{_workspace_id()}/commit",
         )
     )
+
+
+@main.group()
+def credential() -> None:
+    """Read Project credentials for Explore."""
+
+
+@credential.command("list")
+@click.option("--project-id", default=lambda: os.getenv("AXIOM_PROJECT_ID", ""))
+def credential_list(project_id: str) -> None:
+    project_id = project_id.strip()
+    if not project_id:
+        raise click.ClickException("AXIOM_PROJECT_ID is not configured")
+    _emit(_request("GET", f"/api/v1/projects/{project_id}/credentials"))
+
+
+@credential.command("get")
+@click.argument("credential_id")
+def credential_get(credential_id: str) -> None:
+    _emit(_request("GET", f"/api/v1/internal/credentials/{credential_id}"))
