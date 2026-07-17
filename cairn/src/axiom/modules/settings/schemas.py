@@ -12,6 +12,10 @@ class RuntimeConfig(BaseModel):
     reason_limit: int = Field(default=1, gt=0)
     explore_limit: int = Field(default=2, gt=0)
     crawler_enabled: bool = False
+    mozzie_base_url: str = "https://mozzie.t.cn-shenzhen.aliyun.kkgroup.work"
+    mozzie_token: str = ""
+    mozzie_timeout_seconds: int = Field(default=15, gt=0, le=120)
+    external_report_max_attempts: int = Field(default=3, gt=0, le=10)
 
     @model_validator(mode="after")
     def validate_limits(self) -> "RuntimeConfig":

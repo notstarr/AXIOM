@@ -7,6 +7,7 @@ from axiom.modules.projects.service import ProjectService
 from axiom.modules.tasks.schemas import CreateTask
 from axiom.modules.tasks.service import TaskService
 from axiom.modules.vulnerabilities.external import MozzieAdapter
+from axiom.modules.vulnerabilities.reporting import ExternalReportService
 from axiom.modules.vulnerabilities.schemas import ReportVulnerability
 from axiom.modules.vulnerabilities.service import VulnerabilityService
 
@@ -68,3 +69,40 @@ def test_mozzie_adapter_reuses_common_fields_and_adds_platform_project() -> None
         "reproduce": "\n".join(report.reproduction_steps),
         "fix": report.remediation,
     }
+
+
+class FakeMozzieClient:
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.payloads = []
+
+    def resolve_project(self, backend_domain: str) -> str:
+        assert backend_domain == "api.example.com"
+        return "resolved-project"
+
+    def report(self, payload):
+        self.payloads.append(payload)
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def test_external_report_attempt_is_persisted_and_retryable(tmp_path) -> None:
+    engine, task = make_domain(tmp_path)
+    vulnerability = VulnerabilityService(engine).report(task.id, sample_report())
+    client = FakeMozzieClient([RuntimeError("temporary failure"), {"success": True, "id": 7}])
+    service = ExternalReportService(engine, client=client)
+
+    failed = service.report(task.id, vulnerability.id)
+    assert failed.status == "failed"
+    assert failed.attempt_count == 1
+    assert failed.resolved_project == "resolved-project"
+    assert "temporary failure" in failed.last_error
+
+    succeeded = service.retry(failed.id)
+    assert succeeded.status == "success"
+    assert succeeded.attempt_count == 2
+    assert succeeded.response["id"] == 7
+    assert service.list(task.id, vulnerability.id)[0].id == failed.id
+    assert client.payloads[0]["project"] == "resolved-project"

@@ -3,6 +3,8 @@ from __future__ import annotations
 from sqlalchemy import Engine, select
 
 from axiom.infrastructure.database.metadata import intents
+from axiom.modules.audit.schemas import RecordAuditEvent
+from axiom.modules.audit.service import AuditService
 from axiom.modules.common.time import utcnow
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
@@ -31,7 +33,19 @@ class VulnerabilityService:
                 ).scalar_one_or_none()
                 if exists is None:
                     raise ValueError(f"Intent not found: {body.intent_id}")
-            return self.repository.create(conn, task_id, body, now=utcnow())
+            vulnerability = self.repository.create(conn, task_id, body, now=utcnow())
+        AuditService(self.engine).record(
+            RecordAuditEvent(
+                project_id=task.project_id,
+                task_id=task_id,
+                intent_id=body.intent_id,
+                worker=body.reported_by,
+                event_type="vulnerability.reported",
+                message=f"Vulnerability {vulnerability.id} reported",
+                payload={"vulnerability_id": vulnerability.id, "severity": vulnerability.severity},
+            )
+        )
+        return vulnerability
 
     def get(self, task_id: str, vuln_id: str) -> Vulnerability:
         with self.engine.connect() as conn:

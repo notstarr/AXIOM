@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from axiom.api.v1.dependencies import get_v2_engine, require_service_token
-from axiom.modules.vulnerabilities.external import MozzieAdapter
+from axiom.modules.vulnerabilities.reporting import ExternalReportAttempt, ExternalReportService
 from axiom.modules.vulnerabilities.schemas import ReportVulnerability, Vulnerability
 from axiom.modules.vulnerabilities.service import VulnerabilityService
 
@@ -13,11 +13,15 @@ router = APIRouter(tags=["v1-vulnerabilities"])
 
 
 class ExternalPreviewRequest(BaseModel):
-    resolved_project: str = "others"
+    resolved_project: str | None = None
 
 
 def get_service(engine=Depends(get_v2_engine)) -> VulnerabilityService:
     return VulnerabilityService(engine)
+
+
+def get_external_service(request: Request, engine=Depends(get_v2_engine)) -> ExternalReportService:
+    return ExternalReportService(engine, client=getattr(request.app.state, "mozzie_client", None))
 
 
 @router.post(
@@ -51,10 +55,52 @@ def external_preview(
     task_id: str,
     vuln_id: str,
     body: ExternalPreviewRequest,
-    service: VulnerabilityService = Depends(get_service),
+    service: ExternalReportService = Depends(get_external_service),
 ):
     try:
-        vuln = service.get(task_id, vuln_id)
+        return service.preview(task_id, vuln_id, resolved_project=body.resolved_project)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
-    return MozzieAdapter().build_payload(vuln, resolved_project=body.resolved_project)
+
+
+@router.post(
+    "/tasks/{task_id}/vulnerabilities/{vuln_id}/external-report",
+    response_model=ExternalReportAttempt,
+    status_code=201,
+)
+def external_report(
+    task_id: str,
+    vuln_id: str,
+    body: ExternalPreviewRequest,
+    service: ExternalReportService = Depends(get_external_service),
+) -> ExternalReportAttempt:
+    try:
+        return service.report(task_id, vuln_id, resolved_project=body.resolved_project)
+    except ValueError as exc:
+        raise HTTPException(404 if "not found:" in str(exc).lower() else 409, str(exc)) from exc
+
+
+@router.get(
+    "/tasks/{task_id}/external-report-attempts",
+    response_model=list[ExternalReportAttempt],
+)
+def list_external_reports(
+    task_id: str,
+    vulnerability_id: str | None = None,
+    service: ExternalReportService = Depends(get_external_service),
+) -> list[ExternalReportAttempt]:
+    return service.list(task_id, vulnerability_id)
+
+
+@router.post(
+    "/external-report-attempts/{attempt_id}/retry",
+    response_model=ExternalReportAttempt,
+)
+def retry_external_report(
+    attempt_id: str,
+    service: ExternalReportService = Depends(get_external_service),
+) -> ExternalReportAttempt:
+    try:
+        return service.retry(attempt_id)
+    except ValueError as exc:
+        raise HTTPException(404 if "not found:" in str(exc).lower() else 409, str(exc)) from exc
