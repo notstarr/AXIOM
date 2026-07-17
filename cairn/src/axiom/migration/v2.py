@@ -80,7 +80,7 @@ def migrate_legacy_database(
         parent_ids.update(row.get("parent_project_id") or "legacy-orphans" for row in legacy_tasks)
         all_project_map = _build_id_map(parent_ids, _project_id)
         group_map = {row["id"]: all_project_map[row["id"]] for row in groups}
-        task_map = _build_id_map((row["id"] for row in legacy_tasks), _task_id)
+        task_map = _build_task_id_map(legacy_tasks)
         task_group = {
             row["id"]: all_project_map[row.get("parent_project_id") or "legacy-orphans"]
             for row in legacy_tasks
@@ -384,6 +384,7 @@ def _legacy_task_rows(source: sqlite3.Connection, *, report: MigrationReport, no
                 "guard_enabled": 0,
                 "task_scope_enabled": 0,
                 "task_scope_json": '{"targets":[],"exclude":[],"notes":""}',
+                "_recovered": True,
             }
         )
         report.warnings.append(f"Recovered deleted legacy Task shell: {task_id}")
@@ -446,6 +447,20 @@ def _build_id_map(values, mapper) -> dict[str, str]:
                 length += 1
                 candidate = f"{base}_{digest[:length]}"
         result[value] = candidate
+        used.add(candidate)
+    return result
+
+
+def _build_task_id_map(rows: list[dict]) -> dict[str, str]:
+    actual = [row["id"] for row in rows if not row.get("_recovered")]
+    result = _build_id_map(actual, _task_id)
+    used = set(result.values())
+    for row in sorted((item for item in rows if item.get("_recovered")), key=lambda item: item["id"]):
+        digest = hashlib.sha1(row["id"].encode()).hexdigest()[:8]
+        candidate = f"t_legacy_{digest}"
+        if candidate in used:
+            candidate = f"{candidate}_{len(used)}"
+        result[row["id"]] = candidate
         used.add(candidate)
     return result
 
@@ -532,8 +547,8 @@ def _initialize_counters(
     conn.execute(
         id_counters.insert(),
         [
-            {"scope": "global", "kind": "project", "next_value": _next_numeric(project_map.values())},
-            {"scope": "global", "kind": "task", "next_value": _next_numeric(task_map.values())},
+            {"scope": "global", "kind": "project", "next_value": _next_prefixed_numeric(project_map.values(), "prj_")},
+            {"scope": "global", "kind": "task", "next_value": _next_prefixed_numeric(task_map.values(), "t_")},
             {
                 "scope": "global",
                 "kind": "credential",
@@ -568,12 +583,12 @@ def _initialize_counters(
         conn.execute(
             id_counters.insert(),
             [
-                {"scope": new_task, "kind": "fact", "next_value": _next_numeric(row["id"] for row in facts_by_task.get(old_task, []))},
-                {"scope": new_task, "kind": "intent", "next_value": _next_numeric(intents_by_task.get(old_task, []))},
-                {"scope": new_task, "kind": "hint", "next_value": _next_numeric(hints_by_task.get(old_task, []))},
+                {"scope": new_task, "kind": "fact", "next_value": _next_prefixed_numeric((row["id"] for row in facts_by_task.get(old_task, [])), "f")},
+                {"scope": new_task, "kind": "intent", "next_value": _next_prefixed_numeric(intents_by_task.get(old_task, []), "i")},
+                {"scope": new_task, "kind": "hint", "next_value": _next_prefixed_numeric(hints_by_task.get(old_task, []), "h")},
                 {"scope": new_task, "kind": "todo", "next_value": 1},
                 {"scope": new_task, "kind": "artifact", "next_value": artifact_counts.get(new_task, 0) + 1},
-                {"scope": new_task, "kind": "vulnerability", "next_value": _next_numeric(vulnerabilities_by_task.get(old_task, []))},
+                {"scope": new_task, "kind": "vulnerability", "next_value": _next_prefixed_numeric(vulnerabilities_by_task.get(old_task, []), "v")},
             ],
         )
 
