@@ -300,7 +300,7 @@ def test_explore_double_timeout_is_typed(monkeypatch) -> None:
     assert client.released == [("proj_001", "i001", "test-worker")]
 
 
-def test_explore_timeout_invalid_preallocated_uses_latest_valid_session(monkeypatch) -> None:
+def test_explore_timeout_invalid_preallocated_skips_conclude_resume(monkeypatch) -> None:
     config = make_config()
     intent = make_intent()
     project = make_project(intents=[intent])
@@ -342,9 +342,9 @@ def test_explore_timeout_invalid_preallocated_uses_latest_valid_session(monkeypa
         TaskCancellation(),
     )
 
-    assert outcome == "success"
-    assert driver.conclude_sessions == ["session-latest-valid"]
-    assert client.concluded
+    assert outcome == "hard_timeout_execute"
+    assert driver.conclude_sessions == []
+    assert not client.concluded
 
 
 def test_explore_timeout_without_valid_session_keeps_failure_type(monkeypatch) -> None:
@@ -507,7 +507,9 @@ def test_bootstrap_success_concludes_fact_then_completes_project(monkeypatch) ->
     )
 
     assert outcome == "success"
-    assert client.concluded == [("proj_001", "i001", "test-worker", "solved")]
+    assert client.concluded[0][:3] == ("proj_001", "i001", "test-worker")
+    assert client.concluded[0][3].startswith("solved")
+    assert "i001_bootstrap_summary.md" in client.concluded[0][3]
     assert client.completed == [("proj_001", ["f002"], "goal met", "test-worker")]
     assert lease.started and lease.stopped
 
@@ -543,11 +545,105 @@ def test_bootstrap_fact_only_writes_fact_without_completing_project(monkeypatch)
     )
 
     assert outcome == "success"
-    assert client.concluded == [("proj_001", "i001", "test-worker", "initial foothold")]
+    assert client.concluded[0][:3] == ("proj_001", "i001", "test-worker")
+    assert client.concluded[0][3].startswith("initial foothold")
+    assert "i001_bootstrap_summary.md" in client.concluded[0][3]
+
+
+def test_bootstrap_injects_task_scope_and_request_headers_without_prompt_leak(monkeypatch) -> None:
+    config = make_config()
+    intent = make_intent()
+    project = make_project(intents=[intent])
+    project.project.task_scope.enabled = True
+    project.project.task_scope.targets = ["api.example.com"]
+    project.project.credential_headers = "Authorization: Bearer task-secret"
+    client = FakeClient(project)
+    driver = FakeDriver()
+    lease = FakeLease()
+    captured = {}
+
+    monkeypatch.setattr(bootstrap, "get_driver", lambda _name: driver)
+    monkeypatch.setattr(bootstrap.HeartbeatLease, "for_intent", _lease_factory(lease))
+    monkeypatch.setattr(bootstrap, "run_healthcheck", _healthy)
+
+    def fake_run(worker, *_args, **_kwargs):
+        captured.update(worker.env)
+        return ProcessResult(
+            0,
+            '{"accepted":true,"data":{"fact":{"description":"initial foothold"}}}',
+            "",
+        )
+
+    monkeypatch.setattr(bootstrap, "run_worker_process", fake_run)
+
+    outcome = bootstrap.run_bootstrap_task(
+        config,
+        client,
+        project,
+        intent,
+        config.workers[0],
+        TaskCancellation(),
+    )
+
+    assert outcome == "success"
+    assert captured["AXIOM_TASK_SCOPE_ENABLED"] == "1"
+    assert captured["AXIOM_REQUEST_HEADERS"] == "Authorization: Bearer task-secret"
+    assert "AXIOM_REQUEST_HEADERS" in driver.execute_prompts[0]
+    assert "task-secret" not in driver.execute_prompts[0]
     assert client.completed == []
 
 
-def test_bootstrap_timeout_invalid_preallocated_uses_latest_valid_session(monkeypatch) -> None:
+def test_bootstrap_fact_only_creates_frontend_visible_boot_artifacts(monkeypatch, tmp_path) -> None:
+    files_root = tmp_path / "files"
+    monkeypatch.setenv("AXIOM_FILES_ROOT", str(files_root))
+    config = make_config()
+    intent = make_intent()
+    project = make_project(intents=[intent])
+    client = FakeClient(project)
+    driver = FakeDriver()
+    lease = FakeLease()
+    calls: list[dict] = []
+
+    def _run_worker(*_args, **kwargs) -> ProcessResult:
+        calls.append(kwargs)
+        return ProcessResult(
+            0,
+            '{"accepted":true,"data":{"fact":{"description":"boot found real traffic and credentials"}}}',
+            "",
+        )
+
+    monkeypatch.setattr(bootstrap, "get_driver", lambda _name: driver)
+    monkeypatch.setattr(bootstrap.HeartbeatLease, "for_intent", _lease_factory(lease))
+    monkeypatch.setattr(bootstrap, "run_healthcheck", _healthy)
+    monkeypatch.setattr(bootstrap, "run_worker_process", _run_worker)
+
+    outcome = bootstrap.run_bootstrap_task(
+        config,
+        client,
+        project,
+        intent,
+        config.workers[0],
+        TaskCancellation(),
+    )
+
+    ai_dir = files_root / "unknown" / "proj_001" / "ai"
+    assert outcome == "success"
+    assert calls[0]["ai_dir"] == str(ai_dir)
+    assert str(ai_dir) in driver.execute_prompts[0]
+    assert (ai_dir / "i001_bootstrap_summary.md").exists()
+    assert (ai_dir / "i001_bootstrap_context.json").exists()
+    assert (ai_dir / "i001_asset_inventory.md").exists()
+    assert (ai_dir / "i001_request_templates.md").exists()
+    assert (ai_dir / "i001_initial_leads.md").exists()
+    assert (ai_dir / "i001_bootstrap_checks.md").exists()
+    concluded = client.concluded[0][3]
+    assert "i001_bootstrap_summary.md" in concluded
+    assert "i001_request_templates.md" in concluded
+    assert "i001_initial_leads.md" in concluded
+    assert "boot found real traffic and credentials" in (ai_dir / "i001_bootstrap_summary.md").read_text(encoding="utf-8")
+
+
+def test_bootstrap_timeout_invalid_preallocated_skips_conclude_resume(monkeypatch) -> None:
     config = make_config()
     intent = make_intent()
     project = make_project(intents=[intent])
@@ -583,8 +679,8 @@ def test_bootstrap_timeout_invalid_preallocated_uses_latest_valid_session(monkey
         TaskCancellation(),
     )
 
-    assert outcome == "success"
-    assert driver.conclude_sessions == ["session-latest-valid"]
+    assert outcome == "timed_out"
+    assert driver.conclude_sessions == []
 
 
 def test_reason_complete_treats_inactive_project_as_success(monkeypatch) -> None:

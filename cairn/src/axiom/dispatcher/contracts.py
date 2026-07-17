@@ -134,8 +134,6 @@ def validate_reason_payload(
     if complete is None and intents is None and not normalized_data:
         if has_vulns:
             return "noop", None
-        # open_intents_empty + empty data = depth mode "all covered" signal
-        # (prompt says: all tested, no chains → return {"accepted": true, "data": {}})
         return "noop", None
     if complete is not None:
         if intents is not None:
@@ -157,7 +155,6 @@ def validate_reason_payload(
         if not intents:
             return "noop", None
         return "intents", intents
-    # open_intents_empty + no complete/intents = noop (depth mode: plan exhausted)
     return "noop", None
 
 
@@ -187,11 +184,11 @@ def extract_reason_vulns(payload: dict[str, Any]) -> list[dict[str, Any]]:
         steps = item.get("reproduction_steps", [])
         if not isinstance(steps, list):
             raise ValueError(f"vulns[{index}].reproduction_steps must be an array")
-        status = item.get("status", "待确认")
+        status = item.get("status", "待验证")
         if not isinstance(status, str):
             raise ValueError(f"vulns[{index}].status must be a string")
         status = _normalize_vuln_status(status)
-        if status not in {"待确认", "已验证", "忽略", "重复"}:
+        if status not in {"待验证", "已验证", "忽略", "重复"}:
             raise ValueError(f"vulns[{index}].status is invalid")
         normalized.append(
             {
@@ -211,16 +208,17 @@ def extract_reason_vulns(payload: dict[str, Any]) -> list[dict[str, Any]]:
 def _normalize_vuln_status(value: str) -> str:
     text = value.strip()
     mapping = {
-        "pending": "待确认",
+        "pending": "待验证",
         "confirmed": "已验证",
         "ignored": "忽略",
         "rejected": "重复",
-        "待审核": "待确认",
+        "待审核": "待验证",
+        "待确认": "待验证",
         "已确认": "已验证",
         "已忽略": "忽略",
         "已拒绝": "重复",
     }
-    return mapping.get(text.lower(), mapping.get(text, text or "待确认"))
+    return mapping.get(text.lower(), mapping.get(text, text or "待验证"))
 
 
 def validate_bootstrap_execute_payload(payload: dict[str, Any]) -> tuple[str, dict[str, str] | None]:

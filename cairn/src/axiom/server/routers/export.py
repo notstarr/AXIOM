@@ -224,12 +224,13 @@ _SEVERITY_EMOJI = {
 }
 
 _STATUS_LABEL = {
-    "待确认": "待确认",
+    "待验证": "待验证",
     "已验证": "已验证",
     "忽略": "忽略",
     "重复": "重复",
     # backward compatibility for historical records
-    "pending": "待确认",
+    "pending": "待验证",
+    "待确认": "待验证",
     "confirmed": "已验证",
     "ignored": "忽略",
     "rejected": "重复",
@@ -296,25 +297,50 @@ def _format_vuln_md(v, project_title: str = "") -> list[str]:
 def _export_vulns_md(conn, project_id: str) -> str:
     proj = get_project_or_404(conn, project_id)
     vulns = build_vulns(conn, project_id)
+    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+    sorted_vulns = sorted(vulns, key=lambda v: (severity_order.get(v.severity, 99), v.id))
+    severity_counts = {key: 0 for key in ("critical", "high", "medium", "low", "info")}
+    status_counts: dict[str, int] = {}
+    for vuln in vulns:
+        severity_counts[vuln.severity] = severity_counts.get(vuln.severity, 0) + 1
+        status = _STATUS_LABEL.get(vuln.status, vuln.status)
+        status_counts[status] = status_counts.get(status, 0) + 1
 
     lines: list[str] = []
-    lines.append(f"# 漏洞报告 — {proj['title']}")
+    lines.append(f"# 渗透测试报告 — {proj['title']}")
     lines.append("")
     lines.append(f"- **项目 ID**: `{project_id}`")
-    lines.append(f"- **漏洞数量**: {len(vulns)}")
+    lines.append(f"- **报告范围**: 当前任务下全部漏洞记录（包含待验证、已验证、忽略、重复等所有状态）")
+    lines.append(f"- **漏洞总数**: {len(vulns)}")
     lines.append(f"- **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append("")
-    lines.append("---")
+    lines.append("## 1. 执行摘要")
     lines.append("")
 
     if not vulns:
         lines.append("*暂无漏洞记录*")
         return "\n".join(lines)
 
-    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-    sorted_vulns = sorted(vulns, key=lambda v: severity_order.get(v.severity, 99))
+    lines.append("### 1.1 严重程度统计")
+    lines.append("")
+    lines.append("| 严重程度 | 数量 |")
+    lines.append("|---------|------|")
+    for severity in ("critical", "high", "medium", "low", "info"):
+        lines.append(f"| {_SEVERITY_EMOJI.get(severity, '')} {severity} | {severity_counts.get(severity, 0)} |")
+    lines.append("")
 
-    summary_lines = ["## 概览", ""]
+    lines.append("### 1.2 状态统计")
+    lines.append("")
+    lines.append("| 状态 | 数量 |")
+    lines.append("|------|------|")
+    for status in ("待验证", "已验证", "忽略", "重复"):
+        lines.append(f"| {status} | {status_counts.get(status, 0)} |")
+    for status, count in sorted(status_counts.items()):
+        if status not in {"待验证", "已验证", "忽略", "重复"}:
+            lines.append(f"| {status} | {count} |")
+    lines.append("")
+
+    summary_lines = ["## 2. 漏洞清单", ""]
     summary_lines.append("| # | ID | 严重程度 | 状态 | 标题 |")
     summary_lines.append("|---|-----|---------|------|------|")
     for i, v in enumerate(sorted_vulns, 1):
@@ -326,8 +352,10 @@ def _export_vulns_md(conn, project_id: str) -> str:
     summary_lines.append("")
     lines.extend(summary_lines)
 
+    lines.append("## 3. 漏洞详情")
+    lines.append("")
     for i, v in enumerate(sorted_vulns, 1):
-        lines.append(f"## {i}. {v.title}")
+        lines.append(f"### 3.{i} {v.title}")
         lines.append("")
         lines.extend(_format_vuln_md(v, project_title=proj["title"]))
         lines.append("---")

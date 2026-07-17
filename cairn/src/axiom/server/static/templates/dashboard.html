@@ -6,7 +6,7 @@
       <p class="text-xs text-slate-400 mt-0.5">项目、任务、漏洞与 Token 总览</p>
     </div>
     <div class="flex-1"></div>
-    <button @click="refreshDashboardPage()" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 transition inline-flex items-center gap-1.5">
+    <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 transition inline-flex items-center gap-1.5 disabled:opacity-40">
       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
       刷新
     </button>

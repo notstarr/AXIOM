@@ -85,9 +85,7 @@ window.AxiomModules.dashboard = {
     },
 
     placeholderPages() {
-      return [
-        { id: 'mcp', title: 'MCP 集成', subtitle: '外部能力接入预留', description: '后续将在这里配置 MCP Server、能力授权、连接状态和调用审计。' },
-      ];
+      return [];
     },
 
     settingsTabs() {
@@ -95,6 +93,7 @@ window.AxiomModules.dashboard = {
         { id: 'workers', title: 'Worker 管理', description: 'PI worker、模型、密钥' },
         { id: 'config', title: '配置管理', description: '并发、超时、健康检查' },
         { id: 'proxy', title: '代理', description: 'SOCKS5 和认证' },
+        { id: 'judge', title: '裁判管理', description: '监管模型、密钥、白名单' },
         { id: 'crawler', title: '爬虫 Worker', description: '爬虫专用模型配置' },
       ];
     },
@@ -398,16 +397,20 @@ window.AxiomModules.dashboard = {
     // ── Vulnerability CRUD ──
     openVulnEditor(v) {
       if (v) {
-        this.vulnEditor = { open: true, isNew: false, project_id: v.project_id, id: v.id, title: v.title, description: v.description, prerequisites: v.prerequisites || '', impact: v.impact, evidence: (v.evidence||[]).join('\n'), reproduction_steps: (v.reproduction_steps||[]).join('\n'), severity: v.severity || 'medium', status: v.status };
+        this.vulnEditor = { open: true, isNew: false, project_id: v.project_id, id: v.id, title: v.title, description: v.description, prerequisites: v.prerequisites || '', impact: v.impact, evidence: (v.evidence||[]).join('\n'), reproduction_steps: (v.reproduction_steps||[]).join('\n'), severity: v.severity || 'medium', status: v.status, status_reason: v.status_reason || '' };
       } else {
-        this.vulnEditor = { open: true, isNew: true, project_id: '', id: '', title: '', description: '', prerequisites: '', impact: '', evidence: '', reproduction_steps: '', severity: 'medium', status: '待确认' };
+        this.vulnEditor = { open: true, isNew: true, project_id: '', id: '', title: '', description: '', prerequisites: '', impact: '', evidence: '', reproduction_steps: '', severity: 'medium', status: '待验证', status_reason: '' };
       }
     },
 
     async saveVuln() {
       const ed = this.vulnEditor;
       if (!ed.title || !ed.project_id) { this.showToast('标题和项目必填', 'error'); return; }
-      const body = { title: ed.title, severity: ed.severity || 'medium', description: ed.description, prerequisites: ed.prerequisites, impact: ed.impact, evidence: ed.evidence.split('\n').filter(Boolean), reproduction_steps: ed.reproduction_steps.split('\n').filter(Boolean), status: ed.status, source: 'manual', reported_by: this.actorName() };
+      if (ed.status === '忽略' && (ed.status_reason || '').trim().length < 4) {
+        this.showToast('忽略状态需填写不少于 4 字的忽略原因', 'error');
+        return;
+      }
+      const body = { title: ed.title, severity: ed.severity || 'medium', description: ed.description, prerequisites: ed.prerequisites, impact: ed.impact, evidence: ed.evidence.split('\n').filter(Boolean), reproduction_steps: ed.reproduction_steps.split('\n').filter(Boolean), status: ed.status, status_reason: (ed.status_reason || '').trim(), source: 'manual', reported_by: this.actorName() };
       try {
         if (ed.isNew) {
           await this.api('POST', `/projects/${ed.project_id}/vulns`, body);
@@ -438,15 +441,40 @@ window.AxiomModules.dashboard = {
         project_id: v.project_id,
         id: v.id,
         title: v.title || '',
-        status: v.status || '待确认',
+        status: v.status || '待验证',
+        selected: v.status || '待验证',
+        reason: '',
+        reasonError: '',
       };
+    },
+
+    pickVulnStatus(s) {
+      this.vulnStatusQuick.selected = s;
+      if (s !== '忽略') {
+        this.vulnStatusQuick.reason = '';
+        this.vulnStatusQuick.reasonError = '';
+      }
+    },
+
+    async confirmVulnStatus() {
+      const s = this.vulnStatusQuick.selected;
+      if (s === '忽略') {
+        const reason = (this.vulnStatusQuick.reason || '').trim();
+        if (reason.length < 4) {
+          this.vulnStatusQuick.reasonError = '忽略原因不少于 4 个字';
+          return;
+        }
+        await this.saveVulnStatusQuick('忽略', reason);
+      } else {
+        await this.saveVulnStatusQuick(s);
+      }
     },
 
     closeVulnStatusQuick() {
       this.vulnStatusQuick.open = false;
     },
 
-    async saveVulnStatusQuick(nextStatus) {
+    async saveVulnStatusQuick(nextStatus, reason) {
       const quick = this.vulnStatusQuick;
       const current = this.allVulnerabilities().find(
         (item) => item.project_id === quick.project_id && item.id === quick.id,
@@ -467,7 +495,9 @@ window.AxiomModules.dashboard = {
         recommendation: current.recommendation || '',
         affected_scope: current.affected_scope || '',
         status: nextStatus,
+        status_reason: (reason || '').trim(),
         source: current.source || 'manual',
+        source_file: current.source_file || '',
         reported_by: current.reported_by || this.actorName(),
       };
       try {
@@ -488,6 +518,38 @@ window.AxiomModules.dashboard = {
         this.downloadTextFile(filename, text);
         this.showToast('已导出');
       } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async exportCurrentTaskVulnReport() {
+      const projectId = this.vulnFilter?.projectId || this.selectedVulnerability()?.project_id || '';
+      if (!projectId) {
+        this.showToast('请先选择一个任务', 'error');
+        return;
+      }
+      try {
+        const text = await this.fetchText(`/projects/${projectId}/export?format=vulns_md`);
+        const project = (this.projects || []).find(p => p.id === projectId);
+        const title = (project?.title || projectId || 'task').replace(/[^\w\u4e00-\u9fff]/g, '_').slice(0, 48);
+        this.downloadTextFile(`${projectId}_${title}_pentest_report.md`, text);
+        this.showToast('报告已导出');
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async viewEvidence(v) {
+      if (!v?.source_file || !v?.project_id) return;
+      const proj = (this.projects || []).find(p => p.id === v.project_id);
+      const groupId = proj?.parent_project_id || 'unknown';
+      this.navigateTo('files');
+      await this.$nextTick();
+      if ((this.fileGroups || []).length === 0) await this.loadFileTree();
+      await this.selectFolder(groupId, v.project_id, 'ai', false);
+      await this.$nextTick();
+      const file = (this.fileList || []).find(f => f.path === v.source_file || f.path.endsWith('/' + v.source_file) || f.name === v.source_file);
+      if (file) {
+        await this.previewFile(file.path, file.size || 0);
+      } else {
+        await this.previewFile(v.source_file, 0);
+      }
     },
   }
 };

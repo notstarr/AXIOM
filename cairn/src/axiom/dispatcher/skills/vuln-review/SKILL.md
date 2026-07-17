@@ -26,7 +26,7 @@ curl -s "${AXIOM_SERVER}/projects/${PROJECT_ID}/vulns"
 
 ### 3. 提交修正
 
-证据不足 → POST 同 title，`status: "待确认"`  
+证据不足 → POST 同 title，`status: "待验证"`
 确认为误报/重复根因 → POST 同 title，`status: "重复"`，description 说明原因  
 严重程度不匹配 → POST 同 title，修正 `severity`  
 证据充分且无问题 → 无需操作，保持 `status: "已验证"`

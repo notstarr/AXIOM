@@ -1,8 +1,11 @@
 <!-- ═══════════ SETTINGS PAGE ═══════════ -->
 <div x-show="activePage === 'settings'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
-  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 shrink-0">
-    <h2 class="text-base font-semibold text-slate-800 tracking-tight">系统设置</h2>
-    <p class="text-xs text-slate-400 mt-0.5">按配置类型分区管理，后续可以继续扩展新的子配置。</p>
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 shrink-0 flex items-center justify-between gap-3">
+    <div>
+      <h2 class="text-base font-semibold text-slate-800 tracking-tight">系统设置</h2>
+      <p class="text-xs text-slate-400 mt-0.5">按配置类型分区管理，后续可以继续扩展新的子配置。</p>
+    </div>
+    <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition">刷新</button>
   </header>
   <main class="flex-1 overflow-hidden p-5">
     <div class="h-full grid grid-cols-[220px_minmax(0,1fr)] gap-5">
@@ -41,7 +44,7 @@
         </div>
       </div>
       <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-        <h3 class="text-sm font-semibold text-slate-700">阶段并发数 — 广度模式</h3>
+        <h3 class="text-sm font-semibold text-slate-700">阶段并发数</h3>
         <div class="mt-4 space-y-3">
           <div>
             <label class="text-[11px] text-slate-400 mb-1 block font-medium">Bootstrap</label>
@@ -98,12 +101,10 @@
         </div>
       </div>
       <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-        <h3 class="text-sm font-semibold text-slate-700">阶段超时 — 广度模式</h3>
+        <h3 class="text-sm font-semibold text-slate-700">阶段超时</h3>
         <div class="mt-4 grid grid-cols-2 gap-3">
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">boot 超时</label><input type="number" min="1" x-model.number="dispatchSettings.bootstrap_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">boot 总结超时</label><input type="number" min="1" x-model.number="dispatchSettings.bootstrap_conclude_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">explore 超时</label><input type="number" min="1" x-model.number="dispatchSettings.explore_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">explore 总结超时</label><input type="number" min="1" x-model.number="dispatchSettings.explore_conclude_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">bootstrap 执行超时</label><input type="number" min="1" x-model.number="dispatchSettings.bootstrap_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">bootstrap 总结超时</label><input type="number" min="1" x-model.number="dispatchSettings.bootstrap_conclude_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">reason 超时</label><input type="number" min="1" x-model.number="dispatchSettings.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">reason 最大 intent</label><input type="number" min="1" x-model.number="dispatchSettings.reason_max_intents" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
         </div>
@@ -112,8 +113,10 @@
         <h3 class="text-sm font-semibold text-slate-700">阶段超时 — 深度模式</h3>
         <div class="mt-4 grid grid-cols-2 gap-3">
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">plan 超时</label><input type="number" min="1" x-model.number="settingsForm.plan_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">explore 超时</label><input type="number" min="1" x-model.number="dispatchSettings.explore_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">explore 总结超时</label><input type="number" min="1" x-model.number="dispatchSettings.explore_conclude_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div class="col-span-2 rounded-xl border border-amber-100 bg-white/70 p-3">
+            <p class="text-[11px] font-medium text-amber-700">Explore 派发说明</p>
+            <p class="mt-1 text-[11px] text-amber-600/80">深度模式下 Explore 同样由 plan/reason 产生的 intent 驱动，前端不再提供人工派发时间配置。</p>
+          </div>
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">reason 超时</label><input type="number" min="1" x-model.number="dispatchSettings.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">reason 最大 intent</label><input type="number" min="1" x-model.number="dispatchSettings.depth_reason_max_intents" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
         </div>
@@ -153,7 +156,7 @@
                   <div class="flex items-center gap-2">
                     <span class="text-[10px] text-slate-400 w-12 shrink-0">广度</span>
                     <button type="button" @click="toggleWorkerPhase(worker, 'phase_bootstrap')" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition"
-                      :class="phaseToggleClass(worker.phase_bootstrap)" :style="phaseToggleStyle(worker.phase_bootstrap)" x-text="worker.phase_bootstrap ? '✓ boot' : 'boot'"></button>
+                      :class="phaseToggleClass(worker.phase_bootstrap)" :style="phaseToggleStyle(worker.phase_bootstrap)" x-text="worker.phase_bootstrap ? '✓ bootstrap' : 'bootstrap'"></button>
                     <button type="button" @click="toggleWorkerPhase(worker, 'phase_reason')" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition"
                       :class="phaseToggleClass(worker.phase_reason)" :style="phaseToggleStyle(worker.phase_reason)" x-text="worker.phase_reason ? '✓ reason' : 'reason'"></button>
                     <button type="button" @click="toggleWorkerPhase(worker, 'phase_explore')" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition"
@@ -213,6 +216,21 @@
                 <input x-model="worker.pi_model_context_window" placeholder="200000" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
                 <p class="text-[11px] text-slate-400 mt-1">支持 200000 / 500k / 1m，保存时会自动换算为整数。</p>
               </div>
+              <div>
+                <label class="text-[11px] text-slate-400 mb-1 block font-medium">思考强度</label>
+                <select x-model="worker.pi_thinking" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white">
+                  <option value="off">off</option>
+                  <option value="minimal">minimal</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="xhigh">xhigh</option>
+                </select>
+                <div class="mt-1 flex flex-wrap items-center gap-2">
+                  <span class="px-2 py-0.5 rounded-lg border text-[10px] font-semibold" :class="thinkingBadgeClass(worker)" x-text="thinkingBadgeText(worker)"></span>
+                  <span x-show="worker.pi_thinking_tested_at" class="text-[10px] text-slate-400" x-text="`测试：${formatTime(worker.pi_thinking_tested_at)}`"></span>
+                </div>
+              </div>
               <div class="md:col-span-2">
                 <label class="text-[11px] text-slate-400 mb-1 block font-medium">API Key</label>
                 <input type="password" x-model="worker.pi_api_key" :placeholder="worker.pi_api_key_masked ? `已保存：${worker.pi_api_key_masked}（留空不改）` : '留空则保持当前 worker 的密钥'" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
@@ -241,6 +259,110 @@
         </div>
         <div class="mt-3 flex flex-wrap gap-4">
           <label class="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" x-model="settingsForm.proxy_enabled" class="rounded border-slate-300 text-brand-500 focus:ring-brand-300">启用代理（所有阶段：bootstrap / reason / explore）</label>
+        </div>
+      </div>
+    </section>
+
+    <!-- 裁判管理 -->
+    <section x-show="activeSettingsTab === 'judge'" x-cloak x-init="loadJudgeSettings()" class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-5">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h3 class="text-sm font-semibold text-slate-700">裁判管理</h3>
+          <p class="text-xs text-slate-400 mt-0.5">任务开启监管后，bootstrap / explore 的工具调用会先经过白名单、硬规则和裁判模型。</p>
+        </div>
+        <span class="px-2 py-1 rounded-lg text-[11px] font-semibold border"
+          :class="judgeSettings.has_key ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-600 border-amber-100'"
+          x-text="judgeSettings.has_key ? ('Key 已配置 ' + (judgeSettings.masked_key || '')) : 'Key 未配置'"></span>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="space-y-1 md:col-span-2">
+          <label class="text-[11px] font-medium text-slate-500">API Base URL</label>
+          <input x-model="judgeSettings.base_url" placeholder="https://api.siliconflow.cn/v1" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+        </div>
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">Model</label>
+          <input x-model="judgeSettings.model" placeholder="Qwen/Qwen3.5-9B" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+        </div>
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">Timeout（秒）</label>
+          <input type="number" min="1" max="60" x-model.number="judgeSettings.timeout_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+          <p class="text-[11px] text-slate-400">建议 3 秒；超时 fail-open，不阻断任务。</p>
+        </div>
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">API Key（留空保持不变）</label>
+          <div class="flex gap-2">
+            <input x-model="judgeKeyForm.api_key" type="password" placeholder="sk-..." class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+            <button @click="saveJudgeKey()" class="px-3 py-2 text-xs border border-slate-200 rounded-xl hover:bg-slate-50 transition">保存 Key</button>
+          </div>
+        </div>
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">默认新建任务监管</label>
+          <button type="button" @click="judgeSettings.enabled_default = !judgeSettings.enabled_default" class="w-full h-10 px-3 rounded-xl border text-sm font-medium transition flex items-center justify-between"
+            :class="judgeSettings.enabled_default ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-slate-300 bg-slate-100 text-slate-500'">
+            <span>新建任务默认开启</span>
+            <span class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-white/90 border border-current/20" x-text="judgeSettings.enabled_default ? '开启' : '关闭'"></span>
+          </button>
+        </div>
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">模式</label>
+          <select x-model="judgeSettings.mode" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+            <option value="enforce">enforce：硬规则和模型 BLOCK 都阻断</option>
+            <option value="guarded">guarded：只阻断硬规则</option>
+            <option value="observe">observe：只记录不阻断</option>
+            <option value="off">off：关闭</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">白名单工具（每行一个）</label>
+          <textarea :value="(judgeSettings.whitelist_tools || []).join('\n')" @input="judgeSettings.whitelist_tools = normalizeJudgeList($event.target.value)" rows="6" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+        </div>
+        <div class="space-y-1">
+          <label class="text-[11px] font-medium text-slate-500">白名单 bash 命令 verb（每行一个）</label>
+          <textarea :value="(judgeSettings.whitelist_bash_verbs || []).join('\n')" @input="judgeSettings.whitelist_bash_verbs = normalizeJudgeList($event.target.value)" rows="6" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <label class="text-[11px] font-medium text-slate-500">裁判提示词</label>
+            <p class="text-[11px] text-slate-400 mt-0.5">用于非白名单、非硬规则工具调用的模型裁判。输出协议必须保持 ALLOW / BLOCK:&lt;原因&gt;。</p>
+          </div>
+          <button type="button" @click="resetJudgePrompt()" class="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 transition">恢复默认提示词</button>
+        </div>
+        <textarea x-model="judgeSettings.system_prompt" rows="16" maxlength="20000" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono leading-5 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+        <div class="flex justify-between text-[11px] text-slate-400">
+          <span>保存后立即影响后续裁判模型判断，不影响白名单和硬规则。</span>
+          <span x-text="`${(judgeSettings.system_prompt || '').length}/20000`"></span>
+        </div>
+      </div>
+
+      <div class="space-y-2 rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <label class="text-[11px] font-medium text-slate-500">硬规则 BLOCK（每行：原因 + Tab + 正则）</label>
+            <p class="text-[11px] text-slate-400 mt-0.5">命中后直接阻断，不进入裁判模型；行首加 # 可临时禁用该规则。</p>
+          </div>
+          <button type="button" @click="resetJudgeHardRules()" class="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-500 hover:bg-white transition">恢复默认硬规则</button>
+        </div>
+        <textarea :value="hardRulesText()" @input="parseHardRulesText($event.target.value)" rows="10" spellcheck="false" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono leading-5 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+        <div class="flex justify-between text-[11px] text-slate-400">
+          <span>建议只放确定性强的规则；正则保存前会由后端校验。</span>
+          <span x-text="`${(judgeSettings.hard_block_rules || []).filter(r => r.enabled !== false).length}/${(judgeSettings.hard_block_rules || []).length} 启用`"></span>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between gap-3">
+        <div class="text-xs" x-show="judgeTestResult" :class="judgeTestResult && judgeTestResult.ok ? 'text-emerald-600' : 'text-rose-600'">
+          <span x-text="judgeTestResult ? (judgeTestResult.message + (judgeTestResult.latency_ms ? ' · ' + judgeTestResult.latency_ms + 'ms' : '')) : ''"></span>
+        </div>
+        <div class="flex gap-2 ml-auto">
+          <button @click="testJudgeSettings()" :disabled="judgeTesting" class="px-4 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition disabled:opacity-40" x-text="judgeTesting ? '测试中...' : '测试裁判'"></button>
+          <button @click="saveJudgeSettings()" class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition">保存裁判配置</button>
         </div>
       </div>
     </section>

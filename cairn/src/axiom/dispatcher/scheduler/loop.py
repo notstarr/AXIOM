@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -49,6 +50,7 @@ class WorkerSelection:
     blocked_unhealthy: list[str]
     blocked_rejected: list[str]
     blocked_task_type: list[str]
+    blocked_pool: list[str]
 
 
 @dataclass(slots=True)
@@ -104,6 +106,8 @@ class DispatcherLoop:
                     self._refresh_dispatch_config_if_needed()
                     self._reap_futures()
                     summaries = self.client.list_projects()
+                    if self._recover_stale_external_leases(summaries):
+                        summaries = self.client.list_projects()
                     self._initialize_reason_checkpoints(summaries)
                     self._refresh_runtime_projects(summaries)
                     self._cancel_inactive_tasks(summaries)
@@ -357,12 +361,14 @@ class DispatcherLoop:
         return None
 
     def _create_plan_intent(self, project: ProjectDetail) -> Intent | None:
+        pool = list(getattr(project.project, "worker_pool", []) or [])
         response = self.client.create_intent(
             project.project.id,
             ["origin"],
             "plan",
             "dispatcher.plan",
             targets=self._derive_system_intent_targets(project),
+            worker_pool=pool,
         )
         if response.ok and isinstance(response.data, dict):
             intent_data = response.data
@@ -406,7 +412,7 @@ class DispatcherLoop:
         )
 
     def _dispatch_plan(self, project: ProjectDetail, intent: Intent) -> bool:
-        selection = self._select_worker(project.project.id, "plan")
+        selection = self._select_worker(project.project.id, "plan", worker_pool=getattr(intent, "worker_pool", None))
         if selection is None:
             self._log_changed(
                 f"project:{project.project.id}:skip:plan_worker",
@@ -450,7 +456,11 @@ class DispatcherLoop:
             return False
 
     def _dispatch_reason(self, project: ProjectDetail, export_yaml: str, trigger: str) -> bool:
-        selection = self._select_worker(project.project.id, "reason")
+        selection = self._select_worker(
+            project.project.id,
+            "reason",
+            worker_pool=getattr(project.project, "worker_pool", None),
+        )
         worker = selection.worker
         if worker is None:
             self._log_changed(
@@ -514,7 +524,7 @@ class DispatcherLoop:
         return True
 
     def _dispatch_bootstrap(self, project: ProjectDetail, intent: Intent) -> bool:
-        selection = self._select_worker(project.project.id, "bootstrap")
+        selection = self._select_worker(project.project.id, "bootstrap", worker_pool=getattr(intent, "worker_pool", None))
         worker = selection.worker
         if worker is None:
             self._log_changed(
@@ -579,7 +589,7 @@ class DispatcherLoop:
         return True
 
     def _dispatch_explore(self, project: ProjectDetail, export_yaml: str, intent: Intent) -> bool:
-        selection = self._select_worker(project.project.id, "explore")
+        selection = self._select_worker(project.project.id, "explore", worker_pool=getattr(intent, "worker_pool", None))
         worker = selection.worker
         if worker is None:
             self._log_changed(
@@ -652,7 +662,12 @@ class DispatcherLoop:
         LOG.info("dispatched explore project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
         return True
 
-    def _select_worker(self, project_id: str, task_type: str) -> WorkerSelection:
+    def _select_worker(
+        self,
+        project_id: str,
+        task_type: str,
+        worker_pool: list[str] | None = None,
+    ) -> WorkerSelection:
         now = time.time()
         candidates: list[WorkerConfig] = []
         blocked_phase_limit: str | None = None
@@ -660,6 +675,8 @@ class DispatcherLoop:
         blocked_unhealthy: list[str] = []
         blocked_rejected: list[str] = []
         blocked_task_type: list[str] = []
+        blocked_pool: list[str] = []
+        pool_set: set[str] | None = set(worker_pool) if worker_pool else None
         running_counts = self._worker_counts()
         phase_limit = self.config.phase_limits.for_task(task_type)
         running_for_phase = self._phase_running_count(task_type)
@@ -670,6 +687,9 @@ class DispatcherLoop:
                 continue
             if task_type not in worker.task_types:
                 blocked_task_type.append(worker.name)
+                continue
+            if pool_set is not None and worker.name not in pool_set:
+                blocked_pool.append(worker.name)
                 continue
             if blocked_phase_limit is not None:
                 continue
@@ -704,6 +724,7 @@ class DispatcherLoop:
                 blocked_unhealthy=blocked_unhealthy,
                 blocked_rejected=blocked_rejected,
                 blocked_task_type=blocked_task_type,
+                blocked_pool=blocked_pool,
             )
         ordered = choose_worker(candidates, running_counts)
         LOG.debug(
@@ -725,6 +746,7 @@ class DispatcherLoop:
             blocked_unhealthy=blocked_unhealthy,
             blocked_rejected=blocked_rejected,
             blocked_task_type=blocked_task_type,
+            blocked_pool=blocked_pool,
         )
 
     def _worker_counts(self) -> dict[str, int]:
@@ -808,12 +830,14 @@ class DispatcherLoop:
         return any("bootstrap" in worker.task_types for worker in self.config.workers)
 
     def _create_bootstrap_intent(self, project: ProjectDetail) -> Intent | None:
+        pool = list(getattr(project.project, "worker_pool", []) or [])
         response = self.client.create_intent(
             project.project.id,
             ["origin"],
             BOOTSTRAP_INTENT_DESCRIPTION,
             BOOTSTRAP_INTENT_CREATOR,
             targets=self._derive_system_intent_targets(project),
+            worker_pool=pool,
         )
         if response.status_code == 403:
             LOG.info("project became inactive before bootstrap intent create project=%s", project.project.id)
@@ -1153,8 +1177,91 @@ class DispatcherLoop:
         active_ids = {summary.id for summary in summaries if summary.status == "active"}
         self.runtime_project_ids.intersection_update(active_ids)
 
+    def _recover_stale_external_leases(self, summaries: list[ProjectSummary]) -> bool:
+        recovered = False
+        for summary in summaries:
+            if summary.status != "active":
+                continue
+            if summary.reason is None and summary.working_intent_count == 0:
+                continue
+            if self._project_running_task_count(summary.id) > 0:
+                continue
+            try:
+                project = self.client.get_project(summary.id)
+            except requests.RequestException:
+                raise
+            except Exception:
+                LOG.exception("failed to inspect stale leases project=%s", summary.id)
+                continue
+            reason = project.project.reason
+            if reason is not None and self._lease_timestamp_stale(reason.last_heartbeat_at):
+                response = self.client.release_reason(project.project.id, reason.worker)
+                if response.ok or response.status_code in (403, 409):
+                    recovered = response.ok or recovered
+                    LOG.warning(
+                        "released stale external reason lease project=%s worker=%s last_heartbeat_at=%s status=%s",
+                        project.project.id,
+                        reason.worker,
+                        reason.last_heartbeat_at,
+                        response.status_code,
+                    )
+                else:
+                    LOG.warning(
+                        "failed to release stale external reason lease project=%s worker=%s status=%s",
+                        project.project.id,
+                        reason.worker,
+                        response.status_code,
+                    )
+            running_intents = self._project_running_intent_ids(project.project.id)
+            for intent in project.intents:
+                if not self._is_open_intent(intent):
+                    continue
+                if intent.worker is None or intent.id in running_intents:
+                    continue
+                timestamp = intent.last_heartbeat_at or intent.created_at
+                if not self._lease_timestamp_stale(timestamp):
+                    continue
+                response = self.client.release(project.project.id, intent.id, intent.worker)
+                if response.ok or response.status_code in (403, 409):
+                    recovered = response.ok or recovered
+                    LOG.warning(
+                        "released stale external intent lease project=%s intent=%s worker=%s last_heartbeat_at=%s status=%s",
+                        project.project.id,
+                        intent.id,
+                        intent.worker,
+                        intent.last_heartbeat_at,
+                        response.status_code,
+                    )
+                else:
+                    LOG.warning(
+                        "failed to release stale external intent lease project=%s intent=%s worker=%s status=%s",
+                        project.project.id,
+                        intent.id,
+                        intent.worker,
+                        response.status_code,
+                    )
+        return recovered
+
+    def _project_running_intent_ids(self, project_id: str) -> set[str]:
+        return {
+            task.intent_id
+            for task in self.futures.values()
+            if task.project_id == project_id and task.intent_id is not None
+        }
+
+    def _lease_timestamp_stale(self, value: str | None) -> bool:
+        if not value:
+            return False
+        try:
+            timestamp = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            LOG.warning("could not parse lease timestamp value=%s", value)
+            return False
+        grace_seconds = max(30, self.config.runtime.interval * 4)
+        return (datetime.now(timezone.utc) - timestamp).total_seconds() > grace_seconds
+
     def _enqueue_maintainer(self, project_id: str, intent_id: str) -> None:
-        """Submit a maintainer task to scan findings after explore succeeds."""
+        """Submit a maintainer task to scan findings after worker success."""
         worker = next((w for w in self.config.workers if w.name == "stepfun-flash" and not w.disabled), None)
         if worker is None:
             return

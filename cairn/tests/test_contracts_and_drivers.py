@@ -35,6 +35,31 @@ def test_parse_json_output_prefers_fenced_final_json_over_earlier_examples() -> 
     }
 
 
+def test_parse_json_output_prefers_wrapped_accepted_object_over_nested_objects() -> None:
+    text = (
+        "Reasoning summary before final payload.\n"
+        "```json\n"
+        '{"accepted": true, "data": {"intents": [{"from": ["f001"], '
+        '"description": "next", "targets": ["api.example.com"], '
+        '"timeouts": {"execute_seconds": 360, "conclude_seconds": 120}}]}}'
+        "</｜DSML｜parameter> </｜DSML｜invoke>"
+    )
+
+    assert parse_json_output(text) == {
+        "accepted": True,
+        "data": {
+            "intents": [
+                {
+                    "from": ["f001"],
+                    "description": "next",
+                    "targets": ["api.example.com"],
+                    "timeouts": {"execute_seconds": 360, "conclude_seconds": 120},
+                }
+            ]
+        },
+    }
+
+
 def test_reason_payload_limits_number_of_intents() -> None:
     kind, intents = validate_reason_payload(
         {
@@ -321,6 +346,5 @@ def test_pi_driver_prefers_assistant_error_over_user_prompt_examples() -> None:
     )
 
     assert driver.extract_response_text(stdout, "") == "Connection error."
-
 
 

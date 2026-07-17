@@ -25,11 +25,13 @@ from axiom.dispatcher.tasks.common import (
     best_effort_release_reason,
     cancel_reason,
     did_timeout,
+    format_credential_headers_context,
     preview,
     record_session_tools,
     run_healthcheck,
     run_worker_process,
     task_healthcheck_enabled,
+    worker_with_project_runtime,
     write_graph_snapshot_file,
 )
 from axiom.dispatcher.workers.registry import get_driver
@@ -139,6 +141,9 @@ def run_reason_task(
                 else config.tasks.reason.max_intents
             ),
             "blackboard": _format_blackboard(project.blackboard, project.project.parent_project_id or ""),
+            "credential_headers": format_credential_headers_context(
+                getattr(project.project, "credential_headers", "")
+            ),
             "db_path": str(current_db_path()),
             "group_id": project.project.parent_project_id or "",
             "vuln_baseline_script": str(
@@ -171,7 +176,12 @@ def run_reason_task(
         )
 
         session = driver.prepare_session()
-        command = driver.build_execute(worker, prompt, session, phase="reason")
+        execute_worker = worker_with_project_runtime(
+            worker,
+            guard_enabled=False,
+            credential_headers=getattr(project.project, "credential_headers", ""),
+        )
+        command = driver.build_execute(execute_worker, prompt, session, phase="reason")
         reason_metadata = {
             "attempt_id": f"reason:{project.project.id}:{worker.name}:{uuid.uuid4().hex[:8]}",
             "attempt_role": "reason",
@@ -179,7 +189,7 @@ def run_reason_task(
         }
         execute_started = time.perf_counter()
         result = run_worker_process(
-            worker,
+            execute_worker,
             command.argv,
             phase="reason_execute",
             timeout_seconds=config.tasks.reason.timeout,

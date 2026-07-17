@@ -25,6 +25,10 @@
           <option :value="cat" x-text="cat"></option>
         </template>
       </select>
+      <button @click="refreshCurrentPage()" :disabled="refreshLoading"
+              class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition">
+        刷新
+      </button>
       <button @click="showPromptEditor = true; editingPrompt = null; newPrompt = { title: '', category: '通用', content: '' }"
               class="h-8 px-3 rounded-lg bg-brand-500 text-white text-xs font-medium hover:bg-brand-600 transition flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
@@ -154,4 +158,3 @@
     </div>
   </template>
 </div>
-

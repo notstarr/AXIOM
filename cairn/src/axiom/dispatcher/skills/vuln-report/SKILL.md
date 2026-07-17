@@ -38,7 +38,7 @@ for v in vulns:
   ├── 是否有响应证明危害真实发生？
   │     └── 否 → 这是发现，写入 fact，不要上报
   ├── 是否有完整证据链（payload + 响应 + 影响量化）？
-  │     └── 否 → 标 severity: "info"，status: "待确认"
+  │     └── 否 → 标 severity: "info"，status: "待验证"
   └── 全部满足 → 这是漏洞，按下方流程上报
 ```
 
@@ -64,7 +64,7 @@ curl -X POST "${AXIOM_SERVER}/projects/${PROJECT_ID}/vulns" \
       "3. 响应返回所有用户数据，确认注入存在",
       "4. sqlmap 验证数据库级别影响"
     ],
-    "status": "待确认",
+    "status": "待验证",
     "source": "explore",
     "reported_by": "worker-name"
   }'

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Literal
 from typing import Any
 
@@ -22,7 +23,6 @@ class Settings(BaseModel):
     openai_model: str = ""
     proxy_url: str = ""
     proxy_enabled: bool = False
-    domain_blacklist: list[str] = Field(default_factory=list)
 
     @field_validator("proxy_url")
     @classmethod
@@ -48,26 +48,6 @@ class Settings(BaseModel):
     @classmethod
     def normalize_optional_text(cls, value: str) -> str:
         return value.strip()
-
-    @field_validator("domain_blacklist")
-    @classmethod
-    def validate_domain_blacklist(cls, values: list[str]) -> list[str]:
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for raw in values:
-            item = raw.strip().lower()
-            if not item:
-                continue
-            item = item.removeprefix("http://").removeprefix("https://")
-            item = item.split("/", 1)[0].split(":", 1)[0].strip(".")
-            if not item:
-                continue
-            if item in seen:
-                continue
-            seen.add(item)
-            normalized.append(item)
-        return normalized
-
 
 class ProviderKeyMeta(BaseModel):
     provider: str
@@ -95,6 +75,137 @@ class UpdateProviderKeyRequest(BaseModel):
         return text
 
 
+
+
+class JudgeHardRule(BaseModel):
+    reason: str
+    pattern: str
+    enabled: bool = True
+
+    @field_validator("reason", "pattern")
+    @classmethod
+    def validate_non_empty_text(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("pattern")
+    @classmethod
+    def validate_regex(cls, value: str) -> str:
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise ValueError(f"invalid regex: {exc}") from exc
+        return value
+
+
+class JudgeSettingsResponse(BaseModel):
+    enabled_default: bool = False
+    mode: Literal["off", "observe", "guarded", "enforce"] = "enforce"
+    base_url: str = "https://api.siliconflow.cn/v1"
+    model: str = "Qwen/Qwen3.5-9B"
+    timeout_seconds: int = Field(default=3, ge=1, le=60)
+    whitelist_tools: list[str] = Field(default_factory=list)
+    whitelist_bash_verbs: list[str] = Field(default_factory=list)
+    system_prompt: str = ""
+    default_system_prompt: str = ""
+    hard_block_rules: list[JudgeHardRule] = Field(default_factory=list)
+    default_hard_block_rules: list[JudgeHardRule] = Field(default_factory=list)
+    has_key: bool = False
+    masked_key: str = ""
+    updated_at: str = ""
+
+
+class UpdateJudgeSettingsRequest(BaseModel):
+    enabled_default: bool = False
+    mode: Literal["off", "observe", "guarded", "enforce"] = "enforce"
+    base_url: str = "https://api.siliconflow.cn/v1"
+    model: str = "Qwen/Qwen3.5-9B"
+    timeout_seconds: int = Field(default=3, ge=1, le=60)
+    whitelist_tools: list[str] = Field(default_factory=list)
+    whitelist_bash_verbs: list[str] = Field(default_factory=list)
+    system_prompt: str = Field(default="", max_length=20000)
+    hard_block_rules: list[JudgeHardRule] = Field(default_factory=list, max_length=100)
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        text = value.strip().rstrip("/")
+        if not text.startswith(("http://", "https://")):
+            raise ValueError("base_url must start with http:// or https://")
+        return text
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("model must not be empty")
+        return text
+
+    @field_validator("system_prompt")
+    @classmethod
+    def validate_system_prompt(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("system_prompt must not be empty")
+        return text
+
+    @field_validator("whitelist_tools", "whitelist_bash_verbs")
+    @classmethod
+    def normalize_whitelist(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in values:
+            text = str(raw or "").strip().lower()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
+
+class JudgeTestResponse(BaseModel):
+    ok: bool
+    decision: str = ""
+    message: str = ""
+    latency_ms: int = 0
+    raw_output: str = ""
+
+
+# ── 批量 URL 守门测试 ─────────────────────────────────────────────
+class JudgeUrlTestItem(BaseModel):
+    method: str = "GET"
+    url: str
+    body: str = ""
+
+
+class JudgeUrlBatchRequest(BaseModel):
+    items: list[JudgeUrlTestItem]
+
+
+class JudgeUrlTestResult(BaseModel):
+    method: str = "GET"
+    url: str = ""
+    body: str = ""
+    decision: Literal["ALLOW", "BLOCK"]
+    reason: str = ""
+    source: str = ""
+    model_name: str = ""
+    model_latency_ms: int = 0
+    raw_model_output: str = ""
+    normalized: dict[str, Any] = Field(default_factory=dict)
+
+
+class JudgeUrlBatchResponse(BaseModel):
+    results: list[JudgeUrlTestResult]
+    total: int = 0
+    allowed: int = 0
+    blocked: int = 0
+    total_latency_ms: int = 0
+
+
 class ProjectScope(BaseModel):
     targets: list[str] = Field(default_factory=list)
     exclude: list[str] = Field(default_factory=list)
@@ -120,6 +231,11 @@ class ProjectScope(BaseModel):
     @classmethod
     def validate_notes(cls, value: str) -> str:
         return value.strip()
+
+
+
+class TaskScope(ProjectScope):
+    enabled: bool = False
 
 
 class TaskEvent(BaseModel):
@@ -152,7 +268,7 @@ class TaskEventCreateRequest(BaseModel):
 
 
 VulnSeverity = Literal["info", "low", "medium", "high", "critical"]
-VulnStatus = Literal["待确认", "已验证", "忽略", "重复"]
+VulnStatus = Literal["待验证", "已验证", "忽略", "重复"]
 BlackboardStatus = Literal["open", "in_progress", "resolved", "archived"]
 BlackboardPriority = Literal["low", "medium", "high"]
 
@@ -169,8 +285,10 @@ class Vulnerability(BaseModel):
     reproduction_steps: list[str] = Field(default_factory=list)
     recommendation: str = ""
     affected_scope: str = ""
-    status: VulnStatus = "待确认"
+    status: VulnStatus = "待验证"
+    status_reason: str = ""
     source: str = "reason"
+    source_file: str = ""
     reported_by: str
     created_at: str
 
@@ -186,8 +304,10 @@ class CreateVulnerabilityRequest(BaseModel):
     reproduction_steps: list[str] = Field(default_factory=list)
     recommendation: str = ""
     affected_scope: str = ""
-    status: VulnStatus = "待确认"
+    status: VulnStatus = "待验证"
+    status_reason: str = ""
     source: str = "reason"
+    source_file: str = ""
     reported_by: str
 
     @field_validator("title", "description", "impact", "source", "reported_by")
@@ -213,16 +333,17 @@ class CreateVulnerabilityRequest(BaseModel):
     def normalize_vuln_status(cls, value: str) -> str:
         text = str(value or "").strip()
         mapping = {
-            "pending": "待确认",
+            "pending": "待验证",
             "confirmed": "已验证",
             "ignored": "忽略",
             "rejected": "重复",
-            "待审核": "待确认",
+            "待审核": "待验证",
+            "待确认": "待验证",
             "已确认": "已验证",
             "已忽略": "忽略",
             "已拒绝": "重复",
         }
-        return mapping.get(text.lower(), mapping.get(text, text or "待确认"))
+        return mapping.get(text.lower(), mapping.get(text, text or "待验证"))
 
 
 class BlackboardItem(BaseModel):
@@ -412,7 +533,48 @@ class DispatchWorkerSettings(BaseModel):
     pi_model_context_window: str = ""
     pi_api_key: str = ""
     pi_api_key_masked: str = ""
+    pi_thinking: Literal["off", "minimal", "low", "medium", "high", "xhigh"] = "off"
+    pi_thinking_capable: Literal["unknown", "true", "false"] = "unknown"
+    pi_thinking_tested_at: str = ""
+    mcp_enabled: bool = False
+    mcp_profile: str = ""
+    mcp_config_json: str = ""
+    mcp_allowed_servers: str = ""
+    mcp_allowed_tools: str = ""
     disabled: bool = False
+
+    @field_validator(
+        "name",
+        "pi_model",
+        "pi_base_url",
+        "pi_provider_api",
+        "pi_model_context_window",
+        "pi_thinking_tested_at",
+        "mcp_profile",
+        "mcp_config_json",
+        "mcp_allowed_servers",
+        "mcp_allowed_tools",
+        mode="before",
+    )
+    @classmethod
+    def normalize_worker_text_fields(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("mcp_config_json")
+    @classmethod
+    def validate_mcp_config_json(cls, value: str) -> str:
+        text = (value or "").strip()
+        if not text:
+            return ""
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("mcp_config_json must be valid JSON") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("mcp_config_json must be a JSON object")
+        return text
 
 
 class DispatchRuntimeWorkerView(BaseModel):
@@ -497,6 +659,9 @@ class PiConnectionTestRequest(BaseModel):
 class PiConnectionTestResponse(BaseModel):
     ok: bool
     message: str
+    thinking_capable: Literal["unknown", "true", "false"] = "unknown"
+    thinking_tested_at: str = ""
+    thinking_message: str = ""
 
 
 class DispatchModelItem(BaseModel):
@@ -530,6 +695,7 @@ class Intent(BaseModel):
     timeouts: IntentTimeouts | None = None
     creator: str
     worker: str | None = None
+    worker_pool: list[str] = Field(default_factory=list)
     last_heartbeat_at: str | None = None
     created_at: str
     concluded_at: str | None = None
@@ -558,7 +724,6 @@ class ProjectGroupMeta(BaseModel):
     id: str
     title: str
     description: str = ""
-    scope: ProjectScope = Field(default_factory=ProjectScope)
     status: Literal["active", "archived"] = "active"
     created_at: str
 
@@ -575,7 +740,6 @@ class ProjectGroupSummary(ProjectGroupMeta):
 class CreateProjectGroupRequest(BaseModel):
     title: str
     description: str = ""
-    scope: ProjectScope = Field(default_factory=ProjectScope)
 
     @field_validator("title")
     @classmethod
@@ -590,12 +754,6 @@ class CreateProjectGroupRequest(BaseModel):
     def validate_description(cls, value: str) -> str:
         return value.strip()
 
-    @model_validator(mode="after")
-    def validate_scope_mode(self) -> "CreateProjectGroupRequest":
-        if self.scope.targets and self.scope.exclude:
-            raise ValueError("scope.targets and scope.exclude cannot both be set")
-        return self
-
 
 class UpdateProjectGroupRequest(CreateProjectGroupRequest):
     status: Literal["active", "archived"] = "active"
@@ -607,7 +765,12 @@ class ProjectMeta(BaseModel):
     title: str
     status: Literal["active", "stopped", "completed"]
     bootstrap_enabled: bool
+    kk_report_enabled: bool = True
     depth_mode: bool = False
+    guard_enabled: bool = False
+    worker_pool: list[str] = Field(default_factory=list)
+    task_scope: TaskScope = Field(default_factory=TaskScope)
+    credential_headers: str = ""
     created_at: str
     reason: ProjectReason | None = None
 
@@ -648,7 +811,12 @@ class CreateProjectRequest(BaseModel):
     origin: str
     goal: str
     bootstrap_enabled: bool = True
+    kk_report_enabled: bool = False
     depth_mode: bool = False
+    guard_enabled: bool = False
+    worker_pool: list[str] = Field(default_factory=list)
+    credential_headers: str = ""
+    task_scope: TaskScope | None = None
     hints: list[CreateHintInline] | None = None
 
     @field_validator("title", "origin", "goal")
@@ -658,6 +826,11 @@ class CreateProjectRequest(BaseModel):
         if not text:
             raise ValueError("must not be empty")
         return text
+
+    @field_validator("credential_headers")
+    @classmethod
+    def validate_credential_headers(cls, value: str) -> str:
+        return value.strip()
 
     @field_validator("parent_project_id")
     @classmethod
@@ -688,6 +861,7 @@ class CreateIntentRequest(BaseModel):
     timeouts: IntentTimeouts | None = None
     creator: str
     worker: str | None = None
+    worker_pool: list[str] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True}
 
@@ -800,6 +974,28 @@ class ConcludeResponse(BaseModel):
 
 class UpdateProjectStatusRequest(BaseModel):
     status: Literal["active", "stopped"]
+
+
+class UpdateProjectWorkerPoolRequest(BaseModel):
+    worker_pool: list[str] = Field(default_factory=list)
+
+    @field_validator("worker_pool")
+    @classmethod
+    def validate_worker_pool(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            text = str(item).strip()
+            if not text or text in seen:
+                continue
+            cleaned.append(text)
+            seen.add(text)
+        return cleaned
+
+
+class UpdateProjectWorkerPoolResponse(BaseModel):
+    project: ProjectMeta
+    updated_unclaimed_intents: int = 0
 
 
 class UpdateProjectTitleRequest(BaseModel):
@@ -916,7 +1112,37 @@ class AssetStats(BaseModel):
     untested: int
 
 
-AssetAuthType = Literal["cookie", "jwt", "bearer", "basic", "custom_header", "none"]
+AssetAuthType = Literal["cookie", "jwt", "bearer", "basic", "custom_header", "none", "header", "url", "body"]
+
+
+def _coerce_credential_content(text: str) -> str:
+    """人工编辑的凭证内容：允许自由文本，转成后端存储用的 JSON 字符串。
+
+    - 已是合法 JSON（对象/数组/字符串）→ 原样保留（兼容智能体写入的复杂结构，如 miniapp_request_template）。
+    - 否则按 `key: value` / `key = value` 行解析为扁平 dict（最兼容按 key→value 注入的智能体）。
+    - 空 → 存 `{}`；解析不出任何 key→value 且非 JSON → 包进 {"raw": "..."} 避免丢数据。
+    """
+    import re
+
+    raw = (text or "").strip()
+    if not raw:
+        return "{}"
+    try:
+        json.loads(raw)
+        return raw  # 合法 JSON，原样保留
+    except json.JSONDecodeError:
+        pass
+    values: dict[str, str] = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = re.split(r"\s*[:=]\s*", line, maxsplit=1)
+        if len(parts) == 2 and parts[0]:
+            values[parts[0]] = parts[1]
+    if not values:
+        return json.dumps({"raw": raw}, ensure_ascii=False)
+    return json.dumps(values, ensure_ascii=False)
 
 
 class CredentialRead(BaseModel):
@@ -941,6 +1167,7 @@ class CredentialCreate(BaseModel):
     domains_json: str = "[]"
     source_task_id: str = ""
     expires_at: str | None = None
+    active: int = 1
     asset_id: int | None = None
 
     @field_validator("group_id")
@@ -959,16 +1186,8 @@ class CredentialCreate(BaseModel):
     @field_validator("credentials_json")
     @classmethod
     def validate_credentials_json(cls, value: str) -> str:
-        text = value.strip()
-        if not text:
-            raise ValueError("credentials_json must not be empty")
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise ValueError("credentials_json must be valid JSON object") from exc
-        if not isinstance(parsed, dict) or not parsed:
-            raise ValueError("credentials_json must be a non-empty JSON object")
-        return text
+        # 人工编辑允许自由文本（key:value 行）或合法 JSON；统一转成存储用 JSON 字符串
+        return _coerce_credential_content(value)
 
     @field_validator("domains_json")
     @classmethod
@@ -1011,16 +1230,8 @@ class CredentialUpdate(BaseModel):
     def validate_update_credentials_json(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        text = value.strip()
-        if not text:
-            raise ValueError("credentials_json must not be empty")
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise ValueError("credentials_json must be valid JSON object") from exc
-        if not isinstance(parsed, dict) or not parsed:
-            raise ValueError("credentials_json must be a non-empty JSON object")
-        return text
+        # 人工编辑允许自由文本（key:value 行）或合法 JSON；统一转成存储用 JSON 字符串
+        return _coerce_credential_content(value)
 
     @field_validator("domains_json")
     @classmethod
@@ -1037,3 +1248,148 @@ class CredentialUpdate(BaseModel):
         if not isinstance(parsed, list):
             raise ValueError("domains_json must be a JSON array")
         return text
+
+
+class MCPServerBase(BaseModel):
+    name: str
+    command: str | None = None
+    url: str | None = None
+    args_json: str = "[]"
+    env_json: str = "{}"
+    disabled: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("command", "url")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        return text
+
+    @field_validator("args_json", "env_json")
+    @classmethod
+    def validate_json(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            return "[]" if "args" in value else "{}"
+        try:
+            json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("must be valid JSON") from exc
+        return text
+
+    @model_validator(mode="after")
+    def require_command_or_url(self) -> "MCPServerBase":
+        if not self.command and not self.url:
+            raise ValueError("must provide either command (stdio) or url (sse/http)")
+        return self
+
+
+class MCPServerTool(BaseModel):
+    id: str
+    server_id: str
+    server_name: str
+    name: str
+    description: str = ""
+    enabled: bool = True
+    source: str = "manual"
+    created_at: str
+    updated_at: str
+
+
+class MCPServer(MCPServerBase):
+    id: str
+    created_at: str
+    updated_at: str
+    tools: list[MCPServerTool] = Field(default_factory=list)
+
+
+class MCPServerCreate(MCPServerBase):
+    pass
+
+
+class MCPServerUpdate(BaseModel):
+    name: str | None = None
+    command: str | None = None
+    url: str | None = None
+    args_json: str | None = None
+    env_json: str | None = None
+    disabled: bool | None = None
+
+    @field_validator("name", "command", "url")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        return text
+
+    @field_validator("args_json", "env_json")
+    @classmethod
+    def validate_optional_json(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return "[]" if "args" in value else "{}"
+        try:
+            json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("must be valid JSON") from exc
+        return text
+
+
+class MCPServerToolCreate(BaseModel):
+    name: str
+    description: str = ""
+    enabled: bool = True
+    source: str = "manual"
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("description", "source")
+    @classmethod
+    def validate_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class MCPServerToolUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    enabled: bool | None = None
+    source: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_optional_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("description", "source")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()

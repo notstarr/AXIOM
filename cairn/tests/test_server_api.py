@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 import pytest
@@ -9,6 +10,28 @@ import yaml
 from axiom.server import db
 from axiom.server.app import app
 from axiom.server.routers import settings as settings_router
+
+
+def test_new_task_form_submits_hint_and_omits_inline_credentials() -> None:
+    static_dir = Path(__file__).parents[1] / "src" / "axiom" / "server" / "static"
+    template = (static_dir / "templates" / "task-list.html").read_text()
+    state = (static_dir / "js" / "state.js").read_text()
+    projects = (static_dir / "js" / "projects.js").read_text()
+
+    assert 'x-model="newProject.credential_headers"' not in template
+    assert 'x-model="newProject.blackboard"' not in template
+    assert 'x-model="newProject.hints"' in template
+    assert "请求头凭证" not in template
+    assert "提示（Hints）" in template
+
+    new_project_state = state.split("newProject:", 1)[1].split("taskWorkerPoolEditor:", 1)[0]
+    assert "credential_headers" not in new_project_state
+    assert "blackboard" not in new_project_state
+    assert "hints: ''" in new_project_state
+
+    assert "credential_headers: this.newProject.credential_headers" not in projects
+    assert "blackboard: this.newProject.blackboard" not in projects
+    assert "hints: this.newProject.hints.trim()" in projects
 
 
 @pytest.fixture
@@ -31,7 +54,29 @@ def _create_project(client: TestClient) -> str:
     )
     assert response.status_code == 201
     assert response.json()["project"]["bootstrap_enabled"] is True
+    assert response.json()["project"]["kk_report_enabled"] is False
     return response.json()["project"]["id"]
+
+
+def test_project_list_includes_worker_pool_and_depth_mode(client: TestClient) -> None:
+    response = client.post(
+        "/projects",
+        json={
+            "title": "worker scoped",
+            "origin": "starting point",
+            "goal": "finish",
+            "depth_mode": True,
+            "worker_pool": ["worker-a", "worker-b"],
+        },
+    )
+    assert response.status_code == 201
+    project_id = response.json()["project"]["id"]
+
+    listed = client.get("/projects")
+    assert listed.status_code == 200
+    project = next(item for item in listed.json() if item["id"] == project_id)
+    assert project["depth_mode"] is True
+    assert project["worker_pool"] == ["worker-a", "worker-b"]
 
 
 def test_project_workflow_create_conclude_complete_and_reopen(client: TestClient) -> None:
@@ -39,7 +84,7 @@ def test_project_workflow_create_conclude_complete_and_reopen(client: TestClient
 
     response = client.post(
         f"/projects/{project_id}/intents",
-        json={"from": ["origin"], "description": "investigate", "creator": "reasoner", "worker": None},
+        json={"from": ["origin"], "description": "investigate", "creator": "reasoner", "worker": None, "targets": ["scanme.example.com"]},
     )
     assert response.status_code == 201
     assert response.json()["id"] == "i001"
@@ -56,7 +101,9 @@ def test_project_workflow_create_conclude_complete_and_reopen(client: TestClient
         json={"worker": "explorer", "description": "new fact"},
     )
     assert response.status_code == 200
-    assert response.json()["fact"] == {"id": "f001", "description": "new fact"}
+    fact = response.json()["fact"]
+    assert fact["id"] == "f001"
+    assert fact["description"] == "new fact"
 
     response = client.post(
         f"/projects/{project_id}/complete",
@@ -72,7 +119,9 @@ def test_project_workflow_create_conclude_complete_and_reopen(client: TestClient
     assert response.status_code == 200
     payload = response.json()
     assert payload["project"]["status"] == "active"
-    assert payload["fact"] == {"id": "f002", "description": "human correction"}
+    fact = payload["fact"]
+    assert fact["id"] == "f002"
+    assert fact["description"] == "human correction"
     assert payload["intent"]["from"] == ["f001"]
     assert payload["intent"]["to"] == "f002"
 
@@ -123,7 +172,7 @@ def test_stopping_project_releases_claims_and_reason_but_keeps_hints_writable(cl
     project_id = _create_project(client)
     client.post(
         f"/projects/{project_id}/intents",
-        json={"from": ["origin"], "description": "work", "creator": "worker-a", "worker": "worker-a"},
+        json={"from": ["origin"], "description": "work", "creator": "worker-a", "worker": "worker-a", "targets": ["scanme.example.com"]},
     )
     client.post(
         f"/projects/{project_id}/reason/claim",
@@ -174,7 +223,6 @@ def test_settings_and_export_are_backed_by_the_same_database(client: TestClient)
             "plan_timeout": 600,
             "proxy_url": "",
             "proxy_enabled": False,
-            "domain_blacklist": [],
         },
     )
     assert response.status_code == 200
@@ -193,7 +241,6 @@ def test_settings_and_export_are_backed_by_the_same_database(client: TestClient)
         "openai_model": "",
         "proxy_url": "",
         "proxy_enabled": False,
-        "domain_blacklist": [],
     }
 
     exported = client.get(f"/projects/{project_id}/export?format=yaml")
@@ -260,7 +307,7 @@ def test_blackboard_item_crud_and_project_detail_integration(client: TestClient)
     )
     assert created.status_code == 201
     item = created.json()
-    assert item["id"] == "b001"
+    assert item["id"]
     assert item["updated_by"] == "human"
     assert item["priority"] == "high"
     assert item["related_vuln_id"] == "v001"
@@ -306,15 +353,16 @@ def test_blackboard_item_crud_and_project_detail_integration(client: TestClient)
         },
     )
     assert created2.status_code == 201
+    created2_id = created2.json()["id"]
 
     deleted = client.delete(f"/project-groups/{group_id}/blackboard/{item['id']}")
     assert deleted.status_code == 204
     remaining = client.get(f"/project-groups/{group_id}/blackboard").json()
     assert len(remaining) == 1
-    assert remaining[0]["id"] == "b002"
+    assert remaining[0]["id"] == created2_id
 
 
-def test_settings_domain_blacklist_roundtrip(client: TestClient) -> None:
+def test_settings_has_no_project_level_domain_blacklist(client: TestClient) -> None:
     response = client.put(
         "/settings",
         json={
@@ -322,16 +370,12 @@ def test_settings_domain_blacklist_roundtrip(client: TestClient) -> None:
             "reason_timeout": 15,
             "proxy_url": "",
             "proxy_enabled": False,
-            "domain_blacklist": ["https://git.kkroup.cn/path", "api.example.com", "api.example.com"],
         },
     )
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["domain_blacklist"] == ["git.kkroup.cn", "api.example.com"]
-
     fetched = client.get("/settings")
     assert fetched.status_code == 200
-    assert fetched.json()["domain_blacklist"] == ["git.kkroup.cn", "api.example.com"]
+    assert "domain_blacklist" not in fetched.json()
 
 
 def test_expired_intent_and_reason_leases_can_be_reclaimed(client: TestClient) -> None:
@@ -441,6 +485,7 @@ def test_project_creation_persists_disabled_bootstrap_and_exports_it(client: Tes
     assert response.status_code == 201
     project_id = response.json()["project"]["id"]
     assert client.get(f"/projects/{project_id}").json()["project"]["bootstrap_enabled"] is False
+    assert client.get(f"/projects/{project_id}").json()["project"]["kk_report_enabled"] is False
     assert "bootstrap_enabled: false" in client.get(f"/projects/{project_id}/export?format=yaml").text
 
 
@@ -456,6 +501,42 @@ def test_project_creation_rejects_invalid_bootstrap_enabled(client: TestClient) 
     )
 
     assert response.status_code == 422
+
+
+def test_project_creation_supports_kk_report_toggle_and_defaults_off(client: TestClient) -> None:
+    default_response = client.post(
+        "/projects",
+        json={
+            "title": "kk default off",
+            "origin": "start",
+            "goal": "finish",
+        },
+    )
+    assert default_response.status_code == 201
+    default_project_id = default_response.json()["project"]["id"]
+    assert default_response.json()["project"]["kk_report_enabled"] is False
+    listed_default = next(
+        item for item in client.get("/projects").json() if item["id"] == default_project_id
+    )
+    assert listed_default["kk_report_enabled"] is False
+
+    enabled_response = client.post(
+        "/projects",
+        json={
+            "title": "kk on",
+            "origin": "start",
+            "goal": "finish",
+            "kk_report_enabled": True,
+        },
+    )
+    assert enabled_response.status_code == 201
+    enabled_project_id = enabled_response.json()["project"]["id"]
+    assert enabled_response.json()["project"]["kk_report_enabled"] is True
+    assert client.get(f"/projects/{enabled_project_id}").json()["project"]["kk_report_enabled"] is True
+    listed_enabled = next(
+        item for item in client.get("/projects").json() if item["id"] == enabled_project_id
+    )
+    assert listed_enabled["kk_report_enabled"] is True
 
 
 def test_dispatch_settings_roundtrip_uses_database_and_exposes_runtime_state(client: TestClient) -> None:
@@ -487,6 +568,11 @@ def test_dispatch_settings_roundtrip_uses_database_and_exposes_runtime_state(cli
                     "pi_model_context_window": "128000",
                     "pi_api_key": "",
                     "pi_api_key_masked": "",
+                    "mcp_enabled": True,
+                    "mcp_profile": "github-readonly",
+                    "mcp_config_json": "{\"mcpServers\":{\"github\":{\"command\":\"npx\",\"args\":[\"-y\",\"@modelcontextprotocol/server-github\"]}}}",
+                    "mcp_allowed_servers": "github",
+                    "mcp_allowed_tools": "search_repositories,get_file_contents",
                 }
             ],
             "proxy_url": "socks5://127.0.0.1:1080",
@@ -508,6 +594,11 @@ def test_dispatch_settings_roundtrip_uses_database_and_exposes_runtime_state(cli
     assert payload["reason_timeout"] == 47
     assert payload["config_version"] >= 1
     assert payload["workers"][0]["name"] == "alpha"
+    assert payload["workers"][0]["mcp_enabled"] is True
+    assert payload["workers"][0]["mcp_profile"] == "github-readonly"
+    assert "mcpServers" in payload["workers"][0]["mcp_config_json"]
+    assert payload["workers"][0]["mcp_allowed_servers"] == "github"
+    assert payload["workers"][0]["mcp_allowed_tools"] == "search_repositories,get_file_contents"
     assert payload["bootstrap_worker_count"] == 1
     assert payload["explore_worker_count"] == 2
     assert payload["reason_worker_count"] == 1
@@ -516,6 +607,205 @@ def test_dispatch_settings_roundtrip_uses_database_and_exposes_runtime_state(cli
     assert settings_payload["intent_timeout"] == 33
     assert settings_payload["reason_timeout"] == 47
     assert settings_payload["proxy_enabled"] is True
+
+
+def test_dispatch_settings_rejects_invalid_mcp_config_json(client: TestClient) -> None:
+    response = client.put(
+        "/settings/dispatch",
+        json={
+            "runtime_interval": 3,
+            "runtime_max_workers": 8,
+            "runtime_max_running_projects": 3,
+            "runtime_max_project_workers": 4,
+            "runtime_healthcheck_timeout": 20,
+            "runtime_worker_healthcheck": "startup_only",
+            "runtime_prompt_group": "default",
+            "bootstrap_timeout": 300,
+            "bootstrap_conclude_timeout": 90,
+            "explore_timeout": 300,
+            "explore_conclude_timeout": 90,
+            "reason_timeout": 300,
+            "reason_max_intents": 2,
+            "depth_reason_max_intents": 5,
+            "workers": [
+                {
+                    "name": "bad-mcp-worker",
+                    "task_types": ["bootstrap"],
+                    "max_running": 1,
+                    "priority": 0,
+                    "pi_model": "demo",
+                    "pi_base_url": "https://api.example.com/v1",
+                    "pi_provider_api": "openai-completions",
+                    "pi_model_context_window": "128000",
+                    "pi_api_key": "",
+                    "pi_api_key_masked": "",
+                    "mcp_enabled": True,
+                    "mcp_profile": "",
+                    "mcp_config_json": "{bad-json",
+                    "mcp_allowed_servers": "",
+                    "mcp_allowed_tools": "",
+                    "disabled": False,
+                }
+            ],
+            "proxy_url": "",
+            "proxy_username": "",
+            "proxy_password": "",
+            "proxy_enabled": False,
+            "bootstrap_worker_count": 1,
+            "explore_worker_count": 2,
+            "reason_worker_count": 1,
+            "plan_timeout": 600,
+            "plan_worker_count": 1,
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_mcp_server_tools_crud_and_import(client: TestClient) -> None:
+    created = client.post(
+        "/mcp/servers",
+        json={
+            "name": "first-miniapp",
+            "command": None,
+            "url": "http://127.0.0.1:4554/sse",
+            "args_json": "[]",
+            "env_json": "{}",
+            "disabled": False,
+        },
+    )
+    assert created.status_code == 201
+    server_id = created.json()["id"]
+    assert created.json()["tools"] == []
+
+    tool = client.post(
+        f"/mcp/servers/{server_id}/tools",
+        json={"name": "click", "description": "control page", "enabled": True},
+    )
+    assert tool.status_code == 201
+    tool_id = tool.json()["id"]
+    assert tool.json()["server_name"] == "first-miniapp"
+    assert tool.json()["enabled"] is True
+
+    imported = client.post(f"/mcp/servers/{server_id}/tools/import", json={"text": "read_page\nclick, type_text"})
+    assert imported.status_code == 200
+    assert [item["name"] for item in imported.json()] == ["click", "read_page", "type_text"]
+
+    disabled = client.put(f"/mcp/servers/{server_id}/tools/{tool_id}", json={"enabled": False})
+    assert disabled.status_code == 200
+    assert disabled.json()["enabled"] is False
+
+    listed = client.get("/mcp/servers").json()
+    server = next(item for item in listed if item["id"] == server_id)
+    click_tool = next(item for item in server["tools"] if item["name"] == "click")
+    assert click_tool["enabled"] is False
+
+    deleted = client.delete(f"/mcp/servers/{server_id}/tools/{tool_id}")
+    assert deleted.status_code == 204
+    remaining = client.get(f"/mcp/servers/{server_id}/tools").json()
+    assert [item["name"] for item in remaining] == ["read_page", "type_text"]
+
+
+def test_mcp_changes_bump_dispatch_version_and_cleanup_worker_allowlists(client: TestClient) -> None:
+    with db.get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO dispatch_workers
+              (name, worker_type, task_types_json, max_running, priority, env_json, disabled, updated_at)
+            VALUES (?, 'pi', '["bootstrap"]', 1, 0, ?, 0, '2026-01-01T00:00:00Z')
+            """,
+            (
+                "worker-mcp",
+                json.dumps(
+                    {
+                        "PI_MODEL": "model",
+                        "PI_BASE_URL": "http://llm.example/v1",
+                        "PI_API_KEY": "key",
+                        "PI_PROVIDER_API": "openai-completions",
+                        "PI_MODEL_CONTEXT_WINDOW": "200000",
+                        "PI_MCP_ENABLED": "true",
+                        "PI_MCP_ALLOWED_SERVERS": "first-miniapp, yak mcp",
+                        "PI_MCP_ALLOWED_TOOLS": "first-miniapp:miniapp_get_info, yak mcp:query_http_flow",
+                    }
+                ),
+            ),
+        )
+        start_version = conn.execute(
+            "SELECT dispatch_config_version FROM settings WHERE rowid = 1"
+        ).fetchone()["dispatch_config_version"]
+
+    created = client.post(
+        "/mcp/servers",
+        json={
+            "name": "first-miniapp",
+            "command": None,
+            "url": "http://127.0.0.1:4554/sse",
+            "args_json": "[]",
+            "env_json": "{}",
+            "disabled": False,
+        },
+    )
+    assert created.status_code == 201
+    server_id = created.json()["id"]
+
+    renamed = client.put(f"/mcp/servers/{server_id}", json={"name": "yak mcp"})
+    assert renamed.status_code == 200
+    with db.get_conn() as conn:
+        env = json.loads(conn.execute(
+            "SELECT env_json FROM dispatch_workers WHERE name = 'worker-mcp'"
+        ).fetchone()["env_json"])
+        assert env["PI_MCP_ALLOWED_SERVERS"] == "yak mcp"
+        assert "first-miniapp" not in env["PI_MCP_ALLOWED_TOOLS"]
+        assert "yak mcp:miniapp_get_info" in env["PI_MCP_ALLOWED_TOOLS"]
+
+    deleted = client.delete(f"/mcp/servers/{server_id}")
+    assert deleted.status_code == 204
+    with db.get_conn() as conn:
+        env = json.loads(conn.execute(
+            "SELECT env_json FROM dispatch_workers WHERE name = 'worker-mcp'"
+        ).fetchone()["env_json"])
+        version = conn.execute(
+            "SELECT dispatch_config_version FROM settings WHERE rowid = 1"
+        ).fetchone()["dispatch_config_version"]
+        assert env["PI_MCP_ALLOWED_SERVERS"] == ""
+        assert "yak mcp" not in env["PI_MCP_ALLOWED_TOOLS"]
+        assert version > start_version
+
+
+def test_update_project_worker_pool_syncs_unclaimed_intents(client: TestClient) -> None:
+    project = client.post(
+        "/projects",
+        json={
+            "title": "worker pool task",
+            "origin": "start",
+            "goal": "finish",
+            "worker_pool": ["alpha"],
+        },
+    )
+    assert project.status_code == 201
+    project_id = project.json()["project"]["id"]
+    created_intent = client.post(
+        f"/projects/{project_id}/intents",
+        json={
+            "from": ["origin"],
+            "targets": ["goal"],
+            "description": "unclaimed work",
+            "creator": "test",
+            "worker_pool": ["alpha"],
+        },
+    )
+    assert created_intent.status_code == 201
+
+    updated = client.put(
+        f"/projects/{project_id}/worker-pool",
+        json={"worker_pool": ["beta", "beta", "gamma"]},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["project"]["worker_pool"] == ["beta", "gamma"]
+    assert updated.json()["updated_unclaimed_intents"] == 1
+
+    detail = client.get(f"/projects/{project_id}").json()
+    assert detail["project"]["worker_pool"] == ["beta", "gamma"]
+    assert detail["intents"][0]["worker_pool"] == ["beta", "gamma"]
 
 
 def test_dispatch_models_endpoint_uses_worker_env_and_parses_models(client: TestClient, monkeypatch) -> None:
@@ -729,25 +1019,22 @@ def test_update_dispatch_settings_uses_keyring_fallback_for_empty_worker_key(cli
 
 
 def test_intent_scope_filtering(client: TestClient) -> None:
-    project_id = _create_project(client)
-    detail = client.get(f"/projects/{project_id}").json()
-    group_id = detail["project"]["parent_project_id"]
-
-    # 1. 仅白名单模式
-    response = client.put(
-        f"/project-groups/{group_id}",
+    created = client.post(
+        "/projects",
         json={
-            "title": "test group",
-            "description": "test description",
-            "scope": {
+            "title": "task scoped",
+            "origin": "api.b.com",
+            "goal": "finish",
+            "task_scope": {
+                "enabled": True,
                 "targets": ["*.b.com", "10.0.0.1"],
-                "exclude": [],
-                "notes": "test notes"
+                "exclude": ["forbidden.b.com"],
+                "notes": "task-only scope",
             },
-            "status": "active"
-        }
+        },
     )
-    assert response.status_code == 200
+    assert created.status_code == 201
+    project_id = created.json()["project"]["id"]
 
     # 2. 命中白名单 -> 放行
     response = client.post(
@@ -775,7 +1062,7 @@ def test_intent_scope_filtering(client: TestClient) -> None:
         },
     )
     assert response.status_code == 400
-    assert "do not match whitelist" in response.json()["detail"]
+    assert "does not match whitelist" in response.json()["detail"]
 
     # 3.1 强制期：缺失 targets 直接拒绝
     response = client.post(
@@ -790,23 +1077,7 @@ def test_intent_scope_filtering(client: TestClient) -> None:
     assert response.status_code == 400
     assert "intent.targets is required" in response.json()["detail"]
 
-    # 4. 切换为仅黑名单模式
-    response = client.put(
-        f"/project-groups/{group_id}",
-        json={
-            "title": "test group",
-            "description": "test description",
-            "scope": {
-                "targets": [],
-                "exclude": ["forbidden.b.com"],
-                "notes": "blacklist mode"
-            },
-            "status": "active"
-        }
-    )
-    assert response.status_code == 200
-
-    # 5. 命中黑名单 -> 拒绝
+    # 4. 同时命中白名单与黑名单时，黑名单优先。
     response = client.post(
         f"/projects/{project_id}/intents",
         json={
@@ -820,7 +1091,7 @@ def test_intent_scope_filtering(client: TestClient) -> None:
     assert response.status_code == 400
     assert "matched blacklist rule" in response.json()["detail"]
 
-    # 6. 黑名单未命中 -> 放行
+    # 5. 白名单命中且黑名单未命中 -> 放行
     response = client.post(
         f"/projects/{project_id}/intents",
         json={
@@ -1030,11 +1301,9 @@ def test_project_detail_supports_fact_id_filter(client: TestClient) -> None:
     assert missing.status_code == 404
 
 
-def test_project_group_scope_rejects_dual_whitelist_blacklist(client: TestClient) -> None:
-    project_id = _create_project(client)
-    group_id = client.get(f"/projects/{project_id}").json()["project"]["parent_project_id"]
-    response = client.put(
-        f"/project-groups/{group_id}",
+def test_project_group_scope_is_not_part_of_api(client: TestClient) -> None:
+    response = client.post(
+        "/project-groups",
         json={
             "title": "test group",
             "description": "test description",
@@ -1043,10 +1312,10 @@ def test_project_group_scope_rejects_dual_whitelist_blacklist(client: TestClient
                 "exclude": ["forbidden.b.com"],
                 "notes": ""
             },
-            "status": "active"
         },
     )
-    assert response.status_code == 422
+    assert response.status_code == 201
+    assert "scope" not in response.json()
 
 
 def test_assets_post_deduplicates_and_merges(client: TestClient) -> None:

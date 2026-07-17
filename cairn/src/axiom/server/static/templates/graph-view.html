@@ -51,6 +51,10 @@
           </button>
         </div>
       </template>
+      <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition flex items-center gap-1.5 disabled:opacity-40">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
+        刷新
+      </button>
       <button @click="viewProjectYaml(selectedProjectId, project.project.title)" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M14.25 3H7.5A2.25 2.25 0 0 0 5.25 5.25v13.5A2.25 2.25 0 0 0 7.5 21h9a2.25 2.25 0 0 0 2.25-2.25V8.25L14.25 3Z"/><path d="M14.25 3v5.25h4.5"/><path d="M8.25 12h7.5M8.25 15h5.25"/></svg>
         快照
@@ -231,6 +235,10 @@
         <button @click="sideTab = 'board'; reloadBlackboardGroup(project?.project?.parent_project_id)" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'board' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">
           黑板 <span class="ml-0.5 text-[10px] opacity-60" x-text="groupBlackboardItems().length || ''"></span>
+        </button>
+        <button @click="sideTab = 'conversation'; loadConversation(selectedProjectId, { silent: true })" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
+          :class="sideTab === 'conversation' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">
+          对话 <span class="ml-0.5 text-[10px] opacity-60" x-text="conversation?.stats?.timeout_count || ''"></span>
         </button>
         <button @click="sideTab = 'log'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'log' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">日志</button>
@@ -507,6 +515,124 @@
         </template>
       </div>
 
+      <!-- Conversation -->
+      <div x-show="sideTab === 'conversation'" class="flex-1 overflow-y-auto bg-slate-50/40">
+        <div class="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur p-3 space-y-2">
+          <div class="flex flex-wrap gap-1.5 text-[10px]">
+            <button @click="clearConversationFilter()" class="px-2 py-1 rounded-lg border" :class="!conversationActiveFilterLabel() ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200'">全部</button>
+            <button @click="applyConversationFilter({ thread_type: conversationFilter.thread_type === 'intent' ? '' : 'intent' })" class="px-2 py-1 rounded-lg border" :class="conversationFilter.thread_type === 'intent' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200'">Intent <span x-text="conversation?.stats?.thread_types?.intent || 0"></span></button>
+            <button @click="applyConversationFilter({ thread_type: conversationFilter.thread_type === 'reason' ? '' : 'reason' })" class="px-2 py-1 rounded-lg border" :class="conversationFilter.thread_type === 'reason' ? 'bg-sky-500 text-white border-sky-500' : 'bg-white text-sky-600 border-sky-200'">Reason <span x-text="conversation?.stats?.thread_types?.reason || 0"></span></button>
+            <button @click="applyConversationFilter({ thread_type: conversationFilter.thread_type === 'maintainer' ? '' : 'maintainer' })" class="px-2 py-1 rounded-lg border" :class="conversationFilter.thread_type === 'maintainer' ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-white text-emerald-600 border-emerald-200'">Maintainer <span x-text="conversation?.stats?.thread_types?.maintainer || 0"></span></button>
+            <button @click="loadConversation(selectedProjectId, { silent: true })" :disabled="conversationLoading" class="px-2 py-1 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40">刷新</button>
+          </div>
+          <div x-show="conversationActiveFilterLabel()" class="flex items-center justify-between gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs text-brand-700">
+            <span class="truncate" x-text="conversationActiveFilterLabel()"></span>
+            <button @click="clearConversationFilter()" class="text-brand-500 hover:text-brand-700">清除</button>
+          </div>
+        </div>
+
+        <div class="p-3 space-y-3">
+          <template x-if="conversationLoading && conversationThreads().length === 0">
+            <div class="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-400">正在加载对话…</div>
+          </template>
+          <template x-if="!conversationLoading && conversationThreads().length === 0">
+            <div class="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-400">暂无对话数据</div>
+          </template>
+
+          <template x-for="thread in conversationThreads()" :key="thread.id">
+            <article class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-visible">
+              <button type="button" @click="toggleConversationThread(thread.id)" class="sticky top-[84px] z-20 w-full px-4 py-3 text-left bg-white/95 backdrop-blur hover:bg-slate-50 transition border-b border-slate-100">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-2 min-w-0">
+                      <span class="font-semibold text-sm text-slate-700 truncate" x-text="thread.label"></span>
+                      <span class="px-2 py-0.5 rounded-lg border text-[10px] font-semibold shrink-0" :class="conversationStatusClass(thread.status)" x-text="conversationStatusLabel(thread.status)"></span>
+                      <span x-show="thread.intent_id" class="text-[10px] text-slate-400 font-mono" x-text="thread.intent_id"></span>
+                      <span x-show="thread.fact_id" class="text-[10px] text-slate-400 font-mono" x-text="`-> ${thread.fact_id}`"></span>
+                    </div>
+                    <p class="mt-1 text-[11px] text-slate-400 break-words" x-text="thread.summary || thread.subtitle"></p>
+                    <p class="mt-1 text-[10px] text-slate-400 truncate" x-text="[thread.workers.join(', '), thread.started_at ? formatTime(thread.started_at) : ''].filter(Boolean).join(' · ')"></p>
+                  </div>
+                  <div class="text-right shrink-0 text-[10px] text-slate-400 tabular-nums">
+                    <div x-text="`${thread.attempt_count} attempts`"></div>
+                    <div x-show="thread.timeout_count" class="text-amber-600" x-text="`${thread.timeout_count} timeout`"></div>
+                  </div>
+                </div>
+              </button>
+
+              <div x-show="conversationThreadExpanded(thread)" x-cloak class="bg-slate-50/50 px-3 py-3 space-y-3">
+                <div x-show="conversationThreadLoadingState(thread.id)" class="rounded-xl border border-dashed border-slate-200 bg-white px-3 py-4 text-center text-xs text-slate-400">正在加载该 thread 的对话内容…</div>
+                <div x-show="thread.dispatched_intents && thread.dispatched_intents.length" class="rounded-xl border border-sky-100 bg-sky-50/70 p-3">
+                  <p class="text-[10px] font-semibold text-sky-700 mb-1">派发 intents</p>
+                  <div class="space-y-1.5">
+                    <template x-for="item in thread.dispatched_intents" :key="`${thread.id}-${item.id}`">
+                      <div class="rounded-lg bg-white border border-sky-100 px-2 py-1.5">
+                        <div class="text-[10px] text-sky-700 font-mono" x-text="item.fact_id ? `${item.id} -> ${item.fact_id}` : item.id"></div>
+                        <div x-show="item.description" class="mt-0.5 text-[11px] text-slate-600 break-words" x-text="item.description"></div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+
+                <div x-show="thread.type === 'maintainer' && thread.related && (thread.related.intent_id || thread.related.fact_id || thread.related.description)" class="rounded-xl border border-emerald-100 bg-emerald-50/70 p-3">
+                  <p class="text-[10px] font-semibold text-emerald-700 mb-1">关联事实 / 意图</p>
+                  <div class="flex flex-wrap gap-1.5 text-[10px] font-mono text-emerald-700">
+                    <span x-show="thread.related.intent_id" class="px-2 py-0.5 rounded-lg bg-white border border-emerald-100" x-text="thread.related.intent_id"></span>
+                    <span x-show="thread.related.fact_id" class="px-2 py-0.5 rounded-lg bg-white border border-emerald-100" x-text="`-> ${thread.related.fact_id}`"></span>
+                  </div>
+                  <p x-show="thread.related.description" class="mt-2 text-[11px] text-slate-600 break-words" x-text="thread.related.description"></p>
+                </div>
+
+                <template x-for="group in (thread.worker_groups || [])" :key="`${thread.id}-${group.worker}`">
+                  <section class="rounded-xl border border-slate-200 bg-white overflow-visible">
+                    <button type="button" @click="toggleConversationWorker(thread.id, group.worker)" class="sticky top-[144px] z-10 w-full px-3 py-2 bg-white/95 backdrop-blur border-b border-slate-100 text-left flex items-center gap-2">
+                      <span class="text-xs font-semibold text-slate-700 truncate" x-text="group.worker"></span>
+                      <span class="px-1.5 py-0.5 rounded border text-[10px]" :class="conversationStatusClass(group.status)" x-text="conversationStatusLabel(group.status)"></span>
+                      <span class="ml-auto text-[10px] text-slate-400" x-text="`${group.attempts.length} attempts · ${group.item_count} records`"></span>
+                    </button>
+                    <div x-show="conversationWorkerExpanded(thread.id, group.worker)" x-cloak class="p-3 space-y-3">
+                      <template x-for="attempt in group.attempts" :key="attempt.id">
+                        <div class="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2">
+                          <div class="flex items-center gap-2">
+                            <span class="px-2 py-0.5 rounded-md bg-white text-slate-600 text-[10px] font-semibold" x-text="attempt.role || attempt.phase"></span>
+                            <span class="px-1.5 py-0.5 rounded border text-[10px]" :class="conversationStatusClass(attempt.status)" x-text="conversationStatusLabel(attempt.status)"></span>
+                            <span class="ml-auto text-[10px] text-slate-400" x-text="attempt.duration_ms ? `${Math.round(attempt.duration_ms / 1000)}s` : ''"></span>
+                          </div>
+                          <div x-show="attempt.token_usage && Object.keys(attempt.token_usage).length" class="mt-1 text-[10px] text-violet-500" x-text="`tokens ${Number(attempt.token_usage.total_tokens || attempt.token_usage.totalTokens || 0).toLocaleString()}`"></div>
+                        </div>
+                      </template>
+
+                      <template x-for="item in conversationItemsForWorker(thread.id, group.worker)" :key="item.id">
+                    <div class="rounded-xl border bg-white p-3" :class="item.kind === 'timeout' ? 'border-amber-200' : 'border-slate-200'">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span class="px-2 py-0.5 rounded-lg border text-[10px] font-semibold" :class="conversationKindClass(item.kind)" x-text="conversationKindLabel(item.kind)"></span>
+                        <span class="text-xs font-medium text-slate-700" x-text="item.title"></span>
+                        <span class="ml-auto text-[10px] text-slate-400" x-text="formatTime(item.created_at)"></span>
+                      </div>
+                      <p x-show="item.worker || item.phase" class="mt-1 text-[10px] text-slate-400" x-text="[item.phase, item.worker, item.intent_id].filter(Boolean).join(' · ')"></p>
+                      <pre x-show="conversationItemPreview(item)" class="mt-2 whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-2 text-[11px] text-slate-700 max-h-60 overflow-auto" x-text="conversationItemPreview(item)"></pre>
+                      <div x-show="conversationTokenLabel(item)" class="mt-2 text-[10px] text-violet-600" x-text="conversationTokenLabel(item)"></div>
+                      <div x-show="item.kind === 'tool' && (item.payload?.stdout || item.payload?.stderr)" class="mt-2 space-y-2">
+                        <pre x-show="item.payload?.stdout" class="whitespace-pre-wrap break-words rounded-lg bg-emerald-50 p-2 text-[11px] text-emerald-800 max-h-48 overflow-auto" x-text="item.payload.stdout"></pre>
+                        <pre x-show="item.payload?.stderr" class="whitespace-pre-wrap break-words rounded-lg bg-rose-50 p-2 text-[11px] text-rose-800 max-h-48 overflow-auto" x-text="item.payload.stderr"></pre>
+                      </div>
+                      <div x-show="item.kind === 'timeout'" class="mt-2 rounded-lg border border-amber-100 bg-amber-50 p-2">
+                        <p class="text-[10px] font-semibold text-amber-700">超时处理建议</p>
+                        <template x-for="tip in conversationTimeoutSuggestions(item)" :key="tip">
+                          <p class="mt-1 text-[11px] text-amber-700" x-text="`· ${tip}`"></p>
+                        </template>
+                      </div>
+                    </div>
+                      </template>
+                    </div>
+                  </section>
+                </template>
+              </div>
+            </article>
+          </template>
+        </div>
+      </div>
+
       <!-- Log -->
       <div x-show="sideTab === 'log'" class="flex-1 overflow-y-auto p-4 space-y-3">
         <section class="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
@@ -613,4 +739,3 @@
 
 </div>
 </template>
-

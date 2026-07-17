@@ -12,8 +12,8 @@ from axiom.server.db import get_conn
 
 router = APIRouter(tags=["files"])
 
-FILES_ROOT = Path("/tmp/axiom-files")
 _CRAWLER_VIEW_FILENAMES = ("site_map.yaml", "api_inventory.yaml", "page_api_map.yaml")
+FILES_ROOT = Path("/tmp/axiom-files")
 
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico"}
 
@@ -252,4 +252,3 @@ def delete_group_file(group_id: str, folder: str, filename: str):
         raise HTTPException(403, "path traversal denied")
     file_path.unlink()
     return {"deleted": True}
-

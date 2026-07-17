@@ -48,8 +48,10 @@ def create_intent(project_id: str, body: CreateIntentRequest):
         now = utcnow()
         iid = next_intent_id(conn, project_id)
         claimed = body.worker is not None
+        import json as _json
+        worker_pool_json = _json.dumps(body.worker_pool or [])
         conn.execute(
-            "INSERT INTO intents (id, project_id, to_fact_id, description, execute_timeout_seconds, conclude_timeout_seconds, creator, worker, last_heartbeat_at, created_at, concluded_at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL)",
+            "INSERT INTO intents (id, project_id, to_fact_id, description, execute_timeout_seconds, conclude_timeout_seconds, creator, worker, last_heartbeat_at, created_at, concluded_at, worker_pool) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
             (
                 iid,
                 project_id,
@@ -60,6 +62,7 @@ def create_intent(project_id: str, body: CreateIntentRequest):
                 body.worker,
                 now if claimed else None,
                 now,
+                worker_pool_json,
             ),
         )
         for fid in body.from_:
@@ -76,6 +79,7 @@ def create_intent(project_id: str, body: CreateIntentRequest):
             timeouts=body.timeouts,
             creator=body.creator,
             worker=body.worker,
+            worker_pool=list(body.worker_pool or []),
             last_heartbeat_at=now if claimed else None,
             created_at=now,
             concluded_at=None,
@@ -129,6 +133,7 @@ def release(project_id: str, intent_id: str, body: HeartbeatRequest):
 @router.post(
     "/projects/{project_id}/intents/{intent_id}/conclude",
     response_model=ConcludeResponse,
+    response_model_exclude_defaults=True,
 )
 def conclude(project_id: str, intent_id: str, body: ConcludeRequest):
     with get_conn() as conn:

@@ -110,7 +110,7 @@ window.AxiomModules.helpers = {
 
     vulnStatusLabel(status) {
       const labels = {
-        pending: '待确认',
+        pending: '待验证',
         verified: '已验证',
         ignored: '忽略',
         duplicate: '重复',
@@ -122,7 +122,7 @@ window.AxiomModules.helpers = {
     vulnStatusKey(status) {
       const raw = String(status || '').trim();
       const lower = raw.toLowerCase();
-      if (raw === '待确认' || raw === '待审核' || lower === 'pending') return 'pending';
+      if (raw === '待验证' || raw === '待确认' || raw === '待审核' || lower === 'pending') return 'pending';
       if (raw === '已验证' || raw === '已确认' || lower === 'confirmed') return 'verified';
       if (raw === '忽略' || raw === '已忽略' || lower === 'ignored') return 'ignored';
       if (raw === '重复' || raw === '已拒绝' || lower === 'rejected') return 'duplicate';

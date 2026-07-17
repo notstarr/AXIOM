@@ -335,12 +335,12 @@ window.AxiomModules.timeline = {
     },
 
     followReplayTimelineTail() {
-      if (!this.replay.active || this.sideTab !== 'log') return;
+      if (!this.replay.active) return;
       this.scrollTimelineToEntry(this.latestTimelineEntryId(), { flash: false });
     },
 
     scrollTimelineToSelection() {
-      if (this.sideTab !== 'log') return;
+      return;
       this.scrollTimelineToEntry(this.activeTimelineEntryId(true));
     },
 
@@ -348,7 +348,7 @@ window.AxiomModules.timeline = {
       if (!hintId) return;
       const entry = this.timelineEvents().find(event => event.type === 'hint_added' && event.targetId === hintId);
       if (!entry) return;
-      this.sideTab = 'log';
+      this.sideTab = 'hints';
       this.openTimelineEntry(entry);
       this.scrollTimelineToEntry(entry.id);
     },
@@ -699,7 +699,7 @@ window.AxiomModules.timeline = {
           timer: null,
         };
         this.polling = false;
-        this.sideTab = 'log';
+        this.sideTab = 'detail';
         this.selectedNode = null;
         this.selectedFacts = [];
         this.selectedTimelineEntryId = null;

@@ -128,7 +128,9 @@ class FakeClient:
         *,
         targets: list[str] | None = None,
         timeouts: dict | None = None,
+        worker_pool: list[str] | None = None,
     ) -> ApiResult:
+        _ = worker_pool
         self.created_intents.append((project_id, from_ids, description, creator, targets, timeouts))
         return ApiResult(201, {})
 

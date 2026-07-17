@@ -1,0 +1,130 @@
+<div class="flex-1 flex flex-col overflow-hidden min-w-0">
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 shrink-0">
+    <div class="flex items-center justify-between gap-4">
+      <div>
+        <h2 class="text-base font-semibold text-slate-800 tracking-tight">URL 守门测试</h2>
+        <p class="text-xs text-slate-400 mt-0.5">批量提交 URL，复用裁判模型逐条判定 ALLOW / BLOCK（强制判定，忽略全局开关）</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button @click="loadBatchUrlSample()" class="px-4 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition">加载内置样本</button>
+        <button @click="clearBatchUrlRows()" class="px-4 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition">清空</button>
+        <button @click="runBatchUrlJudge()" :disabled="batchUrlJudge.loading || !batchUrlJudge.rows.some(r => r.url && r.url.trim())"
+          class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200 disabled:opacity-40"
+          x-text="batchUrlJudge.loading ? '判定中...' : '批量判定'">
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 overflow-y-auto p-5 space-y-4">
+    <!-- 输入区 -->
+    <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div class="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
+        <span class="text-xs font-semibold text-slate-500 uppercase tracking-wide">请求列表</span>
+        <button @click="addBatchUrlRow()" class="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition">+ 添加一行</button>
+      </div>
+      <div class="divide-y divide-slate-100">
+        <template x-for="(row, idx) in batchUrlJudge.rows" :key="row.id">
+          <div class="px-4 py-3 flex items-start gap-3">
+            <select x-model="row.method" class="shrink-0 w-24 px-2 py-2 border border-slate-200 rounded-lg text-xs font-mono font-semibold focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 bg-white">
+              <option>GET</option>
+              <option>POST</option>
+              <option>PUT</option>
+              <option>PATCH</option>
+              <option>DELETE</option>
+            </select>
+            <div class="flex-1 min-w-0 space-y-2">
+              <input x-model="row.url" placeholder="https://target.com/api/..." type="text"
+                class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 placeholder:text-slate-300" />
+              <input x-model="row.body" placeholder="Body（可选，POST/PUT 用）" type="text"
+                class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-mono text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 placeholder:text-slate-300" />
+            </div>
+            <button @click="removeBatchUrlRow(row.id)" class="shrink-0 mt-1 w-8 h-8 flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition" title="删除">
+              <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" class="w-4 h-4"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+            </button>
+          </div>
+        </template>
+        <template x-if="!batchUrlJudge.rows.length">
+          <div class="px-4 py-8 text-center text-sm text-slate-400">暂无请求，点击「加载内置样本」或「添加一行」。</div>
+        </template>
+      </div>
+    </section>
+
+    <!-- 错误提示 -->
+    <template x-if="batchUrlJudge.error">
+      <div class="rounded-xl border border-rose-200 bg-rose-50 text-rose-600 text-sm px-4 py-3" x-text="batchUrlJudge.error"></div>
+    </template>
+
+    <!-- 结果区 -->
+    <template x-if="batchUrlJudge.results">
+      <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
+          <span class="text-xs font-semibold text-slate-500 uppercase tracking-wide">判定结果</span>
+          <div class="flex items-center gap-2 text-[11px] font-mono">
+            <span class="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-600" x-text="batchUrlJudge.results.allowed + ' 放行'"></span>
+            <span class="px-2 py-1 rounded-lg bg-rose-50 text-rose-600" x-text="batchUrlJudge.results.blocked + ' 拦截'"></span>
+            <span class="px-2 py-1 rounded-lg bg-slate-100 text-slate-500" x-text="'总耗时 ' + batchUrlJudge.results.total_latency_ms + ' ms'"></span>
+            <span class="px-2 py-1 rounded-lg bg-slate-100 text-slate-500" x-text="batchUrlJudge.results.total + ' 条'"></span>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-slate-400 text-[10px] uppercase tracking-wide">
+              <tr>
+                <th class="text-left px-3 py-2 font-medium">#</th>
+                <th class="text-left px-3 py-2 font-medium">方法</th>
+                <th class="text-left px-3 py-2 font-medium">URL</th>
+                <th class="text-left px-3 py-2 font-medium">判定</th>
+                <th class="text-left px-3 py-2 font-medium">来源</th>
+                <th class="text-left px-3 py-2 font-medium">耗时</th>
+                <th class="text-left px-3 py-2 font-medium">命中原因</th>
+                <th class="text-left px-3 py-2 font-medium"></th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <template x-for="(r, i) in batchUrlJudge.results.results" :key="i">
+                <tr class="hover:bg-slate-50/60">
+                  <td class="px-3 py-2 text-slate-300 font-mono" x-text="i + 1"></td>
+                  <td class="px-3 py-2">
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold" :class="batchUrlMethodClass(r.method)" x-text="r.method || '?'"></span>
+                  </td>
+                  <td class="px-3 py-2 font-mono text-slate-600 break-all max-w-xs" x-text="r.url"></td>
+                  <td class="px-3 py-2">
+                    <span class="px-2 py-0.5 rounded border text-[11px] font-semibold" :class="batchUrlDecisionClass(r.decision)" x-text="r.decision"></span>
+                  </td>
+                  <td class="px-3 py-2 text-[11px] text-slate-400" x-text="batchUrlSourceLabel(r.source)"></td>
+                  <td class="px-3 py-2 text-[11px] font-mono text-slate-400" x-text="r.model_latency_ms + ' ms'"></td>
+                  <td class="px-3 py-2 text-[11px] text-slate-500 max-w-xs break-words" x-text="r.reason || '—'"></td>
+                  <td class="px-3 py-2">
+                    <button @click="toggleBatchUrlDetail(i)" class="text-[11px] text-brand-500 hover:underline" x-text="batchUrlJudge.expanded[i] ? '收起' : 'judge 参数'"></button>
+                  </td>
+                </tr>
+                <template x-if="batchUrlJudge.expanded[i]">
+                  <tr>
+                    <td colspan="8" class="px-4 py-3 bg-slate-50">
+                      <div class="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Normalized</div>
+                      <pre class="text-[11px] font-mono text-slate-600 whitespace-pre-wrap break-all" x-text="JSON.stringify(r.normalized || {}, null, 2)"></pre>
+                      <template x-if="r.raw_model_output">
+                        <div class="mt-2">
+                          <div class="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Raw Model Output</div>
+                          <pre class="text-[11px] font-mono text-slate-500 whitespace-pre-wrap break-all" x-text="r.raw_model_output"></pre>
+                        </div>
+                      </template>
+                    </td>
+                  </tr>
+                </template>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </template>
+
+    <template x-if="!batchUrlJudge.results && !batchUrlJudge.loading">
+      <div class="rounded-2xl border border-dashed border-slate-200 bg-white px-6 py-16 text-center">
+        <h3 class="text-sm font-semibold text-slate-600">尚未判定</h3>
+        <p class="mt-1.5 text-xs text-slate-400">填写 URL 后点击「批量判定」，或先「加载内置样本」体验。</p>
+      </div>
+    </template>
+  </main>
+</div>

@@ -25,10 +25,18 @@ class LiveToolTracker:
         *,
         worker_name: str,
         project_id: str,
+        session_id: str = "",
+        event_metadata: dict | None = None,
+        phase: str = "",
+        task_type: str = "",
         poll_interval: float = 0.5,
     ):
         self._worker_name = worker_name
         self._project_id = project_id
+        self._session_id = session_id
+        self._event_metadata = dict(event_metadata or {})
+        self._phase = phase
+        self._task_type = task_type
         self._poll_interval = poll_interval
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -68,15 +76,7 @@ class LiveToolTracker:
         session_dir = Path("/tmp/axiom-pi") / self._worker_name / "sessions"
         if not session_dir.exists():
             return
-        # Only consider files created after this tracker started.
-        candidates = sorted(
-            [
-                p for p in session_dir.iterdir()
-                if p.suffix == ".jsonl" and p.stat().st_mtime >= self._started_at
-            ],
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
+        candidates = self._session_candidates(session_dir)
         if not candidates:
             return
         newest = str(candidates[0])
@@ -108,6 +108,18 @@ class LiveToolTracker:
         # Write any completed pairs
         self._flush_pending()
 
+    def _session_candidates(self, session_dir: Path) -> list[Path]:
+        files = [p for p in session_dir.iterdir() if p.suffix == ".jsonl"]
+        if self._session_id:
+            matches = [p for p in files if self._session_id in p.name]
+            if matches:
+                return sorted(matches, key=lambda p: p.stat().st_mtime, reverse=True)
+        return sorted(
+            [p for p in files if p.stat().st_mtime >= self._started_at],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+
     def _process_line(self, line: str) -> None:
         if not line:
             return
@@ -124,12 +136,19 @@ class LiveToolTracker:
             call_id = msg.get("toolCallId", "")
             if not call_id or call_id in self._written_ids:
                 return
+            tool_name = str(msg.get("toolName", ""))
             output_text = ""
             for block in (msg.get("content") or []):
                 if isinstance(block, dict) and block.get("type") == "text":
                     output_text = block.get("text", "")
                     break
-            is_error = bool(msg.get("isError", False))
+            from axiom.dispatcher.tools.tracker import _is_tool_error
+            is_error = _is_tool_error(
+                tool_name=tool_name,
+                output=output_text,
+                is_error=bool(msg.get("isError", False)),
+                details=msg.get("details"),
+            )
             self._pending_results[call_id] = (output_text, is_error)
             return
 
@@ -178,8 +197,10 @@ class LiveToolTracker:
                 INSERT OR IGNORE INTO tool_executions (
                     id, tool, kind, argv_json, status,
                     returncode, stdout, stderr, duration_ms,
-                    project_group_id, project_id, created_at, finished_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    project_group_id, project_id, worker, task_type, phase,
+                    logical_thread_id, attempt_id, intent_id, session_id,
+                    created_at, finished_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     call_id,
@@ -193,6 +214,13 @@ class LiveToolTracker:
                     0,
                     "",
                     self._project_id,
+                    self._worker_name,
+                    self._task_type,
+                    self._phase,
+                    str(self._event_metadata.get("logical_thread_id") or ""),
+                    str(self._event_metadata.get("attempt_id") or ""),
+                    str(self._event_metadata.get("intent_id") or ""),
+                    self._session_id or str(self._event_metadata.get("session_id") or ""),
                     now,
                     now,
                 ),

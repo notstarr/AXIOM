@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
+import shutil
+import subprocess
+import hashlib
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -12,6 +16,12 @@ from axiom.server.db import current_db_path
 
 LOG = logging.getLogger(__name__)
 DEFAULT_PI_TOOLS = ("read", "write", "bash", "edit")
+MCP_TOOL_NAME = "mcp"
+MCP_CONFIG_FILE = "mcp.json"
+MCP_ADAPTER_INDEX = "/Users/hexin/.pi/agent/extensions/pi-mcp-adapter/index.ts"
+MCP_ADAPTER_SETTINGS_FILE = "settings.json"
+AXIOM_GUARD_EXTENSION_INDEX = str(Path(__file__).resolve().parents[2] / "extensions" / "axiom-guard" / "index.ts")
+PI_THINKING_LEVELS = {"off", "minimal", "low", "medium", "high", "xhigh"}
 
 
 def _normalize_skill_phase(phase: str) -> str:
@@ -53,6 +63,7 @@ def _load_enabled_pi_skills(phase: str = "") -> tuple[str, ...]:
 
 class PiDriver(WorkerDriver):
     type_name = "pi"
+    _session_id_supported: dict[str, bool] = {}
 
     def prepare_session(self) -> str | None:
         # Pre-allocate a deterministic session id per task execution so
@@ -79,6 +90,7 @@ class PiDriver(WorkerDriver):
             ],
             enable_tools=False,
             phase=_normalize_skill_phase(phase),
+            force_disable_mcp=True,
         )
 
     def build_execute(self, worker: WorkerConfig, prompt: str, session: str | None, phase: str = "") -> DriverResult:
@@ -91,10 +103,14 @@ class PiDriver(WorkerDriver):
             "--session-dir",
             self._session_dir(worker),
         ]
-        # Only pass --session if the session file already exists (resume).
-        # For new sessions, let PI auto-generate the session ID.
-        if session and self._session_file_exists(worker, session):
-            argv.extend(["--session", session])
+        # PI >= 0.76 supports --session-id for deterministic create/resume.
+        # Fallback to legacy --session only when the session file already exists.
+        if session:
+            if self._supports_session_id(worker):
+                argv.extend(["--session-id", session])
+            elif self._session_file_exists(worker, session):
+                argv.extend(["--session", session])
+        self._append_thinking(worker, argv)
         argv.extend(["-p", prompt])
         return DriverResult(argv=self._wrap_with_models(worker, argv, phase=_normalize_skill_phase(phase)), session=session)
 
@@ -107,6 +123,7 @@ class PiDriver(WorkerDriver):
             fallback = self.find_session_from_files(worker.name)
             if fallback:
                 actual_session = fallback
+        session_flag = "--session-id" if self._supports_session_id(worker) else "--session"
         argv = [
             "--provider",
             "axiom",
@@ -114,12 +131,21 @@ class PiDriver(WorkerDriver):
             env["PI_MODEL"],
             "--session-dir",
             self._session_dir(worker),
-            "--session",
+            session_flag,
             actual_session,
-            "-p",
-            prompt,
         ]
+        self._append_thinking(worker, argv)
+        argv.extend(["-p", prompt])
         return self._wrap_with_models(worker, argv, phase=_normalize_skill_phase(phase))
+
+    @staticmethod
+    def _append_thinking(worker: WorkerConfig, argv: list[str]) -> None:
+        level = (worker.env.get("PI_THINKING") or "").strip().lower()
+        if not level or level == "off":
+            return
+        if level not in PI_THINKING_LEVELS:
+            return
+        argv.extend(["--thinking", level])
 
     def extract_session(self, session: str | None, stdout: str, stderr: str) -> str | None:
         # Try to parse the actual session ID from PI stdout first.
@@ -182,6 +208,51 @@ class PiDriver(WorkerDriver):
             parts = name.split("_", 1)
             return parts[1] if len(parts) > 1 else None
         return None
+
+    @classmethod
+    def _resolve_pi_path(cls, worker: "WorkerConfig | None" = None) -> str:
+        """Resolve the absolute path to the pi binary.
+
+        Precedence (explicit path wins over PATH lookup):
+          1. ``PI_BINARY_PATH`` in the worker env
+          2. ``PI_BINARY_PATH`` in the dispatcher process environment
+          3. ``shutil.which("pi")`` (PATH lookup — may be stale, last resort)
+        """
+        candidates: list[str] = []
+        if worker is not None:
+            explicit = (worker.env or {}).get("PI_BINARY_PATH")
+            if explicit:
+                candidates.append(explicit)
+        env_path = os.environ.get("PI_BINARY_PATH")
+        if env_path:
+            candidates.append(env_path)
+        for candidate in candidates:
+            if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+        resolved = shutil.which("pi")
+        if resolved:
+            return resolved
+        return "pi"
+
+    @classmethod
+    def _supports_session_id(cls, worker: "WorkerConfig | None" = None) -> bool:
+        pi_path = cls._resolve_pi_path(worker)
+        cached = cls._session_id_supported.get(pi_path)
+        if cached is not None:
+            return cached
+        try:
+            result = subprocess.run(
+                [pi_path, "--help"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=3,
+            )
+            output = (result.stdout or "") + "\n" + (result.stderr or "")
+            cls._session_id_supported[pi_path] = "--session-id" in output
+        except Exception:
+            cls._session_id_supported[pi_path] = False
+        return cls._session_id_supported[pi_path]
 
     def extract_response_text(self, stdout: str, stderr: str) -> str:
         assistant_message: dict[str, Any] | None = None
@@ -264,7 +335,11 @@ class PiDriver(WorkerDriver):
         message_text = self._extract_text_from_message(assistant_message)
         if not message_text and not text_blocks and not text_deltas and assistant_stop_errors:
             unique_errors = list(dict.fromkeys(assistant_stop_errors))
-            raise RuntimeError("pi agent API error: " + "; ".join(unique_errors))
+            return "\n".join(unique_errors)
+
+        if not message_text and not text_blocks and not text_deltas and assistant_errors:
+            unique_errors = list(dict.fromkeys(assistant_errors))
+            return "\n".join(unique_errors)
 
         if message_text:
             return message_text
@@ -320,34 +395,52 @@ class PiDriver(WorkerDriver):
 
         return stdout
 
-    def _wrap_with_models(self, worker: WorkerConfig, pi_argv: list[str], *, enable_tools: bool = True, **kwargs) -> list[str]:
+    def _wrap_with_models(self, worker: WorkerConfig, pi_argv: list[str], *, enable_tools: bool = True, force_disable_mcp: bool = False, **kwargs) -> list[str]:
         agent_dir = self._agent_dir(worker)
         skill_dir = str(PurePosixPath(agent_dir) / "skills")
+        mcp_enabled = _is_truthy(worker.env.get("PI_MCP_ENABLED", "")) if not force_disable_mcp else False
+        mcp_config = _resolve_worker_mcp_config(worker) if not force_disable_mcp else None
+        phase = str(kwargs.get("phase") or "")
+        guard_enabled = _guard_enabled_for_phase(worker, phase)
         script = (
             'agent_dir="$1"\n'
             'models_json="$2"\n'
             'skill_dir="$3"\n'
-            "shift 3\n"
+            'pi_exec="$4"\n'
+            "shift 4\n"
             'mkdir -p "$agent_dir"\n'
             'mkdir -p "$agent_dir/sessions"\n'
             'printf "%s" "$models_json" > "$agent_dir/models.json"\n'
-            'exec env PI_CODING_AGENT_DIR="$agent_dir" pi "$@"\n'
+            'exec env PI_CODING_AGENT_DIR="$agent_dir" "$pi_exec" "$@"\n'
         )
         argv = [
-            "--no-extensions",
+            "--no-skills",
             "--no-prompt-templates",
             "--no-themes",
             "--no-context-files",
         ]
+        extension_paths: list[str] = []
+        if mcp_enabled and mcp_config is not None:
+            extension_paths.append(MCP_ADAPTER_INDEX)
+        if guard_enabled:
+            extension_paths.append(AXIOM_GUARD_EXTENSION_INDEX)
+        if not extension_paths:
+            argv.insert(0, "--no-extensions")
         # Write skills to {skill_dir}/{name}/SKILL.md, then pass the whole
         # directory to pi.  pi recursively scans for SKILL.md and injects
         # <available_skills> XML into the system prompt.  The model reads
         # the full file on demand when the conversation matches.
         _write_skill_files(skill_dir)
+        if mcp_enabled and mcp_config is not None:
+            mcp_config_path = _write_worker_mcp_config(agent_dir, mcp_config, extension_paths=extension_paths)
+            argv.extend(["--mcp-config", mcp_config_path])
+        else:
+            _clear_worker_mcp_config(agent_dir)
+            _write_worker_extension_settings(agent_dir, extension_paths)
         if _has_skill_files(skill_dir):
             argv.extend(["--skill", skill_dir])
         if enable_tools:
-            argv.extend(["--tools", ",".join(_load_enabled_pi_tools())])
+            argv.extend(["--tools", ",".join(_load_enabled_pi_tools(worker))])
         return [
             "/bin/sh",
             "-lc",
@@ -356,6 +449,7 @@ class PiDriver(WorkerDriver):
             agent_dir,
             self._models_json(worker),
             skill_dir,
+            self._resolve_pi_path(worker),
             *argv,
             *pi_argv,
         ]
@@ -475,9 +569,12 @@ class PiDriver(WorkerDriver):
         provider: dict[str, Any] = {
             "baseUrl": env["PI_BASE_URL"],
             "api": env["PI_PROVIDER_API"],
-            "apiKey": api_key,
             "models": [model],
         }
+        if api_key:
+            provider["apiKey"] = api_key
+        else:
+            provider["apiKey"] = "none"  # pi requires at least 1 char
         payload = {"providers": {"axiom": provider}}
         return json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
 
@@ -530,20 +627,234 @@ def _has_skill_files(skill_dir: str) -> bool:
     return False
 
 
-def _load_enabled_pi_tools() -> tuple[str, ...]:
+def _load_enabled_pi_tools(worker: WorkerConfig | None = None) -> tuple[str, ...]:
+    mcp_enabled = bool(worker and _is_truthy(worker.env.get("PI_MCP_ENABLED", "")))
+    db_path = current_db_path()
+    names: tuple[str, ...] = ()
+    if not db_path.exists():
+        names = DEFAULT_PI_TOOLS
+    else:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                "SELECT name FROM pi_tools WHERE enabled = 1 ORDER BY builtin DESC, name ASC"
+            ).fetchall()
+        except sqlite3.Error as exc:
+            LOG.warning("failed to read PI tools, using defaults error=%s", exc)
+            names = DEFAULT_PI_TOOLS
+        else:
+            names = tuple(row["name"] for row in rows if row["name"]) or DEFAULT_PI_TOOLS
+        finally:
+            conn.close()
+    normalized = [name for name in names if name and name != MCP_TOOL_NAME]
+    if mcp_enabled:
+        normalized.append(MCP_TOOL_NAME)
+    return tuple(dict.fromkeys(normalized))
+
+
+def _is_truthy(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
+def _parse_csv_set(raw: str) -> set[str]:
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def _split_allowed_mcp_tools(tokens: set[str]) -> tuple[set[str], dict[str, set[str]]]:
+    flat: set[str] = set()
+    scoped: dict[str, set[str]] = {}
+    for token in tokens:
+        server = ""
+        tool = ""
+        if ":" in token:
+            server, tool = token.split(":", 1)
+        elif "/" in token:
+            server, tool = token.split("/", 1)
+        else:
+            flat.add(token)
+            continue
+        server = server.strip()
+        tool = tool.strip()
+        if server and tool:
+            scoped.setdefault(server, set()).add(tool)
+    return flat, scoped
+
+
+def _load_global_mcp_servers() -> dict[str, Any]:
+    """Load enabled global MCP servers from DB and emit pi-mcp-adapter-compatible
+    entries (with ``mcpServers``/entry shape: command+args+env or url).
+
+    Backend url-only entries (command empty, url present) get emitted as
+    ``{"url": "<url>"}``.  stdio entries become
+    ``{"command": "<cmd>", "args": [...], "env": {...}}``.
+    """
     db_path = current_db_path()
     if not db_path.exists():
-        return DEFAULT_PI_TOOLS
+        return {}
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
+    servers: dict[str, Any] = {}
     try:
-        rows = conn.execute(
-            "SELECT name FROM pi_tools WHERE enabled = 1 ORDER BY builtin DESC, name ASC"
-        ).fetchall()
+        try:
+            rows = conn.execute(
+                "SELECT id, name, command, url, args_json, env_json FROM mcp_servers WHERE disabled = 0"
+            ).fetchall()
+        except sqlite3.Error:
+            # Pre-migration DB without url column
+            rows = conn.execute(
+                "SELECT id, name, command, args_json, env_json FROM mcp_servers WHERE disabled = 0"
+            ).fetchall()
+        tool_rows_by_server: dict[str, list[sqlite3.Row]] = {}
+        server_ids = [row["id"] for row in rows if "id" in row.keys() and row["id"]]
+        if server_ids:
+            try:
+                placeholders = ",".join("?" for _ in server_ids)
+                tool_rows = conn.execute(
+                    f"SELECT server_id, name, enabled FROM mcp_server_tools WHERE server_id IN ({placeholders}) ORDER BY name ASC",
+                    server_ids,
+                ).fetchall()
+                for tool_row in tool_rows:
+                    tool_rows_by_server.setdefault(tool_row["server_id"], []).append(tool_row)
+            except sqlite3.Error as exc:
+                LOG.warning("failed to read global mcp server tools: %s", exc)
+        for row in rows:
+            name = row["name"]
+            if not name:
+                continue
+            server_id = row["id"] if "id" in row.keys() else ""
+            url = row["url"] if "url" in row.keys() else None
+            try:
+                args = json.loads(row["args_json"])
+                env = json.loads(row["env_json"])
+            except json.JSONDecodeError:
+                continue
+            entry: dict[str, Any] = {}
+            if url:
+                entry["url"] = url
+            elif row["command"]:
+                if not isinstance(args, list) or not isinstance(env, dict):
+                    continue
+                entry["command"] = row["command"]
+                entry["args"] = args
+                entry["env"] = env
+            else:
+                continue
+            configured_tools = tool_rows_by_server.get(server_id, [])
+            if configured_tools:
+                entry["directTools"] = [
+                    tool_row["name"]
+                    for tool_row in configured_tools
+                    if tool_row["name"] and int(tool_row["enabled"]) == 1
+                ]
+            servers[name] = entry
     except sqlite3.Error as exc:
-        LOG.warning("failed to read PI tools, using defaults error=%s", exc)
-        return DEFAULT_PI_TOOLS
+        LOG.warning("failed to read global mcp servers: %s", exc)
     finally:
         conn.close()
-    names = tuple(row["name"] for row in rows if row["name"])
-    return names or DEFAULT_PI_TOOLS
+    return servers
+
+
+def _resolve_worker_mcp_config(worker: WorkerConfig) -> dict[str, Any] | None:
+    """Resolve worker MCP config from env JSON with allowlist filtering."""
+    raw = (worker.env.get("PI_MCP_CONFIG_JSON") or "").strip()
+    if not _is_truthy(worker.env.get("PI_MCP_ENABLED", "")):
+        return None
+
+    parsed = {"mcpServers": {}, "settings": {"toolPrefix": "server"}}
+    if raw:
+        try:
+            user_parsed = json.loads(raw)
+            if isinstance(user_parsed, dict):
+                parsed = user_parsed
+        except json.JSONDecodeError as exc:
+            LOG.warning("worker=%s invalid PI_MCP_CONFIG_JSON: %s", worker.name, exc)
+
+    mcp_servers = parsed.get("mcpServers")
+    if not isinstance(mcp_servers, dict):
+        parsed["mcpServers"] = {}
+        mcp_servers = parsed["mcpServers"]
+
+    # Inject global servers
+    global_servers = _load_global_mcp_servers()
+    for name, cfg in global_servers.items():
+        if name not in mcp_servers:
+            mcp_servers[name] = cfg
+
+    allowed_servers = _parse_csv_set(worker.env.get("PI_MCP_ALLOWED_SERVERS", ""))
+    if allowed_servers:
+        mcp_servers = {name: cfg for name, cfg in mcp_servers.items() if name in allowed_servers}
+        parsed["mcpServers"] = mcp_servers
+
+    allowed_tools = _parse_csv_set(worker.env.get("PI_MCP_ALLOWED_TOOLS", ""))
+    if allowed_tools:
+        flat_allowed_tools, scoped_allowed_tools = _split_allowed_mcp_tools(allowed_tools)
+        for server_name, server_cfg in list(mcp_servers.items()):
+            if not isinstance(server_cfg, dict):
+                mcp_servers[server_name] = {}
+                continue
+            server_allowed_tools = set(flat_allowed_tools)
+            server_allowed_tools.update(scoped_allowed_tools.get(server_name, set()))
+            direct_tools = server_cfg.get("directTools")
+            if direct_tools is True:
+                # Block full tool exposure when allowlist exists.
+                server_cfg["directTools"] = sorted(server_allowed_tools)
+            elif isinstance(direct_tools, list):
+                server_cfg["directTools"] = [
+                    tool for tool in direct_tools if isinstance(tool, str) and tool in server_allowed_tools
+                ]
+            elif server_allowed_tools:
+                server_cfg["directTools"] = sorted(server_allowed_tools)
+    return parsed
+
+
+def _guard_enabled_for_phase(worker: WorkerConfig, phase: str) -> bool:
+    normalized = _normalize_skill_phase(phase or "")
+    if normalized not in {"bootstrap", "explore"}:
+        return False
+    return _is_truthy(worker.env.get("AXIOM_GUARD_ENABLED", "")) or _is_truthy(
+        worker.env.get("AXIOM_TASK_SCOPE_ENABLED", "")
+    )
+
+
+def _write_worker_extension_settings(agent_dir: str, extension_paths: list[str]) -> None:
+    settings_path = Path(agent_dir) / MCP_ADAPTER_SETTINGS_FILE
+    if not extension_paths:
+        if settings_path.exists():
+            settings_path.unlink()
+        return
+    unique_paths: list[str] = []
+    for path in extension_paths:
+        if path and path not in unique_paths:
+            unique_paths.append(path)
+    settings = {"extensions": unique_paths}
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps(settings, ensure_ascii=True), encoding="utf-8")
+    LOG.info("registered pi extension settings path=%s extensions=%s", settings_path, unique_paths)
+
+
+def _write_worker_mcp_config(agent_dir: str, config: dict[str, Any], *, extension_paths: list[str] | None = None) -> str:
+    """Write per-worker mcp.json (mcpServers shape) and settings.json (with
+    pi-mcp-adapter extension registered).  pi-mcp-adapter reads both files
+    relative to ``PI_CODING_AGENT_DIR``, so each worker gets its own config.
+    """
+    agent_path = Path(agent_dir)
+    agent_path.mkdir(parents=True, exist_ok=True)
+
+    payload = json.dumps(config, ensure_ascii=True, separators=(",", ":"))
+    mcp_path = agent_path / MCP_CONFIG_FILE
+    mcp_path.write_text(payload, encoding="utf-8")
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+    LOG.info("prepared worker mcp config path=%s sha256=%s", mcp_path, digest)
+
+    _write_worker_extension_settings(agent_dir, extension_paths or [MCP_ADAPTER_INDEX])
+    LOG.info("registered pi extension paths=%s", extension_paths or [MCP_ADAPTER_INDEX])
+    return str(mcp_path)
+
+
+def _clear_worker_mcp_config(agent_dir: str) -> None:
+    agent_path = Path(agent_dir)
+    for filename in (MCP_CONFIG_FILE, "mcp-cache.json"):
+        path = agent_path / filename
+        if path.exists():
+            path.unlink()

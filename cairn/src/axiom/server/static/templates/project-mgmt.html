@@ -7,7 +7,7 @@
     </div>
     <div class="flex-1"></div>
     <button @click="openGroupModal()" class="h-8 px-3 rounded-lg border border-brand-200 text-xs text-brand-600 hover:bg-brand-50 transition">新建项目</button>
-    <button @click="loadProjectGroups(); loadProjects(); loadAllProjectDetails(true)" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 transition">刷新</button>
+    <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition">刷新</button>
   </header>
   <main class="flex-1 overflow-hidden grid grid-cols-[280px_minmax(0,1fr)]">
     <aside class="border-r border-slate-200 bg-white overflow-y-auto overflow-x-hidden p-3 space-y-2">
@@ -39,7 +39,7 @@
                 <p class="mt-1 text-xs text-slate-400" x-text="selectedProjectGroup().description || '暂无项目说明'"></p>
               </div>
               <div class="flex gap-2">
-                <button @click="showTaskComposer = true; newProject.parent_project_id = selectedProjectGroup().id; navigateTo('tasks')" class="px-3 py-2 text-sm rounded-xl border border-brand-200 text-brand-600 hover:bg-brand-50 transition">新建关联任务</button>
+                <button @click="openTaskComposer(selectedProjectGroup().id); navigateTo('tasks')" class="px-3 py-2 text-sm rounded-xl border border-brand-200 text-brand-600 hover:bg-brand-50 transition">新建关联任务</button>
                 <button @click="deleteProjectGroup(selectedProjectGroup().id, selectedProjectGroup().title)" class="px-3 py-2 text-sm rounded-xl border border-rose-200 text-rose-500 hover:bg-rose-50 transition">删除项目</button>
               </div>
             </div>
@@ -48,44 +48,6 @@
               <div class="rounded-xl bg-teal-50 p-3"><p class="text-xs text-teal-600">运行中</p><p class="mt-1 text-xl font-semibold text-teal-700 tabular-nums" x-text="selectedProjectGroup().active_task_count"></p></div>
               <div class="rounded-xl bg-rose-50 p-3"><p class="text-xs text-rose-600">漏洞</p><p class="mt-1 text-xl font-semibold text-rose-700 tabular-nums" x-text="selectedProjectGroup().vuln_count"></p></div>
               <div class="rounded-xl bg-sky-50 p-3"><p class="text-xs text-sky-600">黑板</p><p class="mt-1 text-xl font-semibold text-sky-700 tabular-nums" x-text="selectedProjectGroup().blackboard_count"></p></div>
-            </div>
-          </section>
-
-          <section class="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 space-y-3">
-            <div class="flex items-center justify-between gap-3">
-              <div>
-                <h3 class="text-sm font-semibold text-slate-700">测试范围设置</h3>
-                <p class="text-xs text-slate-400 mt-0.5">白黑名单二选一；Reason intents 将按此放行</p>
-              </div>
-              <button @click="saveProjectGroupSettings()" class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition">保存设置</button>
-            </div>
-            <div class="space-y-2">
-              <button
-                type="button"
-                @click="cycleProjectGroupScopeMode()"
-                class="w-full h-10 px-3 rounded-xl border text-sm font-medium transition flex items-center justify-between"
-                :class="projectGroupSettingsForm.scope_mode === 'none'
-                  ? 'border-slate-300 bg-slate-100 text-slate-700'
-                  : (projectGroupSettingsForm.scope_mode === 'whitelist'
-                    ? 'border-teal-300 bg-teal-50 text-teal-700'
-                    : 'border-rose-300 bg-rose-50 text-rose-700')"
-                title="点击切换模式">
-                <span>范围模式</span>
-                <span class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-white/90 border border-current/20"
-                  x-text="projectGroupScopeModeLabel(projectGroupSettingsForm.scope_mode)"></span>
-              </button>
-            </div>
-            <div x-show="projectGroupSettingsForm.scope_mode === 'whitelist'" class="space-y-1">
-              <label class="text-xs text-slate-500">白名单目标（每行一个域名/IP，支持 `*.example.com`）</label>
-              <textarea x-model="projectGroupSettingsForm.targets_text" rows="4" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
-            </div>
-            <div x-show="projectGroupSettingsForm.scope_mode === 'blacklist'" class="space-y-1">
-              <label class="text-xs text-slate-500">黑名单目标（每行一个域名/IP，支持 `*.example.com`）</label>
-              <textarea x-model="projectGroupSettingsForm.exclude_text" rows="4" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
-            </div>
-            <div class="space-y-1">
-              <label class="text-xs text-slate-500">备注</label>
-              <input x-model="projectGroupSettingsForm.notes" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400" />
             </div>
           </section>
 
@@ -103,7 +65,10 @@
                   :class="selectedProjectManagementTaskId === task.id ? 'border-brand-200 bg-brand-50/50' : 'border-slate-200 hover:bg-slate-50'">
                   <div class="flex items-center justify-between gap-2">
                     <span class="font-mono text-[11px] text-slate-400" x-text="task.id"></span>
-                    <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="projectStatusBadgeClass(task.status)" x-text="projectStatusLabel(task.status)"></span>
+                    <div class="flex items-center gap-1.5">
+                      <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="task.kk_report_enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'" x-text="task.kk_report_enabled ? 'KK开' : 'KK关'"></span>
+                      <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="projectStatusBadgeClass(task.status)" x-text="projectStatusLabel(task.status)"></span>
+                    </div>
                   </div>
                   <p class="mt-2 text-sm font-semibold text-slate-700 break-words" x-text="task.title"></p>
                   <p class="mt-1 text-xs text-slate-400" x-text="`${task.fact_count} 事实 · ${task.intent_count} 意图`"></p>
@@ -148,4 +113,3 @@
     </section>
   </main>
 </div>
-

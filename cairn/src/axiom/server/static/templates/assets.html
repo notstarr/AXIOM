@@ -12,8 +12,11 @@
         <button @click="assetTab='credentials'; loadCredentials()" :class="assetTab==='credentials' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'" class="px-3 py-1 text-xs rounded-md transition font-medium">凭证</button>
       </div>
     </div>
-    <button x-show="assetTab==='assets'" @click="openAssetAdd()" class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition">新增资产</button>
-    <button x-show="assetTab==='credentials'" @click="openCredAdd()" class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition">新增凭证</button>
+    <div class="flex items-center gap-2">
+      <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition">刷新</button>
+      <button x-show="assetTab==='assets'" @click="openAssetAdd()" class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition">新增资产</button>
+      <button x-show="assetTab==='credentials'" @click="openCredAdd()" class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition">新增凭证</button>
+    </div>
   </header>
 
   <!-- ══════ ASSETS TAB ══════ -->
@@ -145,14 +148,14 @@
           <thead class="bg-slate-50/80 border-b border-slate-100">
             <tr class="text-left text-[10px] text-slate-400 uppercase tracking-wider">
               <th class="px-3 py-2" style="width:11%">Group</th>
-              <th class="px-3 py-2" style="width:8%">标签</th>
-              <th class="px-3 py-2" style="width:5%">类型</th>
-              <th class="px-3 py-2" style="width:6%">资产ID</th>
-              <th class="px-3 py-2" style="width:13%">适用域名</th>
-              <th class="px-3 py-2" style="width:28%">凭证内容</th>
+              <th class="px-3 py-2" style="width:13%">名称</th>
+              <th class="px-3 py-2" style="width:7%">类型</th>
+              <th class="px-3 py-2" style="width:14%">适用域名</th>
               <th class="px-3 py-2" style="width:7%">来源</th>
               <th class="px-3 py-2" style="width:9%">捕获时间</th>
-              <th class="px-3 py-2" style="width:13%">操作</th>
+              <th class="px-3 py-2" style="width:21%">凭证内容</th>
+              <th class="px-3 py-2" style="width:6%">状态</th>
+              <th class="px-3 py-2" style="width:12%">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -161,17 +164,21 @@
                 <td class="px-3 py-2 text-slate-500 truncate max-w-[100px]" :title="c.group_id" x-text="c.group_id"></td>
                 <td class="px-3 py-2 font-medium text-slate-700" x-text="c.label || '—'"></td>
                 <td class="px-3 py-2">
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold"
-                    :class="{'bg-blue-50 text-blue-600': c.auth_type==='jwt', 'bg-amber-50 text-amber-600': c.auth_type==='cookie', 'bg-purple-50 text-purple-600': c.auth_type==='bearer'}"
-                    x-text="c.auth_type"></span>
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold whitespace-nowrap"
+                    :class="authTypeBadgeClass(c.auth_type)"
+                    x-text="authTypeLabel(c.auth_type)"></span>
                 </td>
-                <td class="px-3 py-2 text-slate-500 font-mono" x-text="c.asset_id || '—'"></td>
                 <td class="px-3 py-2 text-slate-500 truncate max-w-[130px]" :title="parseDomains(c.domains_json).join(', ')" x-text="parseDomains(c.domains_json).join(', ') || '—'"></td>
+                <td class="px-3 py-2 text-slate-400 truncate max-w-[70px]" x-text="c.source_task_id || '—'"></td>
+                <td class="px-3 py-2 text-slate-400 text-[10px]" x-text="c.captured_at ? c.captured_at.slice(0,16).replace('T',' ') : '—'"></td>
                 <td class="px-3 py-2 cred-cell" @mouseenter="positionCredTooltip($event)" @mouseleave="hideCredTooltip($event)">
                   <span class="text-[10px] text-slate-400 cursor-default" x-text="credSummary(c.credentials_json)"></span>
                 </td>
-                <td class="px-3 py-2 text-slate-400 truncate max-w-[70px]" x-text="c.source_task_id || '—'"></td>
-                <td class="px-3 py-2 text-slate-400 text-[10px]" x-text="c.captured_at ? c.captured_at.slice(0,16).replace('T',' ') : '—'"></td>
+                <td class="px-3 py-2">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold"
+                    :class="c.active === 1 ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'"
+                    x-text="c.active === 1 ? '启用' : '停用'"></span>
+                </td>
                 <td class="px-3 py-2">
                   <div class="flex items-center gap-1">
                     <button @click="openCredEdit(c)" class="p-1 rounded hover:bg-blue-50 text-slate-400 hover:text-blue-500 transition" title="编辑">
@@ -275,20 +282,23 @@
     <div class="space-y-3">
       <div class="grid grid-cols-2 gap-3">
         <div><label class="text-[10px] text-slate-400">Group ID *</label><input x-model="editCredForm.group_id" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
-        <div><label class="text-[10px] text-slate-400">标签</label><input x-model="editCredForm.label" placeholder="admin_session / user1_jwt" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+        <div><label class="text-[10px] text-slate-400">名称 *</label><input x-model="editCredForm.label" placeholder="如 admin_session / 用户1" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
       </div>
-      <div class="grid grid-cols-3 gap-3">
-        <div><label class="text-[10px] text-slate-400">认证类型</label>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-[10px] text-slate-400">类型</label>
           <select x-model="editCredForm.auth_type" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
-            <option value="cookie">cookie</option><option value="jwt">jwt</option><option value="bearer">bearer</option><option value="basic">basic</option><option value="custom_header">custom_header</option>
+            <option value="header">请求头</option>
+            <option value="url">URL</option>
+            <option value="body">请求体</option>
           </select>
         </div>
-        <div><label class="text-[10px] text-slate-400">关联资产 ID</label><input type="number" x-model="editCredForm.asset_id" placeholder="如 723" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
-        <div><label class="text-[10px] text-slate-400">来源任务</label><input x-model="editCredForm.source_task_id" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+        <div><label class="text-[10px] text-slate-400">关联资产 ID</label><input type="number" x-model="editCredForm.asset_id" placeholder="如 723（可选）" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
       </div>
       <div><label class="text-[10px] text-slate-400">适用域名 (逗号分隔)</label><input x-model="editCredForm.domains_text" placeholder="example.com, api.example.com" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      <div><label class="text-[10px] text-slate-400">来源任务</label><input x-model="editCredForm.source_task_id" placeholder="task_xxx（可选）" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
       <div><label class="text-[10px] text-slate-400">过期时间</label><input x-model="editCredForm.expires_at" placeholder="2026-07-01T00:00:00Z（可选）" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
-      <div><label class="text-[10px] text-slate-400">凭证内容 (JSON)</label><textarea x-model="editCredForm.credentials_json" rows="5" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg font-mono" placeholder='{"session_id":"abc","XSRF-TOKEN":"xyz"}'></textarea></div>
+      <div><label class="text-[10px] text-slate-400">凭证内容（每行 `key: value`，或整段粘贴合法 JSON）</label><textarea x-model="editCredForm.credentials_json" rows="6" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg font-mono" placeholder="cookie: 123&#10;token: abc&#10;# 以 # 开头的行会被忽略"></textarea></div>
+      <label class="flex items-center gap-2 text-[11px] text-slate-500"><input type="checkbox" x-model="editCredForm.active" class="rounded border-slate-300"> 启用此凭证（默认启用）</label>
     </div>
     <div class="flex items-center justify-end gap-2 pt-2">
       <button @click="showCredAdd=false" class="px-4 py-2 text-xs text-slate-500 hover:bg-slate-50 rounded-lg">取消</button>
@@ -306,19 +316,24 @@
     </div>
     <div class="space-y-3">
       <div class="grid grid-cols-2 gap-3">
-        <div><label class="text-[10px] text-slate-400">标签</label><input x-model="editCredForm.label" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
-        <div><label class="text-[10px] text-slate-400">认证类型</label>
+        <div><label class="text-[10px] text-slate-400">名称 *</label><input x-model="editCredForm.label" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+        <div><label class="text-[10px] text-slate-400">类型</label>
           <select x-model="editCredForm.auth_type" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
-            <option value="cookie">cookie</option><option value="jwt">jwt</option><option value="bearer">bearer</option><option value="basic">basic</option><option value="custom_header">custom_header</option>
+            <option value="header">请求头</option>
+            <option value="url">URL</option>
+            <option value="body">请求体</option>
           </select>
         </div>
       </div>
       <div class="grid grid-cols-2 gap-3">
-        <div><label class="text-[10px] text-slate-400">关联资产 ID</label><input type="number" x-model="editCredForm.asset_id" placeholder="如 723" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+        <div><label class="text-[10px] text-slate-400">关联资产 ID</label><input type="number" x-model="editCredForm.asset_id" placeholder="如 723（可选）" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
         <div><label class="text-[10px] text-slate-400">过期时间</label><input x-model="editCredForm.expires_at" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
       </div>
       <div><label class="text-[10px] text-slate-400">适用域名 (逗号分隔)</label><input x-model="editCredForm.domains_text" placeholder="example.com, api.example.com" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
-      <div><label class="text-[10px] text-slate-400">凭证内容 (JSON)</label><textarea x-model="editCredForm.credentials_json" rows="5" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg font-mono"></textarea></div>
+      <div><label class="text-[10px] text-slate-400">来源任务</label><input x-model="editCredForm.source_task_id" placeholder="task_xxx（可选）" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      <div><label class="text-[10px] text-slate-400">捕获时间（只读）</label><input :value="editCredForm.captured_at ? editCredForm.captured_at.replace('T',' ') : '—'" disabled readonly class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 text-slate-400"></div>
+      <div><label class="text-[10px] text-slate-400">凭证内容（每行 `key: value`，或整段粘贴合法 JSON）</label><textarea x-model="editCredForm.credentials_json" rows="6" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg font-mono" placeholder="cookie: 123&#10;token: abc&#10;# 以 # 开头的行会被忽略"></textarea></div>
+      <label class="flex items-center gap-2 text-[11px] text-slate-500"><input type="checkbox" x-model="editCredForm.active" class="rounded border-slate-300"> 启用此凭证</label>
     </div>
     <div class="flex items-center justify-end gap-2 pt-2">
       <button @click="showCredEdit=false" class="px-4 py-2 text-xs text-slate-500 hover:bg-slate-50 rounded-lg">取消</button>

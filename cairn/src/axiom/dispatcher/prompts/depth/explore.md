@@ -80,3 +80,6 @@ Normal return example:
 ## Credential Store
 Current group_id: `{group_id}`. If you encounter 401/403 or token expiry, read the `credential-refresh` skill to re-login and update credentials.
 Query existing: `curl -s "$AXIOM_SERVER/credentials?group_id={group_id}"`
+
+## Task Request Headers / Credentials
+{credential_headers}

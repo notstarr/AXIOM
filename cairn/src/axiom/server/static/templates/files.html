@@ -6,7 +6,7 @@
     <label x-show="fileFolder === 'human' && !fileIsGroupLevel" class="px-2.5 py-1.5 text-xs rounded-lg bg-brand-500 text-white cursor-pointer hover:bg-brand-600">上传
       <input type="file" @change="uploadFileToTask($event)" class="hidden">
     </label>
-    <button @click="loadFileTree()" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">刷新</button>
+    <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition">刷新</button>
   </header>
   <div class="flex-1 min-h-0 grid grid-cols-[240px_260px_minmax(0,1fr)]">
     <!-- Left tree: project/group/folder tree -->

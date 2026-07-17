@@ -47,6 +47,9 @@ Normal return example:
 {intent_description}
 ```
 
+## Task Request Headers / Credentials
+{credential_headers}
+
 ## Execute Phase Snapshot (same session)
 - execute_timed_out: `{execute_timed_out}`
 - execute_returncode: `{execute_returncode}`

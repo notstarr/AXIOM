@@ -159,6 +159,20 @@ window.AxiomModules.crawler = {
       }
     },
 
+    async refreshCrawlerResults() {
+      if (!this.selectedCrawlerTaskId || this.crawlerResultsLoading) return;
+      this.crawlerResultsLoading = true;
+      try {
+        const data = await this.api('GET', `/crawler/tasks/${this.selectedCrawlerTaskId}/results`);
+        this.crawlerResultsData = data;
+        this.crawlerResultsPageData = data;
+      } catch(e) {
+        this.showToast(e.message || '刷新爬虫结果失败', 'error');
+      } finally {
+        this.crawlerResultsLoading = false;
+      }
+    },
+
     crawlerBusinessTree() {
       const data = this.crawlerResultsPageData;
       if (!data) return [];

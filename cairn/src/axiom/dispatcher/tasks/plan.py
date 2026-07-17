@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 
 from axiom.dispatcher.config import DispatchConfig, WorkerConfig
 from axiom.dispatcher.contracts import parse_json_output
@@ -64,6 +65,12 @@ def run_plan_task(
         session = driver.prepare_session()
         execute = driver.build_execute(worker, prompt, session, phase="plan")
         session = execute.session
+        plan_metadata = {
+            "logical_thread_id": f"reason:{project.project.id}:plan",
+            "attempt_id": f"plan:{project.project.id}:{worker.name}:{uuid.uuid4().hex[:8]}",
+            "attempt_role": "plan",
+            "session_id": session or "",
+        }
         execute_started = time.perf_counter()
         result = run_worker_process(
             worker,
@@ -75,15 +82,23 @@ def run_plan_task(
             cancellation=cancellation,
             client=client,
             task_type="plan",
+            event_metadata=plan_metadata,
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         session = driver.extract_session(session, result.stdout, result.stderr)
         try:
-            _, token_usage = record_session_tools(session_id=session or "", worker_name=worker.name, project_id=project.project.id)
+            _, token_usage = record_session_tools(
+                session_id=session or "",
+                worker_name=worker.name,
+                project_id=project.project.id,
+                task_type="plan",
+                phase="plan",
+                event_metadata={**plan_metadata, "session_id": session or plan_metadata.get("session_id", "")},
+            )
             if token_usage:
                 _report_event(client, project.project.id, task_type="plan", phase="plan",
                               worker=worker.name, level="info", message="token usage",
-                              payload={"token_usage": token_usage})
+                              payload={"token_usage": token_usage, **plan_metadata, "session_id": session or plan_metadata.get("session_id", "")})
         except Exception:
             LOG.exception("failed to record tool executions session=%s", session)
         cancelled = cancel_reason(result, cancellation)

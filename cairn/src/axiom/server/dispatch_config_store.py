@@ -100,7 +100,7 @@ def load_dispatch_config_snapshot(fallback_path: Path) -> DispatchConfigSnapshot
 
     worker_payload = [_worker_from_row(row) for row in workers]
     if not worker_payload:
-        worker_payload = list((fallback.get("workers") or []))
+        worker_payload = [_sanitize_worker_payload(worker) for worker in (fallback.get("workers") or [])]
     runtime_state = _runtime_state_from_row(state_row)
     return DispatchConfigSnapshot(
         version=DispatchConfigVersion(
@@ -119,6 +119,23 @@ def read_dispatch_yaml(path: Path) -> dict[str, Any]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return data if isinstance(data, dict) else {}
 
+
+
+DEFAULT_TASK_TYPES = ["bootstrap", "reason", "explore"]
+
+
+def _sanitize_task_types(task_types: Any, *, default: list[str] | None = None) -> list[str]:
+    allowed = {"bootstrap", "reason", "explore", "plan", "maintainer"}
+    sanitized: list[str] = []
+    for item in task_types or []:
+        value = str(item)
+        if value in allowed and value not in sanitized:
+            sanitized.append(value)
+    if sanitized:
+        return sanitized
+    if default is not None:
+        return list(default)
+    return list(DEFAULT_TASK_TYPES)
 
 def write_dispatch_yaml(path: Path, body: dict[str, Any]) -> None:
     path.write_text(yaml.safe_dump(body, allow_unicode=True, sort_keys=False), encoding="utf-8")
@@ -179,24 +196,24 @@ def write_dispatch_settings(body: dict[str, Any]) -> DispatchConfigVersion:
             WHERE rowid = 1
             """,
             (
-                body["explore_timeout"],
-                body["reason_timeout"],
-                body["bootstrap_worker_count"],
-                body["explore_worker_count"],
-                body["reason_worker_count"],
-                body["runtime_interval"],
-                body["runtime_max_workers"],
-                body["runtime_max_running_projects"],
-                body["runtime_max_project_workers"],
-                body["runtime_healthcheck_timeout"],
-                body["runtime_worker_healthcheck"],
-                body["runtime_prompt_group"],
-                body["bootstrap_timeout"],
-                body["bootstrap_conclude_timeout"],
-                body["explore_conclude_timeout"],
-                body["reason_max_intents"],
-                body["proxy_url"],
-                1 if body["proxy_enabled"] else 0,
+                body.get("explore_timeout"),
+                body.get("reason_timeout"),
+                body.get("bootstrap_worker_count", 1),
+                body.get("explore_worker_count", 2),
+                body.get("reason_worker_count", 1),
+                body.get("runtime_interval"),
+                body.get("runtime_max_workers"),
+                body.get("runtime_max_running_projects"),
+                body.get("runtime_max_project_workers"),
+                body.get("runtime_healthcheck_timeout"),
+                body.get("runtime_worker_healthcheck"),
+                body.get("runtime_prompt_group"),
+                body.get("bootstrap_timeout"),
+                body.get("bootstrap_conclude_timeout"),
+                body.get("explore_conclude_timeout"),
+                body.get("reason_max_intents"),
+                body.get("proxy_url"),
+                1 if body.get("proxy_enabled") else 0,
                 version,
                 now,
             ),
@@ -213,7 +230,7 @@ def write_dispatch_settings(body: dict[str, Any]) -> DispatchConfigVersion:
                     (
                         worker["name"],
                         worker.get("type", "pi"),
-                        json.dumps(worker["task_types"], ensure_ascii=False, separators=(",", ":")),
+                        json.dumps(_sanitize_task_types(worker.get("task_types")), ensure_ascii=False, separators=(",", ":")),
                         worker["max_running"],
                         worker["priority"],
                         json.dumps(worker["env"], ensure_ascii=False, separators=(",", ":")),
@@ -280,6 +297,22 @@ def write_dispatcher_runtime_state(
         conn.close()
 
 
+
+
+def _sanitize_worker_payload(worker: Any) -> dict[str, Any]:
+    if not isinstance(worker, dict):
+        return {}
+    payload = dict(worker)
+    task_types = _sanitize_task_types(payload.get("task_types"), default=[])
+    if task_types:
+        payload["task_types"] = task_types
+    else:
+        # Keep invalid/empty legacy rows visible in settings without allowing
+        # them to consume work until an operator selects at least one phase.
+        payload["task_types"] = list(DEFAULT_TASK_TYPES)
+        payload["disabled"] = True
+    return payload
+
 def _config_data_from_fallback(fallback: dict[str, Any]) -> dict[str, Any]:
     runtime = dict(fallback.get("runtime") or {})
     tasks = dict(fallback.get("tasks") or {})
@@ -310,7 +343,7 @@ def _config_data_from_fallback(fallback: dict[str, Any]) -> dict[str, Any]:
         },
         "container": fallback.get("container") or {},
         "common_env": fallback.get("common_env") or {},
-        "workers": list(fallback.get("workers") or []),
+        "workers": [_sanitize_worker_payload(worker) for worker in (fallback.get("workers") or [])],
     }
 
 
@@ -369,7 +402,7 @@ def _config_data_from_settings(
             ),
         },
     }
-    base["workers"] = workers
+    base["workers"] = [_sanitize_worker_payload(worker) for worker in workers]
     base["phase_limits"] = {
         "bootstrap": max(1, int(settings["bootstrap_worker_count"] or 1)),
         "explore": max(1, int(settings["explore_worker_count"] or 1)),
@@ -382,25 +415,33 @@ def _worker_from_row(row: sqlite3.Row) -> dict[str, Any]:
     env = _decode_json_dict(row["env_json"], {})
     # Keep the env as-is; no placeholder injection.  If PI_API_KEY is
     # missing or empty, pi will fall back to its own env or models.json.
-    task_types = _decode_json_list(row["task_types_json"], [])
+    task_types = _sanitize_task_types(_decode_json_list(row["task_types_json"], []), default=[])
+    has_no_task_types = not task_types
     return {
         "name": str(row["name"]),
         "type": str(row["worker_type"] or "pi"),
-        "task_types": [str(item) for item in task_types],
+        "task_types": task_types or list(DEFAULT_TASK_TYPES),
         "max_running": max(1, int(row["max_running"] or 1)),
         "priority": max(0, int(row["priority"] or 0)),
         "env": {str(key): str(value) for key, value in env.items()},
-        "disabled": bool(row["disabled"]),
+        "disabled": bool(row["disabled"]) or has_no_task_types,
     }
 
 
 def _runtime_state_from_row(row: sqlite3.Row | None) -> DispatcherRuntimeState | None:
     if row is None:
         return None
+    workers = []
+    for item in _decode_json_list(row["workers_json"], []):
+        if not isinstance(item, dict):
+            continue
+        worker = dict(item)
+        worker["task_types"] = _sanitize_task_types(worker.get("task_types"))
+        workers.append(worker)
     return DispatcherRuntimeState(
         config_version=max(0, int(row["config_version"] or 0)),
         applied_at=str(row["applied_at"] or ""),
-        workers=_decode_json_list(row["workers_json"], []),
+        workers=workers,
         metadata=_decode_json_dict(row["metadata_json"], {}),
     )
 

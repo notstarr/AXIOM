@@ -20,13 +20,14 @@ WORKER_ENV_KEYS: dict[WorkerType, tuple[str, ...]] = {
         "PI_PROVIDER_API",
     ),
 }
+PI_THINKING_LEVELS = {"off", "minimal", "low", "medium", "high", "xhigh"}
 
 DEFAULT_PROMPT_REQUIRED_TOKENS: dict[str, tuple[str, ...]] = {
-    "reason.md": ("{graph_yaml}", "{fact_ids}", "{open_intents}", "{max_intents}", "{blackboard}"),
-    "explore.md": ("{graph_yaml}", "{intent_id}", "{intent_description}", "{blackboard}", "{ai_dir}"),
-    "explore_conclude.md": ("{graph_yaml}", "{intent_id}", "{intent_description}", "{ai_dir}"),
-    "bootstrap.md": ("{origin}", "{goal}", "{hints}"),
-    "bootstrap_conclude.md": ("{origin}", "{goal}", "{hints}"),
+    "reason.md": ("{graph_yaml}", "{fact_ids}", "{open_intents}", "{max_intents}", "{blackboard}", "{credential_headers}"),
+    "explore.md": ("{graph_yaml}", "{intent_id}", "{intent_description}", "{blackboard}", "{ai_dir}", "{credential_headers}"),
+    "explore_conclude.md": ("{graph_yaml}", "{intent_id}", "{intent_description}", "{ai_dir}", "{credential_headers}"),
+    "bootstrap.md": ("{origin}", "{goal}", "{hints}", "{credential_headers}"),
+    "bootstrap_conclude.md": ("{origin}", "{goal}", "{hints}", "{credential_headers}"),
 }
 
 
@@ -105,6 +106,7 @@ class WorkerConfig(BaseModel):
             raise ValueError(f"worker {self.name} missing env keys: {', '.join(missing)}")
         if self.type == "pi":
             _validate_optional_positive_int_env(self.name, self.env, "PI_MODEL_CONTEXT_WINDOW")
+            _validate_pi_thinking_env(self.name, self.env)
         return self
 
 
@@ -185,6 +187,16 @@ def _validate_optional_positive_int_env(worker_name: str, env: dict[str, str], k
         raise ValueError(f"worker {worker_name} env {key} must be an integer") from exc
     if parsed <= 0:
         raise ValueError(f"worker {worker_name} env {key} must be greater than 0")
+
+
+def _validate_pi_thinking_env(worker_name: str, env: dict[str, str]) -> None:
+    value = env.get("PI_THINKING")
+    if value is None or not value.strip():
+        return
+    normalized = value.strip().lower()
+    if normalized not in PI_THINKING_LEVELS:
+        allowed = ", ".join(sorted(PI_THINKING_LEVELS))
+        raise ValueError(f"worker {worker_name} env PI_THINKING must be one of: {allowed}")
 
 
 def validate_prompt_resources(prompt_group: str) -> None:

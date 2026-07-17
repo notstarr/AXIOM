@@ -30,6 +30,8 @@ DEFAULT_DB: Path = _resolve_db_path()
 
 _db_path: Path | None = None
 
+DEFAULT_TASK_SCOPE_JSON = '{"targets":[],"exclude":[],"notes":""}'
+
 SCHEMA = """\
 CREATE TABLE IF NOT EXISTS settings (
     intent_timeout INTEGER NOT NULL DEFAULT 15,
@@ -57,8 +59,7 @@ CREATE TABLE IF NOT EXISTS settings (
     openai_model TEXT NOT NULL DEFAULT '',
     proxy_url TEXT NOT NULL DEFAULT '',
     proxy_bootstrap_enabled INTEGER NOT NULL DEFAULT 0,
-    proxy_explore_enabled INTEGER NOT NULL DEFAULT 0,
-    domain_blacklist_json TEXT NOT NULL DEFAULT '[]'
+    proxy_explore_enabled INTEGER NOT NULL DEFAULT 0
 );
 
 INSERT OR IGNORE INTO settings (rowid, intent_timeout, reason_timeout) VALUES (1, 15, 15);
@@ -67,7 +68,6 @@ CREATE TABLE IF NOT EXISTS project_groups (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    scope_json TEXT NOT NULL DEFAULT '{"targets":[],"exclude":[],"notes":""}',
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL
 );
@@ -78,7 +78,10 @@ CREATE TABLE IF NOT EXISTS projects (
     title TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
     bootstrap_enabled INTEGER NOT NULL DEFAULT 1,
+    kk_report_enabled INTEGER NOT NULL DEFAULT 1,
     depth_mode INTEGER NOT NULL DEFAULT 0,
+    guard_enabled INTEGER NOT NULL DEFAULT 0,
+    worker_pool TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
     reason_worker TEXT,
     reason_trigger TEXT,
@@ -105,6 +108,7 @@ CREATE TABLE IF NOT EXISTS intents (
     last_heartbeat_at TEXT,
     created_at TEXT NOT NULL,
     concluded_at TEXT,
+    worker_pool TEXT NOT NULL DEFAULT '[]',
     PRIMARY KEY (id, project_id)
 );
 
@@ -149,6 +153,23 @@ CREATE TABLE IF NOT EXISTS provider_keys (
     updated_by TEXT NOT NULL
 );
 
+
+CREATE TABLE IF NOT EXISTS judge_settings (
+    singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
+    enabled_default INTEGER NOT NULL DEFAULT 0,
+    mode TEXT NOT NULL DEFAULT 'enforce',
+    base_url TEXT NOT NULL DEFAULT 'https://api.siliconflow.cn/v1',
+    model TEXT NOT NULL DEFAULT 'Qwen/Qwen3.5-9B',
+    timeout_seconds INTEGER NOT NULL DEFAULT 3,
+    whitelist_tools_json TEXT NOT NULL DEFAULT '["read","ls","grep","find"]',
+    whitelist_bash_verbs_json TEXT NOT NULL DEFAULT '["pwd","whoami","id","uname","ls","cat","head","tail","grep","find","ifconfig","ip","env","printenv"]',
+    system_prompt TEXT NOT NULL DEFAULT '',
+    hard_block_rules_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+
+INSERT OR IGNORE INTO judge_settings (singleton_id) VALUES (1);
+
 CREATE TABLE IF NOT EXISTS task_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -162,6 +183,31 @@ CREATE TABLE IF NOT EXISTS task_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_events_project_id_id ON task_events(project_id, id);
+
+
+CREATE TABLE IF NOT EXISTS tool_hook_events (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL DEFAULT '',
+    intent_id TEXT NOT NULL DEFAULT '',
+    phase TEXT NOT NULL DEFAULT '',
+    worker TEXT NOT NULL DEFAULT '',
+    tool_name TEXT NOT NULL DEFAULT '',
+    tool_call_id TEXT NOT NULL DEFAULT '',
+    input_json TEXT NOT NULL DEFAULT '{}',
+    normalized_json TEXT NOT NULL DEFAULT '{}',
+    decision TEXT NOT NULL DEFAULT 'ALLOW',
+    observed_decision TEXT NOT NULL DEFAULT 'ALLOW',
+    decision_source TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    mode TEXT NOT NULL DEFAULT 'observe',
+    model_name TEXT NOT NULL DEFAULT '',
+    model_latency_ms INTEGER NOT NULL DEFAULT 0,
+    raw_model_output TEXT NOT NULL DEFAULT '',
+    cwd TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tool_hook_events_project_created ON tool_hook_events(project_id, created_at);
 
 CREATE TABLE IF NOT EXISTS dispatch_workers (
     name TEXT PRIMARY KEY,
@@ -198,8 +244,10 @@ CREATE TABLE IF NOT EXISTS vulns (
     reproduction_steps_json TEXT NOT NULL DEFAULT '[]',
     recommendation TEXT NOT NULL DEFAULT '',
     affected_scope TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT '待确认',
+    status TEXT NOT NULL DEFAULT '待验证',
+    status_reason TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'reason',
+    source_file TEXT NOT NULL DEFAULT '',
     reported_by TEXT NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY (id, project_id)
@@ -239,6 +287,13 @@ CREATE TABLE IF NOT EXISTS tool_executions (
     duration_ms INTEGER NOT NULL DEFAULT 0,
     project_group_id TEXT REFERENCES project_groups(id) ON DELETE SET NULL,
     project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+    worker TEXT NOT NULL DEFAULT '',
+    task_type TEXT NOT NULL DEFAULT '',
+    phase TEXT NOT NULL DEFAULT '',
+    logical_thread_id TEXT NOT NULL DEFAULT '',
+    attempt_id TEXT NOT NULL DEFAULT '',
+    intent_id TEXT NOT NULL DEFAULT '',
+    session_id TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     finished_at TEXT
 );
@@ -308,6 +363,165 @@ CREATE INDEX IF NOT EXISTS idx_credentials_group_id ON credentials(group_id);
 """
 
 
+def _ensure_mcp_servers_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_servers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            command TEXT NOT NULL DEFAULT '',
+            args_json TEXT NOT NULL DEFAULT '[]',
+            env_json TEXT NOT NULL DEFAULT '{}',
+            disabled INTEGER NOT NULL DEFAULT 0,
+            url TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_servers_disabled ON mcp_servers(disabled)")
+    # Migration: add url column to existing DBs (no-op if already present)
+    cur = conn.execute("PRAGMA table_info(mcp_servers)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "url" not in cols:
+        conn.execute("ALTER TABLE mcp_servers ADD COLUMN url TEXT")
+        # Backfill: any prior url-only entry stored {"url": "..."} in args_json -> migrate to url column
+        rows = conn.execute(
+            "SELECT id, args_json FROM mcp_servers WHERE url IS NULL AND (command = '' OR command IS NULL)"
+        ).fetchall()
+        for row in rows:
+            try:
+                import json as _json
+                parsed = _json.loads(row["args_json"])
+                if isinstance(parsed, dict) and parsed.get("url"):
+                    conn.execute(
+                        "UPDATE mcp_servers SET url = ?, args_json = '[]' WHERE id = ?",
+                        (parsed["url"], row["id"]),
+                    )
+            except Exception:
+                pass
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_server_tools (
+            id TEXT PRIMARY KEY,
+            server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+            server_name TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            source TEXT NOT NULL DEFAULT 'manual',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(server_id, name)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_server_tools_server_id ON mcp_server_tools(server_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_server_tools_enabled ON mcp_server_tools(enabled)")
+    tool_cols = {row[1] for row in conn.execute("PRAGMA table_info(mcp_server_tools)").fetchall()}
+    if "server_name" not in tool_cols:
+        conn.execute("ALTER TABLE mcp_server_tools ADD COLUMN server_name TEXT NOT NULL DEFAULT ''")
+        conn.execute(
+            """
+            UPDATE mcp_server_tools
+            SET server_name = COALESCE((SELECT name FROM mcp_servers WHERE mcp_servers.id = mcp_server_tools.server_id), '')
+            WHERE server_name = ''
+            """
+        )
+    if "description" not in tool_cols:
+        conn.execute("ALTER TABLE mcp_server_tools ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+    if "source" not in tool_cols:
+        conn.execute("ALTER TABLE mcp_server_tools ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
+
+
+def _ensure_tool_hook_events_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tool_hook_events (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL DEFAULT '',
+            intent_id TEXT NOT NULL DEFAULT '',
+            phase TEXT NOT NULL DEFAULT '',
+            worker TEXT NOT NULL DEFAULT '',
+            tool_name TEXT NOT NULL DEFAULT '',
+            tool_call_id TEXT NOT NULL DEFAULT '',
+            input_json TEXT NOT NULL DEFAULT '{}',
+            normalized_json TEXT NOT NULL DEFAULT '{}',
+            decision TEXT NOT NULL DEFAULT 'ALLOW',
+            observed_decision TEXT NOT NULL DEFAULT 'ALLOW',
+            decision_source TEXT NOT NULL DEFAULT '',
+            reason TEXT NOT NULL DEFAULT '',
+            mode TEXT NOT NULL DEFAULT 'observe',
+            model_name TEXT NOT NULL DEFAULT '',
+            model_latency_ms INTEGER NOT NULL DEFAULT 0,
+            raw_model_output TEXT NOT NULL DEFAULT '',
+            cwd TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_hook_events_project_created ON tool_hook_events(project_id, created_at)")
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(tool_hook_events)")}
+    migrations = {
+        "observed_decision": "ALTER TABLE tool_hook_events ADD COLUMN observed_decision TEXT NOT NULL DEFAULT 'ALLOW'",
+        "mode": "ALTER TABLE tool_hook_events ADD COLUMN mode TEXT NOT NULL DEFAULT 'observe'",
+        "raw_model_output": "ALTER TABLE tool_hook_events ADD COLUMN raw_model_output TEXT NOT NULL DEFAULT ''",
+        "cwd": "ALTER TABLE tool_hook_events ADD COLUMN cwd TEXT NOT NULL DEFAULT ''",
+    }
+    for column, sql in migrations.items():
+        if column not in columns:
+            conn.execute(sql)
+
+
+def _ensure_judge_settings_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS judge_settings (
+            singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
+            enabled_default INTEGER NOT NULL DEFAULT 0,
+            mode TEXT NOT NULL DEFAULT 'enforce',
+            base_url TEXT NOT NULL DEFAULT 'https://api.siliconflow.cn/v1',
+            model TEXT NOT NULL DEFAULT 'Qwen/Qwen3.5-9B',
+            timeout_seconds INTEGER NOT NULL DEFAULT 3,
+            whitelist_tools_json TEXT NOT NULL DEFAULT '["read","ls","grep","find"]',
+            whitelist_bash_verbs_json TEXT NOT NULL DEFAULT '["pwd","whoami","id","uname","ls","cat","head","tail","grep","find","ifconfig","ip","env","printenv"]',
+            system_prompt TEXT NOT NULL DEFAULT '',
+            hard_block_rules_json TEXT NOT NULL DEFAULT '[]',
+            updated_at TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(judge_settings)")}
+    migrations = {
+        "enabled_default": "ALTER TABLE judge_settings ADD COLUMN enabled_default INTEGER NOT NULL DEFAULT 0",
+        "mode": "ALTER TABLE judge_settings ADD COLUMN mode TEXT NOT NULL DEFAULT 'enforce'",
+        "base_url": "ALTER TABLE judge_settings ADD COLUMN base_url TEXT NOT NULL DEFAULT 'https://api.siliconflow.cn/v1'",
+        "model": "ALTER TABLE judge_settings ADD COLUMN model TEXT NOT NULL DEFAULT 'Qwen/Qwen3.5-9B'",
+        "timeout_seconds": "ALTER TABLE judge_settings ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 3",
+        "whitelist_tools_json": "ALTER TABLE judge_settings ADD COLUMN whitelist_tools_json TEXT NOT NULL DEFAULT '[\"read\",\"ls\",\"grep\",\"find\"]'",
+        "whitelist_bash_verbs_json": "ALTER TABLE judge_settings ADD COLUMN whitelist_bash_verbs_json TEXT NOT NULL DEFAULT '[\"pwd\",\"whoami\",\"id\",\"uname\",\"ls\",\"cat\",\"head\",\"tail\",\"grep\",\"find\",\"ifconfig\",\"ip\",\"env\",\"printenv\"]'",
+        "system_prompt": "ALTER TABLE judge_settings ADD COLUMN system_prompt TEXT NOT NULL DEFAULT ''",
+        "hard_block_rules_json": "ALTER TABLE judge_settings ADD COLUMN hard_block_rules_json TEXT NOT NULL DEFAULT '[]'",
+        "updated_at": "ALTER TABLE judge_settings ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+    }
+    for column, sql in migrations.items():
+        if column not in columns:
+            conn.execute(sql)
+    conn.execute("INSERT OR IGNORE INTO judge_settings (singleton_id) VALUES (1)")
+    conn.execute("UPDATE judge_settings SET mode = 'enforce' WHERE singleton_id = 1 AND mode NOT IN ('off','observe','guarded','enforce')")
+    conn.execute("UPDATE judge_settings SET timeout_seconds = 3 WHERE singleton_id = 1 AND (timeout_seconds IS NULL OR timeout_seconds < 1)")
+    from axiom.server.judge_settings import DEFAULT_JUDGE_HARD_BLOCK_RULES, DEFAULT_JUDGE_SYSTEM_PROMPT
+    conn.execute(
+        "UPDATE judge_settings SET system_prompt = ? WHERE singleton_id = 1 AND TRIM(COALESCE(system_prompt, '')) = ''",
+        (DEFAULT_JUDGE_SYSTEM_PROMPT,),
+    )
+    import json
+    conn.execute(
+        "UPDATE judge_settings SET hard_block_rules_json = ? WHERE singleton_id = 1 AND TRIM(COALESCE(hard_block_rules_json, '')) IN ('', '[]')",
+        (json.dumps(DEFAULT_JUDGE_HARD_BLOCK_RULES, ensure_ascii=False, separators=(",", ":")),),
+    )
+
+
 def configure(path: Path) -> None:
     global _db_path
     if _db_path is not None:
@@ -329,8 +543,14 @@ def configure(path: Path) -> None:
         _ensure_dispatch_workers_columns(conn)
         _ensure_assets_schema(conn)
         _ensure_credentials_schema(conn)
+        _ensure_tool_executions_columns(conn)
+        _ensure_mcp_servers_schema(conn)
+        _ensure_tool_hook_events_schema(conn)
+        _ensure_judge_settings_schema(conn)
         _migrate_assets_from_tmp(conn)
         _fix_asset_group_ids(conn)
+        _migrate_task_scopes_from_groups(conn)
+        _clear_project_group_scopes(conn)
 
 
 def current_db_path() -> Path:
@@ -395,8 +615,6 @@ def _ensure_settings_columns(conn: sqlite3.Connection) -> None:
                 "UPDATE settings SET proxy_enabled = 1 "
                 "WHERE proxy_bootstrap_enabled = 1 OR proxy_explore_enabled = 1"
             )
-    if "domain_blacklist_json" not in columns:
-        conn.execute("ALTER TABLE settings ADD COLUMN domain_blacklist_json TEXT NOT NULL DEFAULT '[]'")
     conn.execute("UPDATE settings SET bootstrap_worker_count = 1 WHERE bootstrap_worker_count IS NULL OR bootstrap_worker_count < 1")
     conn.execute("UPDATE settings SET explore_worker_count = 2 WHERE explore_worker_count IS NULL OR explore_worker_count < 1")
     conn.execute("UPDATE settings SET reason_worker_count = 1 WHERE reason_worker_count IS NULL OR reason_worker_count < 1")
@@ -422,7 +640,6 @@ def _ensure_settings_columns(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE settings SET proxy_bootstrap_enabled = 0 WHERE proxy_bootstrap_enabled IS NULL")
     conn.execute("UPDATE settings SET proxy_explore_enabled = 0 WHERE proxy_explore_enabled IS NULL")
     conn.execute("UPDATE settings SET proxy_enabled = 0 WHERE proxy_enabled IS NULL")
-    conn.execute("UPDATE settings SET domain_blacklist_json = '[]' WHERE domain_blacklist_json IS NULL")
 
 
 def _ensure_project_columns(conn: sqlite3.Connection) -> None:
@@ -435,8 +652,21 @@ def _ensure_project_columns(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "UPDATE projects SET bootstrap_enabled = CASE WHEN bootstrap_mode = 'disabled' THEN 0 ELSE 1 END"
             )
+    if "kk_report_enabled" not in columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN kk_report_enabled INTEGER NOT NULL DEFAULT 1")
+    conn.execute("UPDATE projects SET kk_report_enabled = 1 WHERE kk_report_enabled IS NULL")
     if "depth_mode" not in columns:
         conn.execute("ALTER TABLE projects ADD COLUMN depth_mode INTEGER NOT NULL DEFAULT 0")
+    if "guard_enabled" not in columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN guard_enabled INTEGER NOT NULL DEFAULT 0")
+    if "worker_pool" not in columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN worker_pool TEXT NOT NULL DEFAULT '[]'")
+    if "task_scope_enabled" not in columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN task_scope_enabled INTEGER NOT NULL DEFAULT 0")
+    if "task_scope_json" not in columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN task_scope_json TEXT NOT NULL DEFAULT '" + DEFAULT_TASK_SCOPE_JSON + "'")
+    if "credential_headers" not in columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN credential_headers TEXT NOT NULL DEFAULT ''")
     _assign_default_project_group(conn)
 
 
@@ -448,6 +678,8 @@ def _ensure_fact_columns(conn: sqlite3.Connection) -> None:
 
 def _ensure_intent_columns(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(intents)")}
+    if "worker_pool" not in columns:
+        conn.execute("ALTER TABLE intents ADD COLUMN worker_pool TEXT NOT NULL DEFAULT '[]'")
     if "archived" not in columns:
         conn.execute("ALTER TABLE intents ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
     if "execute_timeout_seconds" not in columns:
@@ -472,6 +704,22 @@ def _ensure_dispatch_workers_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE dispatch_workers ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0")
 
 
+def _ensure_tool_executions_columns(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(tool_executions)")}
+    additions = {
+        "worker": "TEXT NOT NULL DEFAULT ''",
+        "task_type": "TEXT NOT NULL DEFAULT ''",
+        "phase": "TEXT NOT NULL DEFAULT ''",
+        "logical_thread_id": "TEXT NOT NULL DEFAULT ''",
+        "attempt_id": "TEXT NOT NULL DEFAULT ''",
+        "intent_id": "TEXT NOT NULL DEFAULT ''",
+        "session_id": "TEXT NOT NULL DEFAULT ''",
+    }
+    for name, ddl in additions.items():
+        if name not in columns:
+            conn.execute(f"ALTER TABLE tool_executions ADD COLUMN {name} {ddl}")
+
+
 def _ensure_project_group_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
@@ -479,16 +727,11 @@ def _ensure_project_group_schema(conn: sqlite3.Connection) -> None:
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
-            scope_json TEXT NOT NULL DEFAULT '{"targets":[],"exclude":[],"notes":""}',
             status TEXT NOT NULL DEFAULT 'active',
             created_at TEXT NOT NULL
         )
         """
     )
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(project_groups)")}
-    if "scope_json" not in columns:
-        conn.execute("ALTER TABLE project_groups ADD COLUMN scope_json TEXT NOT NULL DEFAULT '{\"targets\":[],\"exclude\":[],\"notes\":\"\"}'")
-    conn.execute("UPDATE project_groups SET scope_json = '{\"targets\":[],\"exclude\":[],\"notes\":\"\"}' WHERE scope_json IS NULL OR scope_json = ''")
     conn.execute("INSERT OR IGNORE INTO counters (name, value) VALUES ('project_group', 0)")
     _assign_default_project_group(conn)
 
@@ -558,14 +801,17 @@ def _ensure_vuln_columns(conn: sqlite3.Connection) -> None:
         return
     if "prerequisites" not in columns:
         conn.execute("ALTER TABLE vulns ADD COLUMN prerequisites TEXT NOT NULL DEFAULT ''")
+    if "source_file" not in columns:
+        conn.execute("ALTER TABLE vulns ADD COLUMN source_file TEXT NOT NULL DEFAULT ''")
 
 
 @contextmanager
 def get_conn() -> Generator[sqlite3.Connection, None, None]:
     assert _db_path is not None
-    conn = sqlite3.connect(str(_db_path))
+    conn = sqlite3.connect(str(_db_path), timeout=5)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     try:
         yield conn
@@ -598,6 +844,47 @@ def _ensure_assets_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_assets_group_id ON assets(group_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_assets_test_status ON assets(test_status)")
 
+
+
+def _migrate_task_scopes_from_groups(conn: sqlite3.Connection) -> None:
+    try:
+        rows = conn.execute(
+            """
+            SELECT p.id, p.parent_project_id, p.task_scope_enabled, p.task_scope_json, g.scope_json
+            FROM projects p
+            LEFT JOIN project_groups g ON g.id = p.parent_project_id
+            WHERE (p.task_scope_json IS NULL OR p.task_scope_json = ? OR p.task_scope_json = '')
+            """,
+            (DEFAULT_TASK_SCOPE_JSON,),
+        ).fetchall()
+        for row in rows:
+            raw = row["scope_json"] or DEFAULT_TASK_SCOPE_JSON
+            enabled = 0
+            try:
+                import json as _json
+                parsed = _json.loads(raw)
+                if isinstance(parsed, dict) and (parsed.get("targets") or parsed.get("exclude")):
+                    enabled = 1
+            except Exception:
+                raw = DEFAULT_TASK_SCOPE_JSON
+            conn.execute(
+                "UPDATE projects SET task_scope_json = ?, task_scope_enabled = ? WHERE id = ?",
+                (raw, enabled, row["id"]),
+            )
+    except Exception:
+        pass
+
+
+
+def _clear_project_group_scopes(conn: sqlite3.Connection) -> None:
+    """Project-level scope is deprecated; task_scope_json is the single source of truth."""
+    try:
+        conn.execute(
+            "UPDATE project_groups SET scope_json = ? WHERE scope_json IS NULL OR scope_json != ?",
+            (DEFAULT_TASK_SCOPE_JSON, DEFAULT_TASK_SCOPE_JSON),
+        )
+    except Exception:
+        pass
 
 def _ensure_credentials_schema(conn: sqlite3.Connection) -> None:
     """Ensure credentials table exists (for upgrades)."""
@@ -639,6 +926,12 @@ def _migrate_assets_from_tmp(conn: sqlite3.Connection) -> None:
     try:
         src = sqlite3.connect(str(tmp_db))
         src.row_factory = sqlite3.Row
+        # The tmp DB might exist as a stub (e.g. an empty 0-byte file) without an
+        # assets table. Skip gracefully instead of logging a misleading exception.
+        tables = {r["name"] for r in src.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if "assets" not in tables:
+            src.close()
+            return
         rows = src.execute("SELECT * FROM assets").fetchall()
         # Build project_id → parent_project_id lookup from main DB
         parent_map: dict[str, str] = {}

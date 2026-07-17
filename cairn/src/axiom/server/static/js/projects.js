@@ -42,7 +42,6 @@ window.AxiomModules.projects = {
         if (!this.newProject.parent_project_id && this.projectGroups.length > 0) {
           this.newProject.parent_project_id = this.projectGroups[0].id;
         }
-        if (this.selectedProjectManagementId) this.syncProjectGroupSettingsForm();
       } catch(e) { console.error(e); }
     },
 
@@ -583,9 +582,20 @@ window.AxiomModules.projects = {
           kk_report_enabled: !!this.newProject.kk_report_enabled,
           depth_mode: !!this.newProject.depth_mode,
           guard_enabled: !!this.newProject.guard_enabled,
-          blackboard: this.newProject.blackboard || '',
+          hints: this.newProject.hints.trim()
+            ? [{ content: this.newProject.hints.trim(), creator: actor }]
+            : [],
           worker_pool: Array.isArray(this.newProject.worker_pool) ? this.newProject.worker_pool : [],
         };
+        if (this.newProject.task_scope_enabled || this.newProject.task_scope_targets || this.newProject.task_scope_exclude) {
+          const lines = (text) => String(text || '').split(/\n|,/).map(x => x.trim()).filter(Boolean);
+          body.task_scope = {
+            enabled: !!this.newProject.task_scope_enabled,
+            targets: lines(this.newProject.task_scope_targets),
+            exclude: lines(this.newProject.task_scope_exclude),
+            notes: this.newProject.task_scope_notes || '',
+          };
+        }
         const data = await this.api('POST', '/projects', body);
         const pid = data.project.id;
         // Upload HAR to project human/ folder and set origin to full path
@@ -610,7 +620,8 @@ window.AxiomModules.projects = {
         this.newProject = {
           parent_project_id: parentProjectId || this.projectGroups[0]?.id || '',
           title:'', origin:'', goal:'',
-          bootstrap: true, kk_report_enabled: false, depth_mode: false, guard_enabled: !!this.judgeSettings?.enabled_default, blackboard: '',
+          bootstrap: true, kk_report_enabled: false, depth_mode: false, guard_enabled: !!this.judgeSettings?.enabled_default, hints: '',
+          task_scope_enabled: false, task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '',
           depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], _guardTouched: false,
         };
         await this.loadProjectGroups();
@@ -622,96 +633,24 @@ window.AxiomModules.projects = {
 
     openCreateIntent() {
       if (!this.canActOnSelectedFacts()) return;
-      // 预填范围：取当前项目所属项目组的授权范围作为 targets 默认值，
-      // 这样后端按范围策略校验时（白名单/黑名单）能直接通过，避免人工派发被 400 阻断。
-      const gid = this.project?.project?.parent_project_id || '';
-      const group = this.projectGroups.find(g => g.id === gid);
-      const scope = group?.scope || {};
+      const scope = this.project?.project?.task_scope || {};
       const allow = scope.targets || [];
       const deny = scope.exclude || [];
       let targetsDefault = '';
       if (allow.length > 0) targetsDefault = allow.join('\n');
       this.intentForm = { description: '', targets: targetsDefault };
       this.intentScopeHint = deny.length > 0
-        ? (allow.length > 0 ? `白名单+黑名单约束：${allow.join(', ')}（排除 ${deny.join(', ')}）` : `黑名单约束（不得包含：${deny.join(', ')}）`)
-        : (allow.length > 0 ? `授权白名单：${allow.join(', ')}` : '无范围限制');
+        ? (allow.length > 0 ? `任务白名单+黑名单约束：${allow.join(', ')}（排除 ${deny.join(', ')}）` : `任务黑名单约束（不得包含：${deny.join(', ')}）`)
+        : (allow.length > 0 ? `任务白名单：${allow.join(', ')}` : '无范围限制');
       this.showIntentModal = true;
     },
 
     selectManagedProject(projectId) {
       this.selectedProjectManagementId = projectId;
-      this.syncProjectGroupSettingsForm();
       this.reloadBlackboardGroup(projectId);
       const firstTask = this.tasksForGroup(projectId)[0];
       this.selectedProjectManagementTaskId = firstTask?.id || '';
       if (this.selectedProjectManagementTaskId) this.loadProjectDetailForManagement(this.selectedProjectManagementTaskId);
-    },
-
-    syncProjectGroupSettingsForm() {
-      const group = this.selectedProjectGroup();
-      if (!group) return;
-      const scope = group.scope || {};
-      const targets = scope.targets || [];
-      const exclude = scope.exclude || [];
-      const scopeMode = targets.length > 0 ? 'whitelist' : (exclude.length > 0 ? 'blacklist' : 'none');
-      this.projectGroupSettingsForm = {
-        title: group.title || '',
-        description: group.description || '',
-        scope_mode: scopeMode,
-        targets_text: targets.join('\n'),
-        exclude_text: exclude.join('\n'),
-        notes: scope.notes || '',
-        status: group.status || 'active',
-      };
-    },
-
-    cycleProjectGroupScopeMode() {
-      const order = ['none', 'whitelist', 'blacklist'];
-      const current = this.projectGroupSettingsForm.scope_mode || 'none';
-      const idx = order.indexOf(current);
-      this.projectGroupSettingsForm.scope_mode = order[(idx + 1) % order.length];
-    },
-
-    projectGroupScopeModeLabel(mode) {
-      if (mode === 'whitelist') return '白名单';
-      if (mode === 'blacklist') return '黑名单';
-      return '不开启';
-    },
-
-    async saveProjectGroupSettings() {
-      const group = this.selectedProjectGroup();
-      if (!group) return;
-      try {
-        const mode = this.projectGroupSettingsForm.scope_mode || 'none';
-        const targetLines = this.linesFromText(this.projectGroupSettingsForm.targets_text);
-        const excludeLines = this.linesFromText(this.projectGroupSettingsForm.exclude_text);
-        const targets = mode === 'whitelist' ? targetLines : [];
-        const exclude = mode === 'blacklist' ? excludeLines : [];
-        if (mode === 'whitelist' && targets.length === 0) {
-          this.showToast('白名单模式至少需要 1 个目标', 'error');
-          return;
-        }
-        if (mode === 'blacklist' && exclude.length === 0) {
-          this.showToast('黑名单模式至少需要 1 个目标', 'error');
-          return;
-        }
-        const updated = await this.api('PUT', `/project-groups/${group.id}`, {
-          title: this.projectGroupSettingsForm.title,
-          description: this.projectGroupSettingsForm.description,
-          status: this.projectGroupSettingsForm.status,
-          scope: {
-            targets,
-            exclude,
-            notes: this.projectGroupSettingsForm.notes,
-          },
-        });
-        const idx = this.projectGroups.findIndex(item => item.id === updated.id);
-        if (idx >= 0) this.projectGroups.splice(idx, 1, updated);
-        this.syncProjectGroupSettingsForm();
-        this.showToast('项目设置已保存');
-      } catch (e) {
-        this.showToast(e.message, 'error');
-      }
     },
 
     async loadProjectDetailForManagement(projectId) {

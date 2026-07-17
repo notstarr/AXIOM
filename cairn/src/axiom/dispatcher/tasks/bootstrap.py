@@ -22,6 +22,7 @@ from axiom.dispatcher.tasks.common import (
     best_effort_release,
     cancel_reason,
     did_timeout,
+    format_credential_headers_context,
     preview,
     project_allows_conclude_fallback,
     record_session_tools,
@@ -29,7 +30,7 @@ from axiom.dispatcher.tasks.common import (
     run_healthcheck,
     run_worker_process,
     task_healthcheck_enabled,
-    worker_with_project_guard,
+    worker_with_project_runtime,
     write_conclude_result,
     write_conclude_result_with_fact_id,
     write_graph_snapshot_file,
@@ -130,7 +131,12 @@ def run_bootstrap_task(
         )
 
         session = driver.prepare_session()
-        execute_worker = worker_with_project_guard(worker, guard_enabled=bool(getattr(project.project, "guard_enabled", False)))
+        execute_worker = worker_with_project_runtime(
+            worker,
+            guard_enabled=bool(getattr(project.project, "guard_enabled", False)),
+            task_scope_enabled=bool(getattr(project.project.task_scope, "enabled", False)),
+            credential_headers=getattr(project.project, "credential_headers", ""),
+        )
         execute = driver.build_execute(execute_worker, prompt, session, phase="bootstrap")
         session = execute.session
         execute_metadata = {
@@ -419,11 +425,17 @@ def _try_conclude_fallback(
         load_prompt(config.runtime.prompt_group, "bootstrap_conclude.md"),
         _bootstrap_prompt_replacements(project, ai_dir=ai_dir, intent_id=intent.id),
     )
-    conclude_argv = driver.build_conclude(worker, prompt, session, phase="bootstrap")
+    conclude_worker = worker_with_project_runtime(
+        worker,
+        guard_enabled=bool(getattr(project.project, "guard_enabled", False)),
+        task_scope_enabled=bool(getattr(project.project.task_scope, "enabled", False)),
+        credential_headers=getattr(project.project, "credential_headers", ""),
+    )
+    conclude_argv = driver.build_conclude(conclude_worker, prompt, session, phase="bootstrap")
     LOG.info("starting bootstrap conclude fallback project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
     conclude_started = time.perf_counter()
     result = run_worker_process(
-        worker,
+        conclude_worker,
         conclude_argv,
         phase="bootstrap_conclude",
         timeout_seconds=config.tasks.bootstrap.conclude_timeout,
@@ -593,6 +605,9 @@ def _bootstrap_prompt_replacements(project: ProjectDetail, *, ai_dir: str, inten
         "ai_dir": ai_dir,
         "intent_id": intent_id,
         "bootstrap_artifacts": _format_bootstrap_artifact_list(intent_id, ai_dir),
+        "credential_headers": format_credential_headers_context(
+            getattr(project.project, "credential_headers", "")
+        ),
     }
 
 
@@ -614,8 +629,11 @@ def _finalize_bootstrap_artifacts(
     *,
     source: str,
 ) -> str:
-    _validate_bootstrap_artifacts(ai_dir, intent.id)
+    # Workers may return a fact without writing the full artifact set. Fill
+    # compatibility artifacts deterministically first, then validate that reason
+    # will have the files it expects.
     paths = _ensure_bootstrap_artifacts(project, intent, fact_description, ai_dir, source=source)
+    _validate_bootstrap_artifacts(ai_dir, intent.id)
     return _append_bootstrap_artifact_refs(fact_description, paths)
 
 
@@ -659,43 +677,101 @@ def _ensure_bootstrap_artifacts(
 ) -> dict[str, Path]:
     ai_dir.mkdir(parents=True, exist_ok=True)
     paths = {
+        "summary": ai_dir / f"{intent.id}_bootstrap_summary.md",
+        "context": ai_dir / f"{intent.id}_bootstrap_context.json",
         "assets": ai_dir / f"{intent.id}_asset_inventory.md",
+        "requests": ai_dir / f"{intent.id}_request_templates.md",
         "leads": ai_dir / f"{intent.id}_initial_leads.md",
+        "checks": ai_dir / f"{intent.id}_bootstrap_checks.md",
         "findings": ai_dir / f"{intent.id}_findings.md",
     }
-    if not paths["assets"].exists():
+    facts = {fact.id: fact.description for fact in project.facts}
+    fact_text = fact_description.strip() or "Legacy bootstrap returned an empty fact description."
+
+    if _artifact_needs_fallback(paths["summary"]):
+        paths["summary"].write_text(
+            "# Legacy Bootstrap Summary\n\n"
+            f"Project: {project.project.id} / {project.project.title}\n\n"
+            f"Source: {source}\n\n"
+            f"Origin: {facts.get('origin', '').strip()}\n\n"
+            f"Goal: {facts.get('goal', '').strip()}\n\n"
+            "## Result fact\n"
+            f"{fact_text}\n",
+            encoding="utf-8",
+        )
+    if _artifact_needs_fallback(paths["context"]):
+        paths["context"].write_text(
+            json.dumps(
+                {
+                    "project_id": project.project.id,
+                    "intent_id": intent.id,
+                    "source": source,
+                    "origin": facts.get("origin", ""),
+                    "goal": facts.get("goal", ""),
+                    "fact_description": fact_text,
+                    "artifacts": {key: str(path) for key, path in paths.items()},
+                },
+                ensure_ascii=False,
+                indent=2,
+            ) + "\n",
+            encoding="utf-8",
+        )
+    if _artifact_needs_fallback(paths["assets"]):
         paths["assets"].write_text(
-            "# 资产与接口基线\n\n"
-            "Boot worker 未写入详细资产清单。后续 worker 应优先从真实流量、反编译结果、用户输入和凭证库补齐：\n\n"
-            "- host / domain\n- API path / business code\n- miniapp appid / decompiled path\n- key parameters\n- source file or flow id\n",
+            "# Asset Inventory\n\n"
+            "Legacy bootstrap did not provide a structured inventory. This deterministic compatibility file preserves the returned fact for reason.\n\n"
+            f"- origin: {facts.get('origin', '').strip() or 'unknown'}\n"
+            f"- fact: {fact_text}\n",
             encoding="utf-8",
         )
-    if not paths["leads"].exists():
+    if _artifact_needs_fallback(paths["requests"]):
+        paths["requests"].write_text(
+            "# Request Templates\n\n"
+            "Legacy bootstrap did not provide request templates. Reason/explore should derive concrete requests from traffic, credentials, crawler output, or later facts before vulnerability verification.\n",
+            encoding="utf-8",
+        )
+    if _artifact_needs_fallback(paths["leads"]):
         paths["leads"].write_text(
-            "# 初始测试线索\n\n"
-            "## 来自 Boot fact 的线索\n"
-            f"{fact_description.strip() or '暂无。'}\n\n"
-            "## Reason 阶段建议\n"
-            "- 基于已确认事实拆分可并行 intent。\n"
-            "- 优先选择有真实请求、明确参数和可验证影响的方向。\n"
-            "- 不要把缺少凭证、缺少请求模板的问题伪装成漏洞。\n",
+            "# Initial Leads\n\n"
+            "## Lead derived from legacy bootstrap fact\n"
+            f"{fact_text}\n\n"
+            "## Reason guidance\n"
+            "- Convert only evidence-backed leads into intents.\n"
+            "- Keep targets inside the task scope.\n"
+            "- Do not treat missing credentials or missing request templates as a confirmed vulnerability.\n",
             encoding="utf-8",
         )
-    if not paths["findings"].exists():
+    if _artifact_needs_fallback(paths["checks"]):
+        paths["checks"].write_text(
+            "# Bootstrap Checks\n\n"
+            "- legacy_bootstrap_artifacts: generated deterministic compatibility artifacts after the legacy worker returned a fact.\n",
+            encoding="utf-8",
+        )
+    if _artifact_needs_fallback(paths["findings"]):
         paths["findings"].write_text(
-            "# Boot 已确认安全发现\n\n"
-            "Boot worker 未写入已确认漏洞。仅当 boot 阶段已经完成真实验证、具备可复现证据时，才应在本文件记录漏洞，并同步通过 vuln-report 上报中央漏洞库。\n",
+            "# Confirmed Security Findings\n\n"
+            "No confirmed vulnerability evidence was written by the legacy bootstrap worker in this run. If the fact above implies a concrete issue, reason/explore must verify it before reporting.\n",
             encoding="utf-8",
         )
     return paths
 
 
+def _artifact_needs_fallback(path: Path) -> bool:
+    if not path.exists():
+        return True
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return True
+    stripped = content.strip()
+    if len(stripped) < 40:
+        return True
+    return any(marker in content for marker in BOOTSTRAP_PLACEHOLDER_MARKERS)
+
+
 def _append_bootstrap_artifact_refs(description: str, paths: dict[str, Path]) -> str:
-    refs = [
-        str(paths["assets"]),
-        str(paths["leads"]),
-        str(paths["findings"]),
-    ]
+    preferred = ["summary", "context", "assets", "requests", "leads", "checks", "findings"]
+    refs = [str(paths[key]) for key in preferred if key in paths]
     existing = description or "Boot 阶段已完成。"
     missing_refs = [ref for ref in refs if ref not in existing]
     if not missing_refs:

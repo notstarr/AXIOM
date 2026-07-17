@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import uuid
 from pathlib import Path
 
 from axiom.dispatcher.config import DispatchConfig, WorkerConfig
@@ -17,12 +18,14 @@ from axiom.dispatcher.tasks.common import (
     best_effort_release,
     cancel_reason,
     did_timeout,
+    format_credential_headers_context,
     preview,
     project_allows_conclude_fallback,
     record_session_tools,
     run_healthcheck,
     run_worker_process,
     task_healthcheck_enabled,
+    worker_with_project_runtime,
     write_conclude_result,
     write_graph_snapshot_file,
 )
@@ -33,7 +36,7 @@ LOG = logging.getLogger(__name__)
 
 # Track per-intent retry count across dispatch attempts.
 # Keyed by (project_id, intent_id); cleared on success.
-_explore_retries: dict[tuple[str, str], int] = {}
+_explore_retries: dict[tuple[int, str, str], int] = {}
 MAX_EXPLORE_RETRIES = 4
 _MAX_EXECUTE_TIMEOUT_SECONDS = 1800
 _MAX_CONCLUDE_TIMEOUT_SECONDS = 900
@@ -125,14 +128,32 @@ def run_explore_task(
                 "sequence_path": sequence_path,
                 "blackboard": _format_blackboard(project.blackboard, project.project.parent_project_id or ""),
                 "group_id": project.project.parent_project_id or "",
+                "credential_headers": format_credential_headers_context(
+                    getattr(project.project, "credential_headers", "")
+                ),
             },
         )
 
         session = driver.prepare_session()
-        execute = driver.build_execute(worker, prompt, session, phase="explore")
+        execute_worker = worker_with_project_runtime(
+            worker,
+            guard_enabled=bool(getattr(project.project, "guard_enabled", False)),
+            task_scope_enabled=bool(getattr(project.project.task_scope, "enabled", False)),
+            credential_headers=getattr(project.project, "credential_headers", ""),
+        )
+        execute = driver.build_execute(execute_worker, prompt, session, phase="explore")
         session = execute.session
+        execute_attempt_id = f"explore:{project.project.id}:{intent.id}:{worker.name}:{uuid.uuid4().hex[:8]}"
+        execute_metadata = {
+            "logical_thread_id": f"intent:{project.project.id}:{intent.id}",
+            "attempt_id": execute_attempt_id,
+            "attempt_role": "execute",
+            "intent_id": intent.id,
+            "intent_description": intent.description,
+            "session_id": session or "",
+        }
         execute_started = time.perf_counter()
-        retry_key = (project.project.id, intent.id)
+        retry_key = (id(client), project.project.id, intent.id)
         retries = _explore_retries.get(retry_key, 0)
         if retries >= MAX_EXPLORE_RETRIES:
             LOG.warning(
@@ -149,12 +170,13 @@ def run_explore_task(
         first = _run_process(
             client,
             project.project.id,
-            worker,
+            execute_worker,
             execute.argv,
             phase="explore_execute",
             timeout=timeout,
             lease=lease,
             cancellation=cancellation,
+            event_metadata=execute_metadata,
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         session = driver.extract_session(session, first.stdout, first.stderr)
@@ -165,13 +187,16 @@ def run_explore_task(
                 session_id=session or "",
                 worker_name=worker.name,
                 project_id=project.project.id,
+                task_type="explore",
+                phase="explore_execute",
+                event_metadata={**execute_metadata, "session_id": session or execute_metadata.get("session_id", "")},
             )
             recorded_tools = recorded
             LOG.info("recorded %d tool executions session=%s worker=%s", recorded, session, worker.name)
             if token_usage:
                 _report_event(client, project.project.id, task_type="explore", phase="explore_execute",
                               worker=worker.name, level="info", message="token usage",
-                              payload={"token_usage": token_usage})
+                              payload={"token_usage": token_usage, **execute_metadata, "session_id": session or execute_metadata.get("session_id", "")})
         except Exception:
             LOG.exception("failed to record tool executions session=%s", session)
         cancelled = cancel_reason(first, cancellation)
@@ -234,7 +259,7 @@ def run_explore_task(
                 fallback = _try_conclude_fallback(
                     config,
                     client,
-                    worker,
+                    execute_worker,
                     driver,
                     project.project.id,
                     intent,
@@ -290,7 +315,7 @@ def run_explore_task(
             )
             session = _resolve_valid_session(driver, worker, session)
             fallback = _try_conclude_fallback(
-                config, client, worker, driver, project.project.id, intent,
+                config, client, execute_worker, driver, project.project.id, intent,
                 export_yaml, session, lease, cancellation, prompt_group,
                 ai_dir=ai_dir,
                 execute_result=first,
@@ -401,9 +426,20 @@ def _try_conclude_fallback(
                 "" if execute_result is None else preview(execute_result.stderr, limit=1200)
             ),
             "recorded_tool_count": str(max(0, int(recorded_tool_count))),
+            "credential_headers": format_credential_headers_context(
+                str((worker.env or {}).get("AXIOM_REQUEST_HEADERS", ""))
+            ),
         },
     )
     conclude_argv = driver.build_conclude(worker, prompt, session, phase="explore")
+    conclude_metadata = {
+        "logical_thread_id": f"intent:{project_id}:{intent.id}",
+        "attempt_id": f"explore-conclude:{project_id}:{intent.id}:{worker.name}:{uuid.uuid4().hex[:8]}",
+        "attempt_role": "conclude",
+        "intent_id": intent.id,
+        "intent_description": intent.description,
+        "session_id": session or "",
+    }
     LOG.info("starting conclude fallback project=%s intent=%s worker=%s", project_id, intent.id, worker.name)
     conclude_started = time.perf_counter()
     result = _run_process(
@@ -415,6 +451,8 @@ def _try_conclude_fallback(
         timeout=conclude_timeout,
         lease=lease,
         cancellation=cancellation,
+        ai_dir=ai_dir,
+        event_metadata=conclude_metadata,
     )
     conclude_ms = int((time.perf_counter() - conclude_started) * 1000)
     cancelled = cancel_reason(result, cancellation)
@@ -481,10 +519,12 @@ def _try_conclude_fallback(
         best_effort_release(client, project_id, intent.id, worker.name)
         return "api_error"
     except Exception as exc:
-        salvaged_description = _salvage_explore_description(payload, intent.id, ai_dir)
-        if salvaged_description is None:
-            extracted = _extract_description_from_text(model_output or result.stdout)
-            salvaged_description = _salvage_raw_description(extracted, intent.id, ai_dir)
+        salvaged_description = None
+        if execute_result is not None and did_timeout(execute_result):
+            salvaged_description = _salvage_explore_description(payload, intent.id, ai_dir)
+            if salvaged_description is None:
+                extracted = _extract_description_from_text(model_output or result.stdout)
+                salvaged_description = _salvage_raw_description(extracted, intent.id, ai_dir)
         if salvaged_description is not None:
             LOG.warning(
                 "conclude payload salvaged project=%s intent=%s worker=%s error=%s conclude_ms=%s",
@@ -559,6 +599,8 @@ def _run_process(
     timeout: int,
     lease: HeartbeatLease,
     cancellation: TaskCancellation,
+    ai_dir: str | None = None,
+    event_metadata: dict | None = None,
 ):
     return run_worker_process(
         worker,
@@ -570,6 +612,8 @@ def _run_process(
         cancellation=cancellation,
         client=client,
         task_type="explore",
+        ai_dir=ai_dir,
+        event_metadata=event_metadata,
     )
 
 
@@ -637,7 +681,7 @@ def _extract_description_from_text(text: str) -> str | None:
 
 def _resolve_valid_session(driver, worker: WorkerConfig, session: str | None) -> str | None:
     if not session:
-        return _find_latest_session(driver, worker)
+        return None
     exists_checker = getattr(driver, "session_exists", None)
     if not callable(exists_checker):
         return session
@@ -648,19 +692,8 @@ def _resolve_valid_session(driver, worker: WorkerConfig, session: str | None) ->
         LOG.exception("explore session validation crashed worker=%s session=%s", worker.name, session)
     LOG.warning(
         "explore invalid session id project worker=%s session=%s; "
-        "falling back to latest worker session (cross-intent risk)",
+        "skipping conclude session resume to avoid cross-intent contamination",
         worker.name,
         session,
     )
-    return _find_latest_session(driver, worker)
-
-
-def _find_latest_session(driver, worker: WorkerConfig) -> str | None:
-    finder = getattr(driver, "find_session_from_files", None)
-    if not callable(finder):
-        return None
-    try:
-        return finder(worker.name)
-    except Exception:
-        LOG.exception("explore session file lookup crashed worker=%s", worker.name)
-        return None
+    return None

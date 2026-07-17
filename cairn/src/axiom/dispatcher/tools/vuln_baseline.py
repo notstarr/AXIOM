@@ -37,6 +37,7 @@ def _print_summary(vulns: list[dict]) -> None:
                     str(row.get("id") or ""),
                     str(row.get("severity") or ""),
                     str(row.get("status") or ""),
+                    str(row.get("status_reason") or ""),
                     str(row.get("title") or ""),
                 ]
             )

@@ -20,9 +20,191 @@ window.AxiomModules.dispatch = {
       return (this.seeEvents || []).filter(event => (event.worker || 'unknown') === this.selectedWorkerStream);
     },
 
+    normalizeJudgeList(value) {
+      if (Array.isArray(value)) return value.map(v => String(v || '').trim()).filter(Boolean);
+      return String(value || '').split(/[\n,]+/).map(v => v.trim()).filter(Boolean);
+    },
+
+
+    async loadJudgeSettings() {
+      try {
+        const data = await this.api('GET', '/settings/judge');
+        this.judgeSettings = {
+          enabled_default: !!data.enabled_default,
+          mode: data.mode || 'enforce',
+          base_url: data.base_url || 'https://api.siliconflow.cn/v1',
+          model: data.model || 'Qwen/Qwen3.5-9B',
+          timeout_seconds: data.timeout_seconds || 3,
+          whitelist_tools: Array.isArray(data.whitelist_tools) ? data.whitelist_tools : ['read', 'ls', 'grep', 'find'],
+          whitelist_bash_verbs: Array.isArray(data.whitelist_bash_verbs) ? data.whitelist_bash_verbs : ['pwd', 'whoami', 'id', 'uname', 'ls', 'cat', 'head', 'tail', 'grep', 'find', 'ifconfig', 'ip', 'env', 'printenv'],
+          system_prompt: data.system_prompt || '',
+          default_system_prompt: data.default_system_prompt || data.system_prompt || '',
+          hard_block_rules: Array.isArray(data.hard_block_rules) ? data.hard_block_rules : [],
+          default_hard_block_rules: Array.isArray(data.default_hard_block_rules) ? data.default_hard_block_rules : [],
+          has_key: !!data.has_key,
+          masked_key: data.masked_key || '',
+          updated_at: data.updated_at || '',
+        };
+        if (this.newProject && !this.newProject._guardTouched) {
+          this.newProject.guard_enabled = !!this.judgeSettings.enabled_default;
+        }
+      } catch (e) {
+        this.showToast('加载裁判配置失败: ' + e.message, 'error');
+      }
+    },
+
+    judgeSettingsPayload() {
+      return {
+        enabled_default: !!this.judgeSettings.enabled_default,
+        mode: this.judgeSettings.mode || 'enforce',
+        base_url: this.judgeSettings.base_url || 'https://api.siliconflow.cn/v1',
+        model: this.judgeSettings.model || 'Qwen/Qwen3.5-9B',
+        timeout_seconds: Number(this.judgeSettings.timeout_seconds || 3),
+        whitelist_tools: this.normalizeJudgeList(this.judgeSettings.whitelist_tools),
+        whitelist_bash_verbs: this.normalizeJudgeList(this.judgeSettings.whitelist_bash_verbs),
+        system_prompt: this.judgeSettings.system_prompt || this.judgeSettings.default_system_prompt || '',
+        hard_block_rules: this.judgeSettings.hard_block_rules || [],
+      };
+    },
+
+    hardRulesText() {
+      return (this.judgeSettings.hard_block_rules || [])
+        .map(rule => `${rule.enabled === false ? '# ' : ''}${rule.reason || ''}\t${rule.pattern || ''}`)
+        .join('\n');
+    },
+
+    parseHardRulesText(value) {
+      const rules = [];
+      for (const rawLine of String(value || '').split(/\n+/)) {
+        let line = rawLine.trim();
+        if (!line) continue;
+        let enabled = true;
+        if (line.startsWith('#')) {
+          enabled = false;
+          line = line.replace(/^#+\s*/, '').trim();
+        }
+        const tabIndex = line.indexOf('\t');
+        const sepIndex = tabIndex >= 0 ? tabIndex : line.indexOf('  ');
+        if (sepIndex < 0) continue;
+        const reason = line.slice(0, sepIndex).trim();
+        const pattern = line.slice(sepIndex).trim();
+        if (!reason || !pattern) continue;
+        rules.push({ reason, pattern, enabled });
+      }
+      this.judgeSettings.hard_block_rules = rules;
+    },
+
+    resetJudgeHardRules() {
+      this.judgeSettings.hard_block_rules = (this.judgeSettings.default_hard_block_rules || []).map(rule => ({ ...rule }));
+      this.showToast('已恢复默认硬规则，请保存后生效');
+    },
+
+    resetJudgePrompt() {
+      this.judgeSettings.system_prompt = this.judgeSettings.default_system_prompt || '';
+      this.showToast('已恢复默认裁判提示词，请保存后生效');
+    },
+
+    async saveJudgeSettings() {
+      try {
+        const data = await this.api('PUT', '/settings/judge', this.judgeSettingsPayload());
+        this.judgeSettings = { ...this.judgeSettings, ...data };
+        this.showToast('裁判配置已保存');
+      } catch (e) { this.showToast(e.message, 'error'); }
+    },
+
+    async saveJudgeKey() {
+      const key = (this.judgeKeyForm.api_key || '').trim();
+      if (!key) { this.showToast('请填写裁判 API Key', 'error'); return; }
+      try {
+        const data = await this.api('PUT', '/settings/keys/judge', { api_key: key, updated_by: this.actorName ? this.actorName() : 'human' });
+        this.judgeSettings.has_key = !!data.has_key;
+        this.judgeSettings.masked_key = data.masked_key || '';
+        this.judgeKeyForm.api_key = '';
+        this.showToast('裁判 API Key 已保存');
+      } catch (e) { this.showToast(e.message, 'error'); }
+    },
+
+    async testJudgeSettings() {
+      try {
+        this.judgeTesting = true;
+        this.judgeTestResult = await this.api('POST', '/settings/judge/test', {});
+        this.showToast(this.judgeTestResult.ok ? '裁判连接成功' : '裁判连接失败', this.judgeTestResult.ok ? 'success' : 'error');
+      } catch (e) {
+        this.judgeTestResult = { ok: false, message: e.message };
+        this.showToast(e.message, 'error');
+      } finally {
+        this.judgeTesting = false;
+      }
+    },
+
+    async loadGuardAuditEvents() {
+      try {
+        this.guardAudit.loading = true;
+        const params = new URLSearchParams();
+        params.set('limit', String(this.guardAudit.limit || 100));
+        params.set('decision', this.guardAudit.decision || 'all');
+        if (this.guardAudit.project_id) params.set('project_id', this.guardAudit.project_id);
+        this.guardAudit.events = await this.api('GET', '/tool-hooks/events?' + params.toString());
+      } catch (e) {
+        this.showToast('加载守门审计日志失败: ' + e.message, 'error');
+      } finally {
+        this.guardAudit.loading = false;
+      }
+    },
+
+    parseGuardAuditJson(value) {
+      if (!value) return {};
+      if (typeof value === 'object') return value;
+      try { return JSON.parse(value); } catch (e) { return { value: String(value) }; }
+    },
+
+    guardAuditProjectLabel(projectId) {
+      const project = (this.projects || []).find(p => p.id === projectId);
+      return project ? `${project.title || project.id} · ${project.id}` : (projectId || '未关联任务');
+    },
+
+    guardAuditStatusLabel(event) {
+      return event && event.decision === 'BLOCK' ? '拦截' : '放行';
+    },
+
+    guardAuditCommand(event) {
+      const normalized = this.parseGuardAuditJson(event?.normalized_json);
+      const input = this.parseGuardAuditJson(event?.input_json);
+      const command = normalized.command || normalized.path || input.command || input.cmd || input.path || input.file_path || input.filePath || JSON.stringify(input, null, 2);
+      return String(command || '').slice(0, 12000);
+    },
+
+    guardAuditCommandPreview(event) {
+      const command = this.guardAuditCommand(event).replace(/\s+/g, ' ').trim();
+      if (!command) return '无命令内容';
+      return command.length > 180 ? command.slice(0, 180) + '…' : command;
+    },
+
+    guardAuditReason(event) {
+      const reason = String(event?.reason || '').trim();
+      if (reason) return reason;
+      if (event?.decision_source === 'whitelist') return '白名单直放';
+      if (event?.decision_source === 'model') return '模型判定 ALLOW';
+      if (event?.decision_source === 'fail_open') return '模型异常 fail-open';
+      if (event?.decision_source === 'disabled') return '监管关闭';
+      return '无原因';
+    },
+
+    guardAuditDetail(event) {
+      return JSON.stringify({
+        normalized: this.parseGuardAuditJson(event?.normalized_json),
+        input: this.parseGuardAuditJson(event?.input_json),
+        raw_model_output: event?.raw_model_output || '',
+      }, null, 2);
+    },
+
     async loadDispatchSettings() {
-      const data = await this.api('GET', '/settings/dispatch');
-      this.applyDispatchSettings(data);
+      try {
+        const data = await this.api('GET', '/settings/dispatch');
+        this.applyDispatchSettings(data);
+      } catch (e) {
+        this.showToast('加载 Dispatch 配置失败: ' + e.message, 'error');
+      }
     },
 
     applyDispatchSettings(data) {
@@ -63,15 +245,25 @@ window.AxiomModules.dispatch = {
     },
 
     decorateWorkerDraft(worker) {
+      const taskTypes = Array.isArray(worker.task_types) ? worker.task_types : [];
       return {
         ...worker,
+        task_types: taskTypes,
         _draftId: worker?._draftId || this.nextWorkerDraftId(),
-        phase_bootstrap: Array.isArray(worker.task_types) && worker.task_types.includes('bootstrap'),
-        phase_reason: Array.isArray(worker.task_types) && worker.task_types.includes('reason'),
-        phase_explore: Array.isArray(worker.task_types) && worker.task_types.includes('explore'),
-        phase_plan: Array.isArray(worker.task_types) && worker.task_types.includes('plan'),
-        phase_maintainer: Array.isArray(worker.task_types) && worker.task_types.includes('maintainer'),
+        phase_bootstrap: taskTypes.includes('bootstrap'),
+        phase_reason: taskTypes.includes('reason'),
+        phase_explore: taskTypes.includes('explore'),
+        phase_plan: taskTypes.includes('plan'),
+        phase_maintainer: taskTypes.includes('maintainer'),
         pi_api_key: '',
+        pi_thinking: worker.pi_thinking || 'off',
+        pi_thinking_capable: worker.pi_thinking_capable || 'unknown',
+        pi_thinking_tested_at: worker.pi_thinking_tested_at || '',
+        mcp_enabled: !!worker.mcp_enabled,
+        mcp_profile: worker.mcp_profile || '',
+        mcp_config_json: worker.mcp_config_json || '',
+        mcp_allowed_servers: worker.mcp_allowed_servers || '',
+        mcp_allowed_tools: worker.mcp_allowed_tools || '',
         testing: false,
         test_result: null,
         models_loading: false,
@@ -96,6 +288,20 @@ window.AxiomModules.dispatch = {
 
     toggleWorkerPhase(worker, phaseKey) {
       worker[phaseKey] = !worker[phaseKey];
+    },
+
+    thinkingBadgeClass(worker) {
+      const capable = worker?.pi_thinking_capable || 'unknown';
+      if (capable === 'true') return 'bg-teal-50 text-teal-600 border-teal-100';
+      if (capable === 'false') return 'bg-amber-50 text-amber-600 border-amber-100';
+      return 'bg-slate-100 text-slate-500 border-slate-200';
+    },
+
+    thinkingBadgeText(worker) {
+      const capable = worker?.pi_thinking_capable || 'unknown';
+      if (capable === 'true') return '思考可用';
+      if (capable === 'false') return '思考未生效';
+      return '未测试';
     },
 
     parseContextWindowInput(rawValue) {
@@ -318,6 +524,14 @@ window.AxiomModules.dispatch = {
         pi_model_context_window: normalizedContextWindow,
         pi_api_key: worker.pi_api_key || '',
         pi_api_key_masked: worker.pi_api_key_masked || '',
+        pi_thinking: worker.pi_thinking || 'off',
+        pi_thinking_capable: worker.pi_thinking_capable || 'unknown',
+        pi_thinking_tested_at: worker.pi_thinking_tested_at || '',
+        mcp_enabled: !!worker.mcp_enabled,
+        mcp_profile: (worker.mcp_profile || '').trim(),
+        mcp_config_json: (worker.mcp_config_json || '').trim(),
+        mcp_allowed_servers: (worker.mcp_allowed_servers || '').trim(),
+        mcp_allowed_tools: (worker.mcp_allowed_tools || '').trim(),
         disabled: !!worker.disabled,
       };
     },
@@ -369,6 +583,14 @@ window.AxiomModules.dispatch = {
         pi_model_context_window: '200000',
         pi_api_key: '',
         pi_api_key_masked: '',
+        pi_thinking: 'off',
+        pi_thinking_capable: 'unknown',
+        pi_thinking_tested_at: '',
+        mcp_enabled: false,
+        mcp_profile: '',
+        mcp_config_json: '',
+        mcp_allowed_servers: '',
+        mcp_allowed_tools: '',
         disabled: false,
         testing: false,
         test_result: null,
@@ -415,6 +637,8 @@ window.AxiomModules.dispatch = {
           pi_api_key: worker.pi_api_key || '',
         });
         worker.test_result = result;
+        if (result.thinking_capable) worker.pi_thinking_capable = result.thinking_capable;
+        if (result.thinking_tested_at) worker.pi_thinking_tested_at = result.thinking_tested_at;
         this.showToast(result.message, result.ok ? 'info' : 'error');
       } catch (e) {
         worker.test_result = { ok: false, message: e.message };
@@ -454,12 +678,12 @@ window.AxiomModules.dispatch = {
       const bootstrapEvents = (events || [])
         .filter(event => event?.task_type === 'bootstrap')
         .filter(event => event?.payload && typeof event.payload === 'object' && event.payload.conclusion);
-      if (bootstrapEvents.length === 0) return '暂无 bootstrap 结论';
+      if (bootstrapEvents.length === 0) return '暂无 Bootstrap 结论';
       const latest = bootstrapEvents[bootstrapEvents.length - 1];
       const mapping = {
         fact_written: '已写入初始事实',
         complete: '已直接完成目标',
-        rejected: 'bootstrap 已拒绝',
+        rejected: 'Bootstrap 已拒绝',
       };
       const label = mapping[latest.payload.conclusion] || latest.payload.conclusion;
       return latest.worker ? `${label} · ${latest.worker}` : label;
@@ -471,6 +695,379 @@ window.AxiomModules.dispatch = {
 
     actionReplayBootstrapOutcome() {
       return this.bootstrapOutcomeLabel(this.actionReplayEvents || []);
+    },
+
+    async loadMcpServers() {
+      try {
+        const servers = await this.api('GET', '/mcp/servers');
+        this.mcpServers = (servers || []).map(server => ({
+          ...server,
+          tools: server.tools || [],
+          _newToolName: '',
+          _syncingTools: false,
+        }));
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    mcpEnabledWorkers() {
+      return (this.dispatchSettings.workers || []).filter(worker => !worker.disabled);
+    },
+
+    mcpServerSummary(server) {
+      if (server.url) return server.url;
+      const args = server.args_json && server.args_json !== '[]' ? ` ${server.args_json}` : '';
+      return `${server.command || ''}${args}`.trim() || '未配置';
+    },
+
+    mcpToolCountLabel(server) {
+      const tools = server.tools || [];
+      if (!tools.length) return '未登记工具';
+      const enabled = tools.filter(tool => tool.enabled).length;
+      return `${enabled}/${tools.length} 已启用`;
+    },
+
+    enabledMcpTools(server) {
+      return ((server && server.tools) || []).filter(tool => tool.enabled);
+    },
+
+    isDangerousMcpTool(toolName) {
+      return /(click|type|input|press|navigate|goto|scroll|drag|evaluate|eval|execute|control|tap)/i.test(toolName || '');
+    },
+
+    mcpScopedToolName(serverName, toolName) {
+      return `${serverName}:${toolName}`;
+    },
+
+    csvItems(raw) {
+      return (raw || '').split(',').map(item => item.trim()).filter(Boolean);
+    },
+
+    async addMcpTool(server) {
+      const name = (server._newToolName || '').trim();
+      if (!name) {
+        this.showToast('请输入工具名', 'error');
+        return;
+      }
+      try {
+        await this.api('POST', `/mcp/servers/${server.id}/tools`, { name, enabled: true, source: 'manual' });
+        server._newToolName = '';
+        await this.loadMcpServers();
+        this.showToast('MCP 工具已添加');
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async importMcpTools(server) {
+      const text = (this.mcpToolImportText[server.id] || '').trim();
+      if (!text) {
+        this.showToast('请粘贴工具名，每行一个或逗号分隔', 'error');
+        return;
+      }
+      try {
+        await this.api('POST', `/mcp/servers/${server.id}/tools/import`, { text });
+        this.mcpToolImportText[server.id] = '';
+        await this.loadMcpServers();
+        this.showToast('MCP 工具已导入');
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async toggleMcpTool(server, tool) {
+      try {
+        await this.api('PUT', `/mcp/servers/${server.id}/tools/${tool.id}`, { enabled: !tool.enabled });
+        await this.loadMcpServers();
+        this.showToast(`工具 ${tool.name} ${tool.enabled ? '已禁用' : '已启用'}`);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async deleteMcpTool(server, tool) {
+      if (!confirm(`确定要删除工具 "${tool.name}" 吗？`)) return;
+      try {
+        await this.api('DELETE', `/mcp/servers/${server.id}/tools/${tool.id}`);
+        await this.loadMcpServers();
+        this.showToast('MCP 工具已删除');
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async disableDangerousMcpTools(server) {
+      const tools = (server.tools || []).filter(tool => tool.enabled && this.isDangerousMcpTool(tool.name));
+      if (!tools.length) {
+        this.showToast('没有发现需要禁用的控制类工具');
+        return;
+      }
+      try {
+        await Promise.all(tools.map(tool => this.api('PUT', `/mcp/servers/${server.id}/tools/${tool.id}`, { enabled: false })));
+        await this.loadMcpServers();
+        this.showToast(`已禁用 ${tools.length} 个控制类工具`);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async enableAllMcpTools(server) {
+      const tools = (server.tools || []).filter(tool => !tool.enabled);
+      try {
+        await Promise.all(tools.map(tool => this.api('PUT', `/mcp/servers/${server.id}/tools/${tool.id}`, { enabled: true })));
+        await this.loadMcpServers();
+        this.showToast('已启用全部已登记工具');
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async syncMcpTools(server, options = {}) {
+      if (!server || !server.id) return [];
+      server._syncingTools = true;
+      try {
+        const tools = await this.api('POST', `/mcp/servers/${server.id}/tools/sync`);
+        if (!options.skipReload) await this.loadMcpServers();
+        if (!options.silent) this.showToast(`已同步 ${tools.length} 个 MCP 工具`);
+        return tools;
+      } catch (e) {
+        if (!options.silent) this.showToast(e.message, 'error');
+        throw e;
+      } finally {
+        server._syncingTools = false;
+      }
+    },
+
+    openMcpServerModal(server = null) {
+      if (server) {
+        this.mcpServerForm = { ...server };
+        // url may live in server.url (newer API) or packed inside args_json (legacy / stdio entries).
+        let url = server.url || '';
+        if (!url && server.args_json) {
+          try {
+            const parsed = JSON.parse(server.args_json);
+            if (parsed && typeof parsed === 'object' && parsed.url) url = parsed.url;
+          } catch (e) {}
+        }
+        const isStdio = !!server.command;
+        this.mcpServerFormJson = JSON.stringify({
+          name: server.name || '',
+          command: server.command || '',
+          url: url,
+          args_json: isStdio ? (server.args_json || '[]') : '[]',
+          env_json: server.env_json || '{}',
+        }, null, 2);
+      } else {
+        this.mcpServerForm = { id: '', name: '', command: '', url: '', args_json: '[]', env_json: '{}', disabled: false };
+        this.mcpServerFormJson = '{"name":"","command":"","url":"","args_json":"[]","env_json":"{}"}';
+      }
+      this.showMcpServerModal = true;
+    },
+
+    closeMcpServerModal() {
+      this.showMcpServerModal = false;
+      this.mcpServerForm = { id: '', name: '', command: '', url: '', args_json: '[]', env_json: '{}', disabled: false };
+      this.mcpServerFormJson = '';
+    },
+
+    _parseMcpServerJson(rawJson) {
+      let parsed;
+      try {
+        parsed = JSON.parse(rawJson || '{}');
+      } catch (e) {
+        return { error: 'JSON 格式错误：' + e.message };
+      }
+      if (!parsed || typeof parsed !== 'object') {
+        return { error: 'JSON 必须是对象' };
+      }
+      // Unwrap standard mcpServers wrapper: {"mcpServers": {"name": {"url|command..."}}}
+      if (
+        !parsed.name &&
+        parsed.mcpServers && typeof parsed.mcpServers === 'object' &&
+        !Array.isArray(parsed.mcpServers)
+      ) {
+        const entries = Object.entries(parsed.mcpServers);
+        if (entries.length === 0) {
+          return { error: 'mcpServers 里至少要有一个 server' };
+        }
+        if (entries.length > 1) {
+          return { error: '一次只能保存一个 MCP Server（检测到 ' + entries.length + ' 个）' };
+        }
+        const [name, config] = entries[0];
+        if (!config || typeof config !== 'object') {
+          return { error: 'mcpServers.' + name + ' 必须是对象' };
+        }
+        config.name = name;
+        parsed = config;
+      }
+      if (!parsed.name || !String(parsed.name).trim()) {
+        return { error: 'name 为必填字段' };
+      }
+      const cmd = parsed.command ? String(parsed.command).trim() : '';
+      const url = parsed.url ? String(parsed.url).trim() : '';
+      if (!cmd && !url) {
+        return { error: '必须提供 command（stdio）或 url（sse/http）' };
+      }
+      parsed.command = cmd;
+      parsed.url = url;
+      return { value: parsed };
+    },
+
+    async saveMcpServerFromJson() {
+      const result = this._parseMcpServerJson(this.mcpServerFormJson);
+      if (result.error) {
+        this.showToast(result.error, 'error');
+        return;
+      }
+      const parsed = result.value;
+      const payload = {
+        name: parsed.name,
+        command: parsed.command || null,
+        url: parsed.url || null,
+        args_json: parsed.args_json || '[]',
+        env_json: parsed.env_json || '{}',
+        disabled: !!this.mcpServerForm.disabled,
+      };
+      // Sync the form JSON so subsequent saves round-trip identically.
+      this.mcpServerFormJson = JSON.stringify({
+        name: parsed.name,
+        command: parsed.command || '',
+        url: parsed.url || '',
+        args_json: payload.args_json,
+        env_json: payload.env_json,
+      }, null, 2);
+      try {
+        const wasEdit = !!this.mcpServerForm.id;
+        let savedServer;
+        if (wasEdit) {
+          savedServer = await this.api('PUT', '/mcp/servers/' + this.mcpServerForm.id, payload);
+        } else {
+          savedServer = await this.api('POST', '/mcp/servers', payload);
+        }
+        let syncMessage = '';
+        try {
+          const tools = await this.syncMcpTools(savedServer, { silent: true, skipReload: true });
+          syncMessage = `，已同步 ${tools.length} 个工具`;
+        } catch (syncError) {
+          syncMessage = `，但工具同步失败：${syncError.message}`;
+        }
+        this.closeMcpServerModal();
+        await this.loadMcpServers();
+        await this.loadDispatchSettings();
+        this.showToast(`MCP Server ${wasEdit ? '已更新' : '已创建'}${syncMessage}`);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async toggleMcpServerDisabled(server) {
+      try {
+        await this.api('PUT', `/mcp/servers/${server.id}`, {
+          disabled: !server.disabled
+        });
+        this.showToast(`MCP Server ${server.name} ${server.disabled ? '已启用' : '已禁用'}`);
+        await this.loadMcpServers();
+        await this.loadDispatchSettings();
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async deleteMcpServer(server) {
+      if (!confirm(`确定要删除 MCP Server "${server.name}" 吗？`)) return;
+      try {
+        await this.api('DELETE', `/mcp/servers/${server.id}`);
+        this.showToast('MCP Server 已删除');
+        await this.loadMcpServers();
+        await this.loadDispatchSettings();
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    isServerEnabledForWorker(worker, serverName) {
+      const allowed = this.csvItems(worker.mcp_allowed_servers || '');
+      return allowed.includes(serverName);
+    },
+
+    async toggleWorkerServer(worker, serverName) {
+      const allowed = this.csvItems(worker.mcp_allowed_servers || '');
+      const idx = allowed.indexOf(serverName);
+      if (idx >= 0) {
+        allowed.splice(idx, 1);
+        this.removeWorkerToolsForServer(worker, serverName);
+      } else {
+        allowed.push(serverName);
+        this.addWorkerToolsForServerIfNarrowed(worker, serverName);
+      }
+      worker.mcp_allowed_servers = allowed.join(', ');
+      await this.savePiWorker(worker);
+    },
+
+    enabledToolsForServerName(serverName) {
+      const server = (this.mcpServers || []).find(item => item.name === serverName);
+      return ((server && server.tools) || []).filter(tool => tool.enabled);
+    },
+
+    workerAvailableToolTokens(worker) {
+      const serverNames = this.csvItems(worker.mcp_allowed_servers || '');
+      const tokens = [];
+      serverNames.forEach(serverName => {
+        this.enabledToolsForServerName(serverName).forEach(tool => {
+          tokens.push(this.mcpScopedToolName(serverName, tool.name));
+        });
+      });
+      return tokens;
+    },
+
+    removeWorkerToolsForServer(worker, serverName) {
+      const prefix = `${serverName}:`;
+      const slashPrefix = `${serverName}/`;
+      const filtered = this.csvItems(worker.mcp_allowed_tools || '').filter(token => (
+        !token.startsWith(prefix) && !token.startsWith(slashPrefix)
+      ));
+      worker.mcp_allowed_tools = filtered.join(', ');
+    },
+
+    addWorkerToolsForServerIfNarrowed(worker, serverName) {
+      const existing = this.csvItems(worker.mcp_allowed_tools || '');
+      if (!existing.length) return;
+      const tokens = new Set(existing);
+      this.enabledToolsForServerName(serverName).forEach(tool => {
+        tokens.add(this.mcpScopedToolName(serverName, tool.name));
+      });
+      worker.mcp_allowed_tools = Array.from(tokens).join(', ');
+    },
+
+    isToolEnabledForWorker(worker, serverName, toolName) {
+      if (!worker.mcp_enabled || !this.isServerEnabledForWorker(worker, serverName)) return false;
+      const allowedTools = this.csvItems(worker.mcp_allowed_tools || '');
+      if (!allowedTools.length) return true;
+      return allowedTools.includes(toolName)
+        || allowedTools.includes(this.mcpScopedToolName(serverName, toolName))
+        || allowedTools.includes(`${serverName}/${toolName}`);
+    },
+
+    async toggleWorkerTool(worker, serverName, toolName) {
+      if (!this.isServerEnabledForWorker(worker, serverName)) {
+        const allowed = this.csvItems(worker.mcp_allowed_servers || '');
+        allowed.push(serverName);
+        worker.mcp_allowed_servers = allowed.join(', ');
+        this.addWorkerToolsForServerIfNarrowed(worker, serverName);
+      }
+      const scoped = this.mcpScopedToolName(serverName, toolName);
+      let allowedTools = this.csvItems(worker.mcp_allowed_tools || '');
+      if (!allowedTools.length) {
+        allowedTools = this.workerAvailableToolTokens(worker).filter(token => token !== scoped);
+      } else {
+        const variants = new Set([toolName, scoped, `${serverName}/${toolName}`]);
+        const hasTool = allowedTools.some(token => variants.has(token));
+        allowedTools = allowedTools.filter(token => !variants.has(token));
+        if (!hasTool) allowedTools.push(scoped);
+      }
+      worker.mcp_allowed_tools = allowedTools.join(', ');
+      await this.savePiWorker(worker);
     },
   }
 };

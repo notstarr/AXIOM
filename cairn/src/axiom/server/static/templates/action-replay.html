@@ -18,7 +18,7 @@
       <span class="px-2.5 py-1 rounded-lg bg-white border border-slate-200 max-w-[260px] truncate" :title="actionReplayBootstrapOutcome()" x-text="actionReplayBootstrapOutcome()"></span>
     </div>
     <div class="flex items-center gap-1.5 ml-1">
-      <button @click="loadToolExecutions()" class="h-7 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center gap-1.5">
+      <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="h-7 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center gap-1.5 disabled:opacity-40">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
         刷新
       </button>

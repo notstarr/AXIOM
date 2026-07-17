@@ -14,6 +14,7 @@ function cairnApp() {
     M.timeline.methods,
     M.actions.methods,
     M.dispatch.methods,
-    M.prompts.methods
+    M.prompts.methods,
+    M.batchUrlJudge.methods
   );
 }

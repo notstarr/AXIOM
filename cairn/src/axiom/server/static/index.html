@@ -222,7 +222,7 @@
     <div class="space-y-3">
       <textarea x-model="intentForm.description" placeholder="本轮准备探索什么？" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <div>
-        <label class="text-[11px] text-slate-400 mb-1 block font-medium">目标主机/IP（可留空，留空时默认套用项目组授权范围；多个用换行或逗号分隔）</label>
+        <label class="text-[11px] text-slate-400 mb-1 block font-medium">目标主机/IP（可留空，留空时使用任务白名单；多个用换行或逗号分隔）</label>
         <textarea x-model="intentForm.targets" placeholder="例如：api.example.com 或 10.0.0.1" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       </div>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-500" x-show="intentScopeHint" x-text="intentScopeHint"></div>

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -38,32 +37,6 @@ def _status_rank(value: str | None) -> int:
     return _ASSET_STATUS_RANK.get(value, -1)
 
 
-def _normalize_part(value: str, default: str) -> str:
-    token = re.sub(r"[^a-z0-9_-]+", "-", (value or "").strip().lower()).strip("-")
-    return token or default
-
-
-def _canonical_credential_label(group_id: str, label: str, auth_type: str) -> str:
-    group = _normalize_part(group_id, "group")
-    auth = _normalize_part(auth_type, "auth")
-    raw = (label or "").strip()
-    if not raw:
-        return f"{group}.unknown.{auth}.unknown"
-
-    parts = [part.strip() for part in raw.split(".") if part.strip()]
-    if len(parts) >= 4:
-        account = _normalize_part(parts[1], "unknown")
-        env = _normalize_part(parts[3], "unknown")
-        return f"{group}.{account}.{auth}.{env}"
-    if len(parts) == 3:
-        account = _normalize_part(parts[1], "unknown")
-        env = _normalize_part(parts[2], "unknown")
-        return f"{group}.{account}.{auth}.{env}"
-    if len(parts) == 2:
-        account = _normalize_part(parts[1], "unknown")
-        return f"{group}.{account}.{auth}.unknown"
-    account = _normalize_part(parts[0], "unknown")
-    return f"{group}.{account}.{auth}.unknown"
 
 
 def _merge_asset_updates(existing: sqlite3.Row, body: AssetCreate, now: str) -> dict[str, object]:
@@ -97,6 +70,8 @@ def _merge_asset_updates(existing: sqlite3.Row, body: AssetCreate, now: str) -> 
         updates["test_status"] = incoming_status
         updates["tested_at"] = now
     return updates
+
+
 
 
 # ── Assets ────────────────────────────────────────────────────────────
@@ -337,18 +312,19 @@ def get_credential(cred_id: str):
 
 @router.post("/credentials", response_model=CredentialRead)
 def create_credential(body: CredentialCreate):
-    normalized_label = _canonical_credential_label(body.group_id, body.label, body.auth_type)
+    # label 现在直接存储人工/智能体写入的原始值（显示为“名称”），不再强制规整成 pg.xxx.type.xxx
+    raw_label = (body.label or "").strip()
     now = _now_iso()
     with get_conn() as conn:
         existing = conn.execute(
             "SELECT * FROM credentials WHERE group_id = ? AND label = ?",
-            (body.group_id, normalized_label),
+            (body.group_id, raw_label),
         ).fetchone()
         if existing:
             updates: dict[str, object] = {
                 "auth_type": body.auth_type,
                 "credentials_json": body.credentials_json,
-                "active": 1,
+                "active": body.active,
                 "captured_at": now,
             }
             if _has_text(body.domains_json):
@@ -371,9 +347,9 @@ def create_credential(body: CredentialCreate):
         conn.execute(
             """INSERT INTO credentials (id, group_id, label, auth_type, credentials_json, domains_json,
                source_task_id, captured_at, expires_at, active, asset_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
-            (cred_id, body.group_id, normalized_label, body.auth_type,
-             body.credentials_json, body.domains_json, body.source_task_id, now, body.expires_at, body.asset_id),
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (cred_id, body.group_id, raw_label, body.auth_type,
+             body.credentials_json, body.domains_json, body.source_task_id, now, body.expires_at, body.active, body.asset_id),
         )
         row = conn.execute("SELECT * FROM credentials WHERE id = ?", (cred_id,)).fetchone()
         return CredentialRead(**dict(row))
@@ -387,12 +363,9 @@ def update_credential(cred_id: str, body: CredentialUpdate):
             raise HTTPException(404, "credential not found")
         updates = {}
         if body.label is not None:
-            auth_type_for_label = body.auth_type or row["auth_type"]
-            updates["label"] = _canonical_credential_label(row["group_id"], body.label, auth_type_for_label)
+            updates["label"] = body.label.strip()
         if body.auth_type is not None:
             updates["auth_type"] = body.auth_type
-            if body.label is None:
-                updates["label"] = _canonical_credential_label(row["group_id"], row["label"], body.auth_type)
         if body.credentials_json is not None:
             updates["credentials_json"] = body.credentials_json
         if body.domains_json is not None:

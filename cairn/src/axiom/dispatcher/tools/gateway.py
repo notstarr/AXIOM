@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-import re
-from urllib.parse import urlparse
 
-from axiom.dispatcher.domain_blacklist import load_domain_blacklist
+from axiom.dispatcher.task_scope import (
+    extract_hosts_from_text,
+    load_task_scope,
+    out_of_scope_host_for_argv,
+)
 
 
 BUILTIN_TOOLS = frozenset(
@@ -40,7 +42,6 @@ BUILTIN_TOOLS = frozenset(
     }
 )
 
-
 @dataclass(frozen=True, slots=True)
 class ToolInvocation:
     phase: str
@@ -68,13 +69,10 @@ class ToolGateway:
         if normalized in self._blocked_tools:
             raise ValueError(f"tool blocked by policy: {tool}")
         if phase.startswith("bootstrap") or phase.startswith("explore"):
-            try:
-                blocked_domains = load_domain_blacklist(project_id)
-            except TypeError:
-                blocked_domains = load_domain_blacklist()
-            blocked = self._match_blocked_domain(argv, blocked_domains)
-            if blocked is not None:
-                raise ValueError(f"blocked domain by policy: {blocked}")
+            scope = load_task_scope(project_id)
+            rejected = self._match_out_of_scope_domain(argv, scope)
+            if rejected is not None:
+                raise ValueError(f"domain outside task scope: {rejected}")
         kind = "builtin" if normalized in BUILTIN_TOOLS else "external"
         return ToolInvocation(phase=phase, tool=tool, kind=kind, argv=list(argv))
 
@@ -85,36 +83,12 @@ class ToolGateway:
         return PurePosixPath(argv[0]).name or "unknown"
 
     @staticmethod
-    def _match_blocked_domain(argv: list[str], blocked_domains: set[str]) -> str | None:
-        if not blocked_domains:
-            return None
-        for token in argv:
-            for host in ToolGateway._extract_hosts(token):
-                if ToolGateway._is_host_blocked(host, blocked_domains):
-                    return host
-        return None
+    def _match_out_of_scope_domain(argv: list[str], scope) -> str | None:
+        return out_of_scope_host_for_argv(scope, argv)
 
     @staticmethod
     def _extract_hosts(token: str) -> list[str]:
-        text = token.strip()
-        if not text:
-            return []
-        hosts: list[str] = []
-        if "://" in text:
-            parsed = urlparse(text)
-            if parsed.hostname:
-                hosts.append(parsed.hostname.lower().strip("."))
-        for candidate in re.findall(r"\b([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b", text):
-            hosts.append(candidate.lower().strip("."))
-        return hosts
-
-    @staticmethod
-    def _is_host_blocked(host: str, blocked_domains: set[str]) -> bool:
-        for blocked in blocked_domains:
-            if host == blocked or host.endswith(f".{blocked}"):
-                return True
-        return False
-
+        return extract_hosts_from_text(token, allow_bare=True)
 
 _DEFAULT_GATEWAY = ToolGateway()
 

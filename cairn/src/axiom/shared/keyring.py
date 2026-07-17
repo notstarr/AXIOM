@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -12,11 +13,23 @@ class KeyringError(RuntimeError):
 
 
 def _fernet() -> Fernet:
-    master_key = os.getenv("MASTER_KEY", "").strip()
+    master_key = _load_master_key()
     if not master_key:
         raise KeyringError("MASTER_KEY is not configured")
     digest = hashlib.sha256(master_key.encode("utf-8")).digest()
     return Fernet(base64.urlsafe_b64encode(digest))
+
+
+def _load_master_key() -> str:
+    master_key = os.getenv("MASTER_KEY", "").strip()
+    if master_key:
+        return master_key
+    key_file = os.getenv("CAIRN_MASTER_KEY_FILE") or os.getenv("MASTER_KEY_FILE")
+    path = Path(key_file).expanduser() if key_file else Path.home() / ".config" / "cairn" / "master.key"
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def encrypt_secret(raw_secret: str) -> str:

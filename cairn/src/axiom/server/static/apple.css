@@ -308,6 +308,15 @@ html, body {
   flex-shrink: 0;
 }
 
+.nav-back {
+  color: var(--accent);
+  background: var(--accent-light);
+  opacity: 0.85;
+}
+.nav-back:hover {
+  opacity: 1;
+}
+
 /* Tooltip */
 .nav-item::after {
   content: attr(data-tooltip);

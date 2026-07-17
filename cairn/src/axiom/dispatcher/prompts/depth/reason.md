@@ -69,6 +69,9 @@ If there are unverified hypotheses, unexplored targets, or new directions:
 {blackboard}
 ```
 
+## Task Request Headers / Credentials
+{credential_headers}
+
 ## Context
 ### Checklist Path
 ```

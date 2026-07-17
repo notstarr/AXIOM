@@ -130,12 +130,15 @@ class CairnClient:
         *,
         targets: list[str] | None = None,
         timeouts: dict[str, int] | None = None,
+        worker_pool: list[str] | None = None,
     ) -> ApiResult:
         payload: dict[str, Any] = {"from": from_ids, "description": description, "creator": creator, "worker": None}
         if targets is not None:
             payload["targets"] = targets
         if timeouts is not None:
             payload["timeouts"] = timeouts
+        if worker_pool is not None:
+            payload["worker_pool"] = list(worker_pool)
         return self._request_json(
             "POST",
             f"/projects/{project_id}/intents",

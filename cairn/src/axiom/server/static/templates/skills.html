@@ -9,7 +9,7 @@
       上传文件夹/MD
       <input type="file" accept=".md,.txt,.sh,.py,.json,.yaml,.yml" multiple webkitdirectory @change="uploadSkillFiles($event)" class="hidden">
     </label>
-    <button @click="loadSkills()" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">刷新</button>
+    <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition">刷新</button>
   </header>
   <main class="flex-1 overflow-hidden grid grid-cols-[260px_200px_minmax(0,1fr)]">
     <!-- Skill list -->

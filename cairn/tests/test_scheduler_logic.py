@@ -6,9 +6,9 @@ from axiom.dispatcher.models import ReasonCheckpoint, RunningTask
 from axiom.dispatcher.runtime.cancellation import TaskCancellation
 from axiom.dispatcher.scheduler.loop import DispatcherLoop
 from axiom.dispatcher.scheduler.worker_select import choose_worker
-from axiom.server.models import Fact, ProjectSummary
+from axiom.server.models import Fact, ProjectReason, ProjectSummary
 
-from conftest import make_config, make_intent, make_project
+from conftest import FakeClient, make_config, make_intent, make_project
 
 
 def _loop() -> DispatcherLoop:
@@ -78,6 +78,54 @@ def test_refresh_runtime_projects_discards_inactive_ids() -> None:
     )
 
     assert loop.runtime_project_ids == {"active"}
+
+
+def test_recover_stale_external_leases_releases_reason_and_intent() -> None:
+    loop = _loop()
+    loop.config = make_config()
+    loop.futures = {}
+    intent = make_intent("i002")
+    intent.last_heartbeat_at = "2000-01-01T00:00:00Z"
+    project = make_project(intents=[intent])
+    project.project.reason = ProjectReason(
+        worker="test-worker",
+        trigger="initial",
+        started_at="2000-01-01T00:00:00Z",
+        last_heartbeat_at="2000-01-01T00:00:00Z",
+    )
+    client = FakeClient(project)
+    loop.client = client
+    summary = _summary("proj_001", "active")
+    summary.reason = project.project.reason
+    summary.working_intent_count = 1
+
+    assert loop._recover_stale_external_leases([summary])
+    assert client.released_reasons == [("proj_001", "test-worker")]
+    assert client.released == [("proj_001", "i002", "test-worker")]
+
+
+def test_recover_stale_external_leases_keeps_recent_claims() -> None:
+    loop = _loop()
+    loop.config = make_config()
+    loop.futures = {}
+    intent = make_intent("i002")
+    intent.last_heartbeat_at = "2999-01-01T00:00:00Z"
+    project = make_project(intents=[intent])
+    project.project.reason = ProjectReason(
+        worker="test-worker",
+        trigger="initial",
+        started_at="2999-01-01T00:00:00Z",
+        last_heartbeat_at="2999-01-01T00:00:00Z",
+    )
+    client = FakeClient(project)
+    loop.client = client
+    summary = _summary("proj_001", "active")
+    summary.reason = project.project.reason
+    summary.working_intent_count = 1
+
+    assert not loop._recover_stale_external_leases([summary])
+    assert client.released_reasons == []
+    assert client.released == []
 
 
 def test_choose_worker_prefers_priority_then_lower_running_count() -> None:

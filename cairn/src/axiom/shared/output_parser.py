@@ -40,13 +40,16 @@ def extract_json_object(text: str) -> dict[str, Any]:
             if isinstance(parsed, dict):
                 return parsed
 
+        parsed_candidates: list[tuple[int, int, dict[str, Any]]] = []
         for start in _object_start_positions(segment):
             try:
-                parsed, _end = decoder.raw_decode(segment[start:])
+                parsed, end = decoder.raw_decode(segment[start:])
             except json.JSONDecodeError:
                 continue
             if isinstance(parsed, dict):
-                return parsed
+                parsed_candidates.append((start, end, parsed))
+        if parsed_candidates:
+            return _best_parsed_object(parsed_candidates)
 
     raise ValueError("no JSON object found in output")
 
@@ -72,3 +75,10 @@ def _candidate_segments(text: str) -> list[str]:
 
 def _object_start_positions(text: str) -> list[int]:
     return [index for index, char in reversed(list(enumerate(text))) if char == "{"]
+
+
+def _best_parsed_object(candidates: list[tuple[int, int, dict[str, Any]]]) -> dict[str, Any]:
+    accepted_candidates = [item for item in candidates if "accepted" in item[2]]
+    if accepted_candidates:
+        return max(accepted_candidates, key=lambda item: (item[0], item[1]))[2]
+    return candidates[0][2]

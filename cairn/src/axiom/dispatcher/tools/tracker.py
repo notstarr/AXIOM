@@ -16,6 +16,13 @@ def record_tool_executions_from_session(
     session_path: str,
     project_id: str,
     project_group_id: str | None = None,
+    worker_name: str = "",
+    task_type: str = "",
+    phase: str = "",
+    logical_thread_id: str = "",
+    attempt_id: str = "",
+    intent_id: str = "",
+    session_id: str = "",
 ) -> tuple[int, dict[str, int]]:
     """Parse a pi session JSONL file and insert tool execution records.
 
@@ -44,8 +51,10 @@ def record_tool_executions_from_session(
                 INSERT OR IGNORE INTO tool_executions (
                     id, tool, kind, argv_json, status,
                     returncode, stdout, stderr, duration_ms,
-                    project_group_id, project_id, created_at, finished_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    project_group_id, project_id, worker, task_type, phase,
+                    logical_thread_id, attempt_id, intent_id, session_id,
+                    created_at, finished_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record["id"],
@@ -59,6 +68,13 @@ def record_tool_executions_from_session(
                     record["duration_ms"],
                     project_group_id or "",
                     project_id,
+                    worker_name,
+                    task_type,
+                    phase,
+                    logical_thread_id,
+                    attempt_id,
+                    intent_id,
+                    session_id,
                     record["created_at"],
                     record["finished_at"],
                 ),
@@ -87,7 +103,14 @@ def _parse_session(session_path: Path) -> tuple[list[dict[str, Any]], dict[str, 
     Returns (tool_records, token_usage_sum).
     """
     messages: list[dict[str, Any]] = []
-    token_totals: dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    token_totals: dict[str, int] = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "total_tokens": 0,
+    }
     try:
         with open(session_path, encoding="utf-8") as fh:
             for line in fh:
@@ -108,11 +131,17 @@ def _parse_session(session_path: Path) -> tuple[list[dict[str, Any]], dict[str, 
                             # pi format: input/output/totalTokens
                             inp = _safe_int(usage.get("input", usage.get("input_tokens", usage.get("inputTokens"))))
                             out = _safe_int(usage.get("output", usage.get("output_tokens", usage.get("outputTokens"))))
+                            cache_read = _safe_int(usage.get("cacheRead", usage.get("cache_read", usage.get("cache_read_tokens", usage.get("cached_tokens")))))
+                            cache_write = _safe_int(usage.get("cacheWrite", usage.get("cache_write", usage.get("cache_write_tokens"))))
+                            reasoning = _safe_int(usage.get("reasoning", usage.get("reasoningTokens", usage.get("reasoning_tokens"))))
                             total = _safe_int(usage.get("totalTokens", usage.get("total_tokens")))
-                            if inp or out or total:
+                            if inp or out or cache_read or cache_write or reasoning or total:
                                 token_totals["input_tokens"] += inp or 0
                                 token_totals["output_tokens"] += out or 0
-                                token_totals["total_tokens"] += total or (inp or 0) + (out or 0)
+                                token_totals["cache_read_tokens"] += cache_read or 0
+                                token_totals["cache_write_tokens"] += cache_write or 0
+                                token_totals["reasoning_tokens"] += reasoning or 0
+                                token_totals["total_tokens"] += total or (inp or 0) + (out or 0) + (cache_read or 0) + (cache_write or 0)
     except Exception:
         LOG.exception("failed to read session file path=%s", session_path)
         return [], {}
@@ -136,7 +165,12 @@ def _parse_session(session_path: Path) -> tuple[list[dict[str, Any]], dict[str, 
                 break
         results[call_id] = {
             "output": output_text,
-            "is_error": bool(msg.get("isError", False)),
+            "is_error": _is_tool_error(
+                tool_name=str(msg.get("toolName", "")),
+                output=output_text,
+                is_error=bool(msg.get("isError", False)),
+                details=msg.get("details"),
+            ),
             "tool_name": msg.get("toolName", ""),
         }
 
@@ -191,6 +225,25 @@ def _safe_int(value: Any) -> int:
         return v if v >= 0 else 0
     except (TypeError, ValueError):
         return 0
+
+
+def _is_tool_error(*, tool_name: str, output: str, is_error: bool, details: Any = None) -> bool:
+    if is_error:
+        return True
+    if isinstance(details, dict) and details.get("error"):
+        return True
+    text = (output or "").strip().lower()
+    if not text:
+        return False
+    try:
+        parsed = json.loads(output)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, dict) and parsed.get("error"):
+        return True
+    if tool_name == "bash" and "command exited with code " in text:
+        return True
+    return text.startswith(("error:", "failed:", "traceback "))
 
 
 def _tool_input_to_argv(tool_name: str, inp: dict[str, Any]) -> list[str]:

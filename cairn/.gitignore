@@ -1,4 +1,5 @@
 *.db
+*.sqlite
 *.pid
 .pids/
 __pycache__/
@@ -7,7 +8,16 @@ __pycache__/
 .env
 *.log
 logs/
+output/
 dispatch.yaml
 node_modules/
 .DS_Store
 /tmp/
+
+# Local one-off recovery/reporting scripts and generated scan lists.
+tmp_*.py
+task_i*.py
+post_assets.py
+HANDOFF_*.md
+*403list.txt
+bypass403_url.txt

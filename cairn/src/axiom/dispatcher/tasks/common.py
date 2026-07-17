@@ -5,11 +5,13 @@ import logging
 import re
 import time
 import uuid
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from axiom.dispatcher.tools.live_tracker import LiveToolTracker
+from axiom.dispatcher.tools.output_wrangler import default_wrangler
 from axiom.dispatcher.tools.tracker import record_tool_executions_from_session
 
 from axiom.dispatcher.config import DispatchConfig, WorkerConfig
@@ -173,6 +175,8 @@ def run_worker_process(
     cancellation: TaskCancellation | None = None,
     client: CairnClient | None = None,
     task_type: str = "system",
+    ai_dir: str | None = None,
+    event_metadata: dict[str, Any] | None = None,
 ) -> ProcessResult:
     gateway = default_gateway()
     try:
@@ -197,6 +201,15 @@ def run_worker_process(
         timeout_seconds,
     )
     if client is not None and project_id is not None:
+        started_payload = {
+            "timeout_seconds": timeout_seconds,
+            "tool": invocation.tool,
+            "tool_kind": invocation.kind,
+            "command_preview": _sanitize_command(invocation.argv),
+            "mcp": _mcp_runtime_payload(worker),
+        }
+        if event_metadata:
+            started_payload.update(event_metadata)
         _report_event(
             client,
             project_id,
@@ -205,16 +218,25 @@ def run_worker_process(
             worker=worker.name,
             level="info",
             message="phase started",
-            payload={
-                "timeout_seconds": timeout_seconds,
-                "tool": invocation.tool,
-                "tool_kind": invocation.kind,
-                "command_preview": _sanitize_command(invocation.argv),
-            },
+            payload=started_payload,
         )
     env = _worker_env_with_runtime_keys(worker, phase=phase)
     if project_id:
         env["PROJECT_ID"] = project_id
+        env["AXIOM_PROJECT_ID"] = project_id
+    env["AXIOM_PHASE"] = phase
+    env["AXIOM_GUARD_PHASE"] = phase
+    env["AXIOM_WORKER"] = worker.name
+    if event_metadata:
+        intent_id = str(event_metadata.get("intent_id") or "")
+        if intent_id:
+            env["AXIOM_INTENT_ID"] = intent_id
+    if client is not None and not env.get("AXIOM_GUARD_SERVER_URL"):
+        base_url = getattr(client, "_base_url", "")
+        if base_url:
+            env["AXIOM_GUARD_SERVER_URL"] = str(base_url)
+    if ai_dir:
+        env["AXIOM_AI_DIR"] = ai_dir
     process = ManagedProcess(invocation.argv, env)
     process.start()
     # Start live tool tracking — polls the session file while pi runs.
@@ -223,6 +245,10 @@ def run_worker_process(
         live_tracker = LiveToolTracker(
             worker_name=worker.name,
             project_id=project_id,
+            session_id=str((event_metadata or {}).get("session_id") or ""),
+            event_metadata=event_metadata or {},
+            phase=phase,
+            task_type=task_type,
         )
     if live_tracker:
         live_tracker.start()
@@ -245,9 +271,12 @@ def run_worker_process(
                 "cancel_reason": result.cancel_reason,
                 "stdout_preview": _sanitize_text(preview(result.stdout)),
                 "stderr_preview": _sanitize_text(preview(result.stderr)),
+                "mcp": _mcp_runtime_payload(worker),
             }
             if token_usage is not None:
                 payload["token_usage"] = token_usage
+            if event_metadata:
+                payload.update(event_metadata)
             _report_event(
                 client,
                 project_id,
@@ -257,6 +286,39 @@ def run_worker_process(
                 level=level,
                 message="phase finished",
                 payload=payload,
+            )
+        wrangler = default_wrangler()
+        if result.stdout:
+            wrangled_stdout, _, _ = wrangler.wrangle_stdout(
+                result_stdout=result.stdout,
+                invocation_tool=invocation.tool,
+                argv=invocation.argv,
+                phase=phase,
+                ai_dir=ai_dir,
+            )
+            result = ProcessResult(
+                returncode=result.returncode,
+                stdout=wrangled_stdout,
+                stderr=result.stderr,
+                timed_out=result.timed_out,
+                cancelled=result.cancelled,
+                cancel_reason=result.cancel_reason,
+            )
+        if result.stderr:
+            wrangled_stderr, _, _ = wrangler.wrangle_stderr(
+                result_stderr=result.stderr,
+                invocation_tool=invocation.tool,
+                argv=invocation.argv,
+                phase=phase,
+                ai_dir=ai_dir,
+            )
+            result = ProcessResult(
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=wrangled_stderr,
+                timed_out=result.timed_out,
+                cancelled=result.cancelled,
+                cancel_reason=result.cancel_reason,
             )
         return result
     finally:
@@ -271,6 +333,37 @@ def run_worker_process(
             cancellation.attach_process(None)
 
 
+def worker_with_project_runtime(
+    worker: WorkerConfig,
+    *,
+    guard_enabled: bool,
+    task_scope_enabled: bool = False,
+    credential_headers: str = "",
+) -> WorkerConfig:
+    if not guard_enabled and not task_scope_enabled and not credential_headers.strip():
+        return worker
+    env = dict(worker.env or {})
+    if guard_enabled:
+        env["AXIOM_GUARD_ENABLED"] = "1"
+    if task_scope_enabled:
+        env["AXIOM_TASK_SCOPE_ENABLED"] = "1"
+    if credential_headers.strip():
+        # Keep credentials out of prompts and event command previews.  The
+        # worker can read this process-local value when constructing requests.
+        env["AXIOM_REQUEST_HEADERS"] = credential_headers.strip()
+    return worker.model_copy(update={"env": env})
+
+
+def format_credential_headers_context(credential_headers: str) -> str:
+    if not credential_headers.strip():
+        return "未提供。"
+    return (
+        "已通过当前 worker 进程的 AXIOM_REQUEST_HEADERS 环境变量注入。"
+        "每个非空行按 `Header-Name: value` 使用，仅附加到任务 Scope 内的请求；"
+        "禁止打印、回显或写入报告。"
+    )
+
+
 def _worker_env_with_runtime_keys(worker: WorkerConfig, *, phase: str) -> dict[str, str]:
     """Build the process environment for a worker, injecting proxy settings."""
     env = dict(worker.env)
@@ -283,6 +376,28 @@ def _worker_env_with_runtime_keys(worker: WorkerConfig, *, phase: str) -> dict[s
     if not pi_key or pi_key == "<stored-in-database>":
         env.pop("PI_API_KEY", None)
     return env
+
+
+def _mcp_runtime_payload(worker: WorkerConfig) -> dict[str, Any]:
+    env = worker.env or {}
+    enabled = str(env.get("PI_MCP_ENABLED", "")).strip().lower() in {"1", "true", "yes", "on", "enabled"}
+    profile = str(env.get("PI_MCP_PROFILE", "")).strip()
+    raw_config = str(env.get("PI_MCP_CONFIG_JSON", "")).strip()
+    config_sha = hashlib.sha256(raw_config.encode("utf-8")).hexdigest()[:12] if raw_config else ""
+    allowed_servers = [item.strip() for item in str(env.get("PI_MCP_ALLOWED_SERVERS", "")).split(",") if item.strip()]
+    allowed_tools = [item.strip() for item in str(env.get("PI_MCP_ALLOWED_TOOLS", "")).split(",") if item.strip()]
+    payload: dict[str, Any] = {
+        "enabled": enabled,
+        "profile": profile,
+        "config_sha256": config_sha,
+        "allowed_servers_count": len(allowed_servers),
+        "allowed_tools_count": len(allowed_tools),
+    }
+    if allowed_servers:
+        payload["allowed_servers_preview"] = allowed_servers[:5]
+    if allowed_tools:
+        payload["allowed_tools_preview"] = allowed_tools[:8]
+    return payload
 
 
 def _report_event(
@@ -394,20 +509,56 @@ def _normalize_usage_map(payload: dict[str, Any]) -> dict[str, int] | None:
         payload.get("outputTokens",
         payload.get("output"))))  # pi native format
     )
+    cache_read_tokens = _to_non_negative_int(
+        payload.get("cache_read_tokens",
+        payload.get("cached_tokens",
+        payload.get("cacheRead",
+        payload.get("cache_read"))))
+    )
+    cache_write_tokens = _to_non_negative_int(
+        payload.get("cache_write_tokens",
+        payload.get("cacheWrite",
+        payload.get("cache_write")))
+    )
+    reasoning_tokens = _to_non_negative_int(
+        payload.get("reasoning_tokens",
+        payload.get("reasoningTokens",
+        payload.get("reasoning")))
+    )
     total_tokens = _to_non_negative_int(payload.get("total_tokens", payload.get("totalTokens")))
-    if input_tokens is None and output_tokens is None and total_tokens is None:
+    if (
+        input_tokens is None
+        and output_tokens is None
+        and cache_read_tokens is None
+        and cache_write_tokens is None
+        and reasoning_tokens is None
+        and total_tokens is None
+    ):
         return None
     if input_tokens is None:
         input_tokens = 0
     if output_tokens is None:
         output_tokens = 0
+    if cache_read_tokens is None:
+        cache_read_tokens = 0
+    if cache_write_tokens is None:
+        cache_write_tokens = 0
+    if reasoning_tokens is None:
+        reasoning_tokens = 0
     if total_tokens is None:
-        total_tokens = input_tokens + output_tokens
-    return {
+        total_tokens = input_tokens + output_tokens + cache_read_tokens + cache_write_tokens
+    result = {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
     }
+    if cache_read_tokens:
+        result["cache_read_tokens"] = cache_read_tokens
+    if cache_write_tokens:
+        result["cache_write_tokens"] = cache_write_tokens
+    if reasoning_tokens:
+        result["reasoning_tokens"] = reasoning_tokens
+    return result
 
 
 def _to_non_negative_int(value: Any) -> int | None:
@@ -615,6 +766,10 @@ def record_session_tools(
     worker_name: str,
     project_id: str,
     project_group_id: str | None = None,
+    worker_name_for_record: str | None = None,
+    task_type: str = "",
+    phase: str = "",
+    event_metadata: dict[str, Any] | None = None,
 ) -> tuple[int, dict[str, int]]:
     """Find the session file for a pi session and persist tool executions.
 
@@ -634,6 +789,13 @@ def record_session_tools(
                     session_path=str(candidate),
                     project_id=project_id,
                     project_group_id=project_group_id,
+                    worker_name=worker_name_for_record or worker_name,
+                    task_type=task_type,
+                    phase=phase,
+                    logical_thread_id=str((event_metadata or {}).get("logical_thread_id") or ""),
+                    attempt_id=str((event_metadata or {}).get("attempt_id") or ""),
+                    intent_id=str((event_metadata or {}).get("intent_id") or ""),
+                    session_id=session_id,
                 )
     # Fallback: use the most recently modified session file.
     candidates = sorted(
@@ -646,6 +808,13 @@ def record_session_tools(
             session_path=str(candidates[0]),
             project_id=project_id,
             project_group_id=project_group_id,
+            worker_name=worker_name_for_record or worker_name,
+            task_type=task_type,
+            phase=phase,
+            logical_thread_id=str((event_metadata or {}).get("logical_thread_id") or ""),
+            attempt_id=str((event_metadata or {}).get("attempt_id") or ""),
+            intent_id=str((event_metadata or {}).get("intent_id") or ""),
+            session_id=session_id,
         )
     LOG.debug("no session files found for worker=%s", worker_name)
     return 0, {}

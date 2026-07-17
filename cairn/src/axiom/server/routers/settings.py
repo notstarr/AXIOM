@@ -1,13 +1,18 @@
 from fastapi import APIRouter, HTTPException
 import json
 import logging
+import os
 from pathlib import Path
+import subprocess
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import requests
 
+from axiom.dispatcher.config import WorkerConfig
+from axiom.guard.policy import GuardPolicyConfig, evaluate_guard_event
 from axiom.shared.keyring import KeyringError, encrypt_secret
 from axiom.dispatcher.keyring import load_provider_api_key
+from axiom.dispatcher.workers.adapters.pi import PiDriver
 from axiom.server.db import get_conn
 
 LOG = logging.getLogger(__name__)
@@ -19,6 +24,11 @@ from axiom.server.dispatch_config_store import (
 from axiom.server.models import (
     DispatchModelsResponse,
     DispatchSettings,
+    JudgeUrlBatchRequest,
+    JudgeUrlBatchResponse,
+    JudgeUrlTestResult,
+    JudgeSettingsResponse,
+    JudgeTestResponse,
     DispatchRuntimeWorkerView,
     DispatchWorkerSettings,
     PiConnectionTestRequest,
@@ -26,13 +36,25 @@ from axiom.server.models import (
     ProviderKeyMeta,
     ProviderKeysResponse,
     Settings,
+    UpdateJudgeSettingsRequest,
     UpdateProviderKeyRequest,
 )
+from axiom.server.judge_settings import DEFAULT_JUDGE_HARD_BLOCK_RULES, DEFAULT_JUDGE_SYSTEM_PROMPT, JudgeSettingsData, load_judge_settings, save_judge_settings
 from axiom.server.services import utcnow
 
+
 router = APIRouter(tags=["settings"])
-SUPPORTED_KEY_PROVIDERS = ("pi",)
+SUPPORTED_KEY_PROVIDERS = ("pi", "judge")
 DISPATCH_YAML = Path(__file__).resolve().parents[5] / "dispatch.yaml"
+
+
+def _sanitize_dispatch_task_types(values: list[str] | None) -> list[str]:
+    task_types: list[str] = []
+    for item in values or []:
+        value = str(item)
+        if value not in task_types:
+            task_types.append(value)
+    return task_types or ['bootstrap', 'reason', 'explore']
 
 
 @router.get("/settings", response_model=Settings)
@@ -45,18 +67,11 @@ def get_settings():
                 plan_worker_count, plan_timeout,
                 crawler_active_window_seconds, crawler_flush_window_seconds, crawler_total_timeout_seconds,
                 openai_base_url, openai_model,
-                proxy_url, proxy_enabled, domain_blacklist_json
+                proxy_url, proxy_enabled
             FROM settings
             WHERE rowid = 1
             """
         ).fetchone()
-        domain_blacklist: list[str] = []
-        try:
-            payload = json.loads(row["domain_blacklist_json"] or "[]")
-            if isinstance(payload, list):
-                domain_blacklist = [str(item) for item in payload]
-        except json.JSONDecodeError:
-            domain_blacklist = []
         return Settings(
             intent_timeout=row["intent_timeout"],
             reason_timeout=row["reason_timeout"],
@@ -72,7 +87,6 @@ def get_settings():
             openai_model=row["openai_model"] or "",
             proxy_url=row["proxy_url"] or "",
             proxy_enabled=bool(row["proxy_enabled"]),
-            domain_blacklist=domain_blacklist,
         )
 
 
@@ -95,8 +109,7 @@ def update_settings(body: Settings):
                 openai_base_url = ?,
                 openai_model = ?,
                 proxy_url = ?,
-                proxy_enabled = ?,
-                domain_blacklist_json = ?
+                proxy_enabled = ?
             WHERE rowid = 1
             """,
             (
@@ -114,11 +127,10 @@ def update_settings(body: Settings):
                 body.openai_model,
                 body.proxy_url,
                 1 if body.proxy_enabled else 0,
-                json.dumps(body.domain_blacklist, ensure_ascii=False, separators=(",", ":")),
             ),
         )
     bump_dispatch_config_version()
-    return body
+    return get_settings()
 
 
 @router.get("/settings/dispatch", response_model=DispatchSettings)
@@ -137,7 +149,7 @@ def get_dispatch_settings():
         workers.append(
             DispatchWorkerSettings(
                 name=worker_name,
-                task_types=list(item.get("task_types") or []),
+                task_types=_sanitize_dispatch_task_types([str(t) for t in (item.get("task_types") or [])]),
                 max_running=item.get("max_running", 1),
                 priority=item.get("priority", 0),
                 pi_model=env.get("PI_MODEL", ""),
@@ -146,6 +158,14 @@ def get_dispatch_settings():
                 pi_model_context_window=env.get("PI_MODEL_CONTEXT_WINDOW", ""),
                 pi_api_key="",
                 pi_api_key_masked=_mask_secret_middle(env.get("PI_API_KEY", "")) or _provider_key_hint(_worker_key_provider(worker_name)),
+                pi_thinking=_normalize_pi_thinking(env.get("PI_THINKING", "off")),
+                pi_thinking_capable=_normalize_thinking_capable(env.get("PI_THINKING_CAPABLE", "unknown")),
+                pi_thinking_tested_at=env.get("PI_THINKING_TESTED_AT", ""),
+                mcp_enabled=_as_bool(env.get("PI_MCP_ENABLED", "")),
+                mcp_profile=env.get("PI_MCP_PROFILE", ""),
+                mcp_config_json=env.get("PI_MCP_CONFIG_JSON", ""),
+                mcp_allowed_servers=env.get("PI_MCP_ALLOWED_SERVERS", ""),
+                mcp_allowed_tools=env.get("PI_MCP_ALLOWED_TOOLS", ""),
                 disabled=bool(item.get("disabled")),
             )
         )
@@ -156,7 +176,7 @@ def get_dispatch_settings():
         effective_workers.append(
             DispatchRuntimeWorkerView(
                 name=str(item.get("name", "")),
-                task_types=[str(task_type) for task_type in (item.get("task_types") or [])],
+                task_types=_sanitize_dispatch_task_types([str(task_type) for task_type in (item.get("task_types") or [])]),
                 max_running=max(1, int(item.get("max_running", 1) or 1)),
                 priority=max(0, int(item.get("priority", 0) or 0)),
                 disabled=bool(item.get("disabled")),
@@ -216,6 +236,7 @@ def update_dispatch_settings(body: DispatchSettings):
         pass
     resolved_workers: list[dict[str, object]] = []
     for worker in body.workers:
+        _validate_worker_mcp_inputs(worker)
         key = (worker.pi_api_key or "").strip()
         if not key:
             db_env = db_worker_envs.get(worker.name, {})
@@ -228,7 +249,7 @@ def update_dispatch_settings(body: DispatchSettings):
         resolved_workers.append({
             "name": worker.name,
             "type": "pi",
-            "task_types": worker.task_types,
+            "task_types": _sanitize_dispatch_task_types(list(worker.task_types)),
             "max_running": worker.max_running,
             "priority": worker.priority,
             "disabled": worker.disabled,
@@ -238,6 +259,14 @@ def update_dispatch_settings(body: DispatchSettings):
                 "PI_API_KEY": key,
                 "PI_PROVIDER_API": worker.pi_provider_api,
                 "PI_MODEL_CONTEXT_WINDOW": worker.pi_model_context_window,
+                "PI_THINKING": worker.pi_thinking,
+                "PI_THINKING_CAPABLE": worker.pi_thinking_capable,
+                "PI_THINKING_TESTED_AT": worker.pi_thinking_tested_at,
+                "PI_MCP_ENABLED": "true" if worker.mcp_enabled else "false",
+                "PI_MCP_PROFILE": worker.mcp_profile or "",
+                "PI_MCP_CONFIG_JSON": worker.mcp_config_json or "",
+                "PI_MCP_ALLOWED_SERVERS": worker.mcp_allowed_servers or "",
+                "PI_MCP_ALLOWED_TOOLS": worker.mcp_allowed_tools or "",
             },
         })
     write_dispatch_settings(
@@ -324,9 +353,146 @@ def test_pi_connection(body: PiConnectionTestRequest):
     except requests.RequestException as exc:
         return PiConnectionTestResponse(ok=False, message=f"连接失败：{exc}")
     if 200 <= response.status_code < 300:
-        return PiConnectionTestResponse(ok=True, message="连接成功，模型可用")
+        thinking_capable, thinking_message = _probe_pi_thinking(body, api_key)
+        tested_at = utcnow()
+        suffix = f"，{thinking_message}" if thinking_message else ""
+        return PiConnectionTestResponse(
+            ok=True,
+            message=f"连接成功，模型可用{suffix}",
+            thinking_capable=thinking_capable,
+            thinking_tested_at=tested_at,
+            thinking_message=thinking_message,
+        )
     detail = response.text[:500] if response.text else response.reason
     return PiConnectionTestResponse(ok=False, message=f"HTTP {response.status_code}: {detail}")
+
+
+def _probe_pi_thinking(body: PiConnectionTestRequest, api_key: str) -> tuple[str, str]:
+    worker_env = _load_dispatch_worker_env(body.worker_name)
+    probe_name = f"thinking-probe-{_safe_worker_name(body.worker_name or body.pi_model)}"
+    env = {
+        "PI_MODEL": body.pi_model,
+        "PI_BASE_URL": body.pi_base_url,
+        "PI_API_KEY": api_key,
+        "PI_PROVIDER_API": body.pi_provider_api,
+        "PI_THINKING": "high",
+    }
+    if worker_env.get("PI_MODEL_CONTEXT_WINDOW"):
+        env["PI_MODEL_CONTEXT_WINDOW"] = worker_env["PI_MODEL_CONTEXT_WINDOW"]
+    if worker_env.get("PI_BINARY_PATH"):
+        env["PI_BINARY_PATH"] = worker_env["PI_BINARY_PATH"]
+    try:
+        worker = WorkerConfig.model_validate(
+            {
+                "name": probe_name,
+                "type": "pi",
+                "task_types": ["explore"],
+                "max_running": 1,
+                "priority": 0,
+                "env": env,
+            }
+        )
+        driver = PiDriver()
+        session = driver.prepare_session()
+        command = driver.build_execute(
+            worker,
+            "Use brief internal reasoning if available, then reply with exactly: pong",
+            session,
+            phase="explore",
+        ).argv
+        process_env = os.environ.copy()
+        process_env.update(env)
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=45,
+            env=process_env,
+        )
+    except subprocess.TimeoutExpired:
+        return "unknown", "思考检测超时"
+    except Exception as exc:
+        LOG.debug("pi thinking probe failed worker=%s error=%s", body.worker_name, exc)
+        return "unknown", "思考检测失败"
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip().splitlines()
+        preview = detail[-1][:120] if detail else "pi 返回非零状态"
+        LOG.debug("pi thinking probe nonzero worker=%s rc=%s detail=%s", body.worker_name, result.returncode, preview)
+        return "unknown", "思考检测失败"
+    if _has_reasoning_signal(result.stdout) or _has_session_reasoning_signal(probe_name, session):
+        return "true", "思考可用"
+    return "false", "思考未生效"
+
+
+def _has_session_reasoning_signal(worker_name: str, session: str | None) -> bool:
+    if not session:
+        return False
+    session_dir = Path("/tmp/axiom-pi") / worker_name / "sessions"
+    if not session_dir.is_dir():
+        return False
+    for path in sorted(session_dir.glob(f"*{session}*.jsonl"), key=lambda item: item.stat().st_mtime, reverse=True):
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if _json_has_reasoning(event):
+                        return True
+        except OSError:
+            continue
+    return False
+
+
+def _has_reasoning_signal(stdout: str) -> bool:
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if _json_has_reasoning(event):
+            return True
+    return False
+
+
+def _json_has_reasoning(value) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_text = str(key).lower()
+            if "reasoning" in key_text:
+                if isinstance(item, str) and item.strip():
+                    return True
+                if isinstance(item, (int, float)) and item > 0:
+                    return True
+                if isinstance(item, dict) and _usage_has_reasoning_tokens(item):
+                    return True
+            if key_text in {"thinking", "thinking_content"}:
+                if isinstance(item, str) and item.strip().lower() not in {"off", "none", "false", "0"}:
+                    return True
+                if isinstance(item, dict) and _json_has_reasoning(item):
+                    return True
+            if key_text == "usage" and isinstance(item, dict) and _usage_has_reasoning_tokens(item):
+                return True
+            if _json_has_reasoning(item):
+                return True
+    elif isinstance(value, list):
+        return any(_json_has_reasoning(item) for item in value)
+    return False
+
+
+def _usage_has_reasoning_tokens(usage: dict) -> bool:
+    for key, value in usage.items():
+        key_text = str(key).lower()
+        if "reasoning" in key_text and isinstance(value, (int, float)) and value > 0:
+            return True
+        if isinstance(value, dict) and _usage_has_reasoning_tokens(value):
+            return True
+    return False
 
 
 @router.get("/settings/dispatch/models", response_model=DispatchModelsResponse)
@@ -396,6 +562,11 @@ def _worker_key_provider(worker_name: str) -> str:
     return f"pi:{safe_name or 'default'}"
 
 
+def _safe_worker_name(value: str) -> str:
+    safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in value.strip())
+    return safe_name or "default"
+
+
 def _load_dispatch_worker_env(worker_name: str) -> dict[str, str]:
     if not worker_name:
         return {}
@@ -418,9 +589,44 @@ def _load_dispatch_worker_env(worker_name: str) -> dict[str, str]:
     return {str(k): str(v) for k, v in env.items()}
 
 
+def _as_bool(value: str | bool | None) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    return text in {"1", "true", "yes", "on", "enabled"}
+
+
+def _normalize_pi_thinking(value: str | None) -> str:
+    text = str(value or "off").strip().lower()
+    if text in {"off", "minimal", "low", "medium", "high", "xhigh"}:
+        return text
+    return "off"
+
+
+def _normalize_thinking_capable(value: str | None) -> str:
+    text = str(value or "unknown").strip().lower()
+    if text in {"unknown", "true", "false"}:
+        return text
+    return "unknown"
+
+
+def _validate_worker_mcp_inputs(worker: DispatchWorkerSettings) -> None:
+    if not worker.mcp_enabled:
+        return
+    raw = (worker.mcp_config_json or "").strip()
+    if not raw:
+        return
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(422, f"worker {worker.name} mcp_config_json 必须是合法 JSON") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(422, f"worker {worker.name} mcp_config_json 必须是 JSON 对象")
+
+
 def _save_provider_key(provider: str, api_key: str, updated_by: str) -> None:
     now = utcnow()
-    ciphertext = encrypt_secret(api_key)
+    ciphertext = _encrypt_provider_secret(api_key)
     hint = api_key[-4:]
     with get_conn() as conn:
         conn.execute(
@@ -436,6 +642,13 @@ def _save_provider_key(provider: str, api_key: str, updated_by: str) -> None:
             """,
             (provider, ciphertext, hint, now, updated_by),
         )
+
+
+def _encrypt_provider_secret(api_key: str) -> str:
+    try:
+        return encrypt_secret(api_key)
+    except KeyringError as exc:
+        raise HTTPException(status_code=500, detail=f"密钥加密失败：{exc}") from exc
 
 
 def _provider_key_hint(provider: str) -> str:
@@ -494,6 +707,144 @@ def _compose_proxy_url(proxy_url: str, username: str, password: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
+def _judge_settings_response(settings: JudgeSettingsData) -> JudgeSettingsResponse:
+    masked = _provider_key_hint("judge")
+    return JudgeSettingsResponse(
+        enabled_default=settings.enabled_default,
+        mode=settings.mode,
+        base_url=settings.base_url,
+        model=settings.model,
+        timeout_seconds=settings.timeout_seconds,
+        whitelist_tools=settings.whitelist_tools,
+        whitelist_bash_verbs=settings.whitelist_bash_verbs,
+        system_prompt=settings.system_prompt,
+        default_system_prompt=DEFAULT_JUDGE_SYSTEM_PROMPT,
+        hard_block_rules=settings.hard_block_rules,
+        default_hard_block_rules=DEFAULT_JUDGE_HARD_BLOCK_RULES,
+        has_key=bool(masked),
+        masked_key=masked,
+        updated_at=settings.updated_at,
+    )
+
+
+@router.get("/settings/judge", response_model=JudgeSettingsResponse)
+def get_judge_settings():
+    with get_conn() as conn:
+        return _judge_settings_response(load_judge_settings(conn))
+
+
+@router.put("/settings/judge", response_model=JudgeSettingsResponse)
+def update_judge_settings(body: UpdateJudgeSettingsRequest):
+    with get_conn() as conn:
+        current = load_judge_settings(conn)
+        saved = save_judge_settings(
+            conn,
+            JudgeSettingsData(
+                enabled_default=body.enabled_default,
+                mode=body.mode,
+                base_url=body.base_url,
+                model=body.model,
+                timeout_seconds=body.timeout_seconds,
+                whitelist_tools=body.whitelist_tools,
+                whitelist_bash_verbs=body.whitelist_bash_verbs,
+                system_prompt=body.system_prompt if "system_prompt" in body.model_fields_set else current.system_prompt,
+                hard_block_rules=[rule.model_dump() for rule in body.hard_block_rules] if "hard_block_rules" in body.model_fields_set else current.hard_block_rules,
+            ),
+        )
+        return _judge_settings_response(saved)
+
+
+@router.post("/settings/judge/test", response_model=JudgeTestResponse)
+def test_judge_settings():
+    with get_conn() as conn:
+        settings = load_judge_settings(conn)
+    api_key = load_provider_api_key("judge") or os.getenv("AXIOM_GUARD_API_KEY") or os.getenv("SILICONFLOW_API_KEY")
+    if not api_key:
+        return JudgeTestResponse(ok=False, message="裁判 API Key 未配置")
+    started = __import__("time").perf_counter()
+    try:
+        response = requests.post(
+            f"{settings.base_url.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": settings.model,
+                "messages": [
+                    {"role": "system", "content": settings.system_prompt or DEFAULT_JUDGE_SYSTEM_PROMPT},
+                    {"role": "user", "content": "只回复一行 ALLOW"},
+                ],
+                "temperature": 0,
+                "max_tokens": 16,
+                "enable_thinking": False,
+            },
+            timeout=settings.timeout_seconds,
+        )
+        latency_ms = int((__import__("time").perf_counter() - started) * 1000)
+        if response.status_code >= 400:
+            return JudgeTestResponse(ok=False, message=f"HTTP {response.status_code}: {response.text[:300]}", latency_ms=latency_ms)
+        payload = response.json()
+        raw = str(payload.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
+        return JudgeTestResponse(ok=raw == "ALLOW", decision=raw, message="连接成功" if raw else "模型未返回内容", latency_ms=latency_ms, raw_output=raw[:200])
+    except Exception as exc:
+        latency_ms = int((__import__("time").perf_counter() - started) * 1000)
+        return JudgeTestResponse(ok=False, message=f"{type(exc).__name__}: {exc}", latency_ms=latency_ms)
+
+
+@router.post("/settings/judge/batch-url-test", response_model=JudgeUrlBatchResponse)
+def test_judge_urls(body: JudgeUrlBatchRequest):
+    """批量 URL 守门测试：复用 evaluate_guard_event，强制 enforce 模式（忽略全局开关）。"""
+    with get_conn() as conn:
+        settings = load_judge_settings(conn)
+    api_key = load_provider_api_key("judge")
+    config = GuardPolicyConfig(
+        mode="enforce",  # 强制判定，不受全局 judge 模式影响
+        base_url=settings.base_url,
+        model_name=settings.model,
+        timeout_seconds=settings.timeout_seconds,
+        whitelist_tools=settings.whitelist_tools,
+        whitelist_bash_verbs=settings.whitelist_bash_verbs,
+        hard_block_rules=settings.hard_block_rules,
+        system_prompt=settings.system_prompt or DEFAULT_JUDGE_SYSTEM_PROMPT,
+    )
+    results: list[JudgeUrlTestResult] = []
+    allowed = blocked = 0
+    total_latency = 0
+    for item in body.items:
+        input_payload = {"method": item.method, "url": item.url, "body": item.body}
+        evaluation = evaluate_guard_event(
+            tool_name="http_request",
+            input_payload=input_payload,
+            metadata={"source": "settings.judge.batch-url-test"},
+            config=config,
+            api_key=api_key,
+        )
+        results.append(
+            JudgeUrlTestResult(
+                method=item.method,
+                url=item.url,
+                body=item.body,
+                decision=evaluation.decision,
+                reason=evaluation.reason,
+                source=evaluation.source,
+                model_name=evaluation.model_name,
+                model_latency_ms=evaluation.model_latency_ms,
+                raw_model_output=evaluation.raw_model_output[:2000],
+                normalized=evaluation.normalized,
+            )
+        )
+        if evaluation.decision == "BLOCK":
+            blocked += 1
+        else:
+            allowed += 1
+        total_latency += evaluation.model_latency_ms
+    return JudgeUrlBatchResponse(
+        results=results,
+        total=len(results),
+        allowed=allowed,
+        blocked=blocked,
+        total_latency_ms=total_latency,
+    )
+
+
 @router.get("/settings/keys", response_model=ProviderKeysResponse)
 def list_provider_keys():
     with get_conn() as conn:
@@ -533,7 +884,7 @@ def update_provider_key(provider: str, body: UpdateProviderKeyRequest):
     if provider not in SUPPORTED_KEY_PROVIDERS:
         raise HTTPException(400, f"unsupported provider: {provider}")
     now = utcnow()
-    ciphertext = encrypt_secret(body.api_key)
+    ciphertext = _encrypt_provider_secret(body.api_key)
     hint = body.api_key[-4:]
     with get_conn() as conn:
         conn.execute(

@@ -10,11 +10,9 @@ window.AxiomModules.actions = {
         if (raw) {
           targets = raw.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
         }
-        // 用户未填时，回退到当前项目组的授权白名单，以保证通过后端范围校验
+        // 用户未填时，回退到当前任务的白名单。
         if (targets.length === 0) {
-          const gid = this.project?.project?.parent_project_id || '';
-          const group = this.projectGroups.find(g => g.id === gid);
-          const scope = group?.scope || {};
+          const scope = this.project?.project?.task_scope || {};
           const allow = scope.targets || [];
           if (allow.length > 0) targets = allow.slice();
         }

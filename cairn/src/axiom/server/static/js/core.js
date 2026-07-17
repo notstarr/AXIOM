@@ -20,9 +20,14 @@ window.AxiomModules.core = {
       if (this._loadedTemplates[name]) return;
       this._loadedTemplates[name] = true;
       const html = await this.loadTemplate(name);
-      this.$el.innerHTML = html;
+      const container = document.querySelector('[data-page="' + name + '"]');
+      if (!container) {
+        console.error('No container for page:', name);
+        return;
+      }
+      container.innerHTML = html;
       this.$nextTick(() => {
-        if (window.Alpine) window.Alpine.initTree(this.$el);
+        if (window.Alpine) window.Alpine.initTree(container);
       });
     },
 
@@ -102,15 +107,8 @@ window.AxiomModules.core = {
 
     handleRoute() {
       const hash = location.hash || '#/';
-      const actionReplayMatch = hash.match(/^#\/tasks\/([^/]+)\/replay$/);
       const taskMatch = hash.match(/^#\/tasks\/(.+)$/);
       const legacyProjectMatch = hash.match(/^#\/projects\/(.+)$/);
-      if (actionReplayMatch) {
-        const id = decodeURIComponent(actionReplayMatch[1]);
-        if (this.view !== 'list') this.backToList(true);
-        this.openActionReplay(id, '', true);
-        return;
-      }
       if (taskMatch || legacyProjectMatch) {
         const id = decodeURIComponent((taskMatch || legacyProjectMatch)[1]);
         this.activePage = 'task-detail';
@@ -118,10 +116,14 @@ window.AxiomModules.core = {
         return;
       }
       const page = (hash.replace(/^#\/?/, '') || 'dashboard').split('/')[0];
-      const allowed = ['dashboard', 'tasks', 'vulnerabilities', 'projects', 'skills', 'files', 'mcp', 'assets', 'settings', 'crawler-results', 'prompts'];
-      this.activePage = allowed.includes(page) ? page : 'dashboard';
+      const allowed = ['dashboard', 'tasks', 'vulnerabilities', 'projects', 'guard-audit', 'skills', 'files', 'mcp', 'assets', 'settings', 'crawler-results', 'prompts', 'batch-url-judge'];
+      const newPage = allowed.includes(page) ? page : 'dashboard';
+      if (this.activePage !== newPage && !this._navigatingBack) {
+        this.pageHistory.push(this.activePage);
+      }
+      this._navigatingBack = false;
+      this.activePage = newPage;
       if (this.activePage !== 'task-detail' && this.view !== 'list') this.backToList(true);
-      if (this.activePage !== 'action-replay' && this.actionReplayProjectId) this.closeActionReplay();
       if (this.activePage === 'vulnerabilities' || this.activePage === 'projects' || this.activePage === 'dashboard') {
         this.loadAllProjectDetails();
       }
@@ -132,6 +134,9 @@ window.AxiomModules.core = {
         this.loadSkills();
       }
       if (this.activePage === 'settings') this.loadSettings();
+      if (this.activePage === 'tasks') this.loadDispatchSettings();
+      if (this.activePage === 'guard-audit') this.loadGuardAuditEvents();
+      if (this.activePage === 'mcp') { this.loadDispatchSettings(); this.loadMcpServers(); }
       if (this.activePage === 'assets') { this.loadAssets(); this.loadAssetStats(); this.loadAssetFilters(); this.loadCredentials(); }
     },
 
@@ -141,6 +146,7 @@ window.AxiomModules.core = {
         tasks: '#/tasks',
         vulnerabilities: '#/vulnerabilities',
         projects: '#/projects',
+        'guard-audit': '#/guard-audit',
         skills: '#/skills',
         files: '#/files',
         mcp: '#/mcp',
@@ -148,8 +154,23 @@ window.AxiomModules.core = {
         settings: '#/settings',
         'crawler-results': '#/crawler-results',
         prompts: '#/prompts',
+        'batch-url-judge': '#/batch-url-judge',
       };
       location.hash = routes[page] || '#/dashboard';
+      this.handleRoute();
+    },
+
+    goBack() {
+      if (this.pageHistory.length === 0) return;
+      const prev = this.pageHistory.pop();
+      this._navigatingBack = true;
+      const routes = {
+        dashboard: '#/dashboard', tasks: '#/tasks', vulnerabilities: '#/vulnerabilities',
+        projects: '#/projects', 'guard-audit': '#/guard-audit', skills: '#/skills', files: '#/files', mcp: '#/mcp',
+        assets: '#/assets', settings: '#/settings', 'crawler-results': '#/crawler-results',
+        prompts: '#/prompts', 'task-detail': '#/task-detail', 'batch-url-judge': '#/batch-url-judge',
+      };
+      location.hash = routes[prev] || '#/dashboard';
       this.handleRoute();
     },
 
@@ -158,16 +179,26 @@ window.AxiomModules.core = {
       if (body) opts.body = JSON.stringify(body);
       const r = await fetch(path, opts);
       if (r.status === 204) return null;
-      const data = await r.json();
+      const text = await r.text();
+      let data = null;
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          data = null;
+        }
+      }
       if (!r.ok) {
         let msg = `HTTP ${r.status}`;
-        if (typeof data.detail === 'string') msg = data.detail;
-        else if (Array.isArray(data.detail)) msg = data.detail.map(e => e.msg).join('; ');
+        if (data && typeof data.detail === 'string') msg = data.detail;
+        else if (data && Array.isArray(data.detail)) msg = data.detail.map(e => e.msg).join('; ');
+        else if (text) msg = text;
         const err = new Error(msg);
         err.status = r.status;
         err.path = path;
         throw err;
       }
+      if (data === null) return text || {};
       return data;
     },
 
@@ -188,6 +219,62 @@ window.AxiomModules.core = {
     showToast(msg, type = 'info') {
       this.toast = { show: true, message: msg, type };
       setTimeout(() => this.toast.show = false, 3000);
+    },
+
+    async refreshCurrentPage(options = {}) {
+      if (this.refreshLoading) return;
+      const { silent = false } = options;
+      this.refreshLoading = true;
+      try {
+        if (this.activePage === 'dashboard') {
+          await this.refreshDashboardPage({ silent: true });
+        } else if (this.activePage === 'tasks') {
+          await Promise.all([this.loadProjectGroups(), this.loadProjects(), this.loadDispatchSettings()]);
+          if (typeof this.loadMcpServers === 'function') await this.loadMcpServers();
+        } else if (this.activePage === 'task-detail' && this.selectedProjectId) {
+          await Promise.all([this.loadProject(this.selectedProjectId), this.loadSeeEvents(true), this.loadDispatchSettings(), this.loadConversation(this.selectedProjectId, { silent: true })]);
+          if (this.sideTab === 'board') await this.reloadBlackboardGroup(this.project?.project?.parent_project_id);
+          this.updateGraph();
+        } else if (this.activePage === 'vulnerabilities') {
+          await this.loadProjects();
+          await this.loadAllProjectDetails(true);
+        } else if (this.activePage === 'projects') {
+          await Promise.all([this.loadProjectGroups(), this.loadProjects()]);
+          await this.loadAllProjectDetails(true);
+          if (this.selectedProjectManagementTaskId) await this.loadProjectDetailForManagement(this.selectedProjectManagementTaskId);
+        } else if (this.activePage === 'skills') {
+          await this.loadSkills();
+          if (this.skillEditor?.name && !this.skillEditor.fileDirty) await this.loadSkillFiles();
+        } else if (this.activePage === 'files') {
+          const selected = {
+            groupId: this.fileGroupId,
+            taskId: this.fileTaskId,
+            folder: this.fileFolder,
+            isGroupLevel: this.fileIsGroupLevel,
+          };
+          await Promise.all([this.loadProjectGroups(), this.loadProjects()]);
+          await this.loadFileTree();
+          if (selected.folder && (selected.isGroupLevel ? selected.groupId : selected.taskId)) {
+            await this.selectFolder(selected.groupId, selected.taskId, selected.folder, selected.isGroupLevel);
+          }
+        } else if (this.activePage === 'assets') {
+          await Promise.all([this.loadAssetFilters(), this.loadAssets(), this.loadCredentials()]);
+        } else if (this.activePage === 'crawler-results') {
+          await Promise.all([this.loadCrawlerTasks(), this.loadCrawlerWorkerSettings()]);
+          if (this.selectedCrawlerTaskId) await Promise.all([this.loadCrawlerStatus(), this.loadCrawlerResultsPage()]);
+        } else if (this.activePage === 'mcp') {
+          await Promise.all([this.loadDispatchSettings(), this.loadMcpServers()]);
+        } else if (this.activePage === 'settings') {
+          await Promise.all([this.loadSettings(), this.loadDispatchSettings(), this.loadCrawlerWorkerSettings()]);
+        } else if (this.activePage === 'prompts') {
+          this.loadPrompts();
+        }
+        if (!silent) this.showToast('已刷新');
+      } catch (e) {
+        this.showToast('刷新失败: ' + (e.message || e), 'error');
+      } finally {
+        this.refreshLoading = false;
+      }
     },
 
     loadLocalPrefs() {

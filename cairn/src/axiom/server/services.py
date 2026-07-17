@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from fastapi import HTTPException
 
-from axiom.server.models import BlackboardItem, Intent, ProjectMeta, ProjectReason, Vulnerability
+from axiom.server.models import BlackboardItem, Intent, ProjectMeta, ProjectReason, TaskScope, Vulnerability
 
 LOG = logging.getLogger(__name__)
 
@@ -297,8 +297,13 @@ def build_blackboard_items_for_group(conn: sqlite3.Connection, group_id: str) ->
 
 
 def next_blackboard_item_id_for_group(conn: sqlite3.Connection, group_id: str) -> str:
-    import uuid
-    return f"b{uuid.uuid4().hex[:12]}"
+    rows = conn.execute("SELECT id FROM blackboard_items WHERE group_id = ?", (group_id,)).fetchall()
+    max_value = 0
+    for row in rows:
+        raw = str(row["id"] or "")
+        if raw.startswith("b") and raw[1:].isdigit():
+            max_value = max(max_value, int(raw[1:]))
+    return f"b{max_value + 1:03d}"
 
 
 def _blackboard_item_from_row(row: sqlite3.Row) -> BlackboardItem:
@@ -367,6 +372,23 @@ def project_reason_from_row(row: sqlite3.Row) -> ProjectReason | None:
     )
 
 
+def parse_task_scope(enabled: int | bool | None, raw: str | None) -> TaskScope:
+    data: dict[str, object] = {}
+    if raw:
+        try:
+            payload = json.loads(raw)
+            if isinstance(payload, dict):
+                data = payload
+        except json.JSONDecodeError:
+            data = {}
+    return TaskScope(
+        enabled=bool(enabled),
+        targets=[str(item) for item in data.get("targets", [])] if isinstance(data.get("targets", []), list) else [],
+        exclude=[str(item) for item in data.get("exclude", [])] if isinstance(data.get("exclude", []), list) else [],
+        notes=str(data.get("notes", "") or ""),
+    )
+
+
 def project_meta_from_row(row: sqlite3.Row) -> ProjectMeta:
     worker_pool: list[str] = []
     if "worker_pool" in row.keys() and row["worker_pool"]:
@@ -386,6 +408,8 @@ def project_meta_from_row(row: sqlite3.Row) -> ProjectMeta:
         depth_mode=bool(row["depth_mode"]) if "depth_mode" in row.keys() else False,
         guard_enabled=bool(row["guard_enabled"]) if "guard_enabled" in row.keys() else False,
         worker_pool=worker_pool,
+        task_scope=parse_task_scope(row["task_scope_enabled"] if "task_scope_enabled" in row.keys() else 0, row["task_scope_json"] if "task_scope_json" in row.keys() else None),
+        credential_headers=row["credential_headers"] if "credential_headers" in row.keys() else "",
         created_at=row["created_at"],
         reason=project_reason_from_row(row),
     )
@@ -507,17 +531,11 @@ def validate_intent_scope(
     description: str,
     targets: list[str] | None,
 ) -> None:
-    project_row = conn.execute("SELECT parent_project_id FROM projects WHERE id = ?", (project_id,)).fetchone()
-    if not project_row or not project_row["parent_project_id"]:
-        return
-    group_row = conn.execute(
-        "SELECT scope_json FROM project_groups WHERE id = ?",
-        (project_row["parent_project_id"],),
-    ).fetchone()
-    if not group_row or not group_row["scope_json"]:
+    project_row = conn.execute("SELECT task_scope_enabled, task_scope_json FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if not project_row or not bool(project_row["task_scope_enabled"]):
         return
     try:
-        scope_data = json.loads(group_row["scope_json"])
+        scope_data = json.loads(project_row["task_scope_json"] or "{}")
     except Exception:
         return
 
@@ -527,8 +545,6 @@ def validate_intent_scope(
     deny_list = [item for item in deny_list if item]
 
     require_targets = _env_truthy("AXIOM_REQUIRE_INTENT_TARGETS", default=True)
-    # 仅当项目组配置了范围策略（白名单或黑名单非空）时才强制 intent 声明 targets；
-    # 无任何范围策略时不需要 targets，否则会无谓地阻断正常的人工派发。
     require_targets = require_targets and bool(allow_list or deny_list)
     intent_targets = _resolve_targets_for_scope(targets=targets, require_targets=require_targets)
     if not intent_targets:
@@ -544,9 +560,8 @@ def validate_intent_scope(
 
     if allow_list:
         for host in intent_targets:
-            if any(_match_scope(host, allowed) for allowed in allow_list):
-                return
-        raise HTTPException(
-            status_code=400,
-            detail=f"Intent targets {intent_targets} do not match whitelist {allow_list}.",
-        )
+            if not any(_match_scope(host, allowed) for allowed in allow_list):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Intent target '{host}' does not match whitelist {allow_list}.",
+                )
