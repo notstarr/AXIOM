@@ -381,3 +381,39 @@ context_revisions = Table(
     Column("created_at", String, nullable=False),
     PrimaryKeyConstraint("task_id", "revision"),
 )
+
+
+dispatch_workers = Table(
+    "dispatch_workers",
+    metadata,
+    Column("name", String, primary_key=True),
+    Column("worker_type", String, nullable=False, server_default="pi"),
+    Column("capabilities_json", Text, nullable=False),
+    Column("max_running", Integer, nullable=False),
+    Column("priority", Integer, nullable=False, server_default=text("0")),
+    Column("config_json", Text, nullable=False, server_default="{}"),
+    Column("disabled", Boolean, nullable=False, server_default=text("0")),
+    Column("updated_at", String, nullable=False),
+    CheckConstraint("max_running > 0", name="max_running"),
+)
+
+
+worker_runtime_states = Table(
+    "worker_runtime_states",
+    metadata,
+    Column("worker_name", String, ForeignKey("dispatch_workers.name", ondelete="CASCADE"), primary_key=True),
+    Column("cooldown_until", String),
+    Column("last_failure_kind", String, nullable=False, server_default=""),
+    Column("updated_at", String, nullable=False),
+)
+
+
+runtime_settings = Table(
+    "runtime_settings",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("config_json", Text, nullable=False),
+    Column("version", Integer, nullable=False, server_default=text("1")),
+    Column("updated_by", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+)

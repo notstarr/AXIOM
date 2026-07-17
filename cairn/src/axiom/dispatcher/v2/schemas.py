@@ -40,3 +40,8 @@ class WorkerSnapshot(BaseModel):
     priority: int
     disabled: bool = False
     cooldown_until: str | None = None
+
+
+class DispatcherSnapshot(BaseModel):
+    tasks: list[TaskSnapshot]
+    workers: list[WorkerSnapshot]

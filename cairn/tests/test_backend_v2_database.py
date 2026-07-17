@@ -31,6 +31,9 @@ EXPECTED_CORE_TABLES = {
     "external_report_attempts",
     "audit_events",
     "context_revisions",
+    "dispatch_workers",
+    "worker_runtime_states",
+    "runtime_settings",
 }
 
 

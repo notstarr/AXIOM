@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from axiom.api.v1 import (
     artifacts,
     credentials,
+    dispatcher,
     lifecycle,
     projects,
     reason_workspaces,
@@ -23,3 +24,5 @@ router.include_router(artifacts.router)
 router.include_router(vulnerabilities.router)
 router.include_router(lifecycle.router)
 router.include_router(lifecycle.internal)
+router.include_router(dispatcher.router)
+router.include_router(dispatcher.internal)
