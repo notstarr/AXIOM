@@ -197,3 +197,41 @@ def credential_list(project_id: str) -> None:
 @click.argument("credential_id")
 def credential_get(credential_id: str) -> None:
     _emit(_request("GET", f"/api/v1/internal/credentials/{credential_id}"))
+
+
+@main.group()
+def artifact() -> None:
+    """Register and list Task artifacts."""
+
+
+@artifact.command("list")
+def artifact_list() -> None:
+    _emit(_request("GET", f"/api/v1/tasks/{_task_id()}/artifacts"))
+
+
+@artifact.command("register")
+@click.option("--type", "artifact_type", required=True)
+@click.option("--path", required=True)
+@click.option("--summary", default="")
+@click.option("--intent-id", default=lambda: os.getenv("AXIOM_INTENT_ID", ""))
+@click.option("--actor", default=lambda: os.getenv("AXIOM_WORKER", "worker"))
+def artifact_register(
+    artifact_type: str,
+    path: str,
+    summary: str,
+    intent_id: str,
+    actor: str,
+) -> None:
+    _emit(
+        _request(
+            "POST",
+            f"/api/v1/internal/tasks/{_task_id()}/artifacts",
+            {
+                "intent_id": intent_id.strip() or None,
+                "artifact_type": artifact_type,
+                "path": path,
+                "summary": summary,
+                "actor": actor,
+            },
+        )
+    )
