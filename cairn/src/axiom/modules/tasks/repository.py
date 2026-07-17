@@ -4,7 +4,14 @@ import json
 
 from sqlalchemy import Connection, select
 
-from axiom.infrastructure.database.metadata import facts, intent_sources, intents, task_hints, tasks
+from axiom.infrastructure.database.metadata import (
+    facts,
+    id_counters,
+    intent_sources,
+    intents,
+    task_hints,
+    tasks,
+)
 from axiom.modules.common.ids import allocate_readable_id
 from axiom.modules.tasks.schemas import CreateTask, Origin, Task, TaskScope
 
@@ -47,6 +54,9 @@ class TaskRepository:
             "updated_at": now,
         }
         conn.execute(tasks.insert().values(**task_values))
+        conn.execute(
+            id_counters.insert().values(scope=task_id, kind="intent", next_value=2)
+        )
         conn.execute(
             facts.insert(),
             [
