@@ -46,9 +46,10 @@ class ArtifactService:
                 ).scalar_one_or_none()
                 if exists is None:
                     raise ValueError(f"Intent not found: {body.intent_id}")
-            return self.repository.create(
+            return self.repository.upsert_path(
                 conn,
                 task_id=task_id,
+                path=str(path),
                 now=utcnow(),
                 values={
                     "intent_id": body.intent_id,

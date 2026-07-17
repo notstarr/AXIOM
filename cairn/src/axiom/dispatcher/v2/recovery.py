@@ -3,15 +3,16 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from pydantic import BaseModel
-from sqlalchemy import Engine, update
+from sqlalchemy import Engine, select, update
 
-from axiom.infrastructure.database.metadata import intents, tasks
+from axiom.infrastructure.database.metadata import intents, reason_workspaces, tasks
 from axiom.modules.common.time import utcnow
 
 
 class RecoveryResult(BaseModel):
     intents_released: int
     reasons_released: int
+    workspaces_abandoned: int = 0
 
 
 class LeaseRecoveryService:
@@ -52,7 +53,23 @@ class LeaseRecoveryService:
                     updated_at=now,
                 )
             )
+            workspace_result = conn.execute(
+                update(reason_workspaces)
+                .where(
+                    reason_workspaces.c.status == "open",
+                    reason_workspaces.c.task_id.in_(
+                        select(tasks.c.id).where(tasks.c.reason_worker.is_(None))
+                    ),
+                    reason_workspaces.c.updated_at < cutoff,
+                )
+                .values(
+                    status="abandoned",
+                    failure_reason="stale Reason lease recovered after Dispatcher restart",
+                    updated_at=now,
+                )
+            )
         return RecoveryResult(
             intents_released=intent_result.rowcount or 0,
             reasons_released=reason_result.rowcount or 0,
+            workspaces_abandoned=workspace_result.rowcount or 0,
         )

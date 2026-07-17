@@ -52,7 +52,7 @@ class DispatcherSnapshotService:
                         status=row["status"],
                         phase=row["phase"],
                         reason_worker=row["reason_worker"],
-                        reason_due=row["phase"] in {"reason", "waiting"},
+                        reason_due=row["phase"] == "reason",
                         worker_pool=json.loads(row["worker_pool_json"] or "[]"),
                         intents=intents_by_task.get(row["id"], []),
                     )

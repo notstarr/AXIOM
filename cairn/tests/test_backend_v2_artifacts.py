@@ -44,6 +44,21 @@ def test_artifact_registration_indexes_existing_file_without_copying(tmp_path) -
     assert len(artifact.content_hash) == 64
     assert service.list(task.id)[0].content_hash == artifact.content_hash
 
+    artifact_path.write_text("# findings\nupdated evidence\n", encoding="utf-8")
+    updated = service.register(
+        task.id,
+        RegisterArtifact(
+            intent_id="i001",
+            artifact_type="findings",
+            path=str(artifact_path),
+            summary="updated",
+            actor="bootstrap-worker",
+        ),
+    )
+    assert updated.id == artifact.id
+    assert updated.content_hash != artifact.content_hash
+    assert len(service.list(task.id)) == 1
+
 
 def test_artifact_registration_rejects_files_outside_data_dir(tmp_path) -> None:
     engine = create_sqlite_engine(tmp_path / "axiom-v2.db")

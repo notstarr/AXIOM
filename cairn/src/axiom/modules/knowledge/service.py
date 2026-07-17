@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, update
 
-from axiom.infrastructure.database.metadata import project_knowledge, task_hints
+from axiom.infrastructure.database.metadata import intents, project_knowledge, task_hints, tasks
 from axiom.modules.common.ids import allocate_readable_id
 from axiom.modules.common.time import utcnow
 from axiom.modules.knowledge.schemas import CreateKnowledge, CreateTaskHint, Knowledge, TaskHint
@@ -37,6 +37,15 @@ class KnowledgeService:
                 "archived": False,
             }
             conn.execute(project_knowledge.insert().values(**values))
+            conn.execute(
+                update(tasks)
+                .where(
+                    tasks.c.project_id == project_id,
+                    tasks.c.status == "running",
+                    tasks.c.phase == "waiting",
+                )
+                .values(phase="reason", updated_at=now)
+            )
             return Knowledge(**values)
 
     def list_project_knowledge(self, project_id: str) -> list[Knowledge]:
@@ -69,6 +78,25 @@ class KnowledgeService:
                 "archived": False,
             }
             conn.execute(task_hints.insert().values(**values))
+            conn.execute(
+                update(intents)
+                .where(
+                    intents.c.task_id == task_id,
+                    intents.c.id == "i001",
+                    intents.c.status == "pending",
+                    intents.c.last_failure_kind == "needs_hint",
+                )
+                .values(last_failure_kind="", next_retry_at=now)
+            )
+            conn.execute(
+                update(tasks)
+                .where(
+                    tasks.c.id == task_id,
+                    tasks.c.status == "running",
+                    tasks.c.phase == "waiting",
+                )
+                .values(phase="reason", updated_at=now)
+            )
             return TaskHint(**values)
 
     def list_task_hints(self, task_id: str) -> list[TaskHint]:

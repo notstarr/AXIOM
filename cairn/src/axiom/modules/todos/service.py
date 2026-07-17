@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, update
+
+from axiom.infrastructure.database.metadata import tasks
 
 from axiom.modules.common.time import utcnow
 from axiom.modules.tasks.repository import TaskRepository
@@ -36,7 +38,18 @@ class TodoService:
                     source=source,
                 ):
                     raise ValueError(f"Todo source not found: {source.type}:{source.id}")
-            return self.repository.create(conn, task_id, command, now=utcnow())
+            now = utcnow()
+            todo = self.repository.create(conn, task_id, command, now=now)
+            conn.execute(
+                update(tasks)
+                .where(
+                    tasks.c.id == task_id,
+                    tasks.c.status == "running",
+                    tasks.c.phase == "waiting",
+                )
+                .values(phase="reason", updated_at=now)
+            )
+            return todo
 
     def list(self, task_id: str) -> list[Todo]:
         with self.engine.connect() as conn:

@@ -182,7 +182,10 @@ class IntentService:
             conn.execute(
                 update(tasks)
                 .where(tasks.c.id == task_id)
-                .values(phase="reason", updated_at=now)
+                .values(
+                    phase=self._phase_after_intent(conn, task_id, intent_id),
+                    updated_at=now,
+                )
             )
             self.audit.record_in(
                 conn,
@@ -229,7 +232,10 @@ class IntentService:
             conn.execute(
                 update(tasks)
                 .where(tasks.c.id == task_id)
-                .values(phase="reason", updated_at=now)
+                .values(
+                    phase=self._phase_after_intent(conn, task_id, intent_id),
+                    updated_at=now,
+                )
             )
             self.audit.record_in(
                 conn,
@@ -244,6 +250,17 @@ class IntentService:
                 ),
             )
             return self._require_intent(conn, task_id, intent_id)
+
+    @staticmethod
+    def _phase_after_intent(conn, task_id: str, current_intent_id: str) -> str:
+        remaining = conn.execute(
+            select(intents.c.id).where(
+                intents.c.task_id == task_id,
+                intents.c.id != current_intent_id,
+                intents.c.status.in_(["pending", "claimed", "running", "concluding"]),
+            ).limit(1)
+        ).scalar_one_or_none()
+        return "explore" if remaining is not None else "reason"
 
     def _require_running_task(self, conn, task_id: str):
         task = self.tasks.get(conn, task_id)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Connection, select
+from sqlalchemy import Connection, select, update
 
 from axiom.infrastructure.database.metadata import artifacts
 from axiom.modules.artifacts.schemas import Artifact
@@ -23,3 +23,28 @@ class ArtifactRepository:
             .order_by(artifacts.c.created_at, artifacts.c.id)
         ).mappings()
         return [Artifact(**row) for row in rows]
+
+    def upsert_path(
+        self,
+        conn: Connection,
+        *,
+        task_id: str,
+        path: str,
+        now: str,
+        values: dict,
+    ) -> Artifact:
+        row = conn.execute(
+            select(artifacts).where(
+                artifacts.c.task_id == task_id,
+                artifacts.c.path == path,
+            )
+        ).mappings().one_or_none()
+        if row is None:
+            return self.create(conn, task_id=task_id, now=now, values=values)
+        conn.execute(
+            update(artifacts)
+            .where(artifacts.c.task_id == task_id, artifacts.c.id == row["id"])
+            .values(**values)
+        )
+        updated = {**dict(row), **values}
+        return Artifact(**updated)

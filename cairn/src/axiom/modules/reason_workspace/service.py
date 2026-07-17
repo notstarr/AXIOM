@@ -4,7 +4,7 @@ import json
 
 from sqlalchemy import Engine, func, select, update
 
-from axiom.infrastructure.database.metadata import facts, intent_sources, intents, tasks, todos
+from axiom.infrastructure.database.metadata import facts, intent_sources, intents, reason_workspaces, tasks, todos
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
 from axiom.modules.common.ids import allocate_readable_id
@@ -263,10 +263,15 @@ class ReasonWorkspaceService:
         return workspace
 
     def _validate_limits(self, conn, workspace: ReasonWorkspace) -> None:
-        existing_count = conn.execute(
-            select(func.count()).select_from(todos).where(todos.c.task_id == workspace.task_id)
+        committed_rounds = conn.execute(
+            select(func.count())
+            .select_from(reason_workspaces)
+            .where(
+                reason_workspaces.c.task_id == workspace.task_id,
+                reason_workspaces.c.status == "committed",
+            )
         ).scalar_one()
-        max_adds = 10 if existing_count == 0 else 5
+        max_adds = 10 if committed_rounds == 0 else 5
         if len(workspace.draft.todo_adds) > max_adds:
             raise ValueError(f"Reason may add at most {max_adds} Todos in this round")
         if len(workspace.draft.todo_updates) > 10:

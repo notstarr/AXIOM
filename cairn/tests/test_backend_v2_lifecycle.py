@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from axiom.api.v1.router import router
 from axiom.infrastructure.database.engine import create_sqlite_engine
-from axiom.infrastructure.database.metadata import artifacts, metadata
+from axiom.infrastructure.database.metadata import artifacts, intent_sources, intents, metadata, tasks
 from axiom.modules.common.time import utcnow
 from axiom.modules.graph.service import IntentService
 from axiom.modules.projects.schemas import CreateProject
@@ -14,6 +14,9 @@ from axiom.modules.projects.service import ProjectService
 from axiom.modules.tasks.lifecycle import TaskLifecycleService
 from axiom.modules.tasks.schemas import CreateTask
 from axiom.modules.tasks.service import TaskService
+from sqlalchemy import update
+from axiom.modules.knowledge.schemas import CreateTaskHint
+from axiom.modules.knowledge.service import KnowledgeService
 
 
 def make_domain(tmp_path):
@@ -140,3 +143,59 @@ def test_internal_lifecycle_api_requires_token_and_runs_commands(tmp_path) -> No
         )
         assert concluded.status_code == 200
         assert concluded.json()["fact"]["id"] == "f001"
+
+
+def test_reason_waits_for_all_open_explore_intents(tmp_path) -> None:
+    engine, task = make_domain(tmp_path)
+    now = utcnow()
+    with engine.begin() as conn:
+        conn.execute(
+            update(intents)
+            .where(intents.c.task_id == task.id, intents.c.id == "i001")
+            .values(status="completed", concluded_at=now)
+        )
+        for intent_id in ("i002", "i003"):
+            conn.execute(
+                intents.insert().values(
+                    id=intent_id,
+                    task_id=task.id,
+                    description=intent_id,
+                    status="pending",
+                    creator="reason",
+                    worker_pool_json="[]",
+                    targets_json='["example.com"]',
+                    created_at=now,
+                )
+            )
+            conn.execute(
+                intent_sources.insert().values(
+                    task_id=task.id,
+                    intent_id=intent_id,
+                    fact_id="origin",
+                )
+            )
+        conn.execute(update(tasks).where(tasks.c.id == task.id).values(phase="explore"))
+        conn.execute(
+            artifacts.insert(),
+            [
+                {"id": "a010", "task_id": task.id, "intent_id": "i002", "artifact_type": "findings", "path": "/tmp/i002-findings.md", "summary": "", "content_hash": "a" * 64, "size": 1, "created_by": "test", "created_at": now},
+                {"id": "a011", "task_id": task.id, "intent_id": "i002", "artifact_type": "leads", "path": "/tmp/i002-leads.md", "summary": "", "content_hash": "b" * 64, "size": 1, "created_by": "test", "created_at": now},
+            ],
+        )
+    service = IntentService(engine)
+    service.claim(task.id, "i002", worker="worker-a")
+    service.conclude(task.id, "i002", worker="worker-a", description="done")
+    assert TaskService(engine).get(task.id).phase == "explore"
+
+
+def test_new_hint_unblocks_bootstrap_waiting_for_human_input(tmp_path) -> None:
+    engine, task = make_domain(tmp_path)
+    intents_service = IntentService(engine)
+    intents_service.claim(task.id, "i001", worker="worker-a")
+    intents_service.release(task.id, "i001", worker="worker-a", failure_kind="needs_hint")
+    assert intents_service.get(task.id, "i001").last_failure_kind == "needs_hint"
+    KnowledgeService(engine).add_task_hint(
+        task.id,
+        CreateTaskHint(content="Use this additional origin clue", actor="human"),
+    )
+    assert intents_service.get(task.id, "i001").last_failure_kind == ""
