@@ -61,6 +61,13 @@ class TaskRepository:
             id_counters.insert().values(scope=task_id, kind="fact", next_value=1)
         )
         conn.execute(
+            id_counters.insert().values(
+                scope=task_id,
+                kind="hint",
+                next_value=len(command.hints) + 1,
+            )
+        )
+        conn.execute(
             facts.insert(),
             [
                 {
