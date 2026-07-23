@@ -1,211 +1,109 @@
-<!-- ═══════════ MCP PAGE ═══════════ -->
-<div x-show="activePage === 'mcp'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
-  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 shrink-0">
-    <div class="flex items-center justify-between">
-      <div>
-        <h2 class="text-base font-semibold text-slate-800 tracking-tight">MCP 集成管理</h2>
-        <p class="text-xs text-slate-400 mt-0.5">管理全局 MCP Servers，并为各个 Worker 配置 MCP 权限。</p>
-      </div>
-      <div class="flex items-center gap-2">
-        <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition">刷新</button>
-        <div class="flex bg-slate-100 p-1 rounded-xl">
-          <button @click="mcpActiveTab = 'servers'"
-            class="px-4 py-1.5 text-xs font-medium rounded-lg transition"
-            :class="mcpActiveTab === 'servers' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'">全局 Servers</button>
-          <button @click="mcpActiveTab = 'workers'"
-            class="px-4 py-1.5 text-xs font-medium rounded-lg transition"
-            :class="mcpActiveTab === 'workers' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'">Worker 配置</button>
-        </div>
-      </div>
+<div x-show="activePage === 'mcp'" x-cloak class="flex-1 flex flex-col overflow-hidden" x-init="loadMcpPage()">
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
+    <div>
+      <h2 class="text-base font-semibold text-slate-800">MCP 管理</h2>
+      <p class="text-xs text-slate-400 mt-0.5">Server 定义、工具权限和 Worker 绑定在这里统一管理；Worker 页面只保留模型本身。</p>
     </div>
+    <div class="flex-1"></div>
+    <button @click="loadMcpPage()" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50">刷新</button>
+    <button @click="openMcpEditor()" class="h-8 px-3 rounded-lg bg-brand-500 text-white text-xs hover:bg-brand-600">新增 Server</button>
   </header>
 
-  <main class="flex-1 overflow-y-auto p-5 space-y-4">
-    <!-- Servers Tab -->
-    <div x-show="mcpActiveTab === 'servers'" class="space-y-4">
-      <div class="flex items-center justify-between">
-        <h3 class="text-sm font-semibold text-slate-700">MCP Servers</h3>
+  <main class="flex-1 overflow-y-auto p-5 space-y-5">
+    <section class="rounded-2xl border border-slate-200 bg-white p-4">
+      <div class="flex items-center justify-between gap-3 mb-3">
+        <div><h3 class="text-sm font-semibold text-slate-800">导入配置</h3><p class="text-xs text-slate-400 mt-1">支持标准 mcpServers JSON/YAML、单 Server JSON，以及 Codex TOML。</p></div>
         <div class="flex items-center gap-2">
-          <button @click="openMcpServerModal()" class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition flex items-center gap-1.5">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-            添加服务器
-          </button>
+          <select x-model="mcpImportFormat" class="h-8 rounded-lg border border-slate-200 px-2 text-xs text-slate-600"><option value="auto">自动识别</option><option value="json">JSON</option><option value="yaml">YAML</option><option value="toml">TOML</option></select>
+          <button @click="importMcpConfig()" :disabled="mcpImportBusy" class="h-8 px-3 rounded-lg bg-slate-800 text-white text-xs disabled:opacity-50" x-text="mcpImportBusy ? '导入中…' : '导入并保存'"></button>
         </div>
       </div>
+      <textarea x-model="mcpImportContent" rows="7" class="w-full rounded-xl border border-slate-200 bg-slate-50/60 p-3 text-xs font-mono text-slate-700 outline-none focus:border-brand-400" placeholder='{"mcpServers":{"browser":{"command":"npx","args":["-y","..."],"env":{}}}}'></textarea>
+    </section>
 
-      <div class="space-y-3">
-        <template x-for="server in mcpServers" :key="server.id">
-          <div class="rounded-xl border bg-white shadow-sm p-4 transition" :class="server.disabled ? 'border-slate-200 opacity-70' : 'border-slate-200 hover:border-brand-200'">
-            <div class="flex items-start justify-between gap-4">
+    <section>
+      <div class="flex items-center justify-between mb-3"><h3 class="text-sm font-semibold text-slate-800">已配置 Server <span class="text-xs font-normal text-slate-400" x-text="`(${(mcpServers || []).length})`"></span></h3><span class="text-xs text-slate-400">未绑定到 Worker 的 Server 不会注入执行环境</span></div>
+      <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <template x-for="server in (mcpServers || [])" :key="server.id">
+          <article class="rounded-2xl border bg-white p-4" :class="server.disabled ? 'border-slate-200 opacity-65' : 'border-slate-200 hover:border-brand-200'">
+            <div class="flex items-start gap-3">
               <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2 mb-1">
-                  <h4 class="text-sm font-semibold text-slate-800" x-text="server.name"></h4>
-                  <span x-show="server.disabled" class="px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-400 rounded">已禁用</span>
-                  <span class="px-1.5 py-0.5 text-[10px] font-medium bg-sky-50 text-sky-600 rounded" x-text="mcpToolCountLabel(server)"></span>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <h4 class="text-sm font-semibold text-slate-800 truncate" x-text="server.name"></h4>
+                  <span class="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] text-slate-500" x-text="mcpTransportLabel(server)"></span>
+                  <span class="px-1.5 py-0.5 rounded text-[10px]" :class="mcpDiscoveryClass(server)" x-text="mcpDiscoveryLabel(server)"></span>
+                  <span x-show="server.disabled" class="px-1.5 py-0.5 rounded bg-amber-50 text-[10px] text-amber-600">已停用</span>
                 </div>
-                <p class="text-xs text-slate-400 font-mono truncate" x-text="mcpServerSummary(server)"></p>
+                <p class="mt-1 text-xs font-mono text-slate-400 truncate" x-text="mcpServerCommand(server)"></p>
+                <p x-show="server.server_info?.name || server.server_info?.version" class="mt-1 text-[10px] text-slate-400" x-text="[server.server_info?.name, server.server_info?.version].filter(Boolean).join(' · ')"></p>
               </div>
-              <div class="flex items-center gap-3 shrink-0">
-                <button @click="toggleMcpServerDisabled(server)" class="relative inline-flex h-5 w-9 items-center rounded-full transition" :class="server.disabled ? 'bg-slate-200' : 'bg-brand-500'">
-                  <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition" :class="server.disabled ? 'translate-x-0.5' : 'translate-x-4'"></span>
-                </button>
-                <button @click="openMcpServerModal(server)" class="p-1.5 text-slate-400 hover:text-brand-500 rounded-lg transition" title="编辑">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
-                </button>
-                <button @click="deleteMcpServer(server)" class="p-1.5 text-slate-400 hover:text-red-500 rounded-lg transition" title="删除">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                </button>
+              <div class="flex items-center gap-1 shrink-0">
+                <button @click="discoverMcpTools(server)" :disabled="server._discovering" class="px-2 py-1 rounded-lg border border-brand-100 text-[11px] text-brand-600 disabled:opacity-50" x-text="server._discovering ? '发现中…' : '重新发现'"></button>
+                <button @click="toggleMcpPageServer(server)" class="px-2 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-500" x-text="server.disabled ? '启用' : '停用'"></button>
+                <button @click="openMcpEditor(server)" class="px-2 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-500">编辑</button>
+                <button @click="deleteMcpPageServer(server)" class="px-2 py-1 rounded-lg border border-rose-100 text-[11px] text-rose-500">删除</button>
               </div>
             </div>
 
-            <div class="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 p-3 space-y-3">
-              <div class="flex items-center justify-between gap-3">
-                <div>
-                  <p class="text-xs font-semibold text-slate-700">工具权限</p>
-                  <p class="text-[11px] text-slate-400">登记工具后，可全局禁用某些工具，例如 click / type / navigate。</p>
-                </div>
-                <div class="flex gap-2">
-                  <button @click="syncMcpTools(server)" :disabled="server._syncingTools" class="px-2.5 py-1.5 text-[11px] border border-sky-200 text-sky-700 bg-sky-50 rounded-lg hover:bg-sky-100 transition disabled:opacity-50" x-text="server._syncingTools ? '同步中...' : '同步工具'"></button>
-                  <button @click="disableDangerousMcpTools(server)" class="px-2.5 py-1.5 text-[11px] border border-amber-200 text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100 transition">禁用控制类</button>
-                  <button @click="enableAllMcpTools(server)" class="px-2.5 py-1.5 text-[11px] border border-slate-200 text-slate-600 bg-white rounded-lg hover:bg-slate-50 transition">全部启用</button>
-                </div>
+            <div x-show="server.discovery_status === 'error'" class="mt-3 rounded-lg border border-rose-100 bg-rose-50/70 px-3 py-2 text-[11px] text-rose-600 break-words" x-text="server.discovery_error || 'MCP Server 未返回工具清单'"></div>
+            <details x-show="server.instructions" class="mt-3 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2">
+              <summary class="cursor-pointer text-[11px] font-medium text-slate-600">Server 使用说明</summary>
+              <p class="mt-2 whitespace-pre-wrap text-[11px] leading-5 text-slate-500" x-text="server.instructions"></p>
+            </details>
+
+            <div class="mt-3 pt-3 border-t border-slate-100">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-xs font-medium text-slate-700">暴露工具</span>
+                <span class="text-[10px] text-slate-400" x-text="`${(server.tools || []).length} 个`"></span>
+                <div class="flex-1"></div>
+                <input x-show="(server.tools || []).length > 5" x-model="server._toolQuery" class="h-7 w-40 rounded-lg border border-slate-200 px-2 text-[11px] outline-none focus:border-brand-300" placeholder="搜索工具…">
               </div>
-              <div class="flex flex-wrap gap-2" x-show="(server.tools || []).length > 0">
-                <template x-for="tool in (server.tools || [])" :key="tool.id">
-                  <div class="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition"
-                    :class="tool.enabled ? (isDangerousMcpTool(tool.name) ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700') : 'border-slate-200 bg-white text-slate-400'">
-                    <button @click="toggleMcpTool(server, tool)" class="relative inline-flex h-4 w-7 items-center rounded-full transition" :class="tool.enabled ? 'bg-emerald-500' : 'bg-slate-200'">
-                      <span class="inline-block h-3 w-3 transform rounded-full bg-white shadow-sm transition" :class="tool.enabled ? 'translate-x-3.5' : 'translate-x-0.5'"></span>
-                    </button>
-                    <span class="font-mono" x-text="tool.name"></span>
-                    <span x-show="isDangerousMcpTool(tool.name)" class="text-[10px] text-amber-500">控制</span>
-                    <button @click="deleteMcpTool(server, tool)" class="ml-1 text-slate-300 hover:text-red-500">×</button>
-                  </div>
+              <div x-show="(server.tools || []).length === 0 && server.discovery_status !== 'error'" class="rounded-lg border border-dashed border-slate-200 py-7 text-center text-xs text-slate-400">尚未发现工具，点击“重新发现”。</div>
+              <div x-show="(server.tools || []).length > 0" class="max-h-[30rem] overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100">
+                <template x-for="tool in mcpFilteredTools(server)" :key="tool.id">
+                  <details class="group bg-white open:bg-slate-50/50">
+                    <summary class="list-none cursor-pointer px-3 py-2.5 flex items-start gap-2">
+                      <span class="mt-0.5 text-[10px] text-slate-300 group-open:rotate-90 transition">▶</span>
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2">
+                          <code class="text-[11px] font-semibold text-slate-700" x-text="tool.name"></code>
+                          <span x-show="tool.title && tool.title !== tool.name" class="text-[10px] text-slate-400 truncate" x-text="tool.title"></span>
+                        </div>
+                        <p class="mt-0.5 text-[11px] text-slate-500 line-clamp-2" x-text="tool.description || 'Server 未提供功能说明'"></p>
+                      </div>
+                      <button @click.prevent.stop="toggleMcpTool(server, tool)" class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full" :class="tool.enabled ? 'bg-brand-500' : 'bg-slate-200'" :title="tool.enabled ? '停用此工具' : '启用此工具'"><span class="inline-block h-4 w-4 rounded-full bg-white shadow transition" :class="tool.enabled ? 'translate-x-4' : 'translate-x-0.5'"></span></button>
+                    </summary>
+                    <div class="px-8 pb-3 space-y-3">
+                      <div><div class="text-[10px] font-medium text-slate-400 mb-1">调用方式</div><code class="block rounded-lg bg-slate-900 px-3 py-2 text-[11px] text-emerald-300 whitespace-pre-wrap break-all" x-text="tool.usage || `${tool.name}()`"></code></div>
+                      <div x-show="mcpToolParameters(tool).length > 0">
+                        <div class="text-[10px] font-medium text-slate-400 mb-1">参数</div>
+                        <div class="rounded-lg border border-slate-200 divide-y divide-slate-100 bg-white">
+                          <template x-for="param in mcpToolParameters(tool)" :key="param.name"><div class="px-2.5 py-2 text-[11px]"><div class="flex items-center gap-2"><code class="font-semibold text-slate-700" x-text="param.name"></code><span class="text-[10px]" :class="param.required ? 'text-rose-500' : 'text-slate-400'" x-text="param.required ? '必填' : '可选'"></span><code class="text-[10px] text-blue-500" x-text="param.type"></code><span x-show="param.hasDefault" class="text-[10px] text-slate-400" x-text="`默认 ${JSON.stringify(param.defaultValue)}`"></span></div><p x-show="param.description" class="mt-1 leading-5 text-slate-500" x-text="param.description"></p></div></template>
+                        </div>
+                      </div>
+                      <p x-show="mcpToolParameters(tool).length === 0" class="text-[11px] text-slate-400">此工具无需参数，或 Server 未提供参数 Schema。</p>
+                    </div>
+                  </details>
                 </template>
-              </div>
-              <div x-show="(server.tools || []).length === 0" class="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-400">
-                还没有登记工具；未登记时保持旧行为，由 MCP server/adapter 默认暴露工具。登记后将按这里的开关精确控制。
-              </div>
-              <div class="grid grid-cols-1 lg:grid-cols-[1fr_1.5fr] gap-2">
-                <div class="flex gap-2">
-                  <input x-model="server._newToolName" @keydown.enter.prevent="addMcpTool(server)" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none" placeholder="单个工具名，如 get_page_text">
-                  <button @click="addMcpTool(server)" class="px-3 py-2 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition">添加</button>
-                </div>
-                <div class="flex gap-2">
-                  <input x-model="mcpToolImportText[server.id]" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none" placeholder="批量导入工具名：每行一个或逗号分隔">
-                  <button @click="importMcpTools(server)" class="px-3 py-2 text-xs border border-slate-200 text-slate-600 bg-white rounded-lg hover:bg-slate-50 transition">导入</button>
-                </div>
+                <div x-show="mcpFilteredTools(server).length === 0" class="py-7 text-center text-xs text-slate-400">没有匹配的工具。</div>
               </div>
             </div>
-          </div>
+          </article>
         </template>
-        <template x-if="(mcpServers || []).length === 0">
-          <div class="rounded-xl border border-dashed border-slate-200 bg-white px-6 py-12 text-center">
-            <p class="text-sm text-slate-400">暂无 MCP Server</p>
-            <button @click="openMcpServerModal()" class="mt-3 px-4 py-2 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition">添加第一个服务器</button>
-          </div>
-        </template>
+        <div x-show="(mcpServers || []).length === 0" class="xl:col-span-2 rounded-2xl border border-dashed border-slate-200 bg-white py-12 text-center text-sm text-slate-400">还没有 MCP Server，先导入一份配置或点击右上角新增。</div>
       </div>
-    </div>
+    </section>
 
-    <!-- Worker Tab -->
-    <div x-show="mcpActiveTab === 'workers'" class="space-y-4">
-      <div class="flex items-center justify-between">
-        <div>
-          <h3 class="text-sm font-semibold text-slate-700">Worker MCP 分配</h3>
-          <p class="text-xs text-slate-400 mt-0.5">只展示已启用 Worker；先选 Server，再按工具精确收窄权限。</p>
-        </div>
-        <button @click="saveServerSettings()" class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition">保存全部</button>
-      </div>
-
+    <section class="rounded-2xl border border-slate-200 bg-white p-4">
+      <div class="flex items-center justify-between mb-3"><div><h3 class="text-sm font-semibold text-slate-800">Worker 绑定</h3><p class="text-xs text-slate-400 mt-1">这里管理“哪个 Worker 可以使用哪些 MCP”，不再把 MCP 配置揉进 Worker 设置表单。</p></div></div>
       <div class="space-y-3">
-        <template x-for="worker in mcpEnabledWorkers()" :key="worker._draftId">
-          <div class="rounded-xl border border-slate-200 bg-white shadow-sm p-4">
-            <div class="flex items-center justify-between mb-1">
-              <div class="flex items-center gap-3">
-                <h4 class="text-sm font-semibold text-slate-700" x-text="worker.name || worker.worker_id || '\u2014'"></h4>
-                <span class="text-xs text-slate-400 font-mono" x-text="worker.pi_model || ''"></span>
-              </div>
-              <button @click="worker.mcp_enabled = !worker.mcp_enabled; savePiWorker(worker)" class="relative inline-flex h-5 w-9 items-center rounded-full transition shrink-0" :class="worker.mcp_enabled ? 'bg-brand-500' : 'bg-slate-200'">
-                <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition" :class="worker.mcp_enabled ? 'translate-x-4' : 'translate-x-0.5'"></span>
-              </button>
-            </div>
-            <div x-show="worker.mcp_enabled" x-cloak class="mt-3 pt-3 border-t border-slate-100">
-              <div x-show="(mcpServers || []).length === 0" class="text-xs text-slate-400 py-2">请先在上方「全局 Servers」中添加 MCP Server。</div>
-              <div x-show="(mcpServers || []).length > 0" class="flex flex-wrap gap-2">
-                <template x-for="server in mcpServers" :key="server.id">
-                  <div class="rounded-xl border p-3 w-full lg:w-[calc(50%-0.25rem)] transition"
-                    :class="isServerEnabledForWorker(worker, server.name)
-                      ? (server.disabled ? 'border-amber-200 bg-amber-50/60' : 'border-brand-200 bg-brand-50/50')
-                      : 'border-slate-200 bg-slate-50/70'">
-                    <div class="flex items-center justify-between gap-3">
-                      <button @click="toggleWorkerServer(worker, server.name)"
-                        class="px-3 py-1.5 rounded-lg border text-xs font-medium transition"
-                        :class="isServerEnabledForWorker(worker, server.name)
-                          ? (server.disabled ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-brand-300 bg-white text-brand-700')
-                          : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'">
-                        <span x-text="server.name"></span>
-                        <span x-show="server.disabled" class="ml-1 text-[10px] text-amber-500">(全局禁用)</span>
-                      </button>
-                      <span class="text-[11px] text-slate-400" x-text="mcpToolCountLabel(server)"></span>
-                    </div>
-                    <div x-show="isServerEnabledForWorker(worker, server.name)" x-cloak class="mt-3">
-                      <div x-show="enabledMcpTools(server).length === 0" class="text-[11px] text-slate-400">
-                        未登记/未启用工具：保持 server 级启用，具体暴露由 MCP adapter 默认决定。
-                      </div>
-                      <div x-show="enabledMcpTools(server).length > 0" class="flex flex-wrap gap-1.5">
-                        <template x-for="tool in enabledMcpTools(server)" :key="tool.id">
-                          <button @click="toggleWorkerTool(worker, server.name, tool.name)"
-                            class="px-2 py-1 rounded-md border text-[11px] font-mono transition"
-                            :class="isToolEnabledForWorker(worker, server.name, tool.name)
-                              ? (isDangerousMcpTool(tool.name) ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700')
-                              : 'border-slate-200 bg-white text-slate-400'">
-                            <span x-text="tool.name"></span>
-                          </button>
-                        </template>
-                      </div>
-                      <p class="mt-2 text-[10px] text-slate-400">不单独选择工具时默认允许该 server 的全部已启用工具；点击某个工具后会写入精确白名单。</p>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </div>
+        <template x-for="worker in (mcpWorkers || [])" :key="worker.worker">
+          <div class="rounded-xl border border-slate-200 p-3"><div class="flex items-center justify-between"><div><span class="text-sm font-medium text-slate-700" x-text="worker.worker"></span><span class="ml-2 text-[11px] text-slate-400" x-text="worker.worker_type"></span></div><button @click="toggleMcpWorker(worker)" class="relative inline-flex h-5 w-9 items-center rounded-full" :class="worker.enabled ? 'bg-brand-500' : 'bg-slate-200'"><span class="inline-block h-4 w-4 rounded-full bg-white shadow transition" :class="worker.enabled ? 'translate-x-4' : 'translate-x-0.5'"></span></button></div><div class="mt-3 flex flex-wrap gap-2"><template x-for="server in (mcpServers || [])" :key="server.id"><button @click="toggleMcpWorkerServer(worker, server)" class="px-2.5 py-1.5 rounded-lg border text-xs" :class="mcpWorkerHasServer(worker, server) ? 'border-brand-200 bg-brand-50 text-brand-700' : 'border-slate-200 bg-slate-50 text-slate-500'" x-text="server.name"></button></template></div><div class="mt-3"><div class="flex items-center justify-between mb-1"><span class="text-[11px] text-slate-500">工具白名单（可选）</span><button @click="saveMcpWorkerTools(worker)" class="text-[11px] text-brand-600">保存</button></div><input x-model="worker._toolsText" :value="(worker.allowed_tools || []).join(', ')" @focus="worker._toolsText = (worker.allowed_tools || []).join(', ')" class="w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs font-mono" placeholder="server:tool, server:tool；留空表示不额外收窄"></div></div>
         </template>
-        <template x-if="mcpEnabledWorkers().length === 0">
-          <div class="rounded-xl border border-dashed border-slate-200 bg-white px-6 py-12 text-center text-sm text-slate-400">暂无已启用 Worker，可先去「系统设置 -> Worker 管理」启用。</div>
-        </template>
+        <div x-show="(mcpWorkers || []).length === 0" class="text-xs text-slate-400 py-5 text-center">暂无可配置 Worker。</div>
       </div>
-    </div>
+    </section>
+  </main>
 
-  <!-- MCP Server Modal (JSON Paste) -->
-  <div x-show="showMcpServerModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-    <div @click.away="closeMcpServerModal()" class="bg-white rounded-2xl shadow-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
-      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
-        <h3 class="text-base font-semibold text-slate-800" x-text="mcpServerForm.id ? '编辑 MCP Server' : '新增 MCP Server'"></h3>
-        <button @click="closeMcpServerModal()" class="text-slate-400 hover:text-slate-600 transition">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-        </button>
-      </div>
-      <div class="p-5 overflow-y-auto space-y-4">
-        <div>
-          <label class="block text-xs font-medium text-slate-700 mb-1">粘贴 MCP Server 配置 JSON</label>
-          <textarea x-model="mcpServerFormJson" rows="14" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none transition resize-none"
-            placeholder='{"name":"","command":"","url":"","args_json":"[]","env_json":"{}"}'></textarea>
-          <p class="text-[11px] text-slate-400 mt-2 leading-relaxed">
-            直接编辑下方 5 个字段：<code class="bg-slate-100 px-1 rounded">name</code> + (<code class="bg-slate-100 px-1 rounded">command</code> stdio / <code class="bg-slate-100 px-1 rounded">url</code> sse·http) + 可选 <code class="bg-slate-100 px-1 rounded">args_json</code> / <code class="bg-slate-100 px-1 rounded">env_json</code>。
-            也支持粘贴 <code class="bg-slate-100 px-1 rounded">{"mcpServers":{"name":{...}}}</code> 标准格式。
-          </p>
-        </div>
-        <div class="flex items-center gap-2">
-          <input type="checkbox" id="mcp-server-disabled" x-model="mcpServerForm.disabled" class="rounded border-slate-300 text-brand-500 focus:ring-brand-500">
-          <label for="mcp-server-disabled" class="text-sm text-slate-700">禁用此 Server</label>
-        </div>
-      </div>
-      <div class="px-5 py-4 border-t border-slate-100 flex justify-end gap-3 shrink-0 bg-slate-50 rounded-b-2xl">
-        <button @click="closeMcpServerModal()" class="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 transition">取消</button>
-        <button @click="saveMcpServerFromJson()" class="px-4 py-2 text-sm font-medium bg-brand-500 text-white rounded-xl hover:bg-brand-600 transition shadow-sm">保存</button>
-      </div>
-    </div>
-  </div>
+  <div x-show="showMcpEditor" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showMcpEditor=false"><div class="w-full max-w-xl rounded-2xl bg-white shadow-2xl p-5" @click.stop><div class="flex items-center justify-between mb-4"><h3 class="text-base font-semibold text-slate-800" x-text="mcpServerEditor.id ? '编辑 MCP Server' : '新增 MCP Server'"></h3><button @click="showMcpEditor=false" class="text-slate-400">×</button></div><div class="grid grid-cols-2 gap-3"><label class="text-xs text-slate-600">名称<input x-model="mcpServerEditor.name" class="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm"></label><label class="text-xs text-slate-600">URL / SSE（与 command 二选一）<input x-model="mcpServerEditor.url" class="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-mono"></label></div><label class="block mt-3 text-xs text-slate-600">command（stdio）<input x-model="mcpServerEditor.command" class="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-mono"></label><div class="grid grid-cols-2 gap-3 mt-3"><label class="text-xs text-slate-600">args JSON<textarea x-model="mcpServerEditor.args" rows="5" class="mt-1 w-full rounded-lg border border-slate-200 p-2 text-xs font-mono"></textarea></label><label class="text-xs text-slate-600">env JSON<textarea x-model="mcpServerEditor.env" rows="5" class="mt-1 w-full rounded-lg border border-slate-200 p-2 text-xs font-mono"></textarea></label></div><label class="flex items-center gap-2 mt-3 text-xs text-slate-600"><input type="checkbox" x-model="mcpServerEditor.disabled">停用此 Server</label><div class="mt-4 flex justify-end gap-2"><button @click="showMcpEditor=false" class="px-3 py-2 rounded-lg border border-slate-200 text-xs text-slate-600">取消</button><button @click="saveMcpEditor()" class="px-3 py-2 rounded-lg bg-brand-500 text-white text-xs">保存</button></div></div></div>
 </div>

@@ -44,7 +44,7 @@ def test_guard_whitelist_allows_safe_tools_and_bash(monkeypatch) -> None:
     assert bash_result.source == "whitelist"
 
 
-def test_guard_hard_rule_blocks_http_delete_method(monkeypatch) -> None:
+def test_guard_does_not_blanket_block_http_delete_method(monkeypatch) -> None:
     monkeypatch.delenv("AXIOM_GUARD_API_KEY", raising=False)
     monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
     for command in [
@@ -55,9 +55,8 @@ def test_guard_hard_rule_blocks_http_delete_method(monkeypatch) -> None:
         "fetch(url, { method: 'DELETE' })",
     ]:
         result = evaluate_guard_event(tool_name="bash", input_payload={"command": command})
-        assert result.decision == "BLOCK"
-        assert result.source == "hard_rule"
-        assert result.reason == "HTTP DELETE 方法禁用"
+        assert result.decision == "ALLOW"
+        assert result.source != "hard_rule"
 
 
 def test_guard_hard_rules_ignore_report_heredoc_body(monkeypatch) -> None:
@@ -79,7 +78,7 @@ echo "Done"""
     assert result.source != "hard_rule"
 
 
-def test_guard_hard_rules_still_scan_commands_after_heredoc(monkeypatch) -> None:
+def test_guard_allows_minimal_http_delete_after_heredoc(monkeypatch) -> None:
     monkeypatch.delenv("AXIOM_GUARD_API_KEY", raising=False)
     monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
     command = """cat > /tmp/report.md <<EOF
@@ -87,9 +86,8 @@ HTTP DELETE 方法禁用
 EOF
 curl -X DELETE https://target.test/api/users/123"""
     result = evaluate_guard_event(tool_name="bash", input_payload={"command": command})
-    assert result.decision == "BLOCK"
-    assert result.source == "hard_rule"
-    assert result.reason == "HTTP DELETE 方法禁用"
+    assert result.decision == "ALLOW"
+    assert result.source != "hard_rule"
 
 
 def test_guard_defaults_allow_for_normal_pentest_payload(monkeypatch) -> None:
@@ -155,7 +153,7 @@ def test_judge_settings_defaults_and_key_storage(client: TestClient) -> None:
     assert "注入测试中读取表内真实数据" in refreshed["system_prompt"]
     assert "注入测试只证明可读" in refreshed["system_prompt"]
     assert refreshed["default_system_prompt"] == DEFAULT_JUDGE_SYSTEM_PROMPT
-    assert any(rule["reason"] == "HTTP DELETE 方法禁用" for rule in refreshed["hard_block_rules"])
+    assert any(rule["reason"] == "删除或清空关键数据" for rule in refreshed["hard_block_rules"])
     assert refreshed["default_hard_block_rules"]
 
 
@@ -193,7 +191,7 @@ def test_judge_settings_custom_hard_rules(client: TestClient) -> None:
     )
     assert response.status_code == 200
     assert response.json()["decision"] == "BLOCK"
-    assert response.json()["reason"] == "自定义阻断"
+    assert response.json()["reason"] == "🤖裁判模型提醒:自定义阻断"
 
     payload.update({"hard_block_rules": [{"reason": "坏正则", "pattern": "(", "enabled": True}]})
     invalid = client.put("/settings/judge", json=payload)

@@ -14,10 +14,23 @@ class BootstrapRetryDecision:
 @dataclass(frozen=True, slots=True)
 class ExploreRetryPolicy:
     max_attempts: int = 4
+    # Infrastructure recovery is deliberately independent from execution
+    # retries, but still bounded so a broken provider/adapter cannot create an
+    # infinite dispatch loop. Four attempts also give the allocator enough
+    # room to rotate through multiple healthy Workers before Reason intervenes.
+    max_infrastructure_attempts: int = 4
     max_execute_seconds: int = 1800
     max_conclude_seconds: int = 900
 
-    def can_attempt(self, retry_count: int) -> bool:
+    def can_attempt(
+        self,
+        retry_count: int,
+        *,
+        failure_class: str = "execution",
+        infrastructure_retry_count: int = 0,
+    ) -> bool:
+        if failure_class == "transient":
+            return infrastructure_retry_count < self.max_infrastructure_attempts
         return retry_count < self.max_attempts
 
     def execute_timeout(self, base_seconds: int, retry_count: int) -> int:

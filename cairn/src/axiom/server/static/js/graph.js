@@ -112,7 +112,6 @@ window.AxiomModules.graph = {
         style: this.graphStyles(),
         layout: this.layoutOpts(false),
         minZoom: 0.35, maxZoom: 3.5,
-        wheelSensitivity: 0.3,
         pixelRatio: 1,
       });
       this.cy = rawCy;
@@ -1043,6 +1042,90 @@ window.AxiomModules.graph = {
       const intentId = this.selectedIntentId();
       if (!this.project || !intentId) return null;
       return this.project.intents.find(i => i.id === intentId) || null;
+    },
+
+    intentActivityVisible(intent) {
+      return !!intent && (
+        ['claimed', 'running', 'concluding'].includes(intent.status)
+        || !!intent.activity_summary
+      );
+    },
+
+    intentActivityTitle(intent) {
+      return ['claimed', 'running', 'concluding'].includes(intent?.status) ? '实时活动' : '最后活动';
+    },
+
+    intentActivityStateLabel(intent) {
+      const labels = {
+        starting: '准备中',
+        tool_running: '工具执行中',
+        tool_waiting: '等待工具',
+        analyzing: '分析结果',
+        organizing: '整理产物',
+        concluding: '收尾中',
+        submitting: '提交结果',
+        waiting_retry: '等待重试',
+        stopped: '已停止',
+        failed: '未完成',
+        finished: '已结束',
+        cancelled: '已取消',
+      };
+      return labels[intent?.activity_kind] || (['claimed', 'running', 'concluding'].includes(intent?.status) ? '运行中' : '已结束');
+    },
+
+    intentActivityAge(intent) {
+      const value = intent?.activity_updated_at;
+      if (!value) return '尚未上报';
+      const elapsed = Math.max(0, Date.now() - Date.parse(value));
+      if (!Number.isFinite(elapsed)) return this.formatTime(value);
+      const seconds = Math.floor(elapsed / 1000);
+      if (seconds < 5) return '刚刚';
+      if (seconds < 60) return `${seconds} 秒前`;
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return `${minutes} 分钟前`;
+      return this.formatTime(value);
+    },
+
+    intentRunDuration(intent) {
+      const started = intent?.activity_started_at;
+      if (!started) return '—';
+      const end = intent?.concluded_at || new Date().toISOString();
+      const elapsed = Math.max(0, Date.parse(end) - Date.parse(started));
+      return Number.isFinite(elapsed) ? this.formatDurationMs(elapsed) : '—';
+    },
+
+    reasonActivityStateLabel(reason) {
+      const labels = {
+        starting: '准备中',
+        reading_context: '读取上下文',
+        analyzing: '分析规划中',
+        updating_todos: '更新 Todo',
+        planning_intents: '规划 Intent',
+        submitting: '提交结果',
+        failed: '未完成',
+        finished: '已完成',
+      };
+      return labels[reason?.activity_kind] || '运行中';
+    },
+
+    reasonActivityAge(reason) {
+      const value = reason?.activity_updated_at || reason?.last_heartbeat_at;
+      if (!value) return '尚未上报';
+      const elapsed = Math.max(0, Date.now() - Date.parse(value));
+      if (!Number.isFinite(elapsed)) return this.formatTime(value);
+      const seconds = Math.floor(elapsed / 1000);
+      if (seconds < 5) return '刚刚';
+      if (seconds < 60) return `${seconds} 秒前`;
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return `${minutes} 分钟前`;
+      return this.formatTime(value);
+    },
+
+    reasonRunDuration(reason) {
+      const started = reason?.activity_started_at || reason?.last_heartbeat_at;
+      if (!started) return '—';
+      const elapsed = Math.max(0, Date.now() - Date.parse(started));
+      return Number.isFinite(elapsed) ? this.formatDurationMs(elapsed) : '—';
     },
 
     selectedOpenIntentRecord() {

@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+from concurrent.futures import Future
 from types import SimpleNamespace
 
-from axiom.dispatcher.v2.loop import V2DispatcherLoop
-from axiom.dispatcher.v2.schemas import DispatcherSnapshot, IntentSnapshot, TaskSnapshot, WorkerSnapshot
+from axiom.dispatcher.v2.loop import LiveRun, V2DispatcherLoop
+from axiom.dispatcher.v2.schemas import (
+    DispatchAction,
+    DispatcherSnapshot,
+    IntentSnapshot,
+    TaskSnapshot,
+    WorkerSnapshot,
+)
 from axiom.modules.settings.schemas import RuntimeConfig
 
 
@@ -40,9 +47,13 @@ class FakeClient:
 class RecordingRunners:
     def __init__(self):
         self.calls = []
+        self.cancelled = []
 
     def run(self, action, worker, runtime):
         self.calls.append((action.kind, action.task_id, action.intent_id, worker.name))
+
+    def cancel_task(self, task_id, reason):
+        self.cancelled.append((task_id, reason))
 
 
 def test_dispatch_loop_reconciles_and_obeys_task_concurrency(tmp_path) -> None:
@@ -88,3 +99,27 @@ def test_dispatch_loop_reconciles_and_obeys_task_concurrency(tmp_path) -> None:
     assert len(runners.calls) == 1
     assert runners.calls[0][:3] == ("explore", "t_001", "i002")
     assert client.closed is True
+
+
+def test_dispatch_loop_cancels_live_processes_for_stopped_tasks() -> None:
+    snapshot = DispatcherSnapshot(tasks=[], workers=[])
+    client = FakeClient(snapshot)
+    runners = RecordingRunners()
+    loop = V2DispatcherLoop(
+        server="http://unused",
+        service_token="token",
+        client=client,
+        runners=runners,
+    )
+    loop.futures[Future()] = LiveRun(
+        action=DispatchAction(kind="explore", task_id="t_001", intent_id="i002"),
+        worker="worker-a",
+    )
+
+    loop._cancel_inactive_tasks(
+        [TaskSnapshot(id="t_001", status="stopped", phase="explore")]
+    )
+
+    assert runners.cancelled == [
+        ("t_001", "task is no longer running (status=stopped)")
+    ]

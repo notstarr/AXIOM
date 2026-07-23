@@ -39,9 +39,16 @@ class Intent(BaseModel):
     execute_timeout_seconds: int | None = None
     conclude_timeout_seconds: int | None = None
     last_heartbeat_at: str | None = None
+    activity_kind: str = ""
+    activity_summary: str = ""
+    activity_tool: str = ""
+    activity_started_at: str | None = None
+    activity_updated_at: str | None = None
     retry_count: int = 0
+    infrastructure_retry_count: int = 0
     next_retry_at: str | None = None
     last_failure_kind: str = ""
+    failure_class: str = ""
     created_at: str
     concluded_at: str | None = None
     archived: bool = False

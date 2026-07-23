@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+from sqlalchemy import Engine, select, update
+
+from axiom.modules.artifacts.tables import artifacts
+from axiom.modules.goals.repository import GoalRepository
+from axiom.modules.goals.schemas import AssessGoal, GoalEvaluation
+from axiom.modules.graph.tables import facts, intents
+from axiom.modules.tasks.repository import TaskRepository
+from axiom.modules.tasks.tables import task_hints, tasks
+from axiom.modules.todos.tables import todos
+from axiom.modules.vulnerabilities.tables import vulnerabilities
+from axiom.shared.clock import utcnow
+from axiom.shared.database import immediate_transaction
+from axiom.shared.errors import ConflictError, NotFoundError
+
+
+class GoalService:
+    def __init__(self, engine: Engine):
+        self.engine = engine
+        self.repository = GoalRepository()
+        self.tasks = TaskRepository()
+
+    def list(self, task_id: str) -> list[GoalEvaluation]:
+        with self.engine.connect() as conn:
+            if self.tasks.get(conn, task_id) is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            return self.repository.list(conn, task_id)
+
+    def assess(self, task_id: str, command: AssessGoal) -> GoalEvaluation:
+        with immediate_transaction(self.engine) as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.legacy_readonly:
+                raise ConflictError("Legacy Task is read-only")
+            self.validate_evidence(
+                conn,
+                task_id,
+                command.evidence_refs,
+                achieved=command.achieved,
+            )
+            now = utcnow()
+            evaluation = self.repository.create(
+                conn,
+                task_id=task_id,
+                assessment=command,
+                evaluator=command.evaluator,
+                now=now,
+            )
+            if command.achieved:
+                self.complete_task(conn, task_id, now=now)
+            return evaluation
+
+    @staticmethod
+    def complete_task(conn, task_id: str, *, now: str, exclude_intent_id: str | None = None) -> None:
+        open_intents = intents.c.status.in_(["pending", "claimed", "running", "concluding"])
+        condition = intents.c.task_id == task_id
+        if exclude_intent_id:
+            condition = condition & (intents.c.id != exclude_intent_id)
+        conn.execute(
+            update(intents)
+            .where(condition, open_intents)
+            .values(
+                status="cancelled",
+                worker=None,
+                lease_id=None,
+                claimed_at=None,
+                last_heartbeat_at=None,
+                next_retry_at=None,
+                concluded_at=now,
+                last_failure_kind="goal_achieved",
+                failure_class="",
+            )
+        )
+        conn.execute(
+            update(tasks)
+            .where(tasks.c.id == task_id)
+            .values(status="completed", phase="none", completed_at=now, updated_at=now)
+        )
+
+    @staticmethod
+    def validate_evidence(
+        conn,
+        task_id: str,
+        refs: list[str],
+        *,
+        achieved: bool = False,
+    ) -> None:
+        tables = {
+            "fact": (facts, facts.c.id),
+            "artifact": (artifacts, artifacts.c.id),
+            "vulnerability": (vulnerabilities, vulnerabilities.c.id),
+            "todo": (todos, todos.c.id),
+            "hint": (task_hints, task_hints.c.id),
+        }
+        for ref in refs:
+            kind, separator, item_id = ref.partition(":")
+            if not separator or kind not in tables:
+                raise ConflictError(f"Unsupported Goal evidence ref: {ref}")
+            table, id_column = tables[kind]
+            exists = conn.execute(
+                select(id_column).where(table.c.task_id == task_id, id_column == item_id)
+            ).scalar_one_or_none()
+            if exists is None:
+                raise ConflictError(f"Goal evidence not found: {ref}")
+        if achieved and refs and all(ref.startswith("hint:") for ref in refs):
+            raise ConflictError("A completed Goal requires evidence beyond Task Hints")

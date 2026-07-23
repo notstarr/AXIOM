@@ -1,106 +1,102 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 usage() {
-    echo "Usage: $0 [start|stop|status]"
-    exit 1
+  cat <<'EOF'
+Usage: ./start.sh [start|stop|status|rollback]
+
+  start     stop the legacy runtime, migrate once when needed, then start AXIOM
+  stop      stop the new AXIOM API and Runner
+  status    show API/Runner process and health status
+  rollback  stop the new runtime and restore the preserved legacy LaunchAgents
+EOF
+  exit 1
 }
 
 ACTION="${1:-start}"
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CAIRN_DIR="$SCRIPT_DIR/cairn"
-PID_DIR="$CAIRN_DIR/.pids"
-LOG_DIR="$CAIRN_DIR/logs"
-MASTER_KEY_FILE="$HOME/.config/cairn/master.key"
-MOZZIE_TOKEN_FILE="$HOME/.config/cairn/mozzie.token"
-SERVICE_TOKEN_FILE="$HOME/.config/axiom/service.token"
+AXIOM_DIR="${AXIOM_CODE_DIR:-$SCRIPT_DIR/axiom}"
+
+HOST="${AXIOM_HOST:-127.0.0.1}"
+PORT="${AXIOM_PORT:-8888}"
+API_URL="http://$HOST:$PORT"
+
+# Keep the new runtime completely separate from the preserved Cairn runtime.
+LEGACY_DATA_DIR="${AXIOM_LEGACY_DATA_DIR:-$HOME/.local/share/axiom}"
+LEGACY_DB="${AXIOM_LEGACY_DB:-$LEGACY_DATA_DIR/axiom.db}"
+AXIOM_DATA_DIR="${AXIOM_DATA_DIR:-$HOME/.local/share/axiom-v3}"
+AXIOM_DB="${AXIOM_DB:-$AXIOM_DATA_DIR/axiom.db}"
+PID_DIR="$AXIOM_DATA_DIR/run"
+LOG_DIR="$AXIOM_DATA_DIR/logs"
+
 LAUNCH_AGENT_DIR="$HOME/Library/LaunchAgents"
-SERVER_LABEL="com.xrayai.cairn"
-DISPATCHER_LABEL="com.xrayai.cairn.dispatcher"
-LEGACY_DISPATCHER_LABEL="com.axiom.dispatcher"
+SERVER_LABEL="com.xrayai.axiom"
+RUNNER_LABEL="com.xrayai.axiom.runner"
 SERVER_PLIST="$LAUNCH_AGENT_DIR/$SERVER_LABEL.plist"
-DISPATCHER_PLIST="$LAUNCH_AGENT_DIR/$DISPATCHER_LABEL.plist"
+RUNNER_PLIST="$LAUNCH_AGENT_DIR/$RUNNER_LABEL.plist"
+
+# These files are intentionally preserved for an immediate rollback.
+LEGACY_SERVER_LABEL="com.xrayai.cairn"
+LEGACY_RUNNER_LABEL="com.xrayai.cairn.dispatcher"
+LEGACY_DISPATCHER_LABEL="com.axiom.dispatcher"
+LEGACY_SERVER_PLIST="$LAUNCH_AGENT_DIR/$LEGACY_SERVER_LABEL.plist"
+LEGACY_RUNNER_PLIST="$LAUNCH_AGENT_DIR/$LEGACY_RUNNER_LABEL.plist"
 LEGACY_DISPATCHER_PLIST="$LAUNCH_AGENT_DIR/$LEGACY_DISPATCHER_LABEL.plist"
 
-HOST="${CAIRN_HOST:-127.0.0.1}"
-PORT="${CAIRN_PORT:-8888}"
-CONFIG="${CAIRN_CONFIG:-$SCRIPT_DIR/dispatch.yaml}"
-LEGACY_DB="${AXIOM_LEGACY_DB:-$HOME/.local/share/cairn/cairn.db}"
-AXIOM_DATA_DIR="${AXIOM_DATA_DIR:-$HOME/.local/share/axiom}"
-AXIOM_DB="${AXIOM_DB:-$AXIOM_DATA_DIR/axiom.db}"
-LEGACY_ARTIFACT_DIR="${AXIOM_LEGACY_ARTIFACT_DIR:-/tmp/axiom-files}"
+AXIOM_BIN="$AXIOM_DIR/.venv/bin/axiom"
 
-mkdir -p "$PID_DIR" "$LOG_DIR"
+mkdir -p "$PID_DIR" "$LOG_DIR" "$LAUNCH_AGENT_DIR"
+
+require_runtime() {
+  if [[ ! -x "$AXIOM_BIN" ]]; then
+    echo "[axiom] ERROR: runtime not found: $AXIOM_BIN" >&2
+    exit 1
+  fi
+}
 
 use_launchctl() {
-    [ "$(uname -s)" = "Darwin" ] && command -v launchctl >/dev/null 2>&1 && [ "${XRAYAI_NO_LAUNCHCTL:-}" != "1" ]
+  [[ "$(uname -s)" == "Darwin" ]] \
+    && command -v launchctl >/dev/null 2>&1 \
+    && [[ "${XRAYAI_NO_LAUNCHCTL:-}" != "1" ]]
 }
 
 launch_domain() {
-    echo "gui/$(id -u)"
+  printf 'gui/%s' "$(id -u)"
 }
 
 launch_pid() {
-    local label="$1"
-    launchctl print "$(launch_domain)/$label" 2>/dev/null | awk -F'= ' '/pid = / {print $2; exit}'
+  local label="$1"
+  launchctl print "$(launch_domain)/$label" 2>/dev/null \
+    | awk -F'= ' '/pid = / {print $2; exit}'
 }
 
 launch_running() {
-    local label="$1"
-    local pid
-    pid="$(launch_pid "$label")"
-    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+  local pid
+  pid="$(launch_pid "$1")"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
 }
 
-server_pid() {
-    if use_launchctl && launch_running "$SERVER_LABEL"; then
-        launch_pid "$SERVER_LABEL"
-        return
-    fi
-    if [ -f "$PID_DIR/server.pid" ] && kill -0 "$(cat "$PID_DIR/server.pid")" 2>/dev/null; then
-        cat "$PID_DIR/server.pid"
-        return
-    fi
-    pgrep -f "$CAIRN_DIR/.venv/bin/axiom serve.*--port $PORT" | head -1 || true
+stop_launch_agent() {
+  local plist="$1"
+  [[ -f "$plist" ]] || return 0
+  launchctl bootout "$(launch_domain)" "$plist" >/dev/null 2>&1 || true
 }
 
-dispatcher_pid() {
-    if use_launchctl && launch_running "$DISPATCHER_LABEL"; then
-        launch_pid "$DISPATCHER_LABEL"
-        return
-    fi
-    if use_launchctl && launch_running "$LEGACY_DISPATCHER_LABEL"; then
-        launch_pid "$LEGACY_DISPATCHER_LABEL"
-        return
-    fi
-    if [ -f "$PID_DIR/dispatcher.pid" ] && kill -0 "$(cat "$PID_DIR/dispatcher.pid")" 2>/dev/null; then
-        cat "$PID_DIR/dispatcher.pid"
-        return
-    fi
-    pgrep -f "$CAIRN_DIR/.venv/bin/axiom dispatch.*--server" | head -1 || true
+start_launch_agent() {
+  local plist="$1" label="$2"
+  stop_launch_agent "$plist"
+  launchctl bootstrap "$(launch_domain)" "$plist"
+  launchctl kickstart -k "$(launch_domain)/$label" >/dev/null 2>&1 || true
 }
 
 write_launch_agent() {
-    local plist="$1"
-    local label="$2"
-    local workdir="$3"
-    local log_path="$4"
-    shift 4
-    mkdir -p "$LAUNCH_AGENT_DIR"
-    python3 - "$plist" "$label" "$workdir" "$log_path" "$MASTER_KEY" "${MOZZIE_TOKEN:-}" "$AXIOM_SERVICE_TOKEN" "$@" <<'PY'
+  local plist="$1" label="$2" log_path="$3"
+  shift 3
+  python3 - "$plist" "$label" "$AXIOM_DIR" "$log_path" "$AXIOM_DATA_DIR" "$@" <<'PY'
 import plistlib
 import sys
 
-plist, label, workdir, log_path, master_key, mozzie_token, service_token, *argv = sys.argv[1:]
-env = {
-    "MASTER_KEY": master_key,
-    "PATH": "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-}
-if mozzie_token:
-    env["MOZZIE_TOKEN"] = mozzie_token
-env["AXIOM_SERVICE_TOKEN"] = service_token
-env["AXIOM_DATA_DIR"] = str(__import__('pathlib').Path.home() / '.local/share/axiom')
+plist, label, workdir, log_path, data_dir, *argv = sys.argv[1:]
 payload = {
     "Label": label,
     "ProgramArguments": argv,
@@ -109,229 +105,251 @@ payload = {
     "StandardErrorPath": log_path,
     "RunAtLoad": True,
     "KeepAlive": True,
-    "EnvironmentVariables": env,
+    "EnvironmentVariables": {
+        "AXIOM_DATA_DIR": data_dir,
+        "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    },
 }
-with open(plist, "wb") as fh:
-    plistlib.dump(payload, fh)
+with open(plist, "wb") as handle:
+    plistlib.dump(payload, handle)
 PY
 }
 
-start_launch_agent() {
-    local plist="$1"
-    local label="$2"
-    launchctl bootout "$(launch_domain)" "$plist" >/dev/null 2>&1 || true
-    launchctl bootstrap "$(launch_domain)" "$plist"
-    launchctl kickstart -k "$(launch_domain)/$label" >/dev/null 2>&1 || true
+health_is_current() {
+  curl --connect-timeout 1 --max-time 2 -fsS "$API_URL/health" 2>/dev/null \
+    | grep -q '"api":"v1"'
 }
 
-stop_launch_agent() {
-    local plist="$1"
-    launchctl bootout "$(launch_domain)" "$plist" >/dev/null 2>&1 || true
+health_is_legacy() {
+  curl --connect-timeout 1 --max-time 2 -fsS "$API_URL/health" 2>/dev/null \
+    | grep -q '"api":"v2"'
 }
 
-# Ensure MASTER_KEY is available for API key encryption/decryption.
-if [ -n "${MASTER_KEY:-}" ]; then
-    export MASTER_KEY
-elif [ -f "$MASTER_KEY_FILE" ]; then
-    export MASTER_KEY="$(cat "$MASTER_KEY_FILE")"
-else
-    # Generate and persist a random master key on first run.
-    mkdir -p "$(dirname "$MASTER_KEY_FILE")"
-    MASTER_KEY="$(python3 -c "import secrets; print(secrets.token_hex(32))")"
-    echo "$MASTER_KEY" > "$MASTER_KEY_FILE"
-    chmod 600 "$MASTER_KEY_FILE"
-    export MASTER_KEY
-    echo "[xrayAI] Generated MASTER_KEY at $MASTER_KEY_FILE"
-fi
-
-if [ -z "${MOZZIE_TOKEN:-}" ] && [ -f "$MOZZIE_TOKEN_FILE" ]; then
-    export MOZZIE_TOKEN="$(cat "$MOZZIE_TOKEN_FILE")"
-fi
-
-if [ -n "${AXIOM_SERVICE_TOKEN:-}" ]; then
-    export AXIOM_SERVICE_TOKEN
-elif [ -f "$SERVICE_TOKEN_FILE" ]; then
-    export AXIOM_SERVICE_TOKEN="$(cat "$SERVICE_TOKEN_FILE")"
-else
-    mkdir -p "$(dirname "$SERVICE_TOKEN_FILE")"
-    AXIOM_SERVICE_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
-    printf '%s\n' "$AXIOM_SERVICE_TOKEN" > "$SERVICE_TOKEN_FILE"
-    chmod 600 "$SERVICE_TOKEN_FILE"
-    export AXIOM_SERVICE_TOKEN
-    echo "[xrayAI] Generated AXIOM service token at $SERVICE_TOKEN_FILE"
-fi
-
-prepare_v2_database() {
-    if [ -s "$AXIOM_DB" ]; then
-        return
+wait_for_health() {
+  local mode="$1"
+  echo -n "[axiom] 等待 $mode API 就绪"
+  for _ in $(seq 1 60); do
+    if [[ "$mode" == "new" ]] && health_is_current; then
+      echo " ✓"
+      return 0
     fi
-    if [ ! -s "$LEGACY_DB" ]; then
-        echo "[xrayAI] ERROR: neither V2 nor legacy database exists."
-        exit 1
+    if [[ "$mode" == "legacy" ]] && health_is_legacy; then
+      echo " ✓"
+      return 0
     fi
-    local stamp backup_dir backup_db
-    stamp="$(date +%Y%m%d-%H%M%S)"
-    backup_dir="$AXIOM_DATA_DIR/backups/$stamp"
-    backup_db="$backup_dir/cairn.db"
-    mkdir -p "$backup_dir" "$AXIOM_DATA_DIR"
-    echo "[xrayAI] Backing up legacy database to $backup_db"
-    python3 - "$LEGACY_DB" "$backup_db" <<'PY'
-import sqlite3, sys
-source, target = sys.argv[1:]
-with sqlite3.connect(source) as src, sqlite3.connect(target) as dst:
-    src.backup(dst)
+    echo -n "."
+    sleep 1
+  done
+  echo " 超时 ✗" >&2
+  return 1
+}
+
+server_pid() {
+  if use_launchctl && launch_running "$SERVER_LABEL"; then
+    launch_pid "$SERVER_LABEL"
+    return
+  fi
+  if [[ -f "$PID_DIR/server.pid" ]]; then
+    local pid
+    pid="$(cat "$PID_DIR/server.pid")"
+    if kill -0 "$pid" 2>/dev/null; then
+      printf '%s\n' "$pid"
+      return
+    fi
+  fi
+  pgrep -f "$AXIOM_BIN serve.*--port $PORT" | head -1 || true
+}
+
+runner_pid() {
+  if use_launchctl && launch_running "$RUNNER_LABEL"; then
+    launch_pid "$RUNNER_LABEL"
+    return
+  fi
+  if [[ -f "$PID_DIR/runner.pid" ]]; then
+    local pid
+    pid="$(cat "$PID_DIR/runner.pid")"
+    if kill -0 "$pid" 2>/dev/null; then
+      printf '%s\n' "$pid"
+      return
+    fi
+  fi
+  pgrep -f "$AXIOM_BIN runner.*--api-url $API_URL" | head -1 || true
+}
+
+stop_pid_file() {
+  local path="$1" label="$2"
+  [[ -f "$path" ]] || return 0
+  local pid
+  pid="$(cat "$path")"
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 30); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -KILL "$pid" 2>/dev/null || true
+    echo "[axiom] $label stopped (PID $pid)"
+  fi
+  rm -f "$path"
+}
+
+stop_new_runtime() {
+  if use_launchctl; then
+    stop_launch_agent "$RUNNER_PLIST"
+    stop_launch_agent "$SERVER_PLIST"
+  fi
+  stop_pid_file "$PID_DIR/runner.pid" "Runner"
+  stop_pid_file "$PID_DIR/server.pid" "API"
+}
+
+stop_legacy_runtime() {
+  if use_launchctl; then
+    stop_launch_agent "$LEGACY_RUNNER_PLIST"
+    stop_launch_agent "$LEGACY_DISPATCHER_PLIST"
+    stop_launch_agent "$LEGACY_SERVER_PLIST"
+  fi
+  # Only stop preserved Cairn commands; never use a broad `pkill axiom`.
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    kill "$pid" 2>/dev/null || true
+  done < <(pgrep -f '/Users/hexin/vscode/xrayAI/cairn/.venv/bin/axiom (serve|dispatch)' || true)
+
+  # Do not snapshot the legacy database while a restarted legacy process can
+  # still write its WAL.  This is also the hand-off barrier for migration.
+  for _ in $(seq 1 50); do
+    if ! pgrep -f '/Users/hexin/vscode/xrayAI/cairn/.venv/bin/axiom (serve|dispatch)' >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "[axiom] ERROR: legacy runtime did not stop before migration" >&2
+  exit 1
+}
+
+prepare_database() {
+  if [[ -s "$AXIOM_DB" ]]; then
+    "$AXIOM_BIN" db-upgrade --db-path "$AXIOM_DB" >/dev/null
+    return
+  fi
+  if [[ ! -s "$LEGACY_DB" ]]; then
+    echo "[axiom] ERROR: legacy database not found: $LEGACY_DB" >&2
+    exit 1
+  fi
+
+  local stamp backup_dir source_snapshot report_path
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  backup_dir="$AXIOM_DATA_DIR/backups/$stamp"
+  source_snapshot="$backup_dir/legacy-source.db"
+  report_path="$backup_dir/migration-report.json"
+  mkdir -p "$backup_dir"
+
+  echo "[axiom] 创建一致性数据库快照：$source_snapshot"
+  python3 - "$LEGACY_DB" "$source_snapshot" <<'PY'
+import sqlite3
+import sys
+
+with sqlite3.connect(sys.argv[1]) as source, sqlite3.connect(sys.argv[2]) as target:
+    source.backup(target)
 PY
-    if [ -d "$LEGACY_ARTIFACT_DIR" ]; then
-        echo "[xrayAI] Backing up legacy Artifact directory"
-        tar -czf "$backup_dir/axiom-files.tar.gz" -C "$(dirname "$LEGACY_ARTIFACT_DIR")" "$(basename "$LEGACY_ARTIFACT_DIR")"
-    fi
-    echo "[xrayAI] Migrating legacy data to Backend V2"
-    "$CAIRN_DIR/.venv/bin/axiom" migrate-v2 \
-        --source "$backup_db" \
-        --target "$AXIOM_DB" \
-        --data-dir "$AXIOM_DATA_DIR" \
-        --mozzie-token-file "$MOZZIE_TOKEN_FILE" \
-        > "$backup_dir/migration-report.json"
-    echo "[xrayAI] Migration report: $backup_dir/migration-report.json"
+
+  echo "[axiom] 迁移旧生产数据到独立的新运行目录"
+  "$AXIOM_BIN" migrate-legacy \
+    --source-db "$source_snapshot" \
+    --target-db "$AXIOM_DB" \
+    --source-data-dir "$LEGACY_DATA_DIR" \
+    --target-data-dir "$AXIOM_DATA_DIR" \
+    --report-path "$report_path" \
+    >/dev/null
+  echo "[axiom] 迁移报告：$report_path"
 }
 
-stop_all() {
-    echo "[xrayAI] Stopping..."
-    if use_launchctl; then
-        stop_launch_agent "$SERVER_PLIST"
-        stop_launch_agent "$DISPATCHER_PLIST"
-        stop_launch_agent "$LEGACY_DISPATCHER_PLIST"
-    fi
-    if [ -f "$PID_DIR/server.pid" ]; then
-        kill "$(cat "$PID_DIR/server.pid")" 2>/dev/null && echo "  server stopped" || true
-        rm -f "$PID_DIR/server.pid"
-    fi
-    if [ -f "$PID_DIR/dispatcher.pid" ]; then
-        kill "$(cat "$PID_DIR/dispatcher.pid")" 2>/dev/null && echo "  dispatcher stopped" || true
-        rm -f "$PID_DIR/dispatcher.pid"
-    fi
-    # Also kill any orphaned processes
-    pkill -f "axiom serve" 2>/dev/null || true
-    pkill -f "axiom dispatch" 2>/dev/null || true
-    echo "[xrayAI] Done."
+start_new_runtime() {
+  if use_launchctl; then
+    write_launch_agent "$SERVER_PLIST" "$SERVER_LABEL" "$LOG_DIR/server.log" \
+      "$AXIOM_BIN" serve \
+      --host "$HOST" --port "$PORT" \
+      --db-path "$AXIOM_DB" --data-dir "$AXIOM_DATA_DIR" \
+      --log-level info
+    write_launch_agent "$RUNNER_PLIST" "$RUNNER_LABEL" "$LOG_DIR/runner.log" \
+      "$AXIOM_BIN" runner --api-url "$API_URL"
+    start_launch_agent "$SERVER_PLIST" "$SERVER_LABEL"
+    wait_for_health new
+    start_launch_agent "$RUNNER_PLIST" "$RUNNER_LABEL"
+    printf '%s\n' "$(launch_pid "$SERVER_LABEL")" > "$PID_DIR/server.pid"
+    printf '%s\n' "$(launch_pid "$RUNNER_LABEL")" > "$PID_DIR/runner.pid"
+  else
+    nohup "$AXIOM_BIN" serve \
+      --host "$HOST" --port "$PORT" \
+      --db-path "$AXIOM_DB" --data-dir "$AXIOM_DATA_DIR" \
+      --log-level info >"$LOG_DIR/server.log" 2>&1 &
+    printf '%s\n' "$!" > "$PID_DIR/server.pid"
+    wait_for_health new
+    nohup "$AXIOM_BIN" runner --api-url "$API_URL" \
+      >"$LOG_DIR/runner.log" 2>&1 &
+    printf '%s\n' "$!" > "$PID_DIR/runner.pid"
+  fi
 }
 
 status_all() {
-    echo "[xrayAI] Status:"
-    local server_existing
-    server_existing="$(server_pid)"
-    if [ -n "$server_existing" ]; then
-        echo "  server:     running (PID $server_existing)"
-    else
-        echo "  server:     stopped"
-    fi
-    local dispatcher_existing
-    dispatcher_existing="$(dispatcher_pid)"
-    if [ -n "$dispatcher_existing" ]; then
-        echo "  dispatcher: running (PID $dispatcher_existing)"
-    else
-        echo "  dispatcher: stopped"
-    fi
+  local api_pid run_pid
+  api_pid="$(server_pid)"
+  run_pid="$(runner_pid)"
+  echo "[axiom] Status"
+  if [[ -n "$api_pid" ]]; then
+    echo "  API:      running (PID $api_pid)"
+  else
+    echo "  API:      stopped"
+  fi
+  if [[ -n "$run_pid" ]]; then
+    echo "  Runner:   running (PID $run_pid)"
+  else
+    echo "  Runner:   stopped"
+  fi
+  if health_is_current; then
+    echo "  Health:   current"
+  elif health_is_legacy; then
+    echo "  Health:   legacy"
+  else
+    echo "  Health:   unavailable"
+  fi
+  echo "  Database: $AXIOM_DB"
+  echo "  Data:     $AXIOM_DATA_DIR"
 }
 
 start_all() {
-    prepare_v2_database
-    # Check if already running
-    SERVER_PID="$(server_pid)"
-    if [ -n "$SERVER_PID" ]; then
-        echo "$SERVER_PID" > "$PID_DIR/server.pid"
-        echo "[xrayAI] Server is already running on http://$HOST:$PORT"
-    else
-        echo "[xrayAI] Starting Cairn server on $HOST:$PORT..."
-        if use_launchctl; then
-            write_launch_agent "$SERVER_PLIST" "$SERVER_LABEL" "$CAIRN_DIR" "$LOG_DIR/server.log" \
-                /bin/bash -lc "cd '$CAIRN_DIR' && exec uv run --project '$CAIRN_DIR' axiom serve --host '$HOST' --port '$PORT' --db-path '$AXIOM_DB' --data-dir '$AXIOM_DATA_DIR' --no-access-log --log-level info"
-            start_launch_agent "$SERVER_PLIST" "$SERVER_LABEL"
-            sleep 1
-            SERVER_PID="$(launch_pid "$SERVER_LABEL")"
-        else
-            nohup uv run --project "$CAIRN_DIR" axiom serve \
-                --host "$HOST" \
-                --port "$PORT" \
-                --db-path "$AXIOM_DB" \
-                --data-dir "$AXIOM_DATA_DIR" \
-                --no-access-log \
-                --log-level info \
-                > "$LOG_DIR/server.log" 2>&1 &
-            SERVER_PID=$!
-            disown "$SERVER_PID"
-        fi
-        echo "$SERVER_PID" > "$PID_DIR/server.pid"
+  require_runtime
+  stop_new_runtime
+  stop_legacy_runtime
+  prepare_database
+  start_new_runtime
+  echo "[axiom] AXIOM 已启动：$API_URL"
+  status_all
+}
 
-        # Wait for server to be ready
-        echo -n "[xrayAI] Waiting for server"
-        for i in $(seq 1 30); do
-            if curl -s "http://$HOST:$PORT/health" > /dev/null 2>&1; then
-                echo " ready."
-                break
-            fi
-            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-                echo ""
-                echo "[xrayAI] ERROR: Server failed to start. Check $LOG_DIR/server.log"
-                cat "$LOG_DIR/server.log" | tail -20
-                exit 1
-            fi
-            echo -n "."
-            sleep 1
-        done
-
-        if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-            echo ""
-            echo "[xrayAI] ERROR: Server process died."
-            cat "$LOG_DIR/server.log" | tail -20
-            exit 1
-        fi
-    fi
-
-    DISPATCHER_PID="$(dispatcher_pid)"
-    if [ -n "$DISPATCHER_PID" ]; then
-        echo "$DISPATCHER_PID" > "$PID_DIR/dispatcher.pid"
-        echo "[xrayAI] Dispatcher is already running."
-    else
-        echo "[xrayAI] Starting V2 dispatcher..."
-        if use_launchctl; then
-            write_launch_agent "$DISPATCHER_PLIST" "$DISPATCHER_LABEL" "$CAIRN_DIR" "$LOG_DIR/dispatcher.log" \
-                /bin/bash -lc "cd '$CAIRN_DIR' && exec uv run --project '$CAIRN_DIR' axiom dispatch --server 'http://$HOST:$PORT' --service-token '$AXIOM_SERVICE_TOKEN' --log-level info"
-            start_launch_agent "$DISPATCHER_PLIST" "$DISPATCHER_LABEL"
-            sleep 2
-            DISPATCHER_PID="$(launch_pid "$DISPATCHER_LABEL")"
-        else
-            nohup uv run --project "$CAIRN_DIR" axiom dispatch \
-                --server "http://$HOST:$PORT" \
-                --service-token "$AXIOM_SERVICE_TOKEN" \
-                --log-level info \
-                > "$LOG_DIR/dispatcher.log" 2>&1 &
-            DISPATCHER_PID=$!
-            disown "$DISPATCHER_PID"
-            sleep 2
-        fi
-        echo "$DISPATCHER_PID" > "$PID_DIR/dispatcher.pid"
-        if [ -n "$DISPATCHER_PID" ] && kill -0 "$DISPATCHER_PID" 2>/dev/null; then
-            echo "[xrayAI] Dispatcher started (PID $DISPATCHER_PID)."
-        else
-            echo "[xrayAI] ERROR: Dispatcher failed to start. Check $LOG_DIR/dispatcher.log"
-            cat "$LOG_DIR/dispatcher.log" | tail -30
-            exit 1
-        fi
-    fi
-
-    echo ""
-    echo "============================================"
-    echo "  xrayAI is running"
-    echo "  Server:     http://$HOST:$PORT"
-    echo "  Logs:       $LOG_DIR/"
-    echo "  Stop with:  $0 stop"
-    echo "============================================"
+rollback_legacy() {
+  stop_new_runtime
+  if ! use_launchctl; then
+    echo "[axiom] ERROR: rollback currently requires the preserved macOS LaunchAgents" >&2
+    exit 1
+  fi
+  [[ -f "$LEGACY_SERVER_PLIST" ]] || {
+    echo "[axiom] ERROR: legacy server plist is missing" >&2
+    exit 1
+  }
+  start_launch_agent "$LEGACY_SERVER_PLIST" "$LEGACY_SERVER_LABEL"
+  wait_for_health legacy
+  if [[ -f "$LEGACY_RUNNER_PLIST" ]]; then
+    start_launch_agent "$LEGACY_RUNNER_PLIST" "$LEGACY_RUNNER_LABEL"
+  elif [[ -f "$LEGACY_DISPATCHER_PLIST" ]]; then
+    start_launch_agent "$LEGACY_DISPATCHER_PLIST" "$LEGACY_DISPATCHER_LABEL"
+  fi
+  echo "[axiom] 已回滚到保留的旧运行时：$API_URL"
 }
 
 case "$ACTION" in
-    start)   start_all ;;
-    stop)    stop_all ;;
-    status)  status_all ;;
-    *)       usage ;;
+  start) start_all ;;
+  stop) stop_new_runtime ;;
+  status) status_all ;;
+  rollback) rollback_legacy ;;
+  *) usage ;;
 esac

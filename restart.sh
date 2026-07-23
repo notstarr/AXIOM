@@ -1,49 +1,55 @@
 #!/usr/bin/env bash
-# 一键重启 axiom（前端 + 后端 + 调度器）
-# 用法：
-#   ./restart.sh            重启全部（server + dispatcher）
-#   ./restart.sh server      仅重启前端 + 后端 API（8888）
-#   ./restart.sh dispatcher  仅重启任务调度器
 set -euo pipefail
 
-DOMAIN="gui/$(id -u)"
+TARGET="${1:-all}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HOST="${AXIOM_HOST:-127.0.0.1}"
 PORT="${AXIOM_PORT:-8888}"
-TARGET="${1:-all}"
+DOMAIN="gui/$(id -u)"
+SERVER_LABEL="com.xrayai.axiom"
+RUNNER_LABEL="com.xrayai.axiom.runner"
 
-restart() {
+wait_for_api() {
+  echo -n "[axiom] 等待 API 就绪"
+  for _ in $(seq 1 60); do
+    if curl --connect-timeout 1 --max-time 2 -fsS "http://$HOST:$PORT/health" 2>/dev/null \
+      | grep -q '"api":"v1"'; then
+      echo " ✓"
+      return 0
+    fi
+    echo -n "."
+    sleep 1
+  done
+  echo " 超时 ✗" >&2
+  return 1
+}
+
+restart_label() {
   local label="$1"
-  echo "[axiom] kickstart $label ..."
+  if ! launchctl print "$DOMAIN/$label" >/dev/null 2>&1; then
+    echo "[axiom] $label 尚未安装，请先运行 ./start.sh start" >&2
+    exit 1
+  fi
   launchctl kickstart -k "$DOMAIN/$label"
 }
 
 case "$TARGET" in
   server)
-    restart com.xrayai.cairn
+    restart_label "$SERVER_LABEL"
+    wait_for_api
     ;;
-  dispatcher)
-    restart com.xrayai.cairn.dispatcher
+  runner)
+    restart_label "$RUNNER_LABEL"
     ;;
   all)
-    restart com.xrayai.cairn
-    restart com.xrayai.cairn.dispatcher
+    restart_label "$SERVER_LABEL"
+    wait_for_api
+    restart_label "$RUNNER_LABEL"
     ;;
   *)
-    echo "用法: $0 [all|server|dispatcher]" >&2
+    echo "用法: ./restart.sh [all|server|runner]" >&2
     exit 1
     ;;
 esac
 
-if [[ "$TARGET" != "dispatcher" ]]; then
-  echo -n "[axiom] 等待 API 就绪"
-  for i in $(seq 1 20); do
-    if curl -s -o /dev/null "http://$HOST:$PORT/health"; then
-      echo " 就绪 ✓"
-      break
-    fi
-    echo -n "."
-    sleep 1
-  done
-fi
-
-echo "[axiom] 完成。前端: http://$HOST:$PORT"
+echo "[axiom] 重启完成：http://$HOST:$PORT"

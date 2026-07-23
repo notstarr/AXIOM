@@ -9,7 +9,6 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 from axiom.dispatcher.config import WorkerConfig
-from axiom.guard.policy import GuardPolicyConfig, evaluate_guard_event
 from axiom.shared.keyring import KeyringError, encrypt_secret
 from axiom.dispatcher.keyring import load_provider_api_key
 from axiom.dispatcher.workers.adapters.pi import PiDriver
@@ -24,9 +23,6 @@ from axiom.server.dispatch_config_store import (
 from axiom.server.models import (
     DispatchModelsResponse,
     DispatchSettings,
-    JudgeUrlBatchRequest,
-    JudgeUrlBatchResponse,
-    JudgeUrlTestResult,
     JudgeSettingsResponse,
     JudgeTestResponse,
     DispatchRuntimeWorkerView,
@@ -789,60 +785,6 @@ def test_judge_settings():
         return JudgeTestResponse(ok=False, message=f"{type(exc).__name__}: {exc}", latency_ms=latency_ms)
 
 
-@router.post("/settings/judge/batch-url-test", response_model=JudgeUrlBatchResponse)
-def test_judge_urls(body: JudgeUrlBatchRequest):
-    """批量 URL 守门测试：复用 evaluate_guard_event，强制 enforce 模式（忽略全局开关）。"""
-    with get_conn() as conn:
-        settings = load_judge_settings(conn)
-    api_key = load_provider_api_key("judge")
-    config = GuardPolicyConfig(
-        mode="enforce",  # 强制判定，不受全局 judge 模式影响
-        base_url=settings.base_url,
-        model_name=settings.model,
-        timeout_seconds=settings.timeout_seconds,
-        whitelist_tools=settings.whitelist_tools,
-        whitelist_bash_verbs=settings.whitelist_bash_verbs,
-        hard_block_rules=settings.hard_block_rules,
-        system_prompt=settings.system_prompt or DEFAULT_JUDGE_SYSTEM_PROMPT,
-    )
-    results: list[JudgeUrlTestResult] = []
-    allowed = blocked = 0
-    total_latency = 0
-    for item in body.items:
-        input_payload = {"method": item.method, "url": item.url, "body": item.body}
-        evaluation = evaluate_guard_event(
-            tool_name="http_request",
-            input_payload=input_payload,
-            metadata={"source": "settings.judge.batch-url-test"},
-            config=config,
-            api_key=api_key,
-        )
-        results.append(
-            JudgeUrlTestResult(
-                method=item.method,
-                url=item.url,
-                body=item.body,
-                decision=evaluation.decision,
-                reason=evaluation.reason,
-                source=evaluation.source,
-                model_name=evaluation.model_name,
-                model_latency_ms=evaluation.model_latency_ms,
-                raw_model_output=evaluation.raw_model_output[:2000],
-                normalized=evaluation.normalized,
-            )
-        )
-        if evaluation.decision == "BLOCK":
-            blocked += 1
-        else:
-            allowed += 1
-        total_latency += evaluation.model_latency_ms
-    return JudgeUrlBatchResponse(
-        results=results,
-        total=len(results),
-        allowed=allowed,
-        blocked=blocked,
-        total_latency_ms=total_latency,
-    )
 
 
 @router.get("/settings/keys", response_model=ProviderKeysResponse)

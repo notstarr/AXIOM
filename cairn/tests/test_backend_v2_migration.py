@@ -85,6 +85,7 @@ def test_legacy_migration_preserves_history_as_read_only_and_archives_assets(tmp
         assert task["id"] == "t_093"
         assert task["legacy_readonly"] is True
         assert task["status"] == "completed"
+        assert task["origin_input"] == "https://example.com"
         assert conn.execute(select(facts)).mappings().all()
         assert conn.execute(select(intents)).mappings().one()["status"] == "completed"
         assert conn.execute(select(task_hints)).mappings().one()["content"] == "legacy hint"
@@ -175,8 +176,34 @@ def test_migration_handles_colliding_ids_orphans_and_broken_references(tmp_path)
         assert conn.execute(select(intents.c.to_fact_id)).scalar_one() is None
         invalid = next(row for row in migrated_tasks if row["title"] == "B")
         assert invalid["origin_host"] == "legacy.invalid"
+        assert invalid["origin_input"] == "legacy origin unavailable"
         assert invalid["scope_enabled"] is False
         assert all(row["legacy_readonly"] for row in migrated_tasks)
     assert any("reference cleared" in warning for warning in report.warnings)
     assert any("Orphan intent source skipped" in warning for warning in report.warnings)
     assert any("Invalid legacy origin" in warning for warning in report.warnings)
+
+
+def test_migration_canonicalizes_mixed_legacy_origin_without_retaining_secrets(tmp_path) -> None:
+    source = tmp_path / "legacy.db"
+    target = tmp_path / "v2.db"
+    create_legacy_db(source)
+    mixed_origin = """测试域名 https://api.example.com:8443
+authorization: Bearer should-not-survive
+cookie: session=also-secret"""
+    with sqlite3.connect(source) as conn:
+        conn.execute(
+            "UPDATE facts SET description = ? WHERE project_id = ? AND id = 'origin'",
+            (mixed_origin, "proj_093"),
+        )
+
+    migrate_legacy_database(source, target, data_dir=tmp_path / "data")
+    engine = create_sqlite_engine(target)
+    with engine.connect() as conn:
+        task = conn.execute(select(tasks)).mappings().one()
+        assert task["origin_input"] == "https://api.example.com:8443"
+        assert task["origin_host"] == "api.example.com"
+        assert task["origin_port"] == 8443
+        assert "authorization" not in task["origin_input"].lower()
+        assert "cookie" not in task["origin_input"].lower()
+        assert "should-not-survive" not in task["origin_input"]

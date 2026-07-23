@@ -9,6 +9,13 @@ description: 当需要对目标进行自动化漏洞扫描时使用
 nuclei -u https://example.com
 ```
 
+## 工具路径规范
+
+- 始终使用规范命令名 `nuclei`，真实路径由 AXIOM Runner 统一注入 `PATH`。
+- 只允许用 `command -v nuclei` 检查可用性；不可用时直接记录并跳过。
+- 禁止猜测绝对路径，禁止使用 `find /` 搜索模板。
+- 模板异常时只检查 Nuclei 自己报告的配置目录，不遍历整台机器。
+
 ## 常用参数
 
 ```bash
@@ -21,28 +28,28 @@ nuclei -l urls.txt
 # 从 stdin 读取
 cat urls.txt | nuclei
 
-//指定输出文件
+# 指定输出文件
 nuclei -u https://example.com -o results.txt
 
-//JSON 格式输出（适合脚本处理）
+# JSON 格式输出（适合脚本处理）
 nuclei -u https://example.com -json -o results.json
 
-//自动选择模板（根据目标技术栈）
+# 自动选择模板（根据目标技术栈）
 nuclei -u https://example.com -as
 
-//指定严重程度
+# 指定严重程度
 nuclei -u https://example.com -severity critical,high
 
-//指定模板类别
+# 指定模板类别
 nuclei -u https://example.com -t cves/
 nuclei -u https://example.com -t exposures/
 nuclei -u https://example.com -t misconfiguration/
 nuclei -u https://example.com -t vulnerabilities/
 
-//排除某些模板
+# 排除某些模板
 nuclei -u https://example.com -etags brute-force,dos
 
-//并发控制
+# 并发控制
 nuclei -u https://example.com -c 50 -rl 100  # 50 并发，100 请求/秒
 ```
 

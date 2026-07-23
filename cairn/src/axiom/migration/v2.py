@@ -139,7 +139,7 @@ def migrate_legacy_database(
                         origin_host=origin.host if origin else "legacy.invalid",
                         origin_scheme=origin.scheme if origin else None,
                         origin_port=origin.port if origin else None,
-                        origin_input=origin_text or "legacy origin unavailable",
+                        origin_input=_canonical_legacy_origin(origin),
                         goal=goal,
                         status=status,
                         phase="none",
@@ -419,6 +419,17 @@ def _parse_legacy_origin(value: str):
         except ValueError:
             continue
     raise ValueError("No valid legacy origin found")
+
+
+def _canonical_legacy_origin(origin) -> str:
+    """Keep migrated Task origin useful without retaining mixed-in credentials."""
+    if origin is None:
+        return "legacy origin unavailable"
+    host = origin.host
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    authority = f"{host}:{origin.port}" if origin.port else host
+    return f"{origin.scheme}://{authority}" if origin.scheme else authority
 
 
 def _plausible_origin(host: str) -> bool:

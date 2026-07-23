@@ -1,0 +1,156 @@
+from __future__ import annotations
+
+import pytest
+
+from axiom.modules.mcp.service import parse_mcp_config
+
+
+@pytest.mark.parametrize(
+    ("format", "content"),
+    [
+        (
+            "json",
+            '{"mcpServers":{"demo":{"command":"uvx","args":["demo"],"env":{"TOKEN":"x"}}}}',
+        ),
+        (
+            "yaml",
+            "mcpServers:\n  demo:\n    command: uvx\n    args: [demo]\n    env:\n      TOKEN: x\n",
+        ),
+        (
+            "toml",
+            '[mcp_servers.demo]\ncommand = "uvx"\nargs = ["demo"]\n\n'
+            '[mcp_servers.demo.env]\nTOKEN = "x"\n',
+        ),
+    ],
+)
+def test_parse_mcp_config_supports_common_formats(format: str, content: str) -> None:
+    selected, servers = parse_mcp_config(content, format)
+
+    assert selected == format
+    assert len(servers) == 1
+    assert servers[0].name == "demo"
+    assert servers[0].command == "uvx"
+    assert servers[0].args == ["demo"]
+    assert servers[0].env == {"TOKEN": "x"}
+    assert servers[0].transport == "stdio"
+
+
+def test_mcp_import_exposes_tool_schema_usage_and_toggle(client) -> None:
+    imported = client.post(
+        "/api/v1/mcp/import",
+        json={
+            "format": "yaml",
+            "discover": False,
+            "content": "mcpServers:\n  demo:\n    command: uvx\n    args: [demo]\n",
+        },
+    )
+    assert imported.status_code == 201, imported.text
+    server = imported.json()[0]
+
+    replaced = client.put(
+        f"/api/v1/mcp/servers/{server['id']}/tools",
+        json=[
+            {
+                "name": "search",
+                "title": "站点搜索",
+                "description": "搜索目标站点",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["query"],
+                },
+                "output_schema": {"type": "array"},
+                "annotations": {"readOnlyHint": True},
+            }
+        ],
+    )
+    assert replaced.status_code == 200, replaced.text
+    tool = replaced.json()[0]
+    assert tool["title"] == "站点搜索"
+    assert tool["description"] == "搜索目标站点"
+    assert tool["input_schema"]["required"] == ["query"]
+    assert tool["output_schema"] == {"type": "array"}
+    assert tool["usage"] == "search(query: string, limit?: integer)"
+
+    disabled = client.patch(
+        f"/api/v1/mcp/servers/{server['id']}/tools/{tool['id']}",
+        json={"enabled": False},
+    )
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["enabled"] is False
+
+
+def test_mcp_worker_binding_is_kept_out_of_worker_management_shape(client) -> None:
+    client.put(
+        "/api/v1/workers/worker-a",
+        json={"capabilities": ["bootstrap", "reason", "explore"], "max_running": 2},
+    )
+    server = client.post(
+        "/api/v1/mcp/import",
+        json={
+            "discover": False,
+            "content": '{"mcpServers":{"demo":{"command":"uvx","args":["demo"]}}}',
+        },
+    ).json()[0]
+
+    saved = client.put(
+        "/api/v1/mcp/workers/worker-a",
+        json={
+            "enabled": True,
+            "server_ids": [server["id"]],
+            "allowed_tools": ["search"],
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json() == {
+        "worker_name": "worker-a",
+        "worker_type": "pi",
+        "enabled": True,
+        "server_ids": [server["id"]],
+        "server_names": ["demo"],
+        "allowed_tools": ["search"],
+    }
+
+    worker = client.get("/api/v1/workers/worker-a").json()
+    assert worker["config"]["environment"]["PI_MCP_ENABLED"] == "true"
+    assert "demo" in worker["config"]["environment"]["PI_MCP_CONFIG_JSON"]
+
+    bindings = client.get("/api/v1/mcp/workers")
+    assert bindings.status_code == 200, bindings.text
+    assert bindings.json() == [saved.json()]
+
+
+def test_failed_discovery_preserves_tools_and_redacts_secrets(client, monkeypatch) -> None:
+    server = client.post(
+        "/api/v1/mcp/servers",
+        json={
+            "name": "remote",
+            "url": "https://mcp.example.test/api?token=super-secret-token",
+            "transport": "http",
+            "disabled": True,
+            "raw_config": {"headers": {"Authorization": "Bearer private-secret"}},
+        },
+    ).json()
+    tool = client.put(
+        f"/api/v1/mcp/servers/{server['id']}/tools",
+        json=[{"name": "kept", "description": "must survive discovery failure"}],
+    ).json()[0]
+
+    async def fail(_config):
+        raise RuntimeError(
+            "request token=super-secret-token Authorization=Bearer private-secret"
+        )
+
+    monkeypatch.setattr("axiom.modules.mcp.service.discover_mcp_server", fail)
+    discovered = client.post(f"/api/v1/mcp/servers/{server['id']}/discover")
+
+    assert discovered.status_code == 200, discovered.text
+    body = discovered.json()
+    assert body["discovery_status"] == "error"
+    assert [item["id"] for item in body["tools"]] == [tool["id"]]
+    assert "super-secret-token" not in body["discovery_error"]
+    assert "private-secret" not in body["discovery_error"]
+    assert "***" in body["discovery_error"]

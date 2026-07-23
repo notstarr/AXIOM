@@ -7,6 +7,10 @@ from axiom.modules.common.ids import allocate_readable_id
 from axiom.modules.reason_workspace.schemas import ReasonWorkspace, WorkspaceDraft
 
 
+class WorkspaceDraftConflict(RuntimeError):
+    pass
+
+
 class ReasonWorkspaceRepository:
     def open(
         self,
@@ -51,13 +55,20 @@ class ReasonWorkspaceRepository:
         workspace_id: str,
         draft: WorkspaceDraft,
         *,
+        expected_updated_at: str,
         now: str,
     ) -> ReasonWorkspace:
-        conn.execute(
+        result = conn.execute(
             update(reason_workspaces)
-            .where(reason_workspaces.c.id == workspace_id)
+            .where(
+                reason_workspaces.c.id == workspace_id,
+                reason_workspaces.c.status == "open",
+                reason_workspaces.c.updated_at == expected_updated_at,
+            )
             .values(draft_json=draft.model_dump_json(), updated_at=now)
         )
+        if result.rowcount != 1:
+            raise WorkspaceDraftConflict(workspace_id)
         return self.get(conn, workspace_id)  # type: ignore[return-value]
 
     def mark_committed(self, conn: Connection, workspace_id: str, *, now: str) -> ReasonWorkspace:

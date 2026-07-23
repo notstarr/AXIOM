@@ -8,6 +8,16 @@ from axiom.modules.common.ids import allocate_readable_id
 
 
 class ArtifactRepository:
+    def get(self, conn: Connection, task_id: str, artifact_id: str) -> Artifact | None:
+        row = conn.execute(
+            select(artifacts).where(
+                artifacts.c.task_id == task_id,
+                artifacts.c.id == artifact_id,
+                artifacts.c.archived.is_(False),
+            )
+        ).mappings().one_or_none()
+        return Artifact(**row) if row is not None else None
+
     def create(self, conn: Connection, *, task_id: str, now: str, values: dict) -> Artifact:
         artifact_id = allocate_readable_id(
             conn, scope=task_id, kind="artifact", prefix="a"
@@ -48,3 +58,14 @@ class ArtifactRepository:
         )
         updated = {**dict(row), **values}
         return Artifact(**updated)
+
+    def archive(self, conn: Connection, task_id: str, artifact_id: str) -> Artifact | None:
+        artifact = self.get(conn, task_id, artifact_id)
+        if artifact is None:
+            return None
+        conn.execute(
+            update(artifacts)
+            .where(artifacts.c.task_id == task_id, artifacts.c.id == artifact_id)
+            .values(archived=True)
+        )
+        return artifact

@@ -5,7 +5,14 @@ from sqlalchemy import Engine, select, update
 from axiom.infrastructure.database.metadata import intents, project_knowledge, task_hints, tasks
 from axiom.modules.common.ids import allocate_readable_id
 from axiom.modules.common.time import utcnow
-from axiom.modules.knowledge.schemas import CreateKnowledge, CreateTaskHint, Knowledge, TaskHint
+from axiom.modules.knowledge.schemas import (
+    CreateKnowledge,
+    CreateTaskHint,
+    Knowledge,
+    TaskHint,
+    UpdateKnowledge,
+    UpdateTaskHint,
+)
 from axiom.modules.projects.repository import ProjectRepository
 from axiom.modules.tasks.repository import TaskRepository
 
@@ -60,6 +67,50 @@ class KnowledgeService:
             ).mappings()
             return [Knowledge(**row) for row in rows]
 
+    def update_project_knowledge(
+        self,
+        project_id: str,
+        knowledge_id: str,
+        body: UpdateKnowledge,
+    ) -> Knowledge:
+        now = utcnow()
+        with self.engine.begin() as conn:
+            values = body.model_dump(exclude_none=True, exclude={"actor"})
+            values.update(updated_by=body.actor, updated_at=now)
+            result = conn.execute(
+                update(project_knowledge)
+                .where(
+                    project_knowledge.c.project_id == project_id,
+                    project_knowledge.c.id == knowledge_id,
+                    project_knowledge.c.archived.is_(False),
+                )
+                .values(**values)
+            )
+            if not result.rowcount:
+                raise ValueError(f"Knowledge not found: {knowledge_id}")
+            row = conn.execute(
+                select(project_knowledge).where(
+                    project_knowledge.c.project_id == project_id,
+                    project_knowledge.c.id == knowledge_id,
+                )
+            ).mappings().one()
+            return Knowledge(**row)
+
+    def archive_project_knowledge(self, project_id: str, knowledge_id: str, *, actor: str) -> None:
+        now = utcnow()
+        with self.engine.begin() as conn:
+            result = conn.execute(
+                update(project_knowledge)
+                .where(
+                    project_knowledge.c.project_id == project_id,
+                    project_knowledge.c.id == knowledge_id,
+                    project_knowledge.c.archived.is_(False),
+                )
+                .values(archived=True, updated_by=actor.strip() or "human", updated_at=now)
+            )
+            if not result.rowcount:
+                raise ValueError(f"Knowledge not found: {knowledge_id}")
+
     def add_task_hint(self, task_id: str, body: CreateTaskHint) -> TaskHint:
         now = utcnow()
         with self.engine.begin() as conn:
@@ -86,7 +137,13 @@ class KnowledgeService:
                     intents.c.status == "pending",
                     intents.c.last_failure_kind == "needs_hint",
                 )
-                .values(last_failure_kind="", next_retry_at=now)
+                .values(
+                    retry_count=0,
+                    infrastructure_retry_count=0,
+                    last_failure_kind="",
+                    failure_class="",
+                    next_retry_at=now,
+                )
             )
             conn.execute(
                 update(tasks)
@@ -107,3 +164,34 @@ class KnowledgeService:
                 .order_by(task_hints.c.created_at, task_hints.c.id)
             ).mappings()
             return [TaskHint(**row) for row in rows]
+
+    def update_task_hint(
+        self,
+        task_id: str,
+        hint_id: str,
+        body: UpdateTaskHint,
+    ) -> TaskHint:
+        with self.engine.begin() as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise ValueError(f"Task not found: {task_id}")
+            if task.legacy_readonly:
+                raise ValueError("Legacy task is read-only")
+            result = conn.execute(
+                update(task_hints)
+                .where(
+                    task_hints.c.task_id == task_id,
+                    task_hints.c.id == hint_id,
+                    task_hints.c.archived.is_(False),
+                )
+                .values(content=body.content, creator=body.actor)
+            )
+            if not result.rowcount:
+                raise ValueError(f"Hint not found: {hint_id}")
+            row = conn.execute(
+                select(task_hints).where(
+                    task_hints.c.task_id == task_id,
+                    task_hints.c.id == hint_id,
+                )
+            ).mappings().one()
+            return TaskHint(**row)

@@ -174,38 +174,6 @@ class JudgeTestResponse(BaseModel):
     raw_output: str = ""
 
 
-# ── 批量 URL 守门测试 ─────────────────────────────────────────────
-class JudgeUrlTestItem(BaseModel):
-    method: str = "GET"
-    url: str
-    body: str = ""
-
-
-class JudgeUrlBatchRequest(BaseModel):
-    items: list[JudgeUrlTestItem]
-
-
-class JudgeUrlTestResult(BaseModel):
-    method: str = "GET"
-    url: str = ""
-    body: str = ""
-    decision: Literal["ALLOW", "BLOCK"]
-    reason: str = ""
-    source: str = ""
-    model_name: str = ""
-    model_latency_ms: int = 0
-    raw_model_output: str = ""
-    normalized: dict[str, Any] = Field(default_factory=dict)
-
-
-class JudgeUrlBatchResponse(BaseModel):
-    results: list[JudgeUrlTestResult]
-    total: int = 0
-    allowed: int = 0
-    blocked: int = 0
-    total_latency_ms: int = 0
-
-
 class ProjectScope(BaseModel):
     targets: list[str] = Field(default_factory=list)
     exclude: list[str] = Field(default_factory=list)

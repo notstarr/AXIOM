@@ -38,13 +38,15 @@ def create_v2_app(
 
     @app.get("/", include_in_schema=False)
     def index():
-        return FileResponse(STATIC_DIR / "v2" / "index.html")
+        return FileResponse(STATIC_DIR / "index.html")
 
     @app.get("/health", include_in_schema=True)
     def health() -> dict[str, str]:
         return {"status": "ok", "api": "v2"}
 
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR / "v2")), name="static")
+    # Keep the established frontend as the presentation layer. Backend V2 is
+    # exposed only through /api/v1; static/js/v2-adapter.js owns translation.
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     return app
 

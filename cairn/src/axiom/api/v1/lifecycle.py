@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from axiom.api.v1.dependencies import get_v2_engine, require_service_token
 from axiom.modules.graph.schemas import ConcludeResult, Intent
@@ -32,11 +32,24 @@ class WorkerCommand(BaseModel):
 
 class ReleaseIntentCommand(WorkerCommand):
     failure_kind: str = ""
+    failure_class: str = "execution"
     next_retry_at: str | None = None
 
 
 class ConcludeIntentCommand(WorkerCommand):
     description: str
+    summary_source: str = Field(default="legacy", min_length=1)
+
+
+class IntentActivityCommand(WorkerCommand):
+    kind: str
+    summary: str
+    tool: str = ""
+
+
+class ReasonActivityCommand(WorkerCommand):
+    kind: str
+    summary: str
 
 
 class CompleteTaskCommand(BaseModel):
@@ -81,6 +94,26 @@ def heartbeat_intent(task_id: str, intent_id: str, body: WorkerCommand, service=
         _raise(exc)
 
 
+@internal.post("/tasks/{task_id}/intents/{intent_id}/activity", response_model=Intent)
+def report_intent_activity(
+    task_id: str,
+    intent_id: str,
+    body: IntentActivityCommand,
+    service=Depends(intent_service),
+):
+    try:
+        return service.report_activity(
+            task_id,
+            intent_id,
+            worker=body.worker,
+            kind=body.kind,
+            summary=body.summary,
+            tool=body.tool,
+        )
+    except ValueError as exc:
+        _raise(exc)
+
+
 @internal.post("/tasks/{task_id}/intents/{intent_id}/release", response_model=Intent)
 def release_intent(task_id: str, intent_id: str, body: ReleaseIntentCommand, service=Depends(intent_service)):
     try:
@@ -89,6 +122,7 @@ def release_intent(task_id: str, intent_id: str, body: ReleaseIntentCommand, ser
             intent_id,
             worker=body.worker,
             failure_kind=body.failure_kind,
+            failure_class=body.failure_class,
             next_retry_at=body.next_retry_at,
         )
     except ValueError as exc:
@@ -103,6 +137,7 @@ def conclude_intent(task_id: str, intent_id: str, body: ConcludeIntentCommand, s
             intent_id,
             worker=body.worker,
             description=body.description,
+            summary_source=body.summary_source,
         )
     except ValueError as exc:
         _raise(exc)
@@ -133,6 +168,23 @@ def claim_reason(task_id: str, body: WorkerCommand, service=Depends(task_lifecyc
 def heartbeat_reason(task_id: str, body: WorkerCommand, service=Depends(task_lifecycle)):
     try:
         return service.heartbeat_reason(task_id, worker=body.worker)
+    except ValueError as exc:
+        _raise(exc)
+
+
+@internal.post("/tasks/{task_id}/reason/activity", response_model=Task)
+def report_reason_activity(
+    task_id: str,
+    body: ReasonActivityCommand,
+    service=Depends(task_lifecycle),
+):
+    try:
+        return service.report_reason_activity(
+            task_id,
+            worker=body.worker,
+            kind=body.kind,
+            summary=body.summary,
+        )
     except ValueError as exc:
         _raise(exc)
 

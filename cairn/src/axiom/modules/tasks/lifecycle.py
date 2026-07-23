@@ -26,9 +26,51 @@ class TaskLifecycleService:
             conn.execute(
                 update(tasks)
                 .where(tasks.c.id == task_id)
-                .values(reason_worker=worker, reason_heartbeat_at=now, phase="reason", updated_at=now)
+                .values(
+                    reason_worker=worker,
+                    reason_heartbeat_at=now,
+                    reason_activity_kind="starting",
+                    reason_activity_summary="正在读取任务上下文",
+                    reason_activity_started_at=now,
+                    reason_activity_updated_at=now,
+                    phase="reason",
+                    updated_at=now,
+                )
             )
             self.audit.record_in(conn, RecordAuditEvent(project_id=task.project_id, task_id=task_id, worker=worker, event_type="reason.claimed", message=f"Reason claimed by {worker}"))
+            return self.repository.get(conn, task_id)  # type: ignore[return-value]
+
+    def report_reason_activity(
+        self,
+        task_id: str,
+        *,
+        worker: str,
+        kind: str,
+        summary: str,
+    ) -> Task:
+        worker = self._worker(worker)
+        kind = kind.strip()
+        summary = summary.strip()
+        if not kind:
+            raise ValueError("Reason activity kind must not be empty")
+        if not summary:
+            raise ValueError("Reason activity summary must not be empty")
+        now = utcnow()
+        with self.engine.begin() as conn:
+            task = self._writable_running(conn, task_id)
+            self._reason_owner(task, worker)
+            conn.execute(
+                update(tasks)
+                .where(tasks.c.id == task_id)
+                .values(
+                    reason_activity_kind=kind,
+                    reason_activity_summary=summary,
+                    reason_activity_started_at=task.reason_activity_started_at or now,
+                    reason_activity_updated_at=now,
+                    reason_heartbeat_at=now,
+                    updated_at=now,
+                )
+            )
             return self.repository.get(conn, task_id)  # type: ignore[return-value]
 
     def heartbeat_reason(self, task_id: str, *, worker: str) -> Task:
@@ -74,7 +116,15 @@ class TaskLifecycleService:
                     intents.c.task_id == task_id,
                     intents.c.status.in_(["claimed", "running", "concluding"]),
                 )
-                .values(status="pending", worker=None, last_heartbeat_at=None)
+                .values(
+                    status="pending",
+                    worker=None,
+                    last_heartbeat_at=None,
+                    activity_kind="stopped",
+                    activity_summary="任务已停止",
+                    activity_tool="",
+                    activity_updated_at=now,
+                )
             )
             conn.execute(
                 update(tasks)
@@ -84,6 +134,9 @@ class TaskLifecycleService:
                     phase="none",
                     reason_worker=None,
                     reason_heartbeat_at=None,
+                    reason_activity_kind="stopped",
+                    reason_activity_summary="任务已停止",
+                    reason_activity_updated_at=now,
                     updated_at=now,
                 )
             )
@@ -104,10 +157,43 @@ class TaskLifecycleService:
                 select(intents.c.status).where(intents.c.task_id == task_id, intents.c.id == "i001")
             ).scalar_one_or_none()
             phase = "bootstrap" if bootstrap_status != "completed" else "reason"
+            if phase == "bootstrap":
+                # A Bootstrap that exhausted retries is deliberately parked as
+                # `needs_hint`. Explicitly stopping and resuming is a human
+                # retry decision, so clear that latch; otherwise the Task says
+                # "running / bootstrap" forever while the reconciler refuses
+                # to dispatch any Worker.
+                conn.execute(
+                    update(intents)
+                    .where(intents.c.task_id == task_id, intents.c.id == "i001")
+                    .values(
+                        status="pending",
+                        worker=None,
+                        last_heartbeat_at=None,
+                        activity_kind="",
+                        activity_summary="",
+                        activity_tool="",
+                        activity_started_at=None,
+                        activity_updated_at=None,
+                        retry_count=0,
+                        infrastructure_retry_count=0,
+                        next_retry_at=None,
+                        last_failure_kind="",
+                        failure_class="",
+                    )
+                )
             conn.execute(
                 update(tasks)
                 .where(tasks.c.id == task_id)
-                .values(status="running", phase=phase, updated_at=now)
+                .values(
+                    status="running",
+                    phase=phase,
+                    reason_activity_kind="",
+                    reason_activity_summary="",
+                    reason_activity_started_at=None,
+                    reason_activity_updated_at=None,
+                    updated_at=now,
+                )
             )
             self.audit.record_in(conn, RecordAuditEvent(project_id=task.project_id, task_id=task_id, event_type="task.resumed", message=f"Task resumed at {phase}"))
             return self.repository.get(conn, task_id)  # type: ignore[return-value]
@@ -124,7 +210,15 @@ class TaskLifecycleService:
                     intents.c.task_id == task_id,
                     intents.c.status.not_in(["completed", "cancelled"]),
                 )
-                .values(status="cancelled", worker=None, last_heartbeat_at=None)
+                .values(
+                    status="cancelled",
+                    worker=None,
+                    last_heartbeat_at=None,
+                    activity_kind="cancelled",
+                    activity_summary="任务目标已完成，执行已取消",
+                    activity_tool="",
+                    activity_updated_at=now,
+                )
             )
             conn.execute(
                 update(tasks)
@@ -134,6 +228,9 @@ class TaskLifecycleService:
                     phase="none",
                     reason_worker=None,
                     reason_heartbeat_at=None,
+                    reason_activity_kind="finished",
+                    reason_activity_summary="任务目标已完成",
+                    reason_activity_updated_at=now,
                     completed_at=now,
                     updated_at=now,
                 )

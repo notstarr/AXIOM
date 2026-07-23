@@ -59,8 +59,55 @@ class V2Client:
     def intents(self, task_id: str) -> list[Intent]:
         return [Intent.model_validate(item) for item in self._request("GET", f"/tasks/{task_id}/intents", internal=False)]
 
-    def build_context(self, task_id: str, attempt_id: str) -> dict[str, Any]:
-        return self._request("POST", f"/internal/tasks/{task_id}/context", {"attempt_id": attempt_id})
+    def list_vulnerabilities(self, task_id: str) -> list[dict[str, Any]]:
+        payload = self._request(
+            "GET",
+            f"/tasks/{task_id}/vulnerabilities",
+            internal=False,
+        )
+        if not isinstance(payload, list):
+            raise V2ProtocolError("vulnerability list response must be an array")
+        return [item for item in payload if isinstance(item, dict)]
+
+    def build_context(
+        self,
+        task_id: str,
+        attempt_id: str,
+        *,
+        phase: str = "generic",
+        intent_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/internal/tasks/{task_id}/context",
+            {
+                "attempt_id": attempt_id,
+                "phase": phase,
+                "intent_id": intent_id,
+            },
+        )
+
+    def register_artifact(
+        self,
+        task_id: str,
+        *,
+        intent_id: str,
+        artifact_type: str,
+        path: str,
+        summary: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/internal/tasks/{task_id}/artifacts",
+            {
+                "intent_id": intent_id,
+                "artifact_type": artifact_type,
+                "path": path,
+                "summary": summary,
+                "actor": actor,
+            },
+        )
 
     def claim_intent(self, task_id: str, intent_id: str, worker: str) -> Intent:
         return Intent.model_validate(
@@ -72,6 +119,29 @@ class V2Client:
             self._request("POST", f"/internal/tasks/{task_id}/intents/{intent_id}/heartbeat", {"worker": worker})
         )
 
+    def report_intent_activity(
+        self,
+        task_id: str,
+        intent_id: str,
+        worker: str,
+        *,
+        kind: str,
+        summary: str,
+        tool: str = "",
+    ) -> Intent:
+        return Intent.model_validate(
+            self._request(
+                "POST",
+                f"/internal/tasks/{task_id}/intents/{intent_id}/activity",
+                {
+                    "worker": worker,
+                    "kind": kind,
+                    "summary": summary,
+                    "tool": tool,
+                },
+            )
+        )
+
     def release_intent(
         self,
         task_id: str,
@@ -79,6 +149,7 @@ class V2Client:
         worker: str,
         *,
         failure_kind: str,
+        failure_class: str = "execution",
         next_retry_at: str | None,
     ) -> Intent:
         return Intent.model_validate(
@@ -88,18 +159,29 @@ class V2Client:
                 {
                     "worker": worker,
                     "failure_kind": failure_kind,
+                    "failure_class": failure_class,
                     "next_retry_at": next_retry_at,
                 },
             )
         )
 
     def conclude_intent(
-        self, task_id: str, intent_id: str, worker: str, description: str
+        self,
+        task_id: str,
+        intent_id: str,
+        worker: str,
+        description: str,
+        *,
+        summary_source: str,
     ) -> dict[str, Any]:
         return self._request(
             "POST",
             f"/internal/tasks/{task_id}/intents/{intent_id}/conclude",
-            {"worker": worker, "description": description},
+            {
+                "worker": worker,
+                "description": description,
+                "summary_source": summary_source,
+            },
         )
 
     def needs_replan(self, task_id: str, intent_id: str) -> Intent:
@@ -119,6 +201,17 @@ class V2Client:
     def heartbeat_reason(self, task_id: str, worker: str) -> Task:
         return Task.model_validate(
             self._request("POST", f"/internal/tasks/{task_id}/reason/heartbeat", {"worker": worker})
+        )
+
+    def report_reason_activity(
+        self, task_id: str, worker: str, *, kind: str, summary: str
+    ) -> Task:
+        return Task.model_validate(
+            self._request(
+                "POST",
+                f"/internal/tasks/{task_id}/reason/activity",
+                {"worker": worker, "kind": kind, "summary": summary},
+            )
         )
 
     def release_reason(self, task_id: str, worker: str) -> Task:

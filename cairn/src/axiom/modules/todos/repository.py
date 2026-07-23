@@ -77,6 +77,35 @@ class TodoRepository:
             return None
         return self.get(conn, task_id, todo_id)
 
+    def add_sources(
+        self,
+        conn: Connection,
+        task_id: str,
+        todo_id: str,
+        sources: list[TodoSource],
+    ) -> None:
+        existing = {
+            (row.source_type, row.source_id)
+            for row in conn.execute(
+                select(todo_sources.c.source_type, todo_sources.c.source_id).where(
+                    todo_sources.c.task_id == task_id,
+                    todo_sources.c.todo_id == todo_id,
+                )
+            )
+        }
+        values = [
+            {
+                "task_id": task_id,
+                "todo_id": todo_id,
+                "source_type": source.type,
+                "source_id": source.id,
+            }
+            for source in sources
+            if (source.type, source.id) not in existing
+        ]
+        if values:
+            conn.execute(todo_sources.insert(), values)
+
     def source_exists(
         self,
         conn: Connection,

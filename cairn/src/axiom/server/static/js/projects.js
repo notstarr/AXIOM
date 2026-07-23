@@ -24,6 +24,7 @@ window.AxiomModules.projects = {
     async loadProjects() {
       try {
         this.projects = await this.api('GET', '/projects');
+        this.pruneDeletedProjectCaches();
         if (!this.selectedTaskManagementId && this.projects.length > 0) {
           this.selectedTaskManagementId = this.projects[0].id;
         }
@@ -31,6 +32,23 @@ window.AxiomModules.projects = {
           this.selectedProjectManagementTaskId = this.tasksForGroup(this.selectedProjectManagementId)[0]?.id || '';
         }
       } catch(e) { console.error(e); }
+    },
+
+    pruneDeletedProjectCaches() {
+      const liveIds = new Set((this.projects || []).map(project => project.id));
+      for (const cache of [this.projectDetailsCache, this.projectEventsCache, this.taskDiagnostics, this.taskDiagnosticsLoading]) {
+        for (const id of Object.keys(cache || {})) {
+          if (!liveIds.has(id)) delete cache[id];
+        }
+      }
+      if (this.selectedProjectId && !liveIds.has(this.selectedProjectId)) {
+        this.project = null;
+        this.selectedProjectId = '';
+        this.selectedNode = null;
+        this.selectedFacts = [];
+        this.seeEvents = [];
+        this.seeLastEventId = 0;
+      }
     },
 
     async loadProjectGroups() {
@@ -77,7 +95,7 @@ window.AxiomModules.projects = {
       } catch(e) { console.error('load settings failed', e); }
       const workers = (this.dispatchSettings && this.dispatchSettings.workers) || [];
       const defaults = workers
-        .filter(w => w && w.name && !w.disabled && !!w.mcp_enabled)
+        .filter(w => w && w.name && !w.disabled)
         .map(w => w.name);
       if (preselectParentProjectId) {
         this.newProject.parent_project_id = preselectParentProjectId;
@@ -85,7 +103,11 @@ window.AxiomModules.projects = {
         this.newProject.parent_project_id = this.projectGroups[0].id;
       }
       this.newProject.worker_pool = defaults;
+      if (!String(this.newProject.goal || '').trim()) {
+        this.newProject.goal = '对该系统进行渗透测试，并挖掘10个高置信度的漏洞';
+      }
       if (!this.newProject._guardTouched) this.newProject.guard_enabled = !!this.judgeSettings?.enabled_default;
+      this.taskComposerStep = 1;
       this.showTaskComposer = true;
     },
 
@@ -157,7 +179,9 @@ window.AxiomModules.projects = {
     },
 
     allProjectDetails() {
-      const details = Object.values(this.projectDetailsCache || {});
+      const liveIds = new Set((this.projects || []).map(project => project.id));
+      const details = Object.values(this.projectDetailsCache || {})
+        .filter(item => liveIds.has(item?.project?.id));
       if (this.project && this.selectedProjectId) {
         const withoutSelected = details.filter(item => item?.project?.id !== this.selectedProjectId);
         return [this.project, ...withoutSelected];
@@ -171,9 +195,6 @@ window.AxiomModules.projects = {
       const selected = tasks.find(task => task.id === this.selectedTaskManagementId) || tasks[0] || null;
       if (selected && this.taskWorkerPoolEditor.projectId !== selected.id) {
         this.syncTaskWorkerPoolEditor(selected);
-      }
-      if (selected && !this.taskDiagnostics[selected.id] && !this.taskDiagnosticsLoading[selected.id]) {
-        this.loadTaskDiagnostics(selected.id, true);
       }
       return selected;
     },
@@ -241,7 +262,6 @@ window.AxiomModules.projects = {
         bootstrap: 'Bootstrap 榜',
         explore: 'Explore 榜',
         reason: 'Reason 榜',
-        maintainer: 'Maintainer 榜',
       };
       return labels[phase] || phase || '未知阶段';
     },
@@ -372,7 +392,6 @@ window.AxiomModules.projects = {
       try {
         this.project = await this.api('GET', `/projects/${id}`);
         this.projectDetailsCache[id] = this.project;
-        this.loadMaintainerStatus(id);
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
@@ -557,69 +576,32 @@ window.AxiomModules.projects = {
           return;
         }
 
-        let origin = this.newProject.origin;
-        if (this.newProject.depth_mode && this.newProject.depthInputMode === 'crawler' && this.newProject.crawlerTaskId) {
-          try {
-            const resp = await this.api('GET', `/crawler/tasks/${this.newProject.crawlerTaskId}/export`);
-            origin = resp.yaml || '';
-          } catch(e) {
-            this.showToast('获取爬虫数据失败: ' + (e.message || e), 'error');
-            return;
-          }
-          if (!origin) {
-            this.showToast('该爬虫任务暂无数据，请先运行爬虫', 'error');
-            return;
-          }
-        }
-
         const actor = this.actorName();
         const body = {
           parent_project_id: parentProjectId,
           title: this.newProject.title,
-          origin: origin,
-          goal: this.newProject.depth_mode ? '深度模式' : this.newProject.goal,
-          bootstrap_enabled: this.newProject.bootstrap && !this.newProject.depth_mode,
+          origin: this.newProject.origin,
+          goal: this.newProject.goal,
           kk_report_enabled: !!this.newProject.kk_report_enabled,
-          depth_mode: !!this.newProject.depth_mode,
           guard_enabled: !!this.newProject.guard_enabled,
           hints: this.newProject.hints.trim()
             ? [{ content: this.newProject.hints.trim(), creator: actor }]
             : [],
           worker_pool: Array.isArray(this.newProject.worker_pool) ? this.newProject.worker_pool : [],
-        };
-        if (this.newProject.task_scope_enabled || this.newProject.task_scope_targets || this.newProject.task_scope_exclude) {
-          const lines = (text) => String(text || '').split(/\n|,/).map(x => x.trim()).filter(Boolean);
-          body.task_scope = {
+          task_scope: {
             enabled: !!this.newProject.task_scope_enabled,
-            targets: lines(this.newProject.task_scope_targets),
-            exclude: lines(this.newProject.task_scope_exclude),
+            targets: String(this.newProject.task_scope_targets || '').split(/\n|,/).map(x => x.trim()).filter(Boolean),
+            exclude: String(this.newProject.task_scope_exclude || '').split(/\n|,/).map(x => x.trim()).filter(Boolean),
             notes: this.newProject.task_scope_notes || '',
-          };
-        }
+          },
+        };
         const data = await this.api('POST', '/projects', body);
         const pid = data.project.id;
-        // Upload HAR to project human/ folder and set origin to full path
-        if (this._harFile) {
-          try {
-            const form = new FormData();
-            form.append('file', this._harFile);
-            const uploadResp = await fetch(`/files/${pid}/upload?set_origin=true`, { method: 'POST', body: form });
-            if (!uploadResp.ok) {
-              this.showToast('HAR 文件上传失败，请手动上传', 'error');
-            } else {
-              await this.loadProjects();
-              const updated = this.projects.find(p => p.id === pid);
-              if (updated) this.openProject(pid);
-            }
-          } catch(e) {
-            this.showToast('HAR 文件上传失败: ' + (e.message || e), 'error');
-          }
-          this._harFile = null;
-        }
         this.showTaskComposer = false;
+        this.taskComposerStep = 1;
         this.newProject = {
           parent_project_id: parentProjectId || this.projectGroups[0]?.id || '',
-          title:'', origin:'', goal:'',
+          title:'', origin:'', goal:'对该系统进行渗透测试，并挖掘10个高置信度的漏洞',
           bootstrap: true, kk_report_enabled: false, depth_mode: false, guard_enabled: !!this.judgeSettings?.enabled_default, hints: '',
           task_scope_enabled: false, task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '',
           depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], _guardTouched: false,
@@ -740,9 +722,23 @@ window.AxiomModules.projects = {
       if (!projectId || this.isDeletingProject) return;
       try {
         this.isDeletingProject = true;
+        const wasSelected = this.selectedProjectId === projectId;
         await this.api('DELETE', `/projects/${projectId}`);
+        delete this.projectDetailsCache[projectId];
+        delete this.projectEventsCache[projectId];
+        delete this.taskDiagnostics[projectId];
+        delete this.taskDiagnosticsLoading[projectId];
+        if (String(this.selectedVulnerabilityKey || '').startsWith(`${projectId}:`)) {
+          this.selectedVulnerabilityKey = '';
+        }
+        if (wasSelected) {
+          this.project = null;
+          this.selectedProjectId = '';
+          this.selectedNode = null;
+          this.selectedFacts = [];
+        }
         this.closeDeleteModal(true);
-        if (this.selectedProjectId === projectId && this.view === 'graph') {
+        if (wasSelected) {
           this.backToList();
         } else {
           await this.loadProjects();
@@ -891,7 +887,15 @@ window.AxiomModules.projects = {
       }
     },
 
-    async openProject(id, fromRoute = false) {
+    async openTaskOverview(id, fromRoute = false) {
+      return this.openProject(id, fromRoute, 'human');
+    },
+
+    async openTaskGraph(id, fromRoute = false) {
+      return this.openProject(id, fromRoute, 'graph');
+    },
+
+    async openProject(id, fromRoute = false, initialView = 'human') {
       if (this.replay.active) {
         this.stopReplayTimer();
         this.replay.active = false;
@@ -914,9 +918,9 @@ window.AxiomModules.projects = {
       this.selectedTimelineEntryId = null;
       await this.loadProject(id);
       await this.loadSeeEvents(true);
-      await this.loadConversation(id, { reset: true, silent: true });
       await this.loadDispatchSettings();
-      this.view = 'graph';
+      this.humanTab = 'workspace';
+      this.view = initialView === 'graph' ? 'graph' : 'human';
       this.activePage = 'task-detail';
       if (!fromRoute && location.hash !== `#/tasks/${id}`) location.hash = `/tasks/${id}`;
       this.$nextTick(() => {
@@ -927,7 +931,7 @@ window.AxiomModules.projects = {
         }
         this.teardownAutoFit();
         if (this.cy) { this.cy.destroy(); this.cy = null; }
-        this.initGraph();
+        if (this.view === 'graph') this.initGraph();
       });
     },
 
@@ -961,40 +965,44 @@ window.AxiomModules.projects = {
     },
 
     startPolling() {
+      if (this.pollTimer) clearInterval(this.pollTimer);
+      if (this.intentActivityPollTimer) clearInterval(this.intentActivityPollTimer);
       this.pollTimer = setInterval(async () => {
         if (!this.polling) return;
-        if (this.selectedProjectId && this.view === 'graph' && this.activePage === 'task-detail') {
+        if (this.selectedProjectId && ['graph', 'human'].includes(this.view) && this.activePage === 'task-detail') {
           await Promise.all([
             this.loadProject(this.selectedProjectId),
             this.loadSeeEvents(false),
             this.loadDispatchSettings(),
           ]);
-          this.updateGraph();
+          if (this.view === 'graph') this.updateGraph();
         } else {
           await this.loadProjects();
           if (['dashboard', 'projects', 'vulnerabilities'].includes(this.activePage)) {
             await this.loadAllProjectDetails();
           }
         }
-        // Auto-poll crawler status on crawler management page
-        if (this.activePage === 'crawler-results' && this.selectedCrawlerTaskId) {
-          if (this.crawlerStatus && (this.crawlerStatus.status === 'running' || this.crawlerStatus.status === 'stopping')) {
-            const wasRunning = this.crawlerStatus.status === 'running';
-            await this.loadCrawlerStatus();
-            if (wasRunning && this.crawlerStatus.status === 'done') {
-              this.pushNotification({ type: 'success', title: '爬虫完成', message: this.crawlerStatus.target_url });
-              await this.loadCrawlerResultsPage();
-              await this.loadCrawlerTasks();
-            } else if (wasRunning && this.crawlerStatus.status === 'failed') {
-              this.pushNotification({ type: 'error', title: '爬虫失败', message: this.crawlerStatus.target_url });
-              await this.loadCrawlerTasks();
-            }
-          } else {
-            await this.loadCrawlerStatus();
-          }
-          await this.loadCrawlerResultsPage();
-        }
       }, 5000);
+      this.intentActivityPollTimer = setInterval(() => {
+        this.refreshSelectedIntentActivity();
+      }, 2000);
+    },
+
+    async refreshSelectedIntentActivity() {
+      if (!this.polling || this.activePage !== 'task-detail' || this.view !== 'graph') return;
+      const intentId = this.selectedIntentId();
+      if (!this.selectedProjectId || !intentId) return;
+      const current = this.selectedIntentRecord();
+      if (!current || !['claimed', 'running', 'concluding'].includes(current.status)) return;
+      try {
+        const latest = await this.api('GET', `/projects/${this.selectedProjectId}/intents/${intentId}`);
+        const index = (this.project?.intents || []).findIndex(item => item.id === intentId);
+        if (index >= 0) this.project.intents.splice(index, 1, latest);
+      } catch (error) {
+        // Full-page polling remains the fallback. A transient activity refresh
+        // must not distract the operator with repeated toast errors.
+        console.debug('Intent activity refresh failed', error);
+      }
     },
 
     // ── Asset Management ──

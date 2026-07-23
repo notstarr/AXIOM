@@ -1,0 +1,51 @@
+from __future__ import annotations
+
+from fastapi import APIRouter
+
+from axiom.modules.artifacts.api import router as artifacts_router
+from axiom.modules.audit.api import router as audit_router
+from axiom.modules.context.api import router as context_router
+from axiom.modules.credentials.api import router as credentials_router
+from axiom.modules.dispatch.api import router as dispatch_router
+from axiom.modules.diagnostics.api import router as diagnostics_router
+from axiom.modules.execution.api import router as execution_router
+from axiom.modules.exports.api import router as exports_router
+from axiom.modules.external_reports.api import router as external_reports_router
+from axiom.modules.knowledge.api import router as knowledge_router
+from axiom.modules.skills.api import router as skills_router
+from axiom.modules.guard.api import router as guard_router
+from axiom.modules.goals.api import router as goals_router
+from axiom.modules.graph.api import router as graph_router
+from axiom.modules.projects.api import router as projects_router
+from axiom.modules.mcp.api import router as mcp_router
+from axiom.modules.reason.api import router as reason_router
+from axiom.modules.settings.api import router as settings_router
+from axiom.modules.tasks.api import router as tasks_router
+from axiom.modules.todos.api import router as todos_router
+from axiom.modules.vulnerabilities.api import router as vulnerabilities_router
+from axiom.modules.workers.api import router as workers_router
+
+
+router = APIRouter(prefix="/api/v1")
+router.include_router(projects_router)
+router.include_router(reason_router)
+router.include_router(tasks_router)
+router.include_router(graph_router)
+router.include_router(workers_router)
+router.include_router(dispatch_router)
+router.include_router(diagnostics_router)
+router.include_router(artifacts_router)
+router.include_router(audit_router)
+router.include_router(context_router)
+router.include_router(credentials_router)
+router.include_router(execution_router)
+router.include_router(exports_router)
+router.include_router(todos_router)
+router.include_router(settings_router)
+router.include_router(vulnerabilities_router)
+router.include_router(mcp_router)
+router.include_router(external_reports_router)
+router.include_router(knowledge_router)
+router.include_router(skills_router)
+router.include_router(guard_router)
+router.include_router(goals_router)

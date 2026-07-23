@@ -1,0 +1,222 @@
+<template x-if="activePage === 'task-detail' && view === 'human' && project">
+<div class="h-full min-h-0 flex flex-col overflow-hidden min-w-0 bg-slate-50/40">
+  <header class="shrink-0 bg-white/90 backdrop-blur border-b border-slate-200/70">
+    <div class="px-5 py-3 flex items-center gap-3">
+      <button @click="backToList()" class="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition" aria-label="返回任务列表">‹</button>
+      <div class="min-w-0">
+        <div class="flex items-center gap-2">
+          <h2 class="text-base font-semibold text-slate-800 truncate" x-text="project?.project?.title"></h2>
+          <span class="text-[11px] font-mono text-slate-400" x-text="project?.project?.id"></span>
+          <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="projectStatusBadgeClass(project.project.status)" x-text="projectStatusLabel(project.project.status)"></span>
+        </div>
+        <p class="text-xs text-slate-400 mt-0.5 truncate" x-text="project?.project?.origin"></p>
+      </div>
+      <div class="flex-1"></div>
+      <div class="flex items-center gap-2">
+        <span class="hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-500">
+          <span class="h-1.5 w-1.5 rounded-full" :class="project?.project?.status === 'active' ? 'bg-emerald-400' : project?.project?.status === 'completed' ? 'bg-slate-400' : 'bg-amber-400'"></span>
+          <span x-text="humanGoalStatusLabel()"></span>
+        </span>
+        <button @click="refreshCurrentPage()" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition">刷新</button>
+        <button @click="switchTaskView('graph')" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition">图谱</button>
+      </div>
+    </div>
+    <nav class="px-5 flex items-center gap-1 border-t border-slate-100 overflow-x-auto" aria-label="任务工作台导航">
+      <template x-for="tab in [
+        {id: 'workspace', label: '工作台'},
+        {id: 'todos', label: 'Todo'},
+        {id: 'intents', label: 'Intents'},
+        {id: 'facts', label: '事实与线索'},
+        {id: 'artifacts', label: '产物'}
+      ]" :key="tab.id">
+        <button @click="switchHumanTab(tab.id)" class="relative px-3 py-2.5 text-xs whitespace-nowrap transition"
+          :class="humanTab === tab.id ? 'text-brand-700 font-semibold' : 'text-slate-400 hover:text-slate-600'">
+          <span x-text="tab.label"></span>
+          <span x-show="tab.id === 'todos' && project.todos?.length" class="ml-1 text-[10px] text-slate-400" x-text="project.todos.filter(item => !item.archived).length"></span>
+          <span x-show="tab.id === 'intents' && project.intents?.length" class="ml-1 text-[10px] text-slate-400" x-text="project.intents.filter(item => !item.archived).length"></span>
+          <span x-show="humanTab === tab.id" class="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-brand-500"></span>
+        </button>
+      </template>
+    </nav>
+  </header>
+
+  <!-- 工作台：用运行循环表达 Reason 重入和 Explore 并发，不把任务伪装成线性流程。 -->
+  <main x-show="humanTab === 'workspace'" class="flex-1 min-h-0 overflow-y-auto p-5">
+    <div class="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-4 max-w-[1600px] mx-auto">
+      <aside class="space-y-3 self-start xl:sticky xl:top-0">
+        <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">运行循环</p>
+              <h3 class="mt-1 text-sm font-semibold text-slate-800" x-text="humanCycleModel().current ? `当前第 ${humanCycleModel().current.number} 轮` : '等待启动'"></h3>
+            </div>
+            <span class="px-2 py-1 rounded-lg text-[10px] border" :class="humanCycleStatusClass(humanCycleModel().current?.status)" x-text="humanCycleStatusLabel(humanCycleModel().current?.status)"></span>
+          </div>
+
+          <div class="mt-4 space-y-3">
+            <div class="flex items-start gap-2.5">
+              <span class="mt-0.5 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold" :class="humanBootstrapStatus().key === 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'">✓</span>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between gap-2"><span class="text-xs font-semibold text-slate-700">Bootstrap</span><span class="text-[10px] text-slate-400" x-text="humanBootstrapStatus().label"></span></div>
+                <p class="mt-0.5 text-[10px] text-slate-400">攻击面初始化</p>
+              </div>
+            </div>
+            <div class="ml-2.5 h-3 border-l border-dashed border-slate-200"></div>
+            <div class="flex items-start gap-2.5">
+              <span class="mt-0.5 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold bg-blue-100 text-blue-700">↻</span>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between gap-2"><span class="text-xs font-semibold text-slate-700">Reason ↻ Explore</span><span class="text-[10px] text-blue-600" x-text="humanCycleModel().cycles.length ? `${humanCycleModel().cycles.length} 轮` : '尚未运行'"></span></div>
+                <p class="mt-0.5 text-[10px] text-slate-400">循环决策与并发执行</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-4 rounded-xl bg-slate-50 border border-slate-100 p-3">
+            <p class="text-[10px] uppercase tracking-wider text-slate-400">下一步</p>
+            <p class="mt-1.5 text-xs leading-5 text-slate-600" x-text="humanNextActionLabel()"></p>
+          </div>
+        </section>
+
+        <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-semibold text-slate-700">历史循环</h3>
+            <span class="text-[10px] text-slate-400" x-text="`${humanCycleModel().history.length} 轮`"></span>
+          </div>
+          <div class="mt-3 space-y-2">
+            <template x-for="cycle in humanCycleModel().history.slice(0, 6)" :key="`history-cycle-${cycle.number}`">
+              <div class="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-50 transition">
+                <span class="h-5 w-5 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-[10px] font-semibold" x-text="cycle.number"></span>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center justify-between gap-2"><span class="text-[11px] text-slate-600" x-text="humanCycleStatusLabel(cycle.status)"></span><span class="text-[10px] text-slate-400" x-text="`${cycle.intents.length} Intent`"></span></div>
+                  <p class="text-[10px] text-slate-400 truncate" x-text="cycle.reasonWorker || 'Reason'"></p>
+                </div>
+              </div>
+            </template>
+            <p x-show="humanCycleModel().history.length === 0" class="text-[11px] text-slate-400">还没有已结束的历史循环。</p>
+          </div>
+        </section>
+      </aside>
+
+      <div class="min-w-0 space-y-4">
+        <section class="grid grid-cols-1 lg:grid-cols-[1.35fr_1fr] gap-4">
+          <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Goal</p>
+                <h3 class="mt-1 text-base font-semibold text-slate-800">任务目标与完成条件</h3>
+              </div>
+              <span class="px-2.5 py-1 rounded-lg border text-[10px] font-semibold" :class="humanGoalStatusClass()" x-text="humanGoalStatusLabel()"></span>
+            </div>
+            <p class="mt-3 text-sm leading-6 text-slate-700" x-text="project?.project?.goal || '未设置任务目标'"></p>
+            <div class="mt-4 rounded-xl bg-slate-50 border border-slate-100 p-3">
+              <p class="text-[10px] text-slate-400">当前判定</p>
+              <p class="mt-1 text-xs leading-5 text-slate-600" x-text="humanGoalExplanation()"></p>
+            </div>
+          </div>
+          <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div class="flex items-center justify-between"><div><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">覆盖概况</p><h3 class="mt-1 text-base font-semibold text-slate-800">Todo 覆盖进度</h3></div><span class="text-sm font-semibold text-brand-600" x-text="`${humanTodoProgress().percent}%`"></span></div>
+            <div class="mt-4 h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full bg-brand-500 transition-all" :style="`width:${humanTodoProgress().percent}%`"></div></div>
+            <div class="mt-4 grid grid-cols-4 gap-2 text-center">
+              <div><div class="text-lg font-semibold text-slate-700" x-text="project?.facts?.filter(item => !item.archived).length || 0"></div><div class="text-[10px] text-slate-400">事实</div></div>
+              <div><div class="text-lg font-semibold text-violet-700" x-text="project?.intents?.filter(item => !item.archived).length || 0"></div><div class="text-[10px] text-slate-400">Intent</div></div>
+              <div><div class="text-lg font-semibold text-amber-700" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total}`"></div><div class="text-[10px] text-slate-400">Todo</div></div>
+              <div><div class="text-lg font-semibold text-slate-700" x-text="project?.artifacts?.filter(item => !item.archived).length || 0"></div><div class="text-[10px] text-slate-400">产物</div></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+            <div><h3 class="text-sm font-semibold text-slate-800" x-text="humanCurrentIntents().length ? '当前并发执行' : '最近一轮执行'"></h3><p class="mt-1 text-xs text-slate-400" x-text="humanCurrentIntents().length ? 'Reason 可以连续运行，Explore Intent 可以并发领取和执行。' : '当前没有活动 Intent，这里保留最近一轮执行结果。'"></p></div>
+            <span class="px-2 py-1 rounded-lg bg-blue-50 text-blue-700 text-[10px] font-semibold" x-text="`${humanCurrentIntents().length} 个活动 Intent`"></span>
+          </div>
+          <div class="p-4">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <template x-for="intent in humanCycleDisplayIntents()" :key="`running-intent-${intent.id}`">
+                <div class="rounded-xl border border-slate-200 p-3 hover:border-brand-200 hover:bg-brand-50/20 transition">
+                  <div class="flex items-start gap-2.5">
+                    <span class="mt-0.5 h-7 w-7 rounded-lg flex items-center justify-center text-xs font-mono" :class="humanIntentStatusClass(intent)" x-text="intent.id?.replace('i', '') || '—'"></span>
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-start justify-between gap-2"><p class="text-xs font-medium leading-5 text-slate-700" x-text="intent.description || '未命名 Intent'"></p><span class="shrink-0 px-1.5 py-0.5 rounded-md border text-[9px]" :class="humanIntentStatusClass(intent)" x-text="humanIntentStatusLabel(intent)"></span></div>
+                      <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-400"><span x-text="intent.worker || '未领取'"></span><span x-show="intent.targets?.length" x-text="intent.targets.join(', ')"></span><span x-show="intent.retry_count || intent.infrastructure_retry_count" class="text-rose-500" x-text="`执行重试 ${intent.retry_count || 0} · 基础设施重试 ${intent.infrastructure_retry_count || 0}`"></span></div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <div x-show="humanCycleDisplayIntents().length === 0" class="py-8 text-center text-xs text-slate-400">当前没有 Intent，等待 Reason 创建下一批任务。</div>
+          </div>
+        </section>
+
+        <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div class="flex items-center justify-between"><div><h3 class="text-sm font-semibold text-slate-800">Todo 覆盖</h3><p class="mt-1 text-xs text-slate-400">所有 Reason 共享同一层 Todo。</p></div><button @click="switchHumanTab('todos')" class="text-[11px] text-brand-600 hover:text-brand-700">查看全部 →</button></div>
+            <div class="mt-4 space-y-3">
+              <template x-for="group in humanTodoGroups().slice(0, 5)" :key="`workspace-todo-${group.name}`">
+                <div>
+                  <div class="flex items-center justify-between gap-2"><span class="text-xs font-medium text-slate-700" x-text="group.name"></span><span class="text-[10px] text-slate-400" x-text="`${group.completed}/${group.total}`"></span></div>
+                  <div class="mt-1.5 h-1.5 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full bg-emerald-400" :style="`width:${group.total ? group.completed / group.total * 100 : 0}%`"></div></div>
+                </div>
+              </template>
+              <p x-show="humanTodoGroups().length === 0" class="py-4 text-xs text-slate-400">Reason 尚未生成 Todo。</p>
+            </div>
+          </div>
+          <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div class="flex items-center justify-between"><div><h3 class="text-sm font-semibold text-slate-800">事实与待验证线索</h3><p class="mt-1 text-xs text-slate-400">只展示任务上下文，不替代漏洞管理。</p></div><button @click="switchHumanTab('facts')" class="text-[11px] text-brand-600 hover:text-brand-700">查看全部 →</button></div>
+            <div class="mt-3 space-y-2">
+              <template x-for="fact in humanRecentFacts(3)" :key="`workspace-fact-${fact.id}`"><div class="rounded-lg bg-slate-50 border border-slate-100 p-2.5"><div class="text-[10px] font-mono text-slate-400" x-text="fact.id"></div><p class="mt-1 text-xs text-slate-600 line-clamp-2" x-text="fact.description"></p></div></template>
+              <template x-for="lead in humanLeadArtifacts(2)" :key="`workspace-lead-${lead.id}`"><div class="rounded-lg bg-amber-50/60 border border-amber-100 p-2.5"><div class="flex items-center justify-between gap-2"><span class="text-[10px] font-semibold text-amber-700">待验证线索</span><span class="text-[10px] text-amber-600" x-text="humanArtifactLabel(lead)"></span></div><p class="mt-1 text-xs text-amber-800 line-clamp-2" x-text="lead.summary || '存在待验证线索'"></p></div></template>
+              <p x-show="humanRecentFacts(3).length === 0 && humanLeadArtifacts(2).length === 0" class="py-4 text-xs text-slate-400">尚未产生事实或线索。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="grid grid-cols-1 lg:grid-cols-[1fr_1.35fr] gap-4">
+          <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div class="flex items-center justify-between"><div><h3 class="text-sm font-semibold text-slate-800">风险摘要</h3><p class="mt-1 text-xs text-slate-400">漏洞详情和状态统一在漏洞管理中维护。</p></div><button @click="openTaskVulnerabilities()" class="text-[11px] text-brand-600 hover:text-brand-700">查看本任务漏洞 →</button></div>
+            <div class="mt-4 flex flex-wrap gap-2">
+              <span class="px-2.5 py-1.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100 text-xs">严重 <b x-text="humanSeverityCounts().critical"></b></span>
+              <span class="px-2.5 py-1.5 rounded-full bg-orange-50 text-orange-700 border border-orange-100 text-xs">高危 <b x-text="humanSeverityCounts().high"></b></span>
+              <span class="px-2.5 py-1.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100 text-xs">中危 <b x-text="humanSeverityCounts().medium"></b></span>
+              <span class="px-2.5 py-1.5 rounded-full bg-sky-50 text-sky-700 border border-sky-100 text-xs">低危 <b x-text="humanSeverityCounts().low"></b></span>
+            </div>
+            <p class="mt-4 text-xs text-slate-400" x-text="project?.vulns?.length ? `本任务共有 ${project.vulns.length} 个漏洞记录。` : '当前没有确认漏洞记录。'"></p>
+          </div>
+          <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div class="flex items-center justify-between"><div><h3 class="text-sm font-semibold text-slate-800">最近产物</h3><p class="mt-1 text-xs text-slate-400">产物保留在文件管理中心。</p></div><button @click="switchHumanTab('artifacts')" class="text-[11px] text-brand-600 hover:text-brand-700">查看全部 →</button></div>
+            <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2">
+              <template x-for="artifact in (project?.artifacts || []).filter(item => !item.archived).slice(-6).reverse()" :key="`workspace-artifact-${artifact.id}`"><div class="flex items-center gap-2 py-1.5 min-w-0"><span class="text-base text-slate-400">▤</span><div class="min-w-0 flex-1"><div class="text-xs text-slate-700 truncate" x-text="humanArtifactLabel(artifact)"></div><div class="text-[10px] text-slate-400 truncate" x-text="`${humanArtifactPhase(artifact)} · ${humanArtifactTypeLabel(artifact)}`"></div></div></div></template>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <!-- Todo 全量视图 -->
+  <main x-show="humanTab === 'todos'" class="flex-1 min-h-0 overflow-y-auto p-5">
+    <div class="max-w-[1200px] mx-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div class="flex items-start justify-between gap-3"><div><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Reason workspace</p><h3 class="mt-1 text-base font-semibold text-slate-800">Todo 覆盖清单</h3><p class="mt-1 text-xs text-slate-400">Todo 是跨 Reason 轮次共享的任务清单，不按 Host / Path 聚类。</p></div><span class="px-2.5 py-1 rounded-lg bg-brand-50 text-brand-700 text-xs font-semibold" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total} 已完成`"></span></div>
+      <div class="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <template x-for="group in humanTodoGroups()" :key="`todo-tab-${group.name}`"><section class="rounded-xl border border-slate-200 p-3"><div class="flex items-center justify-between"><h4 class="text-xs font-semibold text-slate-700" x-text="group.name"></h4><span class="text-[10px] text-slate-400" x-text="`${group.completed}/${group.total}`"></span></div><div class="mt-2 h-1.5 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full bg-emerald-400" :style="`width:${group.total ? group.completed / group.total * 100 : 0}%`"></div></div><div class="mt-3 space-y-2"><template x-for="todo in group.items" :key="todo.id"><div class="flex items-start gap-2"><span class="mt-0.5 h-3 w-3 rounded border shrink-0" :class="todo.status === 'completed' ? 'bg-emerald-400 border-emerald-400' : 'border-slate-300'"></span><div class="min-w-0 flex-1"><p class="text-xs leading-5" :class="todo.status === 'completed' ? 'line-through text-slate-400' : 'text-slate-600'" x-text="todo.title"></p><span class="inline-flex mt-1 px-1.5 py-0.5 rounded border text-[9px]" :class="humanTodoClass(todo.status)" x-text="humanTodoLabel(todo.status)"></span></div></div></template></div></section></template>
+      </div>
+      <p x-show="humanTodoGroups().length === 0" class="py-12 text-center text-xs text-slate-400">Reason 尚未生成 Todo。</p>
+    </div>
+  </main>
+
+  <!-- Intent 全量视图 -->
+  <main x-show="humanTab === 'intents'" class="flex-1 min-h-0 overflow-y-auto p-5">
+    <div class="max-w-[1300px] mx-auto rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden"><div class="px-5 py-4 border-b border-slate-100"><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Concurrent execution</p><h3 class="mt-1 text-base font-semibold text-slate-800">Intent 执行队列</h3></div><div class="divide-y divide-slate-100"><template x-for="intent in (project?.intents || []).filter(item => !item.archived).slice().reverse()" :key="`intent-tab-${intent.id}`"><div class="px-5 py-4 flex items-start gap-3"><span class="h-7 w-7 rounded-lg flex items-center justify-center text-xs font-mono shrink-0" :class="humanIntentStatusClass(intent)" x-text="intent.id?.replace('i', '') || '—'"></span><div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><p class="text-sm text-slate-700" x-text="intent.description || '未命名 Intent'"></p><span class="shrink-0 px-2 py-0.5 rounded-md border text-[10px]" :class="humanIntentStatusClass(intent)" x-text="humanIntentStatusLabel(intent)"></span></div><div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-400"><span x-text="`Worker：${intent.worker || '未领取'}`"></span><span x-text="`Todo：${intent.todo_id || '未关联'}`"></span><span x-show="intent.targets?.length" x-text="`目标：${intent.targets.join(', ')}`"></span><span x-show="intent.retry_count || intent.infrastructure_retry_count" class="text-rose-500" x-text="`执行重试 ${intent.retry_count || 0} · 基础设施重试 ${intent.infrastructure_retry_count || 0} · ${intent.last_failure_kind || '失败'}`"></span><span x-show="intent.status === 'pending' && intent.next_retry_at" class="text-amber-600" x-text="`下次重试：${formatTime(intent.next_retry_at)}`"></span></div></div></div></template></div><p x-show="!(project?.intents || []).length" class="py-12 text-center text-xs text-slate-400">尚未产生 Intent。</p></div>
+  </main>
+
+  <!-- Facts / Leads 视图 -->
+  <main x-show="humanTab === 'facts'" class="flex-1 min-h-0 overflow-y-auto p-5">
+    <div class="max-w-[1300px] mx-auto grid grid-cols-1 lg:grid-cols-2 gap-4"><section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div class="flex items-center justify-between"><div><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Evidence</p><h3 class="mt-1 text-base font-semibold text-slate-800">事实</h3></div><span class="text-xs text-slate-400" x-text="`${project?.facts?.length || 0} 条`"></span></div><div class="mt-4 space-y-3"><template x-for="fact in (project?.facts || []).filter(item => !item.archived && !['goal', 'origin'].includes(item.id)).slice().reverse()" :key="`fact-tab-${fact.id}`"><article class="rounded-xl border border-slate-200 p-3"><div class="flex items-center justify-between gap-2"><span class="text-[10px] font-mono text-slate-400" x-text="fact.id"></span><span class="text-[10px] text-slate-400" x-text="formatTime(fact.created_at)"></span></div><p class="mt-2 text-xs leading-5 text-slate-600 whitespace-pre-line" x-text="fact.description"></p></article></template></div></section><section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Follow-up</p><h3 class="mt-1 text-base font-semibold text-slate-800">待验证线索</h3></div><div class="mt-4 space-y-3"><template x-for="lead in humanLeadArtifacts(20)" :key="`lead-tab-${lead.id}`"><article class="rounded-xl border border-amber-100 bg-amber-50/50 p-3"><div class="flex items-center justify-between gap-2"><span class="text-xs font-semibold text-amber-800" x-text="humanArtifactLabel(lead)"></span><span class="text-[10px] text-amber-600" x-text="formatTime(lead.created_at)"></span></div><p class="mt-2 text-xs leading-5 text-amber-900" x-text="lead.summary || '存在待验证线索，请查看产物原文。'"></p></article></template><p x-show="humanLeadArtifacts(20).length === 0" class="py-12 text-center text-xs text-slate-400">当前没有待验证线索产物。</p></div></section></div>
+  </main>
+
+  <!-- Artifact 视图 -->
+  <main x-show="humanTab === 'artifacts'" class="flex-1 min-h-0 overflow-y-auto p-5">
+    <div class="max-w-[1300px] mx-auto rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden"><div class="px-5 py-4 border-b border-slate-100"><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Task files</p><h3 class="mt-1 text-base font-semibold text-slate-800">任务产物</h3><p class="mt-1 text-xs text-slate-400">原始文件统一由文件管理中心维护。</p></div><div class="divide-y divide-slate-100"><template x-for="artifact in (project?.artifacts || []).filter(item => !item.archived).slice().reverse()" :key="`artifact-tab-${artifact.id}`"><div class="px-5 py-3.5 flex items-center gap-3"><span class="text-lg text-slate-400">▤</span><div class="min-w-0 flex-1"><div class="flex items-center gap-2"><span class="text-sm text-slate-700 truncate" x-text="humanArtifactLabel(artifact)"></span><span class="px-1.5 py-0.5 rounded border border-slate-200 text-[9px] text-slate-500" x-text="humanArtifactTypeLabel(artifact)"></span><span class="px-1.5 py-0.5 rounded border border-brand-100 bg-brand-50 text-[9px] text-brand-600" x-text="humanArtifactPhase(artifact)"></span></div><p class="mt-1 text-xs text-slate-400 truncate" x-text="artifact.summary || artifact.path"></p></div><span class="text-[10px] text-slate-400" x-text="formatTime(artifact.created_at)"></span></div></template></div><p x-show="!(project?.artifacts || []).length" class="py-12 text-center text-xs text-slate-400">尚未产生任务产物。</p></div>
+  </main>
+</div>
+</template>

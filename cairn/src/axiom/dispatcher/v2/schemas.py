@@ -12,8 +12,10 @@ class IntentSnapshot(BaseModel):
     ]
     creator: str
     retry_count: int = 0
+    infrastructure_retry_count: int = 0
     next_retry_at: str | None = None
     last_failure_kind: str = ""
+    failure_class: str = ""
 
 
 class TaskSnapshot(BaseModel):
@@ -22,6 +24,12 @@ class TaskSnapshot(BaseModel):
     phase: Literal["bootstrap", "reason", "explore", "waiting", "none"]
     reason_worker: str | None = None
     reason_due: bool = False
+    terminal_delta_count: int = 0
+    oldest_terminal_delta_at: str | None = None
+    last_reason_committed_at: str | None = None
+    open_explore_intent_count: int = 0
+    needs_replan_due: bool = False
+    pending_todo_count: int = 0
     worker_pool: list[str] = Field(default_factory=list)
     intents: list[IntentSnapshot] = Field(default_factory=list)
 

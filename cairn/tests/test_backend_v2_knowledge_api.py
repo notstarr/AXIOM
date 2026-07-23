@@ -36,3 +36,10 @@ def test_knowledge_and_task_hints_are_available_through_v1(tmp_path) -> None:
         assert len(client.get(f"/api/v1/projects/{project['id']}/knowledge").json()) == 1
         hints = client.get(f"/api/v1/tasks/{task['id']}/hints").json()
         assert [item["content"] for item in hints] == ["initial hint", "Focus on authorization"]
+        updated_hint = client.patch(
+            f"/api/v1/tasks/{task['id']}/hints/{added_hint.json()['id']}",
+            json={"content": "Focus on IDOR", "actor": "human.frontend"},
+        )
+        assert updated_hint.status_code == 200
+        assert updated_hint.json()["content"] == "Focus on IDOR"
+        assert updated_hint.json()["creator"] == "human.frontend"

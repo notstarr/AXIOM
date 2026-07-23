@@ -6,10 +6,10 @@
       <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
     </button>
     <div class="title-action-trigger flex items-center gap-2 min-w-0">
-      <span class="text-base font-semibold text-slate-800 tracking-tight shrink-0">项目图谱</span>
+      <span class="text-base font-semibold text-slate-800 tracking-tight shrink-0">任务图谱</span>
       <span class="text-[11px] font-mono text-slate-400" x-text="project.project.id"></span>
       <h2 class="text-[15px] font-semibold text-slate-700 truncate" x-text="project.project.title"></h2>
-      <button x-show="!replay.active" @click="openRenameProject(project.project.id, project.project.title)"
+      <button x-show="!replay.active && !project.project.legacy_readonly" @click="openRenameProject(project.project.id, project.project.title)"
         class="title-action-button inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-400 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"
         title="重命名项目"
         :aria-label="`重命名 ${project.project.title}`">
@@ -20,6 +20,10 @@
         x-text="projectStatusLabel(project.project.status)"></span>
     </div>
     <div class="flex-1"></div>
+    <div class="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+      <button @click="switchTaskView('human')" class="px-2.5 py-1 rounded-md text-[11px] text-slate-500 hover:bg-white">概览</button>
+      <button @click="switchTaskView('graph')" class="px-2.5 py-1 rounded-md text-[11px] bg-white text-brand-600 shadow-sm">图谱</button>
+    </div>
     <div class="flex items-center gap-4 text-xs text-slate-400">
       <span x-text="`${project.facts.length} 事实`"></span>
       <span x-text="`${project.intents.length} 意图`"></span>
@@ -57,9 +61,9 @@
       </button>
       <button @click="viewProjectYaml(selectedProjectId, project.project.title)" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M14.25 3H7.5A2.25 2.25 0 0 0 5.25 5.25v13.5A2.25 2.25 0 0 0 7.5 21h9a2.25 2.25 0 0 0 2.25-2.25V8.25L14.25 3Z"/><path d="M14.25 3v5.25h4.5"/><path d="M8.25 12h7.5M8.25 15h5.25"/></svg>
-        快照
+        漏洞报告
       </button>
-      <template x-if="!replay.active && project.project.status !== 'completed'">
+      <template x-if="!replay.active && !project.project.legacy_readonly && ['active', 'stopped'].includes(project.project.status)">
         <button @click="toggleProjectStop()"
           class="px-2.5 py-1 rounded-lg border text-xs transition flex items-center gap-1.5"
           :class="project.project.status === 'active'
@@ -70,14 +74,7 @@
           <span x-text="project.project.status === 'active' ? '暂停' : '继续'"></span>
         </button>
       </template>
-      <template x-if="!replay.active && project.project.status === 'completed'">
-        <button @click="openReopenProject(project.project.id, project.project.title)"
-          class="px-2.5 py-1 rounded-lg border border-sky-200 text-xs text-sky-600 hover:bg-sky-50 transition flex items-center gap-1.5">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
-          重新打开
-        </button>
-      </template>
-      <button x-show="!replay.active" @click="deleteProject()" class="px-2.5 py-1 rounded-lg border border-rose-200 text-xs text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition flex items-center gap-1.5">
+      <button x-show="!replay.active && !project.project.legacy_readonly" @click="deleteProject()" class="px-2.5 py-1 rounded-lg border border-rose-200 text-xs text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4.75A1.75 1.75 0 0 1 9.75 3h4.5A1.75 1.75 0 0 1 16 4.75V6"/><path d="M19 6l-.63 11.338A2 2 0 0 1 16.37 19.5H7.63a2 2 0 0 1-1.997-2.162L5 6"/><path d="M10 10.5v5"/><path d="M14 10.5v5"/></svg>
         删除
       </button>
@@ -108,16 +105,22 @@
       </div>
 
       <template x-if="project.project.reason">
-        <div class="absolute top-14 right-3 z-10 max-w-80">
-          <div class="reason-panel-running relative overflow-hidden rounded-2xl border border-sky-200/80 bg-white/92 px-3.5 py-3 shadow-lg shadow-sky-100/60 backdrop-blur">
+        <div class="absolute top-14 right-3 z-10 w-80 max-w-[calc(100vw-1.5rem)]">
+          <div class="reason-panel-running relative overflow-hidden rounded-2xl border border-sky-200/80 bg-white/92 px-4 py-3.5 shadow-lg shadow-sky-100/60 backdrop-blur">
             <div class="flex items-start gap-3">
               <span class="reason-beacon mt-1 shrink-0"></span>
-              <div class="min-w-0">
-                <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-500">reason 运行中</div>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between gap-2">
+                  <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-500">reason 运行中</div>
+                  <span class="shrink-0 rounded-full border border-sky-100 bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-600" x-text="reasonActivityStateLabel(project.project.reason)"></span>
+                </div>
                 <div class="mt-0.5 text-sm font-semibold text-slate-700 truncate" x-text="project.project.reason.worker"></div>
-                <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
-                  <span x-show="project.project.reason.trigger" x-text="`触发器 ${project.project.reason.trigger}`"></span>
-                  <span x-text="`心跳 ${formatTime(project.project.reason.last_heartbeat_at)}`"></span>
+                <p class="mt-2 text-sm font-medium leading-relaxed text-slate-700" x-text="project.project.reason.activity_summary || '正在分析任务上下文并规划下一批 Intent'"></p>
+                <div class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] text-slate-500">
+                  <div><span class="block text-slate-400">运行时间</span><span class="mt-0.5 block font-medium text-slate-600" x-text="reasonRunDuration(project.project.reason)"></span></div>
+                  <div><span class="block text-slate-400">最后更新</span><span class="mt-0.5 block font-medium text-slate-600" x-text="reasonActivityAge(project.project.reason)"></span></div>
+                  <div><span class="block text-slate-400">心跳</span><span class="mt-0.5 block font-medium text-slate-600" x-text="formatTime(project.project.reason.last_heartbeat_at)"></span></div>
+                  <div><span class="block text-slate-400">触发器</span><span class="mt-0.5 block font-medium text-slate-600" x-text="project.project.reason.trigger || 'scheduler'"></span></div>
                 </div>
               </div>
             </div>
@@ -135,7 +138,7 @@
       </template>
 
       <div class="absolute top-3 right-3 z-10 flex flex-wrap justify-end gap-2">
-        <div class="flex gap-1.5" x-show="projectIsActive()">
+        <div class="hidden" x-show="false">
           <button @click="openCreateIntent()" :disabled="!canActOnSelectedFacts()"
             class="px-3 py-1.5 bg-white/90 backdrop-blur border border-brand-200 text-brand-600 rounded-lg shadow-sm text-xs font-medium hover:bg-brand-50 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
@@ -154,7 +157,7 @@
             提示
           </button>
         </div>
-        <div class="flex gap-1.5" x-show="projectIsActive()">
+        <div class="hidden" x-show="false">
           <button @click="sendHeartbeatForSelectedIntent()" :disabled="!selectedActionableOpenIntentRecord()"
             class="px-3 py-1.5 bg-white/90 backdrop-blur border border-slate-200 text-slate-600 rounded-lg shadow-sm text-xs font-medium hover:bg-slate-50 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3 12h3.5l2.75-6 3.5 12 2.75-7H21"/></svg>
@@ -234,14 +237,16 @@
         </button>
         <button @click="sideTab = 'board'; reloadBlackboardGroup(project?.project?.parent_project_id)" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'board' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">
-          黑板 <span class="ml-0.5 text-[10px] opacity-60" x-text="groupBlackboardItems().length || ''"></span>
+          知识 <span class="ml-0.5 text-[10px] opacity-60" x-text="groupBlackboardItems().length || ''"></span>
         </button>
-        <button @click="sideTab = 'conversation'; loadConversation(selectedProjectId, { silent: true })" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
-          :class="sideTab === 'conversation' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">
-          对话 <span class="ml-0.5 text-[10px] opacity-60" x-text="conversation?.stats?.timeout_count || ''"></span>
+        <button @click="sideTab = 'vulns'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
+          :class="sideTab === 'vulns' ? 'text-rose-600 border-b-2 border-rose-500' : 'text-slate-400 hover:text-slate-600'">
+          漏洞 <span class="ml-0.5 text-[10px] opacity-60" x-text="project.vulns.length || ''"></span>
         </button>
-        <button @click="sideTab = 'log'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
-          :class="sideTab === 'log' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">日志</button>
+        <button @click="sideTab = 'todo'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
+          :class="sideTab === 'todo' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">
+          Todo <span class="ml-0.5 text-[10px] opacity-60" x-text="project.todos.length || ''"></span>
+        </button>
       </div>
 
       <!-- Detail -->
@@ -300,12 +305,8 @@
                     'bg-brand-50 text-brand-700': selectedFactId() !== 'origin' && selectedFactId() !== 'goal'
                   }" x-text="selectedFactId()"></span>
                 <span class="text-[11px] text-slate-400 font-medium uppercase tracking-wider">事实</span>
-                <svg x-show="isMaintainerRunning(selectedFactId())" class="w-3.5 h-3.5 animate-spin text-emerald-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <circle cx="12" cy="12" r="10" opacity="0.25"/>
-                  <path d="M22 12a10 10 0 0 0-10-10" opacity="0.75" stroke-linecap="round"/>
-                </svg>
               </div>
-              <div class="flex items-center gap-1">
+              <div x-show="projectIsActive() && !project.project.legacy_readonly" class="flex items-center gap-1">
                 <button @click="openEditFact()" class="p-1 rounded-md hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition" title="编辑">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
                 </button>
@@ -364,22 +365,45 @@
                 <span class="px-2 py-0.5 rounded-md bg-violet-100 text-violet-700 text-[10px] font-mono font-bold" x-text="selectedIntentId()"></span>
                 <span class="text-[11px] font-medium" :class="intentStatusClass(selectedIntentRecord())" x-text="intentStatusLabel(selectedIntentRecord())"></span>
               </div>
-              <div class="flex items-center gap-1">
+              <div x-show="projectIsActive() && !project.project.legacy_readonly" class="flex items-center gap-1">
                 <button @click="openEditIntent()" class="p-1 rounded-md hover:bg-violet-200 text-slate-400 hover:text-violet-600 transition" title="编辑">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
                 </button>
-                <button @click="toggleArchiveIntent(selectedIntentId())"
+                <button x-show="selectedIntentId() !== 'i001' && !['claimed','running','concluding'].includes(selectedIntentRecord()?.status)"
+                        @click="toggleArchiveIntent(selectedIntentId())"
                         class="p-1 rounded-md transition" title="归档"
                         :class="selectedIntentRecord()?.archived ? 'bg-amber-100 text-amber-500 hover:bg-amber-200' : 'text-slate-400 hover:bg-violet-200 hover:text-violet-600'">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>
                 </button>
-                <button @click="deleteIntent(selectedIntentId())" class="p-1 rounded-md hover:bg-rose-100 text-slate-400 hover:text-rose-500 transition" title="删除">
+                <button x-show="selectedIntentId() !== 'i001' && !selectedIntentRecord()?.to && !['claimed','running','concluding'].includes(selectedIntentRecord()?.status)"
+                        @click="deleteIntent(selectedIntentId())" class="p-1 rounded-md hover:bg-rose-100 text-slate-400 hover:text-rose-500 transition" title="删除">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14Z"/></svg>
                 </button>
               </div>
             </div>
             <div class="p-4 space-y-4">
               <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="selectedIntentRecord().description"></p>
+              <template x-if="intentActivityVisible(selectedIntentRecord())">
+                <div class="rounded-xl border border-violet-200 bg-gradient-to-br from-violet-50 to-white p-3.5 shadow-sm">
+                  <div class="flex items-center justify-between gap-3 mb-2.5">
+                    <div class="flex items-center gap-2 min-w-0">
+                      <span class="relative flex h-2.5 w-2.5 shrink-0">
+                        <span x-show="['claimed','running','concluding'].includes(selectedIntentRecord().status)" class="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-60"></span>
+                        <span class="relative inline-flex h-2.5 w-2.5 rounded-full" :class="['claimed','running','concluding'].includes(selectedIntentRecord().status) ? 'bg-violet-500' : 'bg-slate-400'"></span>
+                      </span>
+                      <span class="text-[11px] font-semibold text-violet-700" x-text="intentActivityTitle(selectedIntentRecord())"></span>
+                    </div>
+                    <span class="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-violet-600 border border-violet-100" x-text="intentActivityStateLabel(selectedIntentRecord())"></span>
+                  </div>
+                  <p class="text-sm font-medium leading-relaxed text-slate-700" x-text="selectedIntentRecord().activity_summary || '正在等待 Worker 上报活动…'"></p>
+                  <div class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
+                    <div class="min-w-0"><span class="text-slate-400">执行者</span><p class="mt-0.5 truncate font-medium text-slate-600" x-text="selectedIntentRecord().worker || '—'"></p></div>
+                    <div class="min-w-0"><span class="text-slate-400">正在使用</span><p class="mt-0.5 truncate font-mono text-slate-600" x-text="selectedIntentRecord().activity_tool || '—'"></p></div>
+                    <div><span class="text-slate-400">运行时间</span><p class="mt-0.5 tabular-nums font-medium text-slate-600" x-text="intentRunDuration(selectedIntentRecord())"></p></div>
+                    <div><span class="text-slate-400">最后更新</span><p class="mt-0.5 tabular-nums font-medium text-slate-600" x-text="intentActivityAge(selectedIntentRecord())"></p></div>
+                  </div>
+                </div>
+              </template>
               <div class="pt-4 border-t border-slate-100 space-y-3 text-xs">
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">基于</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedIntentRecord().from.join(', ')"></span></div>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">产出</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedIntentRecord().to || '—'"></span></div>
@@ -427,18 +451,18 @@
         </template>
       </div>
 
-      <!-- Blackboard -->
+      <!-- Project knowledge -->
       <div x-show="sideTab === 'board'" class="flex-1 overflow-y-auto p-4 space-y-3 bg-sky-50/20" x-init="reloadBlackboardGroup(project?.project?.parent_project_id)">
         <div class="flex items-center justify-between gap-3">
           <div>
-            <h3 class="text-sm font-semibold text-slate-700">黑板</h3>
-            <p class="text-xs text-slate-400 mt-0.5" x-text="`${groupBlackboardItems().length} 条，自动注入到任务 prompt 中`"></p>
+            <h3 class="text-sm font-semibold text-slate-700">共享知识</h3>
+            <p class="text-xs text-slate-400 mt-0.5" x-text="`${groupBlackboardItems().length} 条，供 Reason 与 Explore 读取`"></p>
           </div>
           <button @click="navigateTo('projects')" class="text-[11px] text-slate-400 hover:text-brand-500 transition">前往管理 →</button>
         </div>
         <template x-if="groupBlackboardItems().length === 0">
           <div class="rounded-2xl border border-dashed border-sky-200 bg-white/80 px-5 py-10 text-center shadow-sm">
-            <p class="text-sm text-slate-300">暂无黑板内容</p>
+            <p class="text-sm text-slate-300">暂无共享知识</p>
           </div>
         </template>
         <template x-for="item in groupBlackboardItems()" :key="item.id">
@@ -515,221 +539,54 @@
         </template>
       </div>
 
-      <!-- Conversation -->
-      <div x-show="sideTab === 'conversation'" class="flex-1 overflow-y-auto bg-slate-50/40">
-        <div class="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur p-3 space-y-2">
-          <div class="flex flex-wrap gap-1.5 text-[10px]">
-            <button @click="clearConversationFilter()" class="px-2 py-1 rounded-lg border" :class="!conversationActiveFilterLabel() ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200'">全部</button>
-            <button @click="applyConversationFilter({ thread_type: conversationFilter.thread_type === 'intent' ? '' : 'intent' })" class="px-2 py-1 rounded-lg border" :class="conversationFilter.thread_type === 'intent' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200'">Intent <span x-text="conversation?.stats?.thread_types?.intent || 0"></span></button>
-            <button @click="applyConversationFilter({ thread_type: conversationFilter.thread_type === 'reason' ? '' : 'reason' })" class="px-2 py-1 rounded-lg border" :class="conversationFilter.thread_type === 'reason' ? 'bg-sky-500 text-white border-sky-500' : 'bg-white text-sky-600 border-sky-200'">Reason <span x-text="conversation?.stats?.thread_types?.reason || 0"></span></button>
-            <button @click="applyConversationFilter({ thread_type: conversationFilter.thread_type === 'maintainer' ? '' : 'maintainer' })" class="px-2 py-1 rounded-lg border" :class="conversationFilter.thread_type === 'maintainer' ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-white text-emerald-600 border-emerald-200'">Maintainer <span x-text="conversation?.stats?.thread_types?.maintainer || 0"></span></button>
-            <button @click="loadConversation(selectedProjectId, { silent: true })" :disabled="conversationLoading" class="px-2 py-1 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40">刷新</button>
-          </div>
-          <div x-show="conversationActiveFilterLabel()" class="flex items-center justify-between gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs text-brand-700">
-            <span class="truncate" x-text="conversationActiveFilterLabel()"></span>
-            <button @click="clearConversationFilter()" class="text-brand-500 hover:text-brand-700">清除</button>
+      <!-- Todo -->
+      <div x-show="sideTab === 'todo'" class="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/40">
+        <div class="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <p class="text-sm font-semibold text-slate-700">Reason Todo List</p>
+              <p class="mt-0.5 text-[11px] text-slate-400">跨轮次持续更新，Intent 必须关联 Todo。</p>
+            </div>
+            <span class="text-[10px] text-slate-400" x-text="project.todos.filter(item => item.status === 'completed').length + '/' + project.todos.length"></span>
           </div>
         </div>
-
-        <div class="p-3 space-y-3">
-          <template x-if="conversationLoading && conversationThreads().length === 0">
-            <div class="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-400">正在加载对话…</div>
-          </template>
-          <template x-if="!conversationLoading && conversationThreads().length === 0">
-            <div class="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-400">暂无对话数据</div>
-          </template>
-
-          <template x-for="thread in conversationThreads()" :key="thread.id">
-            <article class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-visible">
-              <button type="button" @click="toggleConversationThread(thread.id)" class="sticky top-[84px] z-20 w-full px-4 py-3 text-left bg-white/95 backdrop-blur hover:bg-slate-50 transition border-b border-slate-100">
-                <div class="flex items-start justify-between gap-3">
-                  <div class="min-w-0">
-                    <div class="flex items-center gap-2 min-w-0">
-                      <span class="font-semibold text-sm text-slate-700 truncate" x-text="thread.label"></span>
-                      <span class="px-2 py-0.5 rounded-lg border text-[10px] font-semibold shrink-0" :class="conversationStatusClass(thread.status)" x-text="conversationStatusLabel(thread.status)"></span>
-                      <span x-show="thread.intent_id" class="text-[10px] text-slate-400 font-mono" x-text="thread.intent_id"></span>
-                      <span x-show="thread.fact_id" class="text-[10px] text-slate-400 font-mono" x-text="`-> ${thread.fact_id}`"></span>
-                    </div>
-                    <p class="mt-1 text-[11px] text-slate-400 break-words" x-text="thread.summary || thread.subtitle"></p>
-                    <p class="mt-1 text-[10px] text-slate-400 truncate" x-text="[thread.workers.join(', '), thread.started_at ? formatTime(thread.started_at) : ''].filter(Boolean).join(' · ')"></p>
-                  </div>
-                  <div class="text-right shrink-0 text-[10px] text-slate-400 tabular-nums">
-                    <div x-text="`${thread.attempt_count} attempts`"></div>
-                    <div x-show="thread.timeout_count" class="text-amber-600" x-text="`${thread.timeout_count} timeout`"></div>
-                  </div>
-                </div>
+        <template x-if="project.todos.length === 0">
+          <div class="rounded-2xl border border-dashed border-slate-200 bg-white px-5 py-10 text-center">
+            <p class="text-sm text-slate-400">Reason 尚未写入 Todo</p>
+            <p class="mt-1 text-xs text-slate-300">先覆盖攻击面，再逐步深入。</p>
+          </div>
+        </template>
+        <template x-for="todo in [...project.todos].sort((a,b) => (b.priority || 0) - (a.priority || 0))" :key="todo.id">
+          <article class="rounded-2xl border bg-white p-4 shadow-sm"
+            :class="todo.status === 'completed' ? 'border-emerald-100 opacity-75' : todo.status === 'active' ? 'border-brand-200' : 'border-slate-200'">
+            <div class="flex items-start gap-2">
+              <button type="button" @click="updateTodoStatus(todo.id, todo.status === 'completed' ? 'pending' : 'completed')"
+                :disabled="project.project.legacy_readonly"
+                class="mt-0.5 h-5 w-5 shrink-0 rounded-md border inline-flex items-center justify-center transition disabled:opacity-40"
+                :class="todo.status === 'completed' ? 'border-emerald-400 bg-emerald-500 text-white' : 'border-slate-300 text-transparent hover:border-brand-400'">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>
               </button>
-
-              <div x-show="conversationThreadExpanded(thread)" x-cloak class="bg-slate-50/50 px-3 py-3 space-y-3">
-                <div x-show="conversationThreadLoadingState(thread.id)" class="rounded-xl border border-dashed border-slate-200 bg-white px-3 py-4 text-center text-xs text-slate-400">正在加载该 thread 的对话内容…</div>
-                <div x-show="thread.dispatched_intents && thread.dispatched_intents.length" class="rounded-xl border border-sky-100 bg-sky-50/70 p-3">
-                  <p class="text-[10px] font-semibold text-sky-700 mb-1">派发 intents</p>
-                  <div class="space-y-1.5">
-                    <template x-for="item in thread.dispatched_intents" :key="`${thread.id}-${item.id}`">
-                      <div class="rounded-lg bg-white border border-sky-100 px-2 py-1.5">
-                        <div class="text-[10px] text-sky-700 font-mono" x-text="item.fact_id ? `${item.id} -> ${item.fact_id}` : item.id"></div>
-                        <div x-show="item.description" class="mt-0.5 text-[11px] text-slate-600 break-words" x-text="item.description"></div>
-                      </div>
-                    </template>
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <span class="font-mono text-[10px] text-slate-400" x-text="todo.id"></span>
+                  <span class="px-1.5 py-0.5 rounded-md bg-slate-100 text-[9px] font-semibold text-slate-500" x-text="todo.category"></span>
+                  <span x-show="todo.theme" class="px-1.5 py-0.5 rounded-md bg-violet-50 text-[9px] text-violet-600" x-text="todo.theme"></span>
+                  <span class="ml-auto text-[10px] text-slate-400" x-text="'P' + todo.priority"></span>
+                </div>
+                <p class="mt-2 text-sm leading-relaxed break-words"
+                  :class="todo.status === 'completed' ? 'line-through text-slate-400' : 'text-slate-700'"
+                  x-text="todo.title"></p>
+                <div class="mt-2 flex items-center justify-between gap-2">
+                  <span class="text-[10px] text-slate-400" x-text="todo.status"></span>
+                  <div class="flex gap-1" x-show="!project.project.legacy_readonly && todo.status !== 'completed'">
+                    <button x-show="todo.status !== 'active'" @click="updateTodoStatus(todo.id, 'active')" class="px-2 py-1 rounded-md border border-brand-100 text-[10px] text-brand-600 hover:bg-brand-50">开始</button>
+                    <button @click="updateTodoStatus(todo.id, 'obsolete')" class="px-2 py-1 rounded-md border border-slate-200 text-[10px] text-slate-500 hover:bg-slate-50">作废</button>
                   </div>
                 </div>
-
-                <div x-show="thread.type === 'maintainer' && thread.related && (thread.related.intent_id || thread.related.fact_id || thread.related.description)" class="rounded-xl border border-emerald-100 bg-emerald-50/70 p-3">
-                  <p class="text-[10px] font-semibold text-emerald-700 mb-1">关联事实 / 意图</p>
-                  <div class="flex flex-wrap gap-1.5 text-[10px] font-mono text-emerald-700">
-                    <span x-show="thread.related.intent_id" class="px-2 py-0.5 rounded-lg bg-white border border-emerald-100" x-text="thread.related.intent_id"></span>
-                    <span x-show="thread.related.fact_id" class="px-2 py-0.5 rounded-lg bg-white border border-emerald-100" x-text="`-> ${thread.related.fact_id}`"></span>
-                  </div>
-                  <p x-show="thread.related.description" class="mt-2 text-[11px] text-slate-600 break-words" x-text="thread.related.description"></p>
-                </div>
-
-                <template x-for="group in (thread.worker_groups || [])" :key="`${thread.id}-${group.worker}`">
-                  <section class="rounded-xl border border-slate-200 bg-white overflow-visible">
-                    <button type="button" @click="toggleConversationWorker(thread.id, group.worker)" class="sticky top-[144px] z-10 w-full px-3 py-2 bg-white/95 backdrop-blur border-b border-slate-100 text-left flex items-center gap-2">
-                      <span class="text-xs font-semibold text-slate-700 truncate" x-text="group.worker"></span>
-                      <span class="px-1.5 py-0.5 rounded border text-[10px]" :class="conversationStatusClass(group.status)" x-text="conversationStatusLabel(group.status)"></span>
-                      <span class="ml-auto text-[10px] text-slate-400" x-text="`${group.attempts.length} attempts · ${group.item_count} records`"></span>
-                    </button>
-                    <div x-show="conversationWorkerExpanded(thread.id, group.worker)" x-cloak class="p-3 space-y-3">
-                      <template x-for="attempt in group.attempts" :key="attempt.id">
-                        <div class="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2">
-                          <div class="flex items-center gap-2">
-                            <span class="px-2 py-0.5 rounded-md bg-white text-slate-600 text-[10px] font-semibold" x-text="attempt.role || attempt.phase"></span>
-                            <span class="px-1.5 py-0.5 rounded border text-[10px]" :class="conversationStatusClass(attempt.status)" x-text="conversationStatusLabel(attempt.status)"></span>
-                            <span class="ml-auto text-[10px] text-slate-400" x-text="attempt.duration_ms ? `${Math.round(attempt.duration_ms / 1000)}s` : ''"></span>
-                          </div>
-                          <div x-show="attempt.token_usage && Object.keys(attempt.token_usage).length" class="mt-1 text-[10px] text-violet-500" x-text="`tokens ${Number(attempt.token_usage.total_tokens || attempt.token_usage.totalTokens || 0).toLocaleString()}`"></div>
-                        </div>
-                      </template>
-
-                      <template x-for="item in conversationItemsForWorker(thread.id, group.worker)" :key="item.id">
-                    <div class="rounded-xl border bg-white p-3" :class="item.kind === 'timeout' ? 'border-amber-200' : 'border-slate-200'">
-                      <div class="flex flex-wrap items-center gap-2">
-                        <span class="px-2 py-0.5 rounded-lg border text-[10px] font-semibold" :class="conversationKindClass(item.kind)" x-text="conversationKindLabel(item.kind)"></span>
-                        <span class="text-xs font-medium text-slate-700" x-text="item.title"></span>
-                        <span class="ml-auto text-[10px] text-slate-400" x-text="formatTime(item.created_at)"></span>
-                      </div>
-                      <p x-show="item.worker || item.phase" class="mt-1 text-[10px] text-slate-400" x-text="[item.phase, item.worker, item.intent_id].filter(Boolean).join(' · ')"></p>
-                      <pre x-show="conversationItemPreview(item)" class="mt-2 whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-2 text-[11px] text-slate-700 max-h-60 overflow-auto" x-text="conversationItemPreview(item)"></pre>
-                      <div x-show="conversationTokenLabel(item)" class="mt-2 text-[10px] text-violet-600" x-text="conversationTokenLabel(item)"></div>
-                      <div x-show="item.kind === 'tool' && (item.payload?.stdout || item.payload?.stderr)" class="mt-2 space-y-2">
-                        <pre x-show="item.payload?.stdout" class="whitespace-pre-wrap break-words rounded-lg bg-emerald-50 p-2 text-[11px] text-emerald-800 max-h-48 overflow-auto" x-text="item.payload.stdout"></pre>
-                        <pre x-show="item.payload?.stderr" class="whitespace-pre-wrap break-words rounded-lg bg-rose-50 p-2 text-[11px] text-rose-800 max-h-48 overflow-auto" x-text="item.payload.stderr"></pre>
-                      </div>
-                      <div x-show="item.kind === 'timeout'" class="mt-2 rounded-lg border border-amber-100 bg-amber-50 p-2">
-                        <p class="text-[10px] font-semibold text-amber-700">超时处理建议</p>
-                        <template x-for="tip in conversationTimeoutSuggestions(item)" :key="tip">
-                          <p class="mt-1 text-[11px] text-amber-700" x-text="`· ${tip}`"></p>
-                        </template>
-                      </div>
-                    </div>
-                      </template>
-                    </div>
-                  </section>
-                </template>
-              </div>
-            </article>
-          </template>
-        </div>
-      </div>
-
-      <!-- Log -->
-      <div x-show="sideTab === 'log'" class="flex-1 overflow-y-auto p-4 space-y-3">
-        <section class="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-            <div class="space-y-1">
-              <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">配置版本</p>
-              <p class="text-slate-700 break-words" x-text="dispatchVersionLabel()"></p>
-            </div>
-            <div class="space-y-1">
-              <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">Dispatcher 生效</p>
-              <p class="text-slate-700 break-words" x-text="dispatcherAppliedLabel()"></p>
-            </div>
-            <div class="space-y-1">
-              <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">Bootstrap 结论</p>
-              <p class="text-slate-700 break-words" x-text="selectedProjectBootstrapOutcome()"></p>
-            </div>
-          </div>
-          <div class="mt-3 pt-3 border-t border-slate-100 space-y-1">
-            <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">当前生效 Worker</p>
-            <p class="text-xs text-slate-600 break-words" x-text="effectiveRuntimeWorkerNames().length > 0 ? effectiveRuntimeWorkerNames().join(', ') : '等待 dispatcher 上报'"></p>
-          </div>
-          <!-- Token 消耗 -->
-          <div class="mt-3 pt-3 border-t border-slate-100">
-            <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">Token 消耗</p>
-            <template x-if="currentProjectTokenUsage().total === 0">
-              <p class="text-xs text-slate-300">暂无数据（任务执行后自动统计）</p>
-            </template>
-            <template x-if="currentProjectTokenUsage().total > 0">
-              <div class="space-y-1.5">
-                <div class="flex items-center justify-between text-xs">
-                  <span class="text-slate-400">合计</span>
-                  <span class="font-semibold text-violet-600 tabular-nums" x-text="currentProjectTokenUsage().total.toLocaleString()"></span>
-                </div>
-                <div class="h-1.5 rounded-full bg-slate-100 overflow-hidden flex">
-                  <div class="h-full bg-violet-400 transition-all duration-300"
-                    :style="`width:${currentProjectTokenUsage().total > 0 ? Math.round(currentProjectTokenUsage().input / currentProjectTokenUsage().total * 100) : 0}%`"></div>
-                  <div class="h-full bg-violet-200 transition-all duration-300"
-                    :style="`width:${currentProjectTokenUsage().total > 0 ? Math.round(currentProjectTokenUsage().output / currentProjectTokenUsage().total * 100) : 0}%`"></div>
-                </div>
-                <div class="flex items-center justify-between text-[11px] text-slate-400">
-                  <span>输入 <span class="text-slate-600 tabular-nums" x-text="currentProjectTokenUsage().input.toLocaleString()"></span></span>
-                  <span>输出 <span class="text-slate-600 tabular-nums" x-text="currentProjectTokenUsage().output.toLocaleString()"></span></span>
-                </div>
-              </div>
-            </template>
-          </div>
-        </section>
-        <template x-if="selectedTimelineSummary()">
-          <section class="sticky top-0 z-10 rounded-2xl border border-slate-200 bg-white/95 backdrop-blur px-4 py-3 shadow-sm">
-            <div class="space-y-2.5">
-              <div class="space-y-1">
-                <div class="flex items-center justify-between gap-3 text-[11px]">
-                  <span class="text-slate-400">序列</span>
-                  <span class="font-mono text-slate-600" x-text="selectedTimelineSummary().sequenceLabel"></span>
-                </div>
-                <div class="h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                  <div class="h-full rounded-full bg-brand-400 transition-all duration-300" :style="`width:${selectedTimelineSummary().sequencePercent}%`"></div>
-                </div>
-              </div>
-              <div class="space-y-1">
-                <div class="flex items-center justify-between gap-3 text-[11px]">
-                  <span class="text-slate-400">时间跨度</span>
-                  <span class="font-mono text-slate-600 text-right" x-text="selectedTimelineSummary().timeLabel"></span>
-                </div>
-                <div class="h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                  <div class="h-full rounded-full bg-teal-400 transition-all duration-300" :style="`width:${selectedTimelineSummary().timePercent}%`"></div>
-                </div>
+                <p x-show="todo.status_reason" class="mt-2 text-[11px] text-slate-400" x-text="todo.status_reason"></p>
               </div>
             </div>
-          </section>
-        </template>
-        <template x-if="timelineEvents().length === 0">
-          <p class="text-sm text-slate-300 text-center mt-12">暂无活动</p>
-        </template>
-        <template x-for="entry in timelineEvents()" :key="entry.id">
-          <div class="flex items-stretch gap-3" :id="timelineEntryDomId(entry.id)">
-            <div class="flex flex-col items-center shrink-0">
-              <div class="w-2.5 h-2.5 rounded-full mt-1.5" :class="timelineEventDotClass(entry)"></div>
-              <div class="w-px flex-1 bg-slate-100 mt-2" x-show="!entry.isLast"></div>
-            </div>
-            <button type="button" @click="openTimelineEntry(entry)"
-              class="min-w-0 flex-1 text-left rounded-xl px-0.5 py-0.5 transition"
-              :class="timelineEntryButtonClass(entry)">
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="text-[11px] font-medium text-slate-400 tabular-nums" x-text="formatTime(entry.timestamp)"></span>
-                <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wide"
-                  :class="timelineEventBadgeClass(entry)" x-text="timelineEventBadge(entry)"></span>
-                <span class="text-[11px] text-slate-300" x-text="formatTimelineDate(entry.timestamp)"></span>
-              </div>
-              <template x-if="entry.title">
-                <p class="text-sm text-slate-700 leading-relaxed break-words mt-1" x-text="entry.title"></p>
-              </template>
-              <template x-if="entry.actor || entry.meta.length > 0">
-                <p class="text-[11px] text-slate-400 mt-1 break-words" x-text="[entry.actor, ...entry.meta].filter(Boolean).join(' · ')"></p>
-              </template>
-            </button>
-          </div>
+          </article>
         </template>
       </div>
 

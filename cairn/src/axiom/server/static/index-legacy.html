@@ -2393,11 +2393,9 @@
       <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
         <h3 class="text-sm font-semibold text-slate-700">阶段超时 — 广度模式</h3>
         <div class="mt-4 grid grid-cols-2 gap-3">
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">boot 超时</label><input type="number" min="1" x-model.number="dispatchSettings.bootstrap_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">boot 总结超时</label><input type="number" min="1" x-model.number="dispatchSettings.bootstrap_conclude_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">explore 超时</label><input type="number" min="1" x-model.number="dispatchSettings.explore_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">explore 总结超时</label><input type="number" min="1" x-model.number="dispatchSettings.explore_conclude_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">reason 超时</label><input type="number" min="1" x-model.number="dispatchSettings.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Bootstrap 探索预算</label><input type="number" min="1" x-model.number="dispatchSettings.bootstrap_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Bootstrap 强制收口预算</label><input type="number" min="1" x-model.number="dispatchSettings.bootstrap_conclude_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 规划预算</label><input type="number" min="1" x-model.number="dispatchSettings.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">reason 最大 intent</label><input type="number" min="1" x-model.number="dispatchSettings.reason_max_intents" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
         </div>
       </div>
@@ -2405,9 +2403,7 @@
         <h3 class="text-sm font-semibold text-slate-700">阶段超时 — 深度模式</h3>
         <div class="mt-4 grid grid-cols-2 gap-3">
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">plan 超时</label><input type="number" min="1" x-model.number="settingsForm.plan_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">explore 超时</label><input type="number" min="1" x-model.number="dispatchSettings.explore_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">explore 总结超时</label><input type="number" min="1" x-model.number="dispatchSettings.explore_conclude_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">reason 超时</label><input type="number" min="1" x-model.number="dispatchSettings.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 规划预算</label><input type="number" min="1" x-model.number="dispatchSettings.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">reason 最大 intent</label><input type="number" min="1" x-model.number="dispatchSettings.depth_reason_max_intents" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
         </div>
       </div>
@@ -2818,7 +2814,7 @@
       <div class="min-w-0 flex items-center gap-3">
         <div class="flex rounded-lg border border-slate-200 overflow-hidden shrink-0">
           <button @click="switchExportTab('yaml')" class="px-2.5 py-1 text-xs font-medium transition"
-            :class="exportTab === 'yaml' ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:text-slate-600'">YAML</button>
+            :class="exportTab === 'yaml' ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:text-slate-600'">概况</button>
           <button @click="switchExportTab('timeline')" class="px-2.5 py-1 text-xs font-medium transition"
             :class="exportTab === 'timeline' ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:text-slate-600'">时间线</button>
         </div>

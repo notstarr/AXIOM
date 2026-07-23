@@ -243,8 +243,8 @@
       ['mozzie_base_url','Base URL'],['mozzie_token','Token','password'],['mozzie_timeout_seconds','超时秒数','number'],['external_report_max_attempts','最大尝试次数','number']
     ], cfg, '外部 project 通过 ingress 域名搜索解析，失败时使用 others。');
     return settingsForm('runtime-settings-form','Dispatcher runtime', [
-      ['interval_seconds','调度间隔（秒）','number'],['max_workers','全局 Worker 槽位','number'],['max_running_tasks','并行 Task 数','number'],['max_task_workers','单 Task Worker 数','number'],['bootstrap_limit','Bootstrap 并发','number'],['reason_limit','Reason 并发','number'],['explore_limit','Explore 并发','number'],['heartbeat_interval_seconds','心跳间隔','number'],['lease_timeout_seconds','租约超时','number'],['retry_base_seconds','重试基准秒数','number'],['bootstrap_execute_seconds','Bootstrap 执行超时','number'],['reason_execute_seconds','Reason 超时','number'],['explore_execute_seconds','Explore 执行超时','number']
-    ], cfg, '并发槽位从 Task/Intent 租约推导，Dispatcher 重启后会恢复过期租约。');
+      ['interval_seconds','调度间隔（秒）','number'],['max_workers','全局 Worker 槽位','number'],['max_running_tasks','并行 Task 数','number'],['max_task_workers','单 Task Worker 数','number'],['bootstrap_limit','Bootstrap 并发','number'],['reason_limit','Reason 并发','number'],['explore_limit','Explore 并发','number'],['heartbeat_interval_seconds','心跳间隔','number'],['lease_timeout_seconds','租约超时','number'],['retry_base_seconds','重试基准秒数','number'],['bootstrap_execute_seconds','Bootstrap 探索预算','number'],['reason_execute_seconds','Reason 规划预算','number'],['reason_batch_size','Reason 结果批量数','number'],['reason_low_watermark','Reason 队列低水位','number'],['reason_max_wait_seconds','Reason 最大等待秒数','number'],['reason_min_interval_seconds','Reason 最短间隔秒数','number'],['reason_target_open_intents','目标未完成 Intent','number']
+    ], cfg, '并发槽位从 Task/Intent 租约推导；每个 Explore Intent 的时间预算由 Reason 派发时单独指定。');
   }
 
   function settingsForm(id, title, fields, cfg, helpText) {

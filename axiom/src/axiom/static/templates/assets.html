@@ -1,0 +1,343 @@
+<!-- ═══════════ ASSET & CREDENTIAL MANAGEMENT ═══════════ -->
+<div x-show="activePage === 'assets'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
+  <!-- Fixed tooltip layer (outside overflow containers) -->
+  <div id="cred-tooltip-fixed" class="hidden fixed z-[9999] w-96 max-h-80 overflow-auto rounded-lg border border-slate-200 bg-white shadow-xl p-3 pointer-events-none">
+    <pre class="text-[10px] text-slate-600 font-mono whitespace-pre-wrap break-all" id="cred-tooltip-content"></pre>
+  </div>
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 shrink-0 flex items-center justify-between">
+    <div class="flex items-center gap-4">
+      <h2 class="text-base font-semibold text-slate-800 tracking-tight">资产管理</h2>
+      <div class="flex gap-1 bg-slate-100 rounded-lg p-0.5">
+        <button @click="assetTab='assets'" :class="assetTab==='assets' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'" class="px-3 py-1 text-xs rounded-md transition font-medium">API 资产</button>
+        <button @click="assetTab='credentials'; loadCredentials()" :class="assetTab==='credentials' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'" class="px-3 py-1 text-xs rounded-md transition font-medium">凭证</button>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition">刷新</button>
+      <button x-show="assetTab==='assets'" @click="openAssetAdd()" class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition">新增资产</button>
+      <button x-show="assetTab==='credentials'" @click="openCredAdd()" class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition">新增凭证</button>
+    </div>
+  </header>
+
+  <!-- ══════ ASSETS TAB ══════ -->
+  <div x-show="assetTab === 'assets'" class="flex-1 flex flex-col overflow-hidden">
+    <!-- Stats cards -->
+    <div class="px-5 py-3 grid grid-cols-5 gap-3 shrink-0" x-show="assetStats.total > 0">
+      <div class="rounded-xl border border-slate-200 bg-white px-4 py-3 text-center">
+        <p class="text-[10px] text-slate-400 uppercase tracking-wider">总数</p>
+        <p class="text-xl font-bold text-slate-700" x-text="assetStats.total"></p>
+      </div>
+      <div class="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-center">
+        <p class="text-[10px] text-emerald-600 uppercase tracking-wider">safe</p>
+        <p class="text-xl font-bold text-emerald-700" x-text="assetStats.safe"></p>
+      </div>
+      <div class="rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-center">
+        <p class="text-[10px] text-slate-500 uppercase tracking-wider">blocked</p>
+        <p class="text-xl font-bold text-slate-600" x-text="assetStats.blocked"></p>
+      </div>
+      <div class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-center">
+        <p class="text-[10px] text-rose-600 uppercase tracking-wider">vulnerable</p>
+        <p class="text-xl font-bold text-rose-700" x-text="assetStats.vulnerable"></p>
+      </div>
+      <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center">
+        <p class="text-[10px] text-amber-600 uppercase tracking-wider">untested</p>
+        <p class="text-xl font-bold text-amber-700" x-text="assetStats.untested"></p>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="px-5 py-2 flex flex-wrap items-center gap-2 shrink-0 border-b border-slate-100">
+      <select x-model="assetFilterGroup" @change="assetPage=0; loadAssets()" class="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+        <option value="">全部项目</option>
+        <template x-for="g in assetGroups" :key="g"><option :value="g" x-text="g"></option></template>
+      </select>
+      <select x-model="assetFilterProject" @change="assetPage=0; loadAssets()" class="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+        <option value="">全部任务</option>
+        <template x-for="p in assetProjects" :key="p"><option :value="p" x-text="p"></option></template>
+      </select>
+      <select x-model="assetFilterDomain" @change="assetPage=0; loadAssets()" class="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white max-w-[240px]">
+        <option value="">全部域名</option>
+        <template x-for="d in assetDomains" :key="d"><option :value="d" x-text="d"></option></template>
+      </select>
+      <input x-model="assetSearch" @input="assetPage=0; loadAssets()" placeholder="搜索 API 路径…" class="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg w-36">
+      <select x-model="assetFilterStatus" @change="assetPage=0; loadAssets()" class="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+        <option value="">全部状态</option><option value="safe">safe</option><option value="blocked">blocked</option><option value="vulnerable">vulnerable</option><option value="untested">untested</option>
+      </select>
+      <select x-model="assetFilterMethod" @change="assetPage=0; loadAssets()" class="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+        <option value="">全部方法</option><option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option><option>PATCH</option>
+      </select>
+      <button @click="assetFilterGroup='';assetFilterProject='';assetFilterDomain='';assetFilterStatus='';assetFilterMethod='';assetSearch='';assetPage=0;loadAssets()" class="px-2.5 py-1.5 text-xs text-slate-500 hover:bg-slate-100 rounded-lg transition">清除筛选</button>
+    </div>
+
+    <!-- Table -->
+    <main class="flex-1 overflow-hidden px-5 py-3">
+      <div class="rounded-xl border border-slate-200 bg-white overflow-auto">
+        <table class="w-full text-xs table-fixed">
+          <thead class="bg-slate-50/80 border-b border-slate-100">
+            <tr class="text-left text-[10px] text-slate-400 uppercase tracking-wider">
+              <th class="px-3 py-2" style="width:18%">域名</th>
+              <th class="px-3 py-2" style="width:24%">API 路径</th>
+              <th class="px-3 py-2" style="width:6%">方法</th>
+              <th class="px-3 py-2" style="width:18%">功能说明</th>
+              <th class="px-3 py-2" style="width:7%">认证</th>
+              <th class="px-3 py-2" style="width:7%">状态</th>
+              <th class="px-3 py-2" style="width:12%">来源</th>
+              <th class="px-3 py-2" style="width:8%">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="a in assets" :key="a.id">
+              <tr class="border-b border-slate-50 hover:bg-slate-50/50 transition"
+                :class="{
+                  'bg-emerald-50/30': a.test_status === 'safe',
+                  'bg-slate-50/50': a.test_status === 'blocked',
+                  'bg-rose-50/30': a.test_status === 'vulnerable',
+                  'bg-amber-50/30': a.test_status === 'untested',
+                }">
+                <td class="px-3 py-2 text-slate-500 truncate max-w-[180px]" :title="a.backend_domain" x-text="a.backend_domain || '—'"></td>
+                <td class="px-3 py-2 font-mono text-slate-700 truncate max-w-[220px]" :title="a.api_path" x-text="a.api_path"></td>
+                <td class="px-3 py-2">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold" :class="methodBadge(a.api_method)" x-text="a.api_method"></span>
+                  <span x-show="a.sample_body" class="ml-1 px-1 py-0.5 rounded text-[9px] bg-slate-100 text-slate-400 cursor-default relative group">
+                    B
+                    <span class="absolute left-0 top-full mt-1 hidden group-hover:block z-50 w-72 max-h-52 overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg text-[11px] p-2.5">
+                      <span x-show="a.content_type" class="block text-[10px] text-slate-400 mb-1" x-text="'Content-Type: ' + a.content_type"></span>
+                      <span class="block font-mono text-slate-700 whitespace-pre-wrap break-all" x-text="a.sample_body"></span>
+                    </span>
+                  </span>
+                </td>
+                <td class="px-3 py-2 text-slate-500 truncate max-w-[130px]" :title="a.api_purpose" x-text="a.api_purpose || '—'"></td>
+                <td class="px-3 py-2 text-slate-500" x-text="a.auth_required === 'yes' ? a.auth_type || '需要' : a.auth_required"></td>
+                <td class="px-3 py-2">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap" :class="statusBadge(a.test_status)" x-text="a.test_status"></span>
+                </td>
+                <td class="px-3 py-2 text-slate-400 truncate max-w-[90px]" :title="a.source_file" x-text="a.source_file ? a.source_file.split('/').pop() : '—'"></td>
+                <td class="px-3 py-2 flex gap-1">
+                  <button @click="openAssetEdit(a)" class="p-1 rounded hover:bg-slate-200 text-slate-400 hover:text-blue-500 transition" title="编辑">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
+                  </button>
+                  <button @click="deleteAsset(a.id)" class="p-1 rounded hover:bg-rose-100 text-slate-400 hover:text-rose-500 transition" title="删除">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18B8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14Z"/></svg>
+                  </button>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="assets.length === 0"><td colspan="8" class="px-3 py-8 text-center text-slate-400">暂无资产记录</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="flex items-center justify-between mt-3" x-show="assetTotal > assetPageSize">
+        <p class="text-xs text-slate-400" x-text="`${assetPage * assetPageSize + 1}–${Math.min((assetPage + 1) * assetPageSize, assetTotal)} / ${assetTotal}`"></p>
+        <div class="flex items-center gap-1">
+          <button @click="assetPage=Math.max(0,assetPage-1);loadAssets()" :disabled="assetPage === 0" class="px-2 py-1 text-xs border border-slate-200 rounded hover:bg-slate-50 disabled:opacity-30">上一页</button>
+          <button @click="assetPage++;loadAssets()" :disabled="(assetPage+1)*assetPageSize >= assetTotal" class="px-2 py-1 text-xs border border-slate-200 rounded hover:bg-slate-50 disabled:opacity-30">下一页</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ══════ CREDENTIALS TAB ══════ -->
+  <div x-show="assetTab === 'credentials'" class="flex-1 flex flex-col overflow-hidden">
+    <div class="px-5 py-2 flex items-center gap-2 shrink-0 border-b border-slate-100">
+      <input x-model="credentialFilterGroup" @input="credPage=0; loadCredentials()" placeholder="按 Group ID 筛选…" class="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg w-48">
+      <button @click="credentialFilterGroup='';credPage=0;loadCredentials()" class="px-2.5 py-1.5 text-xs text-slate-500 hover:bg-slate-100 rounded-lg transition">清除</button>
+    </div>
+    <main class="flex-1 overflow-auto px-5 py-3 space-y-3">
+      <div class="rounded-xl border border-slate-200 bg-white overflow-auto">
+        <table class="w-full text-xs">
+          <thead class="bg-slate-50/80 border-b border-slate-100">
+            <tr class="text-left text-[10px] text-slate-400 uppercase tracking-wider">
+              <th class="px-3 py-2" style="width:11%">Group</th>
+              <th class="px-3 py-2" style="width:13%">名称</th>
+              <th class="px-3 py-2" style="width:7%">类型</th>
+              <th class="px-3 py-2" style="width:14%">适用域名</th>
+              <th class="px-3 py-2" style="width:7%">来源</th>
+              <th class="px-3 py-2" style="width:9%">捕获时间</th>
+              <th class="px-3 py-2" style="width:21%">凭证内容</th>
+              <th class="px-3 py-2" style="width:6%">状态</th>
+              <th class="px-3 py-2" style="width:12%">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="c in credentials" :key="c.id">
+              <tr class="border-b border-slate-50 hover:bg-slate-50/50 transition" :class="c.active === 0 ? 'opacity-50' : ''">
+                <td class="px-3 py-2 text-slate-500 truncate max-w-[100px]" :title="c.group_id" x-text="c.group_id"></td>
+                <td class="px-3 py-2 font-medium text-slate-700" x-text="c.label || '—'"></td>
+                <td class="px-3 py-2">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold whitespace-nowrap"
+                    :class="authTypeBadgeClass(c.auth_type)"
+                    x-text="authTypeLabel(c.auth_type)"></span>
+                </td>
+                <td class="px-3 py-2 text-slate-500 truncate max-w-[130px]" :title="parseDomains(c.domains_json).join(', ')" x-text="parseDomains(c.domains_json).join(', ') || '—'"></td>
+                <td class="px-3 py-2 text-slate-400 truncate max-w-[70px]" x-text="c.source_task_id || '—'"></td>
+                <td class="px-3 py-2 text-slate-400 text-[10px]" x-text="c.captured_at ? c.captured_at.slice(0,16).replace('T',' ') : '—'"></td>
+                <td class="px-3 py-2 cred-cell" @mouseenter="positionCredTooltip($event)" @mouseleave="hideCredTooltip($event)">
+                  <span class="text-[10px] text-slate-400 cursor-default" x-text="credSummary(c.credentials_json)"></span>
+                </td>
+                <td class="px-3 py-2">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold"
+                    :class="c.active === 1 ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'"
+                    x-text="c.active === 1 ? '启用' : '停用'"></span>
+                </td>
+                <td class="px-3 py-2">
+                  <div class="flex items-center gap-1">
+                    <button @click="openCredEdit(c)" class="p-1 rounded hover:bg-blue-50 text-slate-400 hover:text-blue-500 transition" title="编辑">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
+                    </button>
+                    <button @click="deleteCredential(c.id)" class="p-1 rounded hover:bg-rose-50 text-slate-400 hover:text-rose-500 transition" title="删除">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M5 6v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6"/></svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="credentials.length === 0"><td colspan="9" class="px-3 py-8 text-center text-slate-400">暂无凭证记录</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ═══ Edit Asset Modal ═══ -->
+<div x-show="showAssetEdit" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showAssetEdit=false">
+  <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-6 w-[480px] max-h-[80vh] overflow-y-auto space-y-4">
+    <div class="flex items-center justify-between">
+      <h3 class="text-sm font-semibold text-slate-800">编辑资产</h3>
+      <button @click="showAssetEdit=false" class="p-1 rounded hover:bg-slate-100"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="space-y-3">
+      <div><label class="text-[10px] text-slate-400">功能说明</label><input x-model="editAssetForm.api_purpose" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      <div><label class="text-[10px] text-slate-400">测试状态</label>
+        <select x-model="editAssetForm.test_status" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+          <option value="untested">untested</option><option value="safe">safe</option><option value="blocked">blocked</option><option value="vulnerable">vulnerable</option>
+        </select>
+      </div>
+      <div><label class="text-[10px] text-slate-400">认证要求</label>
+        <select x-model="editAssetForm.auth_required" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+          <option value="unknown">unknown</option><option value="yes">yes</option><option value="no">no</option>
+        </select>
+      </div>
+      <div><label class="text-[10px] text-slate-400">认证类型</label><input x-model="editAssetForm.auth_type" placeholder="JWT / Cookie / none" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+    </div>
+    <div class="flex items-center justify-end gap-2 pt-2">
+      <button @click="showAssetEdit=false" class="px-4 py-2 text-xs text-slate-500 hover:bg-slate-50 rounded-lg">取消</button>
+      <button @click="saveAsset();showAssetEdit=false" class="px-4 py-2 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Add Asset Modal ═══ -->
+<div x-show="showAssetAdd" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showAssetAdd=false">
+  <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-6 w-[520px] max-h-[85vh] overflow-y-auto space-y-4">
+    <div class="flex items-center justify-between">
+      <h3 class="text-sm font-semibold text-slate-800">新增资产</h3>
+      <button @click="showAssetAdd=false" class="p-1 rounded hover:bg-slate-100"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-[10px] text-slate-400">项目 ID *</label><input x-model="editAssetForm.project_id" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+        <div><label class="text-[10px] text-slate-400">Group ID</label><input x-model="editAssetForm.group_id" placeholder="项目组 ID（跨任务共享）" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      </div>
+      <div class="grid grid-cols-3 gap-3">
+        <div class="col-span-2"><label class="text-[10px] text-slate-400">API 路径 *</label><input x-model="editAssetForm.api_path" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+        <div><label class="text-[10px] text-slate-400">HTTP 方法 *</label>
+          <select x-model="editAssetForm.api_method" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+            <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option><option>PATCH</option>
+          </select>
+        </div>
+      </div>
+      <div><label class="text-[10px] text-slate-400">后端域名</label><input x-model="editAssetForm.backend_domain" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      <div><label class="text-[10px] text-slate-400">功能说明</label><input x-model="editAssetForm.api_purpose" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      <div class="grid grid-cols-3 gap-3">
+        <div><label class="text-[10px] text-slate-400">认证要求</label>
+          <select x-model="editAssetForm.auth_required" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+            <option value="unknown">unknown</option><option value="yes">yes</option><option value="no">no</option><option value="anonymous">anonymous</option>
+          </select>
+        </div>
+        <div><label class="text-[10px] text-slate-400">认证类型</label><input x-model="editAssetForm.auth_type" placeholder="JWT / Cookie / none" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+        <div><label class="text-[10px] text-slate-400">测试状态</label>
+          <select x-model="editAssetForm.test_status" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+            <option value="untested">untested</option><option value="safe">safe</option><option value="blocked">blocked</option><option value="vulnerable">vulnerable</option>
+          </select>
+        </div>
+      </div>
+      <div><label class="text-[10px] text-slate-400">Content-Type</label><input x-model="editAssetForm.content_type" placeholder="application/json" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      <div><label class="text-[10px] text-slate-400">请求体示例</label><textarea x-model="editAssetForm.sample_body" rows="2" placeholder='{"key": "value"}' class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg font-mono"></textarea></div>
+    </div>
+    <div class="flex items-center justify-end gap-2 pt-2">
+      <button @click="showAssetAdd=false" class="px-4 py-2 text-xs text-slate-500 hover:bg-slate-50 rounded-lg">取消</button>
+      <button @click="addAsset();showAssetAdd=false" class="px-4 py-2 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600">新增</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Add Credential Modal ═══ -->
+<div x-show="showCredAdd" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showCredAdd=false">
+  <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-6 w-[520px] max-h-[85vh] overflow-y-auto space-y-4">
+    <div class="flex items-center justify-between">
+      <h3 class="text-sm font-semibold text-slate-800">新增凭证</h3>
+      <button @click="showCredAdd=false" class="p-1 rounded hover:bg-slate-100"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-[10px] text-slate-400">Group ID *</label><input x-model="editCredForm.group_id" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+        <div><label class="text-[10px] text-slate-400">名称 *</label><input x-model="editCredForm.label" placeholder="如 admin_session / 用户1" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-[10px] text-slate-400">类型</label>
+          <select x-model="editCredForm.auth_type" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+            <option value="header">请求头</option>
+            <option value="url">URL</option>
+            <option value="body">请求体</option>
+          </select>
+        </div>
+        <div><label class="text-[10px] text-slate-400">关联资产 ID</label><input type="number" x-model="editCredForm.asset_id" placeholder="如 723（可选）" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      </div>
+      <div><label class="text-[10px] text-slate-400">适用域名 (逗号分隔)</label><input x-model="editCredForm.domains_text" placeholder="example.com, api.example.com" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      <div><label class="text-[10px] text-slate-400">来源任务</label><input x-model="editCredForm.source_task_id" placeholder="task_xxx（可选）" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      <div><label class="text-[10px] text-slate-400">过期时间</label><input x-model="editCredForm.expires_at" placeholder="2026-07-01T00:00:00Z（可选）" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      <div><label class="text-[10px] text-slate-400">凭证内容（每行 `key: value`，或整段粘贴合法 JSON）</label><textarea x-model="editCredForm.credentials_json" rows="6" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg font-mono" placeholder="cookie: 123&#10;token: abc&#10;# 以 # 开头的行会被忽略"></textarea></div>
+      <label class="flex items-center gap-2 text-[11px] text-slate-500"><input type="checkbox" x-model="editCredForm.active" class="rounded border-slate-300"> 启用此凭证（默认启用）</label>
+    </div>
+    <div class="flex items-center justify-end gap-2 pt-2">
+      <button @click="showCredAdd=false" class="px-4 py-2 text-xs text-slate-500 hover:bg-slate-50 rounded-lg">取消</button>
+      <button @click="addCredential();showCredAdd=false" class="px-4 py-2 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600">新增</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Edit Credential Modal ═══ -->
+<div x-show="showCredEdit" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showCredEdit=false">
+  <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-6 w-[520px] max-h-[85vh] overflow-y-auto space-y-4">
+    <div class="flex items-center justify-between">
+      <h3 class="text-sm font-semibold text-slate-800">编辑凭证</h3>
+      <button @click="showCredEdit=false" class="p-1 rounded hover:bg-slate-100"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-[10px] text-slate-400">名称 *</label><input x-model="editCredForm.label" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+        <div><label class="text-[10px] text-slate-400">类型</label>
+          <select x-model="editCredForm.auth_type" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+            <option value="header">请求头</option>
+            <option value="url">URL</option>
+            <option value="body">请求体</option>
+          </select>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-[10px] text-slate-400">关联资产 ID</label><input type="number" x-model="editCredForm.asset_id" placeholder="如 723（可选）" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+        <div><label class="text-[10px] text-slate-400">过期时间</label><input x-model="editCredForm.expires_at" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      </div>
+      <div><label class="text-[10px] text-slate-400">适用域名 (逗号分隔)</label><input x-model="editCredForm.domains_text" placeholder="example.com, api.example.com" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      <div><label class="text-[10px] text-slate-400">来源任务</label><input x-model="editCredForm.source_task_id" placeholder="task_xxx（可选）" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"></div>
+      <div><label class="text-[10px] text-slate-400">捕获时间（只读）</label><input :value="editCredForm.captured_at ? editCredForm.captured_at.replace('T',' ') : '—'" disabled readonly class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 text-slate-400"></div>
+      <div><label class="text-[10px] text-slate-400">凭证内容（每行 `key: value`，或整段粘贴合法 JSON）</label><textarea x-model="editCredForm.credentials_json" rows="6" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg font-mono" placeholder="cookie: 123&#10;token: abc&#10;# 以 # 开头的行会被忽略"></textarea></div>
+      <label class="flex items-center gap-2 text-[11px] text-slate-500"><input type="checkbox" x-model="editCredForm.active" class="rounded border-slate-300"> 启用此凭证</label>
+    </div>
+    <div class="flex items-center justify-end gap-2 pt-2">
+      <button @click="showCredEdit=false" class="px-4 py-2 text-xs text-slate-500 hover:bg-slate-50 rounded-lg">取消</button>
+      <button @click="saveCredential();showCredEdit=false" class="px-4 py-2 text-xs bg-brand-500 text-white rounded-lg hover:bg-brand-600">保存</button>
+    </div>
+  </div>
+</div>

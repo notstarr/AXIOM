@@ -43,6 +43,7 @@ class DraftTodoUpdate(BaseModel):
     priority: int | None = Field(default=None, ge=0, le=100)
     status: TodoStatus | None = None
     status_reason: str | None = None
+    source_adds: list[TodoSource] = Field(default_factory=list)
 
     @field_validator("todo_id")
     @classmethod
@@ -51,6 +52,19 @@ class DraftTodoUpdate(BaseModel):
         if not text:
             raise ValueError("todo_id must not be empty")
         return text
+
+    @field_validator("source_adds")
+    @classmethod
+    def normalize_source_adds(cls, value: list[TodoSource]) -> list[TodoSource]:
+        seen: set[tuple[str, str]] = set()
+        normalized: list[TodoSource] = []
+        for source in value:
+            key = (source.type, source.id)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(source)
+        return normalized
 
 
 class DraftIntent(BaseModel):
@@ -86,6 +100,37 @@ class DraftIntent(BaseModel):
             self.todo_ref = self.todo_ref.strip()
         if self.todo_id:
             self.todo_id = self.todo_id.strip()
+        return self
+
+    @model_validator(mode="after")
+    def keep_timeout_metadata_structured(self) -> "DraftIntent":
+        """Keep scheduling metadata out of the human-facing Intent brief."""
+        text = " ".join(
+            self.description.casefold()
+            .replace("：", " ")
+            .replace(":", " ")
+            .replace("，", " ")
+            .replace(",", " ")
+            .split()
+        )
+        field_markers = ("execute_seconds", "conclude_seconds", "执行预算", "结论预算")
+        if any(marker in text for marker in field_markers):
+            raise ValueError(
+                "Intent description must not duplicate timeout metadata; "
+                "use execute_seconds and conclude_seconds"
+            )
+        budget_markers = ("预算", "timeout", "超时")
+        execute_markers = (f"execute {self.execute_seconds}", f"执行 {self.execute_seconds}")
+        conclude_markers = (f"conclude {self.conclude_seconds}", f"收口 {self.conclude_seconds}")
+        if (
+            any(marker in text for marker in budget_markers)
+            and any(marker in text for marker in execute_markers)
+            and any(marker in text for marker in conclude_markers)
+        ):
+            raise ValueError(
+                "Intent description must not repeat execute/conclude budgets; "
+                "use execute_seconds and conclude_seconds"
+            )
         return self
 
 

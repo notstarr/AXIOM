@@ -131,6 +131,10 @@
                   <p class="mt-2 text-[11px] text-slate-500"><span class="font-semibold text-slate-600">忽略原因：</span><span x-text="selectedVulnerability().status_reason"></span></p>
                 </template>
                 <h3 class="mt-3 text-lg font-semibold text-slate-800 break-words" x-text="selectedVulnerability().title"></h3>
+                <div class="mt-2 flex flex-wrap gap-2 text-[10px]">
+                  <span class="px-2 py-0.5 rounded-md bg-white/80 text-slate-600" x-text="selectedVulnerability().type || '通用漏洞'"></span>
+                  <span x-show="selectedVulnerability().affected_target" class="px-2 py-0.5 rounded-md bg-white/80 text-slate-500" x-text="selectedVulnerability().affected_target"></span>
+                </div>
                 <div class="mt-2 flex gap-2">
                   <button @click="editVuln(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">编辑</button>
                   <button @click="deleteVuln(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-rose-200 text-rose-500 hover:bg-rose-50">删除</button>
@@ -138,6 +142,8 @@
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
                     导出 MD
                   </button>
+                  <button @click="previewExternalVulnerability(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-violet-200 text-violet-600 hover:bg-violet-50">外部预览</button>
+                  <button @click="reportExternalVulnerability(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-brand-200 text-brand-600 hover:bg-brand-50">外部上报</button>
                   <button x-show="selectedVulnerability().source_file" @click="viewEvidence(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-blue-200 text-blue-600 hover:bg-blue-50 flex items-center gap-1">
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
                     证据
@@ -181,6 +187,14 @@
                     </ol>
                   </div>
                 </template>
+                <div x-show="selectedVulnerability().remediation">
+                  <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">修复建议</p>
+                  <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="selectedVulnerability().remediation"></p>
+                </div>
+                <div x-show="selectedVulnerability().curl_command">
+                  <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">cURL</p>
+                  <pre class="rounded-xl bg-slate-950 p-3 text-xs text-slate-100 whitespace-pre-wrap break-all" x-text="selectedVulnerability().curl_command"></pre>
+                </div>
               </div>
             </article>
           </template>
@@ -226,8 +240,12 @@
       <button @click="vulnEditor.open = false" class="text-slate-400 hover:text-slate-600 text-lg">&times;</button>
     </div>
     <div class="p-5 space-y-3">
-      <input x-model="vulnEditor.project_id" placeholder="项目ID (如 proj_042)" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" :disabled="!vulnEditor.isNew">
+      <input x-model="vulnEditor.project_id" placeholder="任务 ID（如 t_042）" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" :disabled="!vulnEditor.isNew">
       <input x-model="vulnEditor.title" placeholder="标题 *" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <input x-model="vulnEditor.type" placeholder="漏洞类型（如 IDOR / SQLi / JWT）" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+        <input x-model="vulnEditor.affected_target" placeholder="受影响目标 / 接口" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+      </div>
       <div>
         <label class="text-[11px] text-slate-400 mb-1 block font-medium">严重程度</label>
         <div class="flex gap-2">
@@ -252,6 +270,8 @@
       <textarea x-model="vulnEditor.impact" rows="2" placeholder="影响 *" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea>
       <textarea x-model="vulnEditor.evidence" rows="3" placeholder="证据（每行一条）" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea>
       <textarea x-model="vulnEditor.reproduction_steps" rows="3" placeholder="复现步骤（每行一条）" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea>
+      <textarea x-model="vulnEditor.remediation" rows="3" placeholder="修复建议" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea>
+      <textarea x-model="vulnEditor.curl_command" rows="4" placeholder="cURL 命令（可选）" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono"></textarea>
       <div>
         <label class="text-[11px] text-slate-400 mb-1 block font-medium">忽略原因（状态为「忽略」时必填，不少于 4 字）</label>
         <textarea x-model="vulnEditor.status_reason" rows="2" placeholder="选「忽略」时填写，其余状态可留空" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea>

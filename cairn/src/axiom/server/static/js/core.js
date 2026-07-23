@@ -6,7 +6,7 @@ window.AxiomModules.core = {
     async loadTemplate(name) {
       if (this._templateCache[name]) return this._templateCache[name];
       try {
-        const resp = await fetch('/static/templates/' + name + '.html');
+        const resp = await fetch('/static/templates/' + name + '.html', { cache: 'no-store' });
         if (!resp.ok) throw new Error('Template ' + name + ' not found');
         const html = await resp.text();
         this._templateCache[name] = html;
@@ -112,11 +112,11 @@ window.AxiomModules.core = {
       if (taskMatch || legacyProjectMatch) {
         const id = decodeURIComponent((taskMatch || legacyProjectMatch)[1]);
         this.activePage = 'task-detail';
-        if (this.selectedProjectId !== id || this.view !== 'graph') this.openProject(id, true);
+        if (this.selectedProjectId !== id || !this.project) this.openTaskOverview(id, true);
         return;
       }
       const page = (hash.replace(/^#\/?/, '') || 'dashboard').split('/')[0];
-      const allowed = ['dashboard', 'tasks', 'vulnerabilities', 'projects', 'guard-audit', 'skills', 'files', 'mcp', 'assets', 'settings', 'crawler-results', 'prompts', 'batch-url-judge'];
+      const allowed = ['dashboard', 'tasks', 'vulnerabilities', 'projects', 'guard-audit', 'skills', 'files', 'mcp', 'settings', 'prompts'];
       const newPage = allowed.includes(page) ? page : 'dashboard';
       if (this.activePage !== newPage && !this._navigatingBack) {
         this.pageHistory.push(this.activePage);
@@ -127,8 +127,9 @@ window.AxiomModules.core = {
       if (this.activePage === 'vulnerabilities' || this.activePage === 'projects' || this.activePage === 'dashboard') {
         this.loadAllProjectDetails();
       }
-      if (this.activePage === 'dashboard') {
-        this.loadGlobalSkillUsage();
+      if (this.activePage === 'dashboard') this.loadGlobalSkillUsage();
+      if (this.activePage === 'projects' && this.selectedProjectManagementId) {
+        this.loadProjectCredentials(this.selectedProjectManagementId);
       }
       if (this.activePage === 'skills') {
         this.loadSkills();
@@ -136,8 +137,8 @@ window.AxiomModules.core = {
       if (this.activePage === 'settings') this.loadSettings();
       if (this.activePage === 'tasks') this.loadDispatchSettings();
       if (this.activePage === 'guard-audit') this.loadGuardAuditEvents();
-      if (this.activePage === 'mcp') { this.loadDispatchSettings(); this.loadMcpServers(); }
-      if (this.activePage === 'assets') { this.loadAssets(); this.loadAssetStats(); this.loadAssetFilters(); this.loadCredentials(); }
+      if (this.activePage === 'files') this.loadArtifactCenter();
+      if (this.activePage === 'mcp') this.loadMcpPage();
     },
 
     navigateTo(page) {
@@ -150,11 +151,8 @@ window.AxiomModules.core = {
         skills: '#/skills',
         files: '#/files',
         mcp: '#/mcp',
-        assets: '#/assets',
         settings: '#/settings',
-        'crawler-results': '#/crawler-results',
         prompts: '#/prompts',
-        'batch-url-judge': '#/batch-url-judge',
       };
       location.hash = routes[page] || '#/dashboard';
       this.handleRoute();
@@ -167,8 +165,8 @@ window.AxiomModules.core = {
       const routes = {
         dashboard: '#/dashboard', tasks: '#/tasks', vulnerabilities: '#/vulnerabilities',
         projects: '#/projects', 'guard-audit': '#/guard-audit', skills: '#/skills', files: '#/files', mcp: '#/mcp',
-        assets: '#/assets', settings: '#/settings', 'crawler-results': '#/crawler-results',
-        prompts: '#/prompts', 'task-detail': '#/task-detail', 'batch-url-judge': '#/batch-url-judge',
+        settings: '#/settings',
+        prompts: '#/prompts', 'task-detail': '#/task-detail',
       };
       location.hash = routes[prev] || '#/dashboard';
       this.handleRoute();
@@ -230,9 +228,8 @@ window.AxiomModules.core = {
           await this.refreshDashboardPage({ silent: true });
         } else if (this.activePage === 'tasks') {
           await Promise.all([this.loadProjectGroups(), this.loadProjects(), this.loadDispatchSettings()]);
-          if (typeof this.loadMcpServers === 'function') await this.loadMcpServers();
         } else if (this.activePage === 'task-detail' && this.selectedProjectId) {
-          await Promise.all([this.loadProject(this.selectedProjectId), this.loadSeeEvents(true), this.loadDispatchSettings(), this.loadConversation(this.selectedProjectId, { silent: true })]);
+          await Promise.all([this.loadProject(this.selectedProjectId), this.loadSeeEvents(true), this.loadDispatchSettings()]);
           if (this.sideTab === 'board') await this.reloadBlackboardGroup(this.project?.project?.parent_project_id);
           this.updateGraph();
         } else if (this.activePage === 'vulnerabilities') {
@@ -242,6 +239,7 @@ window.AxiomModules.core = {
           await Promise.all([this.loadProjectGroups(), this.loadProjects()]);
           await this.loadAllProjectDetails(true);
           if (this.selectedProjectManagementTaskId) await this.loadProjectDetailForManagement(this.selectedProjectManagementTaskId);
+          if (this.selectedProjectManagementId) await this.loadProjectCredentials(this.selectedProjectManagementId);
         } else if (this.activePage === 'skills') {
           await this.loadSkills();
           if (this.skillEditor?.name && !this.skillEditor.fileDirty) await this.loadSkillFiles();
@@ -257,15 +255,8 @@ window.AxiomModules.core = {
           if (selected.folder && (selected.isGroupLevel ? selected.groupId : selected.taskId)) {
             await this.selectFolder(selected.groupId, selected.taskId, selected.folder, selected.isGroupLevel);
           }
-        } else if (this.activePage === 'assets') {
-          await Promise.all([this.loadAssetFilters(), this.loadAssets(), this.loadCredentials()]);
-        } else if (this.activePage === 'crawler-results') {
-          await Promise.all([this.loadCrawlerTasks(), this.loadCrawlerWorkerSettings()]);
-          if (this.selectedCrawlerTaskId) await Promise.all([this.loadCrawlerStatus(), this.loadCrawlerResultsPage()]);
-        } else if (this.activePage === 'mcp') {
-          await Promise.all([this.loadDispatchSettings(), this.loadMcpServers()]);
         } else if (this.activePage === 'settings') {
-          await Promise.all([this.loadSettings(), this.loadDispatchSettings(), this.loadCrawlerWorkerSettings()]);
+          await Promise.all([this.loadSettings(), this.loadDispatchSettings()]);
         } else if (this.activePage === 'prompts') {
           this.loadPrompts();
         }

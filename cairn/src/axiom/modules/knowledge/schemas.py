@@ -23,6 +23,36 @@ class CreateKnowledge(BaseModel):
         return value.strip()
 
 
+class UpdateKnowledge(BaseModel):
+    title: str | None = None
+    content: str | None = None
+    hint: str | None = None
+    actor: str
+
+    @field_validator("content")
+    @classmethod
+    def validate_optional_content(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("actor")
+    @classmethod
+    def validate_actor(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("title", "hint")
+    @classmethod
+    def trim_optional_text(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+
 class Knowledge(BaseModel):
     id: str
     project_id: str
@@ -37,6 +67,19 @@ class Knowledge(BaseModel):
 
 
 class CreateTaskHint(BaseModel):
+    content: str
+    actor: str
+
+    @field_validator("content", "actor")
+    @classmethod
+    def require_text(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+
+class UpdateTaskHint(BaseModel):
     content: str
     actor: str
 

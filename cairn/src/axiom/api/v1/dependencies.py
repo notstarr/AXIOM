@@ -18,11 +18,17 @@ def get_v2_engine(request: Request) -> Engine:
 
 
 def get_project_service(request: Request) -> ProjectService:
-    return ProjectService(get_v2_engine(request))
+    return ProjectService(
+        get_v2_engine(request),
+        data_dir=getattr(request.app.state, "data_dir", None),
+    )
 
 
 def get_task_service(request: Request) -> TaskService:
-    return TaskService(get_v2_engine(request))
+    return TaskService(
+        get_v2_engine(request),
+        data_dir=getattr(request.app.state, "data_dir", None),
+    )
 
 
 def require_service_token(

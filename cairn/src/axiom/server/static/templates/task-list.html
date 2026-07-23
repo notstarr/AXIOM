@@ -47,180 +47,130 @@
     </div>
   </header>
 
-  <div x-ref="projectListScroll" class="flex-1 min-h-0 p-4 flex flex-col">
+  <div x-ref="projectListScroll" class="flex-1 min-h-0 p-4 flex flex-col gap-3">
+    <div class="rounded-2xl border border-slate-200 bg-white shadow-sm px-3 py-2 flex items-center gap-2 shrink-0">
+      <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input x-model="taskSearch" placeholder="搜索任务名称、ID、Origin、Goal 或所属项目" class="flex-1 h-8 text-sm text-slate-700 placeholder:text-slate-300 focus:outline-none">
+      <select x-model="taskStatusFilter" class="h-8 px-2.5 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-100">
+        <option value="all">全部状态</option><option value="active">运行中</option><option value="stopped">已暂停</option><option value="completed">已完成</option><option value="failed">失败</option>
+      </select>
+      <span class="text-[11px] text-slate-400 tabular-nums" x-text="`${filteredTasks().length} / ${projects.length}`"></span>
+    </div>
     <!-- New Task overlay -->
     <div x-show="showTaskComposer" x-cloak class="fixed inset-0 z-50 flex items-start justify-center overlay pt-10" @click.self="showTaskComposer = false">
       <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto mx-4" @click.stop>
-        <div class="sticky top-0 bg-white px-6 py-4 border-b border-slate-200 flex items-center justify-between z-10 rounded-t-2xl">
-          <h3 class="text-base font-semibold text-slate-800">新建任务</h3>
+        <div class="sticky top-0 bg-white px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-4 z-10 rounded-t-2xl">
+          <div>
+            <h3 class="text-base font-semibold text-slate-800">新建任务</h3>
+            <p class="mt-0.5 text-[11px] text-slate-400" x-text="taskComposerStep === 1 ? '第一步：基础信息' : '第二步：其他设置'"></p>
+          </div>
+          <div class="flex items-center gap-2 ml-auto" aria-label="创建任务步骤">
+            <button type="button" @click="taskComposerStep = 1" aria-label="前往第一步：基础信息" title="基础信息"
+              class="h-2 rounded-full transition-all hover:opacity-80"
+              :class="taskComposerStep === 1 ? 'w-8 bg-brand-500' : 'w-2 bg-brand-200'"></button>
+            <button type="button" @click="taskComposerStep = 2" aria-label="前往第二步：其他设置" title="其他设置"
+              class="h-2 rounded-full transition-all hover:opacity-80"
+              :class="taskComposerStep === 2 ? 'w-8 bg-brand-500' : 'w-2 bg-slate-200'"></button>
+          </div>
           <button @click="showTaskComposer = false" class="text-slate-400 hover:text-slate-600 text-lg">&times;</button>
         </div>
-        <div class="p-6 space-y-5">
-          <!-- Mode selection -->
-          <div>
-            <label class="text-xs font-semibold text-slate-500 mb-2 block">模式</label>
-            <div class="grid grid-cols-2 gap-3">
-              <button type="button" @click="newProject.depth_mode = false; newProject.bootstrap = true"
-                class="rounded-2xl border-2 p-4 text-left transition"
-                :class="!newProject.depth_mode ? 'border-brand-400 bg-brand-50/60' : 'border-slate-200 hover:border-slate-300'">
-                <div class="text-sm font-semibold text-slate-700">广度模式</div>
-                <div class="text-[11px] text-slate-400 mt-1">bootstrap → reason → explore<br>新任务先由 worker 完成信息收集</div>
-              </button>
-              <button type="button" @click="newProject.depth_mode = true; newProject.bootstrap = false"
-                class="rounded-2xl border-2 p-4 text-left transition"
-                :class="newProject.depth_mode ? 'border-amber-400 bg-amber-50/60' : 'border-slate-200 hover:border-slate-300'">
-                <div class="text-sm font-semibold text-slate-700">深度模式</div>
-                <div class="text-[11px] text-slate-400 mt-1">plan → reason → explore<br>基于流量数据，逐条测试</div>
-              </button>
+        <div class="p-6">
+          <!-- Step 1: basic task information only -->
+          <div x-show="taskComposerStep === 1" class="space-y-5">
+            <div>
+              <label class="text-xs font-semibold text-slate-500 mb-1 block">任务名称</label>
+              <input x-model="newProject.title" placeholder="例：第一轮渗透测试" autofocus class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
             </div>
-          </div>
-          <div>
-            <label class="text-xs font-semibold text-slate-500 mb-2 block">外部上报</label>
-            <button
-              type="button"
-              @click="newProject.kk_report_enabled = !newProject.kk_report_enabled"
-              class="w-full h-10 px-3 rounded-xl border text-sm font-medium transition flex items-center justify-between"
-              :class="newProject.kk_report_enabled
-                ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
-                : 'border-slate-300 bg-slate-100 text-slate-500'"
-              title="关闭时仅上报到 AXIOM；开启时同时上报 KK 外部系统">
-              <span>上报KK系统</span>
-              <span
-                class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-white/90 border border-current/20"
-                x-text="newProject.kk_report_enabled ? '开启' : '关闭'"></span>
-            </button>
-          </div>
-          <div>
-            <label class="text-xs font-semibold text-slate-500 mb-2 block">裁判监管</label>
-            <button
-              type="button"
-              @click="newProject.guard_enabled = !newProject.guard_enabled; newProject._guardTouched = true"
-              class="w-full h-10 px-3 rounded-xl border text-sm font-medium transition flex items-center justify-between"
-              :class="newProject.guard_enabled
-                ? 'border-rose-300 bg-rose-50 text-rose-700'
-                : 'border-slate-300 bg-slate-100 text-slate-500'"
-              title="开启后 bootstrap / explore 的工具调用会经过白名单、硬规则和裁判模型；关闭则按旧逻辑执行">
-              <span>启用裁判监管</span>
-              <span
-                class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-white/90 border border-current/20"
-                x-text="newProject.guard_enabled ? '开启' : '关闭'"></span>
-            </button>
-            <p class="mt-1 text-[10px] text-slate-400">关闭时完全不加载监管 hook；开启后默认 enforce，模型超时 fail-open。</p>
-          </div>
-          <!-- Project group -->
-          <div>
-            <label class="text-xs font-semibold text-slate-500 mb-1 block">所属项目</label>
-            <select x-model="newProject.parent_project_id" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-              <option value="">选择所属项目</option>
-              <template x-for="group in projectGroups" :key="`new-task-group-${group.id}`">
-                <option :value="group.id" x-text="group.title"></option>
-              </template>
-            </select>
-          </div>
-          <!-- Workers (task worker pool) -->
-          <div>
-            <div class="flex items-center justify-between mb-1">
-              <label class="text-xs font-semibold text-slate-500">参与 Worker</label>
-              <div class="flex items-center gap-2 text-[10px]">
-                <button type="button" @click="newProject.worker_pool = ((dispatchSettings && dispatchSettings.workers) || []).filter(w => w && w.name && !w.disabled).map(w => w.name)" class="text-brand-600 hover:underline">全选</button>
-                <button type="button" @click="newProject.worker_pool = ((dispatchSettings && dispatchSettings.workers) || []).filter(w => w && w.name && w.mcp_enabled && !w.disabled).map(w => w.name)" class="text-brand-600 hover:underline">仅 MCP 启用</button>
-                <button type="button" @click="newProject.worker_pool = []" class="text-slate-400 hover:underline">清空</button>
-              </div>
+            <div>
+              <label class="text-xs font-semibold text-slate-500 mb-1 block">起点（域名或 IP）</label>
+              <textarea x-model="newProject.origin" rows="3" placeholder="api.example.com 或 https://api.example.com:8443"
+                class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
             </div>
-            <template x-if="!(dispatchSettings && dispatchSettings.workers && dispatchSettings.workers.length)">
-              <p class="text-[11px] text-slate-400">尚未配置 worker，先在设置里添加</p>
-            </template>
-            <div class="space-y-1.5 max-h-40 overflow-y-auto border border-slate-100 rounded-xl p-2 bg-slate-50/60">
-              <template x-for="worker in (dispatchSettings && dispatchSettings.workers) || []" :key="`new-task-worker-${worker.name}`">
-                <label class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white cursor-pointer"
-                  :class="worker.disabled ? 'opacity-40' : ''">
-                  <input type="checkbox" :value="worker.name" x-model="newProject.worker_pool"
-                    :disabled="worker.disabled" class="rounded border-slate-300 text-brand-500 focus:ring-brand-200">
-                  <span class="text-xs font-medium text-slate-700" x-text="worker.name"></span>
-                  <span x-show="worker.disabled" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-200 text-slate-500">已停用</span>
-                  <span x-show="!worker.disabled && worker.mcp_enabled" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-50 text-emerald-600">MCP 开</span>
-                  <span class="ml-auto text-[10px] text-slate-400" x-text="(worker.task_types || []).join(' / ')"></span>
-                </label>
-              </template>
+            <div>
+              <label class="text-xs font-semibold text-slate-500 mb-1 block">任务目标</label>
+              <textarea x-model="newProject.goal" rows="3"
+                class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
             </div>
-            <p class="mt-1 text-[10px] text-slate-400">默认勾选已启用 MCP 的 worker；留空则不限制,所有 worker 均可认领此任务产生的意图。</p>
-          </div>
-          <!-- Title -->
-          <div>
-            <label class="text-xs font-semibold text-slate-500 mb-1 block">任务名称</label>
-            <input x-model="newProject.title" placeholder="例: 第一轮渗透测试" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-          </div>
-          <!-- Origin -->
-          <div>
-            <label class="text-xs font-semibold text-slate-500 mb-1 block" x-text="newProject.depth_mode ? '流量数据' : '起点（已知信息）'"></label>
-            <template x-if="newProject.depth_mode">
-              <div class="space-y-2">
-                <div class="flex items-center gap-2">
-                  <button @click="newProject.depthInputMode = 'har'" class="px-3 py-1 text-xs rounded-lg transition"
-                    :class="newProject.depthInputMode !== 'crawler' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'text-slate-400 border border-slate-200 hover:bg-slate-50'">导入 HAR</button>
-                  <button @click="newProject.depthInputMode = 'crawler'" class="px-3 py-1 text-xs rounded-lg transition"
-                    :class="newProject.depthInputMode === 'crawler' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'text-slate-400 border border-slate-200 hover:bg-slate-50'">选择爬虫任务</button>
-                </div>
-                <template x-if="newProject.depthInputMode !== 'crawler'">
-                  <div>
-                    <div class="flex items-center gap-2 mb-1">
-                      <label class="px-2 py-0.5 text-[10px] rounded border border-amber-200 text-amber-600 hover:bg-amber-50 cursor-pointer">
-                        上传 HAR
-                        <input type="file" accept=".har,.json" @change="uploadHarFile($event)" class="hidden">
-                      </label>
-                    </div>
-                    <textarea x-model="newProject.origin" rows="4" placeholder="/tmp/axiom-uploads/traffic.har"
-                      class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
-                  </div>
-                </template>
-                <template x-if="newProject.depthInputMode === 'crawler'">
-                  <div>
-                    <select x-model="newProject.crawlerTaskId" @change="onCrawlerTaskSelectForProject()"
-                      class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-400">
-                      <option value="">选择爬虫任务…</option>
-                      <template x-for="t in crawlerTasks" :key="t.id">
-                        <option :value="t.id" x-text="`${t.id} — ${t.title} (${t.page_count}页/${t.api_count}API)`"></option>
-                      </template>
-                    </select>
-                    <p x-show="newProject.crawlerTaskId" class="mt-1 text-[11px] text-emerald-600">将使用该爬虫任务的 YAML 产出作为 plan 输入</p>
-                    <p x-show="!newProject.crawlerTaskId" class="mt-1 text-[10px] text-slate-400">请先在爬虫管理页面创建并运行爬虫任务</p>
-                  </div>
-                </template>
-              </div>
-            </template>
-            <template x-if="!newProject.depth_mode">
-              <textarea x-model="newProject.origin" rows="6" placeholder="https://example.com"
-                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
-            </template>
-          </div>
-          <!-- Task Scope -->
-          <div x-show="!newProject.depth_mode">
-            <label class="text-xs font-semibold text-slate-500 mb-1 flex items-center gap-2">
-              <input type="checkbox" x-model="newProject.task_scope_enabled" class="rounded border-slate-300"> 任务级 Scope 开启
-            </label>
-            <textarea x-model="newProject.task_scope_targets" rows="2" placeholder="白名单：api.example.com 或 *.example.com，每行一个"
-              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 mb-2"></textarea>
-            <textarea x-model="newProject.task_scope_exclude" rows="2" placeholder="黑名单：forbidden.example.com，每行一个；黑名单优先"
-              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
           </div>
 
-          <!-- Goal (only for breadth mode) -->
-          <div x-show="!newProject.depth_mode">
-            <label class="text-xs font-semibold text-slate-500 mb-1 block">目标</label>
-            <textarea x-model="newProject.goal" rows="2" placeholder="对这个系统进行全面渗透测试"
-              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
-          </div>
-          <!-- Initial Hints -->
-          <div>
-            <label class="text-xs font-semibold text-slate-500 mb-1 block">提示（Hints）</label>
-            <textarea x-model="newProject.hints" rows="4" placeholder="当前任务的初始提示，会提供给 Bootstrap 和后续 Reason&#10;例: 使用测试账号 admin / 123456&#10;例: 系统使用 JWT 认证，优先检查权限边界"
-              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+          <!-- Step 2: optional and operational settings -->
+          <div x-show="taskComposerStep === 2" x-cloak class="space-y-5">
+            <div>
+              <label class="text-xs font-semibold text-slate-500 mb-1 block">所属项目</label>
+              <select x-model="newProject.parent_project_id" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+                <option value="">选择所属项目</option>
+                <template x-for="group in projectGroups" :key="`new-task-group-${group.id}`">
+                  <option :value="group.id" x-text="group.title"></option>
+                </template>
+              </select>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="text-xs font-semibold text-slate-500">参与 Worker</label>
+                <div class="flex items-center gap-2 text-[10px]">
+                  <button type="button" @click="newProject.worker_pool = ((dispatchSettings && dispatchSettings.workers) || []).filter(w => w && w.name && !w.disabled).map(w => w.name)" class="text-brand-600 hover:underline">全选</button>
+                  <button type="button" @click="newProject.worker_pool = []" class="text-slate-400 hover:underline">清空</button>
+                </div>
+              </div>
+              <template x-if="!(dispatchSettings && dispatchSettings.workers && dispatchSettings.workers.length)">
+                <p class="text-[11px] text-slate-400">尚未配置 Worker，请先在设置中添加</p>
+              </template>
+              <div class="space-y-1.5 max-h-40 overflow-y-auto border border-slate-100 rounded-xl p-2 bg-slate-50/60">
+                <template x-for="worker in (dispatchSettings && dispatchSettings.workers) || []" :key="`new-task-worker-${worker.name}`">
+                  <label class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white cursor-pointer" :class="worker.disabled ? 'opacity-40' : ''">
+                    <input type="checkbox" :value="worker.name" x-model="newProject.worker_pool" :disabled="worker.disabled" class="rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+                    <span class="text-xs font-medium text-slate-700" x-text="worker.name"></span>
+                    <span x-show="worker.disabled" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-200 text-slate-500">已停用</span>
+                    <span class="ml-auto text-[10px] text-slate-400" x-text="(worker.task_types || []).join(' / ')"></span>
+                  </label>
+                </template>
+              </div>
+              <p class="mt-1 text-[10px] text-slate-400">默认选择全部启用的 Worker；清空表示不限制 Worker。</p>
+            </div>
+
+            <div>
+              <label class="text-xs font-semibold text-slate-500 mb-1 flex items-center gap-2">
+                <input type="checkbox" x-model="newProject.task_scope_enabled" class="rounded border-slate-300"> 开启任务级 Scope
+              </label>
+              <textarea x-model="newProject.task_scope_targets" rows="2" placeholder="白名单：api.example.com 或 *.example.com，每行一个"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 mb-2"></textarea>
+              <textarea x-model="newProject.task_scope_exclude" rows="2" placeholder="黑名单：forbidden.example.com，每行一个；黑名单优先"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+            </div>
+
+            <div>
+              <label class="text-xs font-semibold text-slate-500 mb-1 block">提示（Hints）</label>
+              <textarea x-model="newProject.hints" rows="4" placeholder="提供给 Bootstrap 和后续 Reason 的任务提示&#10;例：系统使用 JWT 认证，优先检查权限边界"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button type="button" @click="newProject.kk_report_enabled = !newProject.kk_report_enabled"
+                class="h-11 px-3 rounded-xl border text-sm font-medium transition flex items-center justify-between"
+                :class="newProject.kk_report_enabled ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-300 bg-slate-100 text-slate-500'"
+                title="关闭时仅上报到 AXIOM；开启时同时上报 KK 外部系统">
+                <span>外部上报</span>
+                <span class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-white/90 border border-current/20" x-text="newProject.kk_report_enabled ? '开启' : '关闭'"></span>
+              </button>
+              <button type="button" @click="newProject.guard_enabled = !newProject.guard_enabled; newProject._guardTouched = true"
+                class="h-11 px-3 rounded-xl border text-sm font-medium transition flex items-center justify-between"
+                :class="newProject.guard_enabled ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-slate-300 bg-slate-100 text-slate-500'"
+                title="开启后 Bootstrap / Explore 的工具调用会经过白名单、硬规则和裁判模型">
+                <span>裁判监管</span>
+                <span class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-white/90 border border-current/20" x-text="newProject.guard_enabled ? '开启' : '关闭'"></span>
+              </button>
+            </div>
           </div>
         </div>
-        <div class="sticky bottom-0 bg-white px-6 py-4 border-t border-slate-200 flex items-center justify-end gap-2 rounded-b-2xl">
-          <button @click="showTaskComposer = false" class="px-4 py-2 text-sm rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50">取消</button>
-          <button @click="createProject()" :disabled="!newProject.parent_project_id || !newProject.title || !newProject.origin"
-            class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">创建任务</button>
+        <div class="sticky bottom-0 bg-white px-6 py-4 border-t border-slate-200 flex items-center justify-between gap-2 rounded-b-2xl">
+          <button x-show="taskComposerStep === 1" @click="showTaskComposer = false" class="px-4 py-2 text-sm rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50">取消</button>
+          <button x-show="taskComposerStep === 2" @click="taskComposerStep = 1" class="px-4 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50">上一步</button>
+          <button x-show="taskComposerStep === 1" @click="taskComposerStep = 2"
+            class="ml-auto px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200">下一步</button>
+          <button x-show="taskComposerStep === 2" @click="createProject()"
+            :disabled="!newProject.parent_project_id || !String(newProject.title || '').trim() || !String(newProject.origin || '').trim() || !String(newProject.goal || '').trim()"
+            class="ml-auto px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">创建任务</button>
         </div>
       </div>
     </div>
@@ -234,7 +184,10 @@
 
     <div class="grid grid-cols-[320px_minmax(0,1fr)] gap-4 flex-1 min-h-0">
       <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3 overflow-y-auto overflow-x-hidden space-y-2">
-        <template x-for="p in projects" :key="p.id">
+        <template x-if="filteredTasks().length === 0">
+          <p class="text-sm text-slate-400 text-center py-10">没有匹配的任务</p>
+        </template>
+        <template x-for="p in filteredTasks()" :key="p.id">
           <button type="button" @click="selectedTaskManagementId = p.id" class="w-full text-left rounded-xl border p-3 transition"
             :class="selectedTaskManagementId === p.id ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 hover:bg-slate-50'">
             <div class="flex items-center justify-between gap-2">
@@ -263,13 +216,15 @@
                   <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="selectedTaskSummary().kk_report_enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'" x-text="selectedTaskSummary().kk_report_enabled ? 'KK上报开启' : 'KK上报关闭'"></span>
                   <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="selectedTaskSummary().guard_enabled ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-500'" x-text="selectedTaskSummary().guard_enabled ? '监管开启' : '监管关闭'"></span>
                   <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="projectStatusBadgeClass(selectedTaskSummary().status)" x-text="projectStatusLabel(selectedTaskSummary().status)"></span>
+                  <span x-show="selectedTaskSummary().legacy_readonly" class="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 text-slate-500">旧任务只读</span>
                 </div>
                 <h3 class="mt-2 text-xl font-semibold text-slate-800 break-words" x-text="selectedTaskSummary().title"></h3>
                 <p class="mt-1 text-xs text-brand-600" x-text="`所属项目：${projectGroupTitle(selectedTaskSummary().parent_project_id)}`"></p>
               </div>
               <div class="flex flex-wrap gap-2">
-                <button @click="openProject(selectedTaskSummary().id)" class="px-4 py-2 text-sm rounded-xl bg-brand-500 text-white hover:bg-brand-600 transition">打开图谱</button>
-                <button @click="openRenameProject(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">重命名</button>
+                <button @click="openTaskOverview(selectedTaskSummary().id)" class="px-4 py-2 text-sm rounded-xl border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 transition">打开概览</button>
+                <button @click="openTaskGraph(selectedTaskSummary().id)" class="px-4 py-2 text-sm rounded-xl bg-brand-500 text-white hover:bg-brand-600 transition">打开图谱</button>
+                <button x-show="!selectedTaskSummary().legacy_readonly" @click="openRenameProject(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">重命名</button>
               </div>
             </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -285,7 +240,7 @@
                 const cur = activeDiagnosticPhase;
                 const curBoard = val.worker_rankings && val.worker_rankings.boards ? val.worker_rankings.boards[cur] : null;
                 if (curBoard && (curBoard.total || 0) > 0) return;
-                const order = ['bootstrap', 'explore', 'reason', 'maintainer'];
+                const order = ['bootstrap', 'explore', 'reason'];
                 for (const p of order) {
                   const b = val.worker_rankings && val.worker_rankings.boards ? val.worker_rankings.boards[p] : null;
                   if (b && (b.total || 0) > 0) { activeDiagnosticPhase = p; break; }
@@ -298,7 +253,7 @@
                 <div>
                   <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">任务诊断</p>
                   <h4 class="mt-1 text-sm font-semibold text-slate-800">Worker 完成率 / 失败超时排行榜</h4>
-                  <p class="mt-0.5 text-[11px] text-slate-400">只读检查，不会改变任务派发；按 Bootstrap、Explore、Reason、Maintainer 分阶段统计表现。</p>
+                  <p class="mt-0.5 text-[11px] text-slate-400">只读检查，不会改变任务派发；按 Bootstrap、Explore、Reason 分阶段统计表现。</p>
                 </div>
                 <button type="button" @click="loadTaskDiagnostics(selectedTaskSummary().id)" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 transition">刷新诊断</button>
               </div>
@@ -334,7 +289,7 @@
                   <div class="space-y-3">
                     <div class="rounded-xl border border-slate-100 p-3 bg-white">
                       <div class="flex flex-wrap gap-1.5 mb-3 rounded-xl bg-slate-50 p-1">
-                        <template x-for="phase in ['bootstrap', 'explore', 'reason', 'maintainer']" :key="`diag-phase-tab-${phase}`">
+                        <template x-for="phase in ['bootstrap', 'explore', 'reason']" :key="`diag-phase-tab-${phase}`">
                           <button type="button" @click="activeDiagnosticPhase = phase" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition" :class="activeDiagnosticPhase === phase ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'">
                             <span x-text="diagnosticPhaseLabel(phase)"></span>
                             <span class="ml-1 text-[10px] tabular-nums" :class="activeDiagnosticPhase === phase ? 'text-brand-400' : 'text-slate-400'" x-text="diagnosticPhaseBoard(phase).total || 0"></span>
@@ -451,7 +406,6 @@
                 </div>
                 <div class="flex items-center gap-2 text-[10px]">
                   <button type="button" @click="setTaskWorkerPool('all')" class="text-brand-600 hover:underline">全选</button>
-                  <button type="button" @click="setTaskWorkerPool('mcp')" class="text-brand-600 hover:underline">仅 MCP 启用</button>
                   <button type="button" @click="setTaskWorkerPool('clear')" class="text-slate-400 hover:underline">清空限制</button>
                 </div>
               </div>
@@ -461,7 +415,7 @@
               <div class="space-y-1.5 max-h-48 overflow-y-auto border border-slate-100 rounded-xl p-2 bg-white">
                 <template x-for="worker in (dispatchSettings && dispatchSettings.workers) || []" :key="`task-worker-pool-${selectedTaskSummary().id}-${worker.name}`">
                   <label class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer" :class="worker.disabled ? 'opacity-40' : ''">
-                    <input type="checkbox" :value="worker.name" x-model="taskWorkerPoolEditor.worker_pool" :disabled="worker.disabled || selectedTaskSummary().status === 'completed'" class="rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+                    <input type="checkbox" :value="worker.name" x-model="taskWorkerPoolEditor.worker_pool" :disabled="worker.disabled || selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed'" class="rounded border-slate-300 text-brand-500 focus:ring-brand-200">
                     <span class="text-xs font-medium text-slate-700" x-text="worker.name"></span>
                     <span x-show="worker.disabled" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-200 text-slate-500">已停用</span>
                     <span x-show="!worker.disabled && worker.mcp_enabled" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-50 text-emerald-600">MCP 开</span>
@@ -473,21 +427,47 @@
                 <p class="text-[10px] text-slate-400">当前选择为空 = 不限制 worker；选择后只有这些 worker 可领取后续意图。</p>
                 <div class="flex items-center gap-2">
                   <button type="button" @click="syncTaskWorkerPoolEditor(selectedTaskSummary())" :disabled="!taskWorkerPoolChanged(selectedTaskSummary()) || taskWorkerPoolEditor.saving" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-white transition disabled:opacity-40">撤销</button>
-                  <button type="button" @click="saveTaskWorkerPool()" :disabled="selectedTaskSummary().status === 'completed' || !taskWorkerPoolChanged(selectedTaskSummary()) || taskWorkerPoolEditor.saving" class="px-3 py-1.5 text-xs rounded-lg bg-brand-500 text-white hover:bg-brand-600 transition disabled:opacity-40" x-text="taskWorkerPoolEditor.saving ? '保存中...' : '保存并应用'"></button>
+                  <button type="button" @click="saveTaskWorkerPool()" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed' || !taskWorkerPoolChanged(selectedTaskSummary()) || taskWorkerPoolEditor.saving" class="px-3 py-1.5 text-xs rounded-lg bg-brand-500 text-white hover:bg-brand-600 transition disabled:opacity-40" x-text="taskWorkerPoolEditor.saving ? '保存中...' : '保存并应用'"></button>
                 </div>
+              </div>
+            </div>
+            <div class="rounded-xl border border-slate-200 p-4 bg-white">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">任务 Scope</p>
+                  <h4 class="mt-1 text-sm font-semibold text-slate-800">白名单 / 黑名单</h4>
+                  <p class="mt-0.5 text-[11px] text-slate-400">只约束 Reason 派发 Intent 的目标；黑名单优先。</p>
+                </div>
+                <label class="inline-flex items-center gap-2 text-xs text-slate-600">
+                  <input type="checkbox" x-model="taskScopeEditor.enabled" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed'" class="rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+                  开启 Scope
+                </label>
+              </div>
+              <div class="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-3">
+                <label class="text-[11px] text-slate-400">白名单（每行一个）
+                  <textarea x-model="taskScopeEditor.targetsText" rows="4" placeholder="api.example.com
+*.example.com" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed'" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono disabled:bg-slate-50"></textarea>
+                </label>
+                <label class="text-[11px] text-slate-400">黑名单（每行一个）
+                  <textarea x-model="taskScopeEditor.excludeText" rows="4" placeholder="admin.example.com" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed'" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono disabled:bg-slate-50"></textarea>
+                </label>
+              </div>
+              <label class="mt-3 block text-[11px] text-slate-400">备注
+                <input x-model="taskScopeEditor.notes" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed'" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs disabled:bg-slate-50">
+              </label>
+              <div class="mt-3 flex justify-end gap-2">
+                <button type="button" @click="syncTaskScopeEditor(selectedTaskSummary())" :disabled="!taskScopeChanged(selectedTaskSummary()) || taskScopeEditor.saving" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 disabled:opacity-40">撤销</button>
+                <button type="button" @click="saveTaskScope()" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed' || !taskScopeChanged(selectedTaskSummary()) || taskScopeEditor.saving" class="px-3 py-1.5 text-xs rounded-lg bg-brand-500 text-white disabled:opacity-40" x-text="taskScopeEditor.saving ? '保存中...' : '保存 Scope'"></button>
               </div>
             </div>
             <div class="rounded-xl border border-slate-200 p-4">
               <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">操作</p>
               <div class="flex flex-wrap gap-2">
-                <button @click="viewProjectYaml(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">查看快照</button>
-                <template x-if="selectedTaskSummary().status !== 'completed'">
+                <button @click="viewProjectYaml(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">查看漏洞报告</button>
+                <template x-if="!selectedTaskSummary().legacy_readonly && ['active', 'stopped'].includes(selectedTaskSummary().status)">
                   <button @click="toggleProjectStopById(selectedTaskSummary().id, selectedTaskSummary().status)" class="px-3 py-2 text-sm rounded-xl border border-amber-200 text-amber-700 hover:bg-amber-50 transition" x-text="selectedTaskSummary().status === 'active' ? '暂停任务' : '继续任务'"></button>
                 </template>
-                <template x-if="selectedTaskSummary().status === 'completed'">
-                  <button @click="openReopenProject(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-sky-200 text-sky-600 hover:bg-sky-50 transition">重新打开</button>
-                </template>
-                <button @click="deleteProjectById(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-rose-200 text-rose-500 hover:bg-rose-50 transition">删除任务</button>
+                <button x-show="!selectedTaskSummary().legacy_readonly" @click="deleteProjectById(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-rose-200 text-rose-500 hover:bg-rose-50 transition">删除任务</button>
               </div>
             </div>
           </div>

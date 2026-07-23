@@ -35,9 +35,21 @@ class LeaseRecoveryService:
                     status="pending",
                     worker=None,
                     last_heartbeat_at=None,
-                    retry_count=intents.c.retry_count + 1,
+                    # A stale lease means the Dispatcher/Worker process
+                    # disappeared before it could release ownership.  It is
+                    # not evidence that the Intent's provider/execution
+                    # attempt failed.  In particular, a normal Dispatcher
+                    # restart must not consume the bounded infrastructure
+                    # retry budget and turn an otherwise recoverable Intent
+                    # into retry_exhausted.
+                    infrastructure_retry_count=intents.c.infrastructure_retry_count,
                     next_retry_at=now,
                     last_failure_kind="stale_lease_recovered",
+                    failure_class="transient",
+                    activity_kind="waiting_retry",
+                    activity_summary="Worker 连接中断，等待重新派发",
+                    activity_tool="",
+                    activity_updated_at=now,
                 )
             )
             reason_result = conn.execute(
@@ -49,6 +61,9 @@ class LeaseRecoveryService:
                 .values(
                     reason_worker=None,
                     reason_heartbeat_at=None,
+                    reason_activity_kind="failed",
+                    reason_activity_summary="Reason 心跳中断，等待重新调度",
+                    reason_activity_updated_at=now,
                     phase="reason",
                     updated_at=now,
                 )

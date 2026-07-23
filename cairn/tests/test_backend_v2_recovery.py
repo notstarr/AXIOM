@@ -39,5 +39,10 @@ def test_restart_recovery_releases_stale_intent_and_reason_leases(tmp_path) -> N
     assert result.reasons_released == 1
     recovered_intent = IntentService(engine).get(task.id, "i001")
     assert recovered_intent.status == "pending"
-    assert recovered_intent.retry_count == 1
+    assert recovered_intent.retry_count == 0
+    # Dispatcher restart recovery is ownership repair, not a provider
+    # failure, so it must not consume the infrastructure retry budget.
+    assert recovered_intent.infrastructure_retry_count == 0
+    assert recovered_intent.failure_class == "transient"
+    assert recovered_intent.last_failure_kind == "stale_lease_recovered"
     assert TaskService(engine).get(task.id).reason_worker is None

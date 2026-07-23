@@ -1,0 +1,41 @@
+[project]
+name = "axiom"
+version = "0.1.0"
+description = "Modular penetration-testing orchestration platform"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.14,<2",
+    "click>=8.1,<9",
+    "fastapi>=0.115,<1",
+    "httpx>=0.28,<1",
+    "mcp>=1.12,<2",
+    "pydantic>=2.10,<3",
+    "python-multipart>=0.0.20,<1",
+    "pyyaml>=6,<7",
+    "sqlalchemy>=2.0,<3",
+    "uvicorn[standard]>=0.34,<1",
+]
+
+[project.scripts]
+axiom = "axiom.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.8.9,<0.9.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3,<9",
+    "ruff>=0.12,<1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+extend-exclude = ["src/axiom/dispatcher/skills"]
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple"
+default = true

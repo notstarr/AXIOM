@@ -10,6 +10,7 @@ from axiom.modules.reason_workspace.schemas import (
     DraftTodo,
     DraftTodoUpdate,
     ReasonWorkspace,
+    WorkspaceDraft,
 )
 from axiom.modules.reason_workspace.service import ReasonWorkspaceService
 
@@ -134,5 +135,17 @@ def commit_workspace(
 ) -> CommitResult:
     try:
         return service.commit(workspace_id)
+    except ValueError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post("/reason-workspaces/{workspace_id}/submit", response_model=CommitResult)
+def submit_workspace(
+    workspace_id: str,
+    body: WorkspaceDraft,
+    service: ReasonWorkspaceService = Depends(get_workspace_service),
+) -> CommitResult:
+    try:
+        return service.submit(workspace_id, body)
     except ValueError as exc:
         raise _http_error(exc) from exc

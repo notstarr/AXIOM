@@ -1,0 +1,478 @@
+<div x-show="activePage === 'tasks'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
+    <div class="flex items-center gap-2.5 min-w-0">
+      <span class="text-base font-semibold text-slate-800 tracking-tight">任务管理</span>
+    </div>
+    <div class="flex-1"></div>
+    <div class="flex items-center gap-3 text-[11px] text-slate-400">
+      <span class="inline-flex items-center gap-1.5 shrink-0" title="全部任务">
+        <span class="font-medium uppercase tracking-[0.12em] text-slate-400">全部</span>
+        <span class="font-semibold text-slate-600 tabular-nums" x-text="projects.length"></span>
+      </span>
+      <span class="inline-flex items-center gap-1.5 shrink-0" title="运行中任务">
+        <span class="h-1.5 w-1.5 rounded-full bg-teal-500"></span>
+        <span class="font-semibold text-teal-700 tabular-nums" x-text="countProjectsByStatus('active')"></span>
+      </span>
+      <span class="inline-flex items-center gap-1.5 shrink-0" title="已暂停任务">
+        <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+        <span class="font-semibold text-amber-700 tabular-nums" x-text="countProjectsByStatus('stopped')"></span>
+      </span>
+      <span class="inline-flex items-center gap-1.5 shrink-0" title="已完成任务">
+        <span class="h-1.5 w-1.5 rounded-full bg-slate-400"></span>
+        <span class="font-semibold text-slate-600 tabular-nums" x-text="countProjectsByStatus('completed')"></span>
+      </span>
+      <button type="button"
+        @click="stopAllActiveProjects()"
+        :disabled="!hasActiveProjects() || isStoppingAllProjects"
+        class="h-7 px-2.5 rounded-lg border border-amber-200 text-xs text-amber-700 hover:bg-amber-50 transition inline-flex items-center gap-1.5 shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
+        title="暂停全部运行中任务">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
+        <span x-text="isStoppingAllProjects ? '暂停中...' : '暂停运行中'"></span>
+      </button>
+    </div>
+    <div class="flex items-center gap-1.5">
+      <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="h-7 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center gap-1.5 disabled:opacity-40">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
+        刷新
+      </button>
+      <button @click="showTaskComposer ? (showTaskComposer = false) : openTaskComposer()" class="h-7 px-2.5 rounded-lg border border-brand-200 text-xs text-brand-600 hover:bg-brand-50 transition inline-flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        新建任务
+      </button>
+    </div>
+    <div class="flex items-center gap-1.5 ml-1">
+      <button @click="showLocalPrefs = true" class="h-7 max-w-40 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center shrink-0">
+        <span class="truncate block" x-text="actorName()"></span>
+      </button>
+    </div>
+  </header>
+
+  <div x-ref="projectListScroll" class="flex-1 min-h-0 p-4 flex flex-col gap-3">
+    <div class="rounded-2xl border border-slate-200 bg-white shadow-sm px-3 py-2 flex items-center gap-2 shrink-0">
+      <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input x-model="taskSearch" placeholder="搜索任务名称、ID、Origin、Goal 或所属项目" class="flex-1 h-8 text-sm text-slate-700 placeholder:text-slate-300 focus:outline-none">
+      <select x-model="taskStatusFilter" class="h-8 px-2.5 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-100">
+        <option value="all">全部状态</option><option value="active">运行中</option><option value="stopped">已暂停</option><option value="completed">已完成</option><option value="failed">失败</option>
+      </select>
+      <span class="text-[11px] text-slate-400 tabular-nums" x-text="`${filteredTasks().length} / ${projects.length}`"></span>
+    </div>
+    <!-- New Task overlay -->
+    <div x-show="showTaskComposer" x-cloak class="fixed inset-0 z-50 flex items-start justify-center overlay pt-10" @click.self="showTaskComposer = false">
+      <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto mx-4" @click.stop>
+        <div class="sticky top-0 bg-white px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-4 z-10 rounded-t-2xl">
+          <div>
+            <h3 class="text-base font-semibold text-slate-800">新建任务</h3>
+            <p class="mt-0.5 text-[11px] text-slate-400" x-text="taskComposerStep === 1 ? '第一步：基础信息' : '第二步：其他设置'"></p>
+          </div>
+          <div class="flex items-center gap-2 ml-auto" aria-label="创建任务步骤">
+            <button type="button" @click="taskComposerStep = 1" aria-label="前往第一步：基础信息" title="基础信息"
+              class="h-2 rounded-full transition-all hover:opacity-80"
+              :class="taskComposerStep === 1 ? 'w-8 bg-brand-500' : 'w-2 bg-brand-200'"></button>
+            <button type="button" @click="taskComposerStep = 2" aria-label="前往第二步：其他设置" title="其他设置"
+              class="h-2 rounded-full transition-all hover:opacity-80"
+              :class="taskComposerStep === 2 ? 'w-8 bg-brand-500' : 'w-2 bg-slate-200'"></button>
+          </div>
+          <button @click="showTaskComposer = false" class="text-slate-400 hover:text-slate-600 text-lg">&times;</button>
+        </div>
+        <div class="p-6">
+          <!-- Step 1: basic task information only -->
+          <div x-show="taskComposerStep === 1" class="space-y-5">
+            <div>
+              <label class="text-xs font-semibold text-slate-500 mb-1 block">任务名称</label>
+              <input x-model="newProject.title" placeholder="例：第一轮渗透测试" autofocus class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+            </div>
+            <div>
+              <label class="text-xs font-semibold text-slate-500 mb-1 block">起点（域名或 IP）</label>
+              <textarea x-model="newProject.origin" rows="3" placeholder="api.example.com 或 https://api.example.com:8443"
+                class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+            </div>
+            <div>
+              <label class="text-xs font-semibold text-slate-500 mb-1 block">任务目标</label>
+              <textarea x-model="newProject.goal" rows="3"
+                class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+            </div>
+          </div>
+
+          <!-- Step 2: optional and operational settings -->
+          <div x-show="taskComposerStep === 2" x-cloak class="space-y-5">
+            <div>
+              <label class="text-xs font-semibold text-slate-500 mb-1 block">所属项目</label>
+              <select x-model="newProject.parent_project_id" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+                <option value="">选择所属项目</option>
+                <template x-for="group in projectGroups" :key="`new-task-group-${group.id}`">
+                  <option :value="group.id" x-text="group.title"></option>
+                </template>
+              </select>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="text-xs font-semibold text-slate-500">参与 Worker</label>
+                <div class="flex items-center gap-2 text-[10px]">
+                  <button type="button" @click="newProject.worker_pool = ((dispatchSettings && dispatchSettings.workers) || []).filter(w => w && w.name && !w.disabled).map(w => w.name)" class="text-brand-600 hover:underline">全选</button>
+                  <button type="button" @click="newProject.worker_pool = []" class="text-slate-400 hover:underline">清空</button>
+                </div>
+              </div>
+              <template x-if="!(dispatchSettings && dispatchSettings.workers && dispatchSettings.workers.length)">
+                <p class="text-[11px] text-slate-400">尚未配置 Worker，请先在设置中添加</p>
+              </template>
+              <div class="space-y-1.5 max-h-40 overflow-y-auto border border-slate-100 rounded-xl p-2 bg-slate-50/60">
+                <template x-for="worker in (dispatchSettings && dispatchSettings.workers) || []" :key="`new-task-worker-${worker.name}`">
+                  <label class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white cursor-pointer" :class="worker.disabled ? 'opacity-40' : ''">
+                    <input type="checkbox" :value="worker.name" x-model="newProject.worker_pool" :disabled="worker.disabled" class="rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+                    <span class="text-xs font-medium text-slate-700" x-text="worker.name"></span>
+                    <span x-show="worker.disabled" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-200 text-slate-500">已停用</span>
+                    <span class="ml-auto text-[10px] text-slate-400" x-text="(worker.task_types || []).join(' / ')"></span>
+                  </label>
+                </template>
+              </div>
+              <p class="mt-1 text-[10px] text-slate-400">默认选择全部启用的 Worker；清空表示不限制 Worker。</p>
+            </div>
+
+            <div>
+              <label class="text-xs font-semibold text-slate-500 mb-1 flex items-center gap-2">
+                <input type="checkbox" x-model="newProject.task_scope_enabled" class="rounded border-slate-300"> 开启任务级 Scope
+              </label>
+              <textarea x-model="newProject.task_scope_targets" rows="2" placeholder="白名单：api.example.com 或 *.example.com，每行一个"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 mb-2"></textarea>
+              <textarea x-model="newProject.task_scope_exclude" rows="2" placeholder="黑名单：forbidden.example.com，每行一个；黑名单优先"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+            </div>
+
+            <div>
+              <label class="text-xs font-semibold text-slate-500 mb-1 block">提示（Hints）</label>
+              <textarea x-model="newProject.hints" rows="4" placeholder="提供给 Bootstrap 和后续 Reason 的任务提示&#10;例：系统使用 JWT 认证，优先检查权限边界"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button type="button" @click="newProject.kk_report_enabled = !newProject.kk_report_enabled"
+                class="h-11 px-3 rounded-xl border text-sm font-medium transition flex items-center justify-between"
+                :class="newProject.kk_report_enabled ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-300 bg-slate-100 text-slate-500'"
+                title="关闭时仅上报到 AXIOM；开启时同时上报 KK 外部系统">
+                <span>外部上报</span>
+                <span class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-white/90 border border-current/20" x-text="newProject.kk_report_enabled ? '开启' : '关闭'"></span>
+              </button>
+              <button type="button" @click="newProject.guard_enabled = !newProject.guard_enabled; newProject._guardTouched = true"
+                class="h-11 px-3 rounded-xl border text-sm font-medium transition flex items-center justify-between"
+                :class="newProject.guard_enabled ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-slate-300 bg-slate-100 text-slate-500'"
+                title="开启后 Bootstrap / Explore 的工具调用会经过白名单、硬规则和裁判模型">
+                <span>裁判监管</span>
+                <span class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-white/90 border border-current/20" x-text="newProject.guard_enabled ? '开启' : '关闭'"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="sticky bottom-0 bg-white px-6 py-4 border-t border-slate-200 flex items-center justify-between gap-2 rounded-b-2xl">
+          <button x-show="taskComposerStep === 1" @click="showTaskComposer = false" class="px-4 py-2 text-sm rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50">取消</button>
+          <button x-show="taskComposerStep === 2" @click="taskComposerStep = 1" class="px-4 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50">上一步</button>
+          <button x-show="taskComposerStep === 1" @click="taskComposerStep = 2"
+            class="ml-auto px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200">下一步</button>
+          <button x-show="taskComposerStep === 2" @click="createProject()"
+            :disabled="!newProject.parent_project_id || !String(newProject.title || '').trim() || !String(newProject.origin || '').trim() || !String(newProject.goal || '').trim()"
+            class="ml-auto px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">创建任务</button>
+        </div>
+      </div>
+    </div>
+    <template x-if="projects.length === 0">
+      <div class="flex flex-col items-center justify-center h-full text-slate-400">
+        <img src="/static/favicon.svg" alt="" class="w-20 h-20 mb-5 opacity-30">
+        <p class="text-lg font-medium text-slate-500">还没有任务</p>
+        <p class="text-sm mt-1">新建一个任务开始测试</p>
+      </div>
+    </template>
+
+    <div class="grid grid-cols-[320px_minmax(0,1fr)] gap-4 flex-1 min-h-0">
+      <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3 overflow-y-auto overflow-x-hidden space-y-2">
+        <template x-if="filteredTasks().length === 0">
+          <p class="text-sm text-slate-400 text-center py-10">没有匹配的任务</p>
+        </template>
+        <template x-for="p in filteredTasks()" :key="p.id">
+          <button type="button" @click="selectedTaskManagementId = p.id" class="w-full text-left rounded-xl border p-3 transition"
+            :class="selectedTaskManagementId === p.id ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 hover:bg-slate-50'">
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-mono text-[11px] text-slate-400" x-text="p.id"></span>
+              <div class="flex items-center gap-1.5">
+                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="p.kk_report_enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'" x-text="p.kk_report_enabled ? 'KK开' : 'KK关'"></span>
+                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="p.guard_enabled ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-500'" x-text="p.guard_enabled ? '监管开' : '监管关'"></span>
+                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="projectStatusBadgeClass(p.status)" x-text="projectStatusLabel(p.status)"></span>
+              </div>
+            </div>
+            <p class="mt-2 text-sm font-semibold text-slate-700 break-words" x-text="p.title"></p>
+            <p class="mt-1 text-xs text-slate-400 truncate" x-text="projectGroupTitle(p.parent_project_id)"></p>
+          </button>
+        </template>
+      </aside>
+      <section class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 overflow-y-auto">
+        <template x-if="!selectedTaskSummary()">
+          <div class="h-full min-h-[420px] flex items-center justify-center text-sm text-slate-400">请选择左侧任务查看详情</div>
+        </template>
+        <template x-if="selectedTaskSummary()">
+          <div class="space-y-5">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-xs text-slate-400" x-text="selectedTaskSummary().id"></span>
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="selectedTaskSummary().kk_report_enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'" x-text="selectedTaskSummary().kk_report_enabled ? 'KK上报开启' : 'KK上报关闭'"></span>
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="selectedTaskSummary().guard_enabled ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-500'" x-text="selectedTaskSummary().guard_enabled ? '监管开启' : '监管关闭'"></span>
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="projectStatusBadgeClass(selectedTaskSummary().status)" x-text="projectStatusLabel(selectedTaskSummary().status)"></span>
+                  <span x-show="selectedTaskSummary().legacy_readonly" class="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 text-slate-500">旧任务只读</span>
+                </div>
+                <h3 class="mt-2 text-xl font-semibold text-slate-800 break-words" x-text="selectedTaskSummary().title"></h3>
+                <p class="mt-1 text-xs text-brand-600" x-text="`所属项目：${projectGroupTitle(selectedTaskSummary().parent_project_id)}`"></p>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button @click="openTaskOverview(selectedTaskSummary().id)" class="px-4 py-2 text-sm rounded-xl border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 transition">打开概览</button>
+                <button @click="openTaskGraph(selectedTaskSummary().id)" class="px-4 py-2 text-sm rounded-xl bg-brand-500 text-white hover:bg-brand-600 transition">打开图谱</button>
+                <button x-show="!selectedTaskSummary().legacy_readonly" @click="openRenameProject(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">重命名</button>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div class="rounded-xl bg-slate-50 p-3"><p class="text-xs text-slate-400">事实</p><p class="mt-1 text-xl font-semibold tabular-nums" x-text="selectedTaskSummary().fact_count"></p></div>
+              <div class="rounded-xl bg-violet-50 p-3"><p class="text-xs text-violet-600">意图</p><p class="mt-1 text-xl font-semibold text-violet-700 tabular-nums" x-text="selectedTaskSummary().intent_count"></p></div>
+              <div class="rounded-xl bg-amber-50 p-3"><p class="text-xs text-amber-600">执行中</p><p class="mt-1 text-xl font-semibold text-amber-700 tabular-nums" x-text="selectedTaskSummary().working_intent_count"></p></div>
+              <div class="rounded-xl bg-sky-50 p-3"><p class="text-xs text-sky-600">Hints</p><p class="mt-1 text-xl font-semibold text-sky-700 tabular-nums" x-text="selectedTaskSummary().hint_count"></p></div>
+            </div>
+            <div class="rounded-xl border border-slate-200 p-4 bg-white" x-data="{ activeDiagnosticPhase: 'bootstrap' }" x-init="
+              const diagPick = () => {
+                const val = selectedTaskDiagnostics();
+                if (!val) return;
+                const cur = activeDiagnosticPhase;
+                const curBoard = val.worker_rankings && val.worker_rankings.boards ? val.worker_rankings.boards[cur] : null;
+                if (curBoard && (curBoard.total || 0) > 0) return;
+                const order = ['bootstrap', 'explore', 'reason'];
+                for (const p of order) {
+                  const b = val.worker_rankings && val.worker_rankings.boards ? val.worker_rankings.boards[p] : null;
+                  if (b && (b.total || 0) > 0) { activeDiagnosticPhase = p; break; }
+                }
+              };
+              diagPick();
+              $watch('selectedTaskDiagnostics()', diagPick);
+            ">
+              <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
+                <div>
+                  <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">任务诊断</p>
+                  <h4 class="mt-1 text-sm font-semibold text-slate-800">Worker 完成率 / 失败超时排行榜</h4>
+                  <p class="mt-0.5 text-[11px] text-slate-400">只读检查，不会改变任务派发；按 Bootstrap、Explore、Reason 分阶段统计表现。</p>
+                </div>
+                <button type="button" @click="loadTaskDiagnostics(selectedTaskSummary().id)" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 transition">刷新诊断</button>
+              </div>
+              <template x-if="!selectedTaskDiagnostics()">
+                <div class="rounded-lg bg-slate-50 p-3 text-xs text-slate-400">诊断加载中...</div>
+              </template>
+              <template x-if="selectedTaskDiagnostics()">
+                <div class="space-y-3">
+                  <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div class="rounded-xl border p-3" :class="taskHealthClass(selectedTaskDiagnostics().health.status)">
+                      <p class="text-[11px] font-semibold opacity-80">健康状态</p>
+                      <p class="mt-1 text-lg font-semibold" x-text="taskHealthLabel(selectedTaskDiagnostics().health.status)"></p>
+                      <p class="mt-1 text-[11px] opacity-80" x-text="selectedTaskDiagnostics().health.latest_phase ? `最新阶段：${selectedTaskDiagnostics().health.latest_phase}` : '暂无事件'"></p>
+                    </div>
+                    <div class="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                      <p class="text-[11px] font-semibold text-slate-500">配置生效</p>
+                      <p class="mt-1 text-sm font-semibold" :class="selectedTaskDiagnostics().config_status.is_current ? 'text-emerald-700' : 'text-amber-700'" x-text="configEffectiveLabel(selectedTaskDiagnostics())"></p>
+                      <p class="mt-1 text-[11px] text-slate-400" x-text="selectedTaskDiagnostics().config_status.applied_at ? `应用时间：${formatTime(selectedTaskDiagnostics().config_status.applied_at)}` : 'dispatcher 尚未上报应用时间'"></p>
+                    </div>
+                    <div class="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                      <p class="text-[11px] font-semibold text-slate-500">意图状态</p>
+                      <p class="mt-1 text-sm font-semibold text-slate-700" x-text="`${selectedTaskDiagnostics().health.running_intent_count} 执行中 / ${selectedTaskDiagnostics().health.unclaimed_intent_count} 未领取`"></p>
+                      <p class="mt-1 text-[11px]" :class="selectedTaskDiagnostics().health.stuck_intents.length ? 'text-rose-600' : 'text-slate-400'" x-text="selectedTaskDiagnostics().health.stuck_intents.length ? `${selectedTaskDiagnostics().health.stuck_intents.length} 个疑似超时` : '未发现疑似超时意图'"></p>
+                    </div>
+                  </div>
+                  <template x-if="selectedTaskDiagnostics().health.notes && selectedTaskDiagnostics().health.notes.length">
+                    <div class="flex flex-wrap gap-1.5">
+                      <template x-for="note in selectedTaskDiagnostics().health.notes" :key="note">
+                        <span class="px-2 py-1 rounded-lg bg-amber-50 text-amber-700 text-[11px]" x-text="note"></span>
+                      </template>
+                    </div>
+                  </template>
+                  <div class="space-y-3">
+                    <div class="rounded-xl border border-slate-100 p-3 bg-white">
+                      <div class="flex flex-wrap gap-1.5 mb-3 rounded-xl bg-slate-50 p-1">
+                        <template x-for="phase in ['bootstrap', 'explore', 'reason']" :key="`diag-phase-tab-${phase}`">
+                          <button type="button" @click="activeDiagnosticPhase = phase" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition" :class="activeDiagnosticPhase === phase ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'">
+                            <span x-text="diagnosticPhaseLabel(phase)"></span>
+                            <span class="ml-1 text-[10px] tabular-nums" :class="activeDiagnosticPhase === phase ? 'text-brand-400' : 'text-slate-400'" x-text="diagnosticPhaseBoard(phase).total || 0"></span>
+                          </button>
+                        </template>
+                      </div>
+                      <div>
+                        <div class="flex flex-wrap items-start justify-between gap-2 mb-2">
+                          <div>
+                            <p class="text-xs font-semibold text-slate-700" x-text="diagnosticPhaseLabel(activeDiagnosticPhase)"></p>
+                            <p class="mt-0.5 text-[11px] text-slate-400" x-text="`总 ${diagnosticPhaseBoard(activeDiagnosticPhase).total || 0} · 成功 ${diagnosticPhaseBoard(activeDiagnosticPhase).success || 0} · 失败 ${diagnosticPhaseBoard(activeDiagnosticPhase).failed || 0} · 超时 ${diagnosticPhaseBoard(activeDiagnosticPhase).timed_out || 0}`"></p>
+                          </div>
+                          <span class="px-2 py-1 rounded-lg bg-slate-50 text-[10px] font-semibold text-slate-500">按完成率从高到低</span>
+                        </div>
+                        <template x-if="!(diagnosticPhaseBoard(activeDiagnosticPhase).workers || []).length">
+                          <p class="rounded-lg bg-slate-50 p-2 text-[11px] text-slate-400">暂无该阶段执行记录。</p>
+                        </template>
+                        <div class="space-y-2 max-h-72 overflow-y-auto">
+                          <template x-for="(worker, index) in (diagnosticPhaseBoard(activeDiagnosticPhase).workers || [])" :key="`diag-${activeDiagnosticPhase}-${worker.worker}`">
+                            <div class="rounded-lg bg-slate-50 p-2">
+                              <div class="flex flex-wrap items-center gap-2">
+                                <span class="w-5 h-5 rounded-full bg-white border border-slate-200 text-[10px] font-semibold text-slate-500 inline-flex items-center justify-center" x-text="index + 1"></span>
+                                <span class="text-xs font-semibold text-slate-800" x-text="worker.worker"></span>
+                                <span class="ml-auto flex items-center gap-2 text-right">
+                                  <span class="text-[11px] text-slate-400">成功 <span class="font-semibold text-emerald-600 tabular-nums" x-text="worker.success || 0"></span>/<span class="tabular-nums" x-text="worker.total || 0"></span></span>
+                                  <span class="text-[11px] font-semibold" :class="worker.rank_score ? 'text-rose-600' : 'text-emerald-600'" x-text="`完成率 ${diagnosticCompletionRate(worker)}`"></span>
+                                </span>
+                              </div>
+                              <div class="mt-2 grid grid-cols-4 gap-1 text-center">
+                                <div class="rounded bg-white px-1 py-1"><p class="text-[9px] text-slate-400">总数</p><p class="text-xs font-semibold text-slate-700 tabular-nums" x-text="worker.total"></p></div>
+                                <div class="rounded bg-white px-1 py-1"><p class="text-[9px] text-slate-400">成功</p><p class="text-xs font-semibold text-emerald-600 tabular-nums" x-text="worker.success"></p></div>
+                                <div class="rounded bg-white px-1 py-1"><p class="text-[9px] text-slate-400">失败</p><p class="text-xs font-semibold text-rose-600 tabular-nums" x-text="worker.failed"></p></div>
+                                <div class="rounded bg-white px-1 py-1"><p class="text-[9px] text-slate-400">超时</p><p class="text-xs font-semibold text-amber-600 tabular-nums" x-text="worker.timed_out"></p></div>
+                              </div>
+                              <p class="mt-1.5 text-[11px] text-slate-500" x-text="`失败/超时率 ${diagnosticFailureRate(worker)} · ${diagnosticWorkerTopReasons(worker)}`"></p>
+                            </div>
+                          </template>
+                        </div>
+                        <div class="mt-3 pt-3 border-t border-slate-100">
+                          <p class="text-[11px] font-semibold text-slate-500 mb-1">失败/超时原因 Top</p>
+                          <template x-if="!(diagnosticPhaseBoard(activeDiagnosticPhase).reasons || []).length">
+                            <p class="text-[11px] text-emerald-600">暂无失败或超时原因。</p>
+                          </template>
+                          <div class="flex flex-wrap gap-1.5">
+                            <template x-for="reason in (diagnosticPhaseBoard(activeDiagnosticPhase).reasons || []).slice(0, 5)" :key="`diag-reason-${activeDiagnosticPhase}-${reason.code}`">
+                              <span class="px-2 py-1 rounded-lg text-[11px]" :class="reason.severity === 'high' ? 'bg-rose-50 text-rose-700' : reason.severity === 'medium' ? 'bg-amber-50 text-amber-700' : 'bg-slate-50 text-slate-500'" x-text="diagnosticReasonText(reason)"></span>
+                            </template>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="rounded-xl border border-slate-100 p-3 bg-white">
+                    <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
+                      <div>
+                        <p class="text-xs font-semibold text-slate-700">Token 消耗排行榜</p>
+                        <p class="mt-0.5 text-[11px] text-slate-400" x-text="`总 ${formatTokenCount(tokenRankings().totals?.total_tokens)} tokens · ${tokenRankings().totals?.calls || 0} 次模型调用`"></p>
+                      </div>
+                      <span class="px-2 py-1 rounded-lg bg-slate-50 text-[10px] font-semibold text-slate-500">按消耗从高到低</span>
+                    </div>
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                      <div class="rounded-xl bg-slate-50 p-3">
+                        <p class="text-[11px] font-semibold text-slate-500 mb-2">按 Worker 分类</p>
+                        <template x-if="!(tokenRankings().by_worker || []).length">
+                          <p class="rounded-lg bg-white p-2 text-[11px] text-slate-400">暂无 token 记录。</p>
+                        </template>
+                        <div class="space-y-2 max-h-64 overflow-y-auto">
+                          <template x-for="(row, index) in (tokenRankings().by_worker || [])" :key="`token-worker-${row.worker}`">
+                            <div class="rounded-lg bg-white p-2">
+                              <div class="flex items-center gap-2">
+                                <span class="w-5 h-5 rounded-full bg-slate-50 border border-slate-200 text-[10px] font-semibold text-slate-500 inline-flex items-center justify-center" x-text="index + 1"></span>
+                                <span class="text-xs font-semibold text-slate-800" x-text="row.worker"></span>
+                                <span class="ml-auto text-xs font-semibold text-brand-600 tabular-nums" x-text="formatTokenCount(row.total_tokens)"></span>
+                              </div>
+                              <p class="mt-1 text-[11px] text-slate-400" x-text="tokenWorkerMeta(row)"></p>
+                              <p class="mt-1 text-[11px] text-slate-500" x-text="tokenBreakdownText(row)"></p>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
+                      <div class="rounded-xl bg-slate-50 p-3">
+                        <p class="text-[11px] font-semibold text-slate-500 mb-2">按阶段种类分类</p>
+                        <template x-if="!(tokenRankings().by_phase || []).length">
+                          <p class="rounded-lg bg-white p-2 text-[11px] text-slate-400">暂无 token 记录。</p>
+                        </template>
+                        <div class="space-y-2 max-h-64 overflow-y-auto">
+                          <template x-for="(row, index) in (tokenRankings().by_phase || [])" :key="`token-phase-${row.phase}`">
+                            <div class="rounded-lg bg-white p-2">
+                              <div class="flex items-center gap-2">
+                                <span class="w-5 h-5 rounded-full bg-slate-50 border border-slate-200 text-[10px] font-semibold text-slate-500 inline-flex items-center justify-center" x-text="index + 1"></span>
+                                <span class="text-xs font-semibold text-slate-800" x-text="diagnosticPhaseLabel(row.phase).replace(' 榜', '')"></span>
+                                <span class="ml-auto text-xs font-semibold text-brand-600 tabular-nums" x-text="formatTokenCount(row.total_tokens)"></span>
+                              </div>
+                              <p class="mt-1 text-[11px] text-slate-400" x-text="tokenPhaseMeta(row)"></p>
+                              <p class="mt-1 text-[11px] text-slate-500" x-text="tokenBreakdownText(row)"></p>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
+                    </div>
+                    <template x-if="tokenRankings().notes && tokenRankings().notes.length">
+                      <p class="mt-2 text-[10px] text-slate-400" x-text="tokenRankings().notes[0]"></p>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <div class="rounded-xl border border-slate-200 p-4 bg-slate-50/40">
+              <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
+                <div>
+                  <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">即时生效配置</p>
+                  <h4 class="mt-1 text-sm font-semibold text-slate-800">参与 Worker</h4>
+                  <p class="mt-0.5 text-[11px] text-slate-400">保存后会立刻影响未领取意图和下一轮派发；正在执行的 worker 不会被中断。</p>
+                </div>
+                <div class="flex items-center gap-2 text-[10px]">
+                  <button type="button" @click="setTaskWorkerPool('all')" class="text-brand-600 hover:underline">全选</button>
+                  <button type="button" @click="setTaskWorkerPool('clear')" class="text-slate-400 hover:underline">清空限制</button>
+                </div>
+              </div>
+              <template x-if="!(dispatchSettings && dispatchSettings.workers && dispatchSettings.workers.length)">
+                <p class="text-[11px] text-slate-400">尚未加载 worker 配置，打开任务管理时会自动加载；也可以去系统设置刷新。</p>
+              </template>
+              <div class="space-y-1.5 max-h-48 overflow-y-auto border border-slate-100 rounded-xl p-2 bg-white">
+                <template x-for="worker in (dispatchSettings && dispatchSettings.workers) || []" :key="`task-worker-pool-${selectedTaskSummary().id}-${worker.name}`">
+                  <label class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer" :class="worker.disabled ? 'opacity-40' : ''">
+                    <input type="checkbox" :value="worker.name" x-model="taskWorkerPoolEditor.worker_pool" :disabled="worker.disabled || selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed'" class="rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+                    <span class="text-xs font-medium text-slate-700" x-text="worker.name"></span>
+                    <span x-show="worker.disabled" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-200 text-slate-500">已停用</span>
+                    <span x-show="!worker.disabled && worker.mcp_enabled" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-50 text-emerald-600">MCP 开</span>
+                    <span class="ml-auto text-[10px] text-slate-400" x-text="(worker.task_types || []).join(' / ')"></span>
+                  </label>
+                </template>
+              </div>
+              <div class="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <p class="text-[10px] text-slate-400">当前选择为空 = 不限制 worker；选择后只有这些 worker 可领取后续意图。</p>
+                <div class="flex items-center gap-2">
+                  <button type="button" @click="syncTaskWorkerPoolEditor(selectedTaskSummary())" :disabled="!taskWorkerPoolChanged(selectedTaskSummary()) || taskWorkerPoolEditor.saving" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-white transition disabled:opacity-40">撤销</button>
+                  <button type="button" @click="saveTaskWorkerPool()" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed' || !taskWorkerPoolChanged(selectedTaskSummary()) || taskWorkerPoolEditor.saving" class="px-3 py-1.5 text-xs rounded-lg bg-brand-500 text-white hover:bg-brand-600 transition disabled:opacity-40" x-text="taskWorkerPoolEditor.saving ? '保存中...' : '保存并应用'"></button>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-xl border border-slate-200 p-4 bg-white">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">任务 Scope</p>
+                  <h4 class="mt-1 text-sm font-semibold text-slate-800">白名单 / 黑名单</h4>
+                  <p class="mt-0.5 text-[11px] text-slate-400">只约束 Reason 派发 Intent 的目标；黑名单优先。</p>
+                </div>
+                <label class="inline-flex items-center gap-2 text-xs text-slate-600">
+                  <input type="checkbox" x-model="taskScopeEditor.enabled" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed'" class="rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+                  开启 Scope
+                </label>
+              </div>
+              <div class="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-3">
+                <label class="text-[11px] text-slate-400">白名单（每行一个）
+                  <textarea x-model="taskScopeEditor.targetsText" rows="4" placeholder="api.example.com
+*.example.com" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed'" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono disabled:bg-slate-50"></textarea>
+                </label>
+                <label class="text-[11px] text-slate-400">黑名单（每行一个）
+                  <textarea x-model="taskScopeEditor.excludeText" rows="4" placeholder="admin.example.com" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed'" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono disabled:bg-slate-50"></textarea>
+                </label>
+              </div>
+              <label class="mt-3 block text-[11px] text-slate-400">备注
+                <input x-model="taskScopeEditor.notes" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed'" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs disabled:bg-slate-50">
+              </label>
+              <div class="mt-3 flex justify-end gap-2">
+                <button type="button" @click="syncTaskScopeEditor(selectedTaskSummary())" :disabled="!taskScopeChanged(selectedTaskSummary()) || taskScopeEditor.saving" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 disabled:opacity-40">撤销</button>
+                <button type="button" @click="saveTaskScope()" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed' || !taskScopeChanged(selectedTaskSummary()) || taskScopeEditor.saving" class="px-3 py-1.5 text-xs rounded-lg bg-brand-500 text-white disabled:opacity-40" x-text="taskScopeEditor.saving ? '保存中...' : '保存 Scope'"></button>
+              </div>
+            </div>
+            <div class="rounded-xl border border-slate-200 p-4">
+              <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">操作</p>
+              <div class="flex flex-wrap gap-2">
+                <button @click="viewProjectYaml(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">查看漏洞报告</button>
+                <template x-if="!selectedTaskSummary().legacy_readonly && ['active', 'stopped'].includes(selectedTaskSummary().status)">
+                  <button @click="toggleProjectStopById(selectedTaskSummary().id, selectedTaskSummary().status)" class="px-3 py-2 text-sm rounded-xl border border-amber-200 text-amber-700 hover:bg-amber-50 transition" x-text="selectedTaskSummary().status === 'active' ? '暂停任务' : '继续任务'"></button>
+                </template>
+                <button x-show="!selectedTaskSummary().legacy_readonly" @click="deleteProjectById(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-rose-200 text-rose-500 hover:bg-rose-50 transition">删除任务</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </section>
+    </div>
+  </div>
+</div>

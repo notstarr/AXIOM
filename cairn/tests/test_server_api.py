@@ -1373,13 +1373,13 @@ def test_credentials_post_upserts_same_label_with_normalization(client: TestClie
     )
     assert first.status_code == 200
     first_body = first.json()
-    assert first_body["label"] == "pg_001.user0319.jwt.unknown"
+    assert first_body["label"] == "user0319"
 
     second = client.post(
         "/credentials",
         json={
             "group_id": "pg_001",
-            "label": "pg_001.user0319.jwt.unknown",
+            "label": "user0319",
             "auth_type": "jwt",
             "credentials_json": "{\"authorization\":\"Bearer token-b\"}",
             "domains_json": "[\"api.example.com\",\"teamshare.example\"]",
@@ -1404,7 +1404,10 @@ def test_credentials_reject_invalid_json_fields(client: TestClient) -> None:
             "domains_json": "[\"api.example.com\"]",
         },
     )
-    assert bad_credentials.status_code == 422
+    # Credential content accepts valid JSON (including arrays) or free-form
+    # key/value text. Domain scope remains a strict JSON array.
+    assert bad_credentials.status_code == 200
+    assert bad_credentials.json()["credentials_json"] == "[]"
 
     bad_domains = client.post(
         "/credentials",

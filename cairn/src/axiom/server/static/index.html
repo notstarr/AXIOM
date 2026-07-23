@@ -61,15 +61,6 @@
       :class="{ 'is-active': activePage === 'guard-audit' }" @click="navigateTo('guard-audit')">
       <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.2 2.8 7.9 7 9.5 4.2-1.6 7-5.3 7-9.5V6l-7-3Z"/><path d="M9 12h6"/><path d="M9 15h4"/><path d="M9 9h6"/></svg>
     </button>
-    <button type="button" class="nav-item" data-tooltip="URL 守门测试"
-      :class="{ 'is-active': activePage === 'batch-url-judge' }" @click="navigateTo('batch-url-judge')">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-    </button>
-    <button type="button" class="nav-item" data-tooltip="爬虫管理"
-      :class="{ 'is-active': activePage === 'crawler-results' }" @click="navigateTo('crawler-results')">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/><circle cx="12" cy="12" r="9"/></svg>
-    </button>
-
     <div class="sidebar-divider"></div>
 
 
@@ -77,17 +68,13 @@
       :class="{ 'is-active': activePage === 'skills' }" @click="navigateTo('skills')">
       <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M9 12h6m-3-3v6m-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v14l-4-2-4 2-4-2-4 2Z"/></svg>
     </button>
-    <button type="button" class="nav-item" data-tooltip="MCP"
-      :class="{ 'is-active': activePage === 'mcp' }" @click="navigateTo('mcp')">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 11-13h-8l1-7Z"/></svg>
-    </button>
     <button type="button" class="nav-item" data-tooltip="Files"
       :class="{ 'is-active': activePage === 'files' }" @click="navigateTo('files')">
       <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v11Z"/></svg>
     </button>
-    <button type="button" class="nav-item" data-tooltip="资产管理"
-      :class="{ 'is-active': activePage === 'assets' }" @click="navigateTo('assets')">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+    <button type="button" class="nav-item" data-tooltip="MCP 管理"
+      :class="{ 'is-active': activePage === 'mcp' }" @click="navigateTo('mcp')">
+      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.5 6h7M7.5 8l3 7.5M16.5 8l-3 7.5"/></svg>
     </button>
     <button type="button" class="nav-item" data-tooltip="提示词备忘录"
       :class="{ 'is-active': activePage === 'prompts' }" @click="navigateTo('prompts')">
@@ -131,6 +118,10 @@
      class="flex-1 flex flex-col overflow-hidden min-w-0">
 </div>
 
+<div x-show="activePage === 'task-detail' && view === 'human'" x-cloak
+     data-page="human-view" x-init="loadPageTemplate('human-view')"
+     class="flex-1 flex flex-col overflow-hidden min-w-0"></div>
+
 <div x-show="activePage === 'vulnerabilities'" x-cloak
      data-page="vulnerabilities" x-init="loadPageTemplate('vulnerabilities')"
      class="flex-1 flex flex-col overflow-hidden min-w-0">
@@ -146,11 +137,6 @@
      class="flex-1 flex flex-col overflow-hidden min-w-0">
 </div>
 
-<div x-show="activePage === 'batch-url-judge'" x-cloak
-     data-page="batch-url-judge" x-init="loadPageTemplate('batch-url-judge')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0">
-</div>
-
 <div x-show="activePage === 'skills'" x-cloak
      data-page="skills" x-init="loadPageTemplate('skills')"
      class="flex-1 flex flex-col overflow-hidden min-w-0">
@@ -161,20 +147,9 @@
      class="flex-1 flex flex-col overflow-hidden min-w-0">
 </div>
 
-<div x-show="activePage === 'assets'" x-cloak
-     data-page="assets" x-init="loadPageTemplate('assets')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0">
-</div>
+<div x-show="activePage === 'mcp'" x-cloak data-page="mcp" x-init="loadPageTemplate('mcp')"
+     class="flex-1 flex flex-col overflow-hidden min-w-0"></div>
 
-<div x-show="activePage === 'crawler-results'" x-cloak
-     data-page="crawler" x-init="loadPageTemplate('crawler')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0">
-</div>
-
-<div x-show="activePage === 'mcp'" x-cloak
-     data-page="mcp" x-init="loadPageTemplate('mcp')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0">
-</div>
 
 <!-- Placeholder Pages -->
 <template x-for="page in placeholderPages()" :key="page.id">
@@ -307,7 +282,7 @@
 <!-- Blackboard Editor -->
 <div x-show="blackboardEditor.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="blackboardEditor.open = false">
 <div class="bg-white rounded-2xl shadow-2xl modal-enter p-6 w-full max-w-lg mx-4 relative z-10">
-  <h3 class="text-lg font-semibold text-slate-800" x-text="blackboardEditor.id ? '编辑黑板' : '添加黑板'"></h3>
+  <h3 class="text-lg font-semibold text-slate-800" x-text="blackboardEditor.id ? '编辑共享知识' : '添加共享知识'"></h3>
   <input x-model="blackboardEditor.title" placeholder="标题（可选）" class="mt-4 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-100 focus:border-sky-400">
   <textarea x-model="blackboardEditor.content" rows="5" placeholder="内容（如测试账号、业务逻辑等）" class="mt-3 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-100 focus:border-sky-400"></textarea>
   <div class="mt-3">
@@ -409,7 +384,7 @@
       <div class="min-w-0 flex items-center gap-3">
         <div class="flex rounded-lg border border-slate-200 overflow-hidden shrink-0">
           <button @click="switchExportTab('yaml')" class="px-2.5 py-1 text-xs font-medium transition"
-            :class="exportTab === 'yaml' ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:text-slate-600'">YAML</button>
+            :class="exportTab === 'yaml' ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:text-slate-600'">概况</button>
           <button @click="switchExportTab('timeline')" class="px-2.5 py-1 text-xs font-medium transition"
             :class="exportTab === 'timeline' ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:text-slate-600'">时间线</button>
         </div>
@@ -424,215 +399,6 @@
       <div class="rounded-xl border border-slate-200 bg-white overflow-y-auto overflow-x-auto shadow-sm">
         <div class="w-full p-0 text-[12px] leading-6 font-mono select-text break-words whitespace-pre-wrap" x-html="yamlPreviewHtml"></div>
       </div>
-    </div>
-  </div>
-</div>
-
-<!-- Crawler Results Modal -->
-<div x-show="crawlerResultsOpen" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="crawlerResultsOpen = false">
-  <div class="bg-white rounded-2xl shadow-2xl modal-enter w-full max-w-5xl mx-4 border border-slate-200/60 overflow-hidden flex flex-col" style="max-height:85vh" @click.stop>
-    <!-- Header -->
-    <div class="px-5 py-4 border-b border-slate-200/80 flex items-center justify-between gap-4 shrink-0">
-      <div class="min-w-0 flex items-center gap-3">
-        <h3 class="text-sm font-semibold text-slate-700">爬虫结果</h3>
-        <template x-if="crawlerResultsData">
-          <div class="flex items-center gap-2 text-[11px] text-slate-400">
-            <span class="px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-mono tabular-nums" x-text="crawlerResultsData.counts.pages + ' 页'"></span>
-            <span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-mono tabular-nums" x-text="crawlerResultsData.counts.apis + ' API'"></span>
-            <span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 font-mono tabular-nums" x-text="crawlerResultsData.counts.mappings + ' 映射'"></span>
-          </div>
-        </template>
-      </div>
-      <div class="flex items-center gap-2">
-        <button @click="refreshCrawlerResults()" :disabled="crawlerResultsLoading" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40">刷新</button>
-        <button @click="crawlerResultsOpen = false" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
-      </div>
-    </div>
-    <!-- Tabs -->
-    <div class="px-5 py-2 border-b border-slate-100 flex items-center gap-1 shrink-0">
-      <button @click="crawlerResultsTab = 'pages'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
-        :class="crawlerResultsTab === 'pages' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-slate-600'">
-        页面 <span class="opacity-60" x-text="crawlerResultsData ? '(' + crawlerResultsData.counts.pages + ')' : ''"></span>
-      </button>
-      <button @click="crawlerResultsTab = 'apis'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
-        :class="crawlerResultsTab === 'apis' ? 'bg-amber-50 text-amber-600' : 'text-slate-400 hover:text-slate-600'">
-        API <span class="opacity-60" x-text="crawlerResultsData ? '(' + crawlerResultsData.counts.apis + ')' : ''"></span>
-      </button>
-      <button @click="crawlerResultsTab = 'mappings'" class="px-3 py-1.5 text-xs font-medium rounded-lg transition"
-        :class="crawlerResultsTab === 'mappings' ? 'bg-emerald-50 text-emerald-600' : 'text-slate-400 hover:text-slate-600'">
-        映射 <span class="opacity-60" x-text="crawlerResultsData ? '(' + crawlerResultsData.counts.mappings + ')' : ''"></span>
-      </button>
-    </div>
-    <!-- Content -->
-    <div class="flex-1 overflow-auto bg-slate-50 p-4">
-      <!-- Loading -->
-      <template x-if="crawlerResultsLoading">
-        <div class="flex items-center justify-center py-12 text-sm text-slate-400">加载中…</div>
-      </template>
-      <!-- No data -->
-      <template x-if="!crawlerResultsLoading && !crawlerResultsData">
-        <div class="flex items-center justify-center py-12 text-sm text-slate-400">暂无数据</div>
-      </template>
-
-      <!-- Pages tab -->
-      <template x-if="!crawlerResultsLoading && crawlerResultsData && crawlerResultsTab === 'pages'">
-        <div class="space-y-2">
-          <template x-for="(page, i) in crawlerResultsData.pages" :key="page.id || i">
-            <div class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-              <div class="flex items-start gap-3">
-                <div class="shrink-0 w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center text-[11px] font-mono" x-text="i + 1"></div>
-                <div class="min-w-0 flex-1">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <span class="text-sm font-medium text-slate-700" x-text="page.name || page.id"></span>
-                    <template x-if="page.page_type">
-                      <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-500" x-text="page.page_type"></span>
-                    </template>
-                    <template x-if="page.requires_auth">
-                      <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-50 text-rose-500">需认证</span>
-                    </template>
-                    <template x-if="page.exhausted">
-                      <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600">已穷尽</span>
-                    </template>
-                  </div>
-                  <a :href="page.url" target="_blank" class="text-[11px] text-blue-400 hover:text-blue-600 break-all" x-text="page.url"></a>
-                  <template x-if="page.discovered_via && page.discovered_via.trigger_label">
-                    <p class="text-[10px] text-slate-400 mt-1">来源: <span x-text="page.discovered_via.trigger_label"></span></p>
-                  </template>
-                  <template x-if="page.actions && page.actions.length">
-                    <div class="mt-1.5 flex flex-wrap gap-1">
-                      <template x-for="(action, j) in page.actions" :key="action.id || j">
-                        <span class="px-1.5 py-0.5 rounded text-[10px] bg-indigo-50 text-indigo-500" x-text="action.name || action.label || action.id"></span>
-                      </template>
-                    </div>
-                  </template>
-                </div>
-              </div>
-            </div>
-          </template>
-          <template x-if="!crawlerResultsData.pages.length">
-            <div class="text-center py-8 text-sm text-slate-400">暂无页面数据</div>
-          </template>
-        </div>
-      </template>
-
-      <!-- APIs tab -->
-      <template x-if="!crawlerResultsLoading && crawlerResultsData && crawlerResultsTab === 'apis'">
-        <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table class="w-full text-xs">
-            <thead class="bg-slate-50 text-slate-400 text-[10px] uppercase tracking-wide">
-              <tr>
-                <th class="text-left px-3 py-2 font-medium">#</th>
-                <th class="text-left px-3 py-2 font-medium">方法</th>
-                <th class="text-left px-3 py-2 font-medium">路径</th>
-                <th class="text-left px-3 py-2 font-medium">状态码</th>
-                <th class="text-left px-3 py-2 font-medium">认证</th>
-                <th class="text-left px-3 py-2 font-medium">说明</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100">
-              <template x-for="(api, i) in crawlerResultsData.apis" :key="api.id || i">
-                <tr class="hover:bg-slate-50/60">
-                  <td class="px-3 py-2 text-slate-300 font-mono" x-text="i + 1"></td>
-                  <td class="px-3 py-2">
-                    <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold"
-                      :class="{
-                        'bg-emerald-50 text-emerald-600': api.method === 'GET',
-                        'bg-amber-50 text-amber-600': api.method === 'POST',
-                        'bg-sky-50 text-sky-600': api.method === 'PUT' || api.method === 'PATCH',
-                        'bg-rose-50 text-rose-500': api.method === 'DELETE',
-                        'bg-slate-100 text-slate-500': !['GET','POST','PUT','PATCH','DELETE'].includes(api.method),
-                      }"
-                      x-text="api.method || '?'"></span>
-                  </td>
-                  <td class="px-3 py-2 font-mono text-slate-600 break-all" x-text="api.path || api.full_url_example || ''"></td>
-                  <td class="px-3 py-2">
-                    <div class="flex flex-wrap gap-1">
-                      <template x-for="code in (api.status_codes_seen || [])" :key="code">
-                        <span class="px-1.5 py-0.5 rounded text-[10px] font-mono"
-                          :class="{
-                            'bg-emerald-50 text-emerald-600': code < 300,
-                            'bg-amber-50 text-amber-600': code >= 300 && code < 400,
-                            'bg-rose-50 text-rose-500': code >= 400,
-                          }"
-                          x-text="code"></span>
-                      </template>
-                    </div>
-                  </td>
-                  <td class="px-3 py-2">
-                    <template x-if="api.auth && api.auth.required">
-                      <span class="px-1.5 py-0.5 rounded text-[10px] bg-rose-50 text-rose-500" x-text="api.auth.type || '需认证'"></span>
-                    </template>
-                    <template x-if="!api.auth || !api.auth.required">
-                      <span class="text-[10px] text-slate-300">—</span>
-                    </template>
-                  </td>
-                  <td class="px-3 py-2 text-slate-400 text-[11px] max-w-xs truncate" x-text="api.purpose || (api.notes || []).join('; ') || ''"></td>
-                </tr>
-              </template>
-            </tbody>
-          </table>
-          <template x-if="!crawlerResultsData.apis.length">
-            <div class="text-center py-8 text-sm text-slate-400">暂无 API 数据</div>
-          </template>
-        </div>
-      </template>
-
-      <!-- Mappings tab -->
-      <template x-if="!crawlerResultsLoading && crawlerResultsData && crawlerResultsTab === 'mappings'">
-        <div class="space-y-2">
-          <template x-for="(map, i) in crawlerResultsData.mappings" :key="map.id || i">
-            <div class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-              <div class="flex items-center gap-2 mb-1.5">
-                <span class="text-sm font-medium text-slate-700" x-text="map.page_name || map.page_id"></span>
-                <a :href="map.page_url" target="_blank" class="text-[10px] text-blue-400 hover:text-blue-600 truncate" x-text="map.page_url"></a>
-              </div>
-              <!-- on_load APIs -->
-              <template x-if="map.on_load && map.on_load.length">
-                <div class="mb-1.5">
-                  <p class="text-[10px] text-slate-400 mb-1">页面加载时:</p>
-                  <div class="flex flex-wrap gap-1">
-                    <template x-for="(api, j) in map.on_load" :key="j">
-                      <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-50 text-amber-600" x-text="(api.method || 'GET') + ' ' + (api.path || '')"></span>
-                    </template>
-                  </div>
-                </div>
-              </template>
-              <!-- actions -->
-              <template x-if="map.actions && map.actions.length">
-                <div>
-                  <p class="text-[10px] text-slate-400 mb-1">用户操作:</p>
-                  <div class="space-y-1">
-                    <template x-for="(action, j) in map.actions" :key="action.action_id || j">
-                      <div class="flex items-center gap-2 text-[11px]">
-                        <span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-500" x-text="action.trigger_type || 'action'"></span>
-                        <span class="text-slate-600" x-text="action.action_name || action.trigger_label || ''"></span>
-                        <template x-if="action.result && action.result.status">
-                          <span class="px-1.5 py-0.5 rounded text-[10px]"
-                            :class="{
-                              'bg-emerald-50 text-emerald-600': action.result.status === 'success',
-                              'bg-rose-50 text-rose-500': action.result.status === 'denied' || action.result.status === 'failure',
-                              'bg-slate-100 text-slate-500': action.result.status === 'noop',
-                            }"
-                            x-text="action.result.status"></span>
-                        </template>
-                        <template x-if="action.apis && action.apis.length">
-                          <span class="text-slate-300">→</span>
-                          <template x-for="(api, k) in action.apis" :key="k">
-                            <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-50 text-amber-600" x-text="(api.method || 'GET') + ' ' + (api.path || '')"></span>
-                          </template>
-                        </template>
-                      </div>
-                    </template>
-                  </div>
-                </div>
-              </template>
-            </div>
-          </template>
-          <template x-if="!crawlerResultsData.mappings.length">
-            <div class="text-center py-8 text-sm text-slate-400">暂无映射数据</div>
-          </template>
-        </div>
-      </template>
     </div>
   </div>
 </div>
@@ -670,7 +436,7 @@
       </div>
       <div class="flex-1 min-w-0">
         <h3 class="text-sm font-semibold text-slate-700">删除项目</h3>
-        <p class="mt-1 text-xs text-slate-400">即将删除项目「<span class="font-medium text-slate-600" x-text="deleteGroupConfirm.title"></span>」及其下所有任务、漏洞、黑板事项和爬虫数据。此操作不可撤销。</p>
+        <p class="mt-1 text-xs text-slate-400">即将删除项目「<span class="font-medium text-slate-600" x-text="deleteGroupConfirm.title"></span>」及其下所有任务、漏洞、共享知识和项目凭证。此操作不可撤销。</p>
       </div>
     </div>
     <div class="mt-5 flex justify-end gap-2">
@@ -725,13 +491,14 @@
 <script src="/static/js/dashboard.js"></script>
 <script src="/static/js/skills.js"></script>
 <script src="/static/js/files.js"></script>
-<script src="/static/js/crawler.js"></script>
+<script src="/static/js/mcp.js"></script>
 <script src="/static/js/graph.js"></script>
+<script src="/static/js/human.js"></script>
 <script src="/static/js/timeline.js"></script>
 <script src="/static/js/actions.js"></script>
 <script src="/static/js/dispatch.js"></script>
 <script src="/static/js/prompts.js"></script>
-<script src="/static/js/batch-url-judge.js"></script>
+<script src="/static/js/v2-adapter.js"></script>
 <script src="/static/js/app.js"></script>
 </body>
 </html>

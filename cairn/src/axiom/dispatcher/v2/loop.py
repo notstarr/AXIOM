@@ -41,21 +41,37 @@ class V2DispatcherLoop:
         self.stop_event = Event()
 
     def run(self, *, once: bool = False) -> None:
+        reconnect_delay = 1.0
         try:
             while not self.stop_event.is_set():
-                runtime = self.client.runtime_settings().config
-                self._reap()
-                self._ensure_executor(runtime.max_workers)
-                recovered = self.client.recover_stale_leases(runtime.lease_timeout_seconds)
-                if recovered.get("intents_released") or recovered.get("reasons_released"):
-                    LOG.warning("recovered stale leases %s", recovered)
-                self.client.retry_failed_external_reports(limit=1)
-                snapshot = self.client.snapshot()
-                actions = self.reconciler.calculate(snapshot.tasks)
-                self._dispatch(actions, snapshot.tasks, snapshot.workers, runtime)
-                if once:
-                    return
-                self.stop_event.wait(runtime.interval_seconds)
+                try:
+                    runtime = self.client.runtime_settings().config
+                    self._reap()
+                    self._ensure_executor(runtime.max_workers)
+                    recovered = self.client.recover_stale_leases(runtime.lease_timeout_seconds)
+                    if recovered.get("intents_released") or recovered.get("reasons_released"):
+                        LOG.warning("recovered stale leases %s", recovered)
+                    self.client.retry_failed_external_reports(limit=1)
+                    snapshot = self.client.snapshot()
+                    self._cancel_inactive_tasks(snapshot.tasks)
+                    actions = self.reconciler.calculate(snapshot.tasks, runtime)
+                    self._dispatch(actions, snapshot.tasks, snapshot.workers, runtime)
+                    reconnect_delay = 1.0
+                    if once:
+                        return
+                    self.stop_event.wait(runtime.interval_seconds)
+                except Exception:
+                    if once:
+                        raise
+                    # The API may be restarting or briefly unavailable. Keep
+                    # the dispatcher alive with bounded exponential backoff
+                    # instead of exiting and relying on launchd to thrash.
+                    LOG.exception(
+                        "dispatcher tick failed; retrying in %.1fs",
+                        reconnect_delay,
+                    )
+                    self.stop_event.wait(reconnect_delay)
+                    reconnect_delay = min(reconnect_delay * 2, 30.0)
         finally:
             self.close()
 
@@ -96,6 +112,26 @@ class V2DispatcherLoop:
                     live.action.task_id,
                     live.action.intent_id,
                     live.worker,
+                )
+
+    def _cancel_inactive_tasks(self, tasks) -> None:
+        """Stop live local processes as soon as the durable Task stops.
+
+        Lifecycle APIs reject late writes, but without actively cancelling the
+        process a stopped Task could keep consuming model/network time until a
+        phase deadline and then enter its normal retry/conclude path.  Snapshot
+        polling gives us a bounded cancellation latency (normally one tick).
+        """
+        statuses = {task.id: task.status for task in tasks}
+        cancel_task = getattr(self.runners, "cancel_task", None)
+        if not callable(cancel_task):
+            return
+        for live in self.futures.values():
+            status = statuses.get(live.action.task_id)
+            if status != "running":
+                cancel_task(
+                    live.action.task_id,
+                    f"task is no longer running (status={status or 'missing'})",
                 )
 
     def _dispatch(self, actions, tasks, workers, runtime) -> None:

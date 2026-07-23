@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, delete, select
 
 from axiom.infrastructure.database.metadata import dispatch_workers, worker_runtime_states
 from axiom.modules.common.time import utcnow
@@ -76,6 +76,16 @@ class WorkerService:
                 select(dispatch_workers.c.name).order_by(dispatch_workers.c.priority, dispatch_workers.c.name)
             ).scalars()
             return [self._get(conn, name) for name in names]
+
+    def get(self, name: str) -> Worker:
+        with self.engine.connect() as conn:
+            return self._get(conn, name)
+
+    def delete(self, name: str) -> None:
+        with self.engine.begin() as conn:
+            result = conn.execute(delete(dispatch_workers).where(dispatch_workers.c.name == name))
+            if not result.rowcount:
+                raise ValueError(f"Worker not found: {name}")
 
     @staticmethod
     def _get(conn, name: str) -> Worker:

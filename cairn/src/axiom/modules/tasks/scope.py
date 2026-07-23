@@ -26,6 +26,7 @@ def _matches(pattern: str, target: str) -> bool:
     if normalized.startswith("*."):
         suffix = normalized[2:]
         return target.endswith(f".{suffix}") and target != suffix
+    normalized = normalize_intent_target(normalized)
     try:
         return ipaddress.ip_address(normalized) == ipaddress.ip_address(target)
     except ValueError:

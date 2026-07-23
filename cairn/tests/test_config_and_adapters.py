@@ -202,6 +202,44 @@ def test_pi_driver_execute_argv_includes_worker_thinking_level() -> None:
     assert result.argv[-2:] == ["-p", "prompt"]
 
 
+def test_pi_driver_passes_shared_skill_paths_without_staging_or_deleting_them() -> None:
+    worker_name = "pi-shared-skill-test"
+    worker = WorkerConfig.model_validate(
+        {
+            "name": worker_name,
+            "type": "pi",
+            "task_types": ["explore"],
+            "max_running": 1,
+            "priority": 0,
+            "env": {
+                "PI_MODEL": "model",
+                "PI_BASE_URL": "http://api",
+                "PI_API_KEY": "secret",
+                "PI_PROVIDER_API": "openai-completions",
+            },
+        }
+    )
+    staging = Path("/tmp/axiom-pi") / worker_name / "skills"
+    staging.mkdir(parents=True, exist_ok=True)
+    marker = staging / "must-not-be-deleted.txt"
+    marker.write_text("keep", encoding="utf-8")
+    try:
+        result = PiDriver().build_execute(worker, "prompt", None, phase="explore")
+        skill_paths = [
+            result.argv[index + 1]
+            for index, value in enumerate(result.argv[:-1])
+            if value == "--skill"
+        ]
+        assert skill_paths
+        assert all("/src/axiom/dispatcher/skills/" in path for path in skill_paths)
+        assert all("/tmp/axiom-pi/" not in path for path in skill_paths)
+        assert marker.read_text(encoding="utf-8") == "keep"
+        assert not any(path.endswith("/vuln-review") for path in skill_paths)
+        assert not any(path.endswith("/xss-verify") for path in skill_paths)
+    finally:
+        marker.unlink(missing_ok=True)
+
+
 def test_pi_driver_execute_argv_omits_off_thinking_level() -> None:
     worker = WorkerConfig.model_validate(
         {
@@ -419,6 +457,244 @@ def test_pi_driver_prepares_stable_session_for_execute_and_conclude() -> None:
     conclude = driver.build_conclude(worker, "conclude-prompt", session)
     assert "--session-id" in conclude
     assert conclude[conclude.index("--session-id") + 1] == session
+    assert "--tools" in conclude
+    assert conclude[conclude.index("--tools") + 1] == "read,write,edit"
+
+
+def test_pi_driver_compact_conclude_does_not_resume_execute_session(tmp_path) -> None:
+    worker = WorkerConfig.model_validate(
+        {
+            "name": "pi-compact",
+            "type": "pi",
+            "task_types": ["bootstrap"],
+            "max_running": 1,
+            "priority": 0,
+            "env": {
+                "PI_MODEL": "model",
+                "PI_BASE_URL": "http://api",
+                "PI_API_KEY": "secret",
+                "PI_PROVIDER_API": "openai-completions",
+                "AXIOM_PI_SESSION_DIR": str(tmp_path / "attempt-session"),
+            },
+        }
+    )
+    driver = PiDriver()
+    command = driver.build_compact_conclude(worker, "compact-prompt", phase="bootstrap")
+    assert "--no-session" in command
+    assert "--session-id" not in command
+    assert command[command.index("--tools") + 1] == "read,write,edit"
+
+
+def test_pi_driver_builds_rpc_command_with_session_and_tools() -> None:
+    worker = WorkerConfig.model_validate(
+        {
+            "name": "pi-rpc",
+            "type": "pi",
+            "task_types": ["bootstrap", "reason", "explore"],
+            "max_running": 1,
+            "priority": 0,
+            "env": {
+                "PI_MODEL": "model",
+                "PI_BASE_URL": "http://api",
+                "PI_API_KEY": "secret",
+                "PI_PROVIDER_API": "openai-completions",
+            },
+        }
+    )
+    driver = PiDriver()
+    driver._session_id_supported = {driver._resolve_pi_path(worker): True}
+    command = driver.build_rpc(worker, "rpc-session", phase="bootstrap")
+    assert "--mode" in command
+    assert command[command.index("--mode") + 1] == "rpc"
+    assert "--session-id" in command
+    assert command[command.index("--session-id") + 1] == "rpc-session"
+    assert command[command.index("--tools") + 1] == "read,write,bash,edit"
+
+
+def test_pi_driver_exports_bounded_redacted_evidence(tmp_path) -> None:
+    worker = WorkerConfig.model_validate(
+        {
+            "name": "pi-evidence",
+            "type": "pi",
+            "task_types": ["bootstrap"],
+            "max_running": 1,
+            "priority": 0,
+            "env": {
+                "PI_MODEL": "model",
+                "PI_BASE_URL": "http://api",
+                "PI_API_KEY": "secret",
+                "PI_PROVIDER_API": "openai-completions",
+                "AXIOM_PI_SESSION_DIR": str(tmp_path / "attempt-session"),
+            },
+        }
+    )
+    driver = PiDriver()
+    sessions_dir = Path(driver._session_dir(worker))
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    session_id = "session-evidence"
+    session_file = sessions_dir / f"2026-07-01T00-00-00_{session_id}.jsonl"
+    session_file.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "session", "id": session_id}),
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "toolCall",
+                                    "name": "curl",
+                                    "arguments": {"Authorization": "Bearer raw-auth-value"},
+                                },
+                            ],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "toolResult",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        'confirmed endpoint '
+                                        'access_key_secret=cloud-secret '
+                                        'sts_token=sts-secret '
+                                        'security_token=security-secret '
+                                        'client_secret=client-secret '
+                                        'password=password-secret\n'
+                                        'Set-Cookie: session=cookie-secret; Path=/; HttpOnly\n'
+                                        'X-Api-Key: header-secret\n'
+                                        'AMAP_KEY=amap-secret-value\n'
+                                        'organization-code: org-secret-value\n'
+                                        'standalone Bearer standalone-secret-value'
+                                    ),
+                                }
+                            ],
+                        },
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    destination = tmp_path / "execute_evidence.md"
+    assert driver.export_compact_evidence(worker, session_id, destination) == destination
+    content = destination.read_text(encoding="utf-8")
+    assert "confirmed endpoint" in content
+    assert "raw-auth-value" not in content
+    assert "cloud-secret" not in content
+    assert "sts-secret" not in content
+    assert "security-secret" not in content
+    assert "client-secret" not in content
+    assert "password-secret" not in content
+    assert "cookie-secret" not in content
+    assert "header-secret" not in content
+    assert "amap-secret-value" not in content
+    assert "org-secret-value" not in content
+    assert "standalone-secret-value" not in content
+    assert "REDACTED" in content
+
+
+def test_pi_driver_compact_evidence_skips_context_and_bounds_large_results(tmp_path) -> None:
+    worker = WorkerConfig.model_validate(
+        {
+            "name": "pi-evidence-bounded",
+            "type": "pi",
+            "task_types": ["bootstrap"],
+            "max_running": 1,
+            "priority": 0,
+            "env": {
+                "PI_MODEL": "model",
+                "PI_BASE_URL": "http://api",
+                "PI_API_KEY": "secret",
+                "PI_PROVIDER_API": "openai-completions",
+                "AXIOM_PI_SESSION_DIR": str(tmp_path / "attempt-session"),
+            },
+        }
+    )
+    driver = PiDriver()
+    sessions_dir = Path(driver._session_dir(worker))
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    session_id = "session-bounded"
+    session_file = sessions_dir / f"2026-07-01T00-00-00_{session_id}.jsonl"
+    events = [
+        {
+            "type": "message",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "read-skill",
+                        "name": "read",
+                        "arguments": {"path": "/tmp/skills/whatisvul/SKILL.md"},
+                    }
+                ],
+            },
+        },
+        {
+            "type": "message",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "read-skill",
+                "toolName": "read",
+                "content": [{"type": "text", "text": "SKILL-BODY-MUST-BE-OMITTED"}],
+            },
+        },
+    ]
+    for index in range(80):
+        call_id = f"scan-{index}"
+        events.extend(
+            [
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "toolCall",
+                                "id": call_id,
+                                "name": "bash",
+                                "arguments": {"command": f"curl https://example.com/{index}"},
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "toolResult",
+                        "toolCallId": call_id,
+                        "toolName": "bash",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"HTTP/1.1 200\nendpoint-{index}\n" + ("x" * 5000),
+                            }
+                        ],
+                    },
+                },
+            ]
+        )
+    session_file.write_text(
+        "\n".join(json.dumps(event) for event in events),
+        encoding="utf-8",
+    )
+
+    destination = tmp_path / "bounded-evidence.md"
+    assert driver.export_compact_evidence(worker, session_id, destination) == destination
+    content = destination.read_text(encoding="utf-8")
+
+    assert "SKILL-BODY-MUST-BE-OMITTED" not in content
+    assert "whatisvul/SKILL.md" not in content
+    assert "HTTP/1.1 200" in content
+    assert "middle events omitted" in content
+    assert len(content) <= 36_500
 
 
 def test_pi_driver_extract_session_uses_stdout_first() -> None:
@@ -433,6 +709,36 @@ def test_pi_driver_extract_session_invalid_preallocated_returns_none(monkeypatch
     monkeypatch.setattr(driver, "_session_id_exists_globally", lambda _session_id: False)
     resolved = driver.extract_session("preallocated-session", "", "")
     assert resolved is None
+
+
+def test_pi_driver_recovers_session_from_attempt_scoped_directory(tmp_path) -> None:
+    worker = WorkerConfig.model_validate(
+        {
+            "name": "pi-isolated",
+            "type": "pi",
+            "task_types": ["bootstrap"],
+            "max_running": 1,
+            "priority": 0,
+            "env": {
+                "PI_MODEL": "model",
+                "PI_BASE_URL": "http://api",
+                "PI_API_KEY": "secret",
+                "PI_PROVIDER_API": "openai-completions",
+                "AXIOM_PI_SESSION_DIR": str(tmp_path / "attempt-session"),
+            },
+        }
+    )
+    session_dir = Path(worker.env["AXIOM_PI_SESSION_DIR"])
+    session_dir.mkdir(parents=True)
+    session_id = "019f-session-real"
+    (session_dir / f"2026-07-20T00-00-00_{session_id}.jsonl").write_text(
+        '{"type":"session","version":3,"id":"019f-session-real"}\n',
+        encoding="utf-8",
+    )
+
+    driver = PiDriver()
+    assert driver._session_dir(worker) == str(session_dir)
+    assert driver.recover_session(worker, "wrong-preallocated", "", "") == session_id
 
 
 def test_pi_worker_configuration_is_accepted() -> None:

@@ -9,12 +9,12 @@ function cairnApp() {
     M.dashboard.methods,
     M.skills.methods,
     M.files.methods,
-    M.crawler.methods,
+    M.mcp.methods,
     M.graph.methods,
+    M.human.methods,
     M.timeline.methods,
     M.actions.methods,
     M.dispatch.methods,
-    M.prompts.methods,
-    M.batchUrlJudge.methods
+    M.prompts.methods
   );
 }

@@ -9,37 +9,43 @@ description: 当需要爬取网站页面、发现隐藏路径和 API 端点时�
 katana -u https://example.com
 ```
 
+## 工具路径规范
+
+- 始终使用规范命令名 `katana`，真实路径由 AXIOM Runner 统一注入 `PATH`。
+- 只允许用 `command -v katana` 检查可用性；不可用时直接记录并跳过。
+- 禁止猜测绝对路径，禁止通过 `find /` 搜索工具或浏览器依赖。
+
 ## 常用参数
 
 ```bash
 # 基础爬取
 katana -u https://example.com
 
-//指定深度
+# 指定深度
 katana -u https://example.com -d 3
 
-//无头浏览器模式（渲染 JS，发现动态内容）
+# 无头浏览器模式（渲染 JS，发现动态内容）
 katana -u https://example.com -headless
 
-//爬取并存储到文件
+# 爬取并存储到文件
 katana -u https://example.com -o crawled.txt
 
-//JSON 输出（包含更多信息）
+# JSON 输出（包含更多信息）
 katana -u https://example.com -json -o crawled.json
 
-//只爬同域
+# 只爬同域
 katana -u https://example.com -domain-scope example.com
 
-//并发控制
+# 并发控制
 katana -u https://example.com -c 20
 
-//限制爬取速率
+# 限制爬取速率
 katana -u https://example.com -rl 50
 
-//发现表单
+# 发现表单
 katana -u https://example.com -form-extraction
 
-//从文件读取多个目标
+# 从文件读取多个目标
 katana -list urls.txt
 ```
 

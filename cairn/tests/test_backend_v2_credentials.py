@@ -61,7 +61,7 @@ def test_v1_credential_secret_endpoint_requires_service_token(tmp_path) -> None:
 
         listed = client.get(f"/api/v1/projects/{project.id}/credentials")
         assert listed.status_code == 200
-        assert "data" not in listed.json()[0]
+        assert listed.json()[0]["data"]["Authorization"] == "Bearer plaintext"
 
         assert client.get(f"/api/v1/internal/credentials/{credential_id}").status_code == 401
         fetched = client.get(

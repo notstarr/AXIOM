@@ -95,8 +95,12 @@ window.AxiomModules.helpers = {
     },
     intentStatusLabel(i) {
       if (i.to) return '已结束';
+      if (i.status === 'cancelled') return '已取消';
+      if (i.status === 'failed' && i.last_failure_kind === 'retry_exhausted') return '失败·待 Reason 重规划';
+      if (i.status === 'failed') return '执行失败';
+      if (i.next_retry_at || i.last_failure_kind || i.retry_count || i.infrastructure_retry_count) return '等待重试';
       if (this.isBootstrapIntent(i)) return i.worker ? 'Bootstrap 运行中' : 'Bootstrap 等待中';
-      return i.worker ? '进行中' : '未认领';
+      return i.worker ? '进行中' : '等待 Worker';
     },
 
     vulnStatusClass(status) {

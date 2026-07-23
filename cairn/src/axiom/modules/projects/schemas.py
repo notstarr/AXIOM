@@ -23,6 +23,27 @@ class CreateProject(BaseModel):
         return text
 
 
+class UpdateProject(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    status: Literal["active", "archived"] | None = None
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("title must not be empty")
+        return text
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+
 class Project(BaseModel):
     id: str
     title: str
@@ -30,3 +51,8 @@ class Project(BaseModel):
     status: Literal["active", "archived"] = "active"
     created_at: str
     updated_at: str
+    task_count: int = 0
+    active_task_count: int = 0
+    vulnerability_count: int = 0
+    knowledge_count: int = 0
+    credential_count: int = 0

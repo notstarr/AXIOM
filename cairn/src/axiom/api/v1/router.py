@@ -6,12 +6,15 @@ from axiom.api.v1 import (
     credentials,
     context,
     dispatcher,
+    diagnostics,
     graph,
     guard,
     lifecycle,
     knowledge,
+    mcp,
     projects,
     reason_workspaces,
+    skills,
     tasks,
     todos,
     vulnerabilities,
@@ -28,6 +31,7 @@ router.include_router(credentials.internal_router)
 router.include_router(context.router)
 router.include_router(graph.router)
 router.include_router(guard.router)
+router.include_router(guard.public_router)
 router.include_router(artifacts.router)
 router.include_router(audit.router)
 router.include_router(audit.internal)
@@ -36,4 +40,7 @@ router.include_router(lifecycle.router)
 router.include_router(knowledge.router)
 router.include_router(lifecycle.internal)
 router.include_router(dispatcher.router)
+router.include_router(diagnostics.router)
 router.include_router(dispatcher.internal)
+router.include_router(skills.router)
+router.include_router(mcp.router)

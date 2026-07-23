@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from axiom.api.v1.dependencies import get_v2_engine, require_service_token
 from axiom.modules.vulnerabilities.reporting import ExternalReportAttempt, ExternalReportService
-from axiom.modules.vulnerabilities.schemas import ReportVulnerability, Vulnerability
+from axiom.modules.vulnerabilities.schemas import ReportVulnerability, UpdateVulnerability, Vulnerability
 from axiom.modules.vulnerabilities.service import VulnerabilityService
 
 
@@ -22,6 +23,26 @@ def get_service(engine=Depends(get_v2_engine)) -> VulnerabilityService:
 
 def get_external_service(request: Request, engine=Depends(get_v2_engine)) -> ExternalReportService:
     return ExternalReportService(engine, client=getattr(request.app.state, "mozzie_client", None))
+
+
+@router.get("/vulnerabilities", response_model=list[Vulnerability])
+def list_all_vulnerabilities(
+    project_id: str | None = None,
+    task_id: str | None = None,
+    search: str = "",
+    status: str | None = None,
+    severity: str | None = None,
+    include_archived: bool = False,
+    service: VulnerabilityService = Depends(get_service),
+) -> list[Vulnerability]:
+    return service.list_all(
+        project_id=project_id,
+        task_id=task_id,
+        search=search,
+        status=status,
+        severity=severity,
+        include_archived=include_archived,
+    )
 
 
 @router.post(
@@ -77,6 +98,62 @@ def list_vulnerabilities(
     service: VulnerabilityService = Depends(get_service),
 ) -> list[Vulnerability]:
     return service.list(task_id)
+
+
+@router.patch(
+    "/tasks/{task_id}/vulnerabilities/{vuln_id}",
+    response_model=Vulnerability,
+)
+def update_vulnerability(
+    task_id: str,
+    vuln_id: str,
+    body: UpdateVulnerability,
+    service: VulnerabilityService = Depends(get_service),
+) -> Vulnerability:
+    try:
+        return service.update(task_id, vuln_id, body)
+    except ValueError as exc:
+        detail = str(exc)
+        raise HTTPException(404 if "not found:" in detail.lower() else 409, detail) from exc
+
+
+@router.delete("/tasks/{task_id}/vulnerabilities/{vuln_id}", status_code=204)
+def delete_vulnerability(
+    task_id: str,
+    vuln_id: str,
+    service: VulnerabilityService = Depends(get_service),
+) -> None:
+    try:
+        service.archive(task_id, vuln_id)
+    except ValueError as exc:
+        detail = str(exc)
+        raise HTTPException(404 if "not found:" in detail.lower() else 409, detail) from exc
+
+
+@router.get(
+    "/tasks/{task_id}/vulnerabilities/{vuln_id}/export",
+    response_class=PlainTextResponse,
+)
+def export_vulnerability(
+    task_id: str,
+    vuln_id: str,
+    service: VulnerabilityService = Depends(get_service),
+) -> str:
+    vulnerability = next((item for item in service.list(task_id) if item.id == vuln_id), None)
+    if vulnerability is None:
+        raise HTTPException(404, "Vulnerability not found")
+    return _vulnerability_markdown(vulnerability)
+
+
+@router.get("/tasks/{task_id}/vulnerabilities-export", response_class=PlainTextResponse)
+def export_task_vulnerabilities(
+    task_id: str,
+    service: VulnerabilityService = Depends(get_service),
+) -> str:
+    items = service.list(task_id)
+    sections = [f"# AXIOM Vulnerability Report\n\nTask: `{task_id}`"]
+    sections.extend(_vulnerability_markdown(item, heading=2) for item in items)
+    return "\n\n---\n\n".join(sections) + "\n"
 
 
 @router.post("/tasks/{task_id}/vulnerabilities/{vuln_id}/external-preview")
@@ -145,3 +222,54 @@ def retry_failed_external_reports(
     service: ExternalReportService = Depends(get_external_service),
 ) -> list[ExternalReportAttempt]:
     return service.retry_failed(limit=limit)
+
+
+def _vulnerability_markdown(vulnerability: Vulnerability, *, heading: int = 1) -> str:
+    prefix = "#" * heading
+    steps = "\n".join(
+        f"{index}. {step}" for index, step in enumerate(vulnerability.reproduction_steps, start=1)
+    ) or "-"
+    evidence = "\n".join(f"- {item}" for item in vulnerability.evidence) or "-"
+    reason = (
+        f"\n\n**Status reason:** {vulnerability.status_reason}"
+        if vulnerability.status_reason
+        else ""
+    )
+    return f"""{prefix} {vulnerability.title}
+
+- ID: `{vulnerability.id}`
+- Severity: `{vulnerability.severity}`
+- Status: `{vulnerability.status}`
+- Type: `{vulnerability.type}`
+- Target: `{vulnerability.affected_target or '-'}`{reason}
+
+## Description
+
+{vulnerability.description}
+
+## Prerequisites
+
+{vulnerability.prerequisites or '-'}
+
+## Impact
+
+{vulnerability.impact}
+
+## Reproduction
+
+{steps}
+
+## Evidence
+
+{evidence}
+
+## Remediation
+
+{vulnerability.remediation or '-'}
+
+## cURL
+
+```bash
+{vulnerability.curl_command or '# not provided'}
+```
+""".strip()

@@ -9,6 +9,12 @@ description: 当需要检测和利用 SQL 注入漏洞时使用
 sqlmap -u "https://example.com/api?id=1"
 ```
 
+## 工具路径规范
+
+- 始终使用规范命令名 `sqlmap`，真实路径由 AXIOM Runner 统一注入 `PATH`。
+- 只允许用 `command -v sqlmap` 检查可用性；不可用时直接记录并跳过。
+- 禁止猜测绝对路径，禁止通过 `find /` 搜索工具或 Python 依赖。
+
 ## 常用参数（高频）
 
 ```bash

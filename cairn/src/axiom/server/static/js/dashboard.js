@@ -90,11 +90,9 @@ window.AxiomModules.dashboard = {
 
     settingsTabs() {
       return [
-        { id: 'workers', title: 'Worker 管理', description: 'PI worker、模型、密钥' },
-        { id: 'config', title: '配置管理', description: '并发、超时、健康检查' },
-        { id: 'proxy', title: '代理', description: 'SOCKS5 和认证' },
-        { id: 'judge', title: '裁判管理', description: '监管模型、密钥、白名单' },
-        { id: 'crawler', title: '爬虫 Worker', description: '爬虫专用模型配置' },
+        { id: 'workers', title: 'Worker 管理', description: '模型、阶段与并发配置' },
+        { id: 'config', title: '配置管理', description: '并发、超时、心跳与租约' },
+        { id: 'judge', title: 'Guard 管理', description: '监管模型、密钥与规则' },
       ];
     },
 
@@ -397,20 +395,20 @@ window.AxiomModules.dashboard = {
     // ── Vulnerability CRUD ──
     openVulnEditor(v) {
       if (v) {
-        this.vulnEditor = { open: true, isNew: false, project_id: v.project_id, id: v.id, title: v.title, description: v.description, prerequisites: v.prerequisites || '', impact: v.impact, evidence: (v.evidence||[]).join('\n'), reproduction_steps: (v.reproduction_steps||[]).join('\n'), severity: v.severity || 'medium', status: v.status, status_reason: v.status_reason || '' };
+        this.vulnEditor = { open: true, isNew: false, project_id: v.project_id, id: v.id, title: v.title, type: v.type || '通用漏洞', affected_target: v.affected_target || v.affected_scope || '', description: v.description, prerequisites: v.prerequisites || '', impact: v.impact, evidence: (v.evidence||[]).join('\n'), reproduction_steps: (v.reproduction_steps||[]).join('\n'), remediation: v.remediation || v.recommendation || '', curl_command: v.curl_command || '', severity: v.severity || 'medium', status: v.status, status_reason: v.status_reason || '' };
       } else {
-        this.vulnEditor = { open: true, isNew: true, project_id: '', id: '', title: '', description: '', prerequisites: '', impact: '', evidence: '', reproduction_steps: '', severity: 'medium', status: '待验证', status_reason: '' };
+        this.vulnEditor = { open: true, isNew: true, project_id: '', id: '', title: '', type: '通用漏洞', affected_target: '', description: '', prerequisites: '', impact: '', evidence: '', reproduction_steps: '', remediation: '', curl_command: '', severity: 'medium', status: '待验证', status_reason: '' };
       }
     },
 
     async saveVuln() {
       const ed = this.vulnEditor;
-      if (!ed.title || !ed.project_id) { this.showToast('标题和项目必填', 'error'); return; }
+      if (!ed.title || !ed.project_id) { this.showToast('标题和任务 ID 必填', 'error'); return; }
       if (ed.status === '忽略' && (ed.status_reason || '').trim().length < 4) {
         this.showToast('忽略状态需填写不少于 4 字的忽略原因', 'error');
         return;
       }
-      const body = { title: ed.title, severity: ed.severity || 'medium', description: ed.description, prerequisites: ed.prerequisites, impact: ed.impact, evidence: ed.evidence.split('\n').filter(Boolean), reproduction_steps: ed.reproduction_steps.split('\n').filter(Boolean), status: ed.status, status_reason: (ed.status_reason || '').trim(), source: 'manual', reported_by: this.actorName() };
+      const body = { title: ed.title, type: ed.type || '通用漏洞', severity: ed.severity || 'medium', affected_target: ed.affected_target || '', description: ed.description, prerequisites: ed.prerequisites, impact: ed.impact, evidence: ed.evidence.split('\n').filter(Boolean), reproduction_steps: ed.reproduction_steps.split('\n').filter(Boolean), remediation: ed.remediation || '', curl_command: ed.curl_command || '', status: ed.status, status_reason: (ed.status_reason || '').trim(), source: 'manual', reported_by: this.actorName() };
       try {
         if (ed.isNew) {
           await this.api('POST', `/projects/${ed.project_id}/vulns`, body);
@@ -494,6 +492,7 @@ window.AxiomModules.dashboard = {
         reproduction_steps: Array.isArray(current.reproduction_steps) ? current.reproduction_steps : [],
         recommendation: current.recommendation || '',
         affected_scope: current.affected_scope || '',
+        curl_command: current.curl_command || '',
         status: nextStatus,
         status_reason: (reason || '').trim(),
         source: current.source || 'manual',

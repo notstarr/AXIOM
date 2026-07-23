@@ -20,6 +20,7 @@ from axiom.dispatcher.protocol.client import CairnClient
 from axiom.dispatcher.runtime.cancellation import TaskCancellation
 from axiom.dispatcher.runtime.heartbeat import HeartbeatLease
 from axiom.dispatcher.runtime.process import ManagedProcess, ProcessResult
+from axiom.dispatcher.token_usage import extract_token_usage as _extract_token_usage
 from axiom.dispatcher.tools.gateway import default_gateway
 
 HEALTHCHECK_COMMUNICATE_GRACE_SECONDS = 10
@@ -459,122 +460,6 @@ def _sanitize_text(text: str) -> str:
         else:
             value = pattern.sub(r"\1***", value)
     return value
-
-
-def _extract_token_usage(stdout: str) -> dict[str, int] | None:
-    if not stdout.strip():
-        return None
-    candidates: list[dict[str, int]] = []
-    for line in stdout.splitlines():
-        raw = line.strip()
-        if not raw or not (raw.startswith("{") and raw.endswith("}")):
-            continue
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        for usage in _find_usage_candidates(payload):
-            if usage is not None:
-                candidates.append(usage)
-    if not candidates:
-        return None
-    return max(candidates, key=lambda item: item["total_tokens"])
-
-
-def _find_usage_candidates(value: Any) -> list[dict[str, int] | None]:
-    hits: list[dict[str, int] | None] = []
-    if isinstance(value, dict):
-        parsed = _normalize_usage_map(value)
-        if parsed is not None:
-            hits.append(parsed)
-        for nested in value.values():
-            hits.extend(_find_usage_candidates(nested))
-    elif isinstance(value, list):
-        for item in value:
-            hits.extend(_find_usage_candidates(item))
-    return hits
-
-
-def _normalize_usage_map(payload: dict[str, Any]) -> dict[str, int] | None:
-    # pi uses "input"/"output"/"totalTokens"; OpenAI uses "input_tokens"/"output_tokens"
-    input_tokens = _to_non_negative_int(
-        payload.get("input_tokens",
-        payload.get("prompt_tokens",
-        payload.get("inputTokens",
-        payload.get("input"))))  # pi native format
-    )
-    output_tokens = _to_non_negative_int(
-        payload.get("output_tokens",
-        payload.get("completion_tokens",
-        payload.get("outputTokens",
-        payload.get("output"))))  # pi native format
-    )
-    cache_read_tokens = _to_non_negative_int(
-        payload.get("cache_read_tokens",
-        payload.get("cached_tokens",
-        payload.get("cacheRead",
-        payload.get("cache_read"))))
-    )
-    cache_write_tokens = _to_non_negative_int(
-        payload.get("cache_write_tokens",
-        payload.get("cacheWrite",
-        payload.get("cache_write")))
-    )
-    reasoning_tokens = _to_non_negative_int(
-        payload.get("reasoning_tokens",
-        payload.get("reasoningTokens",
-        payload.get("reasoning")))
-    )
-    total_tokens = _to_non_negative_int(payload.get("total_tokens", payload.get("totalTokens")))
-    if (
-        input_tokens is None
-        and output_tokens is None
-        and cache_read_tokens is None
-        and cache_write_tokens is None
-        and reasoning_tokens is None
-        and total_tokens is None
-    ):
-        return None
-    if input_tokens is None:
-        input_tokens = 0
-    if output_tokens is None:
-        output_tokens = 0
-    if cache_read_tokens is None:
-        cache_read_tokens = 0
-    if cache_write_tokens is None:
-        cache_write_tokens = 0
-    if reasoning_tokens is None:
-        reasoning_tokens = 0
-    if total_tokens is None:
-        total_tokens = input_tokens + output_tokens + cache_read_tokens + cache_write_tokens
-    result = {
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "total_tokens": total_tokens,
-    }
-    if cache_read_tokens:
-        result["cache_read_tokens"] = cache_read_tokens
-    if cache_write_tokens:
-        result["cache_write_tokens"] = cache_write_tokens
-    if reasoning_tokens:
-        result["reasoning_tokens"] = reasoning_tokens
-    return result
-
-
-def _to_non_negative_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value if value >= 0 else None
-    if isinstance(value, float):
-        iv = int(value)
-        return iv if iv >= 0 else None
-    if isinstance(value, str) and value.strip().isdigit():
-        iv = int(value.strip())
-        return iv if iv >= 0 else None
-    return None
 
 
 def project_allows_conclude_fallback(client: CairnClient, project_id: str, *, worker_name: str, intent_id: str) -> bool:

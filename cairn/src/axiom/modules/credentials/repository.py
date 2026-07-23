@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import Connection, select
+from sqlalchemy import Connection, delete, select, update
 
 from axiom.infrastructure.database.metadata import credentials
 from axiom.modules.common.ids import allocate_readable_id
-from axiom.modules.credentials.schemas import CreateCredential, Credential
+from axiom.modules.credentials.schemas import CreateCredential, Credential, UpdateCredential
 
 
 class CredentialRepository:
@@ -26,7 +26,7 @@ class CredentialRepository:
             "credentials_json": json.dumps(body.data, ensure_ascii=False),
             "domains_json": json.dumps(body.domains, ensure_ascii=False),
             "notes": body.notes,
-            "active": True,
+            "active": body.active,
             "created_at": now,
             "updated_at": now,
         }
@@ -45,6 +45,32 @@ class CredentialRepository:
             query = query.where(credentials.c.active.is_(True))
         rows = conn.execute(query.order_by(credentials.c.label, credentials.c.id)).mappings()
         return [self._to_model(row) for row in rows]
+
+    def update(
+        self,
+        conn: Connection,
+        credential_id: str,
+        body: UpdateCredential,
+        *,
+        now: str,
+    ) -> Credential | None:
+        values = body.model_dump(exclude_none=True)
+        if "data" in values:
+            values["credentials_json"] = json.dumps(values.pop("data"), ensure_ascii=False)
+        if "domains" in values:
+            values["domains_json"] = json.dumps(values.pop("domains"), ensure_ascii=False)
+        if not values:
+            return self.get(conn, credential_id)
+        values["updated_at"] = now
+        result = conn.execute(
+            update(credentials).where(credentials.c.id == credential_id).values(**values)
+        )
+        return self.get(conn, credential_id) if result.rowcount else None
+
+    def delete(self, conn: Connection, credential_id: str) -> bool:
+        return bool(
+            conn.execute(delete(credentials).where(credentials.c.id == credential_id)).rowcount
+        )
 
     @staticmethod
     def _to_model(row) -> Credential:

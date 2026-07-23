@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, and_, or_, select
 
 from axiom.infrastructure.database.metadata import audit_events
 from axiom.modules.audit.schemas import AuditEvent, RecordAuditEvent
@@ -41,6 +41,10 @@ class AuditService:
         project_id: str | None = None,
         task_id: str | None = None,
         intent_id: str | None = None,
+        event_type: str | None = None,
+        level: str | None = None,
+        search: str = "",
+        after_id: str | None = None,
         limit: int = 500,
     ) -> list[AuditEvent]:
         query = select(audit_events)
@@ -50,10 +54,42 @@ class AuditService:
             query = query.where(audit_events.c.task_id == task_id)
         if intent_id:
             query = query.where(audit_events.c.intent_id == intent_id)
-        query = query.order_by(audit_events.c.created_at.desc(), audit_events.c.id.desc()).limit(
-            min(max(limit, 1), 2000)
-        )
+        if event_type:
+            query = query.where(audit_events.c.event_type == event_type)
+        if level:
+            query = query.where(audit_events.c.level == level)
+        if search:
+            pattern = f"%{search.strip()}%"
+            query = query.where(
+                or_(
+                    audit_events.c.message.ilike(pattern),
+                    audit_events.c.worker.ilike(pattern),
+                    audit_events.c.payload_json.ilike(pattern),
+                )
+            )
         with self.engine.connect() as conn:
+            if after_id is not None:
+                cursor = conn.execute(
+                    select(audit_events.c.created_at, audit_events.c.id).where(
+                        audit_events.c.id == after_id
+                    )
+                ).mappings().one_or_none()
+                if cursor is not None:
+                    query = query.where(
+                        or_(
+                            audit_events.c.created_at > cursor["created_at"],
+                            and_(
+                                audit_events.c.created_at == cursor["created_at"],
+                                audit_events.c.id > cursor["id"],
+                            ),
+                        )
+                    )
+                query = query.order_by(audit_events.c.created_at, audit_events.c.id)
+            else:
+                query = query.order_by(
+                    audit_events.c.created_at.desc(), audit_events.c.id.desc()
+                )
+            query = query.limit(min(max(limit, 1), 2000))
             return [self._model(row) for row in conn.execute(query).mappings()]
 
     @staticmethod

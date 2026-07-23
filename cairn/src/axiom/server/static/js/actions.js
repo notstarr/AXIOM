@@ -137,7 +137,7 @@ window.AxiomModules.actions = {
         }
         this.blackboardEditor = { open: false, id: '', title: '', content: '', hint: '' };
         await this.reloadBlackboardGroup(gid);
-        this.showToast('黑板已保存');
+        this.showToast('共享知识已保存');
       } catch (e) { this.showToast(e.message, 'error'); }
     },
 
@@ -147,7 +147,7 @@ window.AxiomModules.actions = {
       try {
         await this.api('DELETE', `/project-groups/${gid}/blackboard/${itemId}`);
         await this.reloadBlackboardGroup(gid);
-        this.showToast('黑板已删除');
+        this.showToast('共享知识已删除');
       } catch (e) { this.showToast(e.message, 'error'); }
     },
 
@@ -161,6 +161,8 @@ window.AxiomModules.actions = {
       const items = await this.api('GET', `/project-groups/${groupId}/blackboard`);
       this._groupBlackboardCache = this._groupBlackboardCache || {};
       this._groupBlackboardCache[groupId] = items;
+      const group = (this.projectGroups || []).find(item => item.id === groupId);
+      if (group) group.blackboard_count = items.length;
     },
 
     groupBlackboardItems() {

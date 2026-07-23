@@ -9,6 +9,13 @@ description: 当需要探测 HTTP 服务存活、获取标题和状态码时使�
 httpx -l subdomains.txt
 ```
 
+## 工具路径规范
+
+- 始终使用规范命令名 `httpx`，由 AXIOM Runner 通过 `PATH` 解析真实路径。
+- 可用 `command -v httpx` 做一次轻量检查；不存在就报告工具不可用。
+- 禁止猜测或硬编码 `.workbuddy`、`/usr/local/bin`、Homebrew 等机器路径。
+- 禁止使用 `find /` 搜索二进制或依赖文件。
+
 ## 常用参数
 
 ```bash
@@ -24,16 +31,16 @@ httpx -l subdomains.txt -silent
 # 获取标题、状态码、技术栈
 httpx -l subdomains.txt -title -status-code -tech-detect
 
-//指定输出文件
+# 指定输出文件
 httpx -l subdomains.txt -o alive.txt
 
-//只看 200 状态码
+# 只看 200 状态码
 httpx -l subdomains.txt -mc 200
 
-//截图（需要 chromedp）
+# 截图（需要 chromedp）
 httpx -l subdomains.txt -screenshot
 
-//探测特定端口
+# 探测特定端口
 httpx -l subdomains.txt -p 80,443,8080,8443,3000
 ```
 

@@ -223,6 +223,11 @@ window.AxiomModules.dispatch = {
         reason_timeout: data.reason_timeout || 300,
         reason_max_intents: data.reason_max_intents || 2,
         depth_reason_max_intents: data.depth_reason_max_intents || 5,
+        reason_batch_size: data.reason_batch_size ?? 2,
+        reason_low_watermark: data.reason_low_watermark ?? 1,
+        reason_max_wait_seconds: data.reason_max_wait_seconds ?? 180,
+        reason_min_interval_seconds: data.reason_min_interval_seconds ?? 60,
+        reason_target_open_intents: data.reason_target_open_intents || data.reason_max_intents || 4,
         workers: (data.workers || []).map(worker => this.decorateWorkerDraft(worker)),
         config_version: data.config_version || 1,
         config_updated_at: data.config_updated_at || '',
@@ -237,6 +242,9 @@ window.AxiomModules.dispatch = {
       this.settingsForm.proxy_username = data.proxy_username || '';
       this.settingsForm.proxy_password = data.proxy_password || '';
       this.settingsForm.proxy_enabled = !!data.proxy_enabled;
+      this.settingsForm.bootstrap_worker_count = data.bootstrap_worker_count || 1;
+      this.settingsForm.explore_worker_count = data.explore_worker_count || 2;
+      this.settingsForm.reason_worker_count = data.reason_worker_count || 1;
     },
 
     nextWorkerDraftId() {
@@ -552,6 +560,11 @@ window.AxiomModules.dispatch = {
         reason_timeout: Number(this.dispatchSettings.reason_timeout || 300),
         reason_max_intents: Number(this.dispatchSettings.reason_max_intents || 2),
         depth_reason_max_intents: Number(this.dispatchSettings.depth_reason_max_intents || 5),
+        reason_batch_size: Number(this.dispatchSettings.reason_batch_size ?? 2),
+        reason_low_watermark: Number(this.dispatchSettings.reason_low_watermark ?? 1),
+        reason_max_wait_seconds: Number(this.dispatchSettings.reason_max_wait_seconds ?? 180),
+        reason_min_interval_seconds: Number(this.dispatchSettings.reason_min_interval_seconds ?? 60),
+        reason_target_open_intents: Number(this.dispatchSettings.reason_target_open_intents || 4),
         bootstrap_worker_count: Number(this.settingsForm.bootstrap_worker_count || 1),
         explore_worker_count: Number(this.settingsForm.explore_worker_count || 2),
         reason_worker_count: Number(this.settingsForm.reason_worker_count || 1),
