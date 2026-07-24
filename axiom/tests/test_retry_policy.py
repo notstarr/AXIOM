@@ -62,6 +62,8 @@ def test_execution_failures_use_server_owned_backoff_and_stop_at_limit(client, e
             .values(next_retry_at="2020-01-01T00:00:00Z")
         )
     claim2 = client.post(f"{base}/claim", json={"worker_name": "worker-a"}).json()
+    claimed_intent = client.get(f"/api/v1/tasks/{task['id']}/graph").json()["intents"][0]
+    assert claimed_intent["next_retry_at"] is None
     client.post(f"{base}/start", json={"lease_id": claim2["lease_id"]})
     second = client.post(
         f"{base}/release",

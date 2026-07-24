@@ -130,7 +130,7 @@ def test_explore_completion_atomically_registers_artifact_fact_and_reason(client
     reason = next(item for item in graph["intents"] if item["id"] == "i004")
     assert explore["status"] == "completed"
     assert explore["to_fact_id"] == "f002"
-    assert reason["from_facts"] == ["f002", "goal"]
+    assert reason["from_facts"] == ["f002"]
     assert client.get(f"/api/v1/tasks/{task['id']}").json()["phase"] == "reason"
 
 
@@ -145,7 +145,7 @@ def test_reason_trigger_batches_new_facts_while_explore_backlog_remains(client) 
     assert second["reason_intent_id"] == "i007"
     graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
     reason = next(item for item in graph["intents"] if item["id"] == "i007")
-    assert reason["from_facts"] == ["f002", "f003", "goal"]
+    assert reason["from_facts"] == ["f002", "f003"]
 
 
 def test_explore_completion_is_idempotent_for_the_same_lease(client) -> None:

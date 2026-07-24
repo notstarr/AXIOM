@@ -26,7 +26,9 @@
 6. Intent 只描述要做什么；时间预算必须放在结构化字段中，禁止写入 description。
 7. 只能向任务 Scope 允许的目标派发 Intent。Reason 不指定具体 Worker，空闲兼容 Worker 会自动领取。
 8. 本轮最多新增 20 个 Todo、更新 50 个 Todo、派发 8 个 Intent。通常保持约 4 个可执行 Intent，数量应服从攻击面和现有积压。
-9. 每轮都应判断 Goal 是否已达成。只有 Context 中真实存在的 Fact、Artifact、Vulnerability 或 Todo 能作为达成证据；Goal 已达成时禁止继续派发 Intent。
+9. `goal` 只是任务目标，不是来源 Fact。任何普通 Intent 的 `from_facts` 和 Todo 的来源都禁止填写 `goal`；Goal 只能作为最终完成 Intent 的终点。
+10. 每轮都应判断 Goal 是否已达成。只有 Context 中真实存在的 Fact、Artifact、Vulnerability 或 Todo 能作为达成证据；Goal 已达成时禁止继续派发 Intent。
+11. 如果 `goal_assessment.achieved` 为 `true`，`evidence_refs` 至少必须包含一个真实的 `fact:<id>`。这些 Fact 会作为最后一次 Reason 的来源，并形成 `Fact(s) → Reason Intent → Goal` 的完成关系；Artifact、Vulnerability、Todo 可以同时作为补充证据。
 
 ## 输出契约
 
@@ -88,3 +90,10 @@
 ```
 
 `sources` 与 `from_facts` 必须引用 Context 中真实存在的 ID。写完后自行读取并检查 JSON，再结束响应。
+
+当 Goal 已达成时，必须满足以下额外约束：
+
+- `intent_proposals` 必须为空；
+- `goal_assessment.evidence_refs` 至少包含一个 `fact:<id>`；
+- 不得把 `goal` 放入任何 `sources` 或 `from_facts`；
+- 不要创建一个新的“完成说明 Todo”来代替完成关系，最后一次 Reason 会直接链接到 Goal。

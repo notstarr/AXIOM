@@ -94,15 +94,20 @@ class GoalService:
             "todo": (todos, todos.c.id),
             "hint": (task_hints, task_hints.c.id),
         }
+        completion_fact_refs = 0
         for ref in refs:
             kind, separator, item_id = ref.partition(":")
             if not separator or kind not in tables:
                 raise ConflictError(f"Unsupported Goal evidence ref: {ref}")
+            if kind == "fact" and item_id == "goal":
+                raise ConflictError("Goal Fact cannot be used as Goal evidence")
             table, id_column = tables[kind]
             exists = conn.execute(
                 select(id_column).where(table.c.task_id == task_id, id_column == item_id)
             ).scalar_one_or_none()
             if exists is None:
                 raise ConflictError(f"Goal evidence not found: {ref}")
-        if achieved and refs and all(ref.startswith("hint:") for ref in refs):
-            raise ConflictError("A completed Goal requires evidence beyond Task Hints")
+            if kind == "fact":
+                completion_fact_refs += 1
+        if achieved and completion_fact_refs == 0:
+            raise ConflictError("An achieved Goal requires at least one Fact evidence ref")

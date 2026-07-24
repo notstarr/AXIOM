@@ -291,6 +291,48 @@ def test_reason_scope_failure_rolls_back_the_whole_plan(client) -> None:
     assert [item["id"] for item in graph["intents"]] == ["i001", "i002"]
 
 
+def test_reason_rejects_goal_as_an_explore_intent_source(client) -> None:
+    task, reason_claim, completed = active_reason(client)
+    workspace = client.post(
+        f"/api/v1/tasks/{task['id']}/reason/workspaces",
+        json={
+            "intent_id": reason_claim["intent_id"],
+            "lease_id": reason_claim["lease_id"],
+            "context_revision": reason_claim["context_revision"],
+        },
+    ).json()
+    response = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/submit",
+        json={
+            "lease_id": reason_claim["lease_id"],
+            "draft": {
+                "todo_adds": [
+                    {
+                        "ref": "invalid-goal-source",
+                        "title": "错误来源测试",
+                        "category": "other",
+                        "sources": [{"type": "fact", "id": completed["fact_id"]}],
+                    }
+                ],
+                "intent_proposals": [
+                    {
+                        "todo_ref": "invalid-goal-source",
+                        "from_facts": ["goal"],
+                        "description": "不应从 Goal 派发 Explore Intent",
+                        "targets": ["a.example.com"],
+                        "execute_seconds": 300,
+                        "conclude_seconds": 60,
+                    }
+                ],
+            },
+        },
+    )
+
+    assert response.status_code == 409
+    assert "Goal Fact cannot be used as an Intent source" in response.json()["error"]["message"]
+    assert client.get(f"/api/v1/tasks/{task['id']}/todos").json() == []
+
+
 def test_reason_scope_accepts_the_explicit_origin_port(client) -> None:
     task, reason_claim, completed = active_reason(
         client,

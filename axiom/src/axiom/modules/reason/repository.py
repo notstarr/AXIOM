@@ -44,7 +44,9 @@ class ReasonRepository:
                 archived=False,
             )
         )
-        sources = list(dict.fromkeys([*source_fact_ids, "goal"]))
+        sources = list(dict.fromkeys(source_fact_ids))
+        if "goal" in sources:
+            raise ValueError("Goal Fact cannot be used as an Intent source")
         conn.execute(
             intent_sources.insert(),
             [

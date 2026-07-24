@@ -13,6 +13,7 @@ from axiom.modules.context.service import ContextService
 from axiom.modules.credentials.repository import CredentialRepository
 from axiom.modules.execution.repository import ExecutionRepository
 from axiom.modules.execution.schemas import (
+    ActivityCommand,
     BootstrapCompleted,
     CompleteBootstrapCommand,
     CompleteExploreCommand,
@@ -66,6 +67,20 @@ class ExecutionService:
                 raise LeaseInactiveError("Task is not running")
             if row["intent_status"] not in {"claimed", "running", "concluding"}:
                 raise LeaseInactiveError("Intent lease is not active")
+            # Bootstrap and Reason are created without per-Intent budgets.  The
+            # effective budget must therefore be resolved here, at the single
+            # boundary where execution input is built.  Previously the NULL
+            # values passed through to Pi, which silently selected its legacy
+            # fallbacks (900s Bootstrap execute / 180s conclude), ignoring the
+            # values configured in the UI and persisted in RuntimeConfig.
+            runtime = load_runtime_config(conn)
+            execute_timeout = row["execute_timeout_seconds"]
+            conclude_timeout = row["conclude_timeout_seconds"]
+            if row["kind"] == "bootstrap":
+                execute_timeout = execute_timeout or runtime.bootstrap_execute_seconds
+                conclude_timeout = conclude_timeout or runtime.bootstrap_conclude_seconds
+            elif row["kind"] == "reason":
+                execute_timeout = execute_timeout or runtime.reason_execute_seconds
             values = {
                 "worker_name": row["worker"] or "",
                 "intent_kind": row["kind"],
@@ -78,8 +93,8 @@ class ExecutionService:
                 "goal": row["goal"],
                 "hints": self.repository.hints(conn, task_id),
                 "scope": self.repository.parse_scope(row),
-                "execute_timeout_seconds": row["execute_timeout_seconds"],
-                "conclude_timeout_seconds": row["conclude_timeout_seconds"],
+                "execute_timeout_seconds": execute_timeout,
+                "conclude_timeout_seconds": conclude_timeout,
                 "phase": row["kind"],
             }
         context = self.context.build(
@@ -170,6 +185,27 @@ class ExecutionService:
                 task_id=task_id,
                 intent_id=intent_id,
                 lease_id=command.lease_id,
+                now=utcnow(),
+            ):
+                raise LeaseInactiveError("Intent lease is no longer active")
+
+    def activity(self, *, task_id: str, intent_id: str, command: ActivityCommand) -> None:
+        with immediate_transaction(self.engine) as conn:
+            row = self.repository.input_row(conn, task_id, intent_id)
+            self._require_row(row, task_id, intent_id)
+            self._require_lease(row, command.lease_id)
+            if row["task_status"] != "running":
+                raise LeaseInactiveError("Task is not running")
+            if row["intent_status"] not in {"claimed", "running", "concluding"}:
+                raise LeaseInactiveError("Intent lease is not active")
+            if not self.repository.update_activity(
+                conn,
+                task_id=task_id,
+                intent_id=intent_id,
+                lease_id=command.lease_id,
+                activity_kind=command.activity_kind,
+                activity_summary=command.activity_summary,
+                activity_tool=command.activity_tool,
                 now=utcnow(),
             ):
                 raise LeaseInactiveError("Intent lease is no longer active")

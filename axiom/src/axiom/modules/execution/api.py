@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
 from axiom.modules.execution.schemas import (
+    ActivityCommand,
     BootstrapCompleted,
     CompleteBootstrapCommand,
     CompleteExploreCommand,
@@ -48,6 +49,16 @@ def heartbeat_intent(
     container: Container = Depends(get_container),
 ) -> None:
     container.execution.heartbeat(task_id=task_id, intent_id=intent_id, command=body)
+
+
+@router.post("/tasks/{task_id}/intents/{intent_id}/activity", status_code=204)
+def update_intent_activity(
+    task_id: str,
+    intent_id: str,
+    body: ActivityCommand,
+    container: Container = Depends(get_container),
+) -> None:
+    container.execution.activity(task_id=task_id, intent_id=intent_id, command=body)
 
 
 @router.post("/tasks/{task_id}/intents/{intent_id}/conclude", status_code=204)

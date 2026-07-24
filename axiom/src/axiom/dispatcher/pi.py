@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -10,13 +11,14 @@ from axiom.dispatcher.bootstrap import (
     BootstrapExecutionTimeout,
     TransientWorkerError,
 )
+from axiom.dispatcher.activity import SessionActivityTracker
 from axiom.dispatcher.heartbeat import LeaseLostError
 from axiom.dispatcher.explore import ExploreExecutionTimeout
 from axiom.dispatcher.process import ProcessResult, ProcessSpec, ProcessSupervisor
 from axiom.dispatcher.reason import ReasonExecutionTimeout, ReasonPlanError
 from axiom.dispatcher.tool_path import build_tool_path
 from axiom.modules.artifacts.schemas import BootstrapBundle
-from axiom.modules.execution.schemas import ExecutionInput
+from axiom.modules.execution.schemas import ActivityCommand, ExecutionInput
 from axiom.modules.reason.schemas import WorkspaceDraft
 from axiom.modules.workers.pi_config import PiWorkerConfig
 from axiom.modules.workers.schemas import Worker
@@ -46,12 +48,14 @@ class PiBootstrapExecutor:
         supervisor: ProcessSupervisor | None = None,
         prompt_renderer: PromptRenderer | None = None,
         default_conclude_seconds: int = 180,
+        activity_reporter: Callable[[ActivityCommand], None] | None = None,
     ):
         self.worker = worker
         self.settings = PiSettings.model_validate(worker.config)
         self.supervisor = supervisor or ProcessSupervisor()
         self.prompts = prompt_renderer or PromptRenderer()
         self.default_conclude_seconds = default_conclude_seconds
+        self.activity_reporter = activity_reporter
         self._session_id: str | None = None
 
     def execute(self, execution_input: ExecutionInput, *, lease_active) -> object:
@@ -151,15 +155,33 @@ class PiBootstrapExecutor:
             skill_paths=execution_input.skill_directories,
             guard_enabled=execution_input.guard_enabled,
         )
-        return self.supervisor.run(
-            ProcessSpec(
-                command=argv,
-                log_dir=Path(execution_input.run_dir) / "process",
-                timeout_seconds=timeout_seconds,
-                environment=environment,
-            ),
-            should_cancel=lambda: None if lease_active() else "lease_lost",
+        tracker = (
+            SessionActivityTracker(session_dir, execution_input.lease_id, self.activity_reporter)
+            if self.activity_reporter is not None
+            else None
         )
+        if tracker is not None:
+            tracker.start()
+        try:
+            result = self.supervisor.run(
+                ProcessSpec(
+                    command=argv,
+                    log_dir=Path(execution_input.run_dir) / "process",
+                    timeout_seconds=timeout_seconds,
+                    environment=environment,
+                ),
+                should_cancel=lambda: (
+                    "lease_lost"
+                    if (tracker is not None and tracker.lease_lost) or not lease_active()
+                    else None
+                ),
+            )
+        finally:
+            if tracker is not None:
+                tracker.stop()
+        if tracker is not None and tracker.lease_lost:
+            raise LeaseLostError("Intent activity lease is no longer active")
+        return result
 
     def _build_argv(
         self,

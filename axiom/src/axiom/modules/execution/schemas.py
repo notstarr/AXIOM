@@ -21,6 +21,25 @@ class LeaseCommand(BaseModel):
         return value
 
 
+class ActivityCommand(LeaseCommand):
+    activity_kind: str = Field(min_length=1, max_length=40)
+    activity_summary: str = Field(min_length=1, max_length=500)
+    activity_tool: str = Field(default="", max_length=120)
+
+    @field_validator("activity_kind", "activity_summary")
+    @classmethod
+    def require_activity_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("activity text must not be empty")
+        return value
+
+    @field_validator("activity_tool")
+    @classmethod
+    def normalize_activity_tool(cls, value: str) -> str:
+        return value.strip()
+
+
 class ReleaseIntentCommand(LeaseCommand):
     failure_kind: str = ""
     failure_class: Literal["execution", "transient"] = "execution"

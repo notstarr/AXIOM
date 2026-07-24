@@ -1059,6 +1059,7 @@ window.AxiomModules.graph = {
       const labels = {
         starting: '准备中',
         tool_running: '工具执行中',
+        tool_result: '分析结果',
         tool_waiting: '等待工具',
         analyzing: '分析结果',
         organizing: '整理产物',
@@ -1102,6 +1103,8 @@ window.AxiomModules.graph = {
         updating_todos: '更新 Todo',
         planning_intents: '规划 Intent',
         submitting: '提交结果',
+        tool_running: '工具执行中',
+        tool_result: '分析结果',
         failed: '未完成',
         finished: '已完成',
       };

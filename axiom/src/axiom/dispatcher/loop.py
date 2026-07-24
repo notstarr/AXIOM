@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from axiom.dispatcher.ports import DispatchControlPlane
 from axiom.dispatcher.reconciler import Reconciler
-from axiom.dispatcher.schemas import DispatchReport
+from axiom.dispatcher.schemas import DispatchReport, DispatcherSnapshot
 
 
 class Dispatcher:
@@ -17,8 +17,13 @@ class Dispatcher:
         self.control_plane = control_plane
         self.reconciler = reconciler or Reconciler()
 
-    def tick(self, *, max_claims: int | None = None) -> DispatchReport:
-        snapshot = self.control_plane.snapshot()
+    def tick(
+        self,
+        *,
+        max_claims: int | None = None,
+        snapshot: DispatcherSnapshot | None = None,
+    ) -> DispatchReport:
+        snapshot = snapshot or self.control_plane.snapshot()
         actions = self.reconciler.calculate(snapshot)
         if max_claims is not None:
             if max_claims < 0:

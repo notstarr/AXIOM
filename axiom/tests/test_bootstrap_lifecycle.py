@@ -137,3 +137,53 @@ def test_old_lease_cannot_heartbeat_after_task_stop(client) -> None:
 
     assert stale.status_code == 409
     assert stale.json()["error"]["message"] == "Intent lease is no longer active"
+
+
+def test_activity_updates_live_intent_and_requires_the_active_lease(client) -> None:
+    task, claim = setup_claimed_bootstrap(client)
+    base = f"/api/v1/dispatch/tasks/{task['id']}/intents/i001"
+    client.post(f"{base}/start", json={"lease_id": claim["lease_id"]})
+
+    activity = client.post(
+        f"{base}/activity",
+        json={
+            "lease_id": claim["lease_id"],
+            "activity_kind": "tool_running",
+            "activity_summary": "正在执行 subfinder 子域名枚举",
+            "activity_tool": "subfinder",
+        },
+    )
+    assert activity.status_code == 204, activity.text
+    intent = client.get(f"/api/v1/tasks/{task['id']}/graph").json()["intents"][0]
+    assert intent["activity_kind"] == "tool_running"
+    assert intent["activity_summary"] == "正在执行 subfinder 子域名枚举"
+    assert intent["activity_tool"] == "subfinder"
+
+    stale = client.post(
+        f"{base}/activity",
+        json={
+            "lease_id": "lease-stale",
+            "activity_kind": "tool_running",
+            "activity_summary": "不应写入",
+        },
+    )
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "lease_inactive"
+
+
+def test_activity_is_rejected_after_task_stop(client) -> None:
+    task, claim = setup_claimed_bootstrap(client)
+    base = f"/api/v1/dispatch/tasks/{task['id']}/intents/i001"
+    client.post(f"{base}/start", json={"lease_id": claim["lease_id"]})
+    client.post(f"/api/v1/tasks/{task['id']}/stop")
+
+    response = client.post(
+        f"{base}/activity",
+        json={
+            "lease_id": claim["lease_id"],
+            "activity_kind": "tool_running",
+            "activity_summary": "不应写入",
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "lease_inactive"

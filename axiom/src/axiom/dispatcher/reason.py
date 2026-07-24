@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from typing import Protocol
 
@@ -82,14 +83,17 @@ class ReasonRunner:
         control_plane: ReasonControlPlane,
         *,
         heartbeat_interval_seconds: float = 10.0,
+        cancellation: threading.Event | None = None,
     ):
         self.control_plane = control_plane
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
+        self.cancellation = cancellation
 
     def run(self, work: ClaimedIntent, executor: ReasonExecutor) -> CommitResult:
         heartbeat = LeaseHeartbeat(
             lambda: self.control_plane.heartbeat(work),
             interval_seconds=self.heartbeat_interval_seconds,
+            cancellation=self.cancellation,
         )
         workspace: ReasonWorkspace | None = None
         try:

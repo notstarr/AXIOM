@@ -8,6 +8,7 @@ from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
 from axiom.modules.graph.tables import facts, intent_sources, intents
 from axiom.modules.goals.repository import GoalRepository
+from axiom.modules.goals.schemas import GoalAssessment
 from axiom.modules.goals.service import GoalService
 from axiom.modules.context.tables import context_revisions
 from axiom.modules.reason.repository import ReasonRepository
@@ -451,6 +452,34 @@ class ReasonService:
                     achieved=assessment.achieved,
                 )
 
+            completion_fact_ids = self._fact_evidence_ids(assessment)
+            if assessment and assessment.achieved:
+                existing_source_ids = set(
+                    conn.execute(
+                        select(intent_sources.c.fact_id).where(
+                            intent_sources.c.task_id == workspace.task_id,
+                            intent_sources.c.intent_id == workspace.intent_id,
+                        )
+                    ).scalars()
+                )
+                missing_source_ids = [
+                    fact_id
+                    for fact_id in completion_fact_ids
+                    if fact_id not in existing_source_ids
+                ]
+                if missing_source_ids:
+                    conn.execute(
+                        intent_sources.insert(),
+                        [
+                            {
+                                "task_id": workspace.task_id,
+                                "intent_id": workspace.intent_id,
+                                "fact_id": fact_id,
+                            }
+                            for fact_id in missing_source_ids
+                        ],
+                    )
+
             for update_command in draft.todo_updates:
                 if update_command.todo_id in todo_refs:
                     continue
@@ -534,6 +563,21 @@ class ReasonService:
                 )
                 created_vulnerability_ids.append(vulnerability.id)
 
+            completion_values = {
+                "status": "completed",
+                "concluded_at": now,
+                "last_heartbeat_at": now,
+                "next_retry_at": None,
+                "last_failure_kind": "",
+                "failure_class": "",
+                "activity_kind": "completed",
+                "activity_summary": "Reason 已完成规划并提交",
+                "activity_tool": "",
+                "activity_updated_at": now,
+            }
+            if assessment and assessment.achieved:
+                completion_values["to_fact_id"] = "goal"
+
             completed = conn.execute(
                 update(intents)
                 .where(
@@ -542,18 +586,7 @@ class ReasonService:
                     intents.c.lease_id == lease_id,
                     intents.c.status.in_(["running", "concluding"]),
                 )
-                .values(
-                    status="completed",
-                    concluded_at=now,
-                    last_heartbeat_at=now,
-                    next_retry_at=None,
-                    last_failure_kind="",
-                    failure_class="",
-                    activity_kind="completed",
-                    activity_summary="Reason 已完成规划并提交",
-                    activity_tool="",
-                    activity_updated_at=now,
-                )
+                .values(**completion_values)
             )
             if not completed.rowcount:
                 raise ConflictError("Reason completion lost a concurrent race")
@@ -656,6 +689,8 @@ class ReasonService:
 
     def _validate_sources(self, conn, task_id: str, sources: list[TodoSource]) -> None:
         for source in sources:
+            if source.type == "fact" and source.id == "goal":
+                raise ConflictError("Goal Fact cannot be used as a Todo source")
             if not self.todos.source_exists(conn, task_id=task_id, source=source):
                 raise ConflictError(f"Todo source not found: {source.type}:{source.id}")
 
@@ -665,6 +700,8 @@ class ReasonService:
                 raise ConflictError(f"Intent references unknown Todo draft: {proposal.todo_ref}")
         if proposal.todo_id and self.todos.get(conn, task_id, proposal.todo_id) is None:
             raise NotFoundError(f"Todo not found: {proposal.todo_id}")
+        if "goal" in proposal.from_facts:
+            raise ConflictError("Goal Fact cannot be used as an Intent source")
         for fact_id in proposal.from_facts:
             exists = conn.execute(
                 select(facts.c.id).where(
@@ -712,3 +749,16 @@ class ReasonService:
         if host == task.origin.host and task.origin.port is not None:
             return candidate.port == task.origin.port
         return True
+
+    @staticmethod
+    def _fact_evidence_ids(assessment: GoalAssessment | None) -> list[str]:
+        if assessment is None:
+            return []
+        return list(
+            dict.fromkeys(
+                item_id
+                for ref in assessment.evidence_refs
+                for kind, separator, item_id in [ref.partition(":")]
+                if separator and kind == "fact" and item_id
+            )
+        )

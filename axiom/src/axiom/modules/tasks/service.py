@@ -4,7 +4,6 @@ import json
 
 from sqlalchemy import Engine, func, select, update
 
-from axiom.modules.audit.tables import audit_events
 from axiom.modules.graph.repository import GraphRepository
 from axiom.modules.graph.tables import facts, intents
 from axiom.modules.projects.repository import ProjectRepository
@@ -243,33 +242,25 @@ class TaskService:
                 .order_by(intents.c.created_at.desc(), intents.c.id.desc())
                 .limit(1)
             ).mappings().one_or_none()
-            activity = None
-            if reason is not None:
-                activity = conn.execute(
-                    select(audit_events)
-                    .where(
-                        audit_events.c.task_id == task.id,
-                        audit_events.c.intent_id == reason["id"],
-                    )
-                    .order_by(audit_events.c.created_at.desc(), audit_events.c.id.desc())
-                    .limit(1)
-                ).mappings().one_or_none()
         reason_present = reason is not None
         return task.model_copy(
             update={
                 **counts,
                 "reason_worker": reason["worker"] if reason_present else None,
                 "reason_heartbeat_at": reason["last_heartbeat_at"] if reason_present else None,
-                "reason_activity_kind": "analyzing" if reason_present else "",
+                "reason_activity_kind": reason["activity_kind"] if reason_present else "",
                 "reason_activity_summary": (
-                    activity["message"]
-                    if activity is not None
-                    else "正在分析任务上下文并规划下一批 Intent"
+                    reason["activity_summary"]
+                    or "正在分析任务上下文并规划下一批 Intent"
                 ) if reason_present else "",
-                "reason_activity_tool": "",
-                "reason_activity_started_at": reason["claimed_at"] if reason_present else None,
+                "reason_activity_tool": reason["activity_tool"] if reason_present else "",
+                "reason_activity_started_at": (
+                    (reason["activity_started_at"] or reason["claimed_at"])
+                    if reason_present else None
+                ),
                 "reason_activity_updated_at": (
-                    activity["created_at"] if activity is not None else reason["last_heartbeat_at"]
-                ) if reason_present else None,
+                    (reason["activity_updated_at"] or reason["last_heartbeat_at"])
+                    if reason_present else None
+                ),
             }
         )

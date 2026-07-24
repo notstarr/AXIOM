@@ -76,6 +76,7 @@
         last_heartbeat_at: task.reason_heartbeat_at,
         activity_kind: task.reason_activity_kind || 'analyzing',
         activity_summary: task.reason_activity_summary || '正在分析任务上下文并规划下一批 Intent',
+        activity_tool: task.reason_activity_tool || '',
         activity_started_at: task.reason_activity_started_at || task.reason_heartbeat_at,
         activity_updated_at: task.reason_activity_updated_at || task.reason_heartbeat_at,
       } : null,

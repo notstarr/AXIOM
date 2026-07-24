@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 from pydantic import ValidationError
@@ -11,6 +12,7 @@ from axiom.dispatcher.bootstrap import (
     TransientWorkerError,
 )
 from axiom.dispatcher.http import ControlPlaneError
+from axiom.dispatcher.heartbeat import LeaseLostError
 from axiom.dispatcher.loop import Dispatcher
 from axiom.dispatcher.runner import AxiomRunner
 from axiom.dispatcher.schemas import ClaimedIntent, DispatchReport, DispatcherSnapshot
@@ -106,7 +108,7 @@ class ApiControlPlane:
             self._url(work, "release"),
             json=command.model_dump(mode="json"),
         )
-        assert response.status_code == 200, response.text
+        assert response.status_code in {200, 409}, response.text
 
     @staticmethod
     def _url(work: ClaimedIntent, action: str) -> str:
@@ -139,6 +141,22 @@ class FakeBootstrapExecutor:
         if isinstance(self.conclude_result, BaseException):
             raise self.conclude_result
         return self.conclude_result
+
+
+class BlockingBootstrapExecutor:
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.cancelled = threading.Event()
+
+    def execute(self, _execution_input, *, lease_active):
+        self.started.set()
+        while lease_active():
+            time.sleep(0.01)
+        self.cancelled.set()
+        raise LeaseLostError("task is no longer active")
+
+    def conclude(self, _execution_input, *, reason, lease_active):
+        raise AssertionError(f"cancelled execution must not conclude: {reason}/{lease_active()}")
 
 
 def claimed_work(client, events: list[str]) -> tuple[dict, ApiControlPlane, ClaimedIntent]:
@@ -284,6 +302,49 @@ def test_axiom_runner_reconciles_and_executes_claims_without_blocking_the_tick(c
     assert client.get(f"/api/v1/tasks/{task['id']}/graph").json()["intents"][0][
         "status"
     ] == "completed"
+
+
+def test_axiom_runner_cancels_local_execution_when_task_stops(client) -> None:
+    events: list[str] = []
+    project = client.post("/api/v1/projects", json={"title": "系统"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "停止运行中的任务",
+            "origin": "a.example.com",
+            "goal": "完成渗透测试",
+            "worker_pool": ["worker-a"],
+        },
+    ).json()
+    client.put(
+        "/api/v1/workers/worker-a",
+        json={"capabilities": ["bootstrap"], "max_running": 1},
+    )
+    executor = BlockingBootstrapExecutor()
+    runner = AxiomRunner(
+        ApiControlPlane(client, events),
+        executor_factory=lambda _worker, _work: executor,
+        max_parallel=1,
+        heartbeat_interval_seconds=60,
+    )
+    try:
+        assert runner.run_once().claimed == 1
+        assert executor.started.wait(2)
+        assert client.post(f"/api/v1/tasks/{task['id']}/stop").status_code == 200
+
+        runner.run_once()
+
+        assert executor.cancelled.wait(2)
+        runner.wait_for_idle(timeout_seconds=2)
+    finally:
+        runner.close()
+
+    current = client.get(f"/api/v1/tasks/{task['id']}").json()
+    intent = client.get(f"/api/v1/tasks/{task['id']}/graph").json()["intents"][0]
+    assert current["status"] == "stopped"
+    assert intent["status"] == "pending"
+    assert intent["worker"] is None
 
 
 def test_axiom_runner_keeps_running_when_control_plane_is_temporarily_unavailable() -> None:

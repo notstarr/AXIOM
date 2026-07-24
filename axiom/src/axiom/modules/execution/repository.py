@@ -111,6 +111,35 @@ class ExecutionRepository:
         return bool(result.rowcount)
 
     @staticmethod
+    def update_activity(
+        conn: Connection,
+        *,
+        task_id: str,
+        intent_id: str,
+        lease_id: str,
+        activity_kind: str,
+        activity_summary: str,
+        activity_tool: str,
+        now: str,
+    ) -> bool:
+        result = conn.execute(
+            update(intents)
+            .where(
+                intents.c.task_id == task_id,
+                intents.c.id == intent_id,
+                intents.c.lease_id == lease_id,
+                intents.c.status.in_(["claimed", "running", "concluding"]),
+            )
+            .values(
+                activity_kind=activity_kind,
+                activity_summary=activity_summary,
+                activity_tool=activity_tool,
+                activity_updated_at=now,
+            )
+        )
+        return bool(result.rowcount)
+
+    @staticmethod
     def transition_to_concluding(
         conn: Connection,
         *,

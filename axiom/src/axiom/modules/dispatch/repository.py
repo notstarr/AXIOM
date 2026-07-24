@@ -147,6 +147,7 @@ class DispatchRepository:
                 lease_id=lease_id,
                 claimed_at=now,
                 last_heartbeat_at=now,
+                next_retry_at=None,
                 activity_kind="claimed",
                 activity_summary=f"已由 {worker_name} 领取，正在启动执行环境",
                 activity_tool="",

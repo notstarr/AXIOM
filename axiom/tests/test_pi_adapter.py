@@ -109,3 +109,30 @@ def test_pi_adapter_converts_process_timeout_to_closeout_signal(tmp_path) -> Non
             execution_input(tmp_path / "run"),
             lease_active=lambda: True,
         )
+
+
+def test_pi_adapter_streams_session_tool_activity_while_process_runs(tmp_path) -> None:
+    script = make_script(
+        tmp_path,
+        "mkdir -p \"$PI_CODING_AGENT_DIR/sessions\"\n"
+        "cat >> \"$PI_CODING_AGENT_DIR/sessions/live.jsonl\" <<'JSON'\n"
+        '{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"call-1","name":"bash","arguments":{"command":"httpx -u https://a.example.com"}}]}}\n'
+        "JSON\n"
+        "sleep 0.4\n"
+        "cat > \"$AXIOM_RUN_DIR/bootstrap_artifacts.json\" <<'JSON'\n"
+        '{"asset_inventory":"# 资产","initial_leads":"# 线索","findings":"# 无漏洞"}\n'
+        "JSON\n"
+        "printf 'Bootstrap summary'",
+    )
+    activities = []
+
+    output = PiBootstrapExecutor(
+        pi_worker(script),
+        activity_reporter=activities.append,
+    ).execute(execution_input(tmp_path / "run"), lease_active=lambda: True)
+
+    assert output["summary"] == "Bootstrap summary"
+    assert activities
+    assert activities[0].lease_id == "lease_test"
+    assert activities[0].activity_tool == "httpx"
+    assert activities[0].activity_summary == "正在执行 httpx 服务探测与指纹识别"

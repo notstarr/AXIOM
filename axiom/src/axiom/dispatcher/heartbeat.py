@@ -17,6 +17,7 @@ class LeaseHeartbeat:
         *,
         interval_seconds: float = 10.0,
         max_consecutive_failures: int = 3,
+        cancellation: threading.Event | None = None,
     ):
         if interval_seconds <= 0:
             raise ValueError("interval_seconds must be positive")
@@ -25,6 +26,7 @@ class LeaseHeartbeat:
         self._send = send
         self._interval = interval_seconds
         self._max_failures = max_consecutive_failures
+        self._cancellation = cancellation
         self._stop = threading.Event()
         self._lost = threading.Event()
         self._thread: threading.Thread | None = None
@@ -47,11 +49,17 @@ class LeaseHeartbeat:
             self._thread.join(timeout=max(self._interval * 2, 1.0))
 
     def ensure_active(self) -> None:
+        if self._cancellation is not None and self._cancellation.is_set():
+            raise LeaseLostError("Intent execution was cancelled")
         if self._lost.is_set():
             raise LeaseLostError("Intent lease heartbeat was lost") from self._last_error
 
     def is_active(self) -> bool:
-        return not self._lost.is_set() and not self._stop.is_set()
+        return (
+            not self._lost.is_set()
+            and not self._stop.is_set()
+            and not (self._cancellation is not None and self._cancellation.is_set())
+        )
 
     def _run(self) -> None:
         failures = 0
@@ -59,6 +67,10 @@ class LeaseHeartbeat:
             try:
                 self._send()
                 failures = 0
+            except LeaseLostError as exc:
+                self._last_error = exc
+                self._lost.set()
+                return
             except BaseException as exc:
                 failures += 1
                 self._last_error = exc

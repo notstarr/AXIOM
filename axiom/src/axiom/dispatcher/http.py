@@ -7,6 +7,7 @@ import httpx
 from axiom.dispatcher.heartbeat import LeaseLostError
 from axiom.dispatcher.schemas import ClaimedIntent, DispatcherSnapshot
 from axiom.modules.execution.schemas import (
+    ActivityCommand,
     BootstrapCompleted,
     CompleteBootstrapCommand,
     CompleteExploreCommand,
@@ -98,7 +99,24 @@ class HttpControlPlane:
         )
 
     def heartbeat(self, work: ClaimedIntent) -> None:
-        self._request("POST", self._work_path("heartbeat", work), self._lease(work))
+        try:
+            self._request("POST", self._work_path("heartbeat", work), self._lease(work))
+        except ControlPlaneError as exc:
+            if exc.code == "lease_inactive":
+                raise LeaseLostError(str(exc)) from exc
+            raise
+
+    def activity(self, work: ClaimedIntent, command: ActivityCommand) -> None:
+        try:
+            self._request(
+                "POST",
+                self._work_path("activity", work),
+                command.model_dump(mode="json"),
+            )
+        except ControlPlaneError as exc:
+            if exc.code == "lease_inactive":
+                raise LeaseLostError(str(exc)) from exc
+            raise
 
     def input(self, work: ClaimedIntent) -> ExecutionInput:
         return ExecutionInput.model_validate(

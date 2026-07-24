@@ -13,7 +13,7 @@ from axiom.dispatcher.loop import Dispatcher
 from axiom.dispatcher.explore import ExploreRunner
 from axiom.dispatcher.reason import ReasonRunner
 from axiom.dispatcher.schemas import ClaimedIntent, DispatchReport
-from axiom.modules.execution.schemas import ReleaseIntentCommand
+from axiom.modules.execution.schemas import ActivityCommand, ReleaseIntentCommand
 from axiom.modules.workers.schemas import Worker
 
 
@@ -54,7 +54,7 @@ class AxiomRunner:
             max_workers=128,
             thread_name_prefix="axiom-runner",
         )
-        self._futures: set[Future] = set()
+        self._futures: dict[Future, tuple[ClaimedIntent, threading.Event]] = {}
         self._lock = threading.Lock()
         self._closed = False
 
@@ -66,15 +66,18 @@ class AxiomRunner:
         if recover is not None:
             recover(stale_after_seconds=self.lease_timeout_seconds)
         self._reap_finished()
+        snapshot = self.control_plane.snapshot()
+        self._cancel_inactive_tasks(snapshot)
         with self._lock:
             available_slots = self.max_parallel - len(self._futures)
         if available_slots <= 0:
             return DispatchReport()
-        report = self.dispatcher.tick(max_claims=available_slots)
+        report = self.dispatcher.tick(max_claims=available_slots, snapshot=snapshot)
         for work in report.claims:
-            future = self._pool.submit(self._execute_claim, work)
+            cancellation = threading.Event()
+            future = self._pool.submit(self._execute_claim, work, cancellation)
             with self._lock:
-                self._futures.add(future)
+                self._futures[future] = (work, cancellation)
         return report
 
     def run_forever(
@@ -115,9 +118,12 @@ class AxiomRunner:
         if self._closed:
             return
         self._closed = True
+        with self._lock:
+            for _work, cancellation in self._futures.values():
+                cancellation.set()
         self._pool.shutdown(wait=wait, cancel_futures=not wait)
 
-    def _execute_claim(self, work: ClaimedIntent) -> None:
+    def _execute_claim(self, work: ClaimedIntent, cancellation: threading.Event) -> None:
         try:
             worker = self.control_plane.worker(work.worker_name)
             executor = self.executor_factory(worker, work)
@@ -131,16 +137,19 @@ class AxiomRunner:
                 BootstrapRunner(
                     self.control_plane,
                     heartbeat_interval_seconds=self.heartbeat_interval_seconds,
+                    cancellation=cancellation,
                 ).run(work, executor)
             elif work.kind == "reason":
                 ReasonRunner(
                     self.control_plane,
                     heartbeat_interval_seconds=self.heartbeat_interval_seconds,
+                    cancellation=cancellation,
                 ).run(work, executor)
             elif work.kind == "explore":
                 ExploreRunner(
                     self.control_plane,
                     heartbeat_interval_seconds=self.heartbeat_interval_seconds,
+                    cancellation=cancellation,
                 ).run(work, executor)
             else:
                 raise RuntimeError(f"unsupported Intent kind: {work.kind}")
@@ -168,22 +177,32 @@ class AxiomRunner:
         except BaseException:
             logger.exception("failed to release runner claim: %s/%s", work.task_id, work.intent_id)
 
-    @staticmethod
-    def _default_executor(worker: Worker, work: ClaimedIntent) -> object:
+    def _default_executor(self, worker: Worker, work: ClaimedIntent) -> object:
         from axiom.dispatcher.pi import PiBootstrapExecutor, PiExploreExecutor, PiReasonExecutor
 
+        def activity_reporter(command: ActivityCommand) -> None:
+            self.control_plane.activity(work, command)
+
         if work.kind == "bootstrap":
-            return PiBootstrapExecutor(worker)
+            return PiBootstrapExecutor(worker, activity_reporter=activity_reporter)
         if work.kind == "reason":
-            return PiReasonExecutor(worker)
+            return PiReasonExecutor(worker, activity_reporter=activity_reporter)
         if work.kind == "explore":
-            return PiExploreExecutor(worker)
+            return PiExploreExecutor(worker, activity_reporter=activity_reporter)
         raise RuntimeError(f"unsupported Intent kind: {work.kind}")
 
     def _reap_finished(self) -> None:
         with self._lock:
-            finished = {future for future in self._futures if future.done()}
-            self._futures.difference_update(finished)
+            finished = [future for future in self._futures if future.done()]
+            for future in finished:
+                self._futures.pop(future, None)
+
+    def _cancel_inactive_tasks(self, snapshot) -> None:
+        active_task_ids = {task.id for task in snapshot.tasks if task.status == "running"}
+        with self._lock:
+            for work, cancellation in self._futures.values():
+                if work.task_id not in active_task_ids:
+                    cancellation.set()
 
     def _refresh_runtime_settings(self) -> None:
         provider = getattr(self.control_plane, "runtime_settings", None)

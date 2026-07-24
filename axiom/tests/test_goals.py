@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import yaml
+
+from axiom.modules.goals.tables import goal_evaluations
+
 BOOTSTRAP = {
     "summary": "完成初始攻击面发现。",
     "artifacts": {
@@ -69,6 +73,37 @@ def test_human_goal_assessment_is_the_only_task_completion_path(client) -> None:
     assert graph["intents"][0]["status"] == "cancelled"
 
 
+def test_legacy_achieved_goal_without_persisted_evidence_remains_readable(
+    client,
+    engine,
+) -> None:
+    project = client.post("/api/v1/projects", json={"title": "Legacy Goal"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={"project_id": project["id"], "title": "Legacy Goal", "origin": "a.example.com"},
+    ).json()
+    with engine.begin() as conn:
+        conn.execute(
+            goal_evaluations.insert().values(
+                id="legacy_goal_test",
+                task_id=task["id"],
+                intent_id=None,
+                workspace_id=None,
+                achieved=True,
+                reason="Legacy Task was marked completed; evidence was not persisted.",
+                evidence_refs_json="[]",
+                evaluator="migration.legacy",
+                created_at="2026-07-24T00:00:00Z",
+            )
+        )
+
+    response = client.get(f"/api/v1/tasks/{task['id']}/goal-evaluations")
+
+    assert response.status_code == 200, response.text
+    assert response.json()[0]["achieved"] is True
+    assert response.json()[0]["evidence_refs"] == []
+
+
 def test_reason_can_complete_goal_atomically_without_dispatching_more_work(client) -> None:
     task, reason_claim, completed = _active_reason(client)
     workspace = client.post(
@@ -100,6 +135,50 @@ def test_reason_can_complete_goal_atomically_without_dispatching_more_work(clien
     assert client.get(f"/api/v1/tasks/{task['id']}").json()["status"] == "completed"
     evaluations = client.get(f"/api/v1/tasks/{task['id']}/goal-evaluations").json()
     assert evaluations[0]["achieved"] is True
+    graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
+    final_reason = next(item for item in graph["intents"] if item["id"] == reason_claim["intent_id"])
+    assert final_reason["from_facts"] == [completed["fact_id"]]
+    assert final_reason["to_fact_id"] == "goal"
+    assert all("goal" not in item["from_facts"] for item in graph["intents"])
+    overview = yaml.safe_load(
+        client.get(f"/api/v1/tasks/{task['id']}/export?format=yaml").text
+    )
+    exported_reason = next(
+        item for item in overview["intents"] if item["id"] == reason_claim["intent_id"]
+    )
+    assert exported_reason["from_facts"] == [completed["fact_id"]]
+    assert exported_reason["to_fact_id"] == "goal"
+
+
+def test_reason_goal_completion_requires_at_least_one_fact_evidence(client) -> None:
+    task, reason_claim, _completed = _active_reason(client)
+    artifact = client.get(f"/api/v1/tasks/{task['id']}/artifacts").json()[0]
+    workspace = client.post(
+        f"/api/v1/tasks/{task['id']}/reason/workspaces",
+        json={
+            "intent_id": reason_claim["intent_id"],
+            "lease_id": reason_claim["lease_id"],
+            "context_revision": reason_claim["context_revision"],
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/submit",
+        json={
+            "lease_id": reason_claim["lease_id"],
+            "draft": {
+                "goal_assessment": {
+                    "achieved": True,
+                    "reason": "只有产物引用，尚未提供完成关系所需的 Fact 来源",
+                    "evidence_refs": [f"artifact:{artifact['id']}"],
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 409
+    assert "at least one Fact evidence ref" in response.json()["error"]["message"]
+    assert client.get(f"/api/v1/tasks/{task['id']}").json()["status"] == "running"
 
 
 def test_goal_evidence_must_belong_to_the_same_task(client) -> None:
@@ -208,6 +287,30 @@ def test_task_hint_alone_cannot_prove_an_achieved_goal(client) -> None:
 
     assert response.status_code == 409
     assert client.get(f"/api/v1/tasks/{task['id']}").json()["status"] == "running"
+
+
+def test_goal_fact_cannot_prove_itself(client) -> None:
+    project = client.post("/api/v1/projects", json={"title": "Goal Self Reference"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "Goal Self Reference",
+            "origin": "a.example.com",
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/v1/tasks/{task['id']}/goal-evaluations",
+        json={
+            "achieved": True,
+            "reason": "错误地使用 Goal 自身证明 Goal",
+            "evidence_refs": ["fact:goal"],
+        },
+    )
+
+    assert response.status_code == 409
+    assert "cannot be used as Goal evidence" in response.json()["error"]["message"]
 
 
 def test_goal_evaluation_ids_are_globally_unique_across_tasks(client) -> None:
