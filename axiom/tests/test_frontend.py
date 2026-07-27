@@ -169,13 +169,79 @@ ctx.toggleSkillFromEditor().then(() => process.stdout.write(JSON.stringify({{
     return json.loads(result.stdout)
 
 
+def _run_credential_editor_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
+    program = f"""
+const fs = require('fs');
+const calls = [];
+const loaded = [];
+const toasts = [];
+global.window = {{ AxiomModules: {{
+  state: {{ state: {{}} }},
+  core: {{ methods: {{}} }},
+  projects: {{ methods: {{}} }},
+  graph: {{ methods: {{}} }},
+  files: {{ methods: {{}} }},
+}} }};
+global.location = {{ origin: 'http://testserver' }};
+global.fetch = async (url, init = {{}}) => {{
+  const method = init.method || 'GET';
+  const body = init.body ? JSON.parse(init.body) : null;
+  calls.push({{ method, url, body }});
+  let payload;
+  if (method === 'GET' && url === '/api/v1/projects/prj_001/credentials/cred_001') {{
+    payload = {{ id:'cred_001', project_id:'prj_001', name:'会话', content:'Cookie: old-secret', notes:'低权限', refresh_id:'crf_001', enabled:true }};
+  }} else if (method === 'GET' && url === '/api/v1/projects/prj_001/credential-refreshes/crf_001') {{
+    payload = {{ id:'crf_001', credential_id:'cred_001', content:'重新登录', created_at:'now', updated_at:'now' }};
+  }} else if (method === 'PUT' && url === '/api/v1/projects/prj_001/credentials/cred_001') {{
+    payload = {{ id:'cred_001', project_id:'prj_001', ...body, refresh_id:'crf_001', created_at:'now', updated_at:'now' }};
+  }} else if (method === 'PATCH' && url === '/api/v1/projects/prj_001/credentials/cred_001/enabled') {{
+    payload = {{ id:'cred_001', project_id:'prj_001', name:'会话', content:'Cookie: new-secret', notes:'低权限', refresh_id:'crf_001', enabled:false, created_at:'now', updated_at:'now' }};
+  }} else {{
+    throw new Error(`unexpected request: ${{method}} ${{url}}`);
+  }}
+  return {{ status: 200, ok: true, text: async () => JSON.stringify(payload) }};
+}};
+eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
+const ctx = Object.assign({{
+  selectedProjectManagementId: 'prj_001',
+  projectCredentials: [],
+  projectCredentialSearch: '',
+  credentialEditor: {{}},
+  credentialSaving: false,
+  showToast: (message, type = 'success') => toasts.push({{ message, type }}),
+}}, window.AxiomModules.projects.methods);
+ctx.loadProjectCredentials = async projectId => loaded.push(projectId);
+(async () => {{
+  await ctx.openProjectCredentialEditor({{ id:'cred_001', project_id:'prj_001', name:'会话', notes:'低权限', refresh_id:'crf_001', enabled:true }});
+  const opened = {{ ...ctx.credentialEditor }};
+  ctx.credentialEditor.content = 'Cookie: new-secret';
+  ctx.credentialEditor.refreshContent = 'POST /login\\n\\nusername=a&password=b';
+  await ctx.saveProjectCredential();
+  await ctx.toggleProjectCredential({{ id:'cred_001', project_id:'prj_001', enabled:true }});
+  process.stdout.write(JSON.stringify({{ opened, calls, loaded, toasts }}));
+}})();
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
 def test_frontend_and_static_assets_are_served(client):
     response = client.get("/")
     assert response.status_code == 200
     assert "<title>axiom</title>" in response.text
     assert "/static/js/state.js?v=20260727.1" in response.text
     assert "/static/js/skills.js?v=20260727.4" in response.text
-    assert "/static/js/v2-adapter.js?v=20260727.3" in response.text
+    assert "/static/js/v2-adapter.js?v=20260727.4" in response.text
     assert "/static/js/helpers.js?v=20260724.2" in response.text
     assert "/static/js/graph.js?v=20260727.2" in response.text
     assert "/static/js/human.js?v=20260724.2" in response.text
@@ -212,6 +278,13 @@ def test_frontend_and_static_assets_are_served(client):
     assert graph_script.status_code == 200
     assert "explore_timeout" not in graph_script.text
     assert "bootstrap_timeout" not in graph_script.text
+
+    credential_template = client.get("/static/templates/project-mgmt.html")
+    assert credential_template.status_code == 200
+    assert "凭证如何刷新" in credential_template.text
+    assert "格式不限" in credential_template.text
+    assert "凭证内容（JSON 对象）" not in credential_template.text
+    assert "适用域名（每行一个" not in credential_template.text
 
 
 def test_frontend_fallback_does_not_mask_unknown_api_routes(client):
@@ -252,6 +325,37 @@ def test_skill_toggle_uses_dedicated_patch_endpoint_and_server_state() -> None:
     assert result["toasts"] == [
         {"message": "browser-control 已禁用", "type": "success"}
     ]
+
+
+def test_credential_editor_progressively_loads_and_uses_free_text_protocol() -> None:
+    result = _run_credential_editor_fixture()
+
+    assert result["opened"] == {
+        "open": True,
+        "loading": False,
+        "id": "cred_001",
+        "projectId": "prj_001",
+        "name": "会话",
+        "content": "Cookie: old-secret",
+        "notes": "低权限",
+        "refreshContent": "重新登录",
+        "enabled": True,
+    }
+    assert [(call["method"], call["url"]) for call in result["calls"]] == [
+        ("GET", "/api/v1/projects/prj_001/credentials/cred_001"),
+        ("GET", "/api/v1/projects/prj_001/credential-refreshes/crf_001"),
+        ("PUT", "/api/v1/projects/prj_001/credentials/cred_001"),
+        ("PATCH", "/api/v1/projects/prj_001/credentials/cred_001/enabled"),
+    ]
+    assert result["calls"][2]["body"] == {
+        "name": "会话",
+        "content": "Cookie: new-secret",
+        "notes": "低权限",
+        "refresh_content": "POST /login\n\nusername=a&password=b",
+        "enabled": True,
+    }
+    assert result["calls"][3]["body"] == {"enabled": False}
+    assert result["loaded"] == ["prj_001", "prj_001"]
 
 
 def test_intent_lifecycle_uses_status_instead_of_retained_worker():

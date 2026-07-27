@@ -165,23 +165,7 @@
     return {
       ...item,
       label: item.name,
-      auth_type: item.credential_type === 'headers' ? 'header' : item.credential_type,
-      domains: item.target_host ? [item.target_host] : [],
-      notes: '',
       active: !!item.enabled,
-    };
-  }
-
-  function credentialInput(body, previous = null) {
-    const type = body.auth_type || body.credential_type || previous?.credential_type || 'headers';
-    return {
-      name: body.label || body.name || previous?.name || '凭证',
-      credential_type: type === 'header' ? 'headers' : type,
-      target_host: (body.domains || [body.target_host || previous?.target_host || '']).filter(Boolean)[0] || '',
-      data: body.data || previous?.data || {},
-      enabled: body.active !== undefined
-        ? !!body.active
-        : (body.enabled !== undefined ? !!body.enabled : (previous ? !!previous.enabled : true)),
     };
   }
 
@@ -694,7 +678,7 @@
     fileArtifactMap: {},
     projectCredentials: [],
     projectCredentialSearch: '',
-    credentialEditor: { open: false, id: '', projectId: '', label: '', authType: 'header', dataText: '{\n  "Authorization": "Bearer ..."\n}', domainsText: '', notes: '', active: true },
+    credentialEditor: { open: false, loading: false, id: '', projectId: '', name: '', content: '', notes: '', refreshContent: '', enabled: true },
     credentialSaving: false,
     taskScopeEditor: { taskId: '', enabled: false, targetsText: '', excludeText: '', notes: '', saving: false },
   });
@@ -920,53 +904,65 @@
     filteredProjectCredentials() {
       const keyword = String(this.projectCredentialSearch || '').trim().toLowerCase();
       if (!keyword) return this.projectCredentials || [];
-      return (this.projectCredentials || []).filter(item => [item.label, item.auth_type, item.notes, ...(item.domains || [])]
+      return (this.projectCredentials || []).filter(item => [item.name, item.notes]
         .some(value => String(value || '').toLowerCase().includes(keyword)));
     },
-    openProjectCredentialEditor(credential = null) {
+    async openProjectCredentialEditor(credential = null) {
       const projectId = credential?.project_id || this.selectedProjectManagementId;
       this.credentialEditor = {
         open: true,
+        loading: !!credential,
         id: credential?.id || '',
         projectId,
-        label: credential?.label || '',
-        authType: credential?.auth_type || 'header',
-        dataText: JSON.stringify(credential?.data || { Authorization: 'Bearer ...' }, null, 2),
-        domainsText: (credential?.domains || []).join('\n'),
+        name: credential?.name || '',
+        content: '',
         notes: credential?.notes || '',
-        active: credential ? !!credential.active : true,
+        refreshContent: '',
+        enabled: credential ? !!credential.enabled : true,
       };
-    },
-    credentialDataSummary(credential) {
-      const keys = Object.keys(credential?.data || {});
-      return keys.length ? keys.join(', ') : '无字段';
+      if (!credential) return;
+      try {
+        const detail = await request('GET', `/projects/${projectId}/credentials/${credential.id}`);
+        let refreshContent = '';
+        if (detail.refresh_id) {
+          const refresh = await request('GET', `/projects/${projectId}/credential-refreshes/${detail.refresh_id}`);
+          refreshContent = refresh.content || '';
+        }
+        if (!this.credentialEditor.open || this.credentialEditor.id !== credential.id) return;
+        this.credentialEditor = {
+          open: true,
+          loading: false,
+          id: detail.id,
+          projectId,
+          name: detail.name || '',
+          content: detail.content || '',
+          notes: detail.notes || '',
+          refreshContent,
+          enabled: !!detail.enabled,
+        };
+      } catch (error) {
+        if (this.credentialEditor.id === credential.id) this.credentialEditor.open = false;
+        this.showToast(error.message, 'error');
+      }
     },
     async saveProjectCredential() {
       const editor = this.credentialEditor;
-      if (!editor.projectId || !editor.label.trim() || !editor.authType.trim()) return;
-      let data;
-      try {
-        data = JSON.parse(editor.dataText || '{}');
-        if (!data || Array.isArray(data) || typeof data !== 'object') throw new Error('凭证内容必须是 JSON 对象');
-      } catch (error) {
-        this.showToast(error.message || '凭证 JSON 格式错误', 'error');
-        return;
-      }
+      if (!editor.projectId || !editor.name.trim() || !String(editor.content || '').trim()) return;
       try {
         this.credentialSaving = true;
         const payload = {
-          label: editor.label.trim(),
-          auth_type: editor.authType.trim(),
-          data,
-          domains: splitLines(editor.domainsText),
-          notes: String(editor.notes || '').trim(),
-          active: !!editor.active,
+          name: editor.name.trim(),
+          content: String(editor.content || ''),
+          notes: String(editor.notes || '').trim() || null,
+          refresh_content: String(editor.refreshContent || '').trim()
+            ? String(editor.refreshContent)
+            : null,
+          enabled: !!editor.enabled,
         };
         if (editor.id) {
-          const previous = await request('GET', `/projects/${editor.projectId}/credentials/${editor.id}`);
-          await request('PUT', `/projects/${editor.projectId}/credentials/${editor.id}`, credentialInput(payload, previous));
+          await request('PUT', `/projects/${editor.projectId}/credentials/${editor.id}`, payload);
         } else {
-          await request('POST', `/projects/${editor.projectId}/credentials`, credentialInput(payload));
+          await request('POST', `/projects/${editor.projectId}/credentials`, payload);
         }
         this.credentialEditor.open = false;
         await this.loadProjectCredentials(editor.projectId);
@@ -976,7 +972,7 @@
     },
     async toggleProjectCredential(credential) {
       try {
-        await request('PUT', `/projects/${credential.project_id}/credentials/${credential.id}`, credentialInput({ active: !credential.active }, credential));
+        await request('PATCH', `/projects/${credential.project_id}/credentials/${credential.id}/enabled`, { enabled: !credential.enabled });
         await this.loadProjectCredentials(credential.project_id);
       } catch (error) { this.showToast(error.message, 'error'); }
     },

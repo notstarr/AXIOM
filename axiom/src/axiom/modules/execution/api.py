@@ -4,7 +4,11 @@ from fastapi import APIRouter, Depends
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
-from axiom.modules.credentials.schemas import CredentialMaterial, WorkerCredentialSummary
+from axiom.modules.credentials.schemas import (
+    CredentialMaterial,
+    WorkerCredentialRefresh,
+    WorkerCredentialSummary,
+)
 from axiom.modules.execution.schemas import (
     ActivityCommand,
     BootstrapCompleted,
@@ -50,6 +54,23 @@ def get_worker_credential(
     return container.execution.credential_material(
         task_id=task_id,
         credential_id=credential_id,
+        command=body,
+    )
+
+
+@router.post(
+    "/tasks/{task_id}/credential-refreshes/{refresh_id}/get",
+    response_model=WorkerCredentialRefresh,
+)
+def get_worker_credential_refresh(
+    task_id: str,
+    refresh_id: str,
+    body: CredentialAccessCommand,
+    container: Container = Depends(get_container),
+) -> WorkerCredentialRefresh:
+    return container.execution.credential_refresh_material(
+        task_id=task_id,
+        refresh_id=refresh_id,
         command=body,
     )
 

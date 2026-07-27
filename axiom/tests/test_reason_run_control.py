@@ -227,9 +227,9 @@ def test_reason_run_can_read_project_credentials_only_while_its_lease_is_active(
         f"/api/v1/projects/{task['project_id']}/credentials",
         json={
             "name": "Reason 可读凭证",
-            "credential_type": "bearer",
-            "target_host": "a.example.com",
-            "data": {"token": "secret-token"},
+            "content": "Bearer secret-token",
+            "notes": "仅用于鉴权验证",
+            "refresh_content": "使用 refresh-token 重新登录",
         },
     ).json()
     reason_run_id = completed["next_reason_run_id"]
@@ -251,11 +251,19 @@ def test_reason_run_can_read_project_credentials_only_while_its_lease_is_active(
         f"/api/v1/dispatch/tasks/{task['id']}/credentials/{credential['id']}/get",
         json=access,
     )
+    refresh = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/credential-refreshes/"
+        f"{credential['refresh_id']}/get",
+        json=access,
+    )
 
     assert summaries.status_code == 200, summaries.text
-    assert summaries.json()[0]["data_fields"] == ["token"]
+    assert summaries.json() == [{"id": credential["id"], "name": "Reason 可读凭证"}]
     assert material.status_code == 200, material.text
-    assert material.json()["data"]["token"] == "secret-token"
+    assert material.json()["content"] == "Bearer secret-token"
+    assert material.json()["refresh_id"] == credential["refresh_id"]
+    assert refresh.status_code == 200, refresh.text
+    assert refresh.json()["content"] == "使用 refresh-token 重新登录"
 
     assert client.post(f"/api/v1/tasks/{task['id']}/stop").status_code == 200
     rejected = client.post(

@@ -44,6 +44,132 @@ def test_migrations_reach_head_without_metadata_drift(tmp_path) -> None:
         engine.dispose()
 
 
+def test_credential_text_migration_roundtrip_preserves_legacy_material(tmp_path) -> None:
+    database_path = tmp_path / "credential-roundtrip.db"
+    config = alembic_config(database_path)
+    command.upgrade(config, "20260727_0020")
+
+    engine = create_sqlite_engine(database_path)
+    now = "2026-07-27T00:00:00Z"
+    try:
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "INSERT INTO projects "
+                "(id, title, description, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("prj_001", "credentials", "", "active", now, now),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO credentials "
+                "(id, project_id, name, credential_type, target_host, data_json, "
+                "enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "cred_001",
+                    "prj_001",
+                    "legacy-json",
+                    "headers",
+                    "a.example.com",
+                    json.dumps(
+                        {
+                            "Cookie": "session=test-secret",
+                            "_legacy_notes": "旧备注",
+                            "_legacy_domains": ["b.example.com", "a.example.com"],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    True,
+                    now,
+                    now,
+                ),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO credentials "
+                "(id, project_id, name, credential_type, target_host, data_json, "
+                "enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "cred_002",
+                    "prj_001",
+                    "legacy-text",
+                    "ssh",
+                    "",
+                    "not-json: {broken",
+                    False,
+                    now,
+                    now,
+                ),
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, "head")
+    upgraded = create_sqlite_engine(database_path)
+    try:
+        with upgraded.begin() as conn:
+            columns = {item["name"] for item in inspect(conn).get_columns("credentials")}
+            assert {"content", "notes"}.issubset(columns)
+            assert {"credential_type", "target_host", "data_json"}.isdisjoint(columns)
+            first = conn.exec_driver_sql(
+                "SELECT content, notes FROM credentials WHERE id = 'cred_001'"
+            ).mappings().one()
+            assert json.loads(first["content"]) == {"Cookie": "session=test-secret"}
+            assert "旧备注" in first["notes"]
+            assert "认证类型：headers" in first["notes"]
+            assert "适用域名：a.example.com、b.example.com" in first["notes"]
+            assert conn.exec_driver_sql(
+                "SELECT content FROM credentials WHERE id = 'cred_002'"
+            ).scalar_one() == "not-json: {broken"
+            assert conn.exec_driver_sql(
+                "SELECT COUNT(*) FROM credential_refreshes"
+            ).scalar_one() == 0
+            conn.exec_driver_sql(
+                "INSERT INTO credential_refreshes "
+                "(id, credential_id, content, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("crf_001", "cred_001", "重新登录并读取 Set-Cookie", now, now),
+            )
+    finally:
+        upgraded.dispose()
+
+    command.downgrade(config, "20260727_0020")
+    downgraded = create_sqlite_engine(database_path)
+    try:
+        with downgraded.connect() as conn:
+            assert "credential_refreshes" not in inspect(conn).get_table_names()
+            restored = json.loads(
+                conn.exec_driver_sql(
+                    "SELECT data_json FROM credentials WHERE id = 'cred_001'"
+                ).scalar_one()
+            )
+            assert restored["Cookie"] == "session=test-secret"
+            assert restored["_legacy_notes"] == "旧备注"
+            assert restored["_legacy_domains"] == ["a.example.com", "b.example.com"]
+            assert restored["_legacy_refresh"] == "重新登录并读取 Set-Cookie"
+            assert conn.exec_driver_sql("PRAGMA integrity_check").scalar_one() == "ok"
+            assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+    finally:
+        downgraded.dispose()
+
+    command.upgrade(config, "head")
+    reupgraded = create_sqlite_engine(database_path)
+    try:
+        with reupgraded.connect() as conn:
+            refresh = conn.exec_driver_sql(
+                "SELECT credential_id, content FROM credential_refreshes"
+            ).mappings().one()
+            assert refresh == {
+                "credential_id": "cred_001",
+                "content": "重新登录并读取 Set-Cookie",
+            }
+            content = conn.exec_driver_sql(
+                "SELECT content FROM credentials WHERE id = 'cred_001'"
+            ).scalar_one()
+            assert "_legacy_refresh" not in content
+            assert conn.exec_driver_sql("PRAGMA integrity_check").scalar_one() == "ok"
+            assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+    finally:
+        reupgraded.dispose()
+
+
 def test_reason_run_migration_can_downgrade_after_real_runs(tmp_path) -> None:
     database_path = tmp_path / "reason-run-roundtrip.db"
     config = alembic_config(database_path)

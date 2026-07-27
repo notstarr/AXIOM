@@ -12,7 +12,11 @@ from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
 from axiom.modules.context.service import ContextService
 from axiom.modules.credentials.repository import CredentialRepository
-from axiom.modules.credentials.schemas import CredentialMaterial, WorkerCredentialSummary
+from axiom.modules.credentials.schemas import (
+    CredentialMaterial,
+    WorkerCredentialRefresh,
+    WorkerCredentialSummary,
+)
 from axiom.modules.execution.repository import ExecutionRepository
 from axiom.modules.execution.schemas import (
     ActivityCommand,
@@ -83,16 +87,17 @@ class ExecutionService:
     ) -> list[WorkerCredentialSummary]:
         with self.engine.connect() as conn:
             project_id = self._credential_project_id(conn, task_id, command)
-            materials = self.credentials.for_project_materials(conn, project_id)
+            credentials_for_project = self.credentials.list(
+                conn,
+                project_id,
+                enabled_only=True,
+            )
         return [
             WorkerCredentialSummary(
                 id=item.id,
                 name=item.name,
-                credential_type=item.credential_type,
-                target_host=item.target_host,
-                data_fields=sorted(str(key) for key in item.data),
             )
-            for item in materials
+            for item in credentials_for_project
         ]
 
     def credential_material(
@@ -107,7 +112,34 @@ class ExecutionService:
             credential = self.credentials.get(conn, project_id, credential_id)
         if credential is None or not credential.enabled:
             raise NotFoundError(f"Enabled credential not found: {credential_id}")
-        return CredentialMaterial.model_validate(credential.model_dump(mode="json"))
+        return CredentialMaterial(
+            id=credential.id,
+            name=credential.name,
+            content=credential.content,
+            notes=credential.notes,
+            refresh_id=credential.refresh_id,
+        )
+
+    def credential_refresh_material(
+        self,
+        *,
+        task_id: str,
+        refresh_id: str,
+        command: CredentialAccessCommand,
+    ) -> WorkerCredentialRefresh:
+        with self.engine.connect() as conn:
+            project_id = self._credential_project_id(conn, task_id, command)
+            refresh = self.credentials.get_refresh(
+                conn,
+                project_id,
+                refresh_id,
+                enabled_only=True,
+            )
+        if refresh is None:
+            raise NotFoundError(
+                f"Enabled credential refresh not found: {refresh_id}"
+            )
+        return WorkerCredentialRefresh(id=refresh.id, content=refresh.content)
 
     def input(self, *, task_id: str, intent_id: str, command: LeaseCommand) -> ExecutionInput:
         with self.engine.connect() as conn:
@@ -131,7 +163,6 @@ class ExecutionService:
                 "intent_targets": json.loads(row["targets_json"] or "[]"),
                 "intent_source_facts": self.repository.source_facts(conn, task_id, intent_id),
                 "todo_id": row["todo_id"],
-                "credentials": self.credentials.for_project_materials(conn, row["project_id"]),
                 "origin": row["origin_input"],
                 "goal": row["goal"],
                 "hints": self.repository.hints(conn, task_id),
@@ -157,7 +188,6 @@ class ExecutionService:
             intent_targets=values["intent_targets"],
             intent_source_facts=values["intent_source_facts"],
             todo_id=values["todo_id"],
-            credentials=values["credentials"],
             origin=values["origin"],
             goal=values["goal"],
             hints=values["hints"],
@@ -197,7 +227,6 @@ class ExecutionService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.status != "running":
                 raise LeaseInactiveError("Task is not running")
-            credentials = self.credentials.for_project_materials(conn, task.project_id)
             hints = self.repository.hints(conn, task_id)
 
         context = self.context.build(
@@ -225,7 +254,6 @@ class ExecutionService:
             intent_targets=list(task.scope.targets) or [task.origin.host],
             intent_source_facts=run.source_fact_ids,
             todo_id=None,
-            credentials=credentials,
             origin=task.origin.original_input,
             goal=task.goal,
             hints=hints,

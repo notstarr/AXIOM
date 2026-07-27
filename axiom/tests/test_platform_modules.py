@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 
 def _project_task(client) -> tuple[dict, dict]:
     project = client.post("/api/v1/projects", json={"title": "平台能力"}).json()
@@ -41,22 +43,45 @@ def test_runtime_settings_have_safe_defaults_and_versioned_updates(client) -> No
     assert updated.json()["config"]["network_proxy_mode"] == "http"
 
 
-def test_credentials_are_project_scoped_and_injected_into_execution_input(client) -> None:
+def test_credentials_are_project_scoped_and_progressively_disclosed(client) -> None:
     project, task = _project_task(client)
+    content = "Cookie: session=raw-secret\nX-CSRF: token"
+    refresh_content = "POST /login HTTP/1.1\n\nusername=admin&password=secret"
     created = client.post(
         f"/api/v1/projects/{project['id']}/credentials",
         json={
             "name": "登录 Cookie",
-            "credential_type": "headers",
-            "target_host": "b.example.com",
-            "data": {"Cookie": "session=raw-secret", "X-CSRF": "token"},
+            "content": content,
+            "notes": "低权限测试账号",
+            "refresh_content": refresh_content,
         },
     )
     assert created.status_code == 201, created.text
-    assert created.json()["data"]["Cookie"] == "session=raw-secret"
+    credential = created.json()
+    assert credential["content"] == content
+    assert credential["notes"] == "低权限测试账号"
+    assert credential["refresh_id"].startswith("crf_")
+    assert "refresh_content" not in credential
+
     listed = client.get(f"/api/v1/projects/{project['id']}/credentials")
     assert listed.status_code == 200
-    assert len(listed.json()) == 1
+    assert listed.json()[0]["id"] == credential["id"]
+    assert listed.json()[0]["refresh_id"] == credential["refresh_id"]
+    assert "content" not in listed.json()[0]
+
+    detail = client.get(
+        f"/api/v1/projects/{project['id']}/credentials/{credential['id']}"
+    )
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["content"] == content
+    assert "refresh_content" not in detail.json()
+
+    refresh = client.get(
+        f"/api/v1/projects/{project['id']}/credential-refreshes/"
+        f"{credential['refresh_id']}"
+    )
+    assert refresh.status_code == 200, refresh.text
+    assert refresh.json()["content"] == refresh_content
 
     client.put(
         "/api/v1/workers/worker-a",
@@ -73,7 +98,7 @@ def test_credentials_are_project_scoped_and_injected_into_execution_input(client
         json={"lease_id": claim["lease_id"]},
     )
     assert execution_input.status_code == 200, execution_input.text
-    assert execution_input.json()["credentials"][0]["data"]["Cookie"] == "session=raw-secret"
+    assert "credentials" not in execution_input.json()
 
     access = {"lease_id": claim["lease_id"], "intent_id": "i001"}
     summaries = client.post(
@@ -83,24 +108,161 @@ def test_credentials_are_project_scoped_and_injected_into_execution_input(client
     assert summaries.status_code == 200, summaries.text
     assert summaries.json() == [
         {
-            "id": created.json()["id"],
+            "id": credential["id"],
             "name": "登录 Cookie",
-            "credential_type": "headers",
-            "target_host": "b.example.com",
-            "data_fields": ["Cookie", "X-CSRF"],
         }
     ]
     material = client.post(
-        f"/api/v1/dispatch/tasks/{task['id']}/credentials/{created.json()['id']}/get",
+        f"/api/v1/dispatch/tasks/{task['id']}/credentials/{credential['id']}/get",
         json=access,
     )
     assert material.status_code == 200, material.text
-    assert material.json()["data"]["Cookie"] == "session=raw-secret"
+    assert material.json() == {
+        "id": credential["id"],
+        "name": "登录 Cookie",
+        "content": content,
+        "notes": "低权限测试账号",
+        "refresh_id": credential["refresh_id"],
+    }
+    worker_refresh = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/credential-refreshes/"
+        f"{credential['refresh_id']}/get",
+        json=access,
+    )
+    assert worker_refresh.status_code == 200, worker_refresh.text
+    assert worker_refresh.json() == {
+        "id": credential["refresh_id"],
+        "content": refresh_content,
+    }
+
+    disabled = client.patch(
+        f"/api/v1/projects/{project['id']}/credentials/{credential['id']}/enabled",
+        json={"enabled": False},
+    )
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["enabled"] is False
+    assert "content" not in disabled.json()
+    assert client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/credentials/list",
+        json=access,
+    ).json() == []
+    assert client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/credentials/{credential['id']}/get",
+        json=access,
+    ).status_code == 404
+    assert client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/credential-refreshes/"
+        f"{credential['refresh_id']}/get",
+        json=access,
+    ).status_code == 404
+
     wrong_lease = client.post(
         f"/api/v1/dispatch/tasks/{task['id']}/credentials/list",
         json={"lease_id": "wrong", "intent_id": "i001"},
     )
     assert wrong_lease.status_code == 409
+
+    other_project = client.post(
+        "/api/v1/projects",
+        json={"title": "另一个项目"},
+    ).json()
+    other_credential = client.post(
+        f"/api/v1/projects/{other_project['id']}/credentials",
+        json={"name": "跨项目凭证", "content": "must-not-leak"},
+    ).json()
+    cross_project = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/credentials/"
+        f"{other_credential['id']}/get",
+        json=access,
+    )
+    assert cross_project.status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        ("Cookie", "Cookie: session=abc"),
+        ("JWT", "eyJhbGciOiJub25lIn0.payload.signature"),
+        ("SSH 私钥", "-----BEGIN OPENSSH PRIVATE KEY-----\nline-1\nline-2\n-----END OPENSSH PRIVATE KEY-----"),
+        ("原始请求", "POST /login HTTP/1.1\nHost: example.com\n\nusername=a&password=b"),
+        ("账号密码", "username: admin\npassword: p@ss:word"),
+        ("任意文本", "这不是 JSON，也不应该被解析：{broken"),
+    ],
+)
+def test_credential_content_accepts_free_text_verbatim(client, name, content) -> None:
+    project = client.post("/api/v1/projects", json={"title": name}).json()
+    created = client.post(
+        f"/api/v1/projects/{project['id']}/credentials",
+        json={"name": name, "content": content},
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["content"] == content
+    listed = client.get(f"/api/v1/projects/{project['id']}/credentials").json()
+    assert "content" not in listed[0]
+
+
+def test_credential_refresh_keeps_id_until_removed_and_cascades(client) -> None:
+    project = client.post("/api/v1/projects", json={"title": "刷新生命周期"}).json()
+    base = f"/api/v1/projects/{project['id']}/credentials"
+    created = client.post(
+        base,
+        json={
+            "name": "会话",
+            "content": "token-one",
+            "refresh_content": "first refresh",
+        },
+    ).json()
+    first_refresh_id = created["refresh_id"]
+
+    updated = client.put(
+        f"{base}/{created['id']}",
+        json={
+            "name": "会话",
+            "content": "token-two",
+            "notes": "updated",
+            "refresh_content": "second refresh",
+            "enabled": True,
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["refresh_id"] == first_refresh_id
+    refresh_path = (
+        f"/api/v1/projects/{project['id']}/credential-refreshes/{first_refresh_id}"
+    )
+    assert client.get(refresh_path).json()["content"] == "second refresh"
+
+    cleared = client.put(
+        f"{base}/{created['id']}",
+        json={
+            "name": "会话",
+            "content": "token-two",
+            "notes": "updated",
+            "refresh_content": "",
+            "enabled": True,
+        },
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["refresh_id"] is None
+    assert client.get(refresh_path).status_code == 404
+
+    restored = client.put(
+        f"{base}/{created['id']}",
+        json={
+            "name": "会话",
+            "content": "token-three",
+            "refresh_content": "third refresh",
+            "enabled": True,
+        },
+    )
+    assert restored.status_code == 200, restored.text
+    second_refresh_id = restored.json()["refresh_id"]
+    assert second_refresh_id != first_refresh_id
+
+    deleted = client.delete(f"{base}/{created['id']}")
+    assert deleted.status_code == 204, deleted.text
+    assert client.get(
+        f"/api/v1/projects/{project['id']}/credential-refreshes/{second_refresh_id}"
+    ).status_code == 404
 
 
 def test_vulnerability_format_is_shared_by_internal_management(client) -> None:

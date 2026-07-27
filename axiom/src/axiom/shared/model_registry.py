@@ -3,7 +3,7 @@
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.audit.tables import audit_events
 from axiom.modules.context.tables import context_revisions
-from axiom.modules.credentials.tables import credentials
+from axiom.modules.credentials.tables import credential_refreshes, credentials
 from axiom.modules.graph.tables import facts, intent_sources, intents
 from axiom.modules.knowledge.tables import project_knowledge
 from axiom.modules.goals.tables import goal_evaluations
@@ -38,6 +38,7 @@ ALL_TABLES = (
     runtime_settings,
     audit_events,
     credentials,
+    credential_refreshes,
     vulnerabilities,
     mcp_servers,
     mcp_tools,

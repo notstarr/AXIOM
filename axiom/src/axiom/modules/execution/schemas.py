@@ -5,7 +5,6 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from axiom.modules.artifacts.schemas import Artifact
-from axiom.modules.credentials.schemas import CredentialMaterial
 from axiom.modules.vulnerabilities.schemas import ExploreVulnerabilityReport, Vulnerability
 
 
@@ -75,7 +74,6 @@ class ExecutionInput(BaseModel):
     intent_targets: list[str] = Field(default_factory=list)
     intent_source_facts: list[str] = Field(default_factory=list)
     todo_id: str | None = None
-    credentials: list[CredentialMaterial] = Field(default_factory=list)
     origin: str
     goal: str
     hints: list[str] = Field(default_factory=list)

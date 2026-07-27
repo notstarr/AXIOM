@@ -56,13 +56,37 @@ def register_worker_commands(main: click.Group) -> None:
             f"/dispatch/tasks/{task_id}/credentials/{credential_id}/get",
             _credential_access_payload(),
         )
-        destination = _write_private_json(output, credential)
-        data = credential.get("data") if isinstance(credential, dict) else {}
+        if not isinstance(credential, dict):
+            raise click.ClickException("AXIOM API returned an invalid credential")
+        destination = _write_private_text(output, _credential_markdown(credential))
         _echo(
             {
-                "id": credential_id,
+                "id": str(credential.get("id") or credential_id),
                 "output": str(destination),
-                "data_fields": sorted(str(key) for key in data) if isinstance(data, dict) else [],
+            }
+        )
+
+    @credential_group.command("refresh")
+    @click.argument("refresh_id")
+    @click.option(
+        "--output",
+        type=click.Path(path_type=Path, dir_okay=False),
+        required=True,
+    )
+    def credential_refresh(refresh_id: str, output: Path) -> None:
+        task_id = _environment("AXIOM_TASK_ID")
+        refresh = _request(
+            "POST",
+            f"/dispatch/tasks/{task_id}/credential-refreshes/{refresh_id}/get",
+            _credential_access_payload(),
+        )
+        if not isinstance(refresh, dict) or not isinstance(refresh.get("content"), str):
+            raise click.ClickException("AXIOM API returned invalid refresh instructions")
+        destination = _write_private_text(output, refresh["content"])
+        _echo(
+            {
+                "id": str(refresh.get("id") or refresh_id),
+                "output": str(destination),
             }
         )
 
@@ -383,7 +407,31 @@ def _credential_access_payload() -> dict[str, str]:
     return payload
 
 
-def _write_private_json(output: Path, value: Any) -> Path:
+def _credential_markdown(value: dict[str, Any]) -> str:
+    name = value.get("name")
+    content = value.get("content")
+    if not isinstance(name, str) or not name.strip():
+        raise click.ClickException("AXIOM API credential is missing its name")
+    if not isinstance(content, str) or not content.strip():
+        raise click.ClickException("AXIOM API credential is missing its content")
+
+    lines = [
+        "# 项目凭证",
+        "",
+        f"- ID: {value.get('id', '')}",
+        f"- 名称: {name}",
+    ]
+    refresh_id = str(value.get("refresh_id") or "").strip()
+    if refresh_id:
+        lines.append(f"- 凭证刷新 ID: {refresh_id}")
+    notes = value.get("notes")
+    if isinstance(notes, str) and notes.strip():
+        lines.extend(["", "## 备注", "", notes])
+    lines.extend(["", "## 凭证内容", "", content])
+    return "\n".join(lines)
+
+
+def _write_private_text(output: Path, content: str) -> Path:
     run_dir = Path(_environment("AXIOM_RUN_DIR")).expanduser().resolve()
     requested = output.expanduser()
     if not requested.is_absolute():
@@ -402,8 +450,9 @@ def _write_private_json(output: Path, value: Any) -> Path:
     temporary = Path(temporary_name)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(value, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
+            handle.write(content)
+            if content and not content.endswith("\n"):
+                handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(temporary, 0o600)

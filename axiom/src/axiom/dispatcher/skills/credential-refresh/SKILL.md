@@ -10,11 +10,26 @@ requirements:
 
 # Credential refresh
 
-1. 先运行 `axiom credential list`，根据 name、credential_type、target_host 选择候选凭证。
-2. 仅在真正需要时运行 `axiom credential get <credential_id> --output "$AXIOM_RUN_DIR/private/credential-<credential_id>.json"`。命令标准输出只会显示字段索引，明文只写入权限为 0600 的私有文件；CLI 会拒绝写到当前 Run Directory 之外。
-3. 在同一个请求命令内部读取该 JSON 文件并设置局部变量，不要运行 `cat`、不要 echo/打印凭证、不要把凭证字面量放进命令参数。请求结束后 `unset` 变量；不再需要时删除该私有文件。
-4. 用候选凭证最小化验证一个受保护请求。若返回 401/403/token expired，寻找同 Scope 内的登录/刷新接口，按正常业务流程获取新会话。
-5. 当前 Explore CLI 不允许直接改写 Project Credential。把刷新后的凭证只保存在当前私有运行目录，并在 `leads` Artifact 中记录“需要人工更新 Project Credential”，只引用 Credential ID，不写明文。
-6. 登录需要验证码/MFA 时不要绕过。记录阻塞原因，继续测试不依赖该凭证的方向。
+项目凭证必须渐进读取。不要猜测凭证格式，也不要一次读取所有凭证明文。
 
-刷新凭证是 Explore 的辅助步骤，不要为它创建新的 Intent 或 Todo，也不要中断原 Intent。任何 Fact、Artifact、最终 JSON、会话可见输出或命令文本中都不得出现完整 JWT、Cookie、Authorization、API Key、STS 或 Secret。
+1. 先运行 `axiom credential list`。该命令只返回当前 Project 下已启用凭证的名称和 ID。
+2. 选择确实需要的凭证后，运行：
+
+   ```bash
+   axiom credential get <credential_id> --output "$AXIOM_RUN_DIR/private/credential-<credential_id>.md"
+   ```
+
+   私有文件包含名称、可选备注、可选刷新 ID 和凭证原文，权限为 `0600`。标准输出只返回凭证 ID 和文件路径。
+3. 在请求脚本内部读取私有文件并使用凭证。不要 `cat`、echo 或打印凭证；不要把 JWT、Cookie、Authorization、API Key、账号密码、SSH 私钥或其他 Secret 放进命令参数。
+4. 只有请求明确返回 401/403、token expired，且凭证文件提供了刷新 ID 时，才运行：
+
+   ```bash
+   axiom credential refresh <refresh_id> --output "$AXIOM_RUN_DIR/private/refresh-<refresh_id>.txt"
+   ```
+
+   刷新说明同样只写入 `0600` 私有文件，标准输出不包含说明正文。
+5. 按用户提供的刷新说明在当前 Run Directory 内获得并使用新凭证。Worker 只有读取权限，不得尝试改写 Project Credential；成功刷新后，只记录“需要人工更新凭证 `<credential_id>`”，不要记录新旧明文。
+6. 凭证或刷新说明不得复制到 Fact、Artifact、Todo、漏洞、命令参数或会话可见输出。用完后清理局部变量和不再需要的私有文件。
+7. 登录需要验证码或 MFA 时不要绕过。记录阻塞原因，继续测试不依赖该凭证的方向。
+
+Bootstrap、Reason、Explore 都可以在自己的活动 Lease 中使用上述流程。刷新凭证只是当前阶段的辅助动作，不要因此额外创建 Intent 或 Todo。

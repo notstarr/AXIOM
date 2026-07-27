@@ -126,10 +126,10 @@
             <div class="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 class="text-sm font-semibold text-slate-700">项目凭证</h3>
-                <p class="text-xs text-slate-400 mt-0.5">项目内任务共享，Bootstrap 与 Explore 可通过 AXIOM CLI 读取。</p>
+                <p class="text-xs text-slate-400 mt-0.5">项目内任务共享，Bootstrap、Reason 与 Explore 通过 AXIOM CLI 按需读取。</p>
               </div>
               <div class="flex items-center gap-2">
-                <input x-model="projectCredentialSearch" placeholder="搜索名称、类型或域名" class="w-52 px-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-brand-100">
+                <input x-model="projectCredentialSearch" placeholder="搜索名称或备注" class="w-52 px-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-brand-100">
                 <button @click="openProjectCredentialEditor()" class="px-3 py-1.5 text-xs bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition">添加凭证</button>
               </div>
             </div>
@@ -138,15 +138,14 @@
             </template>
             <div class="overflow-x-auto" x-show="filteredProjectCredentials().length > 0">
               <table class="w-full text-xs">
-                <thead><tr class="border-b border-slate-100 text-left text-[10px] text-slate-400 uppercase tracking-wider"><th class="px-2 py-2">名称</th><th class="px-2 py-2">类型</th><th class="px-2 py-2">适用域名</th><th class="px-2 py-2">凭证字段</th><th class="px-2 py-2">状态</th><th class="px-2 py-2 text-right">操作</th></tr></thead>
+                <thead><tr class="border-b border-slate-100 text-left text-[10px] text-slate-400 uppercase tracking-wider"><th class="px-2 py-2">名称</th><th class="px-2 py-2">备注</th><th class="px-2 py-2">刷新方式</th><th class="px-2 py-2">状态</th><th class="px-2 py-2 text-right">操作</th></tr></thead>
                 <tbody>
                   <template x-for="credential in filteredProjectCredentials()" :key="credential.id">
-                    <tr class="border-b border-slate-50" :class="credential.active ? '' : 'opacity-55'">
-                      <td class="px-2 py-2"><p class="font-medium text-slate-700" x-text="credential.label"></p><p class="mt-0.5 text-[10px] font-mono text-slate-400" x-text="credential.id"></p></td>
-                      <td class="px-2 py-2 text-slate-600" x-text="credential.auth_type"></td>
-                      <td class="px-2 py-2 text-slate-500" x-text="(credential.domains || []).join(', ') || '全部域名'"></td>
-                      <td class="px-2 py-2 text-slate-500" x-text="credentialDataSummary(credential)"></td>
-                      <td class="px-2 py-2"><button @click="toggleProjectCredential(credential)" class="px-2 py-1 rounded-md text-[10px] font-semibold" :class="credential.active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'" x-text="credential.active ? '启用' : '停用'"></button></td>
+                    <tr class="border-b border-slate-50" :class="credential.enabled ? '' : 'opacity-55'">
+                      <td class="px-2 py-2"><p class="font-medium text-slate-700" x-text="credential.name"></p><p class="mt-0.5 text-[10px] font-mono text-slate-400" x-text="credential.id"></p></td>
+                      <td class="px-2 py-2 text-slate-500 max-w-xs"><p class="line-clamp-2 whitespace-pre-line" x-text="credential.notes || '—'"></p></td>
+                      <td class="px-2 py-2"><span class="inline-flex rounded-md px-2 py-1 text-[10px] font-medium" :class="credential.refresh_id ? 'bg-sky-50 text-sky-700' : 'bg-slate-50 text-slate-400'" x-text="credential.refresh_id ? `已配置 · ${credential.refresh_id}` : '未配置'"></span></td>
+                      <td class="px-2 py-2"><button @click="toggleProjectCredential(credential)" class="px-2 py-1 rounded-md text-[10px] font-semibold" :class="credential.enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'" x-text="credential.enabled ? '启用' : '停用'"></button></td>
                       <td class="px-2 py-2"><div class="flex justify-end gap-1"><button @click="openProjectCredentialEditor(credential)" class="px-2 py-1 rounded-md text-[10px] text-brand-600 hover:bg-brand-50">编辑</button><button @click="deleteProjectCredential(credential)" class="px-2 py-1 rounded-md text-[10px] text-rose-500 hover:bg-rose-50">删除</button></div></td>
                     </tr>
                   </template>
@@ -163,18 +162,18 @@
   <div x-show="credentialEditor.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="credentialEditor.open=false">
     <div class="bg-white rounded-2xl shadow-2xl modal-enter w-full max-w-2xl p-6 border border-slate-200/60" @click.stop>
       <div class="flex items-center justify-between gap-3">
-        <div><h3 class="text-base font-semibold text-slate-700" x-text="credentialEditor.id ? '编辑项目凭证' : '添加项目凭证'"></h3><p class="mt-0.5 text-xs text-slate-400">凭证明文保存，供任务执行阶段按项目读取。</p></div>
+        <div><h3 class="text-base font-semibold text-slate-700" x-text="credentialEditor.id ? '编辑项目凭证' : '添加项目凭证'"></h3><p class="mt-0.5 text-xs text-slate-400">内容格式不限；Worker 通过 list → get → refresh 渐进读取。</p></div>
         <button @click="credentialEditor.open=false" class="text-slate-400 hover:text-slate-600 text-lg">&times;</button>
       </div>
-      <div class="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3">
-        <label class="text-[11px] text-slate-400">名称<input x-model="credentialEditor.label" placeholder="admin-session" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></label>
-        <label class="text-[11px] text-slate-400">认证类型<input x-model="credentialEditor.authType" placeholder="header / cookie / jwt / basic" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></label>
-        <label class="md:col-span-2 text-[11px] text-slate-400">适用域名（每行一个；留空表示全部）<textarea x-model="credentialEditor.domainsText" rows="2" placeholder="api.example.com" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono"></textarea></label>
-        <label class="md:col-span-2 text-[11px] text-slate-400">凭证内容（JSON 对象）<textarea x-model="credentialEditor.dataText" rows="7" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono"></textarea></label>
-        <label class="md:col-span-2 text-[11px] text-slate-400">备注<input x-model="credentialEditor.notes" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></label>
-        <label class="md:col-span-2 inline-flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" x-model="credentialEditor.active" class="rounded border-slate-300 text-brand-500">启用此凭证</label>
+      <div x-show="credentialEditor.loading" class="mt-5 rounded-xl border border-slate-100 bg-slate-50 px-4 py-8 text-center text-sm text-slate-400">正在按需读取凭证详情…</div>
+      <div x-show="!credentialEditor.loading" class="mt-5 grid grid-cols-1 gap-3">
+        <label class="text-[11px] text-slate-400">名称<input x-model="credentialEditor.name" maxlength="128" placeholder="生产管理员会话" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></label>
+        <label class="text-[11px] text-slate-400">凭证内容（必填，格式不限）<textarea x-model="credentialEditor.content" rows="8" placeholder="Cookie、JWT、SSH 私钥、原始 HTTP 请求、账号密码等均可原样填写" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono"></textarea></label>
+        <label class="text-[11px] text-slate-400">备注（可选）<textarea x-model="credentialEditor.notes" rows="3" placeholder="用途、权限级别、使用注意事项等" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea></label>
+        <label class="text-[11px] text-slate-400">凭证如何刷新（可选，格式不限）<textarea x-model="credentialEditor.refreshContent" rows="6" placeholder="可填写完整请求包、登录地址、账号密码、刷新步骤或其他说明" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono"></textarea></label>
+        <label class="inline-flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" x-model="credentialEditor.enabled" class="rounded border-slate-300 text-brand-500">启用此凭证</label>
       </div>
-      <div class="mt-5 flex justify-end gap-2"><button @click="credentialEditor.open=false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl">取消</button><button @click="saveProjectCredential()" :disabled="credentialSaving || !credentialEditor.label || !credentialEditor.authType" class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium disabled:opacity-40" x-text="credentialSaving ? '保存中...' : '保存凭证'"></button></div>
+      <div class="mt-5 flex justify-end gap-2"><button @click="credentialEditor.open=false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl">取消</button><button @click="saveProjectCredential()" :disabled="credentialSaving || credentialEditor.loading || !credentialEditor.name.trim() || !credentialEditor.content.trim()" class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium disabled:opacity-40" x-text="credentialSaving ? '保存中...' : '保存凭证'"></button></div>
     </div>
   </div>
 </div>

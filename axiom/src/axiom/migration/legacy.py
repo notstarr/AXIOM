@@ -16,7 +16,7 @@ from axiom.cli import alembic_config
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.audit.tables import audit_events
 from axiom.modules.context.tables import context_revisions
-from axiom.modules.credentials.tables import credentials
+from axiom.modules.credentials.tables import credential_refreshes, credentials
 from axiom.modules.external_reports.tables import external_report_attempts
 from axiom.modules.goals.tables import goal_evaluations
 from axiom.modules.graph.tables import facts, intent_sources, intents
@@ -632,20 +632,26 @@ def _insert_credentials(conn, source, project_ids, report, now) -> None:
         if project_id not in project_ids:
             report.skip("credentials")
             continue
-        domains = _json_list(row.get("domains_json"))
-        auth_type = _credential_type(row.get("auth_type"))
-        data = _json_obj(row.get("credentials_json"))
-        if row.get("notes"):
-            data.setdefault("_legacy_notes", str(row["notes"]))
-        data.setdefault("_legacy_domains", domains)
+        domains = [
+            str(item).strip()
+            for item in _json_list(row.get("domains_json"))
+            if str(item).strip()
+        ]
+        notes = str(row.get("notes") or "").strip()
+        legacy_metadata = _legacy_credential_metadata(
+            str(row.get("auth_type") or "custom"),
+            domains,
+        )
         conn.execute(
             credentials.insert().values(
                 id=str(row.get("id") or f"legacy-cred-{report.counts.get('credentials', 0) + 1}"),
                 project_id=project_id,
                 name=str(row.get("label") or "Legacy credential"),
-                credential_type=auth_type,
-                target_host=str(domains[0]) if domains else "",
-                data_json=json.dumps(data, ensure_ascii=False),
+                content=_freeform_credential_content(row.get("credentials_json")),
+                notes="\n\n".join(
+                    part for part in (notes, legacy_metadata) if part
+                )
+                or None,
                 enabled=bool(row.get("active", row.get("enabled", 1))),
                 created_at=row.get("created_at") or row.get("captured_at") or now,
                 updated_at=row.get("updated_at") or row.get("captured_at") or now,
@@ -900,6 +906,15 @@ def _rebuild_counters(conn, report) -> None:
     rows.extend(_counter_rows(conn, projects, "global", "project", "prj_"))
     rows.extend(_counter_rows(conn, tasks, "global", "task", "t_"))
     rows.extend(_counter_rows(conn, credentials, "global", "credential", "cred_"))
+    rows.extend(
+        _counter_rows(
+            conn,
+            credential_refreshes,
+            "global",
+            "credential_refresh",
+            "crf_",
+        )
+    )
     rows.extend(_counter_rows(conn, reason_workspaces, "global", "reason_workspace", "rw_"))
     rows.extend(_counter_rows(conn, mcp_servers, "global", "mcp", "mcp_"))
     rows.extend(_counter_rows(conn, mcp_tools, "global", "mcp_tool", "mcp_tool_"))
@@ -942,6 +957,7 @@ def _verify(engine: Engine, report: MigrationReport) -> None:
             artifacts,
             vulnerabilities,
             credentials,
+            credential_refreshes,
             workers,
             audit_events,
             context_revisions,
@@ -1069,19 +1085,27 @@ def _intent_kind(row, intent_id: str) -> str:
     return "explore"
 
 
-def _credential_type(value) -> str:
-    text = str(value or "custom").lower()
-    if text in {"jwt", "bearer", "token"}:
-        return "bearer"
-    if text in {"cookie", "session"}:
-        return "cookie"
-    if text in {"basic"}:
-        return "basic"
-    if text in {"ssh"}:
-        return "ssh"
-    if text in {"header", "headers", "custom_header", "body"}:
-        return "headers"
-    return "custom"
+def _legacy_credential_metadata(auth_type: str, domains: list[str]) -> str:
+    domain_text = "、".join(domains) if domains else "（未设置）"
+    return (
+        "[旧版迁移信息]\n"
+        f"认证类型：{auth_type.strip() or 'custom'}\n"
+        f"适用域名：{domain_text}"
+    )
+
+
+def _freeform_credential_content(value: object) -> str:
+    if isinstance(value, str):
+        if not value.strip():
+            return "{}"
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+        return json.dumps(parsed, ensure_ascii=False, indent=2)
+    if value is None:
+        return "{}"
+    return json.dumps(value, ensure_ascii=False, indent=2)
 
 
 def _rows(conn: sqlite3.Connection, table: str) -> list[dict[str, Any]]:

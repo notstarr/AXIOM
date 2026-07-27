@@ -23,6 +23,7 @@ REQUIRED_TABLES = frozenset(
         "artifacts",
         "audit_events",
         "context_revisions",
+        "credential_refreshes",
         "credentials",
         "facts",
         "id_counters",
