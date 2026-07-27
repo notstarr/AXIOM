@@ -130,11 +130,51 @@ window.AxiomModules.core.methods.api('PUT', '/settings/dispatch', {{
     return json.loads(result.stdout)
 
 
+def _run_skill_toggle_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    skills = ROOT / "src/axiom/static/js/skills.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+eval(fs.readFileSync({json.dumps(str(skills))}, 'utf8'));
+const calls = [];
+const toasts = [];
+const ctx = Object.assign({{
+  skills: [{{ name: 'browser-control', enabled: true }}],
+  skillEditor: {{ name: 'browser-control', enabled: true }},
+  skillToggleLoading: '',
+  api: async (method, path, body) => {{
+    calls.push({{ method, path, body }});
+    return {{ name: 'browser-control', enabled: false }};
+  }},
+  showToast: (message, type = 'success') => toasts.push({{ message, type }}),
+}}, window.AxiomModules.skills.methods);
+ctx.toggleSkillFromEditor().then(() => process.stdout.write(JSON.stringify({{
+  calls,
+  toasts,
+  listedEnabled: ctx.skills[0].enabled,
+  editorEnabled: ctx.skillEditor.enabled,
+  loading: ctx.skillToggleLoading,
+}})));
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
 def test_frontend_and_static_assets_are_served(client):
     response = client.get("/")
     assert response.status_code == 200
     assert "<title>axiom</title>" in response.text
     assert "/static/js/state.js?v=20260727.1" in response.text
+    assert "/static/js/skills.js?v=20260727.4" in response.text
     assert "/static/js/v2-adapter.js?v=20260727.3" in response.text
     assert "/static/js/helpers.js?v=20260724.2" in response.text
     assert "/static/js/graph.js?v=20260727.2" in response.text
@@ -194,6 +234,24 @@ def test_runtime_save_uses_the_put_response_and_does_not_touch_workers() -> None
     ]
     assert result["calls"][1]["body"]["expected_version"] == 5
     assert result["calls"][1]["body"]["config"]["reason_low_watermark"] == 0
+
+
+def test_skill_toggle_uses_dedicated_patch_endpoint_and_server_state() -> None:
+    result = _run_skill_toggle_fixture()
+
+    assert result["calls"] == [
+        {
+            "method": "PATCH",
+            "path": "/skills/browser-control/enabled",
+            "body": {"enabled": False},
+        }
+    ]
+    assert result["listedEnabled"] is False
+    assert result["editorEnabled"] is False
+    assert result["loading"] == ""
+    assert result["toasts"] == [
+        {"message": "browser-control 已禁用", "type": "success"}
+    ]
 
 
 def test_intent_lifecycle_uses_status_instead_of_retained_worker():

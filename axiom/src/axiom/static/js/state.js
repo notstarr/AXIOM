@@ -193,6 +193,7 @@ window.AxiomModules.state = {
     globalSkillUsage: [],
     skills: [],
     skillEditor: { name: '', description: '', content: '', isNew: false, builtin: false, enabled: true, activeFile: '', fileContent: '', fileDirty: false },
+    skillToggleLoading: '',
     skillFiles: [],
     showNewSkillFileInput: false,
     newSkillFilePath: '',

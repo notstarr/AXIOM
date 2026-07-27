@@ -109,14 +109,30 @@ window.AxiomModules.skills = {
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
+    async setSkillEnabled(sk, enabled) {
+      if (!sk?.name || this.skillToggleLoading) return;
+      this.skillToggleLoading = sk.name;
+      try {
+        const updated = await this.api(
+          'PATCH',
+          `/skills/${encodeURIComponent(sk.name)}/enabled`,
+          { enabled: Boolean(enabled) },
+        );
+        const listed = this.skills.find(item => item.name === sk.name);
+        if (listed) listed.enabled = updated.enabled;
+        if (this.skillEditor.name === sk.name) {
+          this.skillEditor.enabled = updated.enabled;
+        }
+        this.showToast(`${sk.name} 已${updated.enabled ? '启用' : '禁用'}`);
+        return updated;
+      } catch(e) { this.showToast(e.message, 'error'); }
+      finally { this.skillToggleLoading = ''; }
+    },
+
     async toggleSkillFromEditor() {
       const sk = this.skills.find(s => s.name === this.skillEditor.name);
       if (!sk) return;
-      try {
-        await this.api('PUT', `/skills/${sk.name}`, { enabled: !sk.enabled });
-        sk.enabled = !sk.enabled;
-        this.skillEditor.enabled = sk.enabled;
-      } catch(e) { this.showToast(e.message, 'error'); }
+      await this.setSkillEnabled(sk, !sk.enabled);
     },
 
     openSkillEditor() {
@@ -217,10 +233,7 @@ window.AxiomModules.skills = {
     },
 
     async toggleSkill(sk) {
-      try {
-        await this.api('PUT', `/skills/${sk.name}`, { enabled: !sk.enabled });
-        sk.enabled = !sk.enabled;
-      } catch (e) { this.showToast(e.message, 'error'); }
+      await this.setSkillEnabled(sk, !sk.enabled);
     },
   }
 };
