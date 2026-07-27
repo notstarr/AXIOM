@@ -24,6 +24,7 @@ import time
 import argparse
 import threading
 import urllib.request
+from urllib.parse import quote
 
 try:
     import websocket
@@ -44,10 +45,11 @@ def get_tabs(port):
 def create_new_tab(port, url):
     """Create a new tab via CDP HTTP API and return its WebSocket URL."""
     try:
-        encoded_url = urllib.request.quote(url, safe='')
-        raw = urllib.request.urlopen(
-            f"http://localhost:{port}/json/new?{encoded_url}", timeout=5
-        ).read()
+        request = urllib.request.Request(
+            f"http://localhost:{port}/json/new?{quote(url, safe='')}",
+            method="PUT",
+        )
+        raw = urllib.request.urlopen(request, timeout=5).read()
         tab_info = json.loads(raw)
         return tab_info.get("webSocketDebuggerUrl")
     except Exception as e:
@@ -78,10 +80,12 @@ def main():
     use_new_tab = args.tab_index is None
 
     if use_new_tab:
-        ws_url = create_new_tab(args.cdp_port, args.url)
+        # Attach and enable Page events before navigating.  Navigating in
+        # /json/new can fire alert() before the WebSocket listener exists.
+        ws_url = create_new_tab(args.cdp_port, "about:blank")
         if not ws_url:
             sys.exit(2)
-        print(f"[CDP] created new tab for {args.url}", file=sys.stderr)
+        print("[CDP] created isolated blank tab", file=sys.stderr)
         tab_id = None
         for tab in get_tabs(args.cdp_port):
             if tab.get("webSocketDebuggerUrl") == ws_url:
@@ -123,11 +127,8 @@ def main():
 
     def on_open(ws):
         ws.send(json.dumps({"id": 1, "method": "Page.enable"}))
-        if not use_new_tab:
-            ws.send(json.dumps({"id": 2, "method": "Page.navigate", "params": {"url": args.url}}))
-            print(f"[CDP] navigating to {args.url}", file=sys.stderr)
-        else:
-            print(f"[CDP] tab already navigating to {args.url}", file=sys.stderr)
+        ws.send(json.dumps({"id": 2, "method": "Page.navigate", "params": {"url": args.url}}))
+        print(f"[CDP] navigating to {args.url}", file=sys.stderr)
 
     ws = websocket.WebSocketApp(
         ws_url,

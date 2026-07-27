@@ -69,22 +69,27 @@ fi
 
 echo "🚀 Launching Chrome-SecTest..."
 
-EXTRA_FLAGS=()
+_launch_chrome() {
+    "${CHROME}" \
+      --user-data-dir="${PROFILE_DIR}" \
+      --remote-debugging-port="${CDP_PORT}" \
+      --remote-allow-origins='*' \
+      --no-first-run \
+      --window-size=1280,800 \
+      "$@" \
+      2>/dev/null &
+    new_pid=$!
+}
+
 if [ "${MITM_PROXY:-0}" = "1" ]; then
-    EXTRA_FLAGS+=(--proxy-server=http://127.0.0.1:18080 --ignore-certificate-errors)
     echo "🔀 mitmproxy mode: traffic → 127.0.0.1:18080"
+    _launch_chrome \
+      --proxy-server=http://127.0.0.1:18080 \
+      --ignore-certificate-errors
+else
+    _launch_chrome
 fi
 
-"${CHROME}" \
-  --user-data-dir="${PROFILE_DIR}" \
-  --remote-debugging-port="${CDP_PORT}" \
-  --remote-allow-origins='*' \
-  --no-first-run \
-  --window-size=1280,800 \
-  "${EXTRA_FLAGS[@]}" \
-  2>/dev/null &
-
-new_pid=$!
 echo "${new_pid}" > "${PID_FILE}"
 
 # Wait up to 10s for port to be ready and confirm it's our expected process.
