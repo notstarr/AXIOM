@@ -2,19 +2,34 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import Connection, or_, select, update
+from sqlalchemy import Connection, delete, or_, select, update
 
+from axiom.modules.artifacts.schemas import Artifact
+from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.projects.tables import projects
 from axiom.modules.tasks.tables import tasks
-from axiom.modules.vulnerabilities.schemas import Vulnerability, VulnerabilityReport, UpdateVulnerability
-from axiom.modules.vulnerabilities.tables import vulnerabilities
+from axiom.modules.vulnerabilities.schemas import (
+    LegacyVulnerabilityDetails,
+    UpdateVulnerability,
+    Vulnerability,
+    VulnerabilityReport,
+)
+from axiom.modules.vulnerabilities.tables import vulnerability_artifacts, vulnerabilities
 from axiom.shared.ids import allocate_id
 
 
 class VulnerabilityRepository:
-    def create(self, conn: Connection, *, task_id: str, body: VulnerabilityReport, now: str) -> Vulnerability:
+    def create(
+        self,
+        conn: Connection,
+        *,
+        task_id: str,
+        body: VulnerabilityReport,
+        now: str,
+    ) -> Vulnerability:
+        vulnerability_id = allocate_id(conn, scope=task_id, kind="vulnerability", prefix="v")
         values = {
-            "id": allocate_id(conn, scope=task_id, kind="vulnerability", prefix="v"),
+            "id": vulnerability_id,
             "task_id": task_id,
             "intent_id": body.intent_id,
             "title": body.title,
@@ -23,10 +38,11 @@ class VulnerabilityRepository:
             "description": body.description,
             "prerequisites": body.prerequisites,
             "impact": body.impact,
-            "reproduction_steps_json": json.dumps(body.reproduction_steps, ensure_ascii=False),
+            # V1 columns remain solely for read-only historical compatibility.
+            "reproduction_steps_json": "[]",
             "remediation": body.remediation,
-            "curl_command": body.curl_command,
-            "evidence_json": json.dumps(body.evidence, ensure_ascii=False),
+            "curl_command": "",
+            "evidence_json": "[]",
             "affected_target": body.affected_target,
             "status": body.status,
             "status_reason": body.status_reason,
@@ -35,9 +51,19 @@ class VulnerabilityRepository:
             "created_at": now,
             "updated_at": now,
             "archived": False,
+            "format_version": 2,
         }
         conn.execute(vulnerabilities.insert().values(**values))
-        return self._model(values)
+        self._replace_artifacts(
+            conn,
+            task_id=task_id,
+            vulnerability_id=vulnerability_id,
+            finding_artifact_id=body.finding_artifact_id,
+            evidence_artifact_ids=body.evidence_artifact_ids,
+        )
+        result = self.get(conn, task_id, vulnerability_id)
+        assert result is not None
+        return result
 
     def get(self, conn: Connection, task_id: str, vulnerability_id: str) -> Vulnerability | None:
         row = conn.execute(
@@ -46,15 +72,17 @@ class VulnerabilityRepository:
                 vulnerabilities.c.id == vulnerability_id,
             )
         ).mappings().one_or_none()
-        return self._model(row) if row is not None else None
+        return self._models(conn, [row])[0] if row is not None else None
 
     def list(self, conn: Connection, task_id: str) -> list[Vulnerability]:
-        rows = conn.execute(
-            select(vulnerabilities)
-            .where(vulnerabilities.c.task_id == task_id, vulnerabilities.c.archived.is_(False))
-            .order_by(vulnerabilities.c.updated_at.desc(), vulnerabilities.c.id.desc())
-        ).mappings()
-        return [self._model(row) for row in rows]
+        rows = list(
+            conn.execute(
+                select(vulnerabilities)
+                .where(vulnerabilities.c.task_id == task_id, vulnerabilities.c.archived.is_(False))
+                .order_by(vulnerabilities.c.updated_at.desc(), vulnerabilities.c.id.desc())
+            ).mappings()
+        )
+        return self._models(conn, rows)
 
     def list_all(
         self,
@@ -91,10 +119,12 @@ class VulnerabilityRepository:
                     projects.c.title.ilike(pattern),
                 )
             )
-        rows = conn.execute(
-            query.order_by(vulnerabilities.c.updated_at.desc(), vulnerabilities.c.id.desc())
-        ).mappings()
-        return [self._model(row) for row in rows]
+        rows = list(
+            conn.execute(
+                query.order_by(vulnerabilities.c.updated_at.desc(), vulnerabilities.c.id.desc())
+            ).mappings()
+        )
+        return self._models(conn, rows)
 
     def update(
         self,
@@ -105,25 +135,54 @@ class VulnerabilityRepository:
         *,
         now: str,
     ) -> Vulnerability | None:
-        values = body.model_dump(exclude_none=True)
-        if "reproduction_steps" in values:
-            values["reproduction_steps_json"] = json.dumps(
-                values.pop("reproduction_steps"), ensure_ascii=False
+        values = body.model_dump(exclude_unset=True)
+        finding_changed = "finding_artifact_id" in values
+        evidence_changed = "evidence_artifact_ids" in values
+        finding_artifact_id = values.pop("finding_artifact_id", None)
+        evidence_artifact_ids = values.pop("evidence_artifact_ids", None)
+
+        if values:
+            values["updated_at"] = now
+            result = conn.execute(
+                update(vulnerabilities)
+                .where(
+                    vulnerabilities.c.task_id == task_id,
+                    vulnerabilities.c.id == vulnerability_id,
+                )
+                .values(**values)
             )
-        if "evidence" in values:
-            values["evidence_json"] = json.dumps(values.pop("evidence"), ensure_ascii=False)
-        if not values:
-            return self.get(conn, task_id, vulnerability_id)
-        values["updated_at"] = now
-        result = conn.execute(
-            update(vulnerabilities)
-            .where(
-                vulnerabilities.c.task_id == task_id,
-                vulnerabilities.c.id == vulnerability_id,
+            if not result.rowcount:
+                return None
+        elif self.get(conn, task_id, vulnerability_id) is None:
+            return None
+
+        if finding_changed or evidence_changed:
+            current = self.get(conn, task_id, vulnerability_id)
+            if current is None:
+                return None
+            self._replace_artifacts(
+                conn,
+                task_id=task_id,
+                vulnerability_id=vulnerability_id,
+                finding_artifact_id=(
+                    finding_artifact_id if finding_changed else current.finding_artifact_id
+                ),
+                evidence_artifact_ids=(
+                    list(evidence_artifact_ids or [])
+                    if evidence_changed
+                    else list(current.evidence_artifact_ids)
+                ),
             )
-            .values(**values)
-        )
-        return self.get(conn, task_id, vulnerability_id) if result.rowcount else None
+            if not values:
+                conn.execute(
+                    update(vulnerabilities)
+                    .where(
+                        vulnerabilities.c.task_id == task_id,
+                        vulnerabilities.c.id == vulnerability_id,
+                    )
+                    .values(updated_at=now)
+                )
+        return self.get(conn, task_id, vulnerability_id)
 
     def archive(self, conn: Connection, task_id: str, vulnerability_id: str, *, now: str) -> bool:
         result = conn.execute(
@@ -136,28 +195,136 @@ class VulnerabilityRepository:
         )
         return bool(result.rowcount)
 
-    @staticmethod
-    def _model(row) -> Vulnerability:
-        return Vulnerability(
-            id=row["id"],
-            task_id=row["task_id"],
-            intent_id=row["intent_id"],
-            title=row["title"],
-            type=row["type"],
-            severity=row["severity"],
-            description=row["description"],
-            prerequisites=row["prerequisites"],
-            impact=row["impact"],
-            reproduction_steps=json.loads(row["reproduction_steps_json"] or "[]"),
-            remediation=row["remediation"],
-            curl_command=row["curl_command"],
-            evidence=json.loads(row["evidence_json"] or "[]"),
-            affected_target=row["affected_target"],
-            status=row["status"],
-            status_reason=row["status_reason"],
-            source=row["source"],
-            reported_by=row["reported_by"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-            archived=bool(row["archived"]),
+    def _models(self, conn: Connection, rows: list) -> list[Vulnerability]:
+        if not rows:
+            return []
+        keys = {(str(row["task_id"]), str(row["id"])) for row in rows}
+        task_ids = {task_id for task_id, _vulnerability_id in keys}
+        vulnerability_ids = {vulnerability_id for _task_id, vulnerability_id in keys}
+        relation_rows = list(
+            conn.execute(
+                select(vulnerability_artifacts).where(
+                    vulnerability_artifacts.c.task_id.in_(task_ids),
+                    vulnerability_artifacts.c.vulnerability_id.in_(vulnerability_ids),
+                )
+            ).mappings()
         )
+        artifact_keys = {
+            (str(row["task_id"]), str(row["artifact_id"])) for row in relation_rows
+        }
+        artifact_by_key: dict[tuple[str, str], Artifact] = {}
+        if artifact_keys:
+            artifact_task_ids = {task_id for task_id, _artifact_id in artifact_keys}
+            artifact_ids = {artifact_id for _task_id, artifact_id in artifact_keys}
+            artifact_rows = conn.execute(
+                select(artifacts).where(
+                    artifacts.c.task_id.in_(artifact_task_ids),
+                    artifacts.c.id.in_(artifact_ids),
+                )
+            ).mappings()
+            artifact_by_key = {
+                (str(row["task_id"]), str(row["id"])): Artifact.model_validate(row)
+                for row in artifact_rows
+            }
+
+        relations_by_vulnerability: dict[tuple[str, str], list] = {}
+        for relation in relation_rows:
+            relations_by_vulnerability.setdefault(
+                (str(relation["task_id"]), str(relation["vulnerability_id"])), []
+            ).append(relation)
+
+        result: list[Vulnerability] = []
+        for row in rows:
+            key = (str(row["task_id"]), str(row["id"]))
+            relations = sorted(
+                relations_by_vulnerability.get(key, []),
+                key=lambda item: (0 if item["role"] == "finding" else 1, item["display_order"]),
+            )
+            finding: Artifact | None = None
+            evidence_items: list[Artifact] = []
+            for relation in relations:
+                artifact = artifact_by_key.get((key[0], str(relation["artifact_id"])))
+                if artifact is None or artifact.archived:
+                    continue
+                if relation["role"] == "finding" and finding is None:
+                    finding = artifact
+                elif relation["role"] == "evidence":
+                    evidence_items.append(artifact)
+
+            format_version = int(row.get("format_version") or 1)
+            legacy = None
+            if format_version < 2:
+                legacy = LegacyVulnerabilityDetails(
+                    reproduction_steps=json.loads(row["reproduction_steps_json"] or "[]"),
+                    curl_command=row["curl_command"] or "",
+                    evidence=json.loads(row["evidence_json"] or "[]"),
+                )
+            result.append(
+                Vulnerability(
+                    id=row["id"],
+                    task_id=row["task_id"],
+                    intent_id=row["intent_id"],
+                    title=row["title"],
+                    type=row["type"],
+                    severity=row["severity"],
+                    description=row["description"],
+                    prerequisites=row["prerequisites"],
+                    impact=row["impact"],
+                    remediation=row["remediation"],
+                    affected_target=row["affected_target"],
+                    status=row["status"],
+                    status_reason=row["status_reason"],
+                    source=row["source"],
+                    reported_by=row["reported_by"],
+                    finding_artifact_id=finding.id if finding else None,
+                    evidence_artifact_ids=[item.id for item in evidence_items],
+                    finding_artifact=finding,
+                    evidence_artifacts=evidence_items,
+                    format_version=format_version,
+                    legacy=legacy,
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                    archived=bool(row["archived"]),
+                )
+            )
+        return result
+
+    @staticmethod
+    def _replace_artifacts(
+        conn: Connection,
+        *,
+        task_id: str,
+        vulnerability_id: str,
+        finding_artifact_id: str | None,
+        evidence_artifact_ids: list[str],
+    ) -> None:
+        conn.execute(
+            delete(vulnerability_artifacts).where(
+                vulnerability_artifacts.c.task_id == task_id,
+                vulnerability_artifacts.c.vulnerability_id == vulnerability_id,
+            )
+        )
+        rows: list[dict[str, object]] = []
+        if finding_artifact_id:
+            rows.append(
+                {
+                    "task_id": task_id,
+                    "vulnerability_id": vulnerability_id,
+                    "artifact_id": finding_artifact_id,
+                    "role": "finding",
+                    "display_order": 0,
+                }
+            )
+        rows.extend(
+            {
+                "task_id": task_id,
+                "vulnerability_id": vulnerability_id,
+                "artifact_id": artifact_id,
+                "role": "evidence",
+                "display_order": order,
+            }
+            for order, artifact_id in enumerate(evidence_artifact_ids)
+            if artifact_id != finding_artifact_id
+        )
+        if rows:
+            conn.execute(vulnerability_artifacts.insert(), rows)

@@ -14,7 +14,7 @@ from axiom.modules.mcp.tables import mcp_servers, mcp_tools
 from axiom.modules.settings.tables import runtime_settings
 from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.modules.todos.tables import todo_sources, todos
-from axiom.modules.vulnerabilities.tables import vulnerabilities
+from axiom.modules.vulnerabilities.tables import vulnerability_artifacts, vulnerabilities
 from axiom.modules.workers.tables import workers
 from axiom.shared.ids import id_counters
 
@@ -40,6 +40,7 @@ ALL_TABLES = (
     credentials,
     credential_refreshes,
     vulnerabilities,
+    vulnerability_artifacts,
     mcp_servers,
     mcp_tools,
     external_report_attempts,

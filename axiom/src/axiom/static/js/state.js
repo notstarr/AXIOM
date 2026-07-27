@@ -104,7 +104,7 @@ window.AxiomModules.state = {
     blackboardEditorForManaged: false,
     blackboardEditor: { open: false, id: '', title: '', content: '', hint: '' },
     vulnFilter: { keyword: '', projectId: '' },
-    vulnEditor: { open: false, isNew: true, project_id: '', id: '', title: '', type: '通用漏洞', affected_target: '', description: '', prerequisites: '', impact: '', evidence: '', reproduction_steps: '', remediation: '', curl_command: '', severity: 'medium', status: '待验证', status_reason: '' },
+    vulnEditor: { open: false, isNew: true, project_id: '', id: '', title: '', type: '通用漏洞', affected_target: '', description: '', prerequisites: '', impact: '', remediation: '', severity: 'medium', status: '待验证', status_reason: '', finding_artifact_id: '', evidence_artifact_ids: [], available_artifacts: [], artifacts_loading: false },
     vulnStatusQuick: { open: false, project_id: '', id: '', title: '', status: '待验证' },
     reopenForm: { projectId: '', projectTitle: '', description: '' },
     renameForm: { projectId: '', originalTitle: '', title: '' },

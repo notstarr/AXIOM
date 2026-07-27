@@ -66,6 +66,50 @@ def test_preview_uses_the_shared_vulnerability_report_shape_without_exposing_tok
     assert "external-secret" not in response.text
 
 
+def test_external_adapter_includes_text_artifact_content_and_binary_metadata(client) -> None:
+    task = _task(client)
+    finding = client.post(
+        f"/api/v1/tasks/{task['id']}/artifacts/upload",
+        files={"file": ("findings.md", b"# Findings\n\nConfirmed IDOR", "text/markdown")},
+        data={"actor": "human", "summary": "Findings"},
+    ).json()
+    text_evidence = client.post(
+        f"/api/v1/tasks/{task['id']}/artifacts/upload",
+        files={"file": ("response.txt", b"HTTP/1.1 200 OK", "text/plain")},
+        data={"actor": "human", "summary": "Response"},
+    ).json()
+    binary_evidence = client.post(
+        f"/api/v1/tasks/{task['id']}/artifacts/upload",
+        files={"file": ("proof.png", b"\x89PNG\r\n\x1a\n\x00\xff", "image/png")},
+        data={"actor": "human", "summary": "Screenshot"},
+    ).json()
+    vulnerability = client.post(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities",
+        json={
+            "title": "越权读取",
+            "type": "越权访问",
+            "severity": "high",
+            "description": "普通用户读取了其他用户资源",
+            "impact": "造成数据泄露",
+            "source": "human",
+            "reported_by": "human",
+            "finding_artifact_id": finding["id"],
+            "evidence_artifact_ids": [text_evidence["id"], binary_evidence["id"]],
+        },
+    ).json()
+    _configure(client)
+
+    preview = client.post(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities/{vulnerability['id']}/external-preview"
+    ).json()["payload"]
+
+    assert preview["schema_version"] == 2
+    assert preview["finding"]["content"].startswith("# Findings")
+    assert preview["evidence"][0]["content"] == "HTTP/1.1 200 OK"
+    assert preview["evidence"][1]["name"] == "proof.png"
+    assert preview["evidence"][1]["content"] is None
+
+
 def test_external_report_persists_success_and_reuses_common_payload(client) -> None:
     task = _task(client)
     vulnerability = _vulnerability(client, task["id"])

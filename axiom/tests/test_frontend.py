@@ -169,6 +169,44 @@ ctx.toggleSkillFromEditor().then(() => process.stdout.write(JSON.stringify({{
     return json.loads(result.stdout)
 
 
+def _run_artifact_classification_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{
+  state: {{ state: {{}} }},
+  core: {{ methods: {{}} }},
+  projects: {{ methods: {{}} }},
+  graph: {{ methods: {{}} }},
+  files: {{ methods: {{}} }},
+}} }};
+global.location = {{ origin: 'http://testserver' }};
+eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
+const methods = window.AxiomModules.files.methods;
+const items = [
+  {{ path:'i002/findings.md', artifact_type:'explore.findings' }},
+  {{ path:'i002/leads.md', artifact_type:'explore.leads' }},
+  {{ path:'i002/evidence/response.txt', artifact_type:'explore.evidence' }},
+];
+process.stdout.write(JSON.stringify(items.map(item => ({{
+  phase: methods.artifactSourcePhase(item),
+  label: methods.artifactKindLabel(item),
+  icon: methods.artifactTypeIcon(item.artifact_type),
+}}))));
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
 def _run_credential_editor_fixture() -> dict[str, object]:
     node = shutil.which("node")
     if not node:
@@ -239,12 +277,12 @@ def test_frontend_and_static_assets_are_served(client):
     response = client.get("/")
     assert response.status_code == 200
     assert "<title>axiom</title>" in response.text
-    assert "/static/js/state.js?v=20260727.1" in response.text
+    assert "/static/js/state.js?v=20260727.2" in response.text
     assert "/static/js/skills.js?v=20260727.4" in response.text
-    assert "/static/js/v2-adapter.js?v=20260727.4" in response.text
+    assert "/static/js/v2-adapter.js?v=20260727.6" in response.text
     assert "/static/js/helpers.js?v=20260724.2" in response.text
     assert "/static/js/graph.js?v=20260727.2" in response.text
-    assert "/static/js/human.js?v=20260724.2" in response.text
+    assert "/static/js/human.js?v=20260727.1" in response.text
     assert "/static/js/timeline.js?v=20260724.3" in response.text
 
     asset = client.get("/static/js/v2-adapter.js")
@@ -258,6 +296,21 @@ def test_frontend_and_static_assets_are_served(client):
 
     dashboard = client.get("/static/templates/dashboard.html")
     assert dashboard.status_code == 200
+
+    vulnerabilities = client.get("/static/templates/vulnerabilities.html")
+    assert vulnerabilities.status_code == 200
+    assert 'x-model="vulnEditor.reproduction_steps"' not in vulnerabilities.text
+    assert 'x-model="vulnEditor.curl_command"' not in vulnerabilities.text
+    assert 'x-model="vulnEditor.evidence"' not in vulnerabilities.text
+    assert "finding_artifact" in vulnerabilities.text
+    assert "evidence_artifacts" in vulnerabilities.text
+
+    files = client.get("/static/templates/files.html")
+    assert files.status_code == 200
+    assert "artifactKindLabel" in files.text
+    assert "explore.findings" in files.text
+    assert "explore.leads" in files.text
+    assert "explore.evidence" in files.text
     assert "正在加载任务" in dashboard.text
     assert "正在加载事件" in dashboard.text
 
@@ -324,6 +377,14 @@ def test_skill_toggle_uses_dedicated_patch_endpoint_and_server_state() -> None:
     assert result["loading"] == ""
     assert result["toasts"] == [
         {"message": "browser-control 已禁用", "type": "success"}
+    ]
+
+
+def test_artifact_center_classifies_new_explore_paths_by_type() -> None:
+    assert _run_artifact_classification_fixture() == [
+        {"phase": "explore", "label": "Findings", "icon": "!"},
+        {"phase": "explore", "label": "Leads", "icon": "↗"},
+        {"phase": "explore", "label": "Evidence", "icon": "◈"},
     ]
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import Engine, select
 
+from axiom.modules.artifacts.repository import ArtifactRepository
 from axiom.modules.graph.tables import intents
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
@@ -14,6 +15,7 @@ class VulnerabilityService:
     def __init__(self, engine: Engine):
         self.engine = engine
         self.repository = VulnerabilityRepository()
+        self.artifacts = ArtifactRepository()
         self.tasks = TaskRepository()
 
     def report(self, task_id: str, body: VulnerabilityReport) -> Vulnerability:
@@ -31,6 +33,12 @@ class VulnerabilityService:
                 )
             ).scalar_one_or_none() is None:
                 raise NotFoundError(f"Intent not found: {body.intent_id}")
+            self._validate_artifacts(
+                conn,
+                task_id=task_id,
+                finding_artifact_id=body.finding_artifact_id,
+                evidence_artifact_ids=body.evidence_artifact_ids,
+            )
             return self.repository.create(conn, task_id=task_id, body=body, now=utcnow())
 
     def get(self, task_id: str, vulnerability_id: str) -> Vulnerability:
@@ -62,6 +70,23 @@ class VulnerabilityService:
                 body.status or current.status,
                 body.status_reason if body.status_reason is not None else current.status_reason,
             )
+            fields = body.model_fields_set
+            finding_artifact_id = (
+                body.finding_artifact_id
+                if "finding_artifact_id" in fields
+                else current.finding_artifact_id
+            )
+            evidence_artifact_ids = (
+                body.evidence_artifact_ids
+                if "evidence_artifact_ids" in fields
+                else current.evidence_artifact_ids
+            )
+            self._validate_artifacts(
+                conn,
+                task_id=task_id,
+                finding_artifact_id=finding_artifact_id,
+                evidence_artifact_ids=list(evidence_artifact_ids or []),
+            )
             updated = self.repository.update(
                 conn,
                 task_id,
@@ -83,3 +108,34 @@ class VulnerabilityService:
     def _validate_status_reason(status: str, reason: str) -> None:
         if status == "忽略" and len(reason.strip()) < 4:
             raise ConflictError("Ignored vulnerability requires a status reason")
+
+    def _validate_artifacts(
+        self,
+        conn,
+        *,
+        task_id: str,
+        finding_artifact_id: str | None,
+        evidence_artifact_ids: list[str],
+    ) -> None:
+        if len(evidence_artifact_ids) != len(set(evidence_artifact_ids)):
+            raise ConflictError("Evidence Artifact IDs must be unique")
+        if finding_artifact_id and finding_artifact_id in evidence_artifact_ids:
+            raise ConflictError("The Findings Artifact cannot also be Evidence")
+
+        if finding_artifact_id:
+            finding = self.artifacts.get(conn, task_id, finding_artifact_id)
+            if finding is None:
+                raise NotFoundError(f"Artifact not found: {finding_artifact_id}")
+            if finding.artifact_type not in {
+                "bootstrap.findings",
+                "explore.findings",
+                "upload",
+            }:
+                raise ConflictError("Finding Artifact must be a findings or upload Artifact")
+
+        for artifact_id in evidence_artifact_ids:
+            evidence = self.artifacts.get(conn, task_id, artifact_id)
+            if evidence is None:
+                raise NotFoundError(f"Artifact not found: {artifact_id}")
+            if evidence.artifact_type not in {"explore.evidence", "upload"}:
+                raise ConflictError("Evidence Artifact must be an evidence or upload Artifact")

@@ -34,6 +34,8 @@ from axiom.modules.execution.schemas import (
     StartedIntent,
 )
 from axiom.modules.execution.stage_outputs import (
+    EXPLORE_FINDINGS_FILE,
+    StageOutputError,
     append_explore_vulnerability_locked,
     bootstrap_files,
     explore_state_guard,
@@ -48,7 +50,7 @@ from axiom.modules.settings.service import load_runtime_config
 from axiom.modules.workers.tables import workers
 from axiom.modules.skills.service import SkillService
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
-from axiom.modules.vulnerabilities.schemas import VulnerabilityReport
+from axiom.modules.vulnerabilities.schemas import StoredExploreVulnerability, VulnerabilityReport
 from axiom.shared.clock import format_utc, parse_utc, utcnow
 from axiom.shared.database import immediate_transaction
 from axiom.shared.errors import ConflictError, LeaseInactiveError, NotFoundError
@@ -603,6 +605,15 @@ class ExecutionService:
         try:
             with explore_state_guard(run_dir):
                 state = load_explore_state(run_dir)
+                available_outputs = {item.relative_name for item in outputs}
+                for report in state.vulnerabilities:
+                    missing = [
+                        path for path in report.evidence_paths if path not in available_outputs
+                    ]
+                    if missing:
+                        raise StageOutputError(
+                            "漏洞证据文件未就绪：" + "、".join(missing)
+                        )
                 with immediate_transaction(self.engine) as conn:
                     row = self.repository.input_row(conn, task_id, intent_id)
                     self._require_row(row, task_id, intent_id)
@@ -633,13 +644,30 @@ class ExecutionService:
                         created_by=row["worker"] or "explore",
                         now=now,
                     )
+                    artifact_by_relative = {
+                        item.relative_name: record
+                        for item, record in zip(prepared.files, records, strict=True)
+                    }
+                    finding_artifact = artifact_by_relative[EXPLORE_FINDINGS_FILE]
                     vulnerability_records = []
                     for report in state.vulnerabilities:
+                        evidence_artifact_ids = [
+                            artifact_by_relative[path].id for path in report.evidence_paths
+                        ]
                         vulnerability_records.append(
                             self.vulnerabilities.create(
                                 conn,
                                 task_id=task_id,
-                                body=report,
+                                body=VulnerabilityReport(
+                                    **report.model_dump(
+                                        mode="python",
+                                        exclude={"evidence_paths"},
+                                    ),
+                                    status="待验证",
+                                    status_reason="",
+                                    finding_artifact_id=finding_artifact.id,
+                                    evidence_artifact_ids=evidence_artifact_ids,
+                                ),
                                 now=now,
                             )
                         )
@@ -748,14 +776,12 @@ class ExecutionService:
                 if row["intent_status"] not in {"running", "concluding"}:
                     raise LeaseInactiveError("Explore Intent lease is not active")
                 worker = row["worker"] or "explore"
-            report = VulnerabilityReport(
+            report = StoredExploreVulnerability(
                 **command.report.model_dump(mode="python"),
                 intent_id=intent_id,
                 source="explore",
                 reported_by=worker,
             )
-            if report.status == "忽略" and len(report.status_reason.strip()) < 4:
-                raise ConflictError("Ignored vulnerability requires a status reason")
             after, duplicate = append_explore_vulnerability_locked(run_dir, report)
         return ExploreVulnerabilityRecorded(
             total=len(after.vulnerabilities),
@@ -816,7 +842,10 @@ class ExecutionService:
         intent_summary = intent_description.strip()
         if not intent_summary.endswith(("。", "！", "？", ".", "!", "?")):
             intent_summary += "。"
-        artifact_refs = "、".join(f"artifact:{item.id}" for item in artifacts)
+        by_type = {item.artifact_type: item for item in artifacts}
+        findings = by_type["explore.findings"]
+        leads = by_type["explore.leads"]
+        evidence_count = sum(item.artifact_type == "explore.evidence" for item in artifacts)
         vulnerability_refs = "、".join(
             f"vulnerability:{item_id}" for item_id in vulnerability_ids
         )
@@ -827,7 +856,8 @@ class ExecutionService:
         )
         return (
             f"已完成 Explore Intent：{intent_summary}"
-            f"证据产物：{artifact_refs}。{vulnerability_summary}"
+            f"已确认事实：artifact:{findings.id}；待验证线索：artifact:{leads.id}；"
+            f"证据文件：{evidence_count} 个。{vulnerability_summary}"
         )
 
     @staticmethod

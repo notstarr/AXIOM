@@ -132,7 +132,17 @@ def _complete_explore(
     ).json()
     artifacts_dir = Path(execution_input["run_dir"]) / "artifacts"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
-    (artifacts_dir / f"evidence-{number}.md").write_text(
+    (artifacts_dir / "findings.md").write_text(
+        f"# 已确认事实\n\n- 已完成测试方向 {number}\n",
+        encoding="utf-8",
+    )
+    (artifacts_dir / "leads.md").write_text(
+        "# 待验证线索\n\n本轮无遗留待验证线索\n",
+        encoding="utf-8",
+    )
+    evidence_dir = artifacts_dir / "evidence"
+    evidence_dir.mkdir()
+    (evidence_dir / f"response-{number}.md").write_text(
         f"# 证据 {number}\n\nGET /api/orders/{number}",
         encoding="utf-8",
     )
@@ -163,9 +173,17 @@ def test_explore_completion_atomically_registers_artifact_fact_and_reason(client
 
     assert completed["fact_id"] == "f002"
     assert completed["reason_run_id"] == "rr000002"
-    assert completed["artifacts"][0]["artifact_type"] == "explore.evidence"
-    artifact = completed["artifacts"][0]
-    assert (data_dir / artifact["storage_key"]).read_text(encoding="utf-8").startswith("# 证据")
+    assert [item["artifact_type"] for item in completed["artifacts"]] == [
+        "explore.findings",
+        "explore.leads",
+        "explore.evidence",
+    ]
+    assert [item["storage_key"].split("/")[-2:] for item in completed["artifacts"][:2]] == [
+        [intents[0], "findings.md"],
+        [intents[0], "leads.md"],
+    ]
+    evidence = completed["artifacts"][2]
+    assert (data_dir / evidence["storage_key"]).read_text(encoding="utf-8").startswith("# 证据")
     graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
     explore = next(item for item in graph["intents"] if item["id"] == intents[0])
     assert [item["id"] for item in graph["intents"]] == ["i001", "i002"]
@@ -211,7 +229,8 @@ def test_explore_completion_is_idempotent_for_the_same_lease(client) -> None:
     ).json()
     artifacts_dir = Path(execution_input["run_dir"]) / "artifacts"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
-    (artifacts_dir / "evidence.md").write_text("# 证据\n\n完整内容", encoding="utf-8")
+    (artifacts_dir / "findings.md").write_text("# 已确认事实\n\n完整内容", encoding="utf-8")
+    (artifacts_dir / "leads.md").write_text("# 待验证线索\n\n无", encoding="utf-8")
     payload = {"lease_id": claim["lease_id"]}
 
     first = client.post(f"{base}/explore-complete", json=payload)
@@ -226,7 +245,7 @@ def test_explore_completion_is_idempotent_for_the_same_lease(client) -> None:
             for item in client.get(f"/api/v1/tasks/{task['id']}/artifacts").json()
             if item["intent_id"] == intents[0]
         ]
-    ) == 1
+    ) == 2
 
 
 def test_explore_reports_vulnerability_incrementally_and_fact_keeps_its_reference(
@@ -240,10 +259,8 @@ def test_explore_reports_vulnerability_incrementally_and_fact_keeps_its_referenc
         "severity": "high",
         "description": "低权限用户可以读取其他订单详情。",
         "impact": "导致跨用户数据泄露。",
-        "reproduction_steps": ["使用用户 A 请求用户 B 的订单接口"],
-        "evidence": ["HTTP 200 返回了用户 B 的订单数据"],
+        "evidence_paths": ["evidence/response-1.md"],
         "affected_target": "https://a.example.com/api/orders/2",
-        "status": "已验证",
     }
 
     completed = _complete_explore(
@@ -256,6 +273,9 @@ def test_explore_reports_vulnerability_incrementally_and_fact_keeps_its_referenc
     assert completed["vulnerabilities"][0]["id"] == "v001"
     assert completed["vulnerabilities"][0]["source"] == "explore"
     assert completed["vulnerabilities"][0]["reported_by"] == "worker-a"
+    assert completed["vulnerabilities"][0]["status"] == "待验证"
+    assert completed["vulnerabilities"][0]["finding_artifact"]["artifact_type"] == "explore.findings"
+    assert [item["artifact_type"] for item in completed["vulnerabilities"][0]["evidence_artifacts"]] == ["explore.evidence"]
     fact = next(
         item
         for item in client.get(f"/api/v1/tasks/{task['id']}/graph").json()["facts"]
@@ -267,14 +287,14 @@ def test_explore_reports_vulnerability_incrementally_and_fact_keeps_its_referenc
     # The run directory is lease-specific; the durable artifact must be the
     # only retained copy of the evidence file.
     assert not any(
-        path.name == "evidence-1.md"
+        path.name == "response-1.md"
         for path in (data_dir / "runs" / task["id"] / intents[0]).rglob("*")
     )
     artifacts = client.get(f"/api/v1/tasks/{task['id']}/artifacts").json()
-    assert len([item for item in artifacts if item["intent_id"] == intents[0]]) == 1
+    assert len([item for item in artifacts if item["intent_id"] == intents[0]]) == 3
 
 
-def test_explore_ignored_vulnerability_requires_a_reason(client) -> None:
+def test_explore_rejects_worker_supplied_status(client) -> None:
     task, intents = _task_with_explore_intents(client)
     claim = client.post(
         f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}/claim",
@@ -282,6 +302,15 @@ def test_explore_ignored_vulnerability_requires_a_reason(client) -> None:
     ).json()
     base = f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}"
     client.post(f"{base}/start", json={"lease_id": claim["lease_id"]})
+    execution_input = client.post(
+        f"{base}/input",
+        json={"lease_id": claim["lease_id"]},
+    ).json()
+    artifacts = Path(execution_input["run_dir"]) / "artifacts"
+    (artifacts / "evidence").mkdir(parents=True)
+    (artifacts / "findings.md").write_text("# 已确认事实\n\n漏洞", encoding="utf-8")
+    (artifacts / "leads.md").write_text("# 待验证线索\n\n无", encoding="utf-8")
+    (artifacts / "evidence" / "proof.txt").write_text("proof", encoding="utf-8")
     response = client.post(
         f"{base}/explore-vulnerabilities",
         json={
@@ -292,10 +321,49 @@ def test_explore_ignored_vulnerability_requires_a_reason(client) -> None:
                 "severity": "low",
                 "description": "描述",
                 "impact": "影响",
+                "evidence_paths": ["evidence/proof.txt"],
                 "status": "忽略",
                 "status_reason": "不够",
             },
         },
     )
-    assert response.status_code == 409
-    assert "status reason" in response.json()["error"]["message"]
+    assert response.status_code == 422
+    assert "status" in response.text
+
+
+def test_explore_rejects_reported_vulnerability_with_missing_evidence_file(client) -> None:
+    task, intents = _task_with_explore_intents(client)
+    claim = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}/claim",
+        json={"worker_name": "worker-a"},
+    ).json()
+    base = f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}"
+    client.post(f"{base}/start", json={"lease_id": claim["lease_id"]})
+    execution_input = client.post(f"{base}/input", json={"lease_id": claim["lease_id"]}).json()
+    artifacts = Path(execution_input["run_dir"]) / "artifacts"
+    artifacts.mkdir(parents=True)
+    (artifacts / "findings.md").write_text("已确认事实", encoding="utf-8")
+    (artifacts / "leads.md").write_text("待验证线索", encoding="utf-8")
+    report = client.post(
+        f"{base}/explore-vulnerabilities",
+        json={
+            "lease_id": claim["lease_id"],
+            "report": {
+                "title": "缺失证据",
+                "type": "越权",
+                "severity": "high",
+                "description": "描述",
+                "impact": "影响",
+                "evidence_paths": ["evidence/missing.txt"],
+            },
+        },
+    )
+    assert report.status_code == 200, report.text
+
+    completed = client.post(
+        f"{base}/explore-complete",
+        json={"lease_id": claim["lease_id"]},
+    )
+
+    assert completed.status_code == 409
+    assert "evidence/missing.txt" in completed.json()["error"]["message"]

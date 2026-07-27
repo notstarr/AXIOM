@@ -82,7 +82,7 @@ class Container:
             credentials=CredentialService(engine),
             vulnerabilities=VulnerabilityService(engine),
             mcp=MCPService(engine),
-            external_reports=ExternalReportService(engine, settings),
+            external_reports=ExternalReportService(engine, settings, store),
             knowledge=KnowledgeService(engine),
             skills=skills,
             guard=GuardService(engine, settings),

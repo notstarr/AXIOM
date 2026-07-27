@@ -180,14 +180,21 @@ Task stop、人工/Reason Goal 完成、ReasonRun release 和 stale recovery 都
 Explore 执行一个明确 Intent，可以为完成当前 Intent 寻找必要依赖，但不能越过 Task Scope。产出：
 
 ```text
-{run_dir}/artifacts/**
+{run_dir}/artifacts/
+├── findings.md
+├── leads.md
+└── evidence/**
 ```
 
-Worker 最后一条 assistant 文本必须精确等于 `FINISH`，且 `artifacts/` 中至少有一个非空普通文件。Runner 只遍历该专用目录，拒绝 symlink、越界路径、隐藏/危险路径，以及 `sessions/`、`process/`、`models.json`；不会扫描整个运行目录。
+`findings.md` 保存本轮已确认事实和确认的漏洞发现，`leads.md` 保存已经发现但尚未验证或尚未完成的方向；二者必须始终存在且非空。没有对应内容时明确写“本轮无新增确认事实”或“本轮无遗留待验证线索”。请求、响应、工具原始输出、截图和漏洞证明只写入可选的 `evidence/**`。
 
-只有证据充分时，Explore 使用 `axiom explore vulnerability report` 逐条上报 Vulnerability。命令按现有 `VulnerabilityReport` 字段校验，`source`、`reported_by`、`intent_id` 由执行环境补齐。漏洞先写入代码维护的 lease 级 Explore 状态，阶段完成时与 Artifact、Fact 在服务端收口；Reason 不上报漏洞。
+Worker 最后一条 assistant 文本必须精确等于 `FINISH`。Runner 只允许上述两个根文件和 `evidence/**`，拒绝 `analysis/`、`reproduction/`、其它根文件、symlink、越界/隐藏路径和内部运行文件。正式存储直接形成 `{intent_id}/findings.md`、`{intent_id}/leads.md` 和 `{intent_id}/evidence/**`，Artifact 类型分别为 `explore.findings`、`explore.leads`、`explore.evidence`；历史 `explore.analysis`、`explore.reproduction` 只读保留。
 
-Explore Fact 由代码使用原 Intent description、Artifact ID 和本轮 Vulnerability ID 生成，不使用模型尾部文本，也不会退化成无信息的统一句子。`explore_result.json` 只是代码维护的内部状态/索引，不要求 Worker 编写，也不注册为 Artifact。
+只有证据充分时，Explore 使用 `axiom explore vulnerability report` 逐条上报 Vulnerability，并通过可重复的 `--evidence-path evidence/...` 指向真实证据文件。模型不能设置漏洞状态；服务端自动补齐 `intent_id`、`source=explore`、`reported_by` 和 `status=待验证`。路径先进入 lease 级 Explore 状态，收口时才在 Artifact 注册后解析为正式关系；缺失、为空、越界或未收集的证据会阻止完成。Reason 不上报漏洞。
+
+漏洞表保存标题、类型、等级、目标、描述、前置条件、影响、修复建议、状态和来源元数据；详细发现只写入 findings，原始材料只保存在 evidence。`vulnerability_artifacts` 使用 `finding/evidence` 角色关联正式 Artifact，新漏洞不再写 `reproduction_steps`、`curl_command`、自由文本 `evidence` 或 `source_file`。旧漏洞保留 V1 列并通过只读 `legacy` 区域展示，不批量复制文件。
+
+Explore Fact 由代码使用原 Intent description、findings/leads Artifact ID、证据数量和本轮 Vulnerability ID 生成，不使用模型尾部文本。`explore_result.json` 只是代码维护的内部状态/索引，不要求 Worker 编写，也不注册为 Artifact。
 
 ### 统一完成协议
 

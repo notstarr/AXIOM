@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
+
 import pytest
+
+from axiom.modules.artifacts.tables import artifacts
+from axiom.modules.vulnerabilities.tables import vulnerabilities
 
 
 def _project_task(client) -> tuple[dict, dict]:
@@ -267,6 +272,16 @@ def test_credential_refresh_keeps_id_until_removed_and_cascades(client) -> None:
 
 def test_vulnerability_format_is_shared_by_internal_management(client) -> None:
     _project, task = _project_task(client)
+    finding = client.post(
+        f"/api/v1/tasks/{task['id']}/artifacts/upload",
+        files={"file": ("findings.md", b"# Findings\n\nIDOR confirmed", "text/markdown")},
+        data={"actor": "human", "summary": "人工 Findings"},
+    ).json()
+    evidence = client.post(
+        f"/api/v1/tasks/{task['id']}/artifacts/upload",
+        files={"file": ("response.txt", b"HTTP/1.1 200 OK", "text/plain")},
+        data={"actor": "human", "summary": "响应证据"},
+    ).json()
     reported = client.post(
         f"/api/v1/tasks/{task['id']}/vulnerabilities",
         json={
@@ -276,11 +291,10 @@ def test_vulnerability_format_is_shared_by_internal_management(client) -> None:
             "description": "普通用户可以读取其他用户订单",
             "prerequisites": "已登录普通用户",
             "impact": "造成跨用户数据泄露",
-            "reproduction_steps": ["调用订单详情接口并替换订单 ID"],
             "remediation": "校验对象归属",
-            "curl_command": "curl https://a.example.com/orders/2",
-            "evidence": ["响应返回了不属于当前用户的订单"],
             "affected_target": "a.example.com",
+            "finding_artifact_id": finding["id"],
+            "evidence_artifact_ids": [evidence["id"]],
             "source": "explore",
             "reported_by": "worker-a",
         },
@@ -288,6 +302,10 @@ def test_vulnerability_format_is_shared_by_internal_management(client) -> None:
     assert reported.status_code == 201, reported.text
     vulnerability = reported.json()
     assert vulnerability["id"] == "v001"
+    assert vulnerability["format_version"] == 2
+    assert vulnerability["legacy"] is None
+    assert vulnerability["finding_artifact"]["id"] == finding["id"]
+    assert [item["id"] for item in vulnerability["evidence_artifacts"]] == [evidence["id"]]
     assert client.get(f"/api/v1/tasks/{task['id']}/vulnerabilities").json()[0]["severity"] == "high"
 
     ignored = client.patch(
@@ -296,6 +314,109 @@ def test_vulnerability_format_is_shared_by_internal_management(client) -> None:
     )
     assert ignored.status_code == 200, ignored.text
     assert ignored.json()["status"] == "忽略"
+
+    old_shape = client.post(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities",
+        json={
+            "title": "旧格式请求",
+            "type": "越权访问",
+            "severity": "high",
+            "description": "描述",
+            "impact": "影响",
+            "reproduction_steps": ["旧步骤"],
+            "source": "human",
+            "reported_by": "human",
+        },
+    )
+    assert old_shape.status_code == 422
+
+
+def test_vulnerability_artifact_roles_are_validated(client) -> None:
+    _project, task = _project_task(client)
+    now = "2026-07-27T00:00:00Z"
+    with client.app.state.container.engine.begin() as conn:
+        conn.execute(
+            artifacts.insert().values(
+                id="a001",
+                task_id=task["id"],
+                intent_id=None,
+                artifact_type="explore.leads",
+                storage_key=f"tasks/{task['id']}/artifacts/i002/leads.md",
+                summary="待验证线索",
+                content_hash="0" * 64,
+                size=4,
+                created_by="test",
+                created_at=now,
+                archived=False,
+            )
+        )
+
+    base = {
+        "title": "错误 Artifact 角色",
+        "type": "测试",
+        "severity": "low",
+        "description": "验证后端拒绝错误的 Artifact 角色。",
+        "impact": "防止漏洞索引关系失真。",
+    }
+    invalid_finding = client.post(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities",
+        json={**base, "finding_artifact_id": "a001"},
+    )
+    assert invalid_finding.status_code == 409
+    assert "Finding Artifact" in invalid_finding.text
+
+    invalid_evidence = client.post(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities",
+        json={**base, "evidence_artifact_ids": ["a001"]},
+    )
+    assert invalid_evidence.status_code == 409
+    assert "Evidence Artifact" in invalid_evidence.text
+
+
+def test_legacy_vulnerability_details_are_read_only(client) -> None:
+    _project, task = _project_task(client)
+    now = "2026-07-27T00:00:00Z"
+    with client.app.state.container.engine.begin() as conn:
+        conn.execute(
+            vulnerabilities.insert().values(
+                id="v001",
+                task_id=task["id"],
+                intent_id=None,
+                title="旧格式漏洞",
+                type="越权",
+                severity="high",
+                description="旧描述",
+                prerequisites="",
+                impact="旧影响",
+                reproduction_steps_json=json.dumps(["旧步骤"], ensure_ascii=False),
+                remediation="旧建议",
+                curl_command="curl https://legacy.example.test",
+                evidence_json=json.dumps(["旧文字证据"], ensure_ascii=False),
+                affected_target="legacy.example.test",
+                status="待验证",
+                status_reason="",
+                source="legacy",
+                reported_by="migration",
+                created_at=now,
+                updated_at=now,
+                archived=False,
+                format_version=1,
+            )
+        )
+
+    loaded = client.get(f"/api/v1/tasks/{task['id']}/vulnerabilities/v001")
+    assert loaded.status_code == 200, loaded.text
+    assert loaded.json()["legacy"] == {
+        "reproduction_steps": ["旧步骤"],
+        "curl_command": "curl https://legacy.example.test",
+        "evidence": ["旧文字证据"],
+    }
+
+    rejected = client.patch(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities/v001",
+        json={"curl_command": "curl https://changed.example.test"},
+    )
+    assert rejected.status_code == 422
 
 
 def test_audit_events_are_append_only_and_filterable(client) -> None:

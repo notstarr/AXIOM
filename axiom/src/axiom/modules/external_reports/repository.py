@@ -6,7 +6,6 @@ from sqlalchemy import Connection, func, select, update
 
 from axiom.modules.external_reports.schemas import ExternalReportAttempt
 from axiom.modules.external_reports.tables import external_report_attempts
-from axiom.modules.vulnerabilities.schemas import VulnerabilityReport
 from axiom.shared.ids import allocate_id
 
 
@@ -28,7 +27,7 @@ class ExternalReportRepository:
         vulnerability_id: str,
         attempt_no: int,
         endpoint: str,
-        payload: VulnerabilityReport,
+        payload: dict,
         now: str,
     ) -> ExternalReportAttempt:
         values = {
@@ -38,7 +37,7 @@ class ExternalReportRepository:
             "attempt_no": attempt_no,
             "status": "running",
             "endpoint": endpoint,
-            "payload_json": json.dumps(payload.model_dump(mode="json"), ensure_ascii=False),
+            "payload_json": json.dumps(payload, ensure_ascii=False),
             "response_status": None,
             "response_body": "",
             "error": "",
@@ -103,7 +102,7 @@ class ExternalReportRepository:
             attempt_no=row["attempt_no"],
             status=row["status"],
             endpoint=row["endpoint"],
-            payload=VulnerabilityReport.model_validate(json.loads(row["payload_json"])),
+            payload=json.loads(row["payload_json"]),
             response_status=row["response_status"],
             response_body=row["response_body"],
             error=row["error"],

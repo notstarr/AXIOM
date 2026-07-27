@@ -147,6 +147,38 @@ def _vulnerability_markdown(item: dict[str, Any]) -> str:
     def bullets(values: list[str]) -> str:
         return "\n".join(f"- {value}" for value in values) if values else "- 无"
 
+    finding = item.get("finding_artifact") or {}
+    evidence_artifacts = item.get("evidence_artifacts") or []
+    finding_text = (
+        f"- `artifact:{finding['id']}` · `{finding['storage_key']}`"
+        if finding
+        else "- 未关联"
+    )
+    evidence_text = bullets(
+        [f"`artifact:{artifact['id']}` · `{artifact['storage_key']}`" for artifact in evidence_artifacts]
+    )
+    legacy = item.get("legacy") or None
+    legacy_section = ""
+    if legacy is not None:
+        legacy_section = f"""
+
+## 历史格式内容（只读）
+
+### 旧复现步骤
+
+{bullets(legacy.get('reproduction_steps') or [])}
+
+### 旧文字证据
+
+{bullets(legacy.get('evidence') or [])}
+
+### 旧请求示例
+
+```text
+{legacy.get('curl_command') or '未提供'}
+```
+"""
+
     return f"""# {item['title']}
 
 - ID：`{item['id']}`
@@ -167,21 +199,15 @@ def _vulnerability_markdown(item: dict[str, Any]) -> str:
 
 {item['impact']}
 
-## 复现步骤
+## 关联 Findings
 
-{bullets(item.get('reproduction_steps') or [])}
+{finding_text}
 
-## 证据
+## 证据文件
 
-{bullets(item.get('evidence') or [])}
+{evidence_text}
 
 ## 修复建议
 
 {item.get('remediation') or '未填写'}
-
-## 请求示例
-
-```text
-{item.get('curl_command') or '未提供'}
-```
-"""
+{legacy_section}"""

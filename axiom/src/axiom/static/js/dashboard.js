@@ -393,11 +393,29 @@ window.AxiomModules.dashboard = {
     },
 
     // ── Vulnerability CRUD ──
-    openVulnEditor(v) {
+    async openVulnEditor(v) {
       if (v) {
-        this.vulnEditor = { open: true, isNew: false, project_id: v.project_id, id: v.id, title: v.title, type: v.type || '通用漏洞', affected_target: v.affected_target || v.affected_scope || '', description: v.description, prerequisites: v.prerequisites || '', impact: v.impact, evidence: (v.evidence||[]).join('\n'), reproduction_steps: (v.reproduction_steps||[]).join('\n'), remediation: v.remediation || v.recommendation || '', curl_command: v.curl_command || '', severity: v.severity || 'medium', status: v.status, status_reason: v.status_reason || '' };
+        this.vulnEditor = { open: true, isNew: false, project_id: v.project_id, id: v.id, title: v.title, type: v.type || '通用漏洞', affected_target: v.affected_target || v.affected_scope || '', description: v.description, prerequisites: v.prerequisites || '', impact: v.impact, remediation: v.remediation || v.recommendation || '', severity: v.severity || 'medium', status: v.status, status_reason: v.status_reason || '', finding_artifact_id: v.finding_artifact_id || '', evidence_artifact_ids: Array.isArray(v.evidence_artifact_ids) ? [...v.evidence_artifact_ids] : [], available_artifacts: [], artifacts_loading: false };
       } else {
-        this.vulnEditor = { open: true, isNew: true, project_id: '', id: '', title: '', type: '通用漏洞', affected_target: '', description: '', prerequisites: '', impact: '', evidence: '', reproduction_steps: '', remediation: '', curl_command: '', severity: 'medium', status: '待验证', status_reason: '' };
+        this.vulnEditor = { open: true, isNew: true, project_id: '', id: '', title: '', type: '通用漏洞', affected_target: '', description: '', prerequisites: '', impact: '', remediation: '', severity: 'medium', status: '待验证', status_reason: '', finding_artifact_id: '', evidence_artifact_ids: [], available_artifacts: [], artifacts_loading: false };
+      }
+      if (this.vulnEditor.project_id) await this.loadVulnEditorArtifacts();
+    },
+
+    async loadVulnEditorArtifacts() {
+      const taskId = (this.vulnEditor.project_id || '').trim();
+      if (!taskId) {
+        this.vulnEditor.available_artifacts = [];
+        return;
+      }
+      this.vulnEditor.artifacts_loading = true;
+      try {
+        this.vulnEditor.available_artifacts = await this.api('GET', `/projects/${taskId}/artifacts`);
+      } catch (e) {
+        this.vulnEditor.available_artifacts = [];
+        this.showToast(e.message, 'error');
+      } finally {
+        this.vulnEditor.artifacts_loading = false;
       }
     },
 
@@ -408,7 +426,7 @@ window.AxiomModules.dashboard = {
         this.showToast('忽略状态需填写不少于 4 字的忽略原因', 'error');
         return;
       }
-      const body = { title: ed.title, type: ed.type || '通用漏洞', severity: ed.severity || 'medium', affected_target: ed.affected_target || '', description: ed.description, prerequisites: ed.prerequisites, impact: ed.impact, evidence: ed.evidence.split('\n').filter(Boolean), reproduction_steps: ed.reproduction_steps.split('\n').filter(Boolean), remediation: ed.remediation || '', curl_command: ed.curl_command || '', status: ed.status, status_reason: (ed.status_reason || '').trim(), source: 'manual', reported_by: this.actorName() };
+      const body = { title: ed.title, type: ed.type || '通用漏洞', severity: ed.severity || 'medium', affected_target: ed.affected_target || '', description: ed.description, prerequisites: ed.prerequisites, impact: ed.impact, remediation: ed.remediation || '', status: ed.status, status_reason: (ed.status_reason || '').trim(), finding_artifact_id: ed.finding_artifact_id || null, evidence_artifact_ids: Array.isArray(ed.evidence_artifact_ids) ? ed.evidence_artifact_ids : [], source: 'manual', reported_by: this.actorName() };
       try {
         if (ed.isNew) {
           await this.api('POST', `/projects/${ed.project_id}/vulns`, body);
@@ -481,24 +499,7 @@ window.AxiomModules.dashboard = {
         this.showToast('未找到漏洞记录', 'error');
         return;
       }
-      const body = {
-        title: current.title,
-        type: current.type || '',
-        severity: current.severity || 'medium',
-        description: current.description || '',
-        prerequisites: current.prerequisites || '',
-        impact: current.impact || '',
-        evidence: Array.isArray(current.evidence) ? current.evidence : [],
-        reproduction_steps: Array.isArray(current.reproduction_steps) ? current.reproduction_steps : [],
-        recommendation: current.recommendation || '',
-        affected_scope: current.affected_scope || '',
-        curl_command: current.curl_command || '',
-        status: nextStatus,
-        status_reason: (reason || '').trim(),
-        source: current.source || 'manual',
-        source_file: current.source_file || '',
-        reported_by: current.reported_by || this.actorName(),
-      };
+      const body = { status: nextStatus, status_reason: (reason || '').trim() };
       try {
         await this.api('PUT', `/projects/${current.project_id}/vulns/${current.id}`, body);
         this.closeVulnStatusQuick();
@@ -534,21 +535,14 @@ window.AxiomModules.dashboard = {
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
-    async viewEvidence(v) {
-      if (!v?.source_file || !v?.project_id) return;
-      const proj = (this.projects || []).find(p => p.id === v.project_id);
-      const groupId = proj?.parent_project_id || 'unknown';
+    async openVulnerabilityArtifact(v, artifact) {
+      if (!v?.project_id || !artifact?.id) return;
       this.navigateTo('files');
       await this.$nextTick();
-      if ((this.fileGroups || []).length === 0) await this.loadFileTree();
-      await this.selectFolder(groupId, v.project_id, 'ai', false);
-      await this.$nextTick();
-      const file = (this.fileList || []).find(f => f.path === v.source_file || f.path.endsWith('/' + v.source_file) || f.name === v.source_file);
-      if (file) {
-        await this.previewFile(file.path, file.size || 0);
-      } else {
-        await this.previewFile(v.source_file, 0);
-      }
+      this.artifactCenterSelectedTask = v.project_id;
+      await this.loadArtifactCenter();
+      const target = (this.artifactCenterItems || []).find(item => item.id === artifact.id);
+      if (target) await this.openArtifactCenter(target);
     },
   }
 };

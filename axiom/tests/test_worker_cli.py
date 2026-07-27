@@ -135,6 +135,10 @@ def test_explore_cli_report_does_not_allow_worker_to_choose_identity(monkeypatch
             "低权限用户读取了其他用户的数据。",
             "--impact",
             "导致数据泄露。",
+            "--evidence-path",
+            "evidence/request.txt",
+            "--evidence-path",
+            "evidence/response.txt",
         ],
         env=_env(),
     )
@@ -147,7 +151,38 @@ def test_explore_cli_report_does_not_allow_worker_to_choose_identity(monkeypatch
     assert "intent_id" not in payload["report"]
     assert "source" not in payload["report"]
     assert "reported_by" not in payload["report"]
+    assert "status" not in payload["report"]
+    assert payload["report"]["evidence_paths"] == [
+        "evidence/request.txt",
+        "evidence/response.txt",
+    ]
     assert json.loads(result.output)["total"] == 1
+
+
+def test_explore_cli_requires_an_evidence_path(monkeypatch) -> None:
+    monkeypatch.setattr("axiom.worker_cli._request", lambda *_args: {"total": 1})
+    result = CliRunner().invoke(
+        main,
+        [
+            "explore",
+            "vulnerability",
+            "report",
+            "--title",
+            "对象级授权缺失",
+            "--type",
+            "越权",
+            "--severity",
+            "high",
+            "--description",
+            "描述",
+            "--impact",
+            "影响",
+        ],
+        env=_env(),
+    )
+
+    assert result.exit_code != 0
+    assert "--evidence-path" in result.output
 
 
 def test_credential_cli_lists_metadata_through_the_current_intent_lease(monkeypatch) -> None:

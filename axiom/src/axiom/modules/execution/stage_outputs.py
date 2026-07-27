@@ -13,8 +13,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from axiom.modules.artifacts.schemas import Artifact
-from axiom.modules.vulnerabilities.schemas import Vulnerability
-from axiom.modules.vulnerabilities.schemas import VulnerabilityReport
+from axiom.modules.vulnerabilities.schemas import StoredExploreVulnerability, Vulnerability
 from axiom.shared.errors import ConflictError
 
 
@@ -25,13 +24,8 @@ BOOTSTRAP_FILES = (
     "findings.md",
 )
 _SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
-_FORBIDDEN_EXPLORE_SEGMENTS = {"sessions", "process"}
-_FORBIDDEN_EXPLORE_FILES = {"models.json"}
-_EXPLORE_TYPES = {
-    "analysis": "explore.analysis",
-    "evidence": "explore.evidence",
-    "reproduction": "explore.reproduction",
-}
+EXPLORE_FINDINGS_FILE = "findings.md"
+EXPLORE_LEADS_FILE = "leads.md"
 
 
 class StageOutputError(ConflictError):
@@ -47,7 +41,7 @@ class StageFile:
 
 
 class ExploreState(BaseModel):
-    vulnerabilities: list[VulnerabilityReport] = Field(default_factory=list, max_length=20)
+    vulnerabilities: list[StoredExploreVulnerability] = Field(default_factory=list, max_length=20)
     artifact_ids: list[str] = Field(default_factory=list)
     vulnerability_ids: list[str] = Field(default_factory=list)
     completed: bool = False
@@ -93,33 +87,59 @@ def explore_files(run_dir: str | Path) -> list[StageFile]:
     run_root = Path(run_dir).resolve()
     root = run_root / "artifacts"
     if not root.is_dir() or root.is_symlink():
-        raise StageOutputError("Explore 必须在 artifacts/ 中至少写入一个证据文件")
+        raise StageOutputError("Explore 必须在 artifacts/ 中写入 findings.md 和 leads.md")
+
     results: list[StageFile] = []
-    for path in sorted(root.rglob("*")):
-        if path.is_dir() and not path.is_symlink():
+    required = {
+        EXPLORE_FINDINGS_FILE: ("explore.findings", "Explore 已确认事实"),
+        EXPLORE_LEADS_FILE: ("explore.leads", "Explore 待验证线索"),
+    }
+    errors: list[str] = []
+    for filename, (artifact_type, summary) in required.items():
+        path = root / filename
+        try:
+            _require_regular_output(path, root)
+            _require_non_empty(path)
+        except StageOutputError as exc:
+            errors.append(str(exc))
             continue
-        _require_regular_output(path, root)
-        _require_non_empty(path)
+        results.append(
+            StageFile(
+                relative_name=filename,
+                path=path,
+                artifact_type=artifact_type,
+                summary=summary,
+            )
+        )
+    if errors:
+        raise StageOutputError("Explore 核心产物未就绪：" + "；".join(errors))
+
+    for path in sorted(root.rglob("*")):
         relative = path.relative_to(root)
         for segment in relative.parts:
             if not _SAFE_SEGMENT.fullmatch(segment) or segment.startswith("."):
                 raise StageOutputError(f"Explore 产物路径不安全：{relative.as_posix()}")
-            if segment in _FORBIDDEN_EXPLORE_SEGMENTS:
-                raise StageOutputError(f"Explore 产物目录被禁止收集：{relative.as_posix()}")
-        if relative.name in _FORBIDDEN_EXPLORE_FILES:
-            raise StageOutputError(f"Explore 产物文件被禁止收集：{relative.as_posix()}")
+        if path.is_symlink():
+            raise StageOutputError(f"阶段产物不能是符号链接：{relative.as_posix()}")
+        if relative.as_posix() in required:
+            continue
+        if relative.parts[0] != "evidence":
+            raise StageOutputError(
+                f"Explore 只允许 findings.md、leads.md 和 evidence/**：{relative.as_posix()}"
+            )
+        if path.is_dir():
+            continue
+        _require_regular_output(path, root)
+        _require_non_empty(path)
         relative_name = relative.as_posix()
-        category = relative.parts[0] if len(relative.parts) > 1 else "evidence"
         results.append(
             StageFile(
                 relative_name=relative_name,
                 path=path,
-                artifact_type=_EXPLORE_TYPES.get(category, "explore.evidence"),
+                artifact_type="explore.evidence",
                 summary=f"Explore 证据：{relative_name}",
             )
         )
-    if not results:
-        raise StageOutputError("Explore 必须在 artifacts/ 中至少写入一个非空证据文件")
     if len(results) > 50:
         raise StageOutputError("Explore 单次最多注册 50 个 Artifact")
     return results
@@ -147,7 +167,7 @@ def load_explore_state(run_dir: str | Path) -> ExploreState:
 
 def append_explore_vulnerability(
     run_dir: str | Path,
-    report: VulnerabilityReport,
+    report: StoredExploreVulnerability,
 ) -> tuple[ExploreState, bool]:
     with explore_state_guard(run_dir):
         return append_explore_vulnerability_locked(run_dir, report)
@@ -155,7 +175,7 @@ def append_explore_vulnerability(
 
 def append_explore_vulnerability_locked(
     run_dir: str | Path,
-    report: VulnerabilityReport,
+    report: StoredExploreVulnerability,
 ) -> tuple[ExploreState, bool]:
     """Append while the caller holds ``explore_state_guard``."""
     path = explore_state_path(run_dir)
@@ -271,7 +291,9 @@ def _require_non_empty(path: Path) -> None:
         raise StageOutputError(f"无法读取阶段产物：{path.name}") from exc
 
 
-def _vulnerability_fingerprint(report: VulnerabilityReport) -> tuple[str, str, str, str]:
+def _vulnerability_fingerprint(
+    report: StoredExploreVulnerability,
+) -> tuple[str, str, str, str]:
     return (
         report.title.casefold(),
         report.type.casefold(),

@@ -5,6 +5,7 @@ from collections.abc import Callable
 import httpx
 from sqlalchemy import Engine
 
+from axiom.modules.external_reports.adapter import ExternalVulnerabilityAdapter
 from axiom.modules.external_reports.repository import ExternalReportRepository
 from axiom.modules.external_reports.schemas import (
     ExternalReportAttempt,
@@ -15,10 +16,11 @@ from axiom.modules.external_reports.schemas import (
 from axiom.modules.settings.service import RuntimeSettingsService
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
-from axiom.modules.vulnerabilities.schemas import Vulnerability, VulnerabilityReport
+from axiom.modules.vulnerabilities.schemas import Vulnerability
 from axiom.shared.clock import utcnow
 from axiom.shared.database import immediate_transaction
 from axiom.shared.errors import ConflictError, NotFoundError
+from axiom.shared.storage import FileStore
 
 
 SendReport = Callable[[str, dict, dict[str, str], object], tuple[int, str]]
@@ -45,12 +47,14 @@ class ExternalReportService:
         self,
         engine: Engine,
         settings: RuntimeSettingsService,
+        store: FileStore,
         *,
         sender: SendReport = send_external_report,
     ):
         self.engine = engine
         self.settings = settings
         self.sender = sender
+        self.adapter = ExternalVulnerabilityAdapter(store)
         self.repository = ExternalReportRepository()
         self.tasks = TaskRepository()
         self.vulnerabilities = VulnerabilityRepository()
@@ -126,7 +130,7 @@ class ExternalReportService:
             )
 
         try:
-            response_status, response_body = self.sender(endpoint, payload.model_dump(mode="json"), headers, config)
+            response_status, response_body = self.sender(endpoint, payload, headers, config)
             status = "succeeded" if 200 <= response_status < 300 else "failed"
             error = "" if status == "succeeded" else f"External endpoint returned HTTP {response_status}"
         except Exception as exc:  # the durable attempt must capture transport failures
@@ -162,11 +166,7 @@ class ExternalReportService:
         endpoint = config.external_report_base_url.strip().rstrip("/")
         if not endpoint:
             raise ConflictError("External report endpoint is not configured")
-        report_fields = vulnerability.model_dump(
-            mode="json",
-            exclude={"id", "task_id", "created_at", "updated_at", "archived"},
-        )
-        payload = VulnerabilityReport.model_validate(report_fields)
+        payload = self.adapter.render(vulnerability).model_dump(mode="json")
         headers = {"Content-Type": "application/json"}
         token = config.external_report_token.strip()
         if token:

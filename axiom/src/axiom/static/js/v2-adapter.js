@@ -153,12 +153,19 @@
       project_group_title: project?.title || '',
       recommendation: item.remediation || '',
       affected_scope: item.affected_target || '',
-      source_file: '',
+      finding_artifact: item.finding_artifact ? mapArtifact(item.finding_artifact) : null,
+      evidence_artifacts: (item.evidence_artifacts || []).map(mapArtifact),
     };
   }
 
   function mapArtifact(item) {
-    return { ...item, path: item.storage_key || item.path || '' };
+    const storageKey = item.storage_key || item.path || '';
+    const artifactMarker = '/artifacts/';
+    const uploadMarker = '/uploads/';
+    let displayPath = storageKey;
+    if (storageKey.includes(artifactMarker)) displayPath = storageKey.split(artifactMarker).slice(1).join(artifactMarker);
+    else if (storageKey.includes(uploadMarker)) displayPath = `uploads/${storageKey.split(uploadMarker).slice(1).join(uploadMarker)}`;
+    return { ...item, storage_key: storageKey, path: displayPath };
   }
 
   function mapCredential(item) {
@@ -576,6 +583,9 @@
       }
       if (method === 'POST') return request('POST', `/tasks/${match[1]}/vulnerabilities`, vulnerabilityBody(body));
     }
+    if ((match = path.match(/^\/projects\/([^/]+)\/artifacts$/)) && method === 'GET') {
+      return (await request('GET', `/tasks/${match[1]}/artifacts`)).map(mapArtifact);
+    }
     if ((match = path.match(/^\/projects\/([^/]+)\/vulns\/([^/]+)$/))) {
       if (method === 'PUT') return request('PATCH', `/tasks/${match[1]}/vulnerabilities/${match[2]}`, vulnerabilityBody(body, true));
       if (method === 'DELETE') return request('DELETE', `/tasks/${match[1]}/vulnerabilities/${match[2]}`);
@@ -648,24 +658,25 @@
   }
 
   function vulnerabilityBody(body, partial = false) {
-    const result = {
-      title: body.title,
-      type: body.type || '通用漏洞',
-      severity: body.severity || 'medium',
-      description: body.description || body.title || '',
-      prerequisites: body.prerequisites || '',
-      impact: body.impact || body.description || body.title || '',
-      reproduction_steps: body.reproduction_steps || [],
-      remediation: body.remediation || body.recommendation || '',
-      curl_command: body.curl_command || '',
-      evidence: body.evidence || [],
-      affected_target: body.affected_target || body.affected_scope || '',
-      status: body.status || '待验证',
-      status_reason: body.status_reason || '',
-      source: body.source || 'human',
-      reported_by: body.reported_by || 'human',
-    };
-    if (!partial) result.intent_id = body.intent_id || null;
+    const result = {};
+    const assign = (key, value) => { if (!partial || Object.prototype.hasOwnProperty.call(body, key)) result[key] = value; };
+    assign('title', body.title);
+    assign('type', body.type || '通用漏洞');
+    assign('severity', body.severity || 'medium');
+    assign('description', body.description || body.title || '');
+    assign('prerequisites', body.prerequisites || '');
+    assign('impact', body.impact || body.description || body.title || '');
+    assign('remediation', body.remediation || body.recommendation || '');
+    assign('affected_target', body.affected_target || body.affected_scope || '');
+    assign('status', body.status || '待验证');
+    assign('status_reason', body.status_reason || '');
+    assign('finding_artifact_id', body.finding_artifact_id || null);
+    assign('evidence_artifact_ids', body.evidence_artifact_ids || []);
+    if (!partial) {
+      result.intent_id = body.intent_id || null;
+      result.source = body.source || 'human';
+      result.reported_by = body.reported_by || 'human';
+    }
     return result;
   }
 
@@ -1042,7 +1053,13 @@
     },
     artifactCenterTypes() { return [...new Set((this.artifactCenterItems || []).map(item => item.artifact_type).filter(Boolean))].sort(); },
     artifactCenterPhases() { return [...new Set((this.artifactCenterItems || []).map(item => item.phase).filter(Boolean))].sort(); },
-    artifactSourcePhase(item) { const match = String(item?.path || '').match(/(?:^|\/)(bootstrap|reason|explore|asm)(?:[-_\/]|$)/i); return match ? match[1].toLowerCase() : (item?.artifact_type === 'upload' ? 'upload' : 'unknown'); },
+    artifactSourcePhase(item) {
+      const type = String(item?.artifact_type || '').toLowerCase();
+      const typedPhase = ['bootstrap', 'reason', 'explore', 'asm'].find(phase => type.startsWith(`${phase}.`));
+      if (typedPhase) return typedPhase;
+      const match = String(item?.path || '').match(/(?:^|\/)(bootstrap|reason|explore|asm)(?:[-_\/]|$)/i);
+      return match ? match[1].toLowerCase() : (type === 'upload' ? 'upload' : 'unknown');
+    },
     artifactCenterFiltered() {
       const query = String(this.artifactCenterSearch || '').trim().toLowerCase();
       return (this.artifactCenterItems || []).filter(item => {
@@ -1055,7 +1072,21 @@
       });
     },
     artifactFileName(item) { return String(item?.path || '').split('/').pop() || item?.id || 'artifact'; },
-    artifactTypeIcon(type) { return type === 'upload' ? '↑' : /finding|vuln/i.test(type || '') ? '!' : /api|asset|inventory/i.test(type || '') ? '◫' : '▤'; },
+    artifactTypeIcon(type) { return type === 'upload' ? '↑' : /finding|vuln/i.test(type || '') ? '!' : /lead/i.test(type || '') ? '↗' : /evidence/i.test(type || '') ? '◈' : /api|asset|inventory/i.test(type || '') ? '◫' : '▤'; },
+    artifactKindLabel(item) {
+      const type = String(item?.artifact_type || '').toLowerCase();
+      if (type === 'explore.findings') return 'Findings';
+      if (type === 'explore.leads') return 'Leads';
+      if (type === 'explore.evidence') return 'Evidence';
+      return item?.artifact_type || 'Artifact';
+    },
+    artifactKindClass(item) {
+      const type = String(item?.artifact_type || '').toLowerCase();
+      if (type === 'explore.findings') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+      if (type === 'explore.leads') return 'border-amber-200 bg-amber-50 text-amber-700';
+      if (type === 'explore.evidence') return 'border-blue-200 bg-blue-50 text-blue-700';
+      return 'border-slate-200 bg-slate-100 text-slate-500';
+    },
     formatBytes(size) { const n = Number(size || 0); if (n < 1024) return `${n} B`; if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`; return `${(n / 1024 / 1024).toFixed(1)} MB`; },
     artifactContentUrl(item) { return `${apiRoot}/tasks/${item.task_id}/artifacts/${item.id}/download`; },
     async openArtifactCenter(item) {
@@ -1102,7 +1133,7 @@
       this.fileArtifactMap = {};
       this.fileList = filtered.map(item => {
         const name = item.path.split('/').pop();
-        const path = `${item.id}/${name}`;
+        const path = item.path || `${item.id}/${name}`;
         this.fileArtifactMap[path] = item;
         return { path, name, size: item.size, artifact_id: item.id, created_at: item.created_at };
       });

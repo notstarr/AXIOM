@@ -282,19 +282,10 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--prerequisites-file", type=click.Path(path_type=Path, dir_okay=False))
     @click.option("--impact")
     @click.option("--impact-file", type=click.Path(path_type=Path, dir_okay=False))
-    @click.option("--reproduction-step", multiple=True)
     @click.option("--remediation")
     @click.option("--remediation-file", type=click.Path(path_type=Path, dir_okay=False))
-    @click.option("--curl-command")
-    @click.option("--curl-command-file", type=click.Path(path_type=Path, dir_okay=False))
-    @click.option("--evidence", multiple=True)
+    @click.option("--evidence-path", multiple=True, required=True)
     @click.option("--affected-target", default="")
-    @click.option(
-        "--status",
-        type=click.Choice(("待验证", "已验证", "忽略", "重复")),
-        default="待验证",
-    )
-    @click.option("--status-reason", default="")
     def explore_vulnerability_report(
         title: str,
         vulnerability_type: str,
@@ -305,15 +296,10 @@ def register_worker_commands(main: click.Group) -> None:
         prerequisites_file: Path | None,
         impact: str | None,
         impact_file: Path | None,
-        reproduction_step: tuple[str, ...],
         remediation: str | None,
         remediation_file: Path | None,
-        curl_command: str | None,
-        curl_command_file: Path | None,
-        evidence: tuple[str, ...],
+        evidence_path: tuple[str, ...],
         affected_target: str,
-        status: str,
-        status_reason: str,
     ) -> None:
         report = {
             "title": title,
@@ -331,17 +317,9 @@ def register_worker_commands(main: click.Group) -> None:
                 "prerequisites",
             ),
             "impact": _text_value(impact, impact_file, "impact", required=True),
-            "reproduction_steps": list(reproduction_step),
             "remediation": _text_value(remediation, remediation_file, "remediation"),
-            "curl_command": _text_value(
-                curl_command,
-                curl_command_file,
-                "curl command",
-            ),
-            "evidence": list(evidence),
+            "evidence_paths": list(evidence_path),
             "affected_target": affected_target,
-            "status": status,
-            "status_reason": status_reason,
         }
         task_id = _environment("AXIOM_TASK_ID")
         intent_id = _environment("AXIOM_INTENT_ID")

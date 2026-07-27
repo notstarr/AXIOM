@@ -280,6 +280,11 @@ window.AxiomModules.human = {
     },
 
     humanArtifactPhase(item) {
+      const type = String(item?.artifact_type || '').toLowerCase();
+      if (type.startsWith('bootstrap.')) return 'Bootstrap';
+      if (type.startsWith('explore.')) return 'Explore';
+      if (type.startsWith('reason.')) return 'Reason';
+      if (type.startsWith('asm.')) return 'ASM';
       const path = String(item?.path || '').toLowerCase();
       if (path.includes('/bootstrap-')) return 'Bootstrap';
       if (path.includes('/explore-')) return 'Explore';

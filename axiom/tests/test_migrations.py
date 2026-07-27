@@ -170,6 +170,136 @@ def test_credential_text_migration_roundtrip_preserves_legacy_material(tmp_path)
         reupgraded.dispose()
 
 
+def test_vulnerability_artifact_migration_preserves_v1_rows_and_downgrades(tmp_path) -> None:
+    database_path = tmp_path / "vulnerability-artifacts-roundtrip.db"
+    config = alembic_config(database_path)
+    command.upgrade(config, "20260727_0021")
+    now = "2026-07-27T00:00:00Z"
+    engine = create_sqlite_engine(database_path)
+    try:
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "INSERT INTO projects "
+                "(id, title, description, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("prj_001", "migration", "", "active", now, now),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO tasks "
+                "(id, project_id, title, origin_host, origin_scheme, origin_port, "
+                "origin_input, goal, status, phase, scope_json, worker_pool_json, "
+                "guard_enabled, external_report_enabled, legacy_readonly, created_at, "
+                "updated_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "t_001",
+                    "prj_001",
+                    "migration",
+                    "example.com",
+                    "https",
+                    "443",
+                    "https://example.com",
+                    "goal",
+                    "completed",
+                    "none",
+                    "{}",
+                    "[]",
+                    False,
+                    False,
+                    False,
+                    now,
+                    now,
+                    now,
+                ),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO artifacts "
+                "(id, task_id, intent_id, artifact_type, storage_key, summary, "
+                "content_hash, size, created_by, created_at, archived) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "a001",
+                    "t_001",
+                    None,
+                    "upload",
+                    "tasks/t_001/uploads/legacy/findings.md",
+                    "legacy",
+                    "0" * 64,
+                    10,
+                    "human",
+                    now,
+                    False,
+                ),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO vulnerabilities "
+                "(id, task_id, intent_id, title, type, severity, description, "
+                "prerequisites, impact, reproduction_steps_json, remediation, "
+                "curl_command, evidence_json, affected_target, status, status_reason, "
+                "source, reported_by, created_at, updated_at, archived) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "v001",
+                    "t_001",
+                    None,
+                    "legacy",
+                    "idor",
+                    "high",
+                    "description",
+                    "",
+                    "impact",
+                    '["legacy step"]',
+                    "fix",
+                    "curl legacy",
+                    '["legacy evidence"]',
+                    "example.com",
+                    "待验证",
+                    "",
+                    "legacy",
+                    "migration",
+                    now,
+                    now,
+                    False,
+                ),
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, "head")
+    upgraded = create_sqlite_engine(database_path)
+    try:
+        with upgraded.begin() as conn:
+            assert conn.exec_driver_sql(
+                "SELECT format_version FROM vulnerabilities WHERE id = 'v001'"
+            ).scalar_one() == 1
+            conn.exec_driver_sql(
+                "INSERT INTO vulnerability_artifacts "
+                "(task_id, vulnerability_id, artifact_id, role, display_order) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("t_001", "v001", "a001", "finding", 0),
+            )
+            assert conn.exec_driver_sql(
+                "SELECT COUNT(*) FROM vulnerability_artifacts"
+            ).scalar_one() == 1
+    finally:
+        upgraded.dispose()
+
+    command.downgrade(config, "20260727_0021")
+    downgraded = create_sqlite_engine(database_path)
+    try:
+        with downgraded.connect() as conn:
+            tables = set(inspect(conn).get_table_names())
+            columns = {item["name"] for item in inspect(conn).get_columns("vulnerabilities")}
+            assert "vulnerability_artifacts" not in tables
+            assert "format_version" not in columns
+            assert conn.exec_driver_sql(
+                "SELECT reproduction_steps_json FROM vulnerabilities WHERE id = 'v001'"
+            ).scalar_one() == '["legacy step"]'
+            assert conn.exec_driver_sql("PRAGMA integrity_check").scalar_one() == "ok"
+            assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+    finally:
+        downgraded.dispose()
+
+
 def test_reason_run_migration_can_downgrade_after_real_runs(tmp_path) -> None:
     database_path = tmp_path / "reason-run-roundtrip.db"
     config = alembic_config(database_path)

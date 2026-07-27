@@ -512,24 +512,20 @@
                 <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">影响</p>
                 <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="v.impact"></p>
               </div>
-              <template x-if="(v.evidence || []).length > 0">
+              <template x-if="v.finding_artifact">
                 <div>
-                  <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">证据</p>
-                  <ul class="list-disc ml-5 space-y-1">
-                    <template x-for="(ev, idx) in (v.evidence || [])" :key="`${v.id}-ev-${idx}`">
-                      <li class="text-xs text-slate-600 break-words" x-text="ev"></li>
-                    </template>
-                  </ul>
+                  <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">关联 Findings</p>
+                  <button @click="openVulnerabilityArtifact(v, v.finding_artifact)" class="w-full rounded-lg border border-blue-100 bg-blue-50/50 px-3 py-2 text-left text-xs text-blue-700 font-mono truncate" x-text="v.finding_artifact.path"></button>
                 </div>
               </template>
-              <template x-if="(v.reproduction_steps || []).length > 0">
+              <template x-if="(v.evidence_artifacts || []).length > 0">
                 <div>
-                  <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">复现步骤</p>
-                  <ol class="list-none ml-2 space-y-1">
-                    <template x-for="(step, idx) in (v.reproduction_steps || [])" :key="`${v.id}-step-${idx}`">
-                      <li class="text-xs text-slate-600 break-words" x-text="step"></li>
+                  <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">证据文件</p>
+                  <div class="space-y-1">
+                    <template x-for="artifact in (v.evidence_artifacts || [])" :key="`${v.id}-${artifact.id}`">
+                      <button @click="openVulnerabilityArtifact(v, artifact)" class="w-full flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 text-left hover:border-blue-300"><span class="text-xs text-blue-700 font-mono truncate" x-text="artifact.path"></span><span class="text-[10px] text-slate-400" x-text="formatBytes(artifact.size)"></span></button>
                     </template>
-                  </ol>
+                  </div>
                 </div>
               </template>
               <div>
