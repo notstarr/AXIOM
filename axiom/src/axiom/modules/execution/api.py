@@ -4,11 +4,13 @@ from fastapi import APIRouter, Depends
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
+from axiom.modules.credentials.schemas import CredentialMaterial, WorkerCredentialSummary
 from axiom.modules.execution.schemas import (
     ActivityCommand,
     BootstrapCompleted,
     CompleteBootstrapCommand,
     CompleteExploreCommand,
+    CredentialAccessCommand,
     ExecutionInput,
     ExploreCompleted,
     ExploreVulnerabilityRecorded,
@@ -21,6 +23,35 @@ from axiom.modules.execution.schemas import (
 
 
 router = APIRouter(prefix="/dispatch", tags=["execution"])
+
+
+@router.post(
+    "/tasks/{task_id}/credentials/list",
+    response_model=list[WorkerCredentialSummary],
+)
+def list_worker_credentials(
+    task_id: str,
+    body: CredentialAccessCommand,
+    container: Container = Depends(get_container),
+) -> list[WorkerCredentialSummary]:
+    return container.execution.credential_summaries(task_id=task_id, command=body)
+
+
+@router.post(
+    "/tasks/{task_id}/credentials/{credential_id}/get",
+    response_model=CredentialMaterial,
+)
+def get_worker_credential(
+    task_id: str,
+    credential_id: str,
+    body: CredentialAccessCommand,
+    container: Container = Depends(get_container),
+) -> CredentialMaterial:
+    return container.execution.credential_material(
+        task_id=task_id,
+        credential_id=credential_id,
+        command=body,
+    )
 
 
 @router.post("/tasks/{task_id}/intents/{intent_id}/start", response_model=StartedIntent)

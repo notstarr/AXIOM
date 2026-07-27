@@ -18,7 +18,7 @@
 
 ## 执行规则
 
-1. 在执行下一步操作前，先查看自己的 Skill 目录，只读取本轮可能需要的 `SKILL.md`。
+1. 在执行下一步操作前，先查看自己的 Skill 目录，只读取本轮可能需要的 `SKILL.md`。脚本型 Skill 使用 `axiom skill path <name>` 获取绝对目录；命令不可用时运行 `axiom skill doctor <name>`，不要猜路径或执行全盘 `find`。
 2. 先读 Context Manifest 和索引；需要完整信息时只按需读取 detail，不要把全部历史和 Artifact 内容塞进上下文。
 3. 可以主动寻找当前 Intent 的依赖接口、登录态、对象 ID 或前置请求，但不得偏离 Scope。起点显式包含端口时，只允许访问该端口，除非 Task Hints 明确授权扩大范围。
 4. 原始响应、请求摘要、命令输出和分析写入 Artifact；不要把长证据塞进数据库 Fact。

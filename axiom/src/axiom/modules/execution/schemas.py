@@ -21,6 +21,23 @@ class LeaseCommand(BaseModel):
         return value
 
 
+class CredentialAccessCommand(LeaseCommand):
+    intent_id: str | None = None
+    reason_run_id: str | None = None
+
+    @field_validator("intent_id", "reason_run_id")
+    @classmethod
+    def normalize_owner_id(cls, value: str | None) -> str | None:
+        normalized = (value or "").strip()
+        return normalized or None
+
+    @model_validator(mode="after")
+    def require_one_execution_owner(self) -> "CredentialAccessCommand":
+        if bool(self.intent_id) == bool(self.reason_run_id):
+            raise ValueError("exactly one of intent_id or reason_run_id is required")
+        return self
+
+
 class ActivityCommand(LeaseCommand):
     activity_kind: str = Field(min_length=1, max_length=40)
     activity_summary: str = Field(min_length=1, max_length=500)

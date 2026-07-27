@@ -1,6 +1,11 @@
 ---
 name: agent-mail
 description: 通过 agently-cli 命令行工具操作邮件：发送、回复、转发、搜索、读取、下载附件、管理收件。当需要进行任何邮件相关操作时使用此 skill。
+requirements:
+  commands:
+    - name: agently-cli
+      args: [--help]
+      contains: Agently CLI
 ---
 
 # Agent-Mail

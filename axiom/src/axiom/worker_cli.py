@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,45 @@ SOURCE_TYPES = {"fact", "hint", "artifact", "vulnerability", "knowledge", "origi
 
 
 def register_worker_commands(main: click.Group) -> None:
+    @main.group("credential")
+    def credential_group() -> None:
+        """Read enabled Project credentials through the current active lease."""
+
+    @credential_group.command("list")
+    def credential_list() -> None:
+        task_id = _environment("AXIOM_TASK_ID")
+        _echo(
+            _request(
+                "POST",
+                f"/dispatch/tasks/{task_id}/credentials/list",
+                _credential_access_payload(),
+            )
+        )
+
+    @credential_group.command("get")
+    @click.argument("credential_id")
+    @click.option(
+        "--output",
+        type=click.Path(path_type=Path, dir_okay=False),
+        required=True,
+    )
+    def credential_get(credential_id: str, output: Path) -> None:
+        task_id = _environment("AXIOM_TASK_ID")
+        credential = _request(
+            "POST",
+            f"/dispatch/tasks/{task_id}/credentials/{credential_id}/get",
+            _credential_access_payload(),
+        )
+        destination = _write_private_json(output, credential)
+        data = credential.get("data") if isinstance(credential, dict) else {}
+        _echo(
+            {
+                "id": credential_id,
+                "output": str(destination),
+                "data_fields": sorted(str(key) for key in data) if isinstance(data, dict) else [],
+            }
+        )
+
     @main.group("reason")
     def reason_group() -> None:
         """Incrementally edit the active Reason Workspace over HTTP."""
@@ -329,6 +369,50 @@ def _environment(name: str) -> str:
 
 def _lease_id() -> str:
     return _environment("AXIOM_LEASE_ID")
+
+
+def _credential_access_payload() -> dict[str, str]:
+    intent_id = os.environ.get("AXIOM_INTENT_ID", "").strip()
+    reason_run_id = os.environ.get("AXIOM_REASON_RUN_ID", "").strip()
+    if bool(intent_id) == bool(reason_run_id):
+        raise click.ClickException(
+            "credential access requires exactly one of AXIOM_INTENT_ID or AXIOM_REASON_RUN_ID"
+        )
+    payload = {"lease_id": _lease_id()}
+    payload["intent_id" if intent_id else "reason_run_id"] = intent_id or reason_run_id
+    return payload
+
+
+def _write_private_json(output: Path, value: Any) -> Path:
+    run_dir = Path(_environment("AXIOM_RUN_DIR")).expanduser().resolve()
+    requested = output.expanduser()
+    if not requested.is_absolute():
+        requested = run_dir / requested
+    parent = requested.parent.resolve()
+    destination = parent / requested.name
+    if not parent.is_relative_to(run_dir):
+        raise click.ClickException("credential output must stay inside AXIOM_RUN_DIR")
+    if destination.is_symlink():
+        raise click.ClickException("credential output must not be a symlink")
+    parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        dir=parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        temporary.replace(destination)
+        os.chmod(destination, 0o600)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    return destination
 
 
 def _source(value: str) -> dict[str, str]:

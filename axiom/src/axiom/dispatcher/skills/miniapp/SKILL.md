@@ -1,6 +1,10 @@
 ---
 name: miniapp
 description: 当测试目标是微信小程序、需要发现/反编译小程序、提取接口与敏感信息时使用
+requirements:
+  files:
+    - scripts/miniapp_decompile_analyze.py
+    - scripts/miniapp_regex_rules.json
 ---
 
 # 微信小程序渗透测试工作流（Miniapp CLI + Yak MCP）
@@ -21,15 +25,15 @@ description: 当测试目标是微信小程序、需要发现/反编译小程序
 脚本位置：
 
 ```bash
-python3 /Users/hexin/vscode/xrayAI/cairn/src/axiom/dispatcher/skills/miniapp/scripts/miniapp_decompile_analyze.py --help
+python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" --help
 ```
 
-不要先 `cd /tmp/axiom-pi/<worker>` 后再用 `src/...` 相对路径；worker 运行目录里没有 AXIOM 源码，必须在仓库根目录执行，或直接使用上面的绝对脚本路径。
+不要依赖当前工作目录或猜测仓库路径；`axiom skill path miniapp` 只会解析当前 lease 已启用的 Skill 目录。
 
 ### 1. status：先看有没有可直接用的目标
 
 ```bash
-python3 /Users/hexin/vscode/xrayAI/cairn/src/axiom/dispatcher/skills/miniapp/scripts/miniapp_decompile_analyze.py status
+python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" status
 ```
 
 输出并写入：
@@ -48,7 +52,7 @@ python3 /Users/hexin/vscode/xrayAI/cairn/src/axiom/dispatcher/skills/miniapp/scr
 ### 2. probe：没有可用目标时识别未解包包组
 
 ```bash
-python3 /Users/hexin/vscode/xrayAI/cairn/src/axiom/dispatcher/skills/miniapp/scripts/miniapp_decompile_analyze.py probe
+python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" probe
 ```
 
 输出并写入：
@@ -66,7 +70,7 @@ python3 /Users/hexin/vscode/xrayAI/cairn/src/axiom/dispatcher/skills/miniapp/scr
 ### 3. prepare：只传 target_id 生成完整产物
 
 ```bash
-python3 /Users/hexin/vscode/xrayAI/cairn/src/axiom/dispatcher/skills/miniapp/scripts/miniapp_decompile_analyze.py prepare --target-id <target_id>
+python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" prepare --target-id <target_id>
 ```
 
 worker 不需要拼 `.wxapkg` 路径、版本目录、分包路径或输出目录。脚本会从 `status.json` / `probe.json` 找到目标，自动解包/分析。
@@ -91,21 +95,21 @@ output/miniapp/<target_id>/
 ## Worker 固定流程
 
 ```bash
-python3 /Users/hexin/vscode/xrayAI/cairn/src/axiom/dispatcher/skills/miniapp/scripts/miniapp_decompile_analyze.py status
+python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" status
 ```
 
 - 如果返回 `ready_targets` 且 `is_analyzed=true`：读取对应 `summary.md` / `yak_workflow.md`。
 - 如果没有可用 `ready_targets`：运行 `probe`。
 
 ```bash
-python3 /Users/hexin/vscode/xrayAI/cairn/src/axiom/dispatcher/skills/miniapp/scripts/miniapp_decompile_analyze.py probe
+python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" probe
 ```
 
 - 根据 `display_name`、appid、页面标题、host、业务 code 判断目标。
 - 选中目标后只记录 `target_id`。
 
 ```bash
-python3 /Users/hexin/vscode/xrayAI/cairn/src/axiom/dispatcher/skills/miniapp/scripts/miniapp_decompile_analyze.py prepare --target-id <target_id>
+python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" prepare --target-id <target_id>
 ```
 
 - 读取输出里的 `summary.md` / `yak_workflow.md`。
@@ -117,16 +121,16 @@ python3 /Users/hexin/vscode/xrayAI/cairn/src/axiom/dispatcher/skills/miniapp/scr
 
 ```bash
 # 列出候选包/目录
-python3 /Users/hexin/vscode/xrayAI/cairn/src/axiom/dispatcher/skills/miniapp/scripts/miniapp_decompile_analyze.py list --root /path/to/root
+python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" list --root /path/to/root
 
 # 轻量识别指定根目录
-python3 /Users/hexin/vscode/xrayAI/cairn/src/axiom/dispatcher/skills/miniapp/scripts/miniapp_decompile_analyze.py identify --root /path/to/root --only-unpacked
+python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" identify --root /path/to/root --only-unpacked
 
 # 对明确路径完成解包+分析
-python3 /Users/hexin/vscode/xrayAI/cairn/src/axiom/dispatcher/skills/miniapp/scripts/miniapp_decompile_analyze.py all --input /path/to/pkg_or_decompiled_dir --out output/miniapp/<name>
+python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" all --input /path/to/pkg_or_decompiled_dir --out output/miniapp/<name>
 
 # 只分析已有解包目录
-python3 /Users/hexin/vscode/xrayAI/cairn/src/axiom/dispatcher/skills/miniapp/scripts/miniapp_decompile_analyze.py analyze --input /path/to/decompiled_dir --out output/miniapp/<name>
+python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" analyze --input /path/to/decompiled_dir --out output/miniapp/<name>
 ```
 
 ## `.wxapkg` 处理方式

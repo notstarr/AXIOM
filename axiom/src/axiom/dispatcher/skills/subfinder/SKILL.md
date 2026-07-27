@@ -1,6 +1,11 @@
 ---
 name: subfinder
 description: 当需要枚举目标域名的子域名时使用
+requirements:
+  commands:
+    - name: subfinder
+      args: [-version]
+      contains: Current Version
 ---
 
 ## 工具

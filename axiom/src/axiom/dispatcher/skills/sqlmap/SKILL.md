@@ -1,6 +1,10 @@
 ---
 name: sqlmap
 description: 当需要检测和利用 SQL 注入漏洞时使用
+requirements:
+  commands:
+    - name: sqlmap
+      args: [--version]
 ---
 
 ## 工具

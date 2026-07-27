@@ -1,6 +1,19 @@
 ---
 name: browser-control
 description: 当需要操作浏览器（导航、点击、填表、截图、提取数据）时使用
+requirements:
+  commands: [bash, curl]
+  optional_commands:
+    - name: mitmdump
+      args: [--version]
+      contains: Mitmproxy
+  python_modules: [playwright]
+  files:
+    - scripts/cdp_ctl.py
+    - scripts/launch-chrome.sh
+    - scripts/stop-chrome.sh
+    - scripts/proxy_get_traffic.py
+    - scripts/mitm_addon.py
 ---
 
 ## 工具概览
@@ -21,7 +34,7 @@ description: 当需要操作浏览器（导航、点击、填表、截图、提�
 
 **在任务完成后必须关闭 tab，否则会导致系统卡顿：**
 ```bash
-python3 scripts/cdp_ctl.py close-tab {tab_id}
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" close-tab {tab_id}
 ```
 
 ## 多 Worker 隔离（必须遵守）
@@ -30,12 +43,12 @@ python3 scripts/cdp_ctl.py close-tab {tab_id}
 
 ```bash
 # 正确：每个 worker 创建自己的 tab，互不干扰
-python3 scripts/cdp_ctl.py --tab-id {intent_id} new-tab https://target.com
-python3 scripts/cdp_ctl.py --tab-id {intent_id} state
-python3 scripts/cdp_ctl.py --tab-id {intent_id} click 5
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {intent_id} new-tab https://target.com
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {intent_id} state
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {intent_id} click 5
 
 # 错误：不加 --tab-id，会操作到其他 worker 的页面
-python3 scripts/cdp_ctl.py state
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" state
 ```
 
 ---
@@ -44,7 +57,7 @@ python3 scripts/cdp_ctl.py state
 
 Chrome-SecTest 需要已运行（端口 9223）。启动方式：
 ```bash
-bash scripts/launch-chrome.sh
+bash "$(axiom skill path browser-control)/scripts/launch-chrome.sh"
 ```
 
 launch-chrome.sh 是幂等的——已运行则直接返回。多 worker 可各自安全调用。
@@ -56,7 +69,7 @@ curl -s http://localhost:9223/json/list | python3 -c "import json,sys; print(f'C
 
 停止 Chrome-SecTest（安全，不影响个人 Chrome）：
 ```bash
-bash scripts/stop-chrome.sh
+bash "$(axiom skill path browser-control)/scripts/stop-chrome.sh"
 ```
 
 ---
@@ -66,7 +79,7 @@ bash scripts/stop-chrome.sh
 ### 基本参数
 
 ```bash
-python3 scripts/cdp_ctl.py [--cdp URL] [--tab-id ID] [--sleep SECONDS] <command> [args]
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" [--cdp URL] [--tab-id ID] [--sleep SECONDS] <command> [args]
 ```
 
 - `--cdp`：CDP 端点，默认 `http://localhost:9223`
@@ -76,61 +89,61 @@ python3 scripts/cdp_ctl.py [--cdp URL] [--tab-id ID] [--sleep SECONDS] <command>
 ### 页面信息
 
 ```bash
-python3 scripts/cdp_ctl.py --tab-id {id} state              # URL、标题、所有可交互元素（带编号）
-python3 scripts/cdp_ctl.py --tab-id {id} links              # 所有链接（编号、文字、href）
-python3 scripts/cdp_ctl.py --tab-id {id} url                # 当前 URL
-python3 scripts/cdp_ctl.py --tab-id {id} title              # 页面标题
-python3 scripts/cdp_ctl.py --tab-id {id} text               # 页面可见文字（默认 4000 字符）
-python3 scripts/cdp_ctl.py --tab-id {id} text --chars 8000  # 更多文字
-python3 scripts/cdp_ctl.py --tab-id {id} eval "document.cookie"  # 执行 JS
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} state              # URL、标题、所有可交互元素（带编号）
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} links              # 所有链接（编号、文字、href）
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} url                # 当前 URL
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} title              # 页面标题
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} text               # 页面可见文字（默认 4000 字符）
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} text --chars 8000  # 更多文字
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} eval "document.cookie"  # 执行 JS
 ```
 
 ### 导航
 
 ```bash
-python3 scripts/cdp_ctl.py --tab-id {id} open "https://target.com"  # 导航并等待加载
-python3 scripts/cdp_ctl.py --tab-id {id} back                        # 返回上一页
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} open "https://target.com"  # 导航并等待加载
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} back                        # 返回上一页
 ```
 
 ### 交互
 
 ```bash
-python3 scripts/cdp_ctl.py --tab-id {id} click 5              # 点击编号 5 的元素
-python3 scripts/cdp_ctl.py --tab-id {id} click-text "登录"     # 按文字点击
-python3 scripts/cdp_ctl.py --tab-id {id} click-href "/login"   # 按 href 点击
-python3 scripts/cdp_ctl.py --tab-id {id} hover 3               # 悬停（触发下拉菜单等）
-python3 scripts/cdp_ctl.py --tab-id {id} fill 2 "search term"  # 填写输入框
-python3 scripts/cdp_ctl.py --tab-id {id} select 4 "option"     # 选择下拉框选项
-python3 scripts/cdp_ctl.py --tab-id {id} keys "Enter"          # 键盘事件（Enter/Escape/Tab）
-python3 scripts/cdp_ctl.py --tab-id {id} scroll down           # 向下滚动 500px
-python3 scripts/cdp_ctl.py --tab-id {id} scroll up 1000        # 向上滚动 1000px
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} click 5              # 点击编号 5 的元素
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} click-text "登录"     # 按文字点击
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} click-href "/login"   # 按 href 点击
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} hover 3               # 悬停（触发下拉菜单等）
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} fill 2 "search term"  # 填写输入框
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} select 4 "option"     # 选择下拉框选项
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} keys "Enter"          # 键盘事件（Enter/Escape/Tab）
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} scroll down           # 向下滚动 500px
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} scroll up 1000        # 向上滚动 1000px
 ```
 
 ### 等待
 
 ```bash
-python3 scripts/cdp_ctl.py --tab-id {id} wait text "加载完成"   # 等待文字出现
-python3 scripts/cdp_ctl.py --tab-id {id} wait url "/dashboard"  # 等待 URL 跳转
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} wait text "加载完成"   # 等待文字出现
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} wait url "/dashboard"  # 等待 URL 跳转
 ```
 
 ### 截图
 
 ```bash
-python3 scripts/cdp_ctl.py --tab-id {id} screenshot evidence.png           # 视口截图
-python3 scripts/cdp_ctl.py --tab-id {id} full-screenshot full_page.png     # 全页截图
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} screenshot evidence.png           # 视口截图
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} full-screenshot full_page.png     # 全页截图
 ```
 
 ### Cookies
 
 ```bash
-python3 scripts/cdp_ctl.py --tab-id {id} cookies    # 输出 JSON 格式 cookies
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} cookies    # 输出 JSON 格式 cookies
 ```
 
 ### Tab 管理
 
 ```bash
-python3 scripts/cdp_ctl.py new-tab "https://target.com"    # 创建新 tab，返回 TAB_ID
-python3 scripts/cdp_ctl.py close-tab {tab_id}               # 关闭 tab
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" new-tab "https://target.com"    # 创建新 tab，返回 TAB_ID
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" close-tab {tab_id}               # 关闭 tab
 ```
 
 ---
@@ -145,31 +158,31 @@ mitmproxy 通常由系统自动拉起。手动启动：
 ```bash
 PROXY_FLOW_FILE=/tmp/proxy_flows.jsonl \
 MITM_TARGET_HOST=target.example.com \
-mitmdump -s scripts/mitm_addon.py --listen-port 18080 -q &
+mitmdump -s "$(axiom skill path browser-control)/scripts/mitm_addon.py" --listen-port 18080 -q &
 ```
 
 Chrome-SecTest 需要以代理模式启动：
 ```bash
-MITM_PROXY=1 bash scripts/launch-chrome.sh
+MITM_PROXY=1 bash "$(axiom skill path browser-control)/scripts/launch-chrome.sh"
 ```
 
 ### 查询流量
 
 ```bash
 # 操作前清空
-python3 scripts/proxy_get_traffic.py --clear
+python3 "$(axiom skill path browser-control)/scripts/proxy_get_traffic.py" --clear
 
 # 操作后查看触发的 API
-python3 scripts/proxy_get_traffic.py --type api --summary
+python3 "$(axiom skill path browser-control)/scripts/proxy_get_traffic.py" --type api --summary
 
 # 查看特定路径的流量
-python3 scripts/proxy_get_traffic.py --filter /api/ --type api --summary
+python3 "$(axiom skill path browser-control)/scripts/proxy_get_traffic.py" --filter /api/ --type api --summary
 
 # 查看完整请求/响应
-python3 scripts/proxy_get_traffic.py --filter /api/v1/user --full --last 1
+python3 "$(axiom skill path browser-control)/scripts/proxy_get_traffic.py" --filter /api/v1/user --full --last 1
 
 # 查看状态
-python3 scripts/proxy_get_traffic.py --status
+python3 "$(axiom skill path browser-control)/scripts/proxy_get_traffic.py" --status
 ```
 
 ---
@@ -180,38 +193,38 @@ python3 scripts/proxy_get_traffic.py --status
 
 ```bash
 # 1. 创建 tab（首次）
-python3 scripts/cdp_ctl.py new-tab "https://target.com"
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" new-tab "https://target.com"
 
 # 2. 查看元素编号
-python3 scripts/cdp_ctl.py --tab-id {tab_id} state
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {tab_id} state
 
 # 3. 截图留证
-python3 scripts/cdp_ctl.py --tab-id {tab_id} screenshot before.png
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {tab_id} screenshot before.png
 
 # 4. 点击目标元素
-python3 scripts/cdp_ctl.py --tab-id {tab_id} click 5
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {tab_id} click 5
 
 # 5. 确认操作结果
-python3 scripts/cdp_ctl.py --tab-id {tab_id} state
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {tab_id} state
 ```
 
 ### 填写表单并提交
 
 ```bash
-python3 scripts/cdp_ctl.py --tab-id {id} open "https://target.com/login"
-python3 scripts/cdp_ctl.py --tab-id {id} state                    # 查看输入框编号
-python3 scripts/cdp_ctl.py --tab-id {id} fill 1 "user@test.com"   # 填写用户名
-python3 scripts/cdp_ctl.py --tab-id {id} fill 2 "password123"     # 填写密码
-python3 scripts/cdp_ctl.py --tab-id {id} click 3                   # 点击登录
-python3 scripts/cdp_ctl.py --tab-id {id} wait text "欢迎"          # 等待登录成功
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} open "https://target.com/login"
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} state                    # 查看输入框编号
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} fill 1 "user@test.com"   # 填写用户名
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} fill 2 "password123"     # 填写密码
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} click 3                   # 点击登录
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} wait text "欢迎"          # 等待登录成功
 ```
 
 ### 操作后查看触发的 API
 
 ```bash
-python3 scripts/proxy_get_traffic.py --clear                      # 清空旧流量
-python3 scripts/cdp_ctl.py --tab-id {id} click 5                   # 执行操作
-python3 scripts/proxy_get_traffic.py --type api --summary          # 查看触发的 API
+python3 "$(axiom skill path browser-control)/scripts/proxy_get_traffic.py" --clear                      # 清空旧流量
+python3 "$(axiom skill path browser-control)/scripts/cdp_ctl.py" --tab-id {id} click 5                   # 执行操作
+python3 "$(axiom skill path browser-control)/scripts/proxy_get_traffic.py" --type api --summary          # 查看触发的 API
 ```
 
 ---
@@ -220,7 +233,7 @@ python3 scripts/proxy_get_traffic.py --type api --summary          # 查看触�
 
 | 问题 | 解决 |
 |------|------|
-| `CDP_ERROR: connect failed` | Chrome-SecTest 未运行，执行 `bash scripts/launch-chrome.sh` |
+| `CDP_ERROR: connect failed` | Chrome-SecTest 未运行，执行 `bash "$(axiom skill path browser-control)/scripts/launch-chrome.sh"` |
 | 启动提示 `Port 9223 is occupied by a non-SecTest Chrome instance` | 9223 端口被你的个人 Chrome 占用。脚本会拒绝接管，避免误关你的页面。请改用其他 `CDP_PORT` 或释放 9223 |
 | 抢页面/被其他 worker 导航 | 确认每次都带了 `--tab-id {你的ID}` |
 | click 报 index out of range | 先执行 `state` 获取最新元素编号 |

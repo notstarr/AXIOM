@@ -221,6 +221,50 @@ def test_stopping_a_task_cancels_reason_run_and_invalidates_its_lease(client) ->
     assert reconciled["created_reason_run_ids"][0] != reason_run_id
 
 
+def test_reason_run_can_read_project_credentials_only_while_its_lease_is_active(client) -> None:
+    task, completed = _bootstrap_to_reason(client)
+    credential = client.post(
+        f"/api/v1/projects/{task['project_id']}/credentials",
+        json={
+            "name": "Reason 可读凭证",
+            "credential_type": "bearer",
+            "target_host": "a.example.com",
+            "data": {"token": "secret-token"},
+        },
+    ).json()
+    reason_run_id = completed["next_reason_run_id"]
+    claim, _execution = claim_reason_run(
+        client,
+        task_id=task["id"],
+        reason_run_id=reason_run_id,
+    )
+    access = {
+        "lease_id": claim["lease_id"],
+        "reason_run_id": reason_run_id,
+    }
+
+    summaries = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/credentials/list",
+        json=access,
+    )
+    material = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/credentials/{credential['id']}/get",
+        json=access,
+    )
+
+    assert summaries.status_code == 200, summaries.text
+    assert summaries.json()[0]["data_fields"] == ["token"]
+    assert material.status_code == 200, material.text
+    assert material.json()["data"]["token"] == "secret-token"
+
+    assert client.post(f"/api/v1/tasks/{task['id']}/stop").status_code == 200
+    rejected = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/credentials/list",
+        json=access,
+    )
+    assert rejected.status_code == 409
+
+
 def test_reason_workspace_todos_can_outnumber_intents_and_fifth_proposal_is_rejected(client) -> None:
     task, completed = _bootstrap_to_reason(
         client,

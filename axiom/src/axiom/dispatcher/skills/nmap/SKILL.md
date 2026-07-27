@@ -1,6 +1,11 @@
 ---
 name: nmap
 description: 当需要扫描端口、识别服务版本、检测操作系统时使用
+requirements:
+  commands:
+    - name: nmap
+      args: [--version]
+      contains: Nmap version
 ---
 
 ## 工具

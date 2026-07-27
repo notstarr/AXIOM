@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import stat
+from pathlib import Path
 
 from click.testing import CliRunner
 
@@ -146,3 +148,92 @@ def test_explore_cli_report_does_not_allow_worker_to_choose_identity(monkeypatch
     assert "source" not in payload["report"]
     assert "reported_by" not in payload["report"]
     assert json.loads(result.output)["total"] == 1
+
+
+def test_credential_cli_lists_metadata_through_the_current_intent_lease(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return [{"id": "cred_001", "name": "登录 Cookie", "data_fields": ["Cookie"]}]
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+    environment = _env()
+    environment.pop("AXIOM_REASON_RUN_ID")
+    result = CliRunner().invoke(main, ["credential", "list"], env=environment)
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        (
+            "POST",
+            "/dispatch/tasks/t_001/credentials/list",
+            {"lease_id": "lease-1", "intent_id": "i003"},
+        )
+    ]
+    assert "raw-secret" not in result.output
+
+
+def test_credential_cli_uses_reason_run_identity_when_reason_is_active(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return []
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+    environment = _env()
+    environment.pop("AXIOM_INTENT_ID")
+    result = CliRunner().invoke(main, ["credential", "list"], env=environment)
+
+    assert result.exit_code == 0, result.output
+    assert calls[0][2] == {"lease_id": "lease-1", "reason_run_id": "rr000001"}
+
+
+def test_credential_cli_writes_material_privately_without_echoing_it(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    def fake_request(_method: str, _path: str, _payload: dict):
+        return {
+            "id": "cred_001",
+            "name": "登录 Cookie",
+            "credential_type": "headers",
+            "target_host": "a.example.com",
+            "data": {"Cookie": "session=raw-secret"},
+            "enabled": True,
+            "project_id": "p001",
+            "created_at": "2026-07-27T00:00:00Z",
+            "updated_at": "2026-07-27T00:00:00Z",
+        }
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+    environment = _env()
+    environment.pop("AXIOM_REASON_RUN_ID")
+    environment["AXIOM_RUN_DIR"] = str(tmp_path)
+    result = CliRunner().invoke(
+        main,
+        ["credential", "get", "cred_001", "--output", "private/credential.json"],
+        env=environment,
+    )
+
+    assert result.exit_code == 0, result.output
+    destination = tmp_path / "private" / "credential.json"
+    assert json.loads(destination.read_text(encoding="utf-8"))["data"]["Cookie"] == "session=raw-secret"
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o600
+    assert "raw-secret" not in result.output
+
+
+def test_credential_cli_rejects_output_outside_the_run_directory(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("axiom.worker_cli._request", lambda *_args: {"data": {"Cookie": "secret"}})
+    environment = _env()
+    environment.pop("AXIOM_REASON_RUN_ID")
+    environment["AXIOM_RUN_DIR"] = str(tmp_path / "run")
+
+    result = CliRunner().invoke(
+        main,
+        ["credential", "get", "cred_001", "--output", str(tmp_path / "outside.json")],
+        env=environment,
+    )
+
+    assert result.exit_code != 0
+    assert not (tmp_path / "outside.json").exists()

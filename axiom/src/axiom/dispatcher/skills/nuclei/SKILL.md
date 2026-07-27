@@ -1,6 +1,11 @@
 ---
 name: nuclei
 description: 当需要对目标进行自动化漏洞扫描时使用
+requirements:
+  commands:
+    - name: nuclei
+      args: [-version]
+      contains: Nuclei Engine Version
 ---
 
 ## 工具

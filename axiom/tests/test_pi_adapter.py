@@ -67,11 +67,19 @@ def test_pi_adapter_returns_the_final_assistant_text(tmp_path) -> None:
 
 
 def test_pi_adapter_materializes_custom_provider_and_shared_skill_paths(tmp_path) -> None:
+    security_bin = tmp_path / "security-bin"
+    security_bin.mkdir()
+    security_httpx = security_bin / "httpx"
+    security_httpx.write_text("#!/bin/sh\necho projectdiscovery-httpx\n", encoding="utf-8")
+    security_httpx.chmod(0o755)
     script = make_script(
         tmp_path,
         "test -f \"$PI_CODING_AGENT_DIR/models.json\"\n"
         "test \"$AXIOM_RUN_DIR\" = \"$PI_CODING_AGENT_DIR\"\n"
-        "command -v axiom >/dev/null\n"
+        "test \"$(command -v axiom)\" = \"$AXIOM_RUN_DIR/.axiom-bin/axiom\"\n"
+        "test \"$(command -v python3)\" = \"$AXIOM_RUN_DIR/.axiom-bin/python3\"\n"
+        "test \"$(command -v httpx)\" = \"$EXPECTED_HTTPX\"\n"
+        "python3 -c 'import sys; assert sys.prefix.endswith(\"/.venv\")'\n"
         "grep -q '\"baseUrl\":\"https://models.example/v1\"' \"$PI_CODING_AGENT_DIR/models.json\"\n"
         "printf '%s\\n' \"$@\" | grep -q '/shared/skills/httpx'\n"
         "printf '# 资产' > \"$AXIOM_RUN_DIR/asset_inventory.md\"\n"
@@ -88,7 +96,11 @@ def test_pi_adapter_materializes_custom_provider_and_shared_skill_paths(tmp_path
                 "base_url": "https://models.example/v1",
                 "provider_api": "openai-completions",
                 "api_key": "test-key",
-                "environment": {"PATH": "/usr/bin:/bin"},
+                "environment": {
+                    "PATH": "/usr/bin:/bin",
+                    "AXIOM_TOOL_PATH": str(security_bin),
+                    "EXPECTED_HTTPX": str(security_httpx),
+                },
             }
         }
     )

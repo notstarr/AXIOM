@@ -1,6 +1,11 @@
 ---
 name: httpx
 description: 当需要探测 HTTP 服务存活、获取标题和状态码时使用
+requirements:
+  commands:
+    - name: httpx
+      args: [-version]
+      contains: Current Version
 ---
 
 ## 工具

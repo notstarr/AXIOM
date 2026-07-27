@@ -75,6 +75,33 @@ def test_credentials_are_project_scoped_and_injected_into_execution_input(client
     assert execution_input.status_code == 200, execution_input.text
     assert execution_input.json()["credentials"][0]["data"]["Cookie"] == "session=raw-secret"
 
+    access = {"lease_id": claim["lease_id"], "intent_id": "i001"}
+    summaries = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/credentials/list",
+        json=access,
+    )
+    assert summaries.status_code == 200, summaries.text
+    assert summaries.json() == [
+        {
+            "id": created.json()["id"],
+            "name": "登录 Cookie",
+            "credential_type": "headers",
+            "target_host": "b.example.com",
+            "data_fields": ["Cookie", "X-CSRF"],
+        }
+    ]
+    material = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/credentials/{created.json()['id']}/get",
+        json=access,
+    )
+    assert material.status_code == 200, material.text
+    assert material.json()["data"]["Cookie"] == "session=raw-secret"
+    wrong_lease = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/credentials/list",
+        json={"lease_id": "wrong", "intent_id": "i001"},
+    )
+    assert wrong_lease.status_code == 409
+
 
 def test_vulnerability_format_is_shared_by_internal_management(client) -> None:
     _project, task = _project_task(client)

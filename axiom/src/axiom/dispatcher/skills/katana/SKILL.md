@@ -1,6 +1,11 @@
 ---
 name: katana
 description: 当需要爬取网站页面、发现隐藏路径和 API 端点时使用
+requirements:
+  commands:
+    - name: katana
+      args: [-version]
+      contains: Current version
 ---
 
 ## 工具

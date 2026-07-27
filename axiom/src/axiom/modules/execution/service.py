@@ -12,12 +12,14 @@ from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
 from axiom.modules.context.service import ContextService
 from axiom.modules.credentials.repository import CredentialRepository
+from axiom.modules.credentials.schemas import CredentialMaterial, WorkerCredentialSummary
 from axiom.modules.execution.repository import ExecutionRepository
 from axiom.modules.execution.schemas import (
     ActivityCommand,
     BootstrapCompleted,
     CompleteBootstrapCommand,
     CompleteExploreCommand,
+    CredentialAccessCommand,
     ExecutionInput,
     ExploreCompleted,
     ExploreVulnerabilityRecorded,
@@ -72,6 +74,40 @@ class ExecutionService:
         self.credentials = CredentialRepository()
         self.vulnerabilities = VulnerabilityRepository()
         self.audit = AuditService(engine)
+
+    def credential_summaries(
+        self,
+        *,
+        task_id: str,
+        command: CredentialAccessCommand,
+    ) -> list[WorkerCredentialSummary]:
+        with self.engine.connect() as conn:
+            project_id = self._credential_project_id(conn, task_id, command)
+            materials = self.credentials.for_project_materials(conn, project_id)
+        return [
+            WorkerCredentialSummary(
+                id=item.id,
+                name=item.name,
+                credential_type=item.credential_type,
+                target_host=item.target_host,
+                data_fields=sorted(str(key) for key in item.data),
+            )
+            for item in materials
+        ]
+
+    def credential_material(
+        self,
+        *,
+        task_id: str,
+        credential_id: str,
+        command: CredentialAccessCommand,
+    ) -> CredentialMaterial:
+        with self.engine.connect() as conn:
+            project_id = self._credential_project_id(conn, task_id, command)
+            credential = self.credentials.get(conn, project_id, credential_id)
+        if credential is None or not credential.enabled:
+            raise NotFoundError(f"Enabled credential not found: {credential_id}")
+        return CredentialMaterial.model_validate(credential.model_dump(mode="json"))
 
     def input(self, *, task_id: str, intent_id: str, command: LeaseCommand) -> ExecutionInput:
         with self.engine.connect() as conn:
@@ -775,3 +811,34 @@ class ExecutionService:
     def _require_lease(row, lease_id: str) -> None:
         if row["lease_id"] != lease_id:
             raise LeaseInactiveError("Intent lease does not match")
+
+    def _credential_project_id(
+        self,
+        conn,
+        task_id: str,
+        command: CredentialAccessCommand,
+    ) -> str:
+        if command.intent_id:
+            row = self.repository.input_row(conn, task_id, command.intent_id)
+            self._require_row(row, task_id, command.intent_id)
+            self._require_lease(row, command.lease_id)
+            if row["task_status"] != "running":
+                raise LeaseInactiveError("Task is not running")
+            if row["intent_status"] not in {"claimed", "running", "concluding"}:
+                raise LeaseInactiveError("Intent lease is not active")
+            return str(row["project_id"])
+
+        reason_run_id = command.reason_run_id or ""
+        run = self.reason.repository.get_run(conn, task_id, reason_run_id)
+        if run is None:
+            raise NotFoundError(f"ReasonRun not found: {task_id}/{reason_run_id}")
+        if run.lease_id != command.lease_id:
+            raise LeaseInactiveError("ReasonRun lease does not match")
+        if run.status not in {"claimed", "running", "concluding"}:
+            raise LeaseInactiveError("ReasonRun lease is not active")
+        task = self.reason.tasks.get(conn, task_id)
+        if task is None:
+            raise NotFoundError(f"Task not found: {task_id}")
+        if task.status != "running":
+            raise LeaseInactiveError("Task is not running")
+        return task.project_id

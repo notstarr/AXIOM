@@ -17,7 +17,7 @@ from axiom.dispatcher.heartbeat import LeaseLostError
 from axiom.dispatcher.explore import ExploreExecutionTimeout
 from axiom.dispatcher.process import ProcessResult, ProcessSpec, ProcessSupervisor
 from axiom.dispatcher.reason import ReasonExecutionTimeout
-from axiom.dispatcher.tool_path import build_tool_path
+from axiom.dispatcher.tool_path import build_tool_path, prepare_runtime_bin
 from axiom.modules.execution.schemas import ActivityCommand, ExecutionInput
 from axiom.modules.reason.schemas import ReasonWorkspace
 from axiom.modules.workers.pi_config import PiWorkerConfig
@@ -157,16 +157,17 @@ class PiBootstrapExecutor:
         if self.settings.api_key:
             environment["PI_API_KEY"] = self.settings.api_key
         environment["PI_MODEL_CONTEXT_WINDOW"] = str(self.settings.context_window)
+        venv_bin = Path(sys.executable).parent
+        runtime_bin = prepare_runtime_bin(
+            agent_dir / ".axiom-bin",
+            python_executable=sys.executable,
+            axiom_executable=venv_bin / "axiom",
+        )
         environment["PATH"] = build_tool_path(
             inherited=environment.get("PATH", os.environ.get("PATH", "")),
             configured=environment.get("AXIOM_TOOL_PATH"),
-        )
-        # LaunchAgent PATH does not include the active virtualenv.  Reason's
-        # control plane is intentionally the installed `axiom` CLI, so make
-        # that command available without asking the model to discover paths.
-        venv_bin = str(Path(sys.executable).parent)
-        environment["PATH"] = ":".join(
-            dict.fromkeys([venv_bin, *environment["PATH"].split(":")])
+            runtime_bin=runtime_bin,
+            fallback_bins=[venv_bin],
         )
         argv = self._build_argv(
             prompt,

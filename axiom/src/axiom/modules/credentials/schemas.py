@@ -37,3 +37,13 @@ class Credential(CredentialInput):
 
 class CredentialMaterial(Credential):
     """The exact material delivered to a worker; no masking or encryption layer."""
+
+
+class WorkerCredentialSummary(BaseModel):
+    """Credential metadata safe to print in a Worker session."""
+
+    id: str
+    name: str
+    credential_type: CredentialType
+    target_host: str = ""
+    data_fields: list[str] = Field(default_factory=list)
