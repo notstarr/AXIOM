@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -60,6 +60,25 @@ class CreateTask(BaseModel):
         return list(dict.fromkeys(value.strip() for value in values if value.strip()))
 
 
+class ActiveReasonRun(BaseModel):
+    id: str
+    status: Literal["pending", "claimed", "running", "concluding"]
+    trigger: str
+    trigger_payload: dict[str, Any] = Field(default_factory=dict)
+    worker: str | None = None
+    lease_id: str | None = None
+    settings_version: int
+    execute_timeout_seconds: int
+    conclude_timeout_seconds: int
+    last_heartbeat_at: str | None = None
+    activity_kind: str = ""
+    activity_summary: str = ""
+    activity_tool: str = ""
+    activity_started_at: str | None = None
+    activity_updated_at: str | None = None
+    created_at: str
+
+
 class Task(BaseModel):
     id: str
     project_id: str
@@ -89,6 +108,7 @@ class Task(BaseModel):
     reason_activity_tool: str = ""
     reason_activity_started_at: str | None = None
     reason_activity_updated_at: str | None = None
+    active_reason_run: ActiveReasonRun | None = None
 
 
 class TaskHint(BaseModel):

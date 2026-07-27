@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 class BuildContext(BaseModel):
     phase: Literal["bootstrap", "reason", "explore"]
     intent_id: str | None = None
+    reason_run_id: str | None = None
     lease_id: str | None = None
 
 
@@ -16,6 +17,7 @@ class ContextRevision(BaseModel):
     revision: int
     phase: str
     intent_id: str | None = None
+    reason_run_id: str | None = None
     lease_id: str | None = None
     manifest_key: str
     manifest_path: str

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from axiom.modules.artifacts.schemas import Artifact, BootstrapBundle, ExploreBundle
+from axiom.modules.artifacts.schemas import Artifact
 from axiom.modules.credentials.schemas import CredentialMaterial
-from axiom.modules.vulnerabilities.schemas import Vulnerability
+from axiom.modules.vulnerabilities.schemas import ExploreVulnerabilityReport, Vulnerability
 
 
 class LeaseCommand(BaseModel):
@@ -49,7 +49,8 @@ class ReleaseIntentCommand(LeaseCommand):
 class ExecutionInput(BaseModel):
     task_id: str
     project_id: str = ""
-    intent_id: str
+    intent_id: str | None = None
+    reason_run_id: str | None = None
     lease_id: str
     worker_name: str
     intent_kind: Literal["bootstrap", "reason", "explore"] = "bootstrap"
@@ -70,6 +71,16 @@ class ExecutionInput(BaseModel):
     context_revision: int | None = None
     context_manifest_path: str | None = None
 
+    @model_validator(mode="after")
+    def require_one_execution_owner(self) -> "ExecutionInput":
+        if bool(self.intent_id) == bool(self.reason_run_id):
+            raise ValueError("exactly one of intent_id or reason_run_id is required")
+        if self.intent_kind == "reason" and not self.reason_run_id:
+            raise ValueError("Reason execution requires reason_run_id")
+        if self.intent_kind != "reason" and not self.intent_id:
+            raise ValueError("Intent execution requires intent_id")
+        return self
+
 
 class StartedIntent(BaseModel):
     task_id: str
@@ -80,27 +91,27 @@ class StartedIntent(BaseModel):
 
 
 class CompleteBootstrapCommand(LeaseCommand):
-    summary: str
-    artifacts: BootstrapBundle
-
-    @field_validator("summary")
-    @classmethod
-    def require_summary(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("summary must not be empty")
-        return value
+    """Close Bootstrap using files already present in the leased run directory."""
 
 
 class CompleteExploreCommand(LeaseCommand):
-    output: ExploreBundle
+    """Close Explore using files and code-maintained state from the run directory."""
+
+
+class ReportExploreVulnerabilityCommand(LeaseCommand):
+    report: ExploreVulnerabilityReport
+
+
+class ExploreVulnerabilityRecorded(BaseModel):
+    total: int
+    duplicate: bool = False
 
 
 class ExploreCompleted(BaseModel):
     task_id: str
     intent_id: str
     fact_id: str
-    reason_intent_id: str | None = None
+    reason_run_id: str | None = None
     artifacts: list[Artifact]
     vulnerabilities: list[Vulnerability] = Field(default_factory=list)
     status: Literal["completed"] = "completed"
@@ -110,7 +121,7 @@ class BootstrapCompleted(BaseModel):
     task_id: str
     intent_id: str
     fact_id: str
-    next_intent_id: str
+    next_reason_run_id: str
     artifacts: list[Artifact]
     status: Literal["completed"] = "completed"
 

@@ -9,6 +9,7 @@ class RecordAuditEvent(BaseModel):
     project_id: str | None = None
     task_id: str | None = None
     intent_id: str | None = None
+    reason_run_id: str | None = None
     workspace_id: str | None = None
     worker: str = ""
     event_type: str

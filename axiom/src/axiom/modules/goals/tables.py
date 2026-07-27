@@ -12,6 +12,7 @@ goal_evaluations = Table(
     Column("id", String, primary_key=True),
     Column("task_id", String, ForeignKey(tasks.c.id, ondelete="CASCADE"), nullable=False),
     Column("intent_id", String),
+    Column("reason_run_id", String),
     Column("workspace_id", String),
     Column("achieved", Boolean, nullable=False),
     Column("reason", Text, nullable=False),

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from axiom.dispatcher.schemas import ClaimedIntent, DispatcherSnapshot
+from axiom.dispatcher.schemas import ClaimAction, ClaimedWork, DispatcherSnapshot
 
 
 class DispatchControlPlane(Protocol):
@@ -17,11 +17,5 @@ class DispatchControlPlane(Protocol):
     def snapshot(self) -> DispatcherSnapshot:
         ...
 
-    def claim(
-        self,
-        *,
-        task_id: str,
-        intent_id: str,
-        worker_name: str,
-    ) -> ClaimedIntent | None:
-        """Atomically claim an intent, returning None on a stale conflict."""
+    def claim_work(self, action: ClaimAction) -> ClaimedWork | None:
+        """Atomically claim work, returning None on a stale conflict."""

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from protocol_helpers import bootstrap_files_from_legacy, write_bootstrap_files
+
 
 def setup_claimed_bootstrap(client) -> tuple[dict, dict]:
     project = client.post("/api/v1/projects", json={"title": "系统"}).json()
@@ -56,27 +58,36 @@ def test_bootstrap_closeout_is_atomic_and_materializes_registered_files(client, 
         f"{base}/heartbeat",
         json={"lease_id": claim["lease_id"]},
     ).status_code == 204
+    payload = bootstrap_payload(claim["lease_id"])
+    write_bootstrap_files(
+        execution_input["run_dir"],
+        bootstrap_files_from_legacy(payload),
+    )
 
     completed = client.post(
         f"{base}/bootstrap-complete",
-        json=bootstrap_payload(claim["lease_id"]),
+        json={"lease_id": claim["lease_id"]},
     )
     assert completed.status_code == 200, completed.text
     body = completed.json()
     assert body["fact_id"] == "f001"
-    assert body["next_intent_id"] == "i002"
+    assert body["next_reason_run_id"] == "rr000001"
     assert [item["artifact_type"] for item in body["artifacts"]] == [
         "bootstrap.asset_inventory",
         "bootstrap.initial_leads",
         "bootstrap.findings",
     ]
+    assert all(item["summary"] for item in body["artifacts"])
 
     task_after = client.get(f"/api/v1/tasks/{task['id']}").json()
     graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
     assert task_after["phase"] == "reason"
     assert graph["intents"][0]["status"] == "completed"
     assert graph["intents"][0]["to_fact_id"] == "f001"
-    assert any(fact["id"] == "f001" for fact in graph["facts"])
+    assert [item["id"] for item in graph["intents"]] == ["i001"]
+    assert task_after["active_reason_run"]["id"] == "rr000001"
+    fact = next(fact for fact in graph["facts"] if fact["id"] == "f001")
+    assert all(f"artifact:a00{number}" in fact["description"] for number in (1, 2, 3))
 
     artifacts = client.get(f"/api/v1/tasks/{task['id']}/artifacts").json()
     assert len(artifacts) == 3
@@ -87,6 +98,12 @@ def test_bootstrap_closeout_is_atomic_and_materializes_registered_files(client, 
         assert content.status_code == 200
         assert content.json()["content"].startswith("# ")
         assert (data_dir / artifact["storage_key"]).is_file()
+    run_dir = Path(execution_input["run_dir"])
+    assert not any(
+        (run_dir / filename).exists()
+        for filename in ("asset_inventory.md", "initial_leads.md", "findings.md")
+    )
+    assert (run_dir / "bootstrap_artifacts.json").is_file()
 
 
 def test_bootstrap_completion_is_idempotent_for_the_same_lease(client) -> None:
@@ -94,9 +111,18 @@ def test_bootstrap_completion_is_idempotent_for_the_same_lease(client) -> None:
     base = f"/api/v1/dispatch/tasks/{task['id']}/intents/i001"
     client.post(f"{base}/start", json={"lease_id": claim["lease_id"]})
     payload = bootstrap_payload(claim["lease_id"])
+    execution_input = client.post(
+        f"{base}/input",
+        json={"lease_id": claim["lease_id"]},
+    ).json()
+    write_bootstrap_files(
+        execution_input["run_dir"],
+        bootstrap_files_from_legacy(payload),
+    )
 
-    first = client.post(f"{base}/bootstrap-complete", json=payload)
-    second = client.post(f"{base}/bootstrap-complete", json=payload)
+    command = {"lease_id": claim["lease_id"]}
+    first = client.post(f"{base}/bootstrap-complete", json=command)
+    second = client.post(f"{base}/bootstrap-complete", json=command)
 
     assert first.status_code == 200
     assert second.status_code == 200

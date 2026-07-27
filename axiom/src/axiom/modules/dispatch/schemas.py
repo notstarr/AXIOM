@@ -26,5 +26,13 @@ class RecoveredIntent(BaseModel):
     expired_lease_id: str
 
 
+class RecoveredReasonRun(BaseModel):
+    task_id: str
+    reason_run_id: str
+    worker_name: str
+    expired_lease_id: str
+
+
 class RecoveryReport(BaseModel):
     recovered: list[RecoveredIntent] = Field(default_factory=list)
+    recovered_reason_runs: list[RecoveredReasonRun] = Field(default_factory=list)

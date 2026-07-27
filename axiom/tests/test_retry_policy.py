@@ -11,7 +11,7 @@ def _configure(client, **changes) -> None:
     config.update(changes)
     response = client.put(
         "/api/v1/settings/runtime",
-        json={"actor": "test", "config": config},
+        json={"actor": "test", "expected_version": current["version"], "config": config},
     )
     assert response.status_code == 200, response.text
 

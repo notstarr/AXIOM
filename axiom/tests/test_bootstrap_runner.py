@@ -4,7 +4,6 @@ import threading
 import time
 
 import pytest
-from pydantic import ValidationError
 
 from axiom.dispatcher.bootstrap import (
     BootstrapExecutionTimeout,
@@ -23,16 +22,10 @@ from axiom.modules.execution.schemas import (
     ReleaseIntentCommand,
 )
 from axiom.modules.workers.schemas import Worker
+from protocol_helpers import write_bootstrap_files
 
 
-VALID_OUTPUT = {
-    "summary": "完成初始攻击面发现，确认 HTTPS 服务并记录后续授权测试方向。",
-    "artifacts": {
-        "asset_inventory": "# 资产清单\n\n- a.example.com:443 HTTPS",
-        "initial_leads": "# 初始线索\n\n- 验证 API 对象级授权",
-        "findings": "# 已确认问题\n\n- 本轮没有确认漏洞",
-    },
-}
+VALID_OUTPUT = "FINISH"
 
 
 class ApiControlPlane:
@@ -132,6 +125,8 @@ class FakeBootstrapExecutor:
         assert lease_active()
         if isinstance(self.execute_result, BaseException):
             raise self.execute_result
+        if self.execute_result == VALID_OUTPUT:
+            write_bootstrap_files(execution_input.run_dir)
         return self.execute_result
 
     def conclude(self, execution_input, *, reason, lease_active):
@@ -140,6 +135,8 @@ class FakeBootstrapExecutor:
         assert lease_active()
         if isinstance(self.conclude_result, BaseException):
             raise self.conclude_result
+        if self.conclude_result == VALID_OUTPUT:
+            write_bootstrap_files(execution_input.run_dir)
         return self.conclude_result
 
 
@@ -207,7 +204,7 @@ def test_bootstrap_runner_executes_once_and_heartbeats_before_loading_context(cl
 @pytest.mark.parametrize(
     ("execute_result", "reason"),
     [
-        ({"summary": "", "artifacts": {}}, "invalid_execute_output"),
+        ("invalid", "最终响应必须仅包含 FINISH"),
         (BootstrapExecutionTimeout("budget exhausted"), "execute_timeout"),
     ],
 )
@@ -232,17 +229,20 @@ def test_invalid_conclude_releases_intent_into_existing_retry_state(client) -> N
     task, control, work = claimed_work(client, events)
     executor = FakeBootstrapExecutor(
         events,
-        execute_result={"summary": "", "artifacts": {}},
-        conclude_result={"summary": "", "artifacts": {}},
+        execute_result="invalid",
+        conclude_result="invalid",
     )
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError, match="FINISH"):
         BootstrapRunner(control, heartbeat_interval_seconds=60).run(work, executor)
 
     intent = client.get(f"/api/v1/tasks/{task['id']}/graph").json()["intents"][0]
     assert intent["status"] == "pending"
     assert intent["retry_count"] == 1
     assert intent["last_failure_kind"] == "bootstrap_execution_failed"
+    assert intent["next_retry_at"] is not None
+    assert executor.conclude_calls == 3
+    assert events.count("begin_conclude") == 1
     assert events.count("release") == 1
 
 
@@ -343,7 +343,8 @@ def test_axiom_runner_cancels_local_execution_when_task_stops(client) -> None:
     current = client.get(f"/api/v1/tasks/{task['id']}").json()
     intent = client.get(f"/api/v1/tasks/{task['id']}/graph").json()["intents"][0]
     assert current["status"] == "stopped"
-    assert intent["status"] == "pending"
+    assert intent["status"] == "cancelled"
+    assert intent["last_failure_kind"] == "task_stopped"
     assert intent["worker"] is None
 
 

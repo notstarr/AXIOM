@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from axiom.modules.todos.schemas import TodoCategory, TodoSource, TodoStatus
 from axiom.modules.goals.schemas import GoalAssessment
-from axiom.modules.vulnerabilities.schemas import VulnerabilityReport
+from axiom.modules.todos.schemas import TodoCategory, TodoSource, TodoStatus
 
 
 class DraftTodo(BaseModel):
@@ -115,14 +114,14 @@ class WorkspaceDraft(BaseModel):
     todo_adds: list[DraftTodo] = Field(default_factory=list, max_length=20)
     todo_updates: list[DraftTodoUpdate] = Field(default_factory=list, max_length=50)
     intent_proposals: list[DraftIntent] = Field(default_factory=list, max_length=8)
-    vulnerability_reports: list[VulnerabilityReport] = Field(default_factory=list, max_length=20)
     goal_assessment: GoalAssessment | None = None
 
 
 class ReasonWorkspace(BaseModel):
     id: str
     task_id: str
-    intent_id: str
+    intent_id: str | None = None
+    reason_run_id: str | None = None
     lease_id: str
     status: Literal["open", "committed", "abandoned"]
     context_revision: int
@@ -135,7 +134,7 @@ class ReasonWorkspace(BaseModel):
 
 
 class OpenWorkspace(BaseModel):
-    intent_id: str
+    reason_run_id: str
     lease_id: str
     context_revision: int = Field(ge=0)
 
@@ -148,12 +147,119 @@ class AbandonWorkspace(WorkspaceWorkerCommand):
     failure_reason: str = "Reason execution failed"
 
 
-class SubmitWorkspace(WorkspaceWorkerCommand):
-    draft: WorkspaceDraft
+class AddWorkspaceTodo(WorkspaceWorkerCommand):
+    todo: DraftTodo
+
+
+class UpdateWorkspaceTodo(WorkspaceWorkerCommand):
+    update: DraftTodoUpdate
+
+
+class ProposeWorkspaceIntent(WorkspaceWorkerCommand):
+    intent: DraftIntent
+
+
+class AssessWorkspaceGoal(WorkspaceWorkerCommand):
+    assessment: GoalAssessment
+
+
+class WorkspaceStatus(BaseModel):
+    workspace_id: str
+    status: Literal["open", "committed", "abandoned"]
+    todo_add_count: int = 0
+    todo_update_count: int = 0
+    intent_proposal_count: int = 0
+    todo_refs: list[str] = Field(default_factory=list)
+    updated_todo_ids: list[str] = Field(default_factory=list)
+    goal_assessed: bool = False
+    goal_achieved: bool = False
+    open_explore_intents: int = 0
+    proposal_limit: int = 0
+    remaining_intent_quota: int = 0
+    ready: bool = False
+    errors: list[str] = Field(default_factory=list)
 
 
 class CommitResult(BaseModel):
     workspace: ReasonWorkspace
     created_todo_ids: list[str]
     created_intent_ids: list[str]
-    created_vulnerability_ids: list[str] = Field(default_factory=list)
+
+
+ReasonRunStatus = Literal[
+    "pending",
+    "claimed",
+    "running",
+    "concluding",
+    "completed",
+    "failed",
+    "cancelled",
+]
+
+
+class ReasonRun(BaseModel):
+    id: str
+    task_id: str
+    status: ReasonRunStatus
+    trigger: str
+    trigger_payload: dict[str, Any] = Field(default_factory=dict)
+    input_fingerprint: str
+    source_fact_ids: list[str] = Field(default_factory=list)
+    worker_pool: list[str] = Field(default_factory=list)
+    worker: str | None = None
+    settings_version: int
+    execute_timeout_seconds: int
+    conclude_timeout_seconds: int
+    target_open_intents: int
+    max_new_intents: int
+    explore_execute_min_seconds: int
+    explore_execute_max_seconds: int
+    explore_conclude_min_seconds: int
+    explore_conclude_max_seconds: int
+    lease_id: str | None = None
+    claimed_at: str | None = None
+    last_heartbeat_at: str | None = None
+    retry_count: int = 0
+    infrastructure_retry_count: int = 0
+    next_retry_at: str | None = None
+    last_failure_kind: str = ""
+    failure_class: str = ""
+    activity_kind: str = ""
+    activity_summary: str = ""
+    activity_tool: str = ""
+    activity_started_at: str | None = None
+    activity_updated_at: str | None = None
+    created_at: str
+    updated_at: str
+    concluded_at: str | None = None
+
+
+class ClaimedReasonRun(BaseModel):
+    task_id: str
+    reason_run_id: str
+    worker_name: str
+    kind: Literal["reason"] = "reason"
+    lease_id: str
+    claimed_at: str
+    status: Literal["claimed"] = "claimed"
+
+
+class StartedReasonRun(BaseModel):
+    task_id: str
+    reason_run_id: str
+    worker_name: str
+    lease_id: str
+    status: Literal["running"] = "running"
+
+
+class ReleasedReasonRun(BaseModel):
+    task_id: str
+    reason_run_id: str
+    status: Literal["pending", "failed"]
+    next_retry_at: str | None = None
+    retry_count: int = 0
+    infrastructure_retry_count: int = 0
+
+
+class ReasonReconcileReport(BaseModel):
+    created_reason_run_ids: list[str] = Field(default_factory=list)

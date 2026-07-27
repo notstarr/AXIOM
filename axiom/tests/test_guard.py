@@ -20,9 +20,24 @@ def _mode(client, mode: str) -> None:
     config["guard_mode"] = mode
     response = client.put(
         "/api/v1/settings/runtime",
-        json={"actor": "test", "config": config},
+        json={"actor": "test", "expected_version": current["version"], "config": config},
     )
     assert response.status_code == 200, response.text
+
+
+def _update_guard(client, **changes) -> dict:
+    current = client.get("/api/v1/settings/runtime").json()
+    config = {**current["config"], **changes}
+    response = client.put(
+        "/api/v1/settings/runtime",
+        json={
+            "actor": "test",
+            "expected_version": current["version"],
+            "config": config,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
 def _decide(client, task: dict, command: str) -> dict:
@@ -75,3 +90,45 @@ def test_guard_fails_open_for_normal_external_operation_without_model_config(cli
     decision = _decide(client, task, "curl https://a.example.com/health")
     assert decision["decision"] == "ALLOW"
     assert decision["source"] == "fail_open"
+
+
+def test_guard_policy_fields_are_persisted_and_drive_the_next_decision(client) -> None:
+    task = _task(client, enabled=True)
+    updated = _update_guard(
+        client,
+        guard_whitelist_tools=["read", "custom-safe"],
+        guard_whitelist_bash_verbs=["echo"],
+        guard_hard_block_rules=[
+            {"reason": "禁止触碰标记文件", "pattern": r"touch\s+/tmp/blocked", "enabled": True}
+        ],
+        guard_system_prompt="仅按当前授权范围判断。",
+    )
+
+    assert updated["config"]["guard_whitelist_bash_verbs"] == ["echo"]
+    assert updated["config"]["guard_system_prompt"] == "仅按当前授权范围判断。"
+    assert _decide(client, task, "echo ok")["source"] == "whitelist"
+    blocked = _decide(client, task, "touch /tmp/blocked")
+    assert blocked["decision"] == "BLOCK"
+    assert blocked["reason"] == "禁止触碰标记文件"
+    # The removed default rule must no longer be silently applied.
+    assert _decide(client, task, "systemctl restart nginx")["decision"] == "ALLOW"
+
+
+def test_guard_rejects_an_invalid_configured_regex(client) -> None:
+    current = client.get("/api/v1/settings/runtime").json()
+    response = client.put(
+        "/api/v1/settings/runtime",
+        json={
+            "actor": "test",
+            "expected_version": current["version"],
+            "config": {
+                **current["config"],
+                "guard_hard_block_rules": [
+                    {"reason": "坏规则", "pattern": "(", "enabled": True}
+                ],
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert "invalid guard regex" in response.text

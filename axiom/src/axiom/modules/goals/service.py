@@ -6,6 +6,8 @@ from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.goals.repository import GoalRepository
 from axiom.modules.goals.schemas import AssessGoal, GoalEvaluation
 from axiom.modules.graph.tables import facts, intents
+from axiom.modules.reason.repository import ReasonRepository
+from axiom.modules.reason.tables import reason_runs
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.modules.todos.tables import todos
@@ -53,7 +55,14 @@ class GoalService:
             return evaluation
 
     @staticmethod
-    def complete_task(conn, task_id: str, *, now: str, exclude_intent_id: str | None = None) -> None:
+    def complete_task(
+        conn,
+        task_id: str,
+        *,
+        now: str,
+        exclude_intent_id: str | None = None,
+        exclude_workspace_id: str | None = None,
+    ) -> None:
         open_intents = intents.c.status.in_(["pending", "claimed", "running", "concluding"])
         condition = intents.c.task_id == task_id
         if exclude_intent_id:
@@ -72,6 +81,36 @@ class GoalService:
                 last_failure_kind="goal_achieved",
                 failure_class="",
             )
+        )
+        conn.execute(
+            update(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.status.in_(["pending", "claimed", "running", "concluding"]),
+            )
+            .values(
+                status="cancelled",
+                worker=None,
+                lease_id=None,
+                claimed_at=None,
+                last_heartbeat_at=None,
+                next_retry_at=None,
+                last_failure_kind="goal_achieved",
+                failure_class="",
+                activity_kind="cancelled",
+                activity_summary="Goal 已达成，ReasonRun 已取消",
+                activity_tool="",
+                activity_updated_at=now,
+                updated_at=now,
+                concluded_at=now,
+            )
+        )
+        ReasonRepository.abandon_open(
+            conn,
+            task_id=task_id,
+            failure_reason="goal_achieved",
+            now=now,
+            exclude_workspace_id=exclude_workspace_id,
         )
         conn.execute(
             update(tasks)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -15,11 +16,10 @@ from axiom.dispatcher.activity import SessionActivityTracker
 from axiom.dispatcher.heartbeat import LeaseLostError
 from axiom.dispatcher.explore import ExploreExecutionTimeout
 from axiom.dispatcher.process import ProcessResult, ProcessSpec, ProcessSupervisor
-from axiom.dispatcher.reason import ReasonExecutionTimeout, ReasonPlanError
+from axiom.dispatcher.reason import ReasonExecutionTimeout
 from axiom.dispatcher.tool_path import build_tool_path
-from axiom.modules.artifacts.schemas import BootstrapBundle
 from axiom.modules.execution.schemas import ActivityCommand, ExecutionInput
-from axiom.modules.reason.schemas import WorkspaceDraft
+from axiom.modules.reason.schemas import ReasonWorkspace
 from axiom.modules.workers.pi_config import PiWorkerConfig
 from axiom.modules.workers.schemas import Worker
 
@@ -49,6 +49,8 @@ class PiBootstrapExecutor:
         prompt_renderer: PromptRenderer | None = None,
         default_conclude_seconds: int = 180,
         activity_reporter: Callable[[ActivityCommand], None] | None = None,
+        api_url: str = "http://127.0.0.1:8899",
+        service_token: str = "",
     ):
         self.worker = worker
         self.settings = PiSettings.model_validate(worker.config)
@@ -56,6 +58,8 @@ class PiBootstrapExecutor:
         self.prompts = prompt_renderer or PromptRenderer()
         self.default_conclude_seconds = default_conclude_seconds
         self.activity_reporter = activity_reporter
+        self.api_url = api_url.rstrip("/")
+        self.service_token = service_token
         self._session_id: str | None = None
 
     def execute(self, execution_input: ExecutionInput, *, lease_active) -> object:
@@ -82,7 +86,7 @@ class PiBootstrapExecutor:
         if result.timed_out:
             raise BootstrapExecutionTimeout("Bootstrap execute budget exhausted")
         self._raise_on_process_failure(result)
-        return self._output(execution_input, self._response_text(result))
+        return self._last_assistant_text(result)
 
     def conclude(self, execution_input: ExecutionInput, *, reason: str, lease_active) -> object:
         if not self._session_id:
@@ -107,7 +111,7 @@ class PiBootstrapExecutor:
         if result.timed_out:
             raise BootstrapExecutionTimeout("Bootstrap conclude budget exhausted")
         self._raise_on_process_failure(result)
-        return self._output(execution_input, self._response_text(result))
+        return self._last_assistant_text(result)
 
     def _run(
         self,
@@ -117,6 +121,7 @@ class PiBootstrapExecutor:
         lease_active,
         timeout_seconds: int,
         tool_names: list[str],
+        extra_environment: dict[str, str] | None = None,
     ) -> ProcessResult:
         session_dir = Path(self.settings.session_dir or Path(execution_input.run_dir) / "sessions")
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -128,14 +133,23 @@ class PiBootstrapExecutor:
                 "AXIOM_RUN_DIR": execution_input.run_dir,
                 "AXIOM_TASK_ID": execution_input.task_id,
                 "AXIOM_PROJECT_ID": execution_input.project_id,
-                "AXIOM_INTENT_ID": execution_input.intent_id,
+                "AXIOM_LEASE_ID": execution_input.lease_id,
                 "AXIOM_PHASE": execution_input.intent_kind,
                 "AXIOM_WORKER": execution_input.worker_name,
                 "AXIOM_GUARD_ENABLED": "1" if execution_input.guard_enabled else "0",
                 "PI_CODING_AGENT_DIR": str(agent_dir),
                 "AXIOM_SKILL_DIRECTORIES": ":".join(execution_input.skill_directories),
+                "AXIOM_SERVER": self.api_url,
             }
         )
+        if execution_input.intent_id:
+            environment["AXIOM_INTENT_ID"] = execution_input.intent_id
+        if execution_input.reason_run_id:
+            environment["AXIOM_REASON_RUN_ID"] = execution_input.reason_run_id
+        if self.service_token:
+            environment["AXIOM_SERVICE_TOKEN"] = self.service_token
+        if extra_environment:
+            environment.update(extra_environment)
         if self.settings.base_url:
             environment["PI_BASE_URL"] = self.settings.base_url
         if self.settings.provider_api:
@@ -143,10 +157,16 @@ class PiBootstrapExecutor:
         if self.settings.api_key:
             environment["PI_API_KEY"] = self.settings.api_key
         environment["PI_MODEL_CONTEXT_WINDOW"] = str(self.settings.context_window)
-        environment.setdefault("AXIOM_SERVER", "http://127.0.0.1:8899")
         environment["PATH"] = build_tool_path(
             inherited=environment.get("PATH", os.environ.get("PATH", "")),
             configured=environment.get("AXIOM_TOOL_PATH"),
+        )
+        # LaunchAgent PATH does not include the active virtualenv.  Reason's
+        # control plane is intentionally the installed `axiom` CLI, so make
+        # that command available without asking the model to discover paths.
+        venv_bin = str(Path(sys.executable).parent)
+        environment["PATH"] = ":".join(
+            dict.fromkeys([venv_bin, *environment["PATH"].split(":")])
         )
         argv = self._build_argv(
             prompt,
@@ -200,6 +220,8 @@ class PiBootstrapExecutor:
             self.settings.model,
             "--session-dir",
             str(session_dir),
+            "--mode",
+            "json",
         ]
         if self._session_id:
             argv.extend([self.settings.session_flag, self._session_id])
@@ -254,51 +276,52 @@ class PiBootstrapExecutor:
             raise TransientWorkerError(detail[-2_000:])
 
     @staticmethod
-    def _response_text(result: ProcessResult) -> str:
-        events = []
+    def _last_assistant_text(result: ProcessResult) -> str:
+        assistant_messages: list[str] = []
+        text_events: list[str] = []
         for line in result.stdout.splitlines():
             try:
                 payload = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(payload, dict):
-                events.append(payload)
-        texts: list[str] = []
-        for event in events:
-            message = event.get("message")
+            if not isinstance(payload, dict):
+                continue
+            message = payload.get("message")
             if isinstance(message, dict) and message.get("role") == "assistant":
-                texts.extend(_message_text(message))
-            if event.get("type") == "text_end" and isinstance(event.get("content"), str):
-                texts.append(event["content"])
-        return "\n".join(dict.fromkeys(text.strip() for text in texts if text.strip())) or result.stdout.strip()
-
-    @staticmethod
-    def _output(execution_input: ExecutionInput, response_text: str) -> dict[str, Any]:
-        bundle_path = Path(execution_input.run_dir) / "bootstrap_artifacts.json"
-        try:
-            raw = json.loads(bundle_path.read_text(encoding="utf-8"))
-            bundle = BootstrapBundle.model_validate(raw)
-        except (OSError, json.JSONDecodeError, ValueError):
-            bundle = {}
-        return {"summary": response_text, "artifacts": bundle}
+                text = "\n".join(_message_text(message)).strip()
+                if text:
+                    assistant_messages.append(text)
+            if payload.get("type") == "text_end" and isinstance(payload.get("content"), str):
+                text = payload["content"].strip()
+                if text:
+                    text_events.append(text)
+        if assistant_messages:
+            return assistant_messages[-1]
+        if text_events:
+            return text_events[-1]
+        return result.stdout.strip()
 
 
 class PiReasonExecutor(PiBootstrapExecutor):
-    """File-first Reason adapter; only a validated WorkspaceDraft can escape."""
+    """Incremental Reason adapter backed by the HTTP-only Axiom CLI."""
 
-    def execute(self, execution_input: ExecutionInput, *, lease_active) -> WorkspaceDraft:
+    def execute(
+        self,
+        execution_input: ExecutionInput,
+        *,
+        workspace: ReasonWorkspace,
+        lease_active,
+    ) -> str:
         if not execution_input.context_manifest_path:
             raise TransientWorkerError("Reason Context manifest is unavailable")
         self._session_id = self._session_id or uuid.uuid4().hex
-        plan_path = Path(execution_input.run_dir) / "reason_plan.json"
-        plan_path.unlink(missing_ok=True)
         result = self._run(
             execution_input,
             self.prompts.render(
                 "reason.md",
                 {
                     "task_id": execution_input.task_id,
-                    "intent_id": execution_input.intent_id,
+                    "reason_run_id": execution_input.reason_run_id or "",
                     "intent_description": execution_input.intent_description,
                     "origin": execution_input.origin,
                     "goal": execution_input.goal,
@@ -309,30 +332,59 @@ class PiReasonExecutor(PiBootstrapExecutor):
             ),
             lease_active=lease_active,
             timeout_seconds=execution_input.execute_timeout_seconds or 600,
-            tool_names=self.settings.tools,
+            tool_names=_reason_tool_names(self.settings.tools),
+            extra_environment={"AXIOM_REASON_WORKSPACE_ID": workspace.id},
         )
         if result.cancelled:
             raise LeaseLostError(result.cancel_reason or "worker cancelled")
         if result.timed_out:
             raise ReasonExecutionTimeout("Reason execution budget exhausted")
         self._raise_on_process_failure(result)
-        try:
-            return WorkspaceDraft.model_validate_json(plan_path.read_text(encoding="utf-8"))
-        except OSError as exc:
-            raise ReasonPlanError("Reason did not produce reason_plan.json") from exc
-        except ValueError as exc:
-            raise ReasonPlanError("Reason produced an invalid reason_plan.json") from exc
+        return self._last_assistant_text(result)
+
+    def conclude(
+        self,
+        execution_input: ExecutionInput,
+        *,
+        workspace: ReasonWorkspace,
+        reason: str,
+        lease_active,
+    ) -> str:
+        if not self._session_id:
+            raise TransientWorkerError("Reason session is unavailable for conclude")
+        result = self._run(
+            execution_input,
+            self.prompts.render(
+                "reason_conclude.md",
+                {
+                    "task_id": execution_input.task_id,
+                    "reason_run_id": execution_input.reason_run_id or "",
+                    "workspace_id": workspace.id,
+                    "run_dir": execution_input.run_dir,
+                },
+            )
+            + f"\n收口原因：{reason}\n",
+            lease_active=lease_active,
+            timeout_seconds=execution_input.conclude_timeout_seconds
+            or self.default_conclude_seconds,
+            tool_names=_reason_tool_names(self.settings.tools),
+            extra_environment={"AXIOM_REASON_WORKSPACE_ID": workspace.id},
+        )
+        if result.cancelled:
+            raise LeaseLostError(result.cancel_reason or "worker cancelled")
+        if result.timed_out:
+            raise ReasonExecutionTimeout("Reason conclude budget exhausted")
+        self._raise_on_process_failure(result)
+        return self._last_assistant_text(result)
 
 
 class PiExploreExecutor(PiBootstrapExecutor):
-    """Pi Explore adapter with one execute and at most one bounded conclude."""
+    """Pi Explore adapter with one execute and same-session bounded closeout."""
 
     def execute(self, execution_input: ExecutionInput, *, lease_active) -> object:
         if not execution_input.context_manifest_path:
             raise TransientWorkerError("Explore Context manifest is unavailable")
         self._session_id = self._session_id or uuid.uuid4().hex
-        result_path = Path(execution_input.run_dir) / "explore_result.json"
-        result_path.unlink(missing_ok=True)
         result = self._run(
             execution_input,
             self.prompts.render(
@@ -362,12 +414,11 @@ class PiExploreExecutor(PiBootstrapExecutor):
         if result.timed_out:
             raise ExploreExecutionTimeout("Explore execute budget exhausted")
         self._raise_on_process_failure(result)
-        return self._read_result(result_path)
+        return self._last_assistant_text(result)
 
     def conclude(self, execution_input: ExecutionInput, *, reason: str, lease_active) -> object:
         if not self._session_id:
             raise TransientWorkerError("Explore session is unavailable for conclude")
-        result_path = Path(execution_input.run_dir) / "explore_result.json"
         result = self._run(
             execution_input,
             self.prompts.render(
@@ -384,21 +435,14 @@ class PiExploreExecutor(PiBootstrapExecutor):
             lease_active=lease_active,
             timeout_seconds=execution_input.conclude_timeout_seconds
             or self.default_conclude_seconds,
-            tool_names=["read", "write", "edit"],
+            tool_names=["read", "write", "edit", "bash"],
         )
         if result.cancelled:
             raise LeaseLostError(result.cancel_reason or "worker cancelled")
         if result.timed_out:
             raise ExploreExecutionTimeout("Explore conclude budget exhausted")
         self._raise_on_process_failure(result)
-        return self._read_result(result_path)
-
-    @staticmethod
-    def _read_result(path: Path) -> object:
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
+        return self._last_assistant_text(result)
 
 
 def _message_text(message: dict[str, Any]) -> list[str]:
@@ -416,3 +460,8 @@ def _message_text(message: dict[str, Any]) -> list[str]:
 
 def _format_skill_directories(paths: list[str]) -> str:
     return "\n".join(f"- `{path}`" for path in paths) or "- （当前没有可用 Skill 目录）"
+
+
+def _reason_tool_names(configured: list[str]) -> list[str]:
+    """Keep the control-plane shell available even in a restricted Pi config."""
+    return list(dict.fromkeys([*configured, "bash"]))

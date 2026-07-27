@@ -7,9 +7,12 @@ from sqlalchemy import Engine, func, select, update
 from axiom.modules.graph.repository import GraphRepository
 from axiom.modules.graph.tables import facts, intents
 from axiom.modules.projects.repository import ProjectRepository
+from axiom.modules.reason.repository import ReasonRepository
+from axiom.modules.reason.tables import reason_runs
 from axiom.modules.tasks.origin import parse_origin
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.tasks.schemas import (
+    ActiveReasonRun,
     CreateTask,
     CreateTaskHint,
     Task,
@@ -31,6 +34,7 @@ class TaskService:
         self.projects = ProjectRepository()
         self.tasks = TaskRepository()
         self.graph = GraphRepository()
+        self.reason = ReasonRepository()
 
     def create(self, command: CreateTask) -> Task:
         origin = parse_origin(command.origin)
@@ -92,6 +96,14 @@ class TaskService:
                     .where(intents.c.task_id == task_id, intents.c.status == "pending")
                     .values(worker_pool_json=json.dumps(command.worker_pool, ensure_ascii=False))
                 )
+                conn.execute(
+                    update(reason_runs)
+                    .where(reason_runs.c.task_id == task_id, reason_runs.c.status == "pending")
+                    .values(
+                        worker_pool_json=json.dumps(command.worker_pool, ensure_ascii=False),
+                        updated_at=now,
+                    )
+                )
         assert updated is not None
         return self._decorate(updated)
 
@@ -120,13 +132,21 @@ class TaskService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.status != "running":
                 raise ConflictError("Only a running Task can be stopped")
-            self.graph.release_active_intents(conn, task_id)
+            now = utcnow()
+            self.graph.cancel_active_intents(conn, task_id, now=now)
+            self.reason.abandon_open(
+                conn,
+                task_id=task_id,
+                failure_reason="task_stopped",
+                now=now,
+            )
+            self.reason.cancel_open_for_task(conn, task_id, now=now)
             stopped = self.tasks.set_lifecycle(
                 conn,
                 task_id,
                 status="stopped",
                 phase="none",
-                now=utcnow(),
+                now=now,
             )
             assert stopped is not None
         return self._decorate(stopped)
@@ -138,8 +158,9 @@ class TaskService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.status != "stopped":
                 raise ConflictError("Only a stopped Task can be resumed")
+            self.graph.restore_task_stopped_intents(conn, task_id)
             bootstrap = self.graph.get_intent(conn, task_id, "i001")
-            phase = "reason" if bootstrap and bootstrap.status == "completed" else "bootstrap"
+            phase = "waiting" if bootstrap and bootstrap.status == "completed" else "bootstrap"
             resumed = self.tasks.set_lifecycle(
                 conn,
                 task_id,
@@ -232,14 +253,12 @@ class TaskService:
                 ).scalar_one(),
             }
             reason = conn.execute(
-                select(intents)
+                select(reason_runs)
                 .where(
-                    intents.c.task_id == task.id,
-                    intents.c.kind == "reason",
-                    intents.c.archived.is_(False),
-                    intents.c.status.in_(["pending", "claimed", "running", "concluding"]),
+                    reason_runs.c.task_id == task.id,
+                    reason_runs.c.status.in_(["pending", "claimed", "running", "concluding"]),
                 )
-                .order_by(intents.c.created_at.desc(), intents.c.id.desc())
+                .order_by(reason_runs.c.created_at.desc(), reason_runs.c.id.desc())
                 .limit(1)
             ).mappings().one_or_none()
         reason_present = reason is not None
@@ -261,6 +280,28 @@ class TaskService:
                 "reason_activity_updated_at": (
                     (reason["activity_updated_at"] or reason["last_heartbeat_at"])
                     if reason_present else None
+                ),
+                "active_reason_run": (
+                    ActiveReasonRun(
+                        id=reason["id"],
+                        status=reason["status"],
+                        trigger=reason["trigger"],
+                        trigger_payload=json.loads(reason["trigger_payload_json"] or "{}"),
+                        worker=reason["worker"],
+                        lease_id=reason["lease_id"],
+                        settings_version=reason["settings_version"],
+                        execute_timeout_seconds=reason["execute_timeout_seconds"],
+                        conclude_timeout_seconds=reason["conclude_timeout_seconds"],
+                        last_heartbeat_at=reason["last_heartbeat_at"],
+                        activity_kind=reason["activity_kind"] or "",
+                        activity_summary=reason["activity_summary"] or "",
+                        activity_tool=reason["activity_tool"] or "",
+                        activity_started_at=reason["activity_started_at"],
+                        activity_updated_at=reason["activity_updated_at"],
+                        created_at=reason["created_at"],
+                    )
+                    if reason_present
+                    else None
                 ),
             }
         )

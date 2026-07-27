@@ -9,43 +9,17 @@ from typing import Any
 
 import httpx
 
+from axiom.modules.guard.defaults import SYSTEM_PROMPT
 from axiom.modules.guard.schemas import GuardDecision, GuardRequest
-
-
-WHITELIST_TOOLS = ["read", "ls", "grep", "find"]
-WHITELIST_BASH_VERBS = [
-    "pwd",
-    "whoami",
-    "id",
-    "uname",
-    "ls",
-    "cat",
-    "head",
-    "tail",
-    "grep",
-    "find",
-    "ifconfig",
-    "ip",
-    "env",
-    "printenv",
-]
-HARD_BLOCK_RULES = [
-    {"reason": "修改或重置用户密码", "pattern": r"\b(passwd|chpasswd|reset[_-]?password)\b"},
-    {"reason": "删除或清空关键数据", "pattern": r"\b(drop\s+table|truncate\s+table|redis-cli\s+flush(all|db))\b|rm\s+-rf\s+(/|/etc|/var|/usr|/opt|/home|\*)"},
-    {"reason": "停止或重启业务服务", "pattern": r"\b(systemctl\s+(stop|restart)|shutdown|reboot|service\s+\S+\s+(stop|restart))\b"},
-    {"reason": "篡改账户或权限体系", "pattern": r"\b(useradd|userdel|usermod|groupadd|groupdel|grant\s+all|revoke\s+all)\b"},
-    {"reason": "高并发或 DoS 操作", "pattern": r"\b(slowloris|hping3|ab\s+-n\s+\d{5,}|wrk\s+.*-c\s+\d{3,})\b"},
-]
-SYSTEM_PROMPT = """你是授权渗透测试的安全守门员。默认放行正常的漏洞探测与最小化验证；只有操作会直接破坏业务可用性、不可逆修改真实数据、触达真实用户权益、造成高并发拒绝服务或明显越过授权边界时才阻断。只回复 ALLOW 或 BLOCK:<不超过30字的原因>。"""
 
 
 def evaluate(request: GuardRequest, config) -> GuardDecision:
     normalized = normalize(request.tool_name, request.input)
     if config.guard_mode == "off":
         return GuardDecision(decision="ALLOW", source="disabled")
-    if _whitelisted(normalized):
+    if _whitelisted(normalized, config):
         return GuardDecision(decision="ALLOW", reason="只读或本地侦察操作", source="whitelist")
-    blocked = _hard_block(normalized)
+    blocked = _hard_block(normalized, config)
     if blocked:
         return GuardDecision(decision="BLOCK", reason=blocked, source="hard_rule")
     if not _external_operation(normalized):
@@ -65,8 +39,12 @@ def normalize(tool_name: str, payload: Any) -> dict[str, str]:
     return {"tool_name": name, "command": command[:12_000]}
 
 
-def _whitelisted(normalized: dict[str, str]) -> bool:
-    if normalized["tool_name"] in WHITELIST_TOOLS:
+def _whitelisted(normalized: dict[str, str], config) -> bool:
+    whitelist_tools = {str(item).strip().casefold() for item in config.guard_whitelist_tools}
+    whitelist_bash_verbs = {
+        str(item).strip().casefold() for item in config.guard_whitelist_bash_verbs
+    }
+    if normalized["tool_name"] in whitelist_tools:
         return True
     if normalized["tool_name"] != "bash":
         return False
@@ -77,16 +55,18 @@ def _whitelisted(normalized: dict[str, str]) -> bool:
         tokens = shlex.split(command)
     except ValueError:
         return False
-    if not tokens or PurePosixPath(tokens[0]).name.lower() not in WHITELIST_BASH_VERBS:
+    if not tokens or PurePosixPath(tokens[0]).name.casefold() not in whitelist_bash_verbs:
         return False
     return not (tokens[0] == "find" and any(item in {"-delete", "-exec", "-execdir"} for item in tokens))
 
 
-def _hard_block(normalized: dict[str, str]) -> str:
+def _hard_block(normalized: dict[str, str], config) -> str:
     text = normalized["command"]
-    for rule in HARD_BLOCK_RULES:
-        if re.search(rule["pattern"], text, re.I):
-            return rule["reason"]
+    for rule in config.guard_hard_block_rules:
+        if not rule.enabled:
+            continue
+        if re.search(rule.pattern, text, re.I):
+            return rule.reason
     return ""
 
 
@@ -122,7 +102,10 @@ def _model_decision(request: GuardRequest, normalized: dict[str, str], config) -
                 json={
                     "model": model,
                     "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {
+                            "role": "system",
+                            "content": config.guard_system_prompt.strip() or SYSTEM_PROMPT,
+                        },
                         {
                             "role": "user",
                             "content": json.dumps(

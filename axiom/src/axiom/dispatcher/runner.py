@@ -7,13 +7,14 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 
 from axiom.dispatcher.bootstrap import BootstrapRunner
+from axiom.dispatcher.explore import ExploreRunner
 from axiom.dispatcher.heartbeat import LeaseLostError
 from axiom.dispatcher.http import ControlPlaneError
 from axiom.dispatcher.loop import Dispatcher
-from axiom.dispatcher.explore import ExploreRunner
 from axiom.dispatcher.reason import ReasonRunner
-from axiom.dispatcher.schemas import ClaimedIntent, DispatchReport
+from axiom.dispatcher.schemas import ClaimedWork, DispatchReport
 from axiom.modules.execution.schemas import ActivityCommand, ReleaseIntentCommand
+from axiom.modules.reason.schemas import ClaimedReasonRun
 from axiom.modules.workers.schemas import Worker
 
 
@@ -27,7 +28,7 @@ class AxiomRunner:
         self,
         control_plane,
         *,
-        executor_factory: Callable[[Worker, ClaimedIntent], object] | None = None,
+        executor_factory: Callable[[Worker, ClaimedWork], object] | None = None,
         max_parallel: int | None = None,
         heartbeat_interval_seconds: float | None = None,
         lease_timeout_seconds: int | None = None,
@@ -46,22 +47,23 @@ class AxiomRunner:
         self._max_parallel_override = max_parallel
         self._heartbeat_override = heartbeat_interval_seconds
         self._lease_timeout_override = lease_timeout_seconds
-        self.max_parallel = max_parallel or 8
+        self.max_parallel = max_parallel or 10
         self.heartbeat_interval_seconds = heartbeat
         self.lease_timeout_seconds = lease_timeout_seconds or minimum_lease_timeout
-        self.runner_interval_seconds = 1.0
-        self._pool = ThreadPoolExecutor(
-            max_workers=128,
-            thread_name_prefix="axiom-runner",
-        )
-        self._futures: dict[Future, tuple[ClaimedIntent, threading.Event]] = {}
+        self.runner_interval_seconds = 3.0
+        self._applied_settings_version = 0
+        self._pool = ThreadPoolExecutor(max_workers=128, thread_name_prefix="axiom-runner")
+        self._futures: dict[Future, tuple[ClaimedWork, threading.Event]] = {}
         self._lock = threading.Lock()
         self._closed = False
 
     def run_once(self) -> DispatchReport:
         if self._closed:
             raise RuntimeError("Axiom Runner is closed")
-        self._refresh_runtime_settings()
+        settings_version = self._refresh_runtime_settings()
+        reconcile = getattr(self.control_plane, "reconcile_reason_runs", None)
+        if reconcile is not None:
+            reconcile()
         recover = getattr(self.control_plane, "recover_stale", None)
         if recover is not None:
             recover(stale_after_seconds=self.lease_timeout_seconds)
@@ -70,6 +72,11 @@ class AxiomRunner:
         self._cancel_inactive_tasks(snapshot)
         with self._lock:
             available_slots = self.max_parallel - len(self._futures)
+        if settings_version > self._applied_settings_version:
+            acknowledge = getattr(self.control_plane, "mark_runtime_settings_applied", None)
+            if acknowledge is not None:
+                acknowledge(settings_version)
+            self._applied_settings_version = settings_version
         if available_slots <= 0:
             return DispatchReport()
         report = self.dispatcher.tick(max_claims=available_slots, snapshot=snapshot)
@@ -92,14 +99,7 @@ class AxiomRunner:
             try:
                 self.run_once()
             except ControlPlaneError as exc:
-                # The API and Runner are separate processes.  During an API
-                # restart the control plane can be briefly unavailable; that
-                # is a normal reconciliation condition, not a reason to kill
-                # the long-lived Runner process.
-                logger.warning(
-                    "control plane unavailable; reconciliation will retry: %s",
-                    exc,
-                )
+                logger.warning("control plane unavailable; reconciliation will retry: %s", exc)
             stop_event.wait(interval_seconds or self.runner_interval_seconds)
 
     def wait_for_idle(self, timeout_seconds: float = 30.0) -> None:
@@ -123,12 +123,12 @@ class AxiomRunner:
                 cancellation.set()
         self._pool.shutdown(wait=wait, cancel_futures=not wait)
 
-    def _execute_claim(self, work: ClaimedIntent, cancellation: threading.Event) -> None:
+    def _execute_claim(self, work: ClaimedWork, cancellation: threading.Event) -> None:
         try:
             worker = self.control_plane.worker(work.worker_name)
             executor = self.executor_factory(worker, work)
         except BaseException:
-            logger.exception("failed to initialize Intent runner: %s/%s", work.task_id, work.intent_id)
+            logger.exception("failed to initialize work runner: %s", self._work_label(work))
             self._release_unstarted(work)
             return
 
@@ -140,6 +140,7 @@ class AxiomRunner:
                     cancellation=cancellation,
                 ).run(work, executor)
             elif work.kind == "reason":
+                assert isinstance(work, ClaimedReasonRun)
                 ReasonRunner(
                     self.control_plane,
                     heartbeat_interval_seconds=self.heartbeat_interval_seconds,
@@ -152,19 +153,13 @@ class AxiomRunner:
                     cancellation=cancellation,
                 ).run(work, executor)
             else:
-                raise RuntimeError(f"unsupported Intent kind: {work.kind}")
+                raise RuntimeError(f"unsupported work kind: {work.kind}")
         except LeaseLostError:
-            logger.info(
-                "Intent execution ended after its lease was closed: %s/%s",
-                work.task_id,
-                work.intent_id,
-            )
+            logger.info("work ended after its lease was closed: %s", self._work_label(work))
         except BaseException:
-            # BootstrapRunner owns lifecycle release.  This layer only records
-            # the failure; issuing a second release would race the next claim.
-            logger.exception("Intent execution failed: %s/%s", work.task_id, work.intent_id)
+            logger.exception("work execution failed: %s", self._work_label(work))
 
-    def _release_unstarted(self, work: ClaimedIntent) -> None:
+    def _release_unstarted(self, work: ClaimedWork) -> None:
         try:
             self.control_plane.release(
                 work,
@@ -175,21 +170,26 @@ class AxiomRunner:
                 ),
             )
         except BaseException:
-            logger.exception("failed to release runner claim: %s/%s", work.task_id, work.intent_id)
+            logger.exception("failed to release runner claim: %s", self._work_label(work))
 
-    def _default_executor(self, worker: Worker, work: ClaimedIntent) -> object:
+    def _default_executor(self, worker: Worker, work: ClaimedWork) -> object:
         from axiom.dispatcher.pi import PiBootstrapExecutor, PiExploreExecutor, PiReasonExecutor
 
         def activity_reporter(command: ActivityCommand) -> None:
             self.control_plane.activity(work, command)
 
+        common = {
+            "activity_reporter": activity_reporter,
+            "api_url": getattr(self.control_plane, "api_url", "http://127.0.0.1:8899"),
+            "service_token": getattr(self.control_plane, "service_token", ""),
+        }
         if work.kind == "bootstrap":
-            return PiBootstrapExecutor(worker, activity_reporter=activity_reporter)
+            return PiBootstrapExecutor(worker, **common)
         if work.kind == "reason":
-            return PiReasonExecutor(worker, activity_reporter=activity_reporter)
+            return PiReasonExecutor(worker, **common)
         if work.kind == "explore":
-            return PiExploreExecutor(worker, activity_reporter=activity_reporter)
-        raise RuntimeError(f"unsupported Intent kind: {work.kind}")
+            return PiExploreExecutor(worker, **common)
+        raise RuntimeError(f"unsupported work kind: {work.kind}")
 
     def _reap_finished(self) -> None:
         with self._lock:
@@ -204,23 +204,29 @@ class AxiomRunner:
                 if work.task_id not in active_task_ids:
                     cancellation.set()
 
-    def _refresh_runtime_settings(self) -> None:
+    def _refresh_runtime_settings(self) -> int:
         provider = getattr(self.control_plane, "runtime_settings", None)
         if provider is None:
-            return
+            return self._applied_settings_version
         try:
-            config = provider().config
+            settings = provider()
+            config = settings.config
         except ControlPlaneError:
-            # Let run_forever handle a temporary control-plane outage once,
-            # without producing a second traceback from this optional refresh.
             raise
         except Exception:
             logger.warning("failed to refresh runtime settings; keeping last known values", exc_info=True)
-            return
+            return self._applied_settings_version
         heartbeat = self._heartbeat_override or float(config.heartbeat_interval_seconds)
         lease_timeout = self._lease_timeout_override or int(config.lease_timeout_seconds)
         minimum = max(20, int(heartbeat * 3))
-        self.max_parallel = self._max_parallel_override or int(config.max_parallel)
+        self.max_parallel = self._max_parallel_override or int(config.global_max_active_runs)
         self.heartbeat_interval_seconds = heartbeat
         self.lease_timeout_seconds = max(lease_timeout, minimum)
         self.runner_interval_seconds = float(config.runner_interval_seconds)
+        return int(settings.version)
+
+    @staticmethod
+    def _work_label(work: ClaimedWork) -> str:
+        if isinstance(work, ClaimedReasonRun):
+            return f"{work.task_id}/{work.reason_run_id}"
+        return f"{work.task_id}/{work.intent_id}"

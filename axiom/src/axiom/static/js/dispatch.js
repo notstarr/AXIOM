@@ -34,7 +34,7 @@ window.AxiomModules.dispatch = {
           mode: data.mode || 'enforce',
           base_url: data.base_url || 'https://api.siliconflow.cn/v1',
           model: data.model || 'Qwen/Qwen3.5-9B',
-          timeout_seconds: data.timeout_seconds || 3,
+          timeout_seconds: data.timeout_seconds ?? 3,
           whitelist_tools: Array.isArray(data.whitelist_tools) ? data.whitelist_tools : ['read', 'ls', 'grep', 'find'],
           whitelist_bash_verbs: Array.isArray(data.whitelist_bash_verbs) ? data.whitelist_bash_verbs : ['pwd', 'whoami', 'id', 'uname', 'ls', 'cat', 'head', 'tail', 'grep', 'find', 'ifconfig', 'ip', 'env', 'printenv'],
           system_prompt: data.system_prompt || '',
@@ -56,13 +56,13 @@ window.AxiomModules.dispatch = {
     judgeSettingsPayload() {
       return {
         enabled_default: !!this.judgeSettings.enabled_default,
-        mode: this.judgeSettings.mode || 'enforce',
-        base_url: this.judgeSettings.base_url || 'https://api.siliconflow.cn/v1',
-        model: this.judgeSettings.model || 'Qwen/Qwen3.5-9B',
-        timeout_seconds: Number(this.judgeSettings.timeout_seconds || 3),
+        mode: this.judgeSettings.mode ?? 'enforce',
+        base_url: this.judgeSettings.base_url ?? 'https://api.siliconflow.cn/v1',
+        model: this.judgeSettings.model ?? 'Qwen/Qwen3.5-9B',
+        timeout_seconds: Number(this.judgeSettings.timeout_seconds ?? 3),
         whitelist_tools: this.normalizeJudgeList(this.judgeSettings.whitelist_tools),
         whitelist_bash_verbs: this.normalizeJudgeList(this.judgeSettings.whitelist_bash_verbs),
-        system_prompt: this.judgeSettings.system_prompt || this.judgeSettings.default_system_prompt || '',
+        system_prompt: this.judgeSettings.system_prompt ?? this.judgeSettings.default_system_prompt ?? '',
         hard_block_rules: this.judgeSettings.hard_block_rules || [],
       };
     },
@@ -209,42 +209,47 @@ window.AxiomModules.dispatch = {
 
     applyDispatchSettings(data) {
       this.dispatchSettings = {
-        runtime_interval: data.runtime_interval || 3,
-        runtime_max_workers: data.runtime_max_workers || 8,
-        runtime_max_running_projects: data.runtime_max_running_projects || 3,
-        runtime_max_project_workers: data.runtime_max_project_workers || 4,
-        runtime_healthcheck_timeout: data.runtime_healthcheck_timeout || 20,
-        runtime_worker_healthcheck: data.runtime_worker_healthcheck || 'startup_only',
-        runtime_prompt_group: data.runtime_prompt_group || 'default',
-        bootstrap_timeout: data.bootstrap_timeout || 300,
-        bootstrap_conclude_timeout: data.bootstrap_conclude_timeout || 90,
-        explore_timeout: data.explore_timeout || 300,
-        explore_conclude_timeout: data.explore_conclude_timeout || 90,
-        reason_timeout: data.reason_timeout || 300,
-        reason_max_intents: data.reason_max_intents || 2,
-        depth_reason_max_intents: data.depth_reason_max_intents || 5,
+        runner_interval_seconds: data.runner_interval_seconds ?? 3,
+        global_max_active_runs: data.global_max_active_runs ?? 10,
+        global_max_active_tasks: data.global_max_active_tasks ?? 3,
+        per_task_max_active_runs: data.per_task_max_active_runs ?? 4,
+        per_task_explore_concurrency: data.per_task_explore_concurrency ?? 4,
+        heartbeat_interval_seconds: data.heartbeat_interval_seconds ?? 10,
+        lease_timeout_seconds: data.lease_timeout_seconds ?? 60,
+        execution_retry_limit: data.execution_retry_limit ?? 6,
+        infrastructure_retry_limit: data.infrastructure_retry_limit ?? 30,
+        retry_base_seconds: data.retry_base_seconds ?? 15,
+        retry_max_seconds: data.retry_max_seconds ?? 300,
+        worker_failure_cooldown_seconds: data.worker_failure_cooldown_seconds ?? 30,
+        bootstrap_execute_seconds: data.bootstrap_execute_seconds ?? 300,
+        bootstrap_conclude_seconds: data.bootstrap_conclude_seconds ?? 120,
+        reason_execute_seconds: data.reason_execute_seconds ?? 300,
+        reason_conclude_seconds: data.reason_conclude_seconds ?? 120,
         reason_batch_size: data.reason_batch_size ?? 2,
         reason_low_watermark: data.reason_low_watermark ?? 1,
         reason_max_wait_seconds: data.reason_max_wait_seconds ?? 180,
         reason_min_interval_seconds: data.reason_min_interval_seconds ?? 60,
-        reason_target_open_intents: data.reason_target_open_intents || data.reason_max_intents || 4,
+        reason_target_open_intents: data.reason_target_open_intents ?? 4,
+        reason_max_new_intents_per_run: data.reason_max_new_intents_per_run ?? 4,
+        explore_execute_min_seconds: data.explore_execute_min_seconds ?? 60,
+        explore_execute_max_seconds: data.explore_execute_max_seconds ?? 3600,
+        explore_conclude_min_seconds: data.explore_conclude_min_seconds ?? 30,
+        explore_conclude_max_seconds: data.explore_conclude_max_seconds ?? 600,
+        bootstrap_concurrency: 1,
+        reason_concurrency: 1,
         workers: (data.workers || []).map(worker => this.decorateWorkerDraft(worker)),
-        config_version: data.config_version || 1,
+        config_version: data.config_version ?? 1,
         config_updated_at: data.config_updated_at || '',
-        dispatcher_applied_version: data.dispatcher_applied_version || 0,
+        dispatcher_applied_version: data.dispatcher_applied_version ?? 0,
         dispatcher_applied_at: data.dispatcher_applied_at || '',
         effective_workers: data.effective_workers || [],
-        bootstrap_worker_count: data.bootstrap_worker_count || 1,
-        explore_worker_count: data.explore_worker_count || 2,
-        reason_worker_count: data.reason_worker_count || 1,
+        network_proxy_mode: data.network_proxy_mode || 'off',
+        network_proxy_url: data.network_proxy_url || 'http://127.0.0.1:7890',
       };
-      this.settingsForm.proxy_url = data.proxy_url || this.settingsForm.proxy_url || '';
+      this.settingsForm.proxy_url = data.proxy_url ?? this.settingsForm.proxy_url ?? '';
       this.settingsForm.proxy_username = data.proxy_username || '';
       this.settingsForm.proxy_password = data.proxy_password || '';
       this.settingsForm.proxy_enabled = !!data.proxy_enabled;
-      this.settingsForm.bootstrap_worker_count = data.bootstrap_worker_count || 1;
-      this.settingsForm.explore_worker_count = data.explore_worker_count || 2;
-      this.settingsForm.reason_worker_count = data.reason_worker_count || 1;
     },
 
     nextWorkerDraftId() {
@@ -257,6 +262,7 @@ window.AxiomModules.dispatch = {
       return {
         ...worker,
         task_types: taskTypes,
+        persisted_name: worker.persisted_name || worker.name || '',
         _draftId: worker?._draftId || this.nextWorkerDraftId(),
         phase_bootstrap: taskTypes.includes('bootstrap'),
         phase_reason: taskTypes.includes('reason'),
@@ -546,35 +552,35 @@ window.AxiomModules.dispatch = {
 
     dispatchPayload() {
       return {
-        runtime_interval: Number(this.dispatchSettings.runtime_interval || 3),
-        runtime_max_workers: Number(this.dispatchSettings.runtime_max_workers || 1),
-        runtime_max_running_projects: Number(this.dispatchSettings.runtime_max_running_projects || 1),
-        runtime_max_project_workers: Number(this.dispatchSettings.runtime_max_project_workers || 1),
-        runtime_healthcheck_timeout: Number(this.dispatchSettings.runtime_healthcheck_timeout || 20),
-        runtime_worker_healthcheck: this.dispatchSettings.runtime_worker_healthcheck || 'startup_only',
-        runtime_prompt_group: this.dispatchSettings.runtime_prompt_group || 'default',
-        bootstrap_timeout: Number(this.dispatchSettings.bootstrap_timeout || 300),
-        bootstrap_conclude_timeout: Number(this.dispatchSettings.bootstrap_conclude_timeout || 90),
-        explore_timeout: Number(this.dispatchSettings.explore_timeout || 300),
-        explore_conclude_timeout: Number(this.dispatchSettings.explore_conclude_timeout || 90),
-        reason_timeout: Number(this.dispatchSettings.reason_timeout || 300),
-        reason_max_intents: Number(this.dispatchSettings.reason_max_intents || 2),
-        depth_reason_max_intents: Number(this.dispatchSettings.depth_reason_max_intents || 5),
+        config_version: Number(this.dispatchSettings.config_version ?? 1),
+        runner_interval_seconds: Number(this.dispatchSettings.runner_interval_seconds ?? 3),
+        global_max_active_runs: Number(this.dispatchSettings.global_max_active_runs ?? 10),
+        global_max_active_tasks: Number(this.dispatchSettings.global_max_active_tasks ?? 3),
+        per_task_max_active_runs: Number(this.dispatchSettings.per_task_max_active_runs ?? 4),
+        per_task_explore_concurrency: Number(this.dispatchSettings.per_task_explore_concurrency ?? 4),
+        heartbeat_interval_seconds: Number(this.dispatchSettings.heartbeat_interval_seconds ?? 10),
+        lease_timeout_seconds: Number(this.dispatchSettings.lease_timeout_seconds ?? 60),
+        execution_retry_limit: Number(this.dispatchSettings.execution_retry_limit ?? 6),
+        infrastructure_retry_limit: Number(this.dispatchSettings.infrastructure_retry_limit ?? 30),
+        retry_base_seconds: Number(this.dispatchSettings.retry_base_seconds ?? 15),
+        retry_max_seconds: Number(this.dispatchSettings.retry_max_seconds ?? 300),
+        worker_failure_cooldown_seconds: Number(this.dispatchSettings.worker_failure_cooldown_seconds ?? 30),
+        bootstrap_execute_seconds: Number(this.dispatchSettings.bootstrap_execute_seconds ?? 300),
+        bootstrap_conclude_seconds: Number(this.dispatchSettings.bootstrap_conclude_seconds ?? 120),
+        reason_execute_seconds: Number(this.dispatchSettings.reason_execute_seconds ?? 300),
+        reason_conclude_seconds: Number(this.dispatchSettings.reason_conclude_seconds ?? 120),
         reason_batch_size: Number(this.dispatchSettings.reason_batch_size ?? 2),
         reason_low_watermark: Number(this.dispatchSettings.reason_low_watermark ?? 1),
         reason_max_wait_seconds: Number(this.dispatchSettings.reason_max_wait_seconds ?? 180),
         reason_min_interval_seconds: Number(this.dispatchSettings.reason_min_interval_seconds ?? 60),
-        reason_target_open_intents: Number(this.dispatchSettings.reason_target_open_intents || 4),
-        bootstrap_worker_count: Number(this.settingsForm.bootstrap_worker_count || 1),
-        explore_worker_count: Number(this.settingsForm.explore_worker_count || 2),
-        reason_worker_count: Number(this.settingsForm.reason_worker_count || 1),
-        plan_timeout: Number(this.settingsForm.plan_timeout || 600),
-        plan_worker_count: Number(this.settingsForm.plan_worker_count || 1),
-        workers: (this.dispatchSettings.workers || []).map(worker => this.workerPayload(worker)),
-        proxy_url: this.settingsForm.proxy_url || '',
-        proxy_username: this.settingsForm.proxy_username || '',
-        proxy_password: this.settingsForm.proxy_password || '',
-        proxy_enabled: !!this.settingsForm.proxy_enabled,
+        reason_target_open_intents: Number(this.dispatchSettings.reason_target_open_intents ?? 4),
+        reason_max_new_intents_per_run: Number(this.dispatchSettings.reason_max_new_intents_per_run ?? 4),
+        explore_execute_min_seconds: Number(this.dispatchSettings.explore_execute_min_seconds ?? 60),
+        explore_execute_max_seconds: Number(this.dispatchSettings.explore_execute_max_seconds ?? 3600),
+        explore_conclude_min_seconds: Number(this.dispatchSettings.explore_conclude_min_seconds ?? 30),
+        explore_conclude_max_seconds: Number(this.dispatchSettings.explore_conclude_max_seconds ?? 600),
+        network_proxy_mode: this.dispatchSettings.network_proxy_mode || 'off',
+        network_proxy_url: this.dispatchSettings.network_proxy_url || 'http://127.0.0.1:7890',
       };
     },
 
@@ -614,13 +620,29 @@ window.AxiomModules.dispatch = {
       });
     },
 
-    removePiWorker(index) {
-      this.dispatchSettings.workers.splice(index, 1);
+    async removePiWorker(index) {
+      const worker = this.dispatchSettings.workers[index];
+      if (!worker) return;
+      if (!worker.persisted_name) {
+        this.dispatchSettings.workers.splice(index, 1);
+        return;
+      }
+      try {
+        const updated = await this.api('DELETE', `/settings/dispatch/workers/${encodeURIComponent(worker.persisted_name)}`);
+        this.applyDispatchSettings(updated);
+        this.showToast(`Worker ${worker.persisted_name} 已删除`);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
     },
 
     async toggleWorkerDisabled(worker) {
+      if (!worker.persisted_name) {
+        worker.disabled = !worker.disabled;
+        return;
+      }
       try {
-        const updated = await this.api('PUT', `/settings/dispatch/workers/${encodeURIComponent(worker.name)}/toggle`);
+        const updated = await this.api('PUT', `/settings/dispatch/workers/${encodeURIComponent(worker.persisted_name)}/toggle`);
         this.applyDispatchSettings(updated);
         this.showToast(`Worker ${worker.name} ${worker.disabled ? '已启用' : '已禁用'}`);
       } catch (e) {
@@ -630,7 +652,12 @@ window.AxiomModules.dispatch = {
 
     async savePiWorker(worker) {
       try {
-        const updated = await this.api('PUT', '/settings/dispatch', this.dispatchPayload());
+        const persistedName = worker.persisted_name || '__new__';
+        const updated = await this.api(
+          'PUT',
+          `/settings/dispatch/workers/${encodeURIComponent(persistedName)}`,
+          this.workerPayload(worker),
+        );
         this.applyDispatchSettings(updated);
         this.showToast(`Worker ${worker.name} 已保存`);
       } catch (e) {
@@ -666,7 +693,26 @@ window.AxiomModules.dispatch = {
         const updated = await this.api('PUT', '/settings/dispatch', this.dispatchPayload());
         this.applyDispatchSettings(updated);
         this.showToast('系统配置已保存');
-      } catch(e) { this.showToast(e.message, 'error'); }
+        this.waitForRuntimeSettingsApplied(updated.config_version);
+      } catch(e) {
+        this.showToast(e.message, 'error');
+        if (e.status === 409) await this.loadDispatchSettings();
+      }
+    },
+
+    waitForRuntimeSettingsApplied(version, attempts = 6) {
+      if (!version || attempts <= 0) return;
+      window.setTimeout(async () => {
+        try {
+          const data = await this.api('GET', '/settings/dispatch');
+          this.applyDispatchSettings(data);
+          if (Number(data.dispatcher_applied_version ?? 0) < Number(version)) {
+            this.waitForRuntimeSettingsApplied(version, attempts - 1);
+          }
+        } catch (_) {
+          this.waitForRuntimeSettingsApplied(version, attempts - 1);
+        }
+      }, 1500);
     },
 
     effectiveRuntimeWorkerNames() {
@@ -681,10 +727,15 @@ window.AxiomModules.dispatch = {
     },
 
     dispatcherAppliedLabel() {
-      const version = this.dispatchSettings.dispatcher_applied_version || 0;
+      const version = this.dispatchSettings.dispatcher_applied_version ?? 0;
       const appliedAt = this.dispatchSettings.dispatcher_applied_at;
       if (!version) return '等待 dispatcher 上报';
       return appliedAt ? `v${version} · ${this.formatTime(appliedAt)}` : `v${version}`;
+    },
+
+    runtimeSettingsApplied() {
+      return Number(this.dispatchSettings.dispatcher_applied_version ?? 0)
+        >= Number(this.dispatchSettings.config_version ?? 0);
     },
 
     bootstrapOutcomeLabel(events) {

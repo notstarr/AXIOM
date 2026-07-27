@@ -30,6 +30,8 @@ REQUIRED_TABLES = frozenset(
         "intents",
         "projects",
         "reason_workspaces",
+        "reason_runs",
+        "reason_run_sources",
         "runtime_settings",
         "task_hints",
         "tasks",

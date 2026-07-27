@@ -13,4 +13,6 @@ runtime_settings = Table(
     Column("version", Integer, nullable=False),
     Column("updated_by", String, nullable=False),
     Column("updated_at", String, nullable=False),
+    Column("applied_version", Integer, nullable=False, default=0),
+    Column("applied_at", String),
 )

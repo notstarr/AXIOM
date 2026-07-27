@@ -19,6 +19,7 @@ class GoalRepository:
         evaluator: str,
         now: str,
         intent_id: str | None = None,
+        reason_run_id: str | None = None,
         workspace_id: str | None = None,
     ) -> GoalEvaluation:
         values = {
@@ -33,6 +34,7 @@ class GoalRepository:
             ),
             "task_id": task_id,
             "intent_id": intent_id,
+            "reason_run_id": reason_run_id,
             "workspace_id": workspace_id,
             "achieved": assessment.achieved,
             "reason": assessment.reason,
@@ -57,6 +59,7 @@ class GoalRepository:
             id=row["id"],
             task_id=row["task_id"],
             intent_id=row["intent_id"],
+            reason_run_id=row.get("reason_run_id"),
             workspace_id=row["workspace_id"],
             achieved=bool(row["achieved"]),
             reason=row["reason"],

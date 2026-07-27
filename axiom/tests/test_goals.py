@@ -3,6 +3,12 @@ from __future__ import annotations
 import yaml
 
 from axiom.modules.goals.tables import goal_evaluations
+from protocol_helpers import (
+    apply_reason_draft,
+    bootstrap_files_from_legacy,
+    claim_reason_run,
+    complete_bootstrap,
+)
 
 BOOTSTRAP = {
     "summary": "完成初始攻击面发现。",
@@ -32,19 +38,19 @@ def _active_reason(client) -> tuple[dict, dict, dict]:
     base = f"/api/v1/dispatch/tasks/{task['id']}/intents/i001"
     bootstrap = client.post(f"{base}/claim", json={"worker_name": "worker-a"}).json()
     client.post(f"{base}/start", json={"lease_id": bootstrap["lease_id"]})
-    completed = client.post(
-        f"{base}/bootstrap-complete",
-        json={"lease_id": bootstrap["lease_id"], **BOOTSTRAP},
-    ).json()
-    reason_id = completed["next_intent_id"]
-    reason_base = f"/api/v1/dispatch/tasks/{task['id']}/intents/{reason_id}"
-    reason = client.post(f"{reason_base}/claim", json={"worker_name": "worker-a"}).json()
-    client.post(f"{reason_base}/start", json={"lease_id": reason["lease_id"]})
-    execution = client.post(
-        f"{reason_base}/input",
-        json={"lease_id": reason["lease_id"]},
-    ).json()
-    reason["context_revision"] = execution["context_revision"]
+    completed = complete_bootstrap(
+        client,
+        task_id=task["id"],
+        intent_id="i001",
+        lease_id=bootstrap["lease_id"],
+        files=bootstrap_files_from_legacy(BOOTSTRAP),
+    )
+    reason, _execution = claim_reason_run(
+        client,
+        task_id=task["id"],
+        reason_run_id=completed["next_reason_run_id"],
+        worker_name="worker-a",
+    )
     return task, reason, completed
 
 
@@ -71,6 +77,43 @@ def test_human_goal_assessment_is_the_only_task_completion_path(client) -> None:
     assert current["phase"] == "none"
     graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
     assert graph["intents"][0]["status"] == "cancelled"
+
+
+def test_human_goal_completion_cancels_reason_run_and_abandons_workspace(client) -> None:
+    task, reason_claim, completed = _active_reason(client)
+    workspace = client.post(
+        f"/api/v1/tasks/{task['id']}/reason/workspaces",
+        json={
+            "reason_run_id": reason_claim["reason_run_id"],
+            "lease_id": reason_claim["lease_id"],
+            "context_revision": reason_claim["context_revision"],
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/v1/tasks/{task['id']}/goal-evaluations",
+        json={
+            "achieved": True,
+            "reason": "人工复核确认 Goal 已由现有 Fact 满足",
+            "evidence_refs": [f"fact:{completed['fact_id']}"],
+            "evaluator": "human",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    run = client.get(
+        f"/api/v1/tasks/{task['id']}/reason-runs/{reason_claim['reason_run_id']}"
+    ).json()
+    assert run["status"] == "cancelled"
+    assert run["lease_id"] is None
+    abandoned = client.get(f"/api/v1/reason-workspaces/{workspace['id']}").json()
+    assert abandoned["status"] == "abandoned"
+    assert abandoned["failure_reason"] == "goal_achieved"
+    stale_commit = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        json={"lease_id": reason_claim["lease_id"]},
+    )
+    assert stale_commit.status_code == 409
 
 
 def test_legacy_achieved_goal_without_persisted_evidence_remains_readable(
@@ -109,45 +152,45 @@ def test_reason_can_complete_goal_atomically_without_dispatching_more_work(clien
     workspace = client.post(
         f"/api/v1/tasks/{task['id']}/reason/workspaces",
         json={
-            "intent_id": reason_claim["intent_id"],
+            "reason_run_id": reason_claim["reason_run_id"],
             "lease_id": reason_claim["lease_id"],
             "context_revision": reason_claim["context_revision"],
         },
     ).json()
-    response = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/submit",
-        json={
-            "lease_id": reason_claim["lease_id"],
-            "draft": {
+    response = apply_reason_draft(
+        client,
+        workspace["id"],
+        reason_claim["lease_id"],
+        {
                 "todo_adds": [],
                 "todo_updates": [],
                 "intent_proposals": [],
-                "vulnerability_reports": [],
                 "goal_assessment": {
                     "achieved": True,
                     "reason": "Bootstrap 已覆盖目标系统，现有证据满足本轮 Goal。",
                     "evidence_refs": [f"fact:{completed['fact_id']}"],
                 },
-            },
         },
     )
     assert response.status_code == 200, response.text
+    assert client.get(f"/api/v1/reason-workspaces/{workspace['id']}").json()[
+        "status"
+    ] == "committed"
     assert client.get(f"/api/v1/tasks/{task['id']}").json()["status"] == "completed"
     evaluations = client.get(f"/api/v1/tasks/{task['id']}/goal-evaluations").json()
     assert evaluations[0]["achieved"] is True
     graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
-    final_reason = next(item for item in graph["intents"] if item["id"] == reason_claim["intent_id"])
-    assert final_reason["from_facts"] == [completed["fact_id"]]
-    assert final_reason["to_fact_id"] == "goal"
+    assert [item["id"] for item in graph["intents"]] == ["i001"]
+    assert graph["goal_from_fact_ids"] == [completed["fact_id"]]
     assert all("goal" not in item["from_facts"] for item in graph["intents"])
     overview = yaml.safe_load(
         client.get(f"/api/v1/tasks/{task['id']}/export?format=yaml").text
     )
-    exported_reason = next(
-        item for item in overview["intents"] if item["id"] == reason_claim["intent_id"]
-    )
-    assert exported_reason["from_facts"] == [completed["fact_id"]]
-    assert exported_reason["to_fact_id"] == "goal"
+    assert [item["id"] for item in overview["intents"]] == ["i001"]
+    assert overview["goal_evaluations"][0]["reason_run_id"] == reason_claim["reason_run_id"]
+    assert overview["goal_evaluations"][0]["evidence_refs"] == [
+        f"fact:{completed['fact_id']}"
+    ]
 
 
 def test_reason_goal_completion_requires_at_least_one_fact_evidence(client) -> None:
@@ -156,23 +199,22 @@ def test_reason_goal_completion_requires_at_least_one_fact_evidence(client) -> N
     workspace = client.post(
         f"/api/v1/tasks/{task['id']}/reason/workspaces",
         json={
-            "intent_id": reason_claim["intent_id"],
+            "reason_run_id": reason_claim["reason_run_id"],
             "lease_id": reason_claim["lease_id"],
             "context_revision": reason_claim["context_revision"],
         },
     ).json()
 
-    response = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/submit",
-        json={
-            "lease_id": reason_claim["lease_id"],
-            "draft": {
+    response = apply_reason_draft(
+        client,
+        workspace["id"],
+        reason_claim["lease_id"],
+        {
                 "goal_assessment": {
                     "achieved": True,
                     "reason": "只有产物引用，尚未提供完成关系所需的 Fact 来源",
                     "evidence_refs": [f"artifact:{artifact['id']}"],
                 }
-            },
         },
     )
 
@@ -224,16 +266,16 @@ def test_unachieved_goal_may_reference_a_task_hint(client) -> None:
     workspace = client.post(
         f"/api/v1/tasks/{task['id']}/reason/workspaces",
         json={
-            "intent_id": reason_claim["intent_id"],
+            "reason_run_id": reason_claim["reason_run_id"],
             "lease_id": reason_claim["lease_id"],
             "context_revision": reason_claim["context_revision"],
         },
     ).json()
-    response = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/submit",
-        json={
-            "lease_id": reason_claim["lease_id"],
-            "draft": {
+    response = apply_reason_draft(
+        client,
+        workspace["id"],
+        reason_claim["lease_id"],
+        {
                 "todo_adds": [
                     {
                         "ref": "verify",
@@ -257,7 +299,6 @@ def test_unachieved_goal_may_reference_a_task_hint(client) -> None:
                     "reason": "Hint 要求的独立复核尚未完成",
                     "evidence_refs": [f"hint:{hint['id']}"],
                 },
-            },
         },
     )
 

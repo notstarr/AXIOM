@@ -162,12 +162,12 @@ window.AxiomModules.human = {
     },
 
     humanIntentStatusKey(intent) {
-      const status = String(intent?.status || '').toLowerCase();
-      if (status === 'completed' || intent?.concluded_at) return 'completed';
-      if (['in_progress', 'working', 'running', 'claimed'].includes(status)) return 'working';
-      if (status === 'cancelled') return 'cancelled';
-      if (status === 'failed' && intent?.last_failure_kind === 'retry_exhausted') return 'retry_exhausted';
-      if (['failed', 'rejected', 'retry_exhausted'].includes(status)) return 'failed';
+      const state = this.intentLifecycleState(intent);
+      if (state === 'completed') return 'completed';
+      if (state === 'running') return 'working';
+      if (state === 'cancelled') return 'cancelled';
+      if (state === 'failed' && intent?.last_failure_kind === 'retry_exhausted') return 'retry_exhausted';
+      if (state === 'failed') return 'failed';
       return 'queued';
     },
 

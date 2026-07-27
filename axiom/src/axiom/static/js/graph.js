@@ -57,6 +57,25 @@ window.AxiomModules.graph = {
           }
         }
       }
+      if (!this.project.project.depth_mode) {
+        const existingGoalSources = new Set(
+          edges
+            .filter(edge => edge.data.target === 'goal')
+            .map(edge => edge.data.source),
+        );
+        for (const factId of this.project.goal_from_fact_ids || []) {
+          if (!factId || factId === 'goal' || existingGoalSources.has(factId)) continue;
+          if (!nodes.some(node => node.data.id === factId)) continue;
+          edges.push({ data: {
+            id: `_goal_evidence_${factId}`,
+            source: factId,
+            target: 'goal',
+            label: 'Goal 达成证据',
+            status: 'goal_evidence',
+            edgeType: 'goal_evidence',
+          }});
+        }
+      }
       return { nodes, edges };
     },
 
@@ -169,14 +188,32 @@ window.AxiomModules.graph = {
         // ── Intent nodes (small circles, keep native label) ──
         { selector: 'node[nodeType="in_progress"]', style: {
           shape:'ellipse', 'background-color':'#f59e0b', 'background-opacity':0.85,
-          label:'?', color:'#fff', 'font-size':'11px', 'font-weight':'bold',
+          label:'data(label)', color:'#fff', 'font-size':'11px', 'font-weight':'bold',
           width:26, height:26, 'border-width':2.5, 'border-color':'#fbbf24',
           'text-valign':'center', 'text-halign':'center', 'font-family':font,
         }},
         { selector: 'node[nodeType="unclaimed"]', style: {
           shape:'ellipse', 'background-color':'#f1f5f9', 'background-opacity':0.8,
-          label:'?', color:'#94a3b8', 'font-size':'11px', 'font-weight':'bold',
+          label:'data(label)', color:'#94a3b8', 'font-size':'11px', 'font-weight':'bold',
           width:22, height:22, 'border-width':1.5, 'border-color':'#cbd5e1', 'border-style':'dashed',
+          'text-valign':'center', 'text-halign':'center', 'font-family':font,
+        }},
+        { selector: 'node[nodeType="intent_completed"]', style: {
+          shape:'ellipse', 'background-color':'#10b981', 'background-opacity':0.92,
+          label:'data(label)', color:'#fff', 'font-size':'12px', 'font-weight':'bold',
+          width:24, height:24, 'border-width':2, 'border-color':'#6ee7b7',
+          'text-valign':'center', 'text-halign':'center', 'font-family':font,
+        }},
+        { selector: 'node[nodeType="intent_cancelled"]', style: {
+          shape:'ellipse', 'background-color':'#e2e8f0', 'background-opacity':0.95,
+          label:'data(label)', color:'#64748b', 'font-size':'12px', 'font-weight':'bold',
+          width:24, height:24, 'border-width':1.5, 'border-color':'#94a3b8',
+          'text-valign':'center', 'text-halign':'center', 'font-family':font,
+        }},
+        { selector: 'node[nodeType="intent_failed"]', style: {
+          shape:'ellipse', 'background-color':'#ef4444', 'background-opacity':0.9,
+          label:'data(label)', color:'#fff', 'font-size':'12px', 'font-weight':'bold',
+          width:24, height:24, 'border-width':2, 'border-color':'#fca5a5',
           'text-valign':'center', 'text-halign':'center', 'font-family':font,
         }},
         { selector: 'node[nodeType="bootstrap_pending"]', style: {
@@ -200,6 +237,14 @@ window.AxiomModules.graph = {
           'text-background-color':'#ffffff', 'text-background-opacity':0.9,
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.9,
         }},
+        { selector: 'edge[status="goal_evidence"]', style: {
+          width:2.5, 'line-color':'#14b8a6', 'target-arrow-color':'#14b8a6',
+          'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          label:'data(label)', 'font-size':'8px', color:'#0f766e',
+          'text-rotation':'autorotate', 'text-margin-y':-9,
+          'text-background-color':'#ffffff', 'text-background-opacity':0.92,
+          'text-background-padding':'2px', 'arrow-scale':1,
+        }},
         { selector: 'edge[status="in_progress"]', style: {
           width:2, 'line-color':'#f59e0b', 'line-style':'dashed', 'line-dash-pattern':[8,4],
           'target-arrow-color':'#f59e0b', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
@@ -217,6 +262,33 @@ window.AxiomModules.graph = {
           'text-max-width':'80px', 'text-wrap':'ellipsis',
           'text-background-color':'#ffffff', 'text-background-opacity':0.9,
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.7,
+        }},
+        { selector: 'edge[status="intent_completed"]', style: {
+          width:2, 'line-color':'#34d399', 'target-arrow-color':'#34d399',
+          'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          label:'data(label)', 'font-size':'7px', color:'#047857',
+          'text-rotation':'autorotate', 'text-margin-y':-9,
+          'text-max-width':'80px', 'text-wrap':'ellipsis',
+          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
+          'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.8,
+        }},
+        { selector: 'edge[status="intent_cancelled"]', style: {
+          width:1.5, 'line-color':'#94a3b8', 'line-style':'dashed', 'line-dash-pattern':[4,5],
+          'target-arrow-color':'#94a3b8', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          label:'data(label)', 'font-size':'7px', color:'#64748b',
+          'text-rotation':'autorotate', 'text-margin-y':-9,
+          'text-max-width':'80px', 'text-wrap':'ellipsis',
+          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
+          'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.7,
+        }},
+        { selector: 'edge[status="intent_failed"]', style: {
+          width:1.8, 'line-color':'#f87171', 'line-style':'dashed', 'line-dash-pattern':[6,4],
+          'target-arrow-color':'#f87171', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          label:'data(label)', 'font-size':'7px', color:'#b91c1c',
+          'text-rotation':'autorotate', 'text-margin-y':-9,
+          'text-max-width':'80px', 'text-wrap':'ellipsis',
+          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
+          'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.75,
         }},
         { selector: 'edge[status="bootstrap_pending"]', style: {
           width:2, 'line-color':'#fdba74', 'line-style':'dashed', 'line-dash-pattern':[8,4],
@@ -467,6 +539,7 @@ window.AxiomModules.graph = {
         depth_plan: '#6366f1', depth_fact: '#f59e0b',
         bootstrap_pending: '#fb923c', bootstrap_running: '#ea580c',
         in_progress: '#f59e0b', unclaimed: '#cbd5e1',
+        intent_completed: '#10b981', intent_cancelled: '#94a3b8', intent_failed: '#ef4444',
       };
       return colors[nodeType] || '#94a3b8';
     },
@@ -648,6 +721,9 @@ window.AxiomModules.graph = {
         case 'bootstrap_running': return 'Boot·运行';
         case 'in_progress': return '进行中';
         case 'unclaimed': return '待领取';
+        case 'intent_completed': return '已完成';
+        case 'intent_cancelled': return '已取消';
+        case 'intent_failed': return '执行失败';
         default: return '';
       }
     },
@@ -664,6 +740,9 @@ window.AxiomModules.graph = {
         case 'bootstrap_running': return 'bolt';
         case 'in_progress': return 'spinner';
         case 'unclaimed': return 'question';
+        case 'intent_completed': return 'doc';
+        case 'intent_cancelled': return 'doc';
+        case 'intent_failed': return 'doc';
         default: return 'doc';
       }
     },
@@ -839,7 +918,7 @@ window.AxiomModules.graph = {
       const nt = node.data('nodeType');
       const keepLogFocus = this.sideTab === 'log';
 
-      if (['in_progress', 'unclaimed', 'bootstrap_pending', 'bootstrap_running'].includes(nt)) {
+      if (['in_progress', 'unclaimed', 'bootstrap_pending', 'bootstrap_running', 'intent_completed', 'intent_cancelled', 'intent_failed'].includes(nt)) {
         this.selectIntent(node.data('intentId'));
         if (keepLogFocus) this.scrollTimelineToSelection();
         else this.sideTab = 'detail';
@@ -870,7 +949,9 @@ window.AxiomModules.graph = {
     },
 
     onEdgeTap(e) {
-      this.selectIntent(e.target.data('intentId'));
+      const intentId = e.target.data('intentId');
+      if (intentId) this.selectIntent(intentId);
+      else if (e.target.data('edgeType') === 'goal_evidence') this.selectFact(e.target.data('source'));
       if (this.sideTab === 'log') this.scrollTimelineToSelection();
       else this.sideTab = 'detail';
     },
@@ -1097,6 +1178,10 @@ window.AxiomModules.graph = {
 
     reasonActivityStateLabel(reason) {
       const labels = {
+        pending: '等待领取',
+        claimed: '已领取',
+        running: '运行中',
+        concluding: '收口中',
         starting: '准备中',
         reading_context: '读取上下文',
         analyzing: '分析规划中',
@@ -1108,7 +1193,7 @@ window.AxiomModules.graph = {
         failed: '未完成',
         finished: '已完成',
       };
-      return labels[reason?.activity_kind] || '运行中';
+      return labels[reason?.activity_kind] || labels[reason?.status] || '运行中';
     },
 
     reasonActivityAge(reason) {
@@ -1125,7 +1210,7 @@ window.AxiomModules.graph = {
     },
 
     reasonRunDuration(reason) {
-      const started = reason?.activity_started_at || reason?.last_heartbeat_at;
+      const started = reason?.activity_started_at || reason?.created_at || reason?.last_heartbeat_at;
       if (!started) return '—';
       const elapsed = Math.max(0, Date.now() - Date.parse(started));
       return Number.isFinite(elapsed) ? this.formatDurationMs(elapsed) : '—';
@@ -1133,7 +1218,8 @@ window.AxiomModules.graph = {
 
     selectedOpenIntentRecord() {
       const intent = this.selectedIntentRecord();
-      if (!intent || intent.to || !this.projectIsActive()) return null;
+      if (!intent || !this.projectIsActive()) return null;
+      if (!['pending', 'running'].includes(this.intentLifecycleState(intent))) return null;
       return intent;
     },
 
@@ -1193,15 +1279,21 @@ window.AxiomModules.graph = {
 
       let executeSeconds = Number.isFinite(executeBase) && executeBase > 0
         ? executeBase
-        : Number(this.dispatchSettings?.explore_timeout || 300);
+        : Math.min(
+          Number(this.dispatchSettings?.explore_execute_max_seconds ?? 3600),
+          Math.max(Number(this.dispatchSettings?.explore_execute_min_seconds ?? 60), 300),
+        );
       let concludeSeconds = Number.isFinite(concludeBase) && concludeBase > 0
         ? concludeBase
-        : Number(this.dispatchSettings?.explore_conclude_timeout || 90);
+        : Math.min(
+          Number(this.dispatchSettings?.explore_conclude_max_seconds ?? 600),
+          Math.max(Number(this.dispatchSettings?.explore_conclude_min_seconds ?? 30), 90),
+        );
 
       const isBootstrap = intent.creator === 'dispatcher.bootstrap' || intent.description === 'bootstrap';
       if (isBootstrap) {
-        executeSeconds = Number(this.dispatchSettings?.bootstrap_timeout || 300);
-        concludeSeconds = Number(this.dispatchSettings?.bootstrap_conclude_timeout || 90);
+        executeSeconds = Number(this.dispatchSettings?.bootstrap_execute_seconds ?? 300);
+        concludeSeconds = Number(this.dispatchSettings?.bootstrap_conclude_seconds ?? 120);
       }
 
       // Align with explore retry backoff policy.

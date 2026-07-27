@@ -15,7 +15,7 @@ function truthy(value: string | undefined): boolean {
 
 function guardMode(): string | undefined {
   const raw = (process.env.AXIOM_GUARD_MODE || "").trim().toLowerCase();
-  return ["off", "observe", "guarded", "enforce"].includes(raw) ? raw : undefined;
+  return ["off", "audit", "enforce"].includes(raw) ? raw : undefined;
 }
 
 function baseUrl(): string {

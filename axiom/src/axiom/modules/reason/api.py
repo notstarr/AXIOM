@@ -6,18 +6,31 @@ from axiom.api.dependencies import get_container
 from axiom.composition import Container
 from axiom.modules.reason.schemas import (
     AbandonWorkspace,
+    AddWorkspaceTodo,
+    AssessWorkspaceGoal,
     CommitResult,
-    DraftIntent,
-    DraftTodo,
-    DraftTodoUpdate,
     OpenWorkspace,
+    ProposeWorkspaceIntent,
     ReasonWorkspace,
-    SubmitWorkspace,
+    UpdateWorkspaceTodo,
+    WorkspaceStatus,
     WorkspaceWorkerCommand,
+    ReasonRun,
+    ReasonReconcileReport,
+    ReleasedReasonRun,
+    StartedReasonRun,
 )
+from axiom.modules.execution.schemas import ActivityCommand, ExecutionInput, LeaseCommand, ReleaseIntentCommand
 
 
 router = APIRouter(tags=["reason"])
+
+
+@router.post("/dispatch/reason-runs/reconcile", response_model=ReasonReconcileReport)
+def reconcile_reason_runs(
+    container: Container = Depends(get_container),
+) -> ReasonReconcileReport:
+    return container.reason.reconcile_all()
 
 
 @router.post("/tasks/{task_id}/reason/workspaces", response_model=ReasonWorkspace)
@@ -28,9 +41,113 @@ def open_workspace(
 ) -> ReasonWorkspace:
     return container.reason.open(
         task_id=task_id,
-        intent_id=body.intent_id,
+        reason_run_id=body.reason_run_id,
         lease_id=body.lease_id,
         context_revision=body.context_revision,
+    )
+
+
+@router.get("/tasks/{task_id}/reason-runs/{reason_run_id}", response_model=ReasonRun)
+def get_reason_run(
+    task_id: str,
+    reason_run_id: str,
+    container: Container = Depends(get_container),
+) -> ReasonRun:
+    return container.reason.get_run(task_id, reason_run_id)
+
+
+@router.post(
+    "/dispatch/tasks/{task_id}/reason-runs/{reason_run_id}/start",
+    response_model=StartedReasonRun,
+)
+def start_reason_run(
+    task_id: str,
+    reason_run_id: str,
+    body: LeaseCommand,
+    container: Container = Depends(get_container),
+) -> StartedReasonRun:
+    return container.reason.start_run(task_id, reason_run_id, lease_id=body.lease_id)
+
+
+@router.post(
+    "/dispatch/tasks/{task_id}/reason-runs/{reason_run_id}/input",
+    response_model=ExecutionInput,
+)
+def get_reason_run_input(
+    task_id: str,
+    reason_run_id: str,
+    body: LeaseCommand,
+    container: Container = Depends(get_container),
+) -> ExecutionInput:
+    return container.execution.reason_input(
+        task_id=task_id,
+        reason_run_id=reason_run_id,
+        command=body,
+    )
+
+
+@router.post(
+    "/dispatch/tasks/{task_id}/reason-runs/{reason_run_id}/heartbeat",
+    status_code=204,
+)
+def heartbeat_reason_run(
+    task_id: str,
+    reason_run_id: str,
+    body: LeaseCommand,
+    container: Container = Depends(get_container),
+) -> None:
+    container.reason.heartbeat_run(task_id, reason_run_id, lease_id=body.lease_id)
+
+
+@router.post(
+    "/dispatch/tasks/{task_id}/reason-runs/{reason_run_id}/activity",
+    status_code=204,
+)
+def update_reason_run_activity(
+    task_id: str,
+    reason_run_id: str,
+    body: ActivityCommand,
+    container: Container = Depends(get_container),
+) -> None:
+    container.reason.activity_run(
+        task_id,
+        reason_run_id,
+        lease_id=body.lease_id,
+        activity_kind=body.activity_kind,
+        activity_summary=body.activity_summary,
+        activity_tool=body.activity_tool,
+    )
+
+
+@router.post(
+    "/dispatch/tasks/{task_id}/reason-runs/{reason_run_id}/conclude",
+    status_code=204,
+)
+def conclude_reason_run(
+    task_id: str,
+    reason_run_id: str,
+    body: LeaseCommand,
+    container: Container = Depends(get_container),
+) -> None:
+    container.reason.begin_conclude_run(task_id, reason_run_id, lease_id=body.lease_id)
+
+
+@router.post(
+    "/dispatch/tasks/{task_id}/reason-runs/{reason_run_id}/release",
+    response_model=ReleasedReasonRun,
+)
+def release_reason_run(
+    task_id: str,
+    reason_run_id: str,
+    body: ReleaseIntentCommand,
+    container: Container = Depends(get_container),
+) -> ReleasedReasonRun:
+    return container.reason.release_run(
+        task_id,
+        reason_run_id,
+        lease_id=body.lease_id,
+        failure_kind=body.failure_kind,
+        failure_class=body.failure_class,
     )
 
 
@@ -55,28 +172,58 @@ def abandon_workspace(
 @router.post("/reason-workspaces/{workspace_id}/todos", response_model=ReasonWorkspace)
 def add_workspace_todo(
     workspace_id: str,
-    body: DraftTodo,
+    body: AddWorkspaceTodo,
     container: Container = Depends(get_container),
 ) -> ReasonWorkspace:
-    return container.reason.add_todo(workspace_id, body)
+    return container.reason.add_todo(workspace_id, body.todo, lease_id=body.lease_id)
 
 
 @router.post("/reason-workspaces/{workspace_id}/todo-updates", response_model=ReasonWorkspace)
 def update_workspace_todo(
     workspace_id: str,
-    body: DraftTodoUpdate,
+    body: UpdateWorkspaceTodo,
     container: Container = Depends(get_container),
 ) -> ReasonWorkspace:
-    return container.reason.update_todo(workspace_id, body)
+    return container.reason.update_todo(
+        workspace_id,
+        body.update,
+        lease_id=body.lease_id,
+    )
 
 
 @router.post("/reason-workspaces/{workspace_id}/intents", response_model=ReasonWorkspace)
 def propose_workspace_intent(
     workspace_id: str,
-    body: DraftIntent,
+    body: ProposeWorkspaceIntent,
     container: Container = Depends(get_container),
 ) -> ReasonWorkspace:
-    return container.reason.propose_intent(workspace_id, body)
+    return container.reason.propose_intent(
+        workspace_id,
+        body.intent,
+        lease_id=body.lease_id,
+    )
+
+
+@router.post("/reason-workspaces/{workspace_id}/goal-assessment", response_model=ReasonWorkspace)
+def assess_workspace_goal(
+    workspace_id: str,
+    body: AssessWorkspaceGoal,
+    container: Container = Depends(get_container),
+) -> ReasonWorkspace:
+    return container.reason.assess_goal(
+        workspace_id,
+        body.assessment,
+        lease_id=body.lease_id,
+    )
+
+
+@router.post("/reason-workspaces/{workspace_id}/status", response_model=WorkspaceStatus)
+def workspace_status(
+    workspace_id: str,
+    body: WorkspaceWorkerCommand,
+    container: Container = Depends(get_container),
+) -> WorkspaceStatus:
+    return container.reason.status(workspace_id, lease_id=body.lease_id)
 
 
 @router.post("/reason-workspaces/{workspace_id}/commit", response_model=CommitResult)
@@ -86,12 +233,3 @@ def commit_workspace(
     container: Container = Depends(get_container),
 ) -> CommitResult:
     return container.reason.commit(workspace_id, lease_id=body.lease_id)
-
-
-@router.post("/reason-workspaces/{workspace_id}/submit", response_model=CommitResult)
-def submit_workspace(
-    workspace_id: str,
-    body: SubmitWorkspace,
-    container: Container = Depends(get_container),
-) -> CommitResult:
-    return container.reason.submit(workspace_id, body.draft, lease_id=body.lease_id)

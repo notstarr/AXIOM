@@ -1340,17 +1340,7 @@ window.AxiomModules.projects = {
     async loadSettings() {
       try {
         const s = await this.api('GET', '/settings');
-        this.settingsForm.intent_timeout = s.intent_timeout;
-        this.settingsForm.reason_timeout = s.reason_timeout;
-        this.settingsForm.bootstrap_worker_count = s.bootstrap_worker_count || 1;
-        this.settingsForm.explore_worker_count = s.explore_worker_count || 2;
-        this.settingsForm.reason_worker_count = s.reason_worker_count || 1;
-        this.settingsForm.plan_timeout = s.plan_timeout || 600;
-        this.settingsForm.plan_worker_count = s.plan_worker_count || 1;
-        this.settingsForm.crawler_active_window_seconds = s.crawler_active_window_seconds || 180;
-        this.settingsForm.crawler_flush_window_seconds = s.crawler_flush_window_seconds || 45;
-        this.settingsForm.crawler_total_timeout_seconds = s.crawler_total_timeout_seconds || 1800;
-        this.settingsForm.proxy_url = s.proxy_url || '';
+        this.settingsForm.proxy_url = s.proxy_url ?? '';
         this.settingsForm.proxy_enabled = !!s.proxy_enabled;
         await this.loadDispatchSettings();
         await this.loadJudgeSettings();

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from datetime import timedelta
 
@@ -19,10 +20,21 @@ from axiom.modules.execution.schemas import (
     CompleteExploreCommand,
     ExecutionInput,
     ExploreCompleted,
+    ExploreVulnerabilityRecorded,
     LeaseCommand,
+    ReportExploreVulnerabilityCommand,
     ReleaseIntentCommand,
     ReleasedIntent,
     StartedIntent,
+)
+from axiom.modules.execution.stage_outputs import (
+    append_explore_vulnerability_locked,
+    bootstrap_files,
+    explore_state_guard,
+    explore_files,
+    finalize_explore_state,
+    load_explore_state,
+    write_bootstrap_index,
 )
 from axiom.modules.graph.tables import facts
 from axiom.modules.reason.service import ReasonService
@@ -30,11 +42,15 @@ from axiom.modules.settings.service import load_runtime_config
 from axiom.modules.workers.tables import workers
 from axiom.modules.skills.service import SkillService
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
+from axiom.modules.vulnerabilities.schemas import VulnerabilityReport
 from axiom.shared.clock import format_utc, parse_utc, utcnow
 from axiom.shared.database import immediate_transaction
 from axiom.shared.errors import ConflictError, LeaseInactiveError, NotFoundError
 from axiom.shared.ids import allocate_id
 from axiom.shared.storage import FileStore
+
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionService:
@@ -67,20 +83,11 @@ class ExecutionService:
                 raise LeaseInactiveError("Task is not running")
             if row["intent_status"] not in {"claimed", "running", "concluding"}:
                 raise LeaseInactiveError("Intent lease is not active")
-            # Bootstrap and Reason are created without per-Intent budgets.  The
-            # effective budget must therefore be resolved here, at the single
-            # boundary where execution input is built.  Previously the NULL
-            # values passed through to Pi, which silently selected its legacy
-            # fallbacks (900s Bootstrap execute / 180s conclude), ignoring the
-            # values configured in the UI and persisted in RuntimeConfig.
-            runtime = load_runtime_config(conn)
             execute_timeout = row["execute_timeout_seconds"]
             conclude_timeout = row["conclude_timeout_seconds"]
             if row["kind"] == "bootstrap":
-                execute_timeout = execute_timeout or runtime.bootstrap_execute_seconds
-                conclude_timeout = conclude_timeout or runtime.bootstrap_conclude_seconds
-            elif row["kind"] == "reason":
-                execute_timeout = execute_timeout or runtime.reason_execute_seconds
+                if execute_timeout is None or conclude_timeout is None:
+                    raise ConflictError("Bootstrap budget snapshot is missing; release and reclaim it")
             values = {
                 "worker_name": row["worker"] or "",
                 "intent_kind": row["kind"],
@@ -130,6 +137,74 @@ class ExecutionService:
             ),
             execute_timeout_seconds=values["execute_timeout_seconds"],
             conclude_timeout_seconds=values["conclude_timeout_seconds"],
+            context_revision=context.revision,
+            context_manifest_path=context.manifest_path,
+        )
+
+    def reason_input(
+        self,
+        *,
+        task_id: str,
+        reason_run_id: str,
+        command: LeaseCommand,
+    ) -> ExecutionInput:
+        with self.engine.connect() as conn:
+            run = self.reason.repository.get_run(conn, task_id, reason_run_id)
+            if run is None:
+                raise NotFoundError(f"ReasonRun not found: {task_id}/{reason_run_id}")
+            if run.lease_id != command.lease_id:
+                raise LeaseInactiveError("ReasonRun lease does not match")
+            if run.status not in {"claimed", "running", "concluding"}:
+                raise LeaseInactiveError("ReasonRun lease is not active")
+            task = self.reason.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.status != "running":
+                raise LeaseInactiveError("Task is not running")
+            credentials = self.credentials.for_project_materials(conn, task.project_id)
+            hints = self.repository.hints(conn, task_id)
+
+        context = self.context.build(
+            task_id=task_id,
+            phase="reason",
+            intent_id=None,
+            reason_run_id=reason_run_id,
+            lease_id=command.lease_id,
+        )
+        trigger_summary = {
+            "bootstrap": "分析 Bootstrap 初始攻击面并规划第一批 Explore Intent",
+            "fact_batch": "消费新 Fact 批次并规划后续 Explore Intent",
+            "low_watermark": "补充即将耗尽的 Explore 工作队列",
+            "max_wait": "处理等待时间达到上限的新 Fact",
+        }.get(run.trigger, f"根据触发原因 {run.trigger} 增量规划下一轮测试")
+        return ExecutionInput(
+            task_id=task_id,
+            project_id=task.project_id,
+            intent_id=None,
+            reason_run_id=reason_run_id,
+            lease_id=command.lease_id,
+            worker_name=run.worker or "",
+            intent_kind="reason",
+            intent_description=trigger_summary,
+            intent_targets=list(task.scope.targets) or [task.origin.host],
+            intent_source_facts=run.source_fact_ids,
+            todo_id=None,
+            credentials=credentials,
+            origin=task.origin.original_input,
+            goal=task.goal,
+            hints=hints,
+            skill_directories=self.skills.active_paths(),
+            guard_enabled=task.guard_enabled,
+            scope=task.scope.model_dump(mode="json"),
+            run_dir=str(
+                self.store.run_directory(
+                    task_id=task_id,
+                    reason_run_id=reason_run_id,
+                    lease_id=command.lease_id,
+                )
+            ),
+            execute_timeout_seconds=run.execute_timeout_seconds,
+            conclude_timeout_seconds=run.conclude_timeout_seconds,
             context_revision=context.revision,
             context_manifest_path=context.manifest_path,
         )
@@ -331,12 +406,18 @@ class ExecutionService:
             if existing["intent_status"] == "completed" and existing["to_fact_id"]:
                 return self._completed(conn, task_id, intent_id, existing["to_fact_id"])
 
-        prepared = self.store.prepare_text_files(
+        run_dir = self.store.run_directory(
             task_id=task_id,
             intent_id=intent_id,
-            files=command.artifacts.files(),
+            lease_id=command.lease_id,
+        )
+        outputs = bootstrap_files(run_dir)
+        prepared = self.store.prepare_existing_files(
+            base_key=f"tasks/{task_id}/artifacts/{intent_id}",
+            files={item.relative_name: item.path for item in outputs},
         )
         now = utcnow()
+        transaction_committed = False
         try:
             with immediate_transaction(self.engine) as conn:
                 row = self.repository.input_row(conn, task_id, intent_id)
@@ -354,16 +435,6 @@ class ExecutionService:
                     raise ConflictError("Intent is not ready for completion")
 
                 prepared.commit()
-                fact_id = allocate_id(conn, scope=task_id, kind="fact", prefix="f")
-                conn.execute(
-                    facts.insert().values(
-                        id=fact_id,
-                        task_id=task_id,
-                        description=command.summary,
-                        created_at=now,
-                        archived=False,
-                    )
-                )
                 records = self.artifacts.create_bootstrap_bundle(
                     conn,
                     task_id=task_id,
@@ -371,6 +442,16 @@ class ExecutionService:
                     prepared=prepared.files,
                     created_by=row["worker"] or "bootstrap",
                     now=now,
+                )
+                fact_id = allocate_id(conn, scope=task_id, kind="fact", prefix="f")
+                conn.execute(
+                    facts.insert().values(
+                        id=fact_id,
+                        task_id=task_id,
+                        description=self._bootstrap_fact(records),
+                        created_at=now,
+                        archived=False,
+                    )
                 )
                 if not self.repository.complete_intent(
                     conn,
@@ -393,25 +474,36 @@ class ExecutionService:
                         payload={"phase": "bootstrap", "fact_id": fact_id, "artifact_count": len(records)},
                     ),
                 )
-                next_intent_id = self.reason.create_initial(
+                next_reason_run_id = self.reason.create_initial(
                     conn,
                     task_id=task_id,
                     source_fact_id=fact_id,
-                    worker_pool_json=row["worker_pool_json"],
-                    target=row["origin_host"],
                     now=now,
                 )
                 self.repository.complete_task_phase(conn, task_id, now)
-            prepared.finish()
-            return BootstrapCompleted(
+            transaction_committed = True
+            try:
+                prepared.finish()
+            except OSError:
+                # The durable Artifact and database transaction already won;
+                # retaining a worker-run copy is safer than deleting the only
+                # registered file during cleanup.
+                logger.exception("failed to clean Bootstrap run outputs: %s/%s", task_id, intent_id)
+            result = BootstrapCompleted(
                 task_id=task_id,
                 intent_id=intent_id,
                 fact_id=fact_id,
-                next_intent_id=next_intent_id,
+                next_reason_run_id=next_reason_run_id,
                 artifacts=records,
             )
+            try:
+                write_bootstrap_index(run_dir, records)
+            except Exception:
+                logger.exception("failed to write Bootstrap internal index: %s/%s", task_id, intent_id)
+            return result
         except BaseException:
-            prepared.rollback()
+            if not transaction_committed:
+                prepared.rollback()
             raise
 
     def complete_explore(
@@ -428,117 +520,183 @@ class ExecutionService:
             if existing["intent_status"] == "completed" and existing["to_fact_id"]:
                 return self._explore_completed(conn, task_id, intent_id, existing["to_fact_id"])
 
-        prepared = self.store.prepare_text_files(
+        run_dir = self.store.run_directory(
             task_id=task_id,
             intent_id=intent_id,
-            files={item.filename: item.content for item in command.output.artifacts},
+            lease_id=command.lease_id,
+        )
+        outputs = explore_files(run_dir)
+        prepared = self.store.prepare_existing_files(
+            base_key=f"tasks/{task_id}/artifacts/{intent_id}",
+            files={item.relative_name: item.path for item in outputs},
         )
         specs = {
-            item.filename: (item.artifact_type, item.summary)
-            for item in command.output.artifacts
+            item.relative_name: (item.artifact_type, item.summary)
+            for item in outputs
         }
         now = utcnow()
+        transaction_committed = False
         try:
-            with immediate_transaction(self.engine) as conn:
+            with explore_state_guard(run_dir):
+                state = load_explore_state(run_dir)
+                with immediate_transaction(self.engine) as conn:
+                    row = self.repository.input_row(conn, task_id, intent_id)
+                    self._require_row(row, task_id, intent_id)
+                    self._require_lease(row, command.lease_id)
+                    if row["task_status"] != "running":
+                        raise ConflictError("Task is not running")
+                    if row["kind"] != "explore":
+                        raise ConflictError("Intent is not an Explore Intent")
+                    if row["intent_status"] not in {"running", "concluding"}:
+                        if row["intent_status"] == "completed" and row["to_fact_id"]:
+                            result = self._explore_completed(
+                                conn,
+                                task_id,
+                                intent_id,
+                                row["to_fact_id"],
+                            )
+                            prepared.finish()
+                            return result
+                        raise ConflictError("Intent is not ready for completion")
+
+                    prepared.commit()
+                    records = self.artifacts.create_explore_bundle(
+                        conn,
+                        task_id=task_id,
+                        intent_id=intent_id,
+                        prepared=prepared.files,
+                        specs=specs,
+                        created_by=row["worker"] or "explore",
+                        now=now,
+                    )
+                    vulnerability_records = []
+                    for report in state.vulnerabilities:
+                        vulnerability_records.append(
+                            self.vulnerabilities.create(
+                                conn,
+                                task_id=task_id,
+                                body=report,
+                                now=now,
+                            )
+                        )
+                    fact_id = allocate_id(conn, scope=task_id, kind="fact", prefix="f")
+                    conn.execute(
+                        facts.insert().values(
+                            id=fact_id,
+                            task_id=task_id,
+                            description=self._explore_fact(
+                                intent_description=row["intent_description"],
+                                artifacts=records,
+                                vulnerability_ids=[item.id for item in vulnerability_records],
+                            ),
+                            created_at=now,
+                            archived=False,
+                        )
+                    )
+                    if not self.repository.complete_intent(
+                        conn,
+                        task_id=task_id,
+                        intent_id=intent_id,
+                        lease_id=command.lease_id,
+                        fact_id=fact_id,
+                        now=now,
+                    ):
+                        raise ConflictError("Intent completion lost a concurrent race")
+                    reason_run_id = self.reason.advance_after_explore(
+                        conn,
+                        task_id=task_id,
+                        now=now,
+                    )
+                    self.audit.record_in(
+                        conn,
+                        RecordAuditEvent(
+                            project_id=row["project_id"],
+                            task_id=task_id,
+                            intent_id=intent_id,
+                            worker=row["worker"] or "",
+                            event_type="intent.completed",
+                            message="Explore 已完成并写入 Fact",
+                            payload={
+                                "phase": "explore",
+                                "fact_id": fact_id,
+                                "artifact_count": len(records),
+                                "vulnerability_count": len(vulnerability_records),
+                                "reason_run_id": reason_run_id,
+                            },
+                        ),
+                    )
+                transaction_committed = True
+                try:
+                    prepared.finish()
+                except OSError:
+                    logger.exception(
+                        "failed to clean Explore run outputs: %s/%s",
+                        task_id,
+                        intent_id,
+                    )
+                result = ExploreCompleted(
+                    task_id=task_id,
+                    intent_id=intent_id,
+                    fact_id=fact_id,
+                    reason_run_id=reason_run_id,
+                    artifacts=records,
+                    vulnerabilities=vulnerability_records,
+                )
+                try:
+                    finalize_explore_state(
+                        run_dir,
+                        artifacts=records,
+                        vulnerabilities=vulnerability_records,
+                    )
+                except Exception:
+                    logger.exception(
+                        "failed to finalize Explore internal index: %s/%s",
+                        task_id,
+                        intent_id,
+                    )
+                return result
+        except BaseException:
+            if not transaction_committed:
+                prepared.rollback()
+            raise
+
+    def report_explore_vulnerability(
+        self,
+        *,
+        task_id: str,
+        intent_id: str,
+        command: ReportExploreVulnerabilityCommand,
+    ) -> ExploreVulnerabilityRecorded:
+        run_dir = self.store.run_directory(
+            task_id=task_id,
+            intent_id=intent_id,
+            lease_id=command.lease_id,
+        )
+        with explore_state_guard(run_dir):
+            with self.engine.connect() as conn:
                 row = self.repository.input_row(conn, task_id, intent_id)
                 self._require_row(row, task_id, intent_id)
                 self._require_lease(row, command.lease_id)
                 if row["task_status"] != "running":
-                    raise ConflictError("Task is not running")
+                    raise LeaseInactiveError("Task is not running")
                 if row["kind"] != "explore":
                     raise ConflictError("Intent is not an Explore Intent")
                 if row["intent_status"] not in {"running", "concluding"}:
-                    if row["intent_status"] == "completed" and row["to_fact_id"]:
-                        result = self._explore_completed(
-                            conn,
-                            task_id,
-                            intent_id,
-                            row["to_fact_id"],
-                        )
-                        prepared.finish()
-                        return result
-                    raise ConflictError("Intent is not ready for completion")
-
-                prepared.commit()
-                fact_id = allocate_id(conn, scope=task_id, kind="fact", prefix="f")
-                conn.execute(
-                    facts.insert().values(
-                        id=fact_id,
-                        task_id=task_id,
-                        description=command.output.fact,
-                        created_at=now,
-                        archived=False,
-                    )
-                )
-                records = self.artifacts.create_explore_bundle(
-                    conn,
-                    task_id=task_id,
-                    intent_id=intent_id,
-                    prepared=prepared.files,
-                    specs=specs,
-                    created_by=row["worker"] or "explore",
-                    now=now,
-                )
-                vulnerability_records = []
-                for report in command.output.vulnerabilities:
-                    report = report.model_copy(
-                        update={
-                            "intent_id": intent_id,
-                            "reported_by": row["worker"] or report.reported_by,
-                        }
-                    )
-                    vulnerability_records.append(
-                        self.vulnerabilities.create(
-                            conn,
-                            task_id=task_id,
-                            body=report,
-                            now=now,
-                        )
-                    )
-                if not self.repository.complete_intent(
-                    conn,
-                    task_id=task_id,
-                    intent_id=intent_id,
-                    lease_id=command.lease_id,
-                    fact_id=fact_id,
-                    now=now,
-                ):
-                    raise ConflictError("Intent completion lost a concurrent race")
-                reason_intent_id = self.reason.advance_after_explore(
-                    conn,
-                    task_id=task_id,
-                    now=now,
-                )
-                self.audit.record_in(
-                    conn,
-                    RecordAuditEvent(
-                        project_id=row["project_id"],
-                        task_id=task_id,
-                        intent_id=intent_id,
-                        worker=row["worker"] or "",
-                        event_type="intent.completed",
-                        message="Explore 已完成并写入 Fact",
-                        payload={
-                            "phase": "explore",
-                            "fact_id": fact_id,
-                            "artifact_count": len(records),
-                            "vulnerability_count": len(vulnerability_records),
-                            "reason_intent_id": reason_intent_id,
-                        },
-                    ),
-                )
-            prepared.finish()
-            return ExploreCompleted(
-                task_id=task_id,
+                    raise LeaseInactiveError("Explore Intent lease is not active")
+                worker = row["worker"] or "explore"
+            report = VulnerabilityReport(
+                **command.report.model_dump(mode="python"),
                 intent_id=intent_id,
-                fact_id=fact_id,
-                reason_intent_id=reason_intent_id,
-                artifacts=records,
-                vulnerabilities=vulnerability_records,
+                source="explore",
+                reported_by=worker,
             )
-        except BaseException:
-            prepared.rollback()
-            raise
+            if report.status == "忽略" and len(report.status_reason.strip()) < 4:
+                raise ConflictError("Ignored vulnerability requires a status reason")
+            after, duplicate = append_explore_vulnerability_locked(run_dir, report)
+        return ExploreVulnerabilityRecorded(
+            total=len(after.vulnerabilities),
+            duplicate=duplicate,
+        )
 
     def _completed(self, conn, task_id: str, intent_id: str, fact_id: str) -> BootstrapCompleted:
         records = self.artifacts.for_intent(conn, task_id, intent_id)
@@ -546,7 +704,7 @@ class ExecutionService:
             task_id=task_id,
             intent_id=intent_id,
             fact_id=fact_id,
-            next_intent_id=self.repository.reason_intent_for_fact(conn, task_id, fact_id)
+            next_reason_run_id=self.repository.reason_run_for_fact(conn, task_id, fact_id)
             or "",
             artifacts=records,
         )
@@ -562,13 +720,50 @@ class ExecutionService:
             task_id=task_id,
             intent_id=intent_id,
             fact_id=fact_id,
-            reason_intent_id=self.repository.reason_intent_for_fact(conn, task_id, fact_id),
+            reason_run_id=self.repository.reason_run_for_fact(conn, task_id, fact_id),
             artifacts=self.artifacts.for_intent(conn, task_id, intent_id),
             vulnerabilities=[
                 item
                 for item in self.vulnerabilities.list(conn, task_id)
                 if item.intent_id == intent_id
             ],
+        )
+
+    @staticmethod
+    def _bootstrap_fact(records) -> str:
+        labels = {
+            "bootstrap.asset_inventory": "资产清单",
+            "bootstrap.initial_leads": "初始线索",
+            "bootstrap.findings": "已确认问题",
+        }
+        refs = "；".join(
+            f"{labels.get(item.artifact_type, item.artifact_type)} artifact:{item.id}"
+            for item in records
+        )
+        return f"Bootstrap 已完成初始攻击面收集。产物索引：{refs}。"
+
+    @staticmethod
+    def _explore_fact(
+        *,
+        intent_description: str,
+        artifacts,
+        vulnerability_ids: list[str],
+    ) -> str:
+        intent_summary = intent_description.strip()
+        if not intent_summary.endswith(("。", "！", "？", ".", "!", "?")):
+            intent_summary += "。"
+        artifact_refs = "、".join(f"artifact:{item.id}" for item in artifacts)
+        vulnerability_refs = "、".join(
+            f"vulnerability:{item_id}" for item_id in vulnerability_ids
+        )
+        vulnerability_summary = (
+            f"本轮上报漏洞：{vulnerability_refs}。"
+            if vulnerability_refs
+            else "本轮未上报已确认漏洞。"
+        )
+        return (
+            f"已完成 Explore Intent：{intent_summary}"
+            f"证据产物：{artifact_refs}。{vulnerability_summary}"
         )
 
     @staticmethod

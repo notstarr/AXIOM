@@ -61,7 +61,7 @@ class Container:
     def build(cls, engine: Engine, *, data_dir: Path) -> "Container":
         store = FileStore(data_dir)
         context = ContextService(engine, store)
-        reason = ReasonService(engine)
+        reason = ReasonService(engine, store=store)
         skills = SkillService(data_dir, engine=engine)
         settings = RuntimeSettingsService(engine)
         return cls(

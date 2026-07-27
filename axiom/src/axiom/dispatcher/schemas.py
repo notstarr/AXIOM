@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from axiom.modules.reason.schemas import ClaimedReasonRun
 
 
 IntentKind = Literal["bootstrap", "reason", "explore"]
+SchedulableIntentKind = Literal["bootstrap", "explore"]
+WorkKind = Literal["bootstrap", "reason", "explore"]
+ACTIVE_WORK_STATUSES = frozenset({"claimed", "running", "concluding"})
 
 
 class IntentSnapshot(BaseModel):
@@ -25,12 +30,37 @@ class IntentSnapshot(BaseModel):
     worker_pool: list[str] = Field(default_factory=list)
     next_retry_at: datetime | None = None
     created_at: datetime
+    claimed_at: datetime | None = None
+
+
+class ReasonRunSnapshot(BaseModel):
+    task_id: str
+    id: str
+    kind: Literal["reason"] = "reason"
+    status: Literal[
+        "pending",
+        "claimed",
+        "running",
+        "concluding",
+        "completed",
+        "failed",
+        "cancelled",
+    ]
+    worker_pool: list[str] = Field(default_factory=list)
+    next_retry_at: datetime | None = None
+    created_at: datetime
+    claimed_at: datetime | None = None
 
 
 class TaskSnapshot(BaseModel):
     id: str
     status: Literal["running", "stopped", "completed", "failed"]
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.min.replace(tzinfo=timezone.utc)
+    )
     intents: list[IntentSnapshot] = Field(default_factory=list)
+    reason_runs: list[ReasonRunSnapshot] = Field(default_factory=list)
+    last_claimed_at: datetime | None = None
 
 
 class WorkerSnapshot(BaseModel):
@@ -43,15 +73,36 @@ class WorkerSnapshot(BaseModel):
     cooldown_until: datetime | None = None
 
 
+class DispatchLimits(BaseModel):
+    config_version: int = 1
+    global_max_active_runs: int = Field(default=10, ge=1)
+    global_max_active_tasks: int = Field(default=3, ge=1)
+    per_task_max_active_runs: int = Field(default=4, ge=1)
+    per_task_explore_concurrency: int = Field(default=4, ge=1)
+
+
 class DispatcherSnapshot(BaseModel):
     tasks: list[TaskSnapshot] = Field(default_factory=list)
     workers: list[WorkerSnapshot] = Field(default_factory=list)
+    limits: DispatchLimits = Field(default_factory=DispatchLimits)
 
 
 class ClaimAction(BaseModel):
     task_id: str
-    intent_id: str
     worker_name: str
+    kind: WorkKind
+    intent_id: str | None = None
+    reason_run_id: str | None = None
+
+    @model_validator(mode="after")
+    def require_one_owner(self) -> "ClaimAction":
+        if bool(self.intent_id) == bool(self.reason_run_id):
+            raise ValueError("claim requires exactly one Intent or ReasonRun")
+        if self.kind == "reason" and not self.reason_run_id:
+            raise ValueError("Reason claims require reason_run_id")
+        if self.kind != "reason" and not self.intent_id:
+            raise ValueError("Intent claims require intent_id")
+        return self
 
 
 class DispatchAction(BaseModel):
@@ -69,9 +120,12 @@ class ClaimedIntent(BaseModel):
     lease_id: str
 
 
+ClaimedWork = ClaimedIntent | ClaimedReasonRun
+
+
 class DispatchReport(BaseModel):
     considered: int = 0
     planned: int = 0
     claimed: int = 0
     conflicts: int = 0
-    claims: list[ClaimedIntent] = Field(default_factory=list)
+    claims: list[ClaimedWork] = Field(default_factory=list)

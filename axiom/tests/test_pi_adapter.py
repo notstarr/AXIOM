@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from axiom.dispatcher.bootstrap import BootstrapExecutionTimeout
-from axiom.dispatcher.pi import PiBootstrapExecutor
+from axiom.dispatcher.pi import PiBootstrapExecutor, _reason_tool_names
 from axiom.modules.execution.schemas import ExecutionInput
 from axiom.modules.workers.schemas import Worker
 
@@ -48,12 +48,13 @@ def make_script(tmp_path, body: str) -> Path:
     return path
 
 
-def test_pi_adapter_reads_the_bundle_from_run_directory(tmp_path) -> None:
+def test_pi_adapter_returns_the_final_assistant_text(tmp_path) -> None:
     script = make_script(
         tmp_path,
-        "cat > \"$AXIOM_RUN_DIR/bootstrap_artifacts.json\" <<'JSON'\n"
-        "{\"asset_inventory\":\"# 资产\",\"initial_leads\":\"# 线索\",\"findings\":\"# 无漏洞\"}\n"
-        "JSON\nprintf 'Bootstrap summary'",
+        "printf '# 资产' > \"$AXIOM_RUN_DIR/asset_inventory.md\"\n"
+        "printf '# 线索' > \"$AXIOM_RUN_DIR/initial_leads.md\"\n"
+        "printf '# 无漏洞' > \"$AXIOM_RUN_DIR/findings.md\"\n"
+        "printf 'FINISH'",
     )
     run_dir = tmp_path / "run"
 
@@ -62,19 +63,21 @@ def test_pi_adapter_reads_the_bundle_from_run_directory(tmp_path) -> None:
         lease_active=lambda: True,
     )
 
-    assert output["summary"] == "Bootstrap summary"
-    assert output["artifacts"].asset_inventory == "# 资产\n"
+    assert output == "FINISH"
 
 
 def test_pi_adapter_materializes_custom_provider_and_shared_skill_paths(tmp_path) -> None:
     script = make_script(
         tmp_path,
         "test -f \"$PI_CODING_AGENT_DIR/models.json\"\n"
+        "test \"$AXIOM_RUN_DIR\" = \"$PI_CODING_AGENT_DIR\"\n"
+        "command -v axiom >/dev/null\n"
         "grep -q '\"baseUrl\":\"https://models.example/v1\"' \"$PI_CODING_AGENT_DIR/models.json\"\n"
         "printf '%s\\n' \"$@\" | grep -q '/shared/skills/httpx'\n"
-        "cat > \"$AXIOM_RUN_DIR/bootstrap_artifacts.json\" <<'JSON'\n"
-        "{\"asset_inventory\":\"# 资产\",\"initial_leads\":\"# 线索\",\"findings\":\"# 无漏洞\"}\n"
-        "JSON\nprintf 'Bootstrap summary'",
+        "printf '# 资产' > \"$AXIOM_RUN_DIR/asset_inventory.md\"\n"
+        "printf '# 线索' > \"$AXIOM_RUN_DIR/initial_leads.md\"\n"
+        "printf '# 无漏洞' > \"$AXIOM_RUN_DIR/findings.md\"\n"
+        "printf 'FINISH'",
     )
     worker = pi_worker(script).model_copy(
         update={
@@ -85,6 +88,7 @@ def test_pi_adapter_materializes_custom_provider_and_shared_skill_paths(tmp_path
                 "base_url": "https://models.example/v1",
                 "provider_api": "openai-completions",
                 "api_key": "test-key",
+                "environment": {"PATH": "/usr/bin:/bin"},
             }
         }
     )
@@ -95,7 +99,7 @@ def test_pi_adapter_materializes_custom_provider_and_shared_skill_paths(tmp_path
 
     output = PiBootstrapExecutor(worker).execute(input_value, lease_active=lambda: True)
 
-    assert output["summary"] == "Bootstrap summary"
+    assert output == "FINISH"
     models = (run_dir / "models.json").read_text(encoding="utf-8")
     assert '"providers":{"axiom"' in models
     assert '"apiKey":"test-key"' in models
@@ -119,10 +123,10 @@ def test_pi_adapter_streams_session_tool_activity_while_process_runs(tmp_path) -
         '{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"call-1","name":"bash","arguments":{"command":"httpx -u https://a.example.com"}}]}}\n'
         "JSON\n"
         "sleep 0.4\n"
-        "cat > \"$AXIOM_RUN_DIR/bootstrap_artifacts.json\" <<'JSON'\n"
-        '{"asset_inventory":"# 资产","initial_leads":"# 线索","findings":"# 无漏洞"}\n'
-        "JSON\n"
-        "printf 'Bootstrap summary'",
+        "printf '# 资产' > \"$AXIOM_RUN_DIR/asset_inventory.md\"\n"
+        "printf '# 线索' > \"$AXIOM_RUN_DIR/initial_leads.md\"\n"
+        "printf '# 无漏洞' > \"$AXIOM_RUN_DIR/findings.md\"\n"
+        "printf 'FINISH'",
     )
     activities = []
 
@@ -131,8 +135,13 @@ def test_pi_adapter_streams_session_tool_activity_while_process_runs(tmp_path) -
         activity_reporter=activities.append,
     ).execute(execution_input(tmp_path / "run"), lease_active=lambda: True)
 
-    assert output["summary"] == "Bootstrap summary"
+    assert output == "FINISH"
     assert activities
     assert activities[0].lease_id == "lease_test"
     assert activities[0].activity_tool == "httpx"
     assert activities[0].activity_summary == "正在执行 httpx 服务探测与指纹识别"
+
+
+def test_reason_executor_always_keeps_bash_available_for_axiom_cli() -> None:
+    assert _reason_tool_names(["read", "write"]) == ["read", "write", "bash"]
+    assert _reason_tool_names(["read", "bash"]) == ["read", "bash"]

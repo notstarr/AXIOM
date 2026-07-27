@@ -44,7 +44,8 @@ def test_diagnostics_uses_durable_lifecycle_events(client) -> None:
     assert board["timed_out"] == 1
     assert board["workers"][0]["worker"] == "pi-main"
     assert body["health"]["unclaimed_intent_count"] == 1
-    assert body["config_status"]["is_current"] is True
+    assert body["config_status"]["is_current"] is False
+    assert body["config_status"]["applied_version"] == 0
 
 
 def test_task_and_project_responses_include_live_counts(client) -> None:

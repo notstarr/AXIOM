@@ -59,7 +59,26 @@ window.AxiomModules.timeline = {
           sourceFactIds: [...intent.from],
         });
 
-        if (!intent.concluded_at || !intent.to) continue;
+        if (!intent.concluded_at) continue;
+
+        if (!intent.to) {
+          if (this.intentLifecycleState(intent) !== 'completed') continue;
+          events.push({
+            id: `intent-concluded-${intent.id}`,
+            type: 'intent_concluded',
+            timestamp: intent.concluded_at,
+            actor: intent.worker || intent.creator,
+            title: intent.description,
+            meta: [intent.id, '未产出 Fact', `基于 ${intent.from.join(', ')}`],
+            targetType: 'intent',
+            targetId: intent.id,
+            order: order++,
+            intentId: intent.id,
+            producedFactId: null,
+            sourceFactIds: [...intent.from],
+          });
+          continue;
+        }
 
         if (intent.to === 'goal') {
           events.push({

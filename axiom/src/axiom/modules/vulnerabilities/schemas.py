@@ -9,8 +9,7 @@ Severity = Literal["critical", "high", "medium", "low", "info"]
 VulnerabilityStatus = Literal["待验证", "已验证", "忽略", "重复"]
 
 
-class VulnerabilityReport(BaseModel):
-    intent_id: str | None = None
+class VulnerabilityDetails(BaseModel):
     title: str
     type: str
     severity: Severity
@@ -24,10 +23,8 @@ class VulnerabilityReport(BaseModel):
     affected_target: str = ""
     status: VulnerabilityStatus = "待验证"
     status_reason: str = ""
-    source: str
-    reported_by: str
 
-    @field_validator("title", "type", "description", "impact", "source", "reported_by")
+    @field_validator("title", "type", "description", "impact")
     @classmethod
     def require_text(cls, value: str) -> str:
         value = value.strip()
@@ -36,7 +33,6 @@ class VulnerabilityReport(BaseModel):
         return value
 
     @field_validator(
-        "intent_id",
         "prerequisites",
         "remediation",
         "curl_command",
@@ -51,6 +47,29 @@ class VulnerabilityReport(BaseModel):
     @classmethod
     def normalize_lists(cls, value: list[str]) -> list[str]:
         return [item.strip() for item in value if item.strip()]
+
+
+class ExploreVulnerabilityReport(VulnerabilityDetails):
+    """Worker supplied fields; execution identity is injected by AXIOM."""
+
+
+class VulnerabilityReport(VulnerabilityDetails):
+    intent_id: str | None = None
+    source: str
+    reported_by: str
+
+    @field_validator("source", "reported_by")
+    @classmethod
+    def require_actor_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("intent_id")
+    @classmethod
+    def normalize_intent_id(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
 
 
 class Vulnerability(VulnerabilityReport):

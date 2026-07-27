@@ -16,6 +16,12 @@ BOOTSTRAP_ARTIFACT_TYPES = {
     "findings.md": "bootstrap.findings",
 }
 
+BOOTSTRAP_ARTIFACT_SUMMARIES = {
+    "asset_inventory.md": "Bootstrap 资产清单",
+    "initial_leads.md": "Bootstrap 初始线索",
+    "findings.md": "Bootstrap 已确认问题",
+}
+
 
 class ArtifactRepository:
     def create_upload(
@@ -56,7 +62,7 @@ class ArtifactRepository:
     ) -> list[Artifact]:
         records: list[Artifact] = []
         for item in prepared:
-            filename = item.final_path.name
+            filename = item.relative_name
             values = {
                 "id": allocate_id(
                     conn,
@@ -68,7 +74,7 @@ class ArtifactRepository:
                 "intent_id": intent_id,
                 "artifact_type": BOOTSTRAP_ARTIFACT_TYPES[filename],
                 "storage_key": item.storage_key,
-                "summary": "",
+                "summary": BOOTSTRAP_ARTIFACT_SUMMARIES[filename],
                 "content_hash": item.content_hash,
                 "size": item.size,
                 "created_by": created_by,
@@ -92,7 +98,7 @@ class ArtifactRepository:
     ) -> list[Artifact]:
         records: list[Artifact] = []
         for item in prepared:
-            filename = item.final_path.name
+            filename = item.relative_name
             artifact_type, summary = specs[filename]
             values = {
                 "id": allocate_id(conn, scope=task_id, kind="artifact", prefix="a"),

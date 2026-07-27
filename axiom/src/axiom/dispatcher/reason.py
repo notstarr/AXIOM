@@ -5,13 +5,17 @@ import threading
 from collections.abc import Callable
 from typing import Protocol
 
-from pydantic import ValidationError
-
 from axiom.dispatcher.bootstrap import TransientWorkerError
+from axiom.dispatcher.closeout import bounded_closeout
 from axiom.dispatcher.heartbeat import LeaseHeartbeat, LeaseLostError
-from axiom.dispatcher.schemas import ClaimedIntent
 from axiom.modules.execution.schemas import ExecutionInput, ReleaseIntentCommand
-from axiom.modules.reason.schemas import CommitResult, ReasonWorkspace, WorkspaceDraft
+from axiom.modules.execution.stage_outputs import StageOutputError, require_finish
+from axiom.modules.reason.schemas import (
+    ClaimedReasonRun,
+    CommitResult,
+    ReasonWorkspace,
+    WorkspaceStatus,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -30,48 +34,69 @@ class ReasonExecutor(Protocol):
         self,
         execution_input: ExecutionInput,
         *,
+        workspace: ReasonWorkspace,
+        lease_active: Callable[[], bool],
+    ) -> object:
+        ...
+
+    def conclude(
+        self,
+        execution_input: ExecutionInput,
+        *,
+        workspace: ReasonWorkspace,
+        reason: str,
         lease_active: Callable[[], bool],
     ) -> object:
         ...
 
 
 class ReasonControlPlane(Protocol):
-    def start(self, work: ClaimedIntent) -> None:
+    def start(self, work: ClaimedReasonRun) -> None:
         ...
 
-    def heartbeat(self, work: ClaimedIntent) -> None:
+    def heartbeat(self, work: ClaimedReasonRun) -> None:
         ...
 
-    def input(self, work: ClaimedIntent) -> ExecutionInput:
+    def input(self, work: ClaimedReasonRun) -> ExecutionInput:
         ...
 
     def open_reason_workspace(
         self,
-        work: ClaimedIntent,
+        work: ClaimedReasonRun,
         *,
         context_revision: int,
     ) -> ReasonWorkspace:
         ...
 
-    def submit_reason_workspace(
+    def reason_workspace_status(
         self,
-        work: ClaimedIntent,
+        work: ClaimedReasonRun,
         *,
         workspace_id: str,
-        draft: WorkspaceDraft,
+    ) -> WorkspaceStatus:
+        ...
+
+    def commit_reason_workspace(
+        self,
+        work: ClaimedReasonRun,
+        *,
+        workspace_id: str,
     ) -> CommitResult:
+        ...
+
+    def begin_conclude(self, work: ClaimedReasonRun) -> None:
         ...
 
     def abandon_reason_workspace(
         self,
-        work: ClaimedIntent,
+        work: ClaimedReasonRun,
         *,
         workspace_id: str,
         failure_reason: str,
     ) -> None:
         ...
 
-    def release(self, work: ClaimedIntent, command: ReleaseIntentCommand) -> None:
+    def release(self, work: ClaimedReasonRun, command: ReleaseIntentCommand) -> None:
         ...
 
 
@@ -89,7 +114,7 @@ class ReasonRunner:
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
         self.cancellation = cancellation
 
-    def run(self, work: ClaimedIntent, executor: ReasonExecutor) -> CommitResult:
+    def run(self, work: ClaimedReasonRun, executor: ReasonExecutor) -> CommitResult:
         heartbeat = LeaseHeartbeat(
             lambda: self.control_plane.heartbeat(work),
             interval_seconds=self.heartbeat_interval_seconds,
@@ -106,16 +131,26 @@ class ReasonRunner:
                 work,
                 context_revision=execution_input.context_revision,
             )
-            raw_output = executor.execute(
-                execution_input,
-                lease_active=heartbeat.is_active,
-            )
-            draft = WorkspaceDraft.model_validate(raw_output)
+            try:
+                raw_output = executor.execute(
+                    execution_input,
+                    workspace=workspace,
+                    lease_active=heartbeat.is_active,
+                )
+                self._validate_finish_and_workspace(work, workspace, raw_output)
+            except (ReasonExecutionTimeout, ReasonPlanError, StageOutputError) as exc:
+                self._conclude(
+                    work,
+                    executor,
+                    execution_input,
+                    workspace,
+                    heartbeat,
+                    reason=str(exc),
+                )
             heartbeat.ensure_active()
-            return self.control_plane.submit_reason_workspace(
+            return self.control_plane.commit_reason_workspace(
                 work,
                 workspace_id=workspace.id,
-                draft=draft,
             )
         except LeaseLostError:
             self._close_failed_attempt(
@@ -133,7 +168,7 @@ class ReasonRunner:
                 failure_class="transient",
             )
             raise
-        except (ReasonExecutionTimeout, ReasonPlanError, ValidationError):
+        except (ReasonExecutionTimeout, ReasonPlanError, StageOutputError):
             self._close_failed_attempt(
                 work,
                 workspace,
@@ -152,9 +187,53 @@ class ReasonRunner:
         finally:
             heartbeat.stop()
 
+    def _conclude(
+        self,
+        work: ClaimedReasonRun,
+        executor: ReasonExecutor,
+        execution_input: ExecutionInput,
+        workspace: ReasonWorkspace,
+        heartbeat: LeaseHeartbeat,
+        *,
+        reason: str,
+    ) -> None:
+        heartbeat.ensure_active()
+        bounded_closeout(
+            execution_input=execution_input,
+            begin=lambda: self.control_plane.begin_conclude(work),
+            conclude=lambda attempt_input, attempt_reason: executor.conclude(
+                attempt_input,
+                workspace=workspace,
+                reason=attempt_reason,
+                lease_active=heartbeat.is_active,
+            ),
+            validate=lambda _attempt_input, raw_output: self._validate_finish_and_workspace(
+                work,
+                workspace,
+                raw_output,
+            ),
+            reason=reason,
+            retry_errors=(ReasonPlanError, StageOutputError),
+            default_timeout_seconds=120,
+        )
+
+    def _validate_finish_and_workspace(
+        self,
+        work: ClaimedReasonRun,
+        workspace: ReasonWorkspace,
+        raw_output: object,
+    ) -> None:
+        require_finish(str(raw_output))
+        status = self.control_plane.reason_workspace_status(
+            work,
+            workspace_id=workspace.id,
+        )
+        if not status.ready:
+            raise ReasonPlanError("；".join(status.errors) or "Reason Workspace 未就绪")
+
     def _close_failed_attempt(
         self,
-        work: ClaimedIntent,
+        work: ClaimedReasonRun,
         workspace: ReasonWorkspace | None,
         *,
         failure_kind: str,
@@ -182,8 +261,8 @@ class ReasonRunner:
             )
         except BaseException:
             logger.exception(
-                "failed to release Reason Intent %s/%s after %s",
+                "failed to release ReasonRun %s/%s after %s",
                 work.task_id,
-                work.intent_id,
+                work.reason_run_id,
                 failure_kind,
             )

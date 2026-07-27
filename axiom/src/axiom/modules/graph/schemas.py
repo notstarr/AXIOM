@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class Fact(BaseModel):
@@ -57,6 +57,7 @@ class Intent(BaseModel):
 class TaskGraph(BaseModel):
     facts: list[Fact]
     intents: list[Intent]
+    goal_from_fact_ids: list[str] = Field(default_factory=list)
 
 
 class UpdateFact(BaseModel):

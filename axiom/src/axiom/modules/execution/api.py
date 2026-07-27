@@ -11,7 +11,9 @@ from axiom.modules.execution.schemas import (
     CompleteExploreCommand,
     ExecutionInput,
     ExploreCompleted,
+    ExploreVulnerabilityRecorded,
     LeaseCommand,
+    ReportExploreVulnerabilityCommand,
     ReleaseIntentCommand,
     ReleasedIntent,
     StartedIntent,
@@ -112,6 +114,23 @@ def complete_explore(
     container: Container = Depends(get_container),
 ) -> ExploreCompleted:
     return container.execution.complete_explore(
+        task_id=task_id,
+        intent_id=intent_id,
+        command=body,
+    )
+
+
+@router.post(
+    "/tasks/{task_id}/intents/{intent_id}/explore-vulnerabilities",
+    response_model=ExploreVulnerabilityRecorded,
+)
+def report_explore_vulnerability(
+    task_id: str,
+    intent_id: str,
+    body: ReportExploreVulnerabilityCommand,
+    container: Container = Depends(get_container),
+) -> ExploreVulnerabilityRecorded:
+    return container.execution.report_explore_vulnerability(
         task_id=task_id,
         intent_id=intent_id,
         command=body,

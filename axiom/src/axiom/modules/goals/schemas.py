@@ -53,6 +53,7 @@ class GoalEvaluation(GoalAssessment):
     id: str
     task_id: str
     intent_id: str | None = None
+    reason_run_id: str | None = None
     workspace_id: str | None = None
     evaluator: str
     created_at: str

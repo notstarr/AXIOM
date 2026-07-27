@@ -5,7 +5,13 @@ from typing import Any
 import httpx
 
 from axiom.dispatcher.heartbeat import LeaseLostError
-from axiom.dispatcher.schemas import ClaimedIntent, DispatcherSnapshot
+from axiom.dispatcher.schemas import (
+    ClaimAction,
+    ClaimedIntent,
+    ClaimedWork,
+    DispatcherSnapshot,
+)
+from axiom.modules.dispatch.schemas import RecoveryReport
 from axiom.modules.execution.schemas import (
     ActivityCommand,
     BootstrapCompleted,
@@ -16,8 +22,15 @@ from axiom.modules.execution.schemas import (
     ReleaseIntentCommand,
     StartedIntent,
 )
-from axiom.modules.dispatch.schemas import RecoveryReport
-from axiom.modules.reason.schemas import CommitResult, ReasonWorkspace, WorkspaceDraft
+from axiom.modules.reason.schemas import (
+    ClaimedReasonRun,
+    CommitResult,
+    ReasonReconcileReport,
+    ReasonWorkspace,
+    ReleasedReasonRun,
+    StartedReasonRun,
+    WorkspaceStatus,
+)
 from axiom.modules.settings.schemas import RuntimeSettings
 from axiom.modules.workers.schemas import Worker
 
@@ -40,7 +53,9 @@ class HttpControlPlane:
         timeout_seconds: float = 20.0,
         client: httpx.Client | None = None,
     ):
-        self.base_url = base_url.rstrip("/") + "/api/v1"
+        self.api_url = base_url.rstrip("/")
+        self.base_url = self.api_url + "/api/v1"
+        self.service_token = service_token
         self._headers = {"content-type": "application/json"}
         if service_token:
             self._headers["authorization"] = f"Bearer {service_token}"
@@ -65,6 +80,35 @@ class HttpControlPlane:
     def runtime_settings(self) -> RuntimeSettings:
         return RuntimeSettings.model_validate(self._request("GET", "/settings/runtime"))
 
+    def mark_runtime_settings_applied(self, version: int) -> RuntimeSettings:
+        return RuntimeSettings.model_validate(
+            self._request("POST", "/settings/runtime/applied", {"version": version})
+        )
+
+    def reconcile_reason_runs(self) -> ReasonReconcileReport:
+        return ReasonReconcileReport.model_validate(
+            self._request("POST", "/dispatch/reason-runs/reconcile", {})
+        )
+
+    def claim_work(self, action: ClaimAction) -> ClaimedWork | None:
+        if action.intent_id:
+            path = f"/dispatch/tasks/{action.task_id}/intents/{action.intent_id}/claim"
+            model = ClaimedIntent
+        else:
+            assert action.reason_run_id is not None
+            path = (
+                f"/dispatch/tasks/{action.task_id}/reason-runs/"
+                f"{action.reason_run_id}/claim"
+            )
+            model = ClaimedReasonRun
+        try:
+            payload = self._request("POST", path, {"worker_name": action.worker_name})
+        except ControlPlaneError as exc:
+            if exc.status_code == 409:
+                return None
+            raise
+        return model.model_validate(payload)
+
     def claim(
         self,
         *,
@@ -72,17 +116,15 @@ class HttpControlPlane:
         intent_id: str,
         worker_name: str,
     ) -> ClaimedIntent | None:
-        try:
-            payload = self._request(
-                "POST",
-                f"/dispatch/tasks/{task_id}/intents/{intent_id}/claim",
-                {"worker_name": worker_name},
+        result = self.claim_work(
+            ClaimAction(
+                task_id=task_id,
+                intent_id=intent_id,
+                worker_name=worker_name,
+                kind="bootstrap",
             )
-        except ControlPlaneError as exc:
-            if exc.status_code == 409:
-                return None
-            raise
-        return ClaimedIntent.model_validate(payload)
+        )
+        return result if isinstance(result, ClaimedIntent) else None
 
     def recover_stale(self, *, stale_after_seconds: int) -> RecoveryReport:
         return RecoveryReport.model_validate(
@@ -93,12 +135,13 @@ class HttpControlPlane:
             )
         )
 
-    def start(self, work: ClaimedIntent) -> StartedIntent:
-        return StartedIntent.model_validate(
-            self._request("POST", self._work_path("start", work), self._lease(work))
-        )
+    def start(self, work: ClaimedWork) -> StartedIntent | StartedReasonRun:
+        payload = self._request("POST", self._work_path("start", work), self._lease(work))
+        if isinstance(work, ClaimedReasonRun):
+            return StartedReasonRun.model_validate(payload)
+        return StartedIntent.model_validate(payload)
 
-    def heartbeat(self, work: ClaimedIntent) -> None:
+    def heartbeat(self, work: ClaimedWork) -> None:
         try:
             self._request("POST", self._work_path("heartbeat", work), self._lease(work))
         except ControlPlaneError as exc:
@@ -106,7 +149,7 @@ class HttpControlPlane:
                 raise LeaseLostError(str(exc)) from exc
             raise
 
-    def activity(self, work: ClaimedIntent, command: ActivityCommand) -> None:
+    def activity(self, work: ClaimedWork, command: ActivityCommand) -> None:
         try:
             self._request(
                 "POST",
@@ -118,12 +161,12 @@ class HttpControlPlane:
                 raise LeaseLostError(str(exc)) from exc
             raise
 
-    def input(self, work: ClaimedIntent) -> ExecutionInput:
+    def input(self, work: ClaimedWork) -> ExecutionInput:
         return ExecutionInput.model_validate(
             self._request("POST", self._work_path("input", work), self._lease(work))
         )
 
-    def begin_conclude(self, work: ClaimedIntent) -> None:
+    def begin_conclude(self, work: ClaimedWork) -> None:
         self._request("POST", self._work_path("conclude", work), self._lease(work))
 
     def complete_bootstrap(
@@ -152,23 +195,28 @@ class HttpControlPlane:
             )
         )
 
-    def release(self, work: ClaimedIntent, command: ReleaseIntentCommand) -> None:
+    def release(
+        self,
+        work: ClaimedWork,
+        command: ReleaseIntentCommand,
+    ) -> ReleasedReasonRun | None:
         try:
-            self._request(
+            payload = self._request(
                 "POST",
                 self._work_path("release", work),
                 command.model_dump(mode="json"),
             )
         except ControlPlaneError as exc:
-            # Release is best-effort and idempotent from the Runner's point of
-            # view.  A stopped Task or superseded lease already has the desired
-            # outcome: this process no longer owns executable work.
             if exc.code != "lease_inactive":
                 raise
+            return None
+        if isinstance(work, ClaimedReasonRun):
+            return ReleasedReasonRun.model_validate(payload)
+        return None
 
     def open_reason_workspace(
         self,
-        work: ClaimedIntent,
+        work: ClaimedReasonRun,
         *,
         context_revision: int,
     ) -> ReasonWorkspace:
@@ -177,25 +225,42 @@ class HttpControlPlane:
                 "POST",
                 f"/tasks/{work.task_id}/reason/workspaces",
                 {
-                    "intent_id": work.intent_id,
+                    "reason_run_id": work.reason_run_id,
                     "lease_id": work.lease_id,
                     "context_revision": context_revision,
                 },
             )
         )
 
-    def submit_reason_workspace(
+    def reason_workspace_status(
         self,
-        work: ClaimedIntent,
+        work: ClaimedReasonRun,
         *,
         workspace_id: str,
-        draft: WorkspaceDraft,
+    ) -> WorkspaceStatus:
+        try:
+            payload = self._request(
+                "POST",
+                f"/reason-workspaces/{workspace_id}/status",
+                self._lease(work),
+            )
+        except ControlPlaneError as exc:
+            if exc.code == "lease_inactive":
+                raise LeaseLostError(str(exc)) from exc
+            raise
+        return WorkspaceStatus.model_validate(payload)
+
+    def commit_reason_workspace(
+        self,
+        work: ClaimedReasonRun,
+        *,
+        workspace_id: str,
     ) -> CommitResult:
         try:
             payload = self._request(
                 "POST",
-                f"/reason-workspaces/{workspace_id}/submit",
-                {"lease_id": work.lease_id, "draft": draft.model_dump(mode="json")},
+                f"/reason-workspaces/{workspace_id}/commit",
+                self._lease(work),
             )
         except ControlPlaneError as exc:
             if exc.code == "lease_inactive":
@@ -205,7 +270,7 @@ class HttpControlPlane:
 
     def abandon_reason_workspace(
         self,
-        work: ClaimedIntent,
+        work: ClaimedReasonRun,
         *,
         workspace_id: str,
         failure_reason: str,
@@ -244,9 +309,14 @@ class HttpControlPlane:
         return response.json()
 
     @staticmethod
-    def _work_path(action: str, work: ClaimedIntent) -> str:
+    def _work_path(action: str, work: ClaimedWork) -> str:
+        if isinstance(work, ClaimedReasonRun):
+            return (
+                f"/dispatch/tasks/{work.task_id}/reason-runs/"
+                f"{work.reason_run_id}/{action}"
+            )
         return f"/dispatch/tasks/{work.task_id}/intents/{work.intent_id}/{action}"
 
     @staticmethod
-    def _lease(work: ClaimedIntent) -> dict[str, str]:
+    def _lease(work: ClaimedWork) -> dict[str, str]:
         return {"lease_id": work.lease_id}

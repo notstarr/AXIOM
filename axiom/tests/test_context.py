@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from protocol_helpers import write_bootstrap_files
+
 
 def _create_task(client, *, goal: str = "验证上下文索引不会直接注入完整证据") -> dict:
     project = client.post("/api/v1/projects", json={"title": "上下文测试"}).json()
@@ -83,25 +85,34 @@ def test_artifact_content_is_only_available_through_expansion(client) -> None:
     ).json()
     lease = {"lease_id": claim["lease_id"]}
     client.post(f"/api/v1/dispatch/tasks/{task['id']}/intents/i001/start", json=lease)
+    execution_input = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/intents/i001/input",
+        json=lease,
+    ).json()
+    write_bootstrap_files(
+        execution_input["run_dir"],
+        {
+            "asset_inventory.md": "# 资产\n\nSECRET-EVIDENCE",
+            "initial_leads.md": "# 线索\n\n验证授权",
+            "findings.md": "# 发现\n\n暂无",
+        },
+    )
     completed = client.post(
         f"/api/v1/dispatch/tasks/{task['id']}/intents/i001/bootstrap-complete",
-        json={
-            **lease,
-            "summary": "完成攻击面收集",
-            "artifacts": {
-                "asset_inventory": "# 资产\n\nSECRET-EVIDENCE",
-                "initial_leads": "# 线索\n\n验证授权",
-                "findings": "# 发现\n\n暂无",
-            },
-        },
+        json=lease,
     )
     assert completed.status_code == 200, completed.text
     artifact_id = completed.json()["artifacts"][0]["id"]
 
     revision = client.post(
         f"/api/v1/tasks/{task['id']}/context",
-        json={"phase": "reason", "intent_id": "i002"},
-    ).json()
+        json={
+            "phase": "reason",
+            "reason_run_id": completed.json()["next_reason_run_id"],
+        },
+    )
+    assert revision.status_code == 200, revision.text
+    revision = revision.json()
     directory = Path(revision["manifest_path"]).parent
     artifact_index = (directory / "artifacts.json").read_text(encoding="utf-8")
     assert "SECRET-EVIDENCE" not in artifact_index

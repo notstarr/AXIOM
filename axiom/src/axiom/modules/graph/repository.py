@@ -6,6 +6,7 @@ from sqlalchemy import Connection, select, update
 
 from axiom.modules.graph.schemas import Fact, Intent, TaskGraph
 from axiom.modules.graph.tables import facts, intent_sources, intents
+from axiom.modules.goals.tables import goal_evaluations
 from axiom.modules.tasks.schemas import Task
 from axiom.shared.ids import initialize_counter
 
@@ -138,9 +139,30 @@ class GraphRepository:
             .where(intents.c.task_id == task_id, intents.c.archived.is_(False))
             .order_by(intents.c.created_at, intents.c.id)
         ).mappings()
+        latest_goal_refs = conn.execute(
+            select(goal_evaluations.c.evidence_refs_json)
+            .where(
+                goal_evaluations.c.task_id == task_id,
+                goal_evaluations.c.achieved.is_(True),
+                goal_evaluations.c.reason_run_id.is_not(None),
+            )
+            .order_by(goal_evaluations.c.created_at.desc(), goal_evaluations.c.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        goal_from_fact_ids = []
+        if latest_goal_refs:
+            goal_from_fact_ids = list(
+                dict.fromkeys(
+                    item_id
+                    for ref in json.loads(latest_goal_refs)
+                    for kind, separator, item_id in [ref.partition(":")]
+                    if separator and kind == "fact" and item_id not in {"origin", "goal"}
+                )
+            )
         return TaskGraph(
             facts=[Fact.model_validate(row) for row in fact_rows],
             intents=[self._intent(conn, row) for row in intent_rows],
+            goal_from_fact_ids=goal_from_fact_ids,
         )
 
     @staticmethod
@@ -189,7 +211,13 @@ class GraphRepository:
         )
 
     @staticmethod
-    def release_active_intents(conn: Connection, task_id: str) -> int:
+    def cancel_active_intents(
+        conn: Connection,
+        task_id: str,
+        *,
+        now: str,
+        failure_kind: str = "task_stopped",
+    ) -> int:
         result = conn.execute(
             update(intents)
             .where(
@@ -197,11 +225,47 @@ class GraphRepository:
                 intents.c.status.in_(["claimed", "running", "concluding"]),
             )
             .values(
+                status="cancelled",
+                worker=None,
+                lease_id=None,
+                claimed_at=None,
+                last_heartbeat_at=None,
+                next_retry_at=None,
+                concluded_at=now,
+                last_failure_kind=failure_kind,
+                failure_class="",
+                activity_kind="cancelled",
+                activity_summary="任务已暂停，当前执行已取消",
+                activity_tool="",
+                activity_updated_at=now,
+            )
+        )
+        return int(result.rowcount or 0)
+
+    @staticmethod
+    def restore_task_stopped_intents(conn: Connection, task_id: str) -> int:
+        result = conn.execute(
+            update(intents)
+            .where(
+                intents.c.task_id == task_id,
+                intents.c.status == "cancelled",
+                intents.c.last_failure_kind == "task_stopped",
+            )
+            .values(
                 status="pending",
                 worker=None,
                 lease_id=None,
                 claimed_at=None,
                 last_heartbeat_at=None,
+                next_retry_at=None,
+                concluded_at=None,
+                last_failure_kind="",
+                failure_class="",
+                activity_kind="pending",
+                activity_summary="任务已恢复，等待空闲 Worker 领取",
+                activity_tool="",
+                activity_started_at=None,
+                activity_updated_at=None,
             )
         )
         return int(result.rowcount or 0)

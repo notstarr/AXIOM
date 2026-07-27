@@ -87,13 +87,15 @@ class ContextRepository:
         conn: Connection,
         *,
         task_id: str,
-        intent_id: str,
+        intent_id: str | None,
+        reason_run_id: str | None,
         lease_id: str,
     ):
         return conn.execute(
             select(context_revisions).where(
                 context_revisions.c.task_id == task_id,
                 context_revisions.c.intent_id == intent_id,
+                context_revisions.c.reason_run_id == reason_run_id,
                 context_revisions.c.lease_id == lease_id,
             )
         ).mappings().one_or_none()

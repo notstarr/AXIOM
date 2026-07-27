@@ -11,6 +11,34 @@
 
   const apiRoot = '/api/v1';
   const knowledgeCounts = new Map();
+  const runtimeConfigKeys = [
+    'runner_interval_seconds',
+    'global_max_active_runs',
+    'global_max_active_tasks',
+    'per_task_max_active_runs',
+    'per_task_explore_concurrency',
+    'heartbeat_interval_seconds',
+    'lease_timeout_seconds',
+    'execution_retry_limit',
+    'infrastructure_retry_limit',
+    'retry_base_seconds',
+    'retry_max_seconds',
+    'worker_failure_cooldown_seconds',
+    'bootstrap_execute_seconds',
+    'bootstrap_conclude_seconds',
+    'reason_execute_seconds',
+    'reason_conclude_seconds',
+    'reason_batch_size',
+    'reason_low_watermark',
+    'reason_max_wait_seconds',
+    'reason_min_interval_seconds',
+    'reason_target_open_intents',
+    'reason_max_new_intents_per_run',
+    'explore_execute_min_seconds',
+    'explore_execute_max_seconds',
+    'explore_conclude_min_seconds',
+    'explore_conclude_max_seconds',
+  ];
   const splitLines = value => String(value || '').split(/[\n,]+/).map(item => item.trim()).filter(Boolean);
   const taskStatus = status => ({ running: 'active', stopped: 'stopped', completed: 'completed', failed: 'failed', draft: 'stopped' }[status] || status);
   const v2Status = status => ({ active: 'running', stopped: 'stopped' }[status] || status);
@@ -52,6 +80,20 @@
   }
 
   function mapTask(task) {
+    const activeReasonRun = task.active_reason_run || null;
+    const legacyReason = !activeReasonRun && task.reason_worker ? {
+      id: '',
+      status: 'running',
+      worker: task.reason_worker,
+      trigger: 'legacy',
+      last_heartbeat_at: task.reason_heartbeat_at,
+      activity_kind: task.reason_activity_kind || 'analyzing',
+      activity_summary: task.reason_activity_summary || '正在分析任务上下文并规划下一批 Intent',
+      activity_tool: task.reason_activity_tool || '',
+      activity_started_at: task.reason_activity_started_at || task.reason_heartbeat_at,
+      activity_updated_at: task.reason_activity_updated_at || task.reason_heartbeat_at,
+      created_at: task.reason_activity_started_at || task.reason_heartbeat_at,
+    } : null;
     return {
       id: task.id,
       parent_project_id: task.project_id,
@@ -67,19 +109,28 @@
       worker_pool: task.worker_pool || [],
       task_scope: task.scope || { enabled: false, targets: [], exclude: [], notes: '' },
       legacy_readonly: !!task.legacy_readonly,
-      // Reason can run alongside Explore. Its card follows the durable
-      // lease, not the task phase, because phase=explore may still have
-      // pending Intents being auto-claimed by Explore workers.
-      reason: task.reason_worker ? {
-        worker: task.reason_worker,
-        trigger: 'scheduler',
-        last_heartbeat_at: task.reason_heartbeat_at,
-        activity_kind: task.reason_activity_kind || 'analyzing',
-        activity_summary: task.reason_activity_summary || '正在分析任务上下文并规划下一批 Intent',
-        activity_tool: task.reason_activity_tool || '',
-        activity_started_at: task.reason_activity_started_at || task.reason_heartbeat_at,
-        activity_updated_at: task.reason_activity_updated_at || task.reason_heartbeat_at,
-      } : null,
+      // ReasonRun is an execution activity, not an Intent/graph node.  Keep a
+      // narrow legacy fallback for historical payloads only.
+      reason: activeReasonRun ? {
+        id: activeReasonRun.id,
+        status: activeReasonRun.status,
+        worker: activeReasonRun.worker || '等待 Reason Worker',
+        trigger: activeReasonRun.trigger || 'scheduler',
+        trigger_payload: activeReasonRun.trigger_payload || {},
+        lease_id: activeReasonRun.lease_id || '',
+        settings_version: activeReasonRun.settings_version,
+        execute_timeout_seconds: activeReasonRun.execute_timeout_seconds,
+        conclude_timeout_seconds: activeReasonRun.conclude_timeout_seconds,
+        last_heartbeat_at: activeReasonRun.last_heartbeat_at,
+        activity_kind: activeReasonRun.activity_kind || activeReasonRun.status || 'pending',
+        activity_summary: activeReasonRun.activity_summary || (activeReasonRun.status === 'pending'
+          ? '等待可用的 Reason Worker 领取'
+          : '正在分析任务上下文并规划下一批 Intent'),
+        activity_tool: activeReasonRun.activity_tool || '',
+        activity_started_at: activeReasonRun.activity_started_at || activeReasonRun.created_at,
+        activity_updated_at: activeReasonRun.activity_updated_at || activeReasonRun.last_heartbeat_at || activeReasonRun.created_at,
+        created_at: activeReasonRun.created_at,
+      } : legacyReason,
       created_at: task.created_at,
       updated_at: task.updated_at,
       completed_at: task.completed_at,
@@ -226,6 +277,7 @@
       project: mappedTask,
       facts: graph.facts,
       intents: graph.intents.map(mapIntent),
+      goal_from_fact_ids: graph.goal_from_fact_ids || [],
       hints,
       todos,
       vulns: vulnerabilities.map(item => mapVulnerability(item, task, project)),
@@ -243,6 +295,7 @@
     const config = worker?.config || {};
     return {
       name: worker.name,
+      persisted_name: worker.name,
       type: worker.worker_type || 'pi',
       task_types: worker.capabilities || [],
       max_running: worker.max_running,
@@ -268,37 +321,17 @@
     };
   }
 
-  async function dispatchSettings() {
-    const [runtime, workers] = await Promise.all([
-      request('GET', '/settings/runtime'),
-      request('GET', '/workers'),
-    ]);
+  function mapDispatchSettings(runtime, workers) {
     const config = runtime.config;
     return {
-      runtime_interval: config.runner_interval_seconds,
-      runtime_max_workers: config.max_parallel,
-      runtime_max_running_projects: config.max_parallel,
-      runtime_max_project_workers: Math.max(1, ...workers.map(worker => Number(worker.max_running || 1))),
-      runtime_healthcheck_timeout: config.lease_timeout_seconds,
-      runtime_prompt_group: 'v2',
-      bootstrap_timeout: config.bootstrap_execute_seconds,
-      bootstrap_conclude_timeout: config.bootstrap_conclude_seconds,
-      reason_timeout: config.reason_execute_seconds,
-      reason_max_intents: config.reason_target_open_intents,
-      depth_reason_max_intents: 4,
-      reason_batch_size: config.reason_batch_size,
-      reason_low_watermark: config.reason_low_watermark,
-      reason_max_wait_seconds: config.reason_max_wait_seconds,
-      reason_min_interval_seconds: 0,
-      reason_target_open_intents: config.reason_target_open_intents,
-      bootstrap_worker_count: workers.filter(worker => !worker.disabled && (worker.capabilities || []).includes('bootstrap')).length,
-      reason_worker_count: workers.filter(worker => !worker.disabled && (worker.capabilities || []).includes('reason')).length,
-      explore_worker_count: workers.filter(worker => !worker.disabled && (worker.capabilities || []).includes('explore')).length,
+      ...config,
+      bootstrap_concurrency: 1,
+      reason_concurrency: 1,
       workers: workers.map(mapWorker),
       config_version: runtime.version,
       config_updated_at: runtime.updated_at,
-      dispatcher_applied_version: runtime.version,
-      dispatcher_applied_at: runtime.updated_at,
+      dispatcher_applied_version: runtime.applied_version ?? 0,
+      dispatcher_applied_at: runtime.applied_at || '',
       effective_workers: workers.filter(worker => !worker.disabled).map(worker => ({ name: worker.name })),
       proxy_url: config.network_proxy_url || '',
       proxy_username: '',
@@ -307,57 +340,73 @@
     };
   }
 
+  async function dispatchSettings() {
+    const [runtime, workers] = await Promise.all([
+      request('GET', '/settings/runtime'),
+      request('GET', '/workers'),
+    ]);
+    return mapDispatchSettings(runtime, workers);
+  }
+
   async function saveDispatch(body) {
     const current = await request('GET', '/settings/runtime');
-    const config = {
-      ...current.config,
-      runner_interval_seconds: Number(body.runtime_interval || current.config.runner_interval_seconds),
-      max_parallel: Number(body.runtime_max_workers || current.config.max_parallel),
-      lease_timeout_seconds: Number(body.runtime_healthcheck_timeout || current.config.lease_timeout_seconds),
-      bootstrap_execute_seconds: Number(body.bootstrap_timeout || current.config.bootstrap_execute_seconds),
-      bootstrap_conclude_seconds: Number(body.bootstrap_conclude_timeout || current.config.bootstrap_conclude_seconds),
-      reason_execute_seconds: Number(body.reason_timeout || current.config.reason_execute_seconds),
-      reason_batch_size: Number(body.reason_batch_size ?? current.config.reason_batch_size),
-      reason_low_watermark: Number(body.reason_low_watermark ?? current.config.reason_low_watermark),
-      reason_max_wait_seconds: Number(body.reason_max_wait_seconds ?? current.config.reason_max_wait_seconds),
-      reason_target_open_intents: Number(body.reason_target_open_intents || body.reason_max_intents || current.config.reason_target_open_intents),
-      network_proxy_mode: body.proxy_enabled ? 'http' : current.config.network_proxy_mode,
-      network_proxy_url: body.proxy_url || current.config.network_proxy_url,
-    };
-    await request('PUT', '/settings/runtime', { config, actor: 'human.frontend' });
-
-    const existing = await request('GET', '/workers');
-    const nextNames = new Set();
-    for (const worker of body.workers || []) {
-      const capabilities = (worker.task_types || []).filter(item => ['bootstrap', 'reason', 'explore'].includes(item));
-      if (!worker.name || !capabilities.length) continue;
-      nextNames.add(worker.name);
-      const old = existing.find(item => item.name === worker.name);
-      const oldConfig = old?.config || {};
-      const nextConfig = {
-        ...oldConfig,
-        model: worker.pi_model || '',
-        base_url: worker.pi_base_url || '',
-        provider_api: worker.pi_provider_api || 'openai-completions',
-        context_window: Number(worker.pi_model_context_window || 200000),
-        thinking: worker.pi_thinking || 'off',
-        thinking_capable: worker.pi_thinking_capable || 'unknown',
-        thinking_tested_at: worker.pi_thinking_tested_at || '',
-        environment: { ...(oldConfig.environment || {}) },
-      };
-      delete nextConfig.env;
-      if (worker.pi_api_key) nextConfig.api_key = worker.pi_api_key;
-      await request('PUT', `/workers/${encodeURIComponent(worker.name)}`, {
-        worker_type: 'pi',
-        capabilities,
-        max_running: Number(worker.max_running || 1),
-        priority: Number(worker.priority || 0),
-        config: nextConfig,
-        disabled: !!worker.disabled,
-      });
+    const expectedVersion = Number(body.config_version ?? current.version);
+    if (expectedVersion !== Number(current.version)) {
+      const error = new Error(`配置已被其他操作更新：页面 v${expectedVersion}，当前 v${current.version}，请刷新后重试`);
+      error.status = 409;
+      throw error;
     }
-    for (const worker of existing) {
-      if (!nextNames.has(worker.name)) await request('DELETE', `/workers/${encodeURIComponent(worker.name)}`);
+    const config = { ...current.config };
+    for (const key of runtimeConfigKeys) {
+      if (body[key] !== undefined && body[key] !== null && body[key] !== '') {
+        config[key] = Number(body[key]);
+      }
+    }
+    if (body.network_proxy_mode !== undefined) config.network_proxy_mode = body.network_proxy_mode;
+    if (body.network_proxy_url !== undefined) config.network_proxy_url = body.network_proxy_url;
+    const savedRuntime = await request('PUT', '/settings/runtime', {
+      config,
+      expected_version: expectedVersion,
+      actor: 'human.frontend',
+    });
+    const workers = await request('GET', '/workers');
+    return mapDispatchSettings(savedRuntime, workers);
+  }
+
+  async function saveWorker(persistedName, body) {
+    const targetName = String(body.name || '').trim();
+    if (!targetName) throw new Error('Worker 名称不能为空');
+    const capabilities = (body.task_types || [])
+      .filter(item => ['bootstrap', 'reason', 'explore'].includes(item));
+    if (!capabilities.length) throw new Error(`Worker ${targetName} 至少要勾选一个参与阶段`);
+
+    const existing = persistedName
+      ? await request('GET', `/workers/${encodeURIComponent(persistedName)}`).catch(() => null)
+      : null;
+    const oldConfig = existing?.config || {};
+    const nextConfig = {
+      ...oldConfig,
+      model: body.pi_model || '',
+      base_url: body.pi_base_url || '',
+      provider_api: body.pi_provider_api || 'openai-completions',
+      context_window: Number(body.pi_model_context_window ?? 200000),
+      thinking: body.pi_thinking || 'off',
+      thinking_capable: body.pi_thinking_capable || 'unknown',
+      thinking_tested_at: body.pi_thinking_tested_at || '',
+      environment: { ...(oldConfig.environment || {}) },
+    };
+    delete nextConfig.env;
+    if (body.pi_api_key) nextConfig.api_key = body.pi_api_key;
+    await request('PUT', `/workers/${encodeURIComponent(targetName)}`, {
+      worker_type: 'pi',
+      capabilities,
+      max_running: Number(body.max_running ?? 1),
+      priority: Number(body.priority ?? 0),
+      config: nextConfig,
+      disabled: !!body.disabled,
+    });
+    if (persistedName && persistedName !== targetName) {
+      await request('DELETE', `/workers/${encodeURIComponent(persistedName)}`);
     }
     return dispatchSettings();
   }
@@ -374,11 +423,11 @@
       base_url: config.guard_model_base_url,
       model: config.guard_model_name,
       timeout_seconds: config.guard_timeout_seconds,
-      whitelist_tools: config.guard_whitelist_tools || [],
-      whitelist_bash_verbs: config.guard_whitelist_bash_verbs || [],
-      hard_block_rules: config.guard_hard_block_rules || [],
+      whitelist_tools: config.guard_whitelist_tools ?? defaults.whitelist_tools ?? [],
+      whitelist_bash_verbs: config.guard_whitelist_bash_verbs ?? defaults.whitelist_bash_verbs ?? [],
+      hard_block_rules: config.guard_hard_block_rules ?? defaults.hard_block_rules ?? [],
       default_hard_block_rules: defaults.hard_block_rules || [],
-      system_prompt: config.guard_system_prompt || '',
+      system_prompt: config.guard_system_prompt ?? defaults.system_prompt ?? '',
       default_system_prompt: defaults.system_prompt || '',
       has_key: !!config.guard_api_key,
       masked_key: config.guard_api_key ? '••••••••' : '',
@@ -390,20 +439,24 @@
     const runtime = await request('GET', '/settings/runtime');
     const config = {
       ...runtime.config,
-      guard_mode: body.mode || runtime.config.guard_mode,
+      guard_mode: body.mode ?? runtime.config.guard_mode,
       guard_enabled_default: body.enabled_default !== undefined
         ? !!body.enabled_default
         : runtime.config.guard_enabled_default,
-      guard_model_base_url: body.base_url || runtime.config.guard_model_base_url,
-      guard_model_name: body.model || runtime.config.guard_model_name,
-      guard_timeout_seconds: Number(body.timeout_seconds || runtime.config.guard_timeout_seconds),
-      guard_system_prompt: body.system_prompt || runtime.config.guard_system_prompt,
-      guard_whitelist_tools: body.whitelist_tools || runtime.config.guard_whitelist_tools,
-      guard_whitelist_bash_verbs: body.whitelist_bash_verbs || runtime.config.guard_whitelist_bash_verbs,
-      guard_hard_block_rules: body.hard_block_rules || runtime.config.guard_hard_block_rules,
+      guard_model_base_url: body.base_url ?? runtime.config.guard_model_base_url,
+      guard_model_name: body.model ?? runtime.config.guard_model_name,
+      guard_timeout_seconds: Number(body.timeout_seconds ?? runtime.config.guard_timeout_seconds),
+      guard_system_prompt: body.system_prompt ?? runtime.config.guard_system_prompt,
+      guard_whitelist_tools: body.whitelist_tools ?? runtime.config.guard_whitelist_tools,
+      guard_whitelist_bash_verbs: body.whitelist_bash_verbs ?? runtime.config.guard_whitelist_bash_verbs,
+      guard_hard_block_rules: body.hard_block_rules ?? runtime.config.guard_hard_block_rules,
     };
     if (key !== undefined) config.guard_api_key = key;
-    await request('PUT', '/settings/runtime', { config, actor: 'human.frontend' });
+    await request('PUT', '/settings/runtime', {
+      config,
+      expected_version: runtime.version,
+      actor: 'human.frontend',
+    });
     return judgeSettings();
   }
 
@@ -546,6 +599,16 @@
 
     if (path === '/settings/dispatch' && method === 'GET') return dispatchSettings();
     if (path === '/settings/dispatch' && method === 'PUT') return saveDispatch(body);
+    if ((match = path.match(/^\/settings\/dispatch\/workers\/([^/]+)$/))) {
+      const persistedName = decodeURIComponent(match[1]);
+      if (method === 'PUT') return saveWorker(persistedName === '__new__' ? '' : persistedName, body);
+      if (method === 'DELETE') {
+        if (persistedName !== '__new__') {
+          await request('DELETE', `/workers/${encodeURIComponent(persistedName)}`);
+        }
+        return dispatchSettings();
+      }
+    }
     if ((match = path.match(/^\/settings\/dispatch\/workers\/([^/]+)\/toggle$/)) && method === 'PUT') {
       const workers = await request('GET', '/workers');
       const worker = workers.find(item => item.name === decodeURIComponent(match[1]));

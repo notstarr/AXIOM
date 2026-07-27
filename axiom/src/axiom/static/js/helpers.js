@@ -68,43 +68,95 @@ window.AxiomModules.helpers = {
       );
     },
 
+    intentLifecycleState(intent) {
+      const status = String(intent?.status || '').trim().toLowerCase();
+      const states = {
+        completed: 'completed',
+        done: 'completed',
+        concluded: 'completed',
+        cancelled: 'cancelled',
+        canceled: 'cancelled',
+        failed: 'failed',
+        rejected: 'failed',
+        retry_exhausted: 'failed',
+        claimed: 'running',
+        running: 'running',
+        concluding: 'running',
+        in_progress: 'running',
+        working: 'running',
+        active: 'running',
+        pending: 'pending',
+        queued: 'pending',
+      };
+      if (states[status]) return states[status];
+
+      // Only legacy records without a known lifecycle status may fall back to
+      // graph/worker fields. A retained worker never makes a V2 pending or
+      // completed Intent active again.
+      if (intent?.to || intent?.concluded_at) return 'completed';
+      if (!status && intent?.worker) return 'running';
+      return 'pending';
+    },
+
     openIntentNodeType(intent) {
-      if (this.isBootstrapIntent(intent)) return intent.worker ? 'bootstrap_running' : 'bootstrap_pending';
-      return intent.worker ? 'in_progress' : 'unclaimed';
+      const state = this.intentLifecycleState(intent);
+      if (state === 'completed') return 'intent_completed';
+      if (state === 'cancelled') return 'intent_cancelled';
+      if (state === 'failed') return 'intent_failed';
+      if (this.isBootstrapIntent(intent)) return state === 'running' ? 'bootstrap_running' : 'bootstrap_pending';
+      return state === 'running' ? 'in_progress' : 'unclaimed';
     },
 
     openIntentNodeLabel(intent) {
-      if (this.isBootstrapIntent(intent)) return intent.worker ? '运行中' : '等待中';
-      return '?';
+      const state = this.intentLifecycleState(intent);
+      if (state === 'completed') return '✓';
+      if (state === 'cancelled') return '×';
+      if (state === 'failed') return '!';
+      if (this.isBootstrapIntent(intent)) return state === 'running' ? '运行中' : '等待中';
+      return state === 'running' ? '…' : '?';
     },
 
     openIntentNodeSize(intent) {
-      if (this.isBootstrapIntent(intent)) return { width: 92, height: 48 };
+      const nodeType = this.openIntentNodeType(intent);
+      if (['bootstrap_pending', 'bootstrap_running'].includes(nodeType)) return { width: 92, height: 48 };
+      if (nodeType === 'in_progress') return { width: 26, height: 26 };
+      if (nodeType.startsWith('intent_')) return { width: 24, height: 24 };
       return { width: 22, height: 22 };
     },
 
     intentDotClass(i) {
-      if (i.to) return 'bg-teal-400';
-      if (this.isBootstrapIntent(i)) return i.worker ? 'bg-orange-400' : 'bg-orange-200';
-      return i.worker ? 'bg-amber-400' : 'bg-slate-300';
+      const state = this.intentLifecycleState(i);
+      if (state === 'completed') return 'bg-teal-400';
+      if (state === 'cancelled') return 'bg-slate-300';
+      if (state === 'failed') return 'bg-rose-400';
+      if (this.isBootstrapIntent(i)) return state === 'running' ? 'bg-orange-400' : 'bg-orange-200';
+      if (state === 'running') return 'bg-amber-400';
+      if (i.next_retry_at || i.last_failure_kind || i.retry_count || i.infrastructure_retry_count) return 'bg-amber-300';
+      return 'bg-slate-300';
     },
     intentStatusClass(i) {
-      if (i.to) return 'text-teal-600';
-      if (this.isBootstrapIntent(i)) return i.worker ? 'text-orange-600' : 'text-orange-400';
-      return i.worker ? 'text-amber-600' : 'text-slate-400';
+      const state = this.intentLifecycleState(i);
+      if (state === 'completed') return 'text-teal-600';
+      if (state === 'cancelled') return 'text-slate-500';
+      if (state === 'failed') return 'text-rose-600';
+      if (this.isBootstrapIntent(i)) return state === 'running' ? 'text-orange-600' : 'text-orange-400';
+      if (state === 'running') return 'text-amber-600';
+      if (i.next_retry_at || i.last_failure_kind || i.retry_count || i.infrastructure_retry_count) return 'text-amber-600';
+      return 'text-slate-400';
     },
     intentStatusLabel(i) {
-      if (i.to) return '已结束';
-      if (i.status === 'cancelled') return '已取消';
-      if (i.status === 'failed' && i.last_failure_kind === 'retry_exhausted') return '失败·待 Reason 重规划';
-      if (i.status === 'failed') return '执行失败';
-      if (['claimed', 'running', 'concluding'].includes(i.status)) {
+      const state = this.intentLifecycleState(i);
+      if (state === 'completed') return '已完成';
+      if (state === 'cancelled') return '已取消';
+      if (state === 'failed' && i.last_failure_kind === 'retry_exhausted') return '失败·待 Reason 重规划';
+      if (state === 'failed') return '执行失败';
+      if (state === 'running') {
         if (this.isBootstrapIntent(i)) return 'Bootstrap 运行中';
         return '进行中';
       }
       if (i.next_retry_at || i.last_failure_kind || i.retry_count || i.infrastructure_retry_count) return '等待重试';
-      if (this.isBootstrapIntent(i)) return i.worker ? 'Bootstrap 运行中' : 'Bootstrap 等待中';
-      return i.worker ? '进行中' : '等待 Worker';
+      if (this.isBootstrapIntent(i)) return 'Bootstrap 等待中';
+      return '等待 Worker';
     },
 
     vulnStatusClass(status) {

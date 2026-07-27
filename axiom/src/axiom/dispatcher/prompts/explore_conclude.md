@@ -1,15 +1,9 @@
 # AXIOM Explore 收口
 
-停止继续扩展测试。所有产出必须使用中文。
+停止继续扩展测试，只复用当前会话已经获得的证据。所有 Artifact 内容和漏洞说明必须使用中文。
 
-请复用当前会话已经获得的证据，读取运行目录中的已有文件，完成以下事项：
+1. 在 `{run_dir}/artifacts/` 整理至少一个非空、可审计的证据文件；不得扫描或注册 `sessions/`、`process/`、`models.json`、凭证和日志。
+2. 若已达到漏洞标准，使用 `axiom explore vulnerability report` 逐条补报；不要手动编辑 `explore_result.json`。
+3. 读取检查 Artifact 文件，确认路径和内容可用。
 
-1. 将完整证据整理为至少一个 Artifact；
-2. 写出一条完整、准确、不过度推断的中文 Fact；
-3. 按 Explore 输出契约写入 `{run_dir}/explore_result.json`；
-4. 自行读取并检查 JSON 后立即结束。
-
-- Task：`{task_id}`
-- Intent：`{intent_id}`
-- 当前 Intent：{intent_description}
-- 运行目录：`{run_dir}`
+最后一条 assistant 文本必须严格等于 `FINISH`，不得附带任何说明。

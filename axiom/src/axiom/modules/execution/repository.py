@@ -5,6 +5,7 @@ import json
 from sqlalchemy import Connection, select, update
 
 from axiom.modules.graph.tables import facts, intent_sources, intents
+from axiom.modules.reason.tables import reason_run_sources
 from axiom.modules.tasks.tables import task_hints, tasks
 
 
@@ -160,7 +161,7 @@ class ExecutionRepository:
                 status="concluding",
                 last_heartbeat_at=now,
                 activity_kind="concluding",
-                activity_summary="正在整理证据并写入结构化结果",
+                activity_summary="正在整理阶段产物并完成收口校验",
                 activity_tool="",
                 activity_updated_at=now,
             )
@@ -254,20 +255,14 @@ class ExecutionRepository:
         )
 
     @staticmethod
-    def reason_intent_for_fact(conn: Connection, task_id: str, fact_id: str) -> str | None:
+    def reason_run_for_fact(conn: Connection, task_id: str, fact_id: str) -> str | None:
         return conn.execute(
-            select(intents.c.id)
-            .join(
-                intent_sources,
-                (intent_sources.c.task_id == intents.c.task_id)
-                & (intent_sources.c.intent_id == intents.c.id),
-            )
+            select(reason_run_sources.c.reason_run_id)
             .where(
-                intents.c.task_id == task_id,
-                intents.c.kind == "reason",
-                intent_sources.c.fact_id == fact_id,
+                reason_run_sources.c.task_id == task_id,
+                reason_run_sources.c.fact_id == fact_id,
             )
-            .order_by(intents.c.created_at, intents.c.id)
+            .order_by(reason_run_sources.c.reason_run_id)
         ).scalar_one_or_none()
 
     @staticmethod

@@ -13,6 +13,7 @@ from axiom.modules.graph.repository import GraphRepository
 from axiom.modules.graph.tables import facts, intents
 from axiom.modules.goals.tables import goal_evaluations
 from axiom.modules.knowledge.tables import project_knowledge
+from axiom.modules.reason.tables import reason_runs
 from axiom.modules.tasks.tables import task_hints
 from axiom.modules.todos.repository import TodoRepository
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
@@ -43,10 +44,13 @@ class ContextService:
         task_id: str,
         phase: str,
         intent_id: str | None,
+        reason_run_id: str | None = None,
         lease_id: str | None = None,
     ) -> ContextRevision:
-        if lease_id is not None and intent_id is None:
-            raise ConflictError("A leased Context requires an Intent")
+        if intent_id is not None and reason_run_id is not None:
+            raise ConflictError("Context cannot belong to both an Intent and a ReasonRun")
+        if lease_id is not None and bool(intent_id) == bool(reason_run_id):
+            raise ConflictError("A leased Context requires exactly one execution owner")
         prepared = None
         try:
             with immediate_transaction(self.engine) as conn:
@@ -62,12 +66,24 @@ class ContextService:
                     ).scalar_one_or_none()
                     if exists is None:
                         raise NotFoundError(f"Intent not found: {task_id}/{intent_id}")
+                if reason_run_id is not None:
+                    exists = conn.execute(
+                        select(reason_runs.c.id).where(
+                            reason_runs.c.task_id == task_id,
+                            reason_runs.c.id == reason_run_id,
+                        )
+                    ).scalar_one_or_none()
+                    if exists is None:
+                        raise NotFoundError(
+                            f"ReasonRun not found: {task_id}/{reason_run_id}"
+                        )
 
                 if lease_id is not None:
                     existing = self.repository.for_lease(
                         conn,
                         task_id=task_id,
-                        intent_id=intent_id or "",
+                        intent_id=intent_id,
+                        reason_run_id=reason_run_id,
                         lease_id=lease_id,
                     )
                     if existing is not None:
@@ -82,6 +98,7 @@ class ContextService:
                     "revision": revision,
                     "phase": phase,
                     "intent_id": intent_id,
+                    "reason_run_id": reason_run_id,
                     "lease_id": lease_id,
                     "goal": task["goal"],
                     "origin": task["origin_input"],
@@ -109,6 +126,7 @@ class ContextService:
                         "revision": revision,
                         "phase": phase,
                         "intent_id": intent_id,
+                        "reason_run_id": reason_run_id,
                         "lease_id": lease_id,
                         "manifest_key": manifest_key,
                         "content_hash": content_hash,
@@ -121,6 +139,7 @@ class ContextService:
                 revision=revision,
                 phase=phase,
                 intent_id=intent_id,
+                reason_run_id=reason_run_id,
                 lease_id=lease_id,
                 manifest_key=manifest_key,
                 manifest_path=str(self.store.resolve(manifest_key)),

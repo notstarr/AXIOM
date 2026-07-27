@@ -11,6 +11,7 @@ from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 
 from axiom.cli_runner import register_runner_command
+from axiom.worker_cli import register_worker_commands
 from axiom.shared.database import create_sqlite_engine, schema_is_ready
 
 
@@ -114,3 +115,4 @@ def migration_heads(config: Config) -> set[str]:
 
 
 register_runner_command(main)
+register_worker_commands(main)

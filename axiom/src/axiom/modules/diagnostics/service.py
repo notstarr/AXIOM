@@ -51,9 +51,9 @@ class DiagnosticsService:
             "health": self._health(task, rows, events, runtime.config.lease_timeout_seconds),
             "config_status": {
                 "configured_version": runtime.version,
-                "applied_version": runtime.version,
-                "is_current": True,
-                "applied_at": runtime.updated_at,
+                "applied_version": runtime.applied_version,
+                "is_current": runtime.applied_version >= runtime.version,
+                "applied_at": runtime.applied_at,
             },
             "worker_rankings": self._worker_rankings(events),
             "token_rankings": self._token_rankings(events),

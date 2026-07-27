@@ -25,6 +25,7 @@ def build_context(
         task_id=task_id,
         phase=body.phase,
         intent_id=body.intent_id,
+        reason_run_id=body.reason_run_id,
         lease_id=body.lease_id,
     )
 

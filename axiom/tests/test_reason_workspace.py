@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+import json
+
+from protocol_helpers import (
+    apply_reason_draft,
+    bootstrap_files_from_legacy,
+    complete_bootstrap,
+    claim_reason_run,
+)
 
 BOOTSTRAP_PAYLOAD = {
     "summary": "完成初始资产发现。",
@@ -33,31 +41,28 @@ def active_reason(client, *, origin: str = "a.example.com") -> tuple[dict, dict,
     ).json()
     bootstrap_base = f"/api/v1/dispatch/tasks/{task['id']}/intents/i001"
     client.post(f"{bootstrap_base}/start", json={"lease_id": bootstrap_claim["lease_id"]})
-    completed = client.post(
-        f"{bootstrap_base}/bootstrap-complete",
-        json={"lease_id": bootstrap_claim["lease_id"], **BOOTSTRAP_PAYLOAD},
-    ).json()
-    reason_id = completed["next_intent_id"]
-    reason_claim = client.post(
-        f"/api/v1/dispatch/tasks/{task['id']}/intents/{reason_id}/claim",
-        json={"worker_name": "worker-a"},
-    ).json()
-    reason_base = f"/api/v1/dispatch/tasks/{task['id']}/intents/{reason_id}"
-    client.post(f"{reason_base}/start", json={"lease_id": reason_claim["lease_id"]})
-    execution_input = client.post(
-        f"{reason_base}/input",
-        json={"lease_id": reason_claim["lease_id"]},
-    ).json()
-    reason_claim["context_revision"] = execution_input["context_revision"]
+    completed = complete_bootstrap(
+        client,
+        task_id=task["id"],
+        intent_id="i001",
+        lease_id=bootstrap_claim["lease_id"],
+        files=bootstrap_files_from_legacy(BOOTSTRAP_PAYLOAD),
+    )
+    reason_claim, _execution_input = claim_reason_run(
+        client,
+        task_id=task["id"],
+        reason_run_id=completed["next_reason_run_id"],
+        worker_name="worker-a",
+    )
     return task, reason_claim, completed
 
 
-def test_reason_workspace_commits_todos_and_pending_intents_atomically(client) -> None:
+def test_reason_workspace_commits_todos_and_pending_intents_atomically(client, data_dir) -> None:
     task, reason_claim, completed = active_reason(client)
     opened = client.post(
         f"/api/v1/tasks/{task['id']}/reason/workspaces",
         json={
-            "intent_id": reason_claim["intent_id"],
+            "reason_run_id": reason_claim["reason_run_id"],
             "lease_id": reason_claim["lease_id"],
             "context_revision": reason_claim["context_revision"],
         },
@@ -93,21 +98,22 @@ def test_reason_workspace_commits_todos_and_pending_intents_atomically(client) -
         },
     }
 
-    committed = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/submit",
-        json={"lease_id": reason_claim["lease_id"], "draft": draft},
+    committed = apply_reason_draft(
+        client,
+        workspace["id"],
+        reason_claim["lease_id"],
+        draft,
     )
     assert committed.status_code == 200, committed.text
     result = committed.json()
     assert result["created_todo_ids"] == ["td001"]
-    assert result["created_intent_ids"] == ["i003"]
+    assert result["created_intent_ids"] == ["i002"]
 
     todo = client.get(f"/api/v1/tasks/{task['id']}/todos").json()[0]
     assert todo["status"] == "active"
     graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
-    reason = next(item for item in graph["intents"] if item["id"] == "i002")
-    explore = next(item for item in graph["intents"] if item["id"] == "i003")
-    assert reason["status"] == "completed"
+    assert [item["id"] for item in graph["intents"]] == ["i001", "i002"]
+    explore = next(item for item in graph["intents"] if item["id"] == "i002")
     assert explore["kind"] == "explore"
     assert explore["status"] == "pending"
     assert explore["todo_id"] == "td001"
@@ -123,11 +129,23 @@ def test_reason_workspace_commits_todos_and_pending_intents_atomically(client) -
     assert reason_board["success"] == 1
 
     repeated = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/submit",
-        json={"lease_id": reason_claim["lease_id"], "draft": draft},
+        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        json={"lease_id": reason_claim["lease_id"]},
     )
     assert repeated.status_code == 200, repeated.text
-    assert repeated.json()["created_intent_ids"] == ["i003"]
+    assert repeated.json()["created_intent_ids"] == ["i002"]
+    audit_path = (
+        data_dir
+        / "runs"
+        / task["id"]
+        / reason_claim["reason_run_id"]
+        / reason_claim["lease_id"]
+        / "reason_plan.json"
+    )
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert audit["created_todo_ids"] == ["td001"]
+    assert audit["created_intent_ids"] == ["i002"]
+    assert "vulnerability_reports" not in audit["draft"]
 
 
 def test_reason_rejects_unknown_goal_todo_ref_and_rolls_back(client) -> None:
@@ -135,7 +153,7 @@ def test_reason_rejects_unknown_goal_todo_ref_and_rolls_back(client) -> None:
     workspace = client.post(
         f"/api/v1/tasks/{task['id']}/reason/workspaces",
         json={
-            "intent_id": reason_claim["intent_id"],
+            "reason_run_id": reason_claim["reason_run_id"],
             "lease_id": reason_claim["lease_id"],
             "context_revision": reason_claim["context_revision"],
         },
@@ -166,9 +184,11 @@ def test_reason_rejects_unknown_goal_todo_ref_and_rolls_back(client) -> None:
         },
     }
 
-    response = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/submit",
-        json={"lease_id": reason_claim["lease_id"], "draft": draft},
+    response = apply_reason_draft(
+        client,
+        workspace["id"],
+        reason_claim["lease_id"],
+        draft,
     )
 
     assert response.status_code == 409
@@ -176,13 +196,13 @@ def test_reason_rejects_unknown_goal_todo_ref_and_rolls_back(client) -> None:
     assert client.get(f"/api/v1/tasks/{task['id']}/todos").json() == []
     assert client.get(f"/api/v1/tasks/{task['id']}/goal-evaluations").json() == []
     graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
-    assert [item["id"] for item in graph["intents"]] == ["i001", "i002"]
+    assert [item["id"] for item in graph["intents"]] == ["i001"]
 
 
 def test_reason_workspace_open_is_idempotent_for_the_same_reason_lease(client) -> None:
     task, reason_claim, _completed = active_reason(client)
     payload = {
-        "intent_id": reason_claim["intent_id"],
+        "reason_run_id": reason_claim["reason_run_id"],
         "lease_id": reason_claim["lease_id"],
         "context_revision": reason_claim["context_revision"],
     }
@@ -195,13 +215,101 @@ def test_reason_workspace_open_is_idempotent_for_the_same_reason_lease(client) -
     assert second.json()["id"] == first.json()["id"]
 
 
+def test_reason_workspace_mutations_require_the_current_active_lease(client) -> None:
+    task, reason_claim, completed = active_reason(client)
+    workspace = client.post(
+        f"/api/v1/tasks/{task['id']}/reason/workspaces",
+        json={
+            "reason_run_id": reason_claim["reason_run_id"],
+            "lease_id": reason_claim["lease_id"],
+            "context_revision": reason_claim["context_revision"],
+        },
+    ).json()
+    assert "vulnerability_reports" not in workspace["draft"]
+    todo = {
+        "ref": "lease-test",
+        "title": "验证租约边界",
+        "category": "other",
+        "sources": [{"type": "fact", "id": completed["fact_id"]}],
+    }
+
+    stale = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/todos",
+        json={"lease_id": "lease-stale", "todo": todo},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "lease_inactive"
+
+    stopped = client.post(f"/api/v1/tasks/{task['id']}/stop")
+    assert stopped.status_code == 200, stopped.text
+    after_stop = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/todos",
+        json={"lease_id": reason_claim["lease_id"], "todo": todo},
+    )
+    assert after_stop.status_code == 409
+    assert after_stop.json()["error"]["code"] == "lease_inactive"
+
+
+def test_reason_workspace_has_no_whole_draft_submit_endpoint(client) -> None:
+    task, reason_claim, _completed = active_reason(client)
+    workspace = client.post(
+        f"/api/v1/tasks/{task['id']}/reason/workspaces",
+        json={
+            "reason_run_id": reason_claim["reason_run_id"],
+            "lease_id": reason_claim["lease_id"],
+            "context_revision": reason_claim["context_revision"],
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/submit",
+        json={"lease_id": reason_claim["lease_id"], "draft": {}},
+    )
+
+    assert response.status_code in {404, 405}
+
+
+def test_reason_todo_can_reference_enabled_project_knowledge(client) -> None:
+    task, reason_claim, _completed = active_reason(client)
+    knowledge = client.post(
+        f"/api/v1/projects/{task['project_id']}/knowledge",
+        json={
+            "title": "历史鉴权约束",
+            "content": "该系统的管理接口统一使用 X-Admin-Token。",
+        },
+    ).json()
+    workspace = client.post(
+        f"/api/v1/tasks/{task['id']}/reason/workspaces",
+        json={
+            "reason_run_id": reason_claim["reason_run_id"],
+            "lease_id": reason_claim["lease_id"],
+            "context_revision": reason_claim["context_revision"],
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/todos",
+        json={
+            "lease_id": reason_claim["lease_id"],
+            "todo": {
+                "ref": "knowledge-auth",
+                "title": "依据项目知识验证管理接口鉴权",
+                "category": "authentication",
+                "sources": [{"type": "knowledge", "id": knowledge["id"]}],
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+
+
 def test_reason_can_complete_a_new_todo_by_its_draft_ref(client) -> None:
     task, reason_claim, completed = active_reason(client)
     finding_artifact_id = client.get(f"/api/v1/tasks/{task['id']}/artifacts").json()[2]["id"]
     workspace = client.post(
         f"/api/v1/tasks/{task['id']}/reason/workspaces",
         json={
-            "intent_id": reason_claim["intent_id"],
+            "reason_run_id": reason_claim["reason_run_id"],
             "lease_id": reason_claim["lease_id"],
             "context_revision": reason_claim["context_revision"],
         },
@@ -231,9 +339,11 @@ def test_reason_can_complete_a_new_todo_by_its_draft_ref(client) -> None:
         },
     }
 
-    response = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/submit",
-        json={"lease_id": reason_claim["lease_id"], "draft": draft},
+    response = apply_reason_draft(
+        client,
+        workspace["id"],
+        reason_claim["lease_id"],
+        draft,
     )
 
     assert response.status_code == 200, response.text
@@ -253,7 +363,7 @@ def test_reason_scope_failure_rolls_back_the_whole_plan(client) -> None:
     workspace = client.post(
         f"/api/v1/tasks/{task['id']}/reason/workspaces",
         json={
-            "intent_id": reason_claim["intent_id"],
+            "reason_run_id": reason_claim["reason_run_id"],
             "lease_id": reason_claim["lease_id"],
             "context_revision": reason_claim["context_revision"],
         },
@@ -280,15 +390,17 @@ def test_reason_scope_failure_rolls_back_the_whole_plan(client) -> None:
         ],
     }
 
-    response = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/submit",
-        json={"lease_id": reason_claim["lease_id"], "draft": draft},
+    response = apply_reason_draft(
+        client,
+        workspace["id"],
+        reason_claim["lease_id"],
+        draft,
     )
 
     assert response.status_code == 409
     assert client.get(f"/api/v1/tasks/{task['id']}/todos").json() == []
     graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
-    assert [item["id"] for item in graph["intents"]] == ["i001", "i002"]
+    assert [item["id"] for item in graph["intents"]] == ["i001"]
 
 
 def test_reason_rejects_goal_as_an_explore_intent_source(client) -> None:
@@ -296,16 +408,16 @@ def test_reason_rejects_goal_as_an_explore_intent_source(client) -> None:
     workspace = client.post(
         f"/api/v1/tasks/{task['id']}/reason/workspaces",
         json={
-            "intent_id": reason_claim["intent_id"],
+            "reason_run_id": reason_claim["reason_run_id"],
             "lease_id": reason_claim["lease_id"],
             "context_revision": reason_claim["context_revision"],
         },
     ).json()
-    response = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/submit",
-        json={
-            "lease_id": reason_claim["lease_id"],
-            "draft": {
+    response = apply_reason_draft(
+        client,
+        workspace["id"],
+        reason_claim["lease_id"],
+        {
                 "todo_adds": [
                     {
                         "ref": "invalid-goal-source",
@@ -324,7 +436,6 @@ def test_reason_rejects_goal_as_an_explore_intent_source(client) -> None:
                         "conclude_seconds": 60,
                     }
                 ],
-            },
         },
     )
 
@@ -341,7 +452,7 @@ def test_reason_scope_accepts_the_explicit_origin_port(client) -> None:
     workspace = client.post(
         f"/api/v1/tasks/{task['id']}/reason/workspaces",
         json={
-            "intent_id": reason_claim["intent_id"],
+            "reason_run_id": reason_claim["reason_run_id"],
             "lease_id": reason_claim["lease_id"],
             "context_revision": reason_claim["context_revision"],
         },
@@ -367,9 +478,11 @@ def test_reason_scope_accepts_the_explicit_origin_port(client) -> None:
         ],
     }
 
-    response = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/submit",
-        json={"lease_id": reason_claim["lease_id"], "draft": draft},
+    response = apply_reason_draft(
+        client,
+        workspace["id"],
+        reason_claim["lease_id"],
+        draft,
     )
 
     assert response.status_code == 200, response.text
@@ -385,7 +498,7 @@ def test_reason_scope_rejects_a_different_port_on_the_origin_host(client) -> Non
     workspace = client.post(
         f"/api/v1/tasks/{task['id']}/reason/workspaces",
         json={
-            "intent_id": reason_claim["intent_id"],
+            "reason_run_id": reason_claim["reason_run_id"],
             "lease_id": reason_claim["lease_id"],
             "context_revision": reason_claim["context_revision"],
         },
@@ -411,9 +524,11 @@ def test_reason_scope_rejects_a_different_port_on_the_origin_host(client) -> Non
         ],
     }
 
-    response = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/submit",
-        json={"lease_id": reason_claim["lease_id"], "draft": draft},
+    response = apply_reason_draft(
+        client,
+        workspace["id"],
+        reason_claim["lease_id"],
+        draft,
     )
 
     assert response.status_code == 409

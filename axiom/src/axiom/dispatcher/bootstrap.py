@@ -5,16 +5,19 @@ import threading
 from collections.abc import Callable
 from typing import Protocol
 
-from pydantic import BaseModel, ValidationError, field_validator
-
+from axiom.dispatcher.closeout import bounded_closeout
 from axiom.dispatcher.heartbeat import LeaseHeartbeat, LeaseLostError
 from axiom.dispatcher.schemas import ClaimedIntent
-from axiom.modules.artifacts.schemas import BootstrapBundle
 from axiom.modules.execution.schemas import (
     BootstrapCompleted,
     CompleteBootstrapCommand,
     ExecutionInput,
     ReleaseIntentCommand,
+)
+from axiom.modules.execution.stage_outputs import (
+    StageOutputError,
+    bootstrap_files,
+    require_finish,
 )
 
 
@@ -27,19 +30,6 @@ class BootstrapExecutionTimeout(TimeoutError):
 
 class TransientWorkerError(RuntimeError):
     """Provider/process infrastructure failed before a valid result existed."""
-
-
-class BootstrapWorkerOutput(BaseModel):
-    summary: str
-    artifacts: BootstrapBundle
-
-    @field_validator("summary")
-    @classmethod
-    def require_summary(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("Bootstrap summary must not be empty")
-        return value
 
 
 class BootstrapExecutor(Protocol):
@@ -86,7 +76,7 @@ class BootstrapControlPlane(Protocol):
 
 
 class BootstrapRunner:
-    """Execute exactly once, conclude at most once, then close atomically."""
+    """Execute once, then perform bounded same-session closeout if needed."""
 
     def __init__(
         self,
@@ -118,32 +108,28 @@ class BootstrapRunner:
                     execution_input,
                     lease_active=heartbeat.is_active,
                 )
-                output = BootstrapWorkerOutput.model_validate(raw_output)
+                self._validate_output(execution_input, raw_output)
             except BootstrapExecutionTimeout:
-                output = self._conclude(
+                self._conclude(
                     work,
                     executor,
                     execution_input,
                     heartbeat,
                     reason="execute_timeout",
                 )
-            except ValidationError:
-                output = self._conclude(
+            except StageOutputError as exc:
+                self._conclude(
                     work,
                     executor,
                     execution_input,
                     heartbeat,
-                    reason="invalid_execute_output",
+                    reason=str(exc),
                 )
 
             heartbeat.ensure_active()
             return self.control_plane.complete_bootstrap(
                 work,
-                CompleteBootstrapCommand(
-                    lease_id=work.lease_id,
-                    summary=output.summary,
-                    artifacts=output.artifacts,
-                ),
+                CompleteBootstrapCommand(lease_id=work.lease_id),
             )
         except LeaseLostError:
             self._release_best_effort(
@@ -177,15 +163,26 @@ class BootstrapRunner:
         heartbeat: LeaseHeartbeat,
         *,
         reason: str,
-    ) -> BootstrapWorkerOutput:
+    ) -> None:
         heartbeat.ensure_active()
-        self.control_plane.begin_conclude(work)
-        raw_output = executor.conclude(
-            execution_input,
+        bounded_closeout(
+            execution_input=execution_input,
+            begin=lambda: self.control_plane.begin_conclude(work),
+            conclude=lambda attempt_input, attempt_reason: executor.conclude(
+                attempt_input,
+                reason=attempt_reason,
+                lease_active=heartbeat.is_active,
+            ),
+            validate=self._validate_output,
             reason=reason,
-            lease_active=heartbeat.is_active,
+            retry_errors=(StageOutputError,),
+            default_timeout_seconds=120,
         )
-        return BootstrapWorkerOutput.model_validate(raw_output)
+
+    @staticmethod
+    def _validate_output(execution_input: ExecutionInput, raw_output: object) -> None:
+        require_finish(str(raw_output))
+        bootstrap_files(execution_input.run_dir)
 
     def _release_best_effort(
         self,

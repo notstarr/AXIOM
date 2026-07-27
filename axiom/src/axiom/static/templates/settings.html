@@ -22,77 +22,73 @@
         </div>
       </aside>
       <section class="overflow-y-auto space-y-5 pr-1">
-    <section x-show="activeSettingsTab === 'config'" x-cloak class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+    <section x-show="activeSettingsTab === 'config'" x-cloak class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+      <div class="xl:col-span-2 rounded-2xl border border-slate-200 bg-white shadow-sm px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 class="text-sm font-semibold text-slate-700">运行配置</h3>
+          <p class="mt-1 text-[11px] text-slate-400">保存后持久化；Runner 会在下一次 tick 读取新版本。降低并发只停止新领取，不强杀已运行阶段。</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 text-[11px]">
+          <span class="px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 text-slate-500" x-text="`已保存 ${dispatchVersionLabel()}`"></span>
+          <span class="px-2.5 py-1 rounded-lg border" :class="runtimeSettingsApplied() ? 'border-emerald-200 bg-emerald-50 text-emerald-600' : 'border-amber-200 bg-amber-50 text-amber-600'" x-text="`${runtimeSettingsApplied() ? 'Runner 已应用' : '等待 Runner 应用'} ${dispatcherAppliedLabel()}`"></span>
+        </div>
+      </div>
+
       <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
         <h3 class="text-sm font-semibold text-slate-700">调度并发</h3>
-        <div class="mt-4 space-y-3">
-          <div>
-            <label class="text-[11px] text-slate-400 mb-1 block font-medium">全局最大 worker 数量</label>
-            <input type="number" min="1" x-model.number="dispatchSettings.runtime_max_workers" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-            <p class="text-[11px] text-slate-400 mt-1">所有任务和所有 worker 加起来最多同时跑多少个。</p>
-          </div>
-          <div>
-            <label class="text-[11px] text-slate-400 mb-1 block font-medium">最大运行任务数量</label>
-            <input type="number" min="1" x-model.number="dispatchSettings.runtime_max_running_projects" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-            <p class="text-[11px] text-slate-400 mt-1">同一时间最多调度多少个任务。</p>
-          </div>
-          <div>
-            <label class="text-[11px] text-slate-400 mb-1 block font-medium">单任务最大 worker 数量</label>
-            <input type="number" min="1" x-model.number="dispatchSettings.runtime_max_project_workers" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-            <p class="text-[11px] text-slate-400 mt-1">防止一个任务占满全部 worker。</p>
+        <p class="mt-1 text-[11px] text-slate-400">所有限制会同时在调度计算和数据库 claim 事务中校验。</p>
+        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Runner tick（秒）</label><input type="number" min="0.1" max="60" step="0.1" x-model.number="dispatchSettings.runner_interval_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">全局活动 Run 上限</label><input type="number" min="1" x-model.number="dispatchSettings.global_max_active_runs" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">全局活动 Task 上限</label><input type="number" min="1" x-model.number="dispatchSettings.global_max_active_tasks" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">单 Task 活动 Run 上限</label><input type="number" min="1" x-model.number="dispatchSettings.per_task_max_active_runs" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">单 Task Explore 并发</label><input type="number" min="1" x-model.number="dispatchSettings.per_task_explore_concurrency" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Bootstrap 并发</label><div class="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-500">1（固定）</div></div>
+            <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 并发</label><div class="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-500">1（固定）</div></div>
           </div>
         </div>
       </div>
+
       <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-        <h3 class="text-sm font-semibold text-slate-700">阶段并发数</h3>
-        <div class="mt-4 space-y-3">
-          <div>
-            <label class="text-[11px] text-slate-400 mb-1 block font-medium">Bootstrap</label>
-            <input type="number" min="1" x-model.number="settingsForm.bootstrap_worker_count" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-          </div>
-          <div>
-            <label class="text-[11px] text-slate-400 mb-1 block font-medium">Explore</label>
-            <input type="number" min="1" x-model.number="settingsForm.explore_worker_count" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-          </div>
-          <div>
-            <label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason</label>
-            <input type="number" min="1" x-model.number="settingsForm.reason_worker_count" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-          </div>
+        <h3 class="text-sm font-semibold text-slate-700">阶段预算</h3>
+        <p class="mt-1 text-[11px] text-slate-400">Bootstrap 与 Reason 在领取时快照；Explore 由 Reason 逐 Intent 分配，必须落在下限与上限之间。</p>
+        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Bootstrap 执行（秒）</label><input type="number" min="60" x-model.number="dispatchSettings.bootstrap_execute_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Bootstrap 收口（秒）</label><input type="number" min="30" x-model.number="dispatchSettings.bootstrap_conclude_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 执行（秒）</label><input type="number" min="60" x-model.number="dispatchSettings.reason_execute_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 收口（秒）</label><input type="number" min="30" x-model.number="dispatchSettings.reason_conclude_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Explore 执行下限（秒）</label><input type="number" min="10" x-model.number="dispatchSettings.explore_execute_min_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Explore 执行上限（秒）</label><input type="number" min="10" x-model.number="dispatchSettings.explore_execute_max_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Explore 收口下限（秒）</label><input type="number" min="10" x-model.number="dispatchSettings.explore_conclude_min_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Explore 收口上限（秒）</label><input type="number" min="10" x-model.number="dispatchSettings.explore_conclude_max_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
         </div>
       </div>
+
       <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-        <h3 class="text-sm font-semibold text-slate-700">心跳与租约</h3>
-        <div class="mt-4 space-y-3">
-          <div>
-            <label class="text-[11px] text-slate-400 mb-1 block font-medium">调度/心跳间隔（秒）</label>
-            <input type="number" min="1" x-model.number="dispatchSettings.runtime_interval" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-            <p class="text-[11px] text-slate-400 mt-1">worker 心跳发送间隔；连续失败宽限约为该值的 2 倍。</p>
-          </div>
-          <div>
-            <label class="text-[11px] text-slate-400 mb-1 block font-medium">租约超时时间（秒）</label>
-            <input type="number" min="1" x-model.number="dispatchSettings.runtime_healthcheck_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-            <p class="text-[11px] text-slate-400 mt-1">Reason 或 Explore 超过该时间未续租时，Dispatcher 会回收占用。</p>
-          </div>
-        </div>
-      </div>
-      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 xl:col-span-3">
-        <h3 class="text-sm font-semibold text-slate-700">阶段预算与收口</h3>
-        <p class="mt-1 text-[11px] text-slate-400">Bootstrap 与 Reason 使用全局阶段预算；每个 Explore Intent 的探索和收口时间由 Reason 在派发时单独指定，因此这里不提供 Explore 时间配置。</p>
-        <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Bootstrap 探索预算（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.bootstrap_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Bootstrap 强制收口预算（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.bootstrap_conclude_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 规划预算（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-        </div>
-      </div>
-      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 xl:col-span-3">
-        <h3 class="text-sm font-semibold text-slate-700">Reason 增量触发</h3>
-        <p class="mt-1 text-[11px] text-slate-400">Reason 不再被单个 Fact 立即触发：优先批量消费结果，并在待执行队列接近耗尽或结果等待过久时提前补充计划。</p>
-        <div class="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3">
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">结果批量数</label><input type="number" min="1" max="20" x-model.number="dispatchSettings.reason_batch_size" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">队列低水位</label><input type="number" min="0" max="20" x-model.number="dispatchSettings.reason_low_watermark" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">结果最大等待（秒）</label><input type="number" min="1" max="3600" x-model.number="dispatchSettings.reason_max_wait_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+        <h3 class="text-sm font-semibold text-slate-700">Reason 触发与派发</h3>
+        <p class="mt-1 text-[11px] text-slate-400">Todo 不限量；Explore Intent 同时受开放目标数和单轮新增上限约束。</p>
+        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">未规划 Fact 批量数</label><input type="number" min="1" max="20" x-model.number="dispatchSettings.reason_batch_size" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">开放 Explore 低水位</label><input type="number" min="0" max="20" x-model.number="dispatchSettings.reason_low_watermark" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Fact 最大等待（秒）</label><input type="number" min="10" max="3600" x-model.number="dispatchSettings.reason_max_wait_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 最短间隔（秒）</label><input type="number" min="0" max="3600" x-model.number="dispatchSettings.reason_min_interval_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">目标未完成 Intent</label><input type="number" min="1" max="4" x-model.number="dispatchSettings.reason_target_open_intents" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">目标开放 Explore 数</label><input type="number" min="1" max="8" x-model.number="dispatchSettings.reason_target_open_intents" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">单轮最多新增 Intent</label><input type="number" min="1" max="8" x-model.number="dispatchSettings.reason_max_new_intents_per_run" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
+        <h3 class="text-sm font-semibold text-slate-700">高级可靠性</h3>
+        <p class="mt-1 text-[11px] text-slate-400">租约至少要容纳三个心跳；重试退避上限不能小于基准值。</p>
+        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">心跳间隔（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.heartbeat_interval_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">租约超时（秒）</label><input type="number" min="20" x-model.number="dispatchSettings.lease_timeout_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">执行失败重试上限</label><input type="number" min="1" x-model.number="dispatchSettings.execution_retry_limit" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">基础设施重试上限</label><input type="number" min="1" x-model.number="dispatchSettings.infrastructure_retry_limit" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">重试基准（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.retry_base_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">重试退避上限（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.retry_max_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div class="md:col-span-2"><label class="text-[11px] text-slate-400 mb-1 block font-medium">Worker 失败冷却（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.worker_failure_cooldown_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
         </div>
       </div>
     </section>
@@ -253,8 +249,7 @@
           <label class="text-[11px] font-medium text-slate-500">模式</label>
           <select x-model="judgeSettings.mode" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
             <option value="enforce">enforce：硬规则和模型 BLOCK 都阻断</option>
-            <option value="guarded">guarded：只阻断硬规则</option>
-            <option value="observe">observe：只记录不阻断</option>
+            <option value="audit">audit：执行判断并记录，但不阻断</option>
             <option value="off">off：关闭</option>
           </select>
         </div>
@@ -312,7 +307,7 @@
       </div>
     </section>
 
-    <div class="flex justify-end">
+    <div x-show="activeSettingsTab === 'config'" x-cloak class="flex justify-end">
       <button @click="saveServerSettings()" class="px-5 py-2.5 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200">保存系统设置</button>
     </div>
       </section>

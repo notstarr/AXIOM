@@ -4,64 +4,449 @@ import json
 
 from sqlalchemy import Connection, select, update
 
-from axiom.modules.graph.tables import intent_sources, intents
-from axiom.modules.reason.schemas import ReasonWorkspace, WorkspaceDraft
-from axiom.modules.reason.tables import reason_workspaces
+from axiom.modules.reason.schemas import ReasonRun, ReasonWorkspace, WorkspaceDraft
+from axiom.modules.reason.tables import reason_run_sources, reason_runs, reason_workspaces
 from axiom.shared.ids import allocate_id
 
 
+ACTIVE_REASON_STATUSES = ("pending", "claimed", "running", "concluding")
+LEASED_REASON_STATUSES = ("claimed", "running", "concluding")
+
+
 class ReasonRepository:
-    def create_intent(
+    def create_run(
         self,
         conn: Connection,
         *,
         task_id: str,
         source_fact_ids: list[str],
-        worker_pool_json: str,
-        target: str,
-        description: str,
-        creator: str,
+        trigger: str,
+        trigger_payload: dict,
+        input_fingerprint: str,
+        worker_pool: list[str],
+        settings_version: int,
+        execute_timeout_seconds: int,
+        conclude_timeout_seconds: int,
+        target_open_intents: int,
+        max_new_intents: int,
+        explore_execute_min_seconds: int,
+        explore_execute_max_seconds: int,
+        explore_conclude_min_seconds: int,
+        explore_conclude_max_seconds: int,
         now: str,
-    ) -> str:
-        intent_id = allocate_id(conn, scope=task_id, kind="intent", prefix="i")
-        conn.execute(
-            intents.insert().values(
-                id=intent_id,
-                task_id=task_id,
-                todo_id=None,
-                kind="reason",
-                description=description,
-                status="pending",
-                creator=creator,
-                worker=None,
-                worker_pool_json=worker_pool_json,
-                targets_json=json.dumps([target], ensure_ascii=False),
-                retry_count=0,
-                infrastructure_retry_count=0,
-                last_failure_kind="",
-                failure_class="",
-                created_at=now,
-                archived=False,
+    ) -> ReasonRun:
+        run_id = allocate_id(
+            conn,
+            scope="global",
+            kind="reason_run",
+            prefix="rr",
+            width=6,
+        )
+        values = {
+            "id": run_id,
+            "task_id": task_id,
+            "status": "pending",
+            "trigger": trigger,
+            "trigger_payload_json": json.dumps(trigger_payload, ensure_ascii=False),
+            "input_fingerprint": input_fingerprint,
+            "worker_pool_json": json.dumps(worker_pool, ensure_ascii=False),
+            "worker": None,
+            "settings_version": settings_version,
+            "execute_timeout_seconds": execute_timeout_seconds,
+            "conclude_timeout_seconds": conclude_timeout_seconds,
+            "target_open_intents": target_open_intents,
+            "max_new_intents": max_new_intents,
+            "explore_execute_min_seconds": explore_execute_min_seconds,
+            "explore_execute_max_seconds": explore_execute_max_seconds,
+            "explore_conclude_min_seconds": explore_conclude_min_seconds,
+            "explore_conclude_max_seconds": explore_conclude_max_seconds,
+            "lease_id": None,
+            "claimed_at": None,
+            "last_heartbeat_at": None,
+            "retry_count": 0,
+            "infrastructure_retry_count": 0,
+            "next_retry_at": None,
+            "last_failure_kind": "",
+            "failure_class": "",
+            "activity_kind": "pending",
+            "activity_summary": "Reason 已就绪，等待空闲 Worker 领取",
+            "activity_tool": "",
+            "activity_started_at": None,
+            "activity_updated_at": now,
+            "created_at": now,
+            "updated_at": now,
+            "concluded_at": None,
+        }
+        conn.execute(reason_runs.insert().values(**values))
+        source_fact_ids = list(dict.fromkeys(source_fact_ids))
+        if source_fact_ids:
+            conn.execute(
+                reason_run_sources.insert(),
+                [
+                    {"task_id": task_id, "reason_run_id": run_id, "fact_id": fact_id}
+                    for fact_id in source_fact_ids
+                ],
+            )
+        return self._run(values, source_fact_ids)
+
+    def get_run(self, conn: Connection, task_id: str, run_id: str) -> ReasonRun | None:
+        row = conn.execute(
+            select(reason_runs).where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.id == run_id,
+            )
+        ).mappings().one_or_none()
+        return self._run(row, self.source_ids(conn, task_id, run_id)) if row is not None else None
+
+    def get_run_by_id(self, conn: Connection, run_id: str) -> ReasonRun | None:
+        row = conn.execute(
+            select(reason_runs).where(reason_runs.c.id == run_id)
+        ).mappings().one_or_none()
+        return (
+            self._run(row, self.source_ids(conn, row["task_id"], run_id))
+            if row is not None
+            else None
+        )
+
+    @staticmethod
+    def source_ids(conn: Connection, task_id: str, run_id: str) -> list[str]:
+        return list(
+            conn.execute(
+                select(reason_run_sources.c.fact_id)
+                .where(
+                    reason_run_sources.c.task_id == task_id,
+                    reason_run_sources.c.reason_run_id == run_id,
+                )
+                .order_by(reason_run_sources.c.fact_id)
+            ).scalars()
+        )
+
+    def active_for_task(self, conn: Connection, task_id: str) -> ReasonRun | None:
+        row = conn.execute(
+            select(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.status.in_(ACTIVE_REASON_STATUSES),
+            )
+            .order_by(reason_runs.c.created_at, reason_runs.c.id)
+            .limit(1)
+        ).mappings().one_or_none()
+        return (
+            self._run(row, self.source_ids(conn, task_id, row["id"]))
+            if row is not None
+            else None
+        )
+
+    @staticmethod
+    def latest_completed_row(conn: Connection, task_id: str):
+        return conn.execute(
+            select(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.status == "completed",
+            )
+            .order_by(reason_runs.c.concluded_at.desc(), reason_runs.c.id.desc())
+            .limit(1)
+        ).mappings().one_or_none()
+
+    @staticmethod
+    def latest_deduplication_row(conn: Connection, task_id: str):
+        """Return the latest finalized planning input that must not be replayed."""
+
+        return conn.execute(
+            select(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.status.in_(["completed", "failed"]),
+            )
+            .order_by(reason_runs.c.concluded_at.desc(), reason_runs.c.id.desc())
+            .limit(1)
+        ).mappings().one_or_none()
+
+    @staticmethod
+    def claim(
+        conn: Connection,
+        *,
+        task_id: str,
+        run_id: str,
+        worker_name: str,
+        lease_id: str,
+        settings_version: int,
+        execute_timeout_seconds: int,
+        conclude_timeout_seconds: int,
+        target_open_intents: int,
+        max_new_intents: int,
+        explore_execute_min_seconds: int,
+        explore_execute_max_seconds: int,
+        explore_conclude_min_seconds: int,
+        explore_conclude_max_seconds: int,
+        now: str,
+    ) -> bool:
+        result = conn.execute(
+            update(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.id == run_id,
+                reason_runs.c.status == "pending",
+            )
+            .values(
+                status="claimed",
+                worker=worker_name,
+                lease_id=lease_id,
+                claimed_at=now,
+                last_heartbeat_at=now,
+                settings_version=settings_version,
+                execute_timeout_seconds=execute_timeout_seconds,
+                conclude_timeout_seconds=conclude_timeout_seconds,
+                target_open_intents=target_open_intents,
+                max_new_intents=max_new_intents,
+                explore_execute_min_seconds=explore_execute_min_seconds,
+                explore_execute_max_seconds=explore_execute_max_seconds,
+                explore_conclude_min_seconds=explore_conclude_min_seconds,
+                explore_conclude_max_seconds=explore_conclude_max_seconds,
+                next_retry_at=None,
+                activity_kind="claimed",
+                activity_summary=f"已由 {worker_name} 领取，正在启动 Reason 环境",
+                activity_tool="",
+                activity_started_at=now,
+                activity_updated_at=now,
+                updated_at=now,
             )
         )
-        sources = list(dict.fromkeys(source_fact_ids))
-        if "goal" in sources:
-            raise ValueError("Goal Fact cannot be used as an Intent source")
-        conn.execute(
-            intent_sources.insert(),
-            [
-                {"task_id": task_id, "intent_id": intent_id, "fact_id": fact_id}
-                for fact_id in sources
-            ],
+        return bool(result.rowcount)
+
+    @staticmethod
+    def start(
+        conn: Connection,
+        *,
+        task_id: str,
+        run_id: str,
+        lease_id: str,
+        now: str,
+    ) -> bool:
+        result = conn.execute(
+            update(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.id == run_id,
+                reason_runs.c.status == "claimed",
+                reason_runs.c.lease_id == lease_id,
+            )
+            .values(
+                status="running",
+                last_heartbeat_at=now,
+                activity_kind="analyzing",
+                activity_summary="正在分析任务上下文并规划下一批 Intent",
+                activity_updated_at=now,
+                updated_at=now,
+            )
         )
-        return intent_id
+        return bool(result.rowcount)
+
+    @staticmethod
+    def heartbeat(
+        conn: Connection,
+        *,
+        task_id: str,
+        run_id: str,
+        lease_id: str,
+        now: str,
+    ) -> bool:
+        result = conn.execute(
+            update(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.id == run_id,
+                reason_runs.c.lease_id == lease_id,
+                reason_runs.c.status.in_(LEASED_REASON_STATUSES),
+            )
+            .values(last_heartbeat_at=now, activity_updated_at=now, updated_at=now)
+        )
+        return bool(result.rowcount)
+
+    @staticmethod
+    def update_activity(
+        conn: Connection,
+        *,
+        task_id: str,
+        run_id: str,
+        lease_id: str,
+        activity_kind: str,
+        activity_summary: str,
+        activity_tool: str,
+        now: str,
+    ) -> bool:
+        result = conn.execute(
+            update(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.id == run_id,
+                reason_runs.c.lease_id == lease_id,
+                reason_runs.c.status.in_(LEASED_REASON_STATUSES),
+            )
+            .values(
+                activity_kind=activity_kind,
+                activity_summary=activity_summary,
+                activity_tool=activity_tool,
+                activity_updated_at=now,
+                updated_at=now,
+            )
+        )
+        return bool(result.rowcount)
+
+    @staticmethod
+    def begin_conclude(
+        conn: Connection,
+        *,
+        task_id: str,
+        run_id: str,
+        lease_id: str,
+        now: str,
+    ) -> bool:
+        result = conn.execute(
+            update(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.id == run_id,
+                reason_runs.c.lease_id == lease_id,
+                reason_runs.c.status == "running",
+            )
+            .values(
+                status="concluding",
+                last_heartbeat_at=now,
+                activity_kind="concluding",
+                activity_summary="正在整理 Reason Workspace 并完成收口校验",
+                activity_tool="",
+                activity_updated_at=now,
+                updated_at=now,
+            )
+        )
+        return bool(result.rowcount)
+
+    @staticmethod
+    def release(
+        conn: Connection,
+        *,
+        task_id: str,
+        run_id: str,
+        lease_id: str,
+        failure_kind: str,
+        failure_class: str,
+        next_retry_at: str | None,
+        terminal: bool,
+        now: str,
+    ) -> bool:
+        result = conn.execute(
+            update(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.id == run_id,
+                reason_runs.c.lease_id == lease_id,
+                reason_runs.c.status.in_(LEASED_REASON_STATUSES),
+            )
+            .values(
+                status="failed" if terminal else "pending",
+                worker=None,
+                lease_id=None,
+                claimed_at=None,
+                last_heartbeat_at=None,
+                next_retry_at=None if terminal else next_retry_at,
+                last_failure_kind=failure_kind,
+                failure_class=failure_class,
+                retry_count=reason_runs.c.retry_count + (1 if failure_class == "execution" else 0),
+                infrastructure_retry_count=reason_runs.c.infrastructure_retry_count
+                + (1 if failure_class == "transient" else 0),
+                activity_kind="failed" if terminal else "retry_wait",
+                activity_summary=(
+                    f"Reason 执行失败：{failure_kind}"
+                    if terminal
+                    else f"Reason 已释放，等待重试：{failure_kind}"
+                ),
+                activity_tool="",
+                activity_updated_at=now,
+                updated_at=now,
+                concluded_at=now if terminal else None,
+            )
+        )
+        return bool(result.rowcount)
+
+    @staticmethod
+    def complete(
+        conn: Connection,
+        *,
+        task_id: str,
+        run_id: str,
+        lease_id: str,
+        now: str,
+    ) -> bool:
+        result = conn.execute(
+            update(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.id == run_id,
+                reason_runs.c.lease_id == lease_id,
+                reason_runs.c.status.in_(["running", "concluding"]),
+            )
+            .values(
+                status="completed",
+                last_heartbeat_at=now,
+                next_retry_at=None,
+                last_failure_kind="",
+                failure_class="",
+                activity_kind="completed",
+                activity_summary="Reason 已完成规划并提交",
+                activity_tool="",
+                activity_updated_at=now,
+                updated_at=now,
+                concluded_at=now,
+            )
+        )
+        return bool(result.rowcount)
+
+    @staticmethod
+    def cancel_open_for_task(conn: Connection, task_id: str, *, now: str) -> int:
+        result = conn.execute(
+            update(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.status.in_(ACTIVE_REASON_STATUSES),
+            )
+            .values(
+                status="cancelled",
+                worker=None,
+                lease_id=None,
+                claimed_at=None,
+                last_heartbeat_at=None,
+                next_retry_at=None,
+                last_failure_kind="task_inactive",
+                failure_class="",
+                activity_kind="cancelled",
+                activity_summary="任务已停止，ReasonRun 已取消",
+                activity_tool="",
+                activity_updated_at=now,
+                updated_at=now,
+                concluded_at=now,
+            )
+        )
+        return int(result.rowcount or 0)
+
+    @staticmethod
+    def stale_active(conn: Connection, *, cutoff: str):
+        return conn.execute(
+            select(reason_runs).where(
+                reason_runs.c.status.in_(LEASED_REASON_STATUSES),
+                reason_runs.c.lease_id.is_not(None),
+                reason_runs.c.last_heartbeat_at.is_not(None),
+                reason_runs.c.last_heartbeat_at <= cutoff,
+            )
+        ).mappings().all()
 
     def open(
         self,
         conn: Connection,
         *,
         task_id: str,
-        intent_id: str,
+        reason_run_id: str,
         lease_id: str,
         worker: str,
         context_revision: int,
@@ -77,7 +462,8 @@ class ReasonRepository:
         values = {
             "id": workspace_id,
             "task_id": task_id,
-            "intent_id": intent_id,
+            "intent_id": None,
+            "reason_run_id": reason_run_id,
             "lease_id": lease_id,
             "status": "open",
             "context_revision": context_revision,
@@ -102,13 +488,13 @@ class ReasonRepository:
         self,
         conn: Connection,
         task_id: str,
-        intent_id: str,
+        reason_run_id: str,
         lease_id: str,
     ) -> ReasonWorkspace | None:
         row = conn.execute(
             select(reason_workspaces).where(
                 reason_workspaces.c.task_id == task_id,
-                reason_workspaces.c.intent_id == intent_id,
+                reason_workspaces.c.reason_run_id == reason_run_id,
                 reason_workspaces.c.lease_id == lease_id,
             )
         ).mappings().one_or_none()
@@ -140,14 +526,12 @@ class ReasonRepository:
         *,
         created_todo_ids: list[str],
         created_intent_ids: list[str],
-        created_vulnerability_ids: list[str],
         now: str,
     ) -> ReasonWorkspace:
         result_json = json.dumps(
             {
                 "created_todo_ids": created_todo_ids,
                 "created_intent_ids": created_intent_ids,
-                "created_vulnerability_ids": created_vulnerability_ids,
             },
             ensure_ascii=False,
         )
@@ -171,7 +555,7 @@ class ReasonRepository:
         self,
         conn: Connection,
         workspace: ReasonWorkspace,
-    ) -> tuple[list[str], list[str], list[str]]:
+    ) -> tuple[list[str], list[str]]:
         row = conn.execute(
             select(reason_workspaces.c.result_json).where(reason_workspaces.c.id == workspace.id)
         ).scalar_one()
@@ -179,7 +563,6 @@ class ReasonRepository:
         return (
             list(payload.get("created_todo_ids", [])),
             list(payload.get("created_intent_ids", [])),
-            list(payload.get("created_vulnerability_ids", [])),
         )
 
     def abandon(
@@ -202,11 +585,44 @@ class ReasonRepository:
         return workspace
 
     @staticmethod
+    def abandon_open(
+        conn: Connection,
+        *,
+        task_id: str,
+        failure_reason: str,
+        now: str,
+        reason_run_id: str | None = None,
+        lease_id: str | None = None,
+        exclude_workspace_id: str | None = None,
+    ) -> int:
+        conditions = [
+            reason_workspaces.c.task_id == task_id,
+            reason_workspaces.c.status == "open",
+        ]
+        if reason_run_id is not None:
+            conditions.append(reason_workspaces.c.reason_run_id == reason_run_id)
+        if lease_id is not None:
+            conditions.append(reason_workspaces.c.lease_id == lease_id)
+        if exclude_workspace_id is not None:
+            conditions.append(reason_workspaces.c.id != exclude_workspace_id)
+        result = conn.execute(
+            update(reason_workspaces)
+            .where(*conditions)
+            .values(
+                status="abandoned",
+                failure_reason=failure_reason,
+                updated_at=now,
+            )
+        )
+        return int(result.rowcount or 0)
+
+    @staticmethod
     def _workspace(row) -> ReasonWorkspace:
         return ReasonWorkspace(
             id=row["id"],
             task_id=row["task_id"],
-            intent_id=row["intent_id"],
+            intent_id=row.get("intent_id"),
+            reason_run_id=row.get("reason_run_id"),
             lease_id=row["lease_id"],
             status=row["status"],
             context_revision=row["context_revision"],
@@ -216,4 +632,43 @@ class ReasonRepository:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             committed_at=row["committed_at"],
+        )
+
+    @staticmethod
+    def _run(row, source_fact_ids: list[str]) -> ReasonRun:
+        return ReasonRun(
+            id=row["id"],
+            task_id=row["task_id"],
+            status=row["status"],
+            trigger=row["trigger"],
+            trigger_payload=json.loads(row["trigger_payload_json"] or "{}"),
+            input_fingerprint=row["input_fingerprint"],
+            source_fact_ids=source_fact_ids,
+            worker_pool=json.loads(row["worker_pool_json"] or "[]"),
+            worker=row["worker"],
+            settings_version=row["settings_version"],
+            execute_timeout_seconds=row["execute_timeout_seconds"],
+            conclude_timeout_seconds=row["conclude_timeout_seconds"],
+            target_open_intents=row["target_open_intents"],
+            max_new_intents=row["max_new_intents"],
+            explore_execute_min_seconds=row["explore_execute_min_seconds"],
+            explore_execute_max_seconds=row["explore_execute_max_seconds"],
+            explore_conclude_min_seconds=row["explore_conclude_min_seconds"],
+            explore_conclude_max_seconds=row["explore_conclude_max_seconds"],
+            lease_id=row["lease_id"],
+            claimed_at=row["claimed_at"],
+            last_heartbeat_at=row["last_heartbeat_at"],
+            retry_count=row["retry_count"],
+            infrastructure_retry_count=row["infrastructure_retry_count"],
+            next_retry_at=row["next_retry_at"],
+            last_failure_kind=row["last_failure_kind"] or "",
+            failure_class=row["failure_class"] or "",
+            activity_kind=row["activity_kind"] or "",
+            activity_summary=row["activity_summary"] or "",
+            activity_tool=row["activity_tool"] or "",
+            activity_started_at=row["activity_started_at"],
+            activity_updated_at=row["activity_updated_at"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            concluded_at=row["concluded_at"],
         )

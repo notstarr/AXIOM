@@ -12,6 +12,7 @@ audit_events = Table(
     Column("project_id", String),
     Column("task_id", String),
     Column("intent_id", String),
+    Column("reason_run_id", String),
     Column("workspace_id", String),
     Column("worker", String, nullable=False, default=""),
     Column("event_type", String, nullable=False),

@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
-from axiom.modules.guard.policy import HARD_BLOCK_RULES, SYSTEM_PROMPT, WHITELIST_BASH_VERBS, WHITELIST_TOOLS
+from axiom.modules.guard.defaults import (
+    HARD_BLOCK_RULES,
+    SYSTEM_PROMPT,
+    WHITELIST_BASH_VERBS,
+    WHITELIST_TOOLS,
+)
 from axiom.modules.guard.schemas import GuardDecision, GuardDefaults, GuardRequest
 
 

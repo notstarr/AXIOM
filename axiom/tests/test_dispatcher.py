@@ -6,8 +6,10 @@ from axiom.dispatcher.loop import Dispatcher
 from axiom.dispatcher.reconciler import Reconciler
 from axiom.dispatcher.schemas import (
     ClaimedIntent,
+    DispatchLimits,
     DispatcherSnapshot,
     IntentSnapshot,
+    ReasonRunSnapshot,
     TaskSnapshot,
     WorkerSnapshot,
 )
@@ -62,6 +64,17 @@ def worker(name: str, *, capabilities=("explore",), running=0, max_running=1, pr
         running=running,
         max_running=max_running,
         priority=priority,
+    )
+
+
+def reason_run(task_id: str, number: int, *, status="pending", pool=None):
+    return ReasonRunSnapshot(
+        task_id=task_id,
+        id=f"rr{number:06d}",
+        status=status,
+        worker_pool=pool or [],
+        created_at=NOW + timedelta(seconds=number),
+        claimed_at=NOW if status in {"claimed", "running", "concluding"} else None,
     )
 
 
@@ -153,3 +166,151 @@ def test_dispatcher_limits_claims_to_runner_capacity():
     assert report.claimed == 1
     assert [item.intent_id for item in report.claims] == ["i002"]
     assert control_plane.current.tasks[0].intents[1].status == "pending"
+
+
+def test_reconciler_uses_bootstrap_reason_explore_priority_without_reason_intents():
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                intents=[
+                    intent("t_001", 1, kind="bootstrap"),
+                    intent("t_001", 2, kind="explore"),
+                ],
+                reason_runs=[reason_run("t_001", 1)],
+            )
+        ],
+        workers=[
+            worker("bootstrap", capabilities=("bootstrap",)),
+            worker("reason", capabilities=("reason",)),
+            worker("explore", capabilities=("explore",)),
+        ],
+        limits=DispatchLimits(
+            global_max_active_runs=3,
+            global_max_active_tasks=1,
+            per_task_max_active_runs=3,
+            per_task_explore_concurrency=1,
+        ),
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert [item.claim.kind for item in actions] == ["bootstrap", "reason", "explore"]
+    assert actions[1].claim.reason_run_id == "rr000001"
+    assert actions[1].claim.intent_id is None
+
+
+def test_reconciler_round_robins_tasks_before_giving_one_task_a_second_slot():
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                intents=[intent("t_001", 2), intent("t_001", 3)],
+            ),
+            TaskSnapshot(
+                id="t_002",
+                status="running",
+                intents=[intent("t_002", 2), intent("t_002", 3)],
+            ),
+        ],
+        workers=[worker("worker-a", max_running=2)],
+        limits=DispatchLimits(
+            global_max_active_runs=2,
+            global_max_active_tasks=2,
+            per_task_max_active_runs=2,
+            per_task_explore_concurrency=2,
+        ),
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert [(item.claim.task_id, item.claim.intent_id) for item in actions] == [
+        ("t_001", "i002"),
+        ("t_002", "i002"),
+    ]
+
+
+def test_reconciler_prefers_the_task_that_has_waited_longer_across_ticks():
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                intents=[intent("t_001", 2)],
+                last_claimed_at=NOW,
+            ),
+            TaskSnapshot(
+                id="t_002",
+                status="running",
+                intents=[intent("t_002", 2)],
+            ),
+        ],
+        workers=[worker("worker-a")],
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert actions[0].claim.task_id == "t_002"
+
+
+def test_active_reason_run_consumes_global_task_and_reason_capacity():
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                intents=[intent("t_001", 2)],
+                reason_runs=[
+                    reason_run("t_001", 1, status="running"),
+                    reason_run("t_001", 2),
+                ],
+            ),
+            TaskSnapshot(
+                id="t_002",
+                status="running",
+                intents=[intent("t_002", 2)],
+            ),
+        ],
+        workers=[
+            worker("reason-a", capabilities=("reason",), running=1, max_running=2),
+            worker("explore-a", capabilities=("explore",)),
+        ],
+        limits=DispatchLimits(
+            global_max_active_runs=2,
+            global_max_active_tasks=1,
+            per_task_max_active_runs=2,
+            per_task_explore_concurrency=1,
+        ),
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert len(actions) == 1
+    assert actions[0].claim.task_id == "t_001"
+    assert actions[0].claim.kind == "explore"
+
+
+def test_reconciler_does_not_exceed_per_task_explore_concurrency():
+    active = intent("t_001", 2)
+    active.status = "running"
+    active.claimed_at = NOW
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                intents=[active, intent("t_001", 3)],
+            )
+        ],
+        workers=[worker("worker-a", running=1, max_running=2)],
+        limits=DispatchLimits(
+            global_max_active_runs=2,
+            global_max_active_tasks=1,
+            per_task_max_active_runs=2,
+            per_task_explore_concurrency=1,
+        ),
+    )
+
+    assert Reconciler(now=lambda: NOW).calculate(snapshot) == []

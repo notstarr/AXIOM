@@ -5,7 +5,8 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.graph.tables import facts
-from axiom.modules.tasks.tables import task_hints
+from axiom.modules.knowledge.tables import project_knowledge
+from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.modules.todos.schemas import CreateTodo, Todo, TodoSource
 from axiom.modules.todos.tables import todo_sources, todos
 from axiom.modules.vulnerabilities.tables import vulnerabilities
@@ -114,6 +115,20 @@ class TodoRepository:
                 vulnerabilities.c.task_id == task_id,
                 vulnerabilities.c.id == source.id,
                 vulnerabilities.c.archived.is_(False),
+            )
+        elif source.type == "knowledge":
+            statement = select(project_knowledge.c.id).where(
+                project_knowledge.c.id == source.id,
+                project_knowledge.c.enabled.is_(True),
+                project_knowledge.c.archived.is_(False),
+                project_knowledge.c.project_id
+                == select(
+                    # Resolve the task's project without broadening a
+                    # knowledge reference to another project.
+                    tasks.c.project_id
+                )
+                .where(tasks.c.id == task_id)
+                .scalar_subquery(),
             )
         else:
             return False

@@ -23,11 +23,18 @@ context_revisions = Table(
     Column("revision", Integer, nullable=False),
     Column("phase", String, nullable=False),
     Column("intent_id", String),
+    Column("reason_run_id", String),
     Column("lease_id", String),
     Column("manifest_key", Text, nullable=False),
     Column("content_hash", String, nullable=False),
     Column("created_at", String, nullable=False),
     PrimaryKeyConstraint("task_id", "revision"),
     UniqueConstraint("task_id", "intent_id", "lease_id"),
+    UniqueConstraint("task_id", "reason_run_id", "lease_id"),
 )
 Index("ix_context_revisions_task_intent", context_revisions.c.task_id, context_revisions.c.intent_id)
+Index(
+    "ix_context_revisions_task_reason_run",
+    context_revisions.c.task_id,
+    context_revisions.c.reason_run_id,
+)

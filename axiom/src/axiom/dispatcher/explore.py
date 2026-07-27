@@ -5,17 +5,21 @@ import threading
 from collections.abc import Callable
 from typing import Protocol
 
-from pydantic import ValidationError
-
 from axiom.dispatcher.bootstrap import TransientWorkerError
+from axiom.dispatcher.closeout import bounded_closeout
 from axiom.dispatcher.heartbeat import LeaseHeartbeat, LeaseLostError
 from axiom.dispatcher.schemas import ClaimedIntent
-from axiom.modules.artifacts.schemas import ExploreBundle
 from axiom.modules.execution.schemas import (
     CompleteExploreCommand,
     ExecutionInput,
     ExploreCompleted,
     ReleaseIntentCommand,
+)
+from axiom.modules.execution.stage_outputs import (
+    StageOutputError,
+    explore_files,
+    initialize_explore_state,
+    require_finish,
 )
 
 
@@ -70,7 +74,7 @@ class ExploreControlPlane(Protocol):
 
 
 class ExploreRunner:
-    """Execute once, conclude at most once, then atomically persist evidence and Fact."""
+    """Execute once, then perform bounded closeout and atomically persist evidence."""
 
     def __init__(
         self,
@@ -93,33 +97,34 @@ class ExploreRunner:
             self.control_plane.start(work)
             heartbeat.start()
             execution_input = self.control_plane.input(work)
+            initialize_explore_state(execution_input.run_dir)
             try:
                 raw_output = executor.execute(
                     execution_input,
                     lease_active=heartbeat.is_active,
                 )
-                output = ExploreBundle.model_validate(raw_output)
+                self._validate_output(execution_input, raw_output)
             except ExploreExecutionTimeout:
-                output = self._conclude(
+                self._conclude(
                     work,
                     executor,
                     execution_input,
                     heartbeat,
                     reason="execute_timeout",
                 )
-            except ValidationError:
-                output = self._conclude(
+            except StageOutputError as exc:
+                self._conclude(
                     work,
                     executor,
                     execution_input,
                     heartbeat,
-                    reason="invalid_execute_output",
+                    reason=str(exc),
                 )
 
             heartbeat.ensure_active()
             return self.control_plane.complete_explore(
                 work,
-                CompleteExploreCommand(lease_id=work.lease_id, output=output),
+                CompleteExploreCommand(lease_id=work.lease_id),
             )
         except LeaseLostError:
             self._release_best_effort(
@@ -153,15 +158,26 @@ class ExploreRunner:
         heartbeat: LeaseHeartbeat,
         *,
         reason: str,
-    ) -> ExploreBundle:
+    ) -> None:
         heartbeat.ensure_active()
-        self.control_plane.begin_conclude(work)
-        raw_output = executor.conclude(
-            execution_input,
+        bounded_closeout(
+            execution_input=execution_input,
+            begin=lambda: self.control_plane.begin_conclude(work),
+            conclude=lambda attempt_input, attempt_reason: executor.conclude(
+                attempt_input,
+                reason=attempt_reason,
+                lease_active=heartbeat.is_active,
+            ),
+            validate=self._validate_output,
             reason=reason,
-            lease_active=heartbeat.is_active,
+            retry_errors=(StageOutputError,),
+            default_timeout_seconds=120,
         )
-        return ExploreBundle.model_validate(raw_output)
+
+    @staticmethod
+    def _validate_output(execution_input: ExecutionInput, raw_output: object) -> None:
+        require_finish(str(raw_output))
+        explore_files(execution_input.run_dir)
 
     def _release_best_effort(
         self,

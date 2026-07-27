@@ -4,7 +4,11 @@ from fastapi import APIRouter, Depends
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
-from axiom.modules.settings.schemas import RuntimeSettings, UpdateRuntimeSettings
+from axiom.modules.settings.schemas import (
+    ApplyRuntimeSettings,
+    RuntimeSettings,
+    UpdateRuntimeSettings,
+)
 
 
 router = APIRouter(prefix="/settings/runtime", tags=["settings"])
@@ -22,4 +26,16 @@ def update_runtime_settings(
     body: UpdateRuntimeSettings,
     container: Container = Depends(get_container),
 ) -> RuntimeSettings:
-    return container.settings.update(body.config, actor=body.actor)
+    return container.settings.update(
+        body.config,
+        actor=body.actor,
+        expected_version=body.expected_version,
+    )
+
+
+@router.post("/applied", response_model=RuntimeSettings)
+def mark_runtime_settings_applied(
+    body: ApplyRuntimeSettings,
+    container: Container = Depends(get_container),
+) -> RuntimeSettings:
+    return container.settings.mark_applied(body.version)
