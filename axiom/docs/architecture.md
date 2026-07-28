@@ -167,6 +167,8 @@ remaining = min(
 
 Reason 最后一条 assistant 文本精确等于 `FINISH` 后，Runner 先读取 Workspace readiness：必须存在 Goal assessment，并且要么继续派发工作，要么用真实 Fact 证据证明 Goal 已达成。校验通过才调用 `/commit`。提交后由代码生成 `reason_plan.json` 审计文件；`/submit` 不再存在。
 
+ReasonRun 创建时还会快照 `todo_review_ids`：这些 Todo 处于 pending/active、至少有一个终态 Explore，且已经没有开放 Explore。Reason 必须逐个明确收口为 completed/rejected/obsolete；若保持 active，必须填写原因并在同一 Workspace 为该 Todo 提交新的 Intent。readiness 会拒绝遗漏审查、空 active，以及“终态 Todo 同时派发 Intent”。审查集合固定在 ReasonRun 快照中，不会因并发 Explore 在执行期间结束而动态扩大。
+
 同一轮新增 Todo 可以使用临时 `ref` 被 Intent 或 Goal Assessment 引用。提交事务先创建 Todo，再将临时引用解析为真实 `tdXXX`；引用不存在时整批回滚，不会留下半套规划或错误的 Goal Evaluation。
 
 Reason Trigger Reconciler 在 Bootstrap/Explore 完成后立即评估，并在每个 Runner tick 周期评估。前置条件是 Task running、Bootstrap 已完成、Goal 未达成、没有活动 ReasonRun，且除初次外已满足最短间隔。满足以下任一条件时创建新 ReasonRun：未规划 Fact 达到批量数；开放 Explore 低于低水位且存在新 Fact、失败终态或未派发的可执行 Todo；最老未规划 Fact 达到最大等待。输入状态指纹防止同一低水位状态空转，Task 恢复只重新评估规则，不无条件触发。

@@ -171,6 +171,7 @@ class WorkspaceStatus(BaseModel):
     intent_proposal_count: int = 0
     todo_refs: list[str] = Field(default_factory=list)
     updated_todo_ids: list[str] = Field(default_factory=list)
+    todo_review_ids: list[str] = Field(default_factory=list)
     goal_assessed: bool = False
     goal_achieved: bool = False
     open_explore_intents: int = 0

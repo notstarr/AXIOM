@@ -47,6 +47,7 @@ from axiom.shared.storage import FileStore
 
 logger = logging.getLogger(__name__)
 OPEN_EXPLORE_STATUSES = ("pending", "claimed", "running", "concluding")
+TERMINAL_EXPLORE_STATUSES = ("completed", "failed", "cancelled")
 
 
 class ReasonService:
@@ -80,6 +81,7 @@ class ReasonService:
             source_fact_ids=[source_fact_id],
             failed_intent_ids=[],
             actionable_todo_ids=[],
+            todo_review_ids=[],
             open_explore_ids=[],
         )
         run = self._create_run(
@@ -149,6 +151,7 @@ class ReasonService:
         open_explore_ids = list(state["open_explore_ids"])
         failed_intent_ids = list(state["failed_intent_ids"])
         actionable_todo_ids = list(state["actionable_todo_ids"])
+        todo_review_ids = list(state["todo_review_ids"])
         signals_present = bool(source_fact_ids or failed_intent_ids or actionable_todo_ids)
         if not signals_present:
             self._set_phase(conn, task_id, "explore" if open_explore_ids else "waiting", now)
@@ -191,6 +194,7 @@ class ReasonService:
             source_fact_ids=source_fact_ids,
             failed_intent_ids=failed_intent_ids,
             actionable_todo_ids=actionable_todo_ids,
+            todo_review_ids=todo_review_ids,
             open_explore_ids=open_explore_ids,
         )
         latest_deduplication = self.repository.latest_deduplication_row(conn, task_id)
@@ -211,6 +215,7 @@ class ReasonService:
                 "open_explore_count": len(open_explore_ids),
                 "failed_intent_ids": failed_intent_ids,
                 "actionable_todo_ids": actionable_todo_ids,
+                "todo_review_ids": todo_review_ids,
                 "oldest_fact_age_seconds": oldest_age,
             },
             input_fingerprint=fingerprint,
@@ -342,6 +347,7 @@ class ReasonService:
             "open_explore_ids": open_explore_ids,
             "failed_intent_ids": failed_intent_ids,
             "actionable_todo_ids": actionable_todo_ids,
+            "todo_review_ids": self._todo_review_ids(conn, task_id),
         }
 
     @staticmethod
@@ -350,6 +356,7 @@ class ReasonService:
         source_fact_ids: list[str],
         failed_intent_ids: list[str],
         actionable_todo_ids: list[str],
+        todo_review_ids: list[str],
         open_explore_ids: list[str],
     ) -> str:
         payload = json.dumps(
@@ -357,6 +364,7 @@ class ReasonService:
                 "facts": sorted(set(source_fact_ids)),
                 "failed_intents": sorted(set(failed_intent_ids)),
                 "actionable_todos": sorted(set(actionable_todo_ids)),
+                "todo_reviews": sorted(set(todo_review_ids)),
                 "open_explore": sorted(set(open_explore_ids)),
             },
             ensure_ascii=False,
@@ -784,6 +792,7 @@ class ReasonService:
             )
             open_count, limit, remaining = self._intent_quota(conn, workspace, run)
             assessment = workspace.draft.goal_assessment
+            todo_review_ids = self._run_todo_review_ids(conn, workspace.task_id, run)
             return WorkspaceStatus(
                 workspace_id=workspace.id,
                 status=workspace.status,
@@ -792,6 +801,7 @@ class ReasonService:
                 intent_proposal_count=len(workspace.draft.intent_proposals),
                 todo_refs=[item.ref for item in workspace.draft.todo_adds],
                 updated_todo_ids=[item.todo_id for item in workspace.draft.todo_updates],
+                todo_review_ids=todo_review_ids,
                 goal_assessed=assessment is not None,
                 goal_achieved=bool(assessment and assessment.achieved),
                 open_explore_intents=open_count,
@@ -1115,6 +1125,25 @@ class ReasonService:
                 self._validate_intent(conn, workspace.task_id, draft, proposal, run)
             except (ConflictError, NotFoundError) as exc:
                 errors.append(str(exc))
+        review_ids = self._run_todo_review_ids(conn, workspace.task_id, run)
+        updates_by_id = {item.todo_id: item for item in draft.todo_updates}
+        proposed_todo_ids = {
+            item.todo_id for item in draft.intent_proposals if item.todo_id is not None
+        }
+        for todo_id in review_ids:
+            staged = updates_by_id.get(todo_id)
+            if staged is None or staged.status is None:
+                errors.append(f"Todo {todo_id} 已无开放 Intent，必须明确更新状态")
+                continue
+            if staged.status == "active":
+                if not (staged.status_reason or "").strip():
+                    errors.append(f"Todo {todo_id} 保持 active 时必须填写 status_reason")
+                if todo_id not in proposed_todo_ids:
+                    errors.append(f"Todo {todo_id} 保持 active 时必须派发新的关联 Intent")
+            elif staged.status not in {"completed", "rejected", "obsolete"}:
+                errors.append(
+                    f"Todo {todo_id} 收口状态必须是 completed、rejected、obsolete 或 active"
+                )
         open_count, limit, _remaining = self._intent_quota(conn, workspace, run)
         if len(draft.intent_proposals) > limit:
             errors.append(
@@ -1135,6 +1164,47 @@ class ReasonService:
             if not assessment.achieved and not draft.intent_proposals and not open_count:
                 errors.append("Goal 未达成时必须派发可执行 Intent，或保留已有活动 Explore")
         return list(dict.fromkeys(errors))
+
+    @staticmethod
+    def _todo_review_ids(conn, task_id: str) -> list[str]:
+        open_explore_exists = exists(
+            select(intents.c.id).where(
+                intents.c.task_id == task_id,
+                intents.c.todo_id == todos.c.id,
+                intents.c.kind == "explore",
+                intents.c.status.in_(OPEN_EXPLORE_STATUSES),
+                intents.c.archived.is_(False),
+            )
+        )
+        terminal_explore_exists = exists(
+            select(intents.c.id).where(
+                intents.c.task_id == task_id,
+                intents.c.todo_id == todos.c.id,
+                intents.c.kind == "explore",
+                intents.c.status.in_(TERMINAL_EXPLORE_STATUSES),
+                intents.c.archived.is_(False),
+            )
+        )
+        return list(
+            conn.execute(
+                select(todos.c.id)
+                .where(
+                    todos.c.task_id == task_id,
+                    todos.c.status.in_(["pending", "active"]),
+                    todos.c.archived.is_(False),
+                    terminal_explore_exists,
+                    ~open_explore_exists,
+                )
+                .order_by(todos.c.priority.desc(), todos.c.id)
+            ).scalars()
+        )
+
+    def _run_todo_review_ids(self, conn, task_id: str, run: ReasonRun) -> list[str]:
+        snapshot = run.trigger_payload.get("todo_review_ids", [])
+        if not isinstance(snapshot, list):
+            return []
+        current = set(self._todo_review_ids(conn, task_id))
+        return [todo_id for todo_id in snapshot if isinstance(todo_id, str) and todo_id in current]
 
     def _intent_quota(
         self, conn, workspace: ReasonWorkspace, run: ReasonRun
@@ -1229,10 +1299,25 @@ class ReasonService:
         run: ReasonRun,
     ) -> None:
         if proposal.todo_ref:
-            if not any(item.ref == proposal.todo_ref for item in draft.todo_adds):
+            todo = next(
+                (item for item in draft.todo_adds if item.ref == proposal.todo_ref),
+                None,
+            )
+            if todo is None:
                 raise ConflictError(f"Intent references unknown Todo draft: {proposal.todo_ref}")
-        if proposal.todo_id and self.todos.get(conn, task_id, proposal.todo_id) is None:
-            raise NotFoundError(f"Todo not found: {proposal.todo_id}")
+            todo_id = proposal.todo_ref
+        else:
+            todo = self.todos.get(conn, task_id, proposal.todo_id or "")
+            if todo is None:
+                raise NotFoundError(f"Todo not found: {proposal.todo_id}")
+            todo_id = proposal.todo_id or ""
+        staged = next(
+            (item for item in draft.todo_updates if item.todo_id == todo_id),
+            None,
+        )
+        effective_status = staged.status if staged and staged.status is not None else todo.status
+        if effective_status in {"completed", "rejected", "obsolete"}:
+            raise ConflictError(f"Intent cannot reference terminal Todo: {todo_id}")
         if "goal" in proposal.from_facts:
             raise ConflictError("Goal Fact cannot be used as an Intent source")
         for fact_id in proposal.from_facts:

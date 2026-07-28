@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from protocol_helpers import (
     apply_reason_draft,
     bootstrap_files_from_legacy,
     complete_bootstrap,
     claim_reason_run,
+    open_reason_workspace,
+    update_runtime_settings,
 )
 
 BOOTSTRAP_PAYLOAD = {
@@ -55,6 +58,256 @@ def active_reason(client, *, origin: str = "a.example.com") -> tuple[dict, dict,
         worker_name="worker-a",
     )
     return task, reason_claim, completed
+
+
+def todo_review_workspace(client, *, sibling_intent: bool = False) -> tuple[dict, dict, dict]:
+    update_runtime_settings(
+        client,
+        reason_batch_size=1,
+        reason_min_interval_seconds=0,
+        reason_target_open_intents=4,
+    )
+    task, reason_claim, completed = active_reason(client)
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=reason_claim)
+    proposals = [
+        {
+            "todo_ref": "authz",
+            "from_facts": [completed["fact_id"]],
+            "description": "验证订单详情接口是否存在对象级授权问题",
+            "targets": ["a.example.com"],
+            "execute_seconds": 420,
+            "conclude_seconds": 180,
+        }
+    ]
+    if sibling_intent:
+        proposals.append(
+            {
+                "todo_ref": "authz",
+                "from_facts": [completed["fact_id"]],
+                "description": "验证订单修改接口是否存在对象级授权问题",
+                "targets": ["a.example.com"],
+                "execute_seconds": 420,
+                "conclude_seconds": 180,
+            }
+        )
+    committed = apply_reason_draft(
+        client,
+        workspace["id"],
+        reason_claim["lease_id"],
+        {
+            "todo_adds": [
+                {
+                    "ref": "authz",
+                    "title": "验证对象级授权",
+                    "category": "authorization",
+                    "sources": [{"type": "fact", "id": completed["fact_id"]}],
+                }
+            ],
+            "intent_proposals": proposals,
+        },
+    )
+    assert committed.status_code == 200, committed.text
+    intent_id = committed.json()["created_intent_ids"][0]
+    claim = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/intents/{intent_id}/claim",
+        json={"worker_name": "worker-a"},
+    ).json()
+    base = f"/api/v1/dispatch/tasks/{task['id']}/intents/{intent_id}"
+    client.post(f"{base}/start", json={"lease_id": claim["lease_id"]})
+    execution_input = client.post(
+        f"{base}/input", json={"lease_id": claim["lease_id"]}
+    ).json()
+    artifacts = Path(execution_input["run_dir"]) / "artifacts"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    (artifacts / "findings.md").write_text(
+        "# 已确认事实\n\n- 已完成对象级授权测试\n", encoding="utf-8"
+    )
+    (artifacts / "leads.md").write_text(
+        "# 待验证线索\n\n本轮无遗留待验证线索\n", encoding="utf-8"
+    )
+    explored = client.post(
+        f"{base}/explore-complete", json={"lease_id": claim["lease_id"]}
+    )
+    assert explored.status_code == 200, explored.text
+    next_reason_run_id = explored.json()["reason_run_id"]
+    assert next_reason_run_id is not None
+    next_claim, _ = claim_reason_run(
+        client,
+        task_id=task["id"],
+        reason_run_id=next_reason_run_id,
+        worker_name="worker-a",
+    )
+    next_workspace = open_reason_workspace(client, task_id=task["id"], claim=next_claim)
+    return task, next_claim, next_workspace
+
+
+def test_reason_requires_explicit_review_when_a_todo_has_no_open_intent(client) -> None:
+    task, claim, workspace = todo_review_workspace(client)
+    fact_id = client.get(f"/api/v1/tasks/{task['id']}/graph").json()["facts"][-1]["id"]
+    assessed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/goal-assessment",
+        json={
+            "lease_id": claim["lease_id"],
+            "assessment": {
+                "achieved": True,
+                "reason": "当前测试目标已有充分证据",
+                "evidence_refs": [f"fact:{fact_id}"],
+            },
+        },
+    )
+    assert assessed.status_code == 200, assessed.text
+
+    status = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/status",
+        json={"lease_id": claim["lease_id"]},
+    ).json()
+    assert status["todo_review_ids"] == ["td001"]
+    assert status["ready"] is False
+    assert "Todo td001 已无开放 Intent，必须明确更新状态" in status["errors"]
+
+    committed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        json={"lease_id": claim["lease_id"]},
+    )
+    assert committed.status_code == 409
+    assert client.get(f"/api/v1/tasks/{task['id']}/todos").json()[0]["status"] == "active"
+
+
+def test_reason_completes_a_reviewed_todo_and_records_completed_at(client) -> None:
+    task, claim, workspace = todo_review_workspace(client)
+    fact_id = client.get(f"/api/v1/tasks/{task['id']}/graph").json()["facts"][-1]["id"]
+    response = apply_reason_draft(
+        client,
+        workspace["id"],
+        claim["lease_id"],
+        {
+            "todo_updates": [
+                {
+                    "todo_id": "td001",
+                    "status": "completed",
+                    "status_reason": "关联 Explore 已覆盖该测试主题",
+                    "source_adds": [{"type": "fact", "id": fact_id}],
+                }
+            ],
+            "goal_assessment": {
+                "achieved": True,
+                "reason": "当前测试目标已有充分证据",
+                "evidence_refs": [f"fact:{fact_id}"],
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    todo = client.get(f"/api/v1/tasks/{task['id']}/todos").json()[0]
+    assert todo["status"] == "completed"
+    assert todo["completed_at"] is not None
+    assert todo["status_reason"] == "关联 Explore 已覆盖该测试主题"
+
+
+def test_reason_keeps_a_reviewed_todo_active_only_with_a_new_intent(client) -> None:
+    task, claim, workspace = todo_review_workspace(client)
+    fact_id = client.get(f"/api/v1/tasks/{task['id']}/graph").json()["facts"][-1]["id"]
+    update = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/todo-updates",
+        json={
+            "lease_id": claim["lease_id"],
+            "update": {
+                "todo_id": "td001",
+                "status": "active",
+                "status_reason": "仍需验证订单修改接口",
+            },
+        },
+    )
+    assert update.status_code == 200, update.text
+    assessed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/goal-assessment",
+        json={
+            "lease_id": claim["lease_id"],
+            "assessment": {
+                "achieved": False,
+                "reason": "仍需继续验证授权边界",
+                "evidence_refs": [f"fact:{fact_id}"],
+            },
+        },
+    )
+    assert assessed.status_code == 200, assessed.text
+    rejected = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        json={"lease_id": claim["lease_id"]},
+    )
+    assert rejected.status_code == 409
+    assert "保持 active 时必须派发新的关联 Intent" in rejected.text
+
+    proposed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/intents",
+        json={
+            "lease_id": claim["lease_id"],
+            "intent": {
+                "todo_id": "td001",
+                "from_facts": [fact_id],
+                "description": "继续验证订单修改接口的对象级授权边界",
+                "targets": ["a.example.com"],
+                "execute_seconds": 420,
+                "conclude_seconds": 180,
+            },
+        },
+    )
+    assert proposed.status_code == 200, proposed.text
+    committed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        json={"lease_id": claim["lease_id"]},
+    )
+    assert committed.status_code == 200, committed.text
+    assert committed.json()["created_intent_ids"] == ["i003"]
+    todo = client.get(f"/api/v1/tasks/{task['id']}/todos").json()[0]
+    assert todo["status"] == "active"
+    assert todo["status_reason"] == "仍需验证订单修改接口"
+
+
+def test_reason_does_not_review_a_todo_while_a_sibling_intent_is_open(client) -> None:
+    _task, claim, workspace = todo_review_workspace(client, sibling_intent=True)
+    status = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/status",
+        json={"lease_id": claim["lease_id"]},
+    ).json()
+    assert status["todo_review_ids"] == []
+
+
+def test_reason_rejects_an_intent_for_a_todo_staged_as_terminal(client) -> None:
+    task, reason_claim, completed = active_reason(client)
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=reason_claim)
+    todo = {
+        "ref": "done",
+        "title": "已经完成的测试方向",
+        "category": "other",
+        "sources": [{"type": "fact", "id": completed["fact_id"]}],
+    }
+    assert client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/todos",
+        json={"lease_id": reason_claim["lease_id"], "todo": todo},
+    ).status_code == 200
+    assert client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/todo-updates",
+        json={
+            "lease_id": reason_claim["lease_id"],
+            "update": {"todo_id": "done", "status": "completed"},
+        },
+    ).status_code == 200
+    proposed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/intents",
+        json={
+            "lease_id": reason_claim["lease_id"],
+            "intent": {
+                "todo_ref": "done",
+                "from_facts": [completed["fact_id"]],
+                "description": "不应继续派发的测试",
+                "targets": ["a.example.com"],
+                "execute_seconds": 300,
+                "conclude_seconds": 180,
+            },
+        },
+    )
+    assert proposed.status_code == 409
+    assert "Intent cannot reference terminal Todo: done" in proposed.text
 
 
 def test_reason_workspace_commits_todos_and_pending_intents_atomically(client, data_dir) -> None:
