@@ -23,6 +23,8 @@
 
 ## Skill 规则
 
+`whatisvul` 是本阶段的强制前置 Skill，不是“可能需要时再读”的可选项。读取高价值 Context 后、开始任何网络探测或编写产物前，必须先运行 `axiom skill path whatisvul`，并完整读取返回目录中的 `SKILL.md`。读取失败时先运行 `axiom skill doctor whatisvul` 排障并重试，不得凭记忆或常识替代。即使 Bootstrap 不负责逐条上报漏洞，也必须用该 Skill 的标准区分 `findings.md` 中的已确认漏洞与 `initial_leads.md` 中的待验证线索。
+
 在开始以及执行下一步操作前，先查看当前会话自己的 Skill 目录；只读取本轮操作需要的 `SKILL.md`，不要复制或一次性加载全部 Skill。脚本型 Skill 使用 `axiom skill path <name>` 获取绝对目录；命令不可用时运行 `axiom skill doctor <name>` 定位原因，不要猜路径或执行全盘 `find`。Skill 与任务边界冲突时，以任务边界和系统规则为准。
 
 ## 必须写入的产物

@@ -103,6 +103,9 @@ def test_pi_json_and_rpc_modes_append_the_shared_context_attention_rule(tmp_path
         index = argv.index("--append-system-prompt")
         assert argv[index + 1] == CONTEXT_ATTENTION_SYSTEM_PROMPT
         assert "hints.json、knowledge.json、vulnerabilities.json" in argv[index + 1]
+        assert "axiom skill path whatisvul" in argv[index + 1]
+        assert "axiom skill doctor whatisvul" in argv[index + 1]
+        assert "不得用记忆、常识或其它 Skill 替代" in argv[index + 1]
 
 
 def test_pi_adapter_materializes_custom_provider_and_shared_skill_paths(tmp_path) -> None:
@@ -260,6 +263,42 @@ def test_explore_prompt_requires_priority_context_before_progressive_details() -
     assert "完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`" in prompt
     assert "status_reason" in prompt
     assert "再按需读取相关 Fact、Intent、Todo、Artifact、Evidence" in prompt
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "bootstrap.md",
+        "bootstrap_conclude.md",
+        "reason.md",
+        "reason_conclude.md",
+        "explore.md",
+        "explore_conclude.md",
+    ],
+)
+def test_all_stage_prompts_require_whatisvul_before_stage_work(template: str) -> None:
+    prompt = PromptRenderer().render(
+        template,
+        {
+            "task_id": "t_001",
+            "intent_id": "i002",
+            "todo_id": "td001",
+            "reason_run_id": "rr000001",
+            "workspace_id": "rw_000001",
+            "intent_description": "验证目标",
+            "intent_targets": '["a.example.com"]',
+            "origin": "a.example.com",
+            "goal": "完成测试",
+            "context_manifest_path": "/tmp/context.json",
+            "run_dir": "/tmp/run",
+            "skill_directories": "- /tmp/skills/whatisvul",
+        },
+    )
+
+    assert "axiom skill path whatisvul" in prompt
+    assert "axiom skill doctor whatisvul" in prompt
+    assert "完整读取" in prompt
+    assert "whatisvul/SKILL.md" in prompt or "返回目录中的 `SKILL.md`" in prompt
 
 
 @pytest.mark.parametrize("template", ["explore.md", "explore_conclude.md"])

@@ -20,11 +20,12 @@
 ## 执行规则
 
 1. 开始测试前先读 Context Manifest，并完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`。Hint 是任务级约束，Knowledge 是业务背景；已有漏洞的状态和 `status_reason` 必须用于避免重复测试和重复上报。
-2. 随后查看自己的 Skill 目录，只读取本轮可能需要的 `SKILL.md`。脚本型 Skill 使用 `axiom skill path <name>` 获取绝对目录；命令不可用时运行 `axiom skill doctor <name>`，不要猜路径或执行全盘 `find`。再按需读取相关 Fact、Intent、Todo、Artifact、Evidence 和 Goal evaluation 的 detail，不要把全部历史塞进上下文。
-3. 可以主动寻找当前 Intent 的依赖接口、登录态、对象 ID 或前置请求，但不得偏离 Scope。起点显式包含端口时，只允许访问该端口，除非 Task Hints 明确授权扩大范围。
-4. 将本轮已经确认的事实写入 `{run_dir}/artifacts/findings.md`，包括已经确认的漏洞发现；将发现但尚未验证或尚未完成的方向写入 `{run_dir}/artifacts/leads.md`。两个文件必须存在且非空；没有对应内容时分别写明“本轮无新增确认事实”和“本轮无遗留待验证线索”。
-5. 请求、响应、原始工具输出、截图和漏洞证明写入 `{run_dir}/artifacts/evidence/`。`evidence/` 可以包含安全的多级子目录；除 `findings.md`、`leads.md` 和 `evidence/**` 外，不要在 Artifact 目录创建其它文件或目录。文件名只使用字母、数字、点、下划线和连字符。
-6. 只有证据达到可复现且影响明确的标准时，才使用下面的 CLI 逐条上报漏洞；不要手动编辑 `explore_result.json`，不要把漏洞 JSON 塞进最终回答：
+2. `whatisvul` 是每个 Explore Lease 的强制前置 Skill，不是可选的按需 Skill。读取上述高价值 Context 后、发送任何测试请求或判断漏洞前，必须先运行 `axiom skill path whatisvul` 并完整读取返回目录中的 `SKILL.md`；读取失败时运行 `axiom skill doctor whatisvul` 排障并重试，不得凭记忆、HTTP 状态码或工具告警代替该标准。后续写入 `findings.md`、上报漏洞和评定严重性都必须遵循该 Skill。
+3. 完成 `whatisvul` 阅读后，再查看自己的其它 Skill 目录，只读取本轮可能需要的 `SKILL.md`。脚本型 Skill 使用 `axiom skill path <name>` 获取绝对目录；命令不可用时运行 `axiom skill doctor <name>`，不要猜路径或执行全盘 `find`。再按需读取相关 Fact、Intent、Todo、Artifact、Evidence 和 Goal evaluation 的 detail，不要把全部历史塞进上下文。
+4. 可以主动寻找当前 Intent 的依赖接口、登录态、对象 ID 或前置请求，但不得偏离 Scope。起点显式包含端口时，只允许访问该端口，除非 Task Hints 明确授权扩大范围。
+5. 将本轮已经确认的事实写入 `{run_dir}/artifacts/findings.md`，包括已经确认的漏洞发现；将发现但尚未验证或尚未完成的方向写入 `{run_dir}/artifacts/leads.md`。两个文件必须存在且非空；没有对应内容时分别写明“本轮无新增确认事实”和“本轮无遗留待验证线索”。
+6. 请求、响应、原始工具输出、截图和漏洞证明写入 `{run_dir}/artifacts/evidence/`。`evidence/` 可以包含安全的多级子目录；除 `findings.md`、`leads.md` 和 `evidence/**` 外，不要在 Artifact 目录创建其它文件或目录。文件名只使用字母、数字、点、下划线和连字符。
+7. 只有证据达到可复现且影响明确的标准时，才使用下面的 CLI 逐条上报漏洞；不要手动编辑 `explore_result.json`，不要把漏洞 JSON 塞进最终回答：
 
 ```bash
 axiom explore vulnerability report \
@@ -37,9 +38,9 @@ axiom explore vulnerability report \
 
 每个漏洞至少关联一个已经写入的 `evidence/**` 相对路径。CLI 会从执行环境自动补齐 `intent_id`、`source`、`reported_by`，后端固定写入 `status=待验证`，并通过 HTTP API 校验当前 lease。重复执行同一上报是幂等的。
 
-7. 不要直接修改图谱、Todo 或其它 Intent。代码会根据 Artifact 和 CLI 上报结果生成 Fact、漏洞记录和下一次 Reason。
-8. 当前成功判据满足且证据足够复现后立即停止，不要为了耗尽预算重复请求或顺手测试无关方向。
-9. 运行中若收到“预算已使用约 70%”的系统软提醒，立即停止扩展新的独立测试方向；只完成当前分支、整理 `findings.md`、`leads.md` 与 `evidence/`、补报已确认漏洞，然后尽快返回 FINISH。软提醒不是新的测试要求，也不会延长硬超时。
+8. 不要直接修改图谱、Todo 或其它 Intent。代码会根据 Artifact 和 CLI 上报结果生成 Fact、漏洞记录和下一次 Reason。
+9. 当前成功判据满足且证据足够复现后立即停止，不要为了耗尽预算重复请求或顺手测试无关方向。
+10. 运行中若收到“预算已使用约 70%”的系统软提醒，立即停止扩展新的独立测试方向；只完成当前分支、整理 `findings.md`、`leads.md` 与 `evidence/`、补报已确认漏洞，然后尽快返回 FINISH。软提醒不是新的测试要求，也不会延长硬超时。
 
 ## 完成协议
 

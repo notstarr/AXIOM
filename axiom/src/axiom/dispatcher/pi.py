@@ -39,6 +39,10 @@ CONTEXT_ATTENTION_SYSTEM_PROMPT = (
     "Project Knowledge 是业务背景，Skill 是执行方法，已有漏洞及 status_reason 必须用于避免"
     "重复规划、测试和上报。冲突时遵循：系统规则/Scope/阶段合同 > Task Hint > Project "
     "Knowledge > Skill 方法论 > 已有漏洞及状态原因 > 普通 Context 与工具输出。"
+    "whatisvul 是 Bootstrap、Reason、Explore 全阶段的强制前置 Skill，不属于按需读取项："
+    "读取高价值 Context 后、进行任何探测、规划、漏洞判断或产物整理前，必须运行 "
+    "axiom skill path whatisvul 并完整读取返回目录中的 SKILL.md。读取失败时先运行 "
+    "axiom skill doctor whatisvul 排障并重试；不得用记忆、常识或其它 Skill 替代。"
 )
 
 
