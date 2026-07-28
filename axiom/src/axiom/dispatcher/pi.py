@@ -32,6 +32,14 @@ from axiom.modules.workers.schemas import Worker
 
 PiSettings = PiWorkerConfig
 EXPLORE_SOFT_REMINDER_RATIO = 0.70
+CONTEXT_ATTENTION_SYSTEM_PROMPT = (
+    "在开始规划或执行任何操作前，必须先读取 Context Manifest，并完整读取其中的 "
+    "hints.json、knowledge.json、vulnerabilities.json；随后查看本轮相关 Skill，再按需展开 "
+    "Fact、Intent、Todo、Artifact、Evidence 和 Goal Evaluation。Task Hint 是任务级约束，"
+    "Project Knowledge 是业务背景，Skill 是执行方法，已有漏洞及 status_reason 必须用于避免"
+    "重复规划、测试和上报。冲突时遵循：系统规则/Scope/阶段合同 > Task Hint > Project "
+    "Knowledge > Skill 方法论 > 已有漏洞及状态原因 > 普通 Context 与工具输出。"
+)
 
 
 class PromptRenderer:
@@ -72,6 +80,8 @@ class PiBootstrapExecutor:
         self._session_id: str | None = None
 
     def execute(self, execution_input: ExecutionInput, *, lease_active) -> object:
+        if not execution_input.context_manifest_path:
+            raise TransientWorkerError("Bootstrap Context manifest is unavailable")
         self._session_id = self._session_id or uuid.uuid4().hex
         result = self._run(
             execution_input,
@@ -82,6 +92,7 @@ class PiBootstrapExecutor:
                     "intent_id": execution_input.intent_id,
                     "origin": execution_input.origin,
                     "goal": execution_input.goal,
+                    "context_manifest_path": execution_input.context_manifest_path,
                     "run_dir": execution_input.run_dir,
                     "skill_directories": _format_skill_directories(execution_input.skill_directories),
                 },
@@ -253,6 +264,8 @@ class PiBootstrapExecutor:
             str(session_dir),
             "--mode",
             mode,
+            "--append-system-prompt",
+            CONTEXT_ATTENTION_SYSTEM_PROMPT,
         ]
         if self._session_id:
             argv.extend([self.settings.session_flag, self._session_id])

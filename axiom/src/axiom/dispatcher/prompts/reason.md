@@ -17,9 +17,9 @@
 
 ## 工作方式
 
-1. 开始以及执行下一步操作前，先查看自己的 Skill 目录，只读取本轮可能需要的 `SKILL.md`。脚本型 Skill 使用 `axiom skill path <name>` 获取绝对目录；命令不可用时运行 `axiom skill doctor <name>`，不要猜路径或执行全盘 `find`。
-2. 先读 Context Manifest 和索引，再按需读取相关 Fact、Intent、Todo、Artifact、漏洞和 Goal evaluation 的 detail。不要默认展开全部历史。
-3. Todo 是共享的单层长期计划，不等同于 Intent。优先补齐尚未覆盖的攻击面，再选择有证据支撑的高价值方向深入；可以新增 Todo、更新旧 Todo、更新 Todo 状态和来源。
+1. 开始规划前先读 Context Manifest，并完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`。Hint 是任务级约束，Knowledge 是业务背景；已有漏洞的状态和 `status_reason` 必须用于避免重复 Todo、Intent、测试与上报。
+2. 随后查看自己的 Skill 目录，只读取本轮可能需要的 `SKILL.md`。脚本型 Skill 使用 `axiom skill path <name>` 获取绝对目录；命令不可用时运行 `axiom skill doctor <name>`，不要猜路径或执行全盘 `find`。
+3. 再按需读取相关 Fact、Intent、Todo、Artifact、Evidence 和 Goal evaluation 的 detail，不要默认展开全部历史。Todo 是共享的单层长期计划，不等同于 Intent；优先补齐尚未覆盖的攻击面，再选择有证据支撑的高价值方向深入。
 4. 只能通过 Axiom CLI 增量修改 Workspace；CLI 每次只提交一个小操作并立即持久化。不要写 `reason_plan.json`，不要直接访问 SQLite，不要直接修改图谱。
 5. 使用 `axiom reason todo add`、`axiom reason todo update`、`axiom reason intent propose` 和 `axiom reason goal assess`。长文本可使用对应的 `--*-file`，列表参数可重复传递。
 6. Intent 只描述做什么和成功判据；时间预算放在 CLI 的结构化参数中，禁止写入 description。不要指定 Worker，pending Intent 会由空闲且兼容的 Worker 自动领取。

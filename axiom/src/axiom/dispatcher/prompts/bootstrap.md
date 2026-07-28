@@ -6,6 +6,7 @@
 
 - 起点：`{origin}`
 - 任务目标：`{goal}`
+- Context Manifest：`{context_manifest_path}`
 - 可写运行目录：`{run_dir}`
 - Skill 目录（只提供路径，按需读取）：
 {skill_directories}
@@ -15,6 +16,10 @@
 完成首页、显式 JS、robots/OpenAPI、已发现端点和已启用工具的首轮覆盖后，如果连续两轮探测没有产生新的高价值入口，应停止网络操作。不要围绕同一端点反复变换无关 Header/Method，也不要用长串猜测路径代替有证据的枚举。
 
 所有解释性文字、Markdown 标题、摘要、线索和漏洞说明使用中文；命令、URL、路径、协议名、工具名和 JSON 字段名可以保留原文。凭证只按需使用，不能写入产物、命令参数或摘要。
+
+## Context 读取规则
+
+开始探测前先读取 Context Manifest，然后完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`。Hint 是本任务的强制约束，Knowledge 是需要遵循的业务背景，已有漏洞及其状态原因用于避免重复测试和重复上报。之后查看本轮相关 Skill，再按需读取其它索引和 detail；不要默认展开全部历史 Artifact 或 Evidence。
 
 ## Skill 规则
 

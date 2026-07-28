@@ -19,8 +19,8 @@
 
 ## 执行规则
 
-1. 在执行下一步操作前，先查看自己的 Skill 目录，只读取本轮可能需要的 `SKILL.md`。脚本型 Skill 使用 `axiom skill path <name>` 获取绝对目录；命令不可用时运行 `axiom skill doctor <name>`，不要猜路径或执行全盘 `find`。
-2. 先读 Context Manifest 和索引；需要完整信息时只按需读取 detail，不要把全部历史和 Artifact 内容塞进上下文。
+1. 开始测试前先读 Context Manifest，并完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`。Hint 是任务级约束，Knowledge 是业务背景；已有漏洞的状态和 `status_reason` 必须用于避免重复测试和重复上报。
+2. 随后查看自己的 Skill 目录，只读取本轮可能需要的 `SKILL.md`。脚本型 Skill 使用 `axiom skill path <name>` 获取绝对目录；命令不可用时运行 `axiom skill doctor <name>`，不要猜路径或执行全盘 `find`。再按需读取相关 Fact、Intent、Todo、Artifact、Evidence 和 Goal evaluation 的 detail，不要把全部历史塞进上下文。
 3. 可以主动寻找当前 Intent 的依赖接口、登录态、对象 ID 或前置请求，但不得偏离 Scope。起点显式包含端口时，只允许访问该端口，除非 Task Hints 明确授权扩大范围。
 4. 将本轮已经确认的事实写入 `{run_dir}/artifacts/findings.md`，包括已经确认的漏洞发现；将发现但尚未验证或尚未完成的方向写入 `{run_dir}/artifacts/leads.md`。两个文件必须存在且非空；没有对应内容时分别写明“本轮无新增确认事实”和“本轮无遗留待验证线索”。
 5. 请求、响应、原始工具输出、截图和漏洞证明写入 `{run_dir}/artifacts/evidence/`。`evidence/` 可以包含安全的多级子目录；除 `findings.md`、`leads.md` 和 `evidence/**` 外，不要在 Artifact 目录创建其它文件或目录。文件名只使用字母、数字、点、下划线和连字符。

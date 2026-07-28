@@ -46,6 +46,8 @@ def test_project_knowledge_is_editable_and_progressively_disclosed(client) -> No
         )
     )
     assert knowledge_index[0]["title"] == "统一登录流程"
+    assert knowledge_index[0]["content"].startswith("管理员必须先访问统一认证站点")
+    assert knowledge_index[0]["created_by"] == "human"
     assert "管理员必须先访问统一认证站点" not in manifest_path.read_text(encoding="utf-8")
 
     expanded = client.post(

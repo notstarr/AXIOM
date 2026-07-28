@@ -54,6 +54,8 @@ class KnowledgeIndexEntry(BaseModel):
     id: str
     title: str
     category: str
+    content: str
+    created_by: str
     preview: str
     ref: str
     detail: str

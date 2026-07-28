@@ -4,8 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from axiom.dispatcher.bootstrap import BootstrapExecutionTimeout
+from axiom.dispatcher.bootstrap import BootstrapExecutionTimeout, TransientWorkerError
 from axiom.dispatcher.pi import (
+    CONTEXT_ATTENTION_SYSTEM_PROMPT,
     PiBootstrapExecutor,
     PiExploreExecutor,
     PromptRenderer,
@@ -33,6 +34,8 @@ def pi_worker(binary: Path) -> Worker:
 
 def execution_input(run_dir: Path) -> ExecutionInput:
     run_dir.mkdir(parents=True)
+    context_manifest_path = run_dir / "context.json"
+    context_manifest_path.write_text("{}", encoding="utf-8")
     return ExecutionInput(
         task_id="t_001",
         intent_id="i001",
@@ -45,6 +48,7 @@ def execution_input(run_dir: Path) -> ExecutionInput:
         run_dir=str(run_dir),
         execute_timeout_seconds=2,
         conclude_timeout_seconds=1,
+        context_manifest_path=str(context_manifest_path),
     )
 
 
@@ -71,6 +75,34 @@ def test_pi_adapter_returns_the_final_assistant_text(tmp_path) -> None:
     )
 
     assert output == "FINISH"
+
+
+def test_bootstrap_rejects_missing_context_manifest(tmp_path) -> None:
+    input_value = execution_input(tmp_path / "run").model_copy(
+        update={"context_manifest_path": None}
+    )
+
+    with pytest.raises(TransientWorkerError, match="Bootstrap Context manifest"):
+        PiBootstrapExecutor(pi_worker(tmp_path / "unused-pi")).execute(
+            input_value,
+            lease_active=lambda: True,
+        )
+
+
+def test_pi_json_and_rpc_modes_append_the_shared_context_attention_rule(tmp_path) -> None:
+    executor = PiBootstrapExecutor(pi_worker(tmp_path / "unused-pi"))
+    executor._session_id = "session-test"
+
+    for mode in ("json", "rpc"):
+        argv = executor._build_argv(
+            "测试提示",
+            tmp_path / "sessions",
+            ["read"],
+            mode=mode,
+        )
+        index = argv.index("--append-system-prompt")
+        assert argv[index + 1] == CONTEXT_ATTENTION_SYSTEM_PROMPT
+        assert "hints.json、knowledge.json、vulnerabilities.json" in argv[index + 1]
 
 
 def test_pi_adapter_materializes_custom_provider_and_shared_skill_paths(tmp_path) -> None:
@@ -184,7 +216,50 @@ def test_reason_prompt_requires_small_todos_and_intents_without_fixed_budget_exa
     assert "一个 Todo 只描述一个攻击主题" in prompt
     assert "最多包含 2–3 个紧密相关" in prompt
     assert "获取对象 ID、准备登录态" in prompt
+    assert "完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`" in prompt
+    assert "status_reason" in prompt
     assert "--execute-seconds 600 --conclude-seconds 120" not in prompt
+
+
+def test_bootstrap_prompt_receives_manifest_and_requires_priority_context_reading() -> None:
+    prompt = PromptRenderer().render(
+        "bootstrap.md",
+        {
+            "task_id": "t_001",
+            "intent_id": "i001",
+            "origin": "a.example.com",
+            "goal": "完成测试",
+            "context_manifest_path": "/tmp/context.json",
+            "run_dir": "/tmp/run",
+            "skill_directories": "- /tmp/skills",
+        },
+    )
+
+    assert "Context Manifest：`/tmp/context.json`" in prompt
+    assert "完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`" in prompt
+    assert "避免重复测试和重复上报" in prompt
+
+
+def test_explore_prompt_requires_priority_context_before_progressive_details() -> None:
+    prompt = PromptRenderer().render(
+        "explore.md",
+        {
+            "task_id": "t_001",
+            "intent_id": "i002",
+            "todo_id": "td001",
+            "intent_description": "验证目标",
+            "intent_targets": '["a.example.com"]',
+            "origin": "a.example.com",
+            "goal": "完成测试",
+            "context_manifest_path": "/tmp/context.json",
+            "run_dir": "/tmp/run",
+            "skill_directories": "- /tmp/skills",
+        },
+    )
+
+    assert "完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`" in prompt
+    assert "status_reason" in prompt
+    assert "再按需读取相关 Fact、Intent、Todo、Artifact、Evidence" in prompt
 
 
 @pytest.mark.parametrize("template", ["explore.md", "explore_conclude.md"])
