@@ -7,4 +7,8 @@
 3. 若已达到漏洞标准，使用 `axiom explore vulnerability report` 逐条补报，并用 `--evidence-path` 关联真实证据文件；不要手动编辑 `explore_result.json`。
 4. 读取检查两个核心文件和所有已引用证据，确认路径与内容可用。
 
-最后一条 assistant 文本必须严格等于 `FINISH`，不得附带任何说明。
+完成所有工具调用后，不要描述检查结果或总结执行过程。最后一条 assistant 消息必须只包含 6 个 ASCII 字符：
+
+FINISH
+
+禁止反引号、代码块、句号、解释、总结或其它字符。

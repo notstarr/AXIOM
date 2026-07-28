@@ -18,6 +18,10 @@ from axiom.shared.errors import ConflictError
 
 
 FINISH_MARKER = "FINISH"
+_FINISH_FENCE = re.compile(
+    r"(?:^|\n)```(?:[A-Za-z0-9_.+-]+)?[ \t]*\n"
+    r"[ \t]*FINISH[ \t]*\n```[ \t]*$"
+)
 BOOTSTRAP_FILES = (
     "asset_inventory.md",
     "initial_leads.md",
@@ -50,6 +54,26 @@ class ExploreState(BaseModel):
 def require_finish(value: str) -> None:
     if value.strip() != FINISH_MARKER:
         raise StageOutputError("最终响应必须仅包含 FINISH")
+
+
+def require_explore_finish(value: str) -> str | None:
+    """Accept harmless Explore marker formatting while keeping the marker terminal."""
+    text = value.strip()
+    if text == FINISH_MARKER:
+        return None
+    if text == f"`{FINISH_MARKER}`":
+        return "inline_code"
+
+    fenced = _FINISH_FENCE.search(text)
+    if fenced is not None:
+        return "code_fence" if fenced.start() == 0 else "trailing_code_fence"
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if lines and lines[-1] == FINISH_MARKER:
+        return "trailing_line"
+    if lines and lines[-1] == f"`{FINISH_MARKER}`":
+        return "trailing_inline_code"
+    raise StageOutputError("最终响应必须以独立的 FINISH 结束")
 
 
 def bootstrap_files(run_dir: str | Path) -> list[StageFile]:

@@ -8,6 +8,7 @@ from axiom.modules.execution.stage_outputs import (
     StageOutputError,
     bootstrap_files,
     explore_files,
+    require_explore_finish,
     require_finish,
 )
 
@@ -24,6 +25,43 @@ def test_finish_marker_accepts_only_trimmed_exact_finish(value: str) -> None:
 def test_finish_marker_rejects_explanations_code_blocks_and_other_text(value: str) -> None:
     with pytest.raises(StageOutputError, match="FINISH"):
         require_finish(value)
+
+
+@pytest.mark.parametrize(
+    ("value", "normalization"),
+    [
+        ("FINISH", None),
+        (" FINISH\n", None),
+        ("`FINISH`", "inline_code"),
+        ("```\nFINISH\n```", "code_fence"),
+        ("```text\nFINISH\n```", "code_fence"),
+        ("检查完成。\nFINISH", "trailing_line"),
+        ("检查完成。\n`FINISH`", "trailing_inline_code"),
+        ("检查完成。\n```text\nFINISH\n```", "trailing_code_fence"),
+    ],
+)
+def test_explore_finish_marker_accepts_safe_terminal_variants(
+    value: str,
+    normalization: str | None,
+) -> None:
+    assert require_explore_finish(value) == normalization
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "finish",
+        "FINISH。",
+        "abc FINISH",
+        "FINISH\n仍有说明",
+        "```\nFINISH。\n```",
+        "检查完成。\n```\nFINISH\n```\n仍有说明",
+    ],
+)
+def test_explore_finish_marker_rejects_non_terminal_or_changed_markers(value: str) -> None:
+    with pytest.raises(StageOutputError, match="FINISH"):
+        require_explore_finish(value)
 
 
 def test_bootstrap_collects_only_the_three_fixed_outputs(tmp_path: Path) -> None:

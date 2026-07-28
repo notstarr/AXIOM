@@ -39,12 +39,14 @@ axiom explore vulnerability report \
 
 7. 不要直接修改图谱、Todo 或其它 Intent。代码会根据 Artifact 和 CLI 上报结果生成 Fact、漏洞记录和下一次 Reason。
 8. 当前成功判据满足且证据足够复现后立即停止，不要为了耗尽预算重复请求或顺手测试无关方向。
-9. 运行中若收到“预算已使用约 70%”的系统软提醒，立即停止扩展新的独立测试方向；只完成当前分支、整理 `findings.md`、`leads.md` 与 `evidence/`、补报已确认漏洞，然后尽快返回 `FINISH`。软提醒不是新的测试要求，也不会延长硬超时。
+9. 运行中若收到“预算已使用约 70%”的系统软提醒，立即停止扩展新的独立测试方向；只完成当前分支、整理 `findings.md`、`leads.md` 与 `evidence/`、补报已确认漏洞，然后尽快返回 FINISH。软提醒不是新的测试要求，也不会延长硬超时。
 
 ## 完成协议
 
-确认 `findings.md`、`leads.md` 和证据文件已写完，漏洞（如有）已逐条通过 CLI 上报后，最后一条 assistant 文本必须严格等于：
+确认 `findings.md`、`leads.md` 和证据文件已写完，漏洞（如有）已逐条通过 CLI 上报后，发送最后一条 assistant 消息。不要描述检查结果或总结执行过程。
 
-`FINISH`
+该消息必须只包含 6 个 ASCII 字符：
 
-不要输出 JSON、总结、代码块或其它字符。Fact 由代码生成，内容会包含本 Intent 描述、findings/leads Artifact ID、证据数量和漏洞 ID。
+FINISH
+
+禁止反引号、代码块、句号、解释、总结或其它字符。Fact 由代码生成，内容会包含本 Intent 描述、findings/leads Artifact ID、证据数量和漏洞 ID。

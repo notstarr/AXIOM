@@ -187,6 +187,29 @@ def test_reason_prompt_requires_small_todos_and_intents_without_fixed_budget_exa
     assert "--execute-seconds 600 --conclude-seconds 120" not in prompt
 
 
+@pytest.mark.parametrize("template", ["explore.md", "explore_conclude.md"])
+def test_explore_prompts_show_plain_finish_without_markdown_wrapping(template: str) -> None:
+    prompt = PromptRenderer().render(
+        template,
+        {
+            "task_id": "t_001",
+            "intent_id": "i002",
+            "todo_id": "td001",
+            "intent_description": "验证目标",
+            "intent_targets": '["a.example.com"]',
+            "origin": "a.example.com",
+            "goal": "完成测试",
+            "context_manifest_path": "/tmp/context.json",
+            "run_dir": "/tmp/run",
+            "skill_directories": "- /tmp/skills",
+        },
+    )
+
+    assert "\nFINISH\n" in prompt
+    assert "`FINISH`" not in prompt
+    assert "不要描述检查结果或总结执行过程" in prompt
+
+
 @pytest.mark.parametrize(
     ("execute_seconds", "expected_reminder", "expected_remaining"),
     [

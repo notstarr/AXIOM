@@ -19,7 +19,7 @@ from axiom.modules.execution.stage_outputs import (
     StageOutputError,
     explore_files,
     initialize_explore_state,
-    require_finish,
+    require_explore_finish,
 )
 
 
@@ -176,8 +176,17 @@ class ExploreRunner:
 
     @staticmethod
     def _validate_output(execution_input: ExecutionInput, raw_output: object) -> None:
-        require_finish(str(raw_output))
+        normalization = require_explore_finish(str(raw_output))
         explore_files(execution_input.run_dir)
+        if normalization is not None:
+            logger.warning(
+                "explore_finish_normalized task_id=%s intent_id=%s lease_id=%s "
+                "normalization=%s",
+                execution_input.task_id,
+                execution_input.intent_id,
+                execution_input.lease_id,
+                normalization,
+            )
 
     def _release_best_effort(
         self,
