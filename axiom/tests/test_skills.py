@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+import yaml
+
+
+def _split_skill_document(content: str) -> tuple[dict, str]:
+    lines = content.splitlines()
+    assert lines[0] == "---"
+    end = lines.index("---", 1)
+    return yaml.safe_load("\n".join(lines[1:end])), "\n".join(lines[end + 1 :]).strip()
+
 
 def test_skills_are_shared_paths_and_not_copied_per_worker(client) -> None:
     listed = client.get("/api/v1/skills")
@@ -27,6 +36,35 @@ def test_skills_are_shared_paths_and_not_copied_per_worker(client) -> None:
     selected = next(item for item in listed_again if item["name"] == "whatisvul")
     assert selected["source"] == "managed"
     assert "worker" not in selected["path"].lower()
+
+
+def test_skill_save_keeps_one_frontmatter_layer_and_preserves_metadata(client) -> None:
+    original = client.get("/api/v1/skills/browser-control").json()
+    original_metadata, _ = _split_skill_document(original["content"])
+    duplicated_payload = (
+        "---\n"
+        "name: browser-control\n"
+        "description: 旧描述\n"
+        "---\n\n"
+        "---\n"
+        "name: browser-control\n"
+        "description: 更旧描述\n"
+        "---\n\n"
+        "# 自定义浏览器流程\n"
+    )
+
+    saved = client.put(
+        "/api/v1/skills/browser-control",
+        json={"description": "新描述", "content": duplicated_payload},
+    )
+
+    assert saved.status_code == 200, saved.text
+    metadata, body = _split_skill_document(saved.json()["content"])
+    assert metadata["name"] == "browser-control"
+    assert metadata["description"] == "新描述"
+    assert metadata["requirements"] == original_metadata["requirements"]
+    assert body == "# 自定义浏览器流程"
+    assert not body.startswith("---")
 
 
 def test_execution_input_contains_skill_directories_without_skill_content(client) -> None:

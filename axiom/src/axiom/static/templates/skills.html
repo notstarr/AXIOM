@@ -106,7 +106,10 @@
           <!-- File editor -->
           <div class="flex-1 overflow-hidden p-4">
             <div class="flex items-center justify-between mb-2">
-              <span class="text-xs font-mono text-slate-400" x-text="skillEditor.activeFile || ''"></span>
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-mono text-slate-400" x-text="skillEditor.activeFile || ''"></span>
+                <span x-show="skillEditor.activeFile === 'SKILL.md'" class="text-[10px] text-slate-400">仅编辑正文，frontmatter 由上方字段维护</span>
+              </div>
               <span x-show="skillEditor.fileDirty" class="text-[10px] text-amber-500">未保存</span>
             </div>
             <textarea x-model="skillEditor.fileContent" @input="skillEditor.fileDirty = true"

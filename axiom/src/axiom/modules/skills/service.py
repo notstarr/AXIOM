@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -70,12 +71,20 @@ class SkillService:
     def save(self, name: str, command: SaveSkill) -> SkillContent:
         name = self._name(name)
         directory = self.managed_root / name
+        existing_content = self._existing_content(name)
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / "SKILL.md"
         temporary = directory / ".SKILL.md.tmp"
         content = command.content
         if command.description is not None:
-            content = _with_frontmatter(name, command.description, command.content)
+            content = _with_frontmatter(
+                name,
+                command.description,
+                command.content,
+                existing_content=existing_content,
+            )
+        else:
+            content = _collapse_duplicate_frontmatter(content)
         temporary.write_text(content, encoding="utf-8")
         temporary.replace(path)
         if command.enabled is not None:
@@ -235,6 +244,13 @@ class SkillService:
                 return directory
         raise NotFoundError(f"Skill not found: {name}")
 
+    def _existing_content(self, name: str) -> str:
+        for root in (self.managed_root, self.bundled_root):
+            path = root / name / "SKILL.md"
+            if path.is_file():
+                return path.read_text(encoding="utf-8", errors="replace")
+        return ""
+
     def _require_managed_root(self, name: str) -> Path:
         root = self._skill_root(name)
         if not root.is_relative_to(self.managed_root):
@@ -244,20 +260,9 @@ class SkillService:
 
 def _metadata(path: Path) -> tuple[str, str]:
     content = path.read_text(encoding="utf-8", errors="replace")
-    lines = content.splitlines()
-    frontmatter: dict[str, object] = {}
-    if lines and lines[0].strip() == "---":
-        try:
-            end = next(
-                index for index, line in enumerate(lines[1:], 1) if line.strip() == "---"
-            )
-        except StopIteration:
-            end = -1
-        if end > 0:
-            parsed = yaml.safe_load("\n".join(lines[1:end]))
-            if isinstance(parsed, dict):
-                frontmatter = parsed
-            lines = lines[end + 1 :]
+    layers, body = _leading_frontmatter(content)
+    frontmatter = _merge_frontmatter(layers)
+    lines = body.splitlines()
     title = next(
         (line.lstrip("# ").strip() for line in lines if line.strip().startswith("#")),
         "",
@@ -269,6 +274,68 @@ def _metadata(path: Path) -> tuple[str, str]:
     return title or path.parent.name, description[:300]
 
 
-def _with_frontmatter(name: str, description: str, content: str) -> str:
-    body = content.strip()
-    return f"---\nname: {name}\ndescription: {description.strip()}\n---\n\n{body}\n"
+def _with_frontmatter(
+    name: str,
+    description: str,
+    content: str,
+    *,
+    existing_content: str = "",
+) -> str:
+    existing_layers, _ = _leading_frontmatter(existing_content)
+    incoming_layers, body = _leading_frontmatter(content)
+    metadata = _merge_frontmatter(existing_layers)
+    metadata.update(_merge_frontmatter(incoming_layers))
+    metadata.update({"name": name, "description": description.strip()})
+    return _render_skill_document(metadata, body)
+
+
+def _collapse_duplicate_frontmatter(content: str) -> str:
+    layers, body = _leading_frontmatter(content)
+    if len(layers) < 2:
+        return content
+    return _render_skill_document(_merge_frontmatter(layers), body)
+
+
+def _leading_frontmatter(content: str) -> tuple[list[dict[str, Any]], str]:
+    remaining = content.lstrip("\ufeff")
+    layers: list[dict[str, Any]] = []
+    while True:
+        lines = remaining.splitlines(keepends=True)
+        if not lines or lines[0].strip() != "---":
+            break
+        try:
+            end = next(
+                index for index, line in enumerate(lines[1:], 1) if line.strip() == "---"
+            )
+        except StopIteration:
+            break
+        try:
+            parsed = yaml.safe_load("".join(lines[1:end]))
+        except yaml.YAMLError:
+            break
+        if not isinstance(parsed, dict):
+            break
+        layers.append(dict(parsed))
+        remaining = "".join(lines[end + 1 :]).lstrip("\r\n")
+    return layers, remaining
+
+
+def _merge_frontmatter(layers: list[dict[str, Any]]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    # The outermost layer is the newest one produced by the old double-wrap bug.
+    # Merge from inner to outer so its name/description wins while useful inner
+    # metadata such as requirements is retained.
+    for layer in reversed(layers):
+        merged.update(layer)
+    return merged
+
+
+def _render_skill_document(metadata: dict[str, Any], body: str) -> str:
+    frontmatter = yaml.safe_dump(
+        metadata,
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
+    ).strip()
+    normalized_body = body.strip()
+    return f"---\n{frontmatter}\n---\n\n{normalized_body}\n"

@@ -169,6 +169,59 @@ ctx.toggleSkillFromEditor().then(() => process.stdout.write(JSON.stringify({{
     return json.loads(result.stdout)
 
 
+def _run_skill_editor_frontmatter_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    skills = ROOT / "src/axiom/static/js/skills.js"
+    content = """---
+name: vuln-report
+description: 漏洞上报
+---
+
+---
+name: vuln-report
+description: 漏洞上报
+---
+
+# Vulnerability reporting
+
+正文内容
+"""
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+eval(fs.readFileSync({json.dumps(str(skills))}, 'utf8'));
+const calls = [];
+const listed = [{{ name: 'vuln-report', description: '漏洞上报', content: {json.dumps(content)}, builtin: false, enabled: true }}];
+const ctx = Object.assign({{
+  skills: listed,
+  skillEditor: {{ name: 'vuln-report', description: '漏洞上报', isNew: false, activeFile: '', fileContent: '', fileDirty: false }},
+  api: async (method, path, body) => {{
+    calls.push({{ method, path, body }});
+    if (method === 'GET' && path === '/skills') return listed;
+    return listed[0];
+  }},
+  showToast: () => {{}},
+}}, window.AxiomModules.skills.methods);
+(async () => {{
+  await ctx.openSkillFile('SKILL.md');
+  const opened = ctx.skillEditor.fileContent;
+  ctx.skillEditor.fileDirty = true;
+  await ctx.saveSkillFile();
+  process.stdout.write(JSON.stringify({{ opened, calls }}));
+}})();
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
 def _run_artifact_classification_fixture() -> dict[str, object]:
     node = shutil.which("node")
     if not node:
@@ -373,7 +426,7 @@ def test_frontend_and_static_assets_are_served(client):
     assert response.status_code == 200
     assert "<title>axiom</title>" in response.text
     assert "/static/js/state.js?v=20260727.3" in response.text
-    assert "/static/js/skills.js?v=20260727.4" in response.text
+    assert "/static/js/skills.js?v=20260728.1" in response.text
     assert "/static/js/v2-adapter.js?v=20260728.2" in response.text
     assert "/static/js/helpers.js?v=20260724.2" in response.text
     assert "/static/js/graph.js?v=20260727.3" in response.text
@@ -475,6 +528,20 @@ def test_skill_toggle_uses_dedicated_patch_endpoint_and_server_state() -> None:
     assert result["toasts"] == [
         {"message": "browser-control 已禁用", "type": "success"}
     ]
+
+
+def test_skill_editor_hides_frontmatter_and_saves_body_only() -> None:
+    result = _run_skill_editor_frontmatter_fixture()
+
+    assert result["opened"] == "# Vulnerability reporting\n\n正文内容\n"
+    assert result["calls"][0] == {
+        "method": "PUT",
+        "path": "/skills/vuln-report",
+        "body": {
+            "description": "漏洞上报",
+            "content": "# Vulnerability reporting\n\n正文内容\n",
+        },
+    }
 
 
 def test_artifact_center_classifies_new_explore_paths_by_type() -> None:

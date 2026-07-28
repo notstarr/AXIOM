@@ -1,3 +1,13 @@
+function stripSkillFrontmatter(value) {
+  let body = String(value || '').replace(/^\uFEFF/, '');
+  while (body.startsWith('---')) {
+    const match = body.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
+    if (!match || !/^(?:name|description):/m.test(match[1])) break;
+    body = body.slice(match[0].length).replace(/^(?:\r?\n)+/, '');
+  }
+  return body;
+}
+
 window.AxiomModules = window.AxiomModules || {};
 window.AxiomModules.skills = {
   methods: {
@@ -41,11 +51,8 @@ window.AxiomModules.skills = {
         if (path === 'SKILL.md') {
           const sk = this.skills.find(s => s.name === this.skillEditor.name);
           if (sk) {
-            const fm = (sk.content || '').match(/^---\s*\n(.*?)\n---/s);
-            let body = sk.content || '';
-            if (fm) body = (sk.content || '').replace(/^---\s*\n.*?\n---\s*\n?/s, '');
             this.skillEditor.activeFile = path;
-            this.skillEditor.fileContent = body;
+            this.skillEditor.fileContent = stripSkillFrontmatter(sk.content);
             this.skillEditor.fileDirty = false;
             return;
           }
@@ -67,12 +74,12 @@ window.AxiomModules.skills = {
           const name = this.skillEditor.name.trim();
           const desc = (this.skillEditor.description || '').trim();
           if (!desc) { this.showToast('description 不能为空', 'error'); return; }
-          const fullContent = `---\nname: ${name}\ndescription: ${desc}\n---\n\n${content}`;
+          const body = stripSkillFrontmatter(content);
           if (this.skillEditor.isNew) {
-            await this.api('POST', '/skills', { name, display_name: name, description: desc, content: fullContent, enabled: true });
+            await this.api('POST', '/skills', { name, display_name: name, description: desc, content: body, enabled: true });
             this.skillEditor.isNew = false;
           } else {
-            await this.api('PUT', `/skills/${this.skillEditor.name}`, { description: desc, content: fullContent });
+            await this.api('PUT', `/skills/${this.skillEditor.name}`, { description: desc, content: body });
           }
           await this.loadSkills();
         } else {
@@ -184,7 +191,7 @@ window.AxiomModules.skills = {
         try {
           const exists = this.skills.find(s => s.name === skillName);
           if (!exists) {
-            await this.api('POST', '/skills', { name: skillName, display_name: skillName, description: '上传的 Skill', content: '---\nname: ' + skillName + '\ndescription: 上传的 Skill\n---\n\n请编辑此文件', enabled: true });
+            await this.api('POST', '/skills', { name: skillName, display_name: skillName, description: '上传的 Skill', content: '请编辑此文件', enabled: true });
           }
           for (const file of files) {
             const relPath = file.webkitRelativePath?.split('/').slice(1).join('/') || file.name;
@@ -198,7 +205,7 @@ window.AxiomModules.skills = {
                 const dm = fmMatch[1].match(/^description:\s*(.+)$/m);
                 if (nm) name = nm[1].trim();
                 if (dm) desc = dm[1].trim();
-                body = content.replace(/^---\s*\n.*?\n---\s*\n?/s, '');
+                body = stripSkillFrontmatter(content);
                 const fullContent = `---\nname: ${name}\ndescription: ${desc}\n---\n\n${body}`;
                 await this.api('PUT', `/skills/${skillName}/files/SKILL.md`, { content: fullContent });
                 continue;
