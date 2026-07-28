@@ -64,12 +64,29 @@ def test_runtime_settings_expose_the_formal_scheduler_defaults(client) -> None:
         "reason_max_new_intents_per_run": 4,
         "explore_execute_min_seconds": 60,
         "explore_execute_max_seconds": 3600,
-        "explore_conclude_min_seconds": 30,
+        "explore_conclude_min_seconds": 180,
         "explore_conclude_max_seconds": 600,
     }
     assert "max_parallel" not in config
     assert "bootstrap_concurrency" not in config
     assert "reason_concurrency" not in config
+
+
+def test_runtime_settings_reject_explore_closeout_below_180_seconds(client) -> None:
+    current = client.get("/api/v1/settings/runtime").json()
+    response = client.put(
+        "/api/v1/settings/runtime",
+        json={
+            "actor": "test",
+            "expected_version": current["version"],
+            "config": {
+                **current["config"],
+                "explore_conclude_min_seconds": 179,
+            },
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_runtime_settings_keep_zero_reject_stale_writes_and_survive_restart(

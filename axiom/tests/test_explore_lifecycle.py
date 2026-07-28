@@ -75,7 +75,7 @@ def _task_with_explore_intents(client, *, count: int = 1) -> tuple[dict, list[st
                 "description": f"验证接口方向 {number} 的授权边界",
                 "targets": ["a.example.com"],
                 "execute_seconds": 300,
-                "conclude_seconds": 60,
+                "conclude_seconds": 180,
             }
             for number in range(count)
         ],

@@ -300,6 +300,201 @@ def test_vulnerability_artifact_migration_preserves_v1_rows_and_downgrades(tmp_p
         downgraded.dispose()
 
 
+def test_explore_closeout_floor_migration_updates_only_unfinished_work(tmp_path) -> None:
+    database_path = tmp_path / "explore-closeout-floor.db"
+    config = alembic_config(database_path)
+    command.upgrade(config, "20260727_0022")
+    now = "2026-07-27T00:00:00Z"
+    engine = create_sqlite_engine(database_path)
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                projects.insert().values(
+                    id="prj_001",
+                    title="closeout floor",
+                    description="",
+                    status="active",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            conn.execute(
+                tasks.insert().values(
+                    id="t_001",
+                    project_id="prj_001",
+                    title="closeout floor",
+                    origin_host="example.com",
+                    origin_scheme="https",
+                    origin_port="443",
+                    origin_input="https://example.com",
+                    goal="goal",
+                    status="running",
+                    phase="explore",
+                    scope_json="{}",
+                    worker_pool_json="[]",
+                    guard_enabled=False,
+                    external_report_enabled=False,
+                    legacy_readonly=False,
+                    created_at=now,
+                    updated_at=now,
+                    completed_at=None,
+                )
+            )
+            common_intent = {
+                "task_id": "t_001",
+                "kind": "explore",
+                "description": "explore",
+                "creator": "test",
+                "worker_pool_json": "[]",
+                "targets_json": "[]",
+                "retry_count": 0,
+                "infrastructure_retry_count": 0,
+                "last_failure_kind": "",
+                "failure_class": "",
+                "activity_kind": "",
+                "activity_summary": "",
+                "activity_tool": "",
+                "created_at": now,
+                "archived": False,
+            }
+            conn.execute(
+                intents.insert(),
+                [
+                    {
+                        **common_intent,
+                        "id": "i001",
+                        "status": "pending",
+                        "execute_timeout_seconds": 600,
+                        "conclude_timeout_seconds": 30,
+                    },
+                    {
+                        **common_intent,
+                        "id": "i002",
+                        "status": "running",
+                        "execute_timeout_seconds": 600,
+                        "conclude_timeout_seconds": None,
+                    },
+                    {
+                        **common_intent,
+                        "id": "i003",
+                        "status": "completed",
+                        "execute_timeout_seconds": 600,
+                        "conclude_timeout_seconds": 30,
+                        "concluded_at": now,
+                    },
+                ],
+            )
+            common_reason_run = {
+                "task_id": "t_001",
+                "trigger": "test",
+                "trigger_payload_json": "{}",
+                "input_fingerprint": "fingerprint",
+                "worker_pool_json": "[]",
+                "settings_version": 7,
+                "execute_timeout_seconds": 300,
+                "conclude_timeout_seconds": 120,
+                "target_open_intents": 4,
+                "max_new_intents": 4,
+                "explore_execute_min_seconds": 60,
+                "explore_execute_max_seconds": 3600,
+                "explore_conclude_min_seconds": 30,
+                "explore_conclude_max_seconds": 120,
+                "retry_count": 0,
+                "infrastructure_retry_count": 0,
+                "last_failure_kind": "",
+                "failure_class": "",
+                "activity_kind": "",
+                "activity_summary": "",
+                "activity_tool": "",
+                "created_at": now,
+                "updated_at": now,
+            }
+            conn.execute(
+                reason_runs.insert(),
+                [
+                    {**common_reason_run, "id": "rr000001", "status": "pending"},
+                    {
+                        **common_reason_run,
+                        "id": "rr000002",
+                        "status": "completed",
+                        "concluded_at": now,
+                    },
+                ],
+            )
+            conn.execute(
+                runtime_settings.insert().values(
+                    id="runtime",
+                    config_json=json.dumps(
+                        {
+                            "explore_conclude_min_seconds": 30,
+                            "explore_conclude_max_seconds": 120,
+                        }
+                    ),
+                    version=7,
+                    updated_by="test",
+                    updated_at=now,
+                    applied_version=7,
+                    applied_at=now,
+                )
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, "head")
+    upgraded = create_sqlite_engine(database_path)
+    try:
+        with upgraded.connect() as conn:
+            runtime = conn.execute(
+                select(runtime_settings).where(runtime_settings.c.id == "runtime")
+            ).mappings().one()
+            runtime_config = json.loads(runtime["config_json"])
+            assert runtime_config["explore_conclude_min_seconds"] == 180
+            assert runtime_config["explore_conclude_max_seconds"] == 180
+            assert runtime["version"] == 8
+            assert runtime["applied_version"] == 7
+
+            intent_budgets = dict(
+                conn.execute(
+                    select(intents.c.id, intents.c.conclude_timeout_seconds).where(
+                        intents.c.task_id == "t_001"
+                    )
+                ).all()
+            )
+            assert intent_budgets == {"i001": 180, "i002": 180, "i003": 30}
+
+            run_budgets = {
+                row.id: (row.explore_conclude_min_seconds, row.explore_conclude_max_seconds)
+                for row in conn.execute(
+                    select(
+                        reason_runs.c.id,
+                        reason_runs.c.explore_conclude_min_seconds,
+                        reason_runs.c.explore_conclude_max_seconds,
+                    ).where(reason_runs.c.task_id == "t_001")
+                )
+            }
+            assert run_budgets == {
+                "rr000001": (180, 180),
+                "rr000002": (30, 120),
+            }
+    finally:
+        upgraded.dispose()
+
+    command.downgrade(config, "20260727_0022")
+    downgraded = create_sqlite_engine(database_path)
+    try:
+        with downgraded.connect() as conn:
+            runtime = json.loads(
+                conn.execute(
+                    select(runtime_settings.c.config_json).where(runtime_settings.c.id == "runtime")
+                ).scalar_one()
+            )
+            assert runtime["explore_conclude_min_seconds"] == 180
+            assert conn.exec_driver_sql("PRAGMA integrity_check").scalar_one() == "ok"
+            assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+    finally:
+        downgraded.dispose()
+
+
 def test_reason_run_migration_can_downgrade_after_real_runs(tmp_path) -> None:
     database_path = tmp_path / "reason-run-roundtrip.db"
     config = alembic_config(database_path)

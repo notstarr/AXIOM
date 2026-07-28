@@ -98,7 +98,7 @@ def test_reason_cli_intent_propose_keeps_time_budget_out_of_description(monkeypa
             "--execute-seconds",
             "420",
             "--conclude-seconds",
-            "90",
+            "180",
         ],
         env=_env(),
     )
@@ -107,7 +107,7 @@ def test_reason_cli_intent_propose_keeps_time_budget_out_of_description(monkeypa
     proposal = calls[0][2]["intent"]
     assert proposal["description"] == "验证订单详情接口是否存在对象级授权问题"
     assert proposal["execute_seconds"] == 420
-    assert proposal["conclude_seconds"] == 90
+    assert proposal["conclude_seconds"] == 180
     assert "timeout" not in proposal["description"]
 
 

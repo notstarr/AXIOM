@@ -291,7 +291,7 @@ def test_unachieved_goal_may_reference_a_task_hint(client) -> None:
                         "description": "按 Hint 独立复核",
                         "targets": ["a.example.com"],
                         "execute_seconds": 300,
-                        "conclude_seconds": 60,
+                        "conclude_seconds": 180,
                     }
                 ],
                 "goal_assessment": {

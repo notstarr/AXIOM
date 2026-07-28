@@ -1144,6 +1144,7 @@ window.AxiomModules.graph = {
         tool_waiting: '等待工具',
         analyzing: '分析结果',
         organizing: '整理产物',
+        soft_reminder: '整理产物',
         concluding: '收尾中',
         submitting: '提交结果',
         waiting_retry: '等待重试',
@@ -1287,7 +1288,7 @@ window.AxiomModules.graph = {
         ? concludeBase
         : Math.min(
           Number(this.dispatchSettings?.explore_conclude_max_seconds ?? 600),
-          Math.max(Number(this.dispatchSettings?.explore_conclude_min_seconds ?? 30), 90),
+          Math.max(Number(this.dispatchSettings?.explore_conclude_min_seconds ?? 180), 180),
         );
 
       const isBootstrap = intent.creator === 'dispatcher.bootstrap' || intent.description === 'bootstrap';

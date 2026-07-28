@@ -82,7 +82,7 @@ def _proposal(number: int, fact_id: str) -> dict:
         "description": f"验证接口方向 {number} 的授权边界",
         "targets": ["a.example.com"],
         "execute_seconds": 300,
-        "conclude_seconds": 60,
+        "conclude_seconds": 180,
     }
 
 

@@ -207,6 +207,101 @@ process.stdout.write(JSON.stringify(items.map(item => ({{
     return json.loads(result.stdout)
 
 
+def _run_artifact_preview_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
+    program = f"""
+const fs = require('fs');
+const calls = [];
+const payloads = {{
+  '/api/v1/tasks/t_148/artifacts/a_txt/content': '第一行\\n<script>alert(1)</script>',
+  '/api/v1/tasks/t_148/artifacts/a_json/content': '{{"name":"测试","items":[1,2]}}',
+  '/api/v1/tasks/t_148/artifacts/a_array/content': '[{{"id":1}},{{"id":2}}]',
+  '/api/v1/tasks/t_148/artifacts/a_invalid/content': '{{"broken":',
+  '/api/v1/tasks/t_148/artifacts/a_html/content': '<img src=x onerror=alert(1)>',
+  '/api/v1/tasks/t_148/artifacts/a_empty/content': '',
+  '/api/v1/tasks/t_148/artifacts/a_md/content': '# 标题',
+}};
+global.window = {{ AxiomModules: {{
+  state: {{ state: {{}} }},
+  core: {{ methods: {{}} }},
+  projects: {{ methods: {{}} }},
+  graph: {{ methods: {{}} }},
+  files: {{ methods: {{}} }},
+}} }};
+global.location = {{ origin: 'http://testserver' }};
+global.marked = {{ parse: content => `<h1>${{content.replace(/^# /, '')}}</h1>` }};
+global.fetch = async (url, init = {{}}) => {{
+  calls.push({{ method: init.method || 'GET', url }});
+  if (!(url in payloads)) throw new Error(`unexpected request: ${{url}}`);
+  return {{
+    status: 200,
+    ok: true,
+    text: async () => JSON.stringify({{ artifact: {{}}, content: payloads[url] }}),
+  }};
+}};
+eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
+const methods = window.AxiomModules.files.methods;
+const ctx = Object.assign({{
+  artifactCenterSelected: null,
+  isImageFile: name => /\\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(name),
+  isMdFile: name => /\\.md$/i.test(name),
+}}, methods);
+let selectedState = null;
+Object.defineProperty(ctx, 'artifactCenterSelected', {{
+  configurable: true,
+  get: () => selectedState,
+  set: value => {{ selectedState = value === null ? null : new Proxy(value, {{}}); }},
+}});
+const item = (id, path, size = 10) => ({{ id, task_id:'t_148', path, size }});
+const capture = selected => ({{
+  kind: selected._previewKind,
+  loading: selected._loading,
+  content: selected._content,
+  rendered: selected._rendered,
+  warning: selected._warning,
+  notice: selected._notice,
+  error: selected._error,
+}});
+(async () => {{
+  const result = {{}};
+  await ctx.openArtifactCenter(item('a_txt', 'i014/evidence/result.txt'));
+  result.txt = capture(ctx.artifactCenterSelected);
+  await ctx.openArtifactCenter(item('a_json', 'i014/evidence/result.json'));
+  result.json = capture(ctx.artifactCenterSelected);
+  await ctx.openArtifactCenter(item('a_array', 'i014/evidence/result-array.json'));
+  result.array = capture(ctx.artifactCenterSelected);
+  await ctx.openArtifactCenter(item('a_invalid', 'i014/evidence/invalid.json'));
+  result.invalid = capture(ctx.artifactCenterSelected);
+  await ctx.openArtifactCenter(item('a_html', 'i014/evidence/poc.html'));
+  result.html = capture(ctx.artifactCenterSelected);
+  await ctx.openArtifactCenter(item('a_empty', 'i014/evidence/empty.txt', 0));
+  result.empty = capture(ctx.artifactCenterSelected);
+  await ctx.openArtifactCenter(item('a_md', 'i014/findings.md'));
+  result.markdown = capture(ctx.artifactCenterSelected);
+  await ctx.openArtifactCenter(item('a_large', 'i014/evidence/large.txt', 5 * 1024 * 1024 + 1));
+  result.large = capture(ctx.artifactCenterSelected);
+  await ctx.openArtifactCenter(item('a_binary', 'i014/evidence/cache.pyc'));
+  result.binary = capture(ctx.artifactCenterSelected);
+  await ctx.openArtifactCenter(item('a_image', 'i014/evidence/proof.png'));
+  result.image = capture(ctx.artifactCenterSelected);
+  result.calls = calls;
+  result.downloadUrl = ctx.artifactDownloadUrl(item('a_txt', 'result.txt'));
+  process.stdout.write(JSON.stringify(result));
+}})();
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
 def _run_credential_editor_fixture() -> dict[str, object]:
     node = shutil.which("node")
     if not node:
@@ -277,11 +372,11 @@ def test_frontend_and_static_assets_are_served(client):
     response = client.get("/")
     assert response.status_code == 200
     assert "<title>axiom</title>" in response.text
-    assert "/static/js/state.js?v=20260727.2" in response.text
+    assert "/static/js/state.js?v=20260727.3" in response.text
     assert "/static/js/skills.js?v=20260727.4" in response.text
-    assert "/static/js/v2-adapter.js?v=20260727.6" in response.text
+    assert "/static/js/v2-adapter.js?v=20260728.2" in response.text
     assert "/static/js/helpers.js?v=20260724.2" in response.text
-    assert "/static/js/graph.js?v=20260727.2" in response.text
+    assert "/static/js/graph.js?v=20260727.3" in response.text
     assert "/static/js/human.js?v=20260727.1" in response.text
     assert "/static/js/timeline.js?v=20260724.3" in response.text
 
@@ -311,6 +406,8 @@ def test_frontend_and_static_assets_are_served(client):
     assert "explore.findings" in files.text
     assert "explore.leads" in files.text
     assert "explore.evidence" in files.text
+    assert 'data-testid="artifact-preview-text"' in files.text
+    assert '<template x-if="!artifactCenterSelected._isImage"><template' not in files.text
     assert "正在加载任务" in dashboard.text
     assert "正在加载事件" in dashboard.text
 
@@ -385,6 +482,46 @@ def test_artifact_center_classifies_new_explore_paths_by_type() -> None:
         {"phase": "explore", "label": "Findings", "icon": "!"},
         {"phase": "explore", "label": "Leads", "icon": "↗"},
         {"phase": "explore", "label": "Evidence", "icon": "◈"},
+    ]
+
+
+def test_artifact_center_previews_text_and_formats_json_safely() -> None:
+    result = _run_artifact_preview_fixture()
+
+    assert result["txt"] == {
+        "kind": "text",
+        "loading": False,
+        "content": "第一行\n<script>alert(1)</script>",
+        "rendered": "",
+        "warning": "",
+        "notice": "",
+        "error": "",
+    }
+    assert result["json"]["kind"] == "json"
+    assert result["json"]["content"] == '{\n  "name": "测试",\n  "items": [\n    1,\n    2\n  ]\n}'
+    assert result["array"]["content"] == '[\n  {\n    "id": 1\n  },\n  {\n    "id": 2\n  }\n]'
+    assert result["invalid"]["content"] == '{"broken":'
+    assert result["invalid"]["warning"] == "JSON 格式无效，已按原文显示。"
+    assert result["html"]["kind"] == "text"
+    assert result["html"]["content"] == "<img src=x onerror=alert(1)>"
+    assert result["empty"]["content"] == ""
+    assert result["empty"]["loading"] is False
+    assert result["markdown"]["kind"] == "markdown"
+    assert result["markdown"]["rendered"] == "<h1>标题</h1>"
+    assert result["large"]["kind"] == "text"
+    assert "在线预览上限为 5 MB" in result["large"]["notice"]
+    assert result["binary"]["kind"] == "unsupported"
+    assert result["binary"]["notice"] == "该文件类型不支持在线预览，请下载查看。"
+    assert result["image"]["kind"] == "image"
+    assert result["downloadUrl"] == "/api/v1/tasks/t_148/artifacts/a_txt/download"
+    assert [call["url"] for call in result["calls"]] == [
+        "/api/v1/tasks/t_148/artifacts/a_txt/content",
+        "/api/v1/tasks/t_148/artifacts/a_json/content",
+        "/api/v1/tasks/t_148/artifacts/a_array/content",
+        "/api/v1/tasks/t_148/artifacts/a_invalid/content",
+        "/api/v1/tasks/t_148/artifacts/a_html/content",
+        "/api/v1/tasks/t_148/artifacts/a_empty/content",
+        "/api/v1/tasks/t_148/artifacts/a_md/content",
     ]
 
 

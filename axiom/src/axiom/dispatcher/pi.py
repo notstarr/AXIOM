@@ -15,7 +15,13 @@ from axiom.dispatcher.bootstrap import (
 from axiom.dispatcher.activity import SessionActivityTracker
 from axiom.dispatcher.heartbeat import LeaseLostError
 from axiom.dispatcher.explore import ExploreExecutionTimeout
-from axiom.dispatcher.process import ProcessResult, ProcessSpec, ProcessSupervisor
+from axiom.dispatcher.process import (
+    ProcessResult,
+    ProcessSpec,
+    ProcessSupervisor,
+    RpcProcessSpec,
+    RpcProcessSupervisor,
+)
 from axiom.dispatcher.reason import ReasonExecutionTimeout
 from axiom.dispatcher.tool_path import build_tool_path, prepare_runtime_bin
 from axiom.modules.execution.schemas import ActivityCommand, ExecutionInput
@@ -25,6 +31,7 @@ from axiom.modules.workers.schemas import Worker
 
 
 PiSettings = PiWorkerConfig
+EXPLORE_SOFT_REMINDER_RATIO = 0.70
 
 
 class PromptRenderer:
@@ -46,6 +53,7 @@ class PiBootstrapExecutor:
         worker: Worker,
         *,
         supervisor: ProcessSupervisor | None = None,
+        rpc_supervisor: RpcProcessSupervisor | None = None,
         prompt_renderer: PromptRenderer | None = None,
         default_conclude_seconds: int = 180,
         activity_reporter: Callable[[ActivityCommand], None] | None = None,
@@ -55,6 +63,7 @@ class PiBootstrapExecutor:
         self.worker = worker
         self.settings = PiSettings.model_validate(worker.config)
         self.supervisor = supervisor or ProcessSupervisor()
+        self.rpc_supervisor = rpc_supervisor or RpcProcessSupervisor()
         self.prompts = prompt_renderer or PromptRenderer()
         self.default_conclude_seconds = default_conclude_seconds
         self.activity_reporter = activity_reporter
@@ -122,6 +131,9 @@ class PiBootstrapExecutor:
         timeout_seconds: int,
         tool_names: list[str],
         extra_environment: dict[str, str] | None = None,
+        rpc: bool = False,
+        steer_after_seconds: float | None = None,
+        steer_message: str | None = None,
     ) -> ProcessResult:
         session_dir = Path(self.settings.session_dir or Path(execution_input.run_dir) / "sessions")
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -175,6 +187,7 @@ class PiBootstrapExecutor:
             tool_names,
             skill_paths=execution_input.skill_directories,
             guard_enabled=execution_input.guard_enabled,
+            mode="rpc" if rpc else "json",
         )
         tracker = (
             SessionActivityTracker(session_dir, execution_input.lease_id, self.activity_reporter)
@@ -184,19 +197,35 @@ class PiBootstrapExecutor:
         if tracker is not None:
             tracker.start()
         try:
-            result = self.supervisor.run(
-                ProcessSpec(
-                    command=argv,
-                    log_dir=Path(execution_input.run_dir) / "process",
-                    timeout_seconds=timeout_seconds,
-                    environment=environment,
-                ),
-                should_cancel=lambda: (
-                    "lease_lost"
-                    if (tracker is not None and tracker.lease_lost) or not lease_active()
-                    else None
-                ),
-            )
+            def should_cancel() -> str | None:
+                if (tracker is not None and tracker.lease_lost) or not lease_active():
+                    return "lease_lost"
+                return None
+
+            if rpc:
+                result = self.rpc_supervisor.run(
+                    RpcProcessSpec(
+                        command=argv,
+                        log_dir=Path(execution_input.run_dir) / "process",
+                        timeout_seconds=timeout_seconds,
+                        environment=environment,
+                        prompt=prompt,
+                        steer_after_seconds=steer_after_seconds,
+                        steer_message=steer_message,
+                    ),
+                    should_cancel=should_cancel,
+                    on_steer=lambda: self._report_soft_reminder(execution_input),
+                )
+            else:
+                result = self.supervisor.run(
+                    ProcessSpec(
+                        command=argv,
+                        log_dir=Path(execution_input.run_dir) / "process",
+                        timeout_seconds=timeout_seconds,
+                        environment=environment,
+                    ),
+                    should_cancel=should_cancel,
+                )
         finally:
             if tracker is not None:
                 tracker.stop()
@@ -212,6 +241,7 @@ class PiBootstrapExecutor:
         *,
         skill_paths: list[str] | None = None,
         guard_enabled: bool = False,
+        mode: str = "json",
     ) -> list[str]:
         argv = [
             self.settings.binary,
@@ -222,7 +252,7 @@ class PiBootstrapExecutor:
             "--session-dir",
             str(session_dir),
             "--mode",
-            "json",
+            mode,
         ]
         if self._session_id:
             argv.extend([self.settings.session_flag, self._session_id])
@@ -235,8 +265,21 @@ class PiBootstrapExecutor:
         if guard_enabled:
             extension = Path(__file__).with_name("extensions") / "axiom-guard" / "index.ts"
             argv.extend(["--extension", str(extension)])
-        argv.extend(["-p", prompt])
+        if mode != "rpc":
+            argv.extend(["-p", prompt])
         return argv
+
+    def _report_soft_reminder(self, execution_input: ExecutionInput) -> None:
+        if self.activity_reporter is None:
+            return
+        self.activity_reporter(
+            ActivityCommand(
+                lease_id=execution_input.lease_id,
+                activity_kind="soft_reminder",
+                activity_summary="已发送预算软提醒，正在整理本轮产物",
+                activity_tool="",
+            )
+        )
 
     def _write_models_file(self, agent_dir: Path) -> None:
         """Materialize Pi's custom provider registry for this isolated run.
@@ -278,6 +321,8 @@ class PiBootstrapExecutor:
 
     @staticmethod
     def _last_assistant_text(result: ProcessResult) -> str:
+        if result.last_assistant_text is not None:
+            return result.last_assistant_text
         assistant_messages: list[str] = []
         text_events: list[str] = []
         for line in result.stdout.splitlines():
@@ -386,6 +431,8 @@ class PiExploreExecutor(PiBootstrapExecutor):
         if not execution_input.context_manifest_path:
             raise TransientWorkerError("Explore Context manifest is unavailable")
         self._session_id = self._session_id or uuid.uuid4().hex
+        timeout_seconds = execution_input.execute_timeout_seconds or 900
+        steer_after_seconds, remaining_seconds = _explore_soft_reminder_timing(timeout_seconds)
         result = self._run(
             execution_input,
             self.prompts.render(
@@ -407,8 +454,11 @@ class PiExploreExecutor(PiBootstrapExecutor):
                 },
             ),
             lease_active=lease_active,
-            timeout_seconds=execution_input.execute_timeout_seconds or 900,
+            timeout_seconds=timeout_seconds,
             tool_names=self.settings.tools,
+            rpc=True,
+            steer_after_seconds=steer_after_seconds,
+            steer_message=_explore_soft_reminder(remaining_seconds),
         )
         if result.cancelled:
             raise LeaseLostError(result.cancel_reason or "worker cancelled")
@@ -437,6 +487,7 @@ class PiExploreExecutor(PiBootstrapExecutor):
             timeout_seconds=execution_input.conclude_timeout_seconds
             or self.default_conclude_seconds,
             tool_names=["read", "write", "edit", "bash"],
+            rpc=True,
         )
         if result.cancelled:
             raise LeaseLostError(result.cancel_reason or "worker cancelled")
@@ -466,3 +517,21 @@ def _format_skill_directories(paths: list[str]) -> str:
 def _reason_tool_names(configured: list[str]) -> list[str]:
     """Keep the control-plane shell available even in a restricted Pi config."""
     return list(dict.fromkeys([*configured, "bash"]))
+
+
+def _explore_soft_reminder(remaining_seconds: int) -> str:
+    return (
+        "本次 Explore 执行预算已使用约 70%，"
+        f"剩余约 {remaining_seconds} 秒。\n"
+        "不要再扩展新的独立测试方向。请完成当前分支，立即整理 "
+        "findings.md、leads.md 和 evidence，逐条上报已确认漏洞，"
+        "完成后仅返回 FINISH。"
+    )
+
+
+def _explore_soft_reminder_timing(execute_seconds: int) -> tuple[float, int]:
+    if execute_seconds <= 0:
+        raise ValueError("Explore execute budget must be positive")
+    remind_after = execute_seconds * EXPLORE_SOFT_REMINDER_RATIO
+    remaining = (execute_seconds * 30 + 99) // 100
+    return remind_after, remaining

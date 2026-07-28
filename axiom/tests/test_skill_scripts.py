@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import signal
+import socket
 import subprocess
+import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -112,3 +117,166 @@ def test_browser_launch_script_is_valid_for_macos_bash() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "EXTRA_FLAGS[@]" not in script.read_text(encoding="utf-8")
+
+
+def test_browser_launch_script_detaches_chrome_from_worker_pipe(tmp_path) -> None:
+    launch = SKILLS / "browser-control" / "scripts" / "launch-chrome.sh"
+    stop = SKILLS / "browser-control" / "scripts" / "stop-chrome.sh"
+    port = _free_port()
+    fake_chrome = _fake_chrome(tmp_path)
+    args_file = tmp_path / "chrome-args.json"
+    environment = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "CDP_PORT": str(port),
+        "CHROME_BIN": str(fake_chrome),
+        "FAKE_CHROME_ARGS_FILE": str(args_file),
+        "MITM_PROXY": "1",
+    }
+    pid_file = Path(f"/tmp/chrome-sectest-{port}.pid")
+    pid = 0
+
+    try:
+        started = time.monotonic()
+        result = subprocess.run(
+            [
+                "/bin/bash",
+                "-c",
+                f'bash "{launch}" 2>&1 | head -30',
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+            env=environment,
+        )
+
+        assert result.returncode == 0, result.stderr or result.stdout
+        assert time.monotonic() - started < 5
+        assert "Chrome-SecTest ready" in result.stdout
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+        os.kill(pid, 0)
+        assert os.getpgid(pid) == pid
+        args = json.loads(args_file.read_text(encoding="utf-8"))
+        assert f"--remote-debugging-port={port}" in args
+        assert "--proxy-server=http://127.0.0.1:18080" in args
+        assert "--ignore-certificate-errors" in args
+
+        reused = subprocess.run(
+            ["/bin/bash", str(launch)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=3,
+            env=environment,
+        )
+        assert reused.returncode == 0
+        assert "already running" in reused.stdout
+        assert int(pid_file.read_text(encoding="utf-8").strip()) == pid
+    finally:
+        subprocess.run(
+            ["/bin/bash", str(stop)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+            env=environment,
+        )
+        if pid:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        pid_file.unlink(missing_ok=True)
+
+
+def test_browser_launch_script_refuses_foreign_cdp_process(tmp_path) -> None:
+    launch = SKILLS / "browser-control" / "scripts" / "launch-chrome.sh"
+    port = _free_port()
+    server = subprocess.Popen(
+        [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    environment = {**os.environ, "HOME": str(tmp_path), "CDP_PORT": str(port)}
+    try:
+        _wait_for_port(port)
+        result = subprocess.run(
+            ["/bin/bash", str(launch)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=3,
+            env=environment,
+        )
+
+        assert result.returncode == 2
+        assert "occupied by a non-SecTest Chrome instance" in result.stdout
+        assert server.poll() is None
+    finally:
+        try:
+            os.killpg(server.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        server.wait(timeout=3)
+        Path(f"/tmp/chrome-sectest-{port}.pid").unlink(missing_ok=True)
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _wait_for_port(port: int) -> None:
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                return
+        except OSError:
+            time.sleep(0.02)
+    raise AssertionError(f"port {port} did not become ready")
+
+
+def _fake_chrome(tmp_path: Path) -> Path:
+    script = tmp_path / "fake-chrome.py"
+    script.write_text(
+        f"""#!{sys.executable}
+import http.server
+import json
+import os
+import sys
+
+port = None
+for argument in sys.argv[1:]:
+    if argument.startswith("--remote-debugging-port="):
+        port = int(argument.split("=", 1)[1])
+if port is None:
+    raise SystemExit(2)
+
+args_file = os.environ.get("FAKE_CHROME_ARGS_FILE")
+if args_file:
+    with open(args_file, "w", encoding="utf-8") as handle:
+        json.dump(sys.argv[1:], handle)
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        payload = b'{{"Browser":"Fake Chrome"}}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, _format, *_args):
+        return
+
+http.server.HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+""",
+        encoding="utf-8",
+    )
+    script.chmod(0o700)
+    return script

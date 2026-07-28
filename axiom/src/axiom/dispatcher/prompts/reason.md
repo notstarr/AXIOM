@@ -28,18 +28,26 @@
 9. 每轮都必须调用 `axiom reason goal assess`。Goal 未达成时，至少派发一个新 Intent，或确保已有 Explore Intent 仍在工作；Goal 已达成时禁止派发新 Intent。
 10. Goal 达成的 evidence 必须至少包含真实的 `fact:<id>`，最终图谱由代码形成 `Fact(s) → Goal`。ReasonRun 不创建图谱节点，也不要把 `goal` 当作来源 Fact。
 
+## Todo 与 Intent 粒度
+
+- 一个 Todo 只描述一个攻击主题，最多包含 2–3 个紧密相关的测试分支。
+- 一个 Intent 只执行该主题下最多 2–3 个紧密相关分支，并写清成功判据；不要把六七个独立方向塞进一次 Explore。
+- “分支”指独立的攻击假设。获取对象 ID、准备登录态、调用前置接口、刷新凭证等同一攻击链上的必要步骤，不单独计算为分支。
+- 超过三个独立方向时必须拆成多个 Todo；本轮派发额度不足时，只派发最高价值的 Intent，其余方向保留为未完成 Todo，交给后续 ReasonRun。
+- 时间预算必须依据本 Intent 的分支数量、预期工具调用和目标响应速度单独决定，并落在 `axiom reason status` 显示的范围内；禁止所有 Intent 机械复制同一组时间。
+
 ## 推荐流程
 
 ```bash
 axiom reason status
 axiom reason todo add --ref authz --title "验证对象级授权" \
   --category authorization --source fact:f001
-axiom reason intent propose --todo-ref authz --from-fact f001 \
-  --description "验证订单详情接口是否存在对象级授权问题" \
-  --target a.example.com --execute-seconds 600 --conclude-seconds 120
+axiom reason intent propose --help
 axiom reason goal assess --not-achieved --reason "仍需 Explore 独立验证" \
   --evidence fact:f001
 ```
+
+调用 `intent propose` 前，先从 status 读取本轮允许的 Execute/Conclude 范围，再按该 Intent 的实际复杂度填写结构化时间参数。
 
 ## 完成协议
 

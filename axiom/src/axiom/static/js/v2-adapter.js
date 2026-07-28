@@ -1088,13 +1088,71 @@
       return 'border-slate-200 bg-slate-100 text-slate-500';
     },
     formatBytes(size) { const n = Number(size || 0); if (n < 1024) return `${n} B`; if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`; return `${(n / 1024 / 1024).toFixed(1)} MB`; },
-    artifactContentUrl(item) { return `${apiRoot}/tasks/${item.task_id}/artifacts/${item.id}/download`; },
+    artifactPreviewKind(name) {
+      const filename = String(name || '').toLowerCase();
+      if (this.isImageFile(filename)) return 'image';
+      if (this.isMdFile(filename)) return 'markdown';
+      if (/\.(json|har)$/.test(filename)) return 'json';
+      if (/\.(txt|log|csv|tsv|jsonl|ndjson|xml|ya?ml|js|mjs|cjs|jsx|ts|tsx|py|sh|bash|zsh|fish|html?|css|scss|sql|ini|conf|cfg|env|toml|properties|http)$/.test(filename)) return 'text';
+      return 'unsupported';
+    },
+    artifactPreviewUrl(item) { return `${apiRoot}/tasks/${item.task_id}/artifacts/${item.id}/content`; },
+    artifactDownloadUrl(item) { return `${apiRoot}/tasks/${item.task_id}/artifacts/${item.id}/download`; },
+    artifactContentUrl(item) { return this.artifactDownloadUrl(item); },
     async openArtifactCenter(item) {
-      const name = this.artifactFileName(item); const isImage = this.isImageFile(name); const isMarkdown = this.isMdFile(name);
-      this.artifactCenterSelected = { ...item, _isImage: isImage, _isMarkdown: isMarkdown, _content: '', _rendered: '' };
-      if (isImage || Number(item.size || 0) > 5 * 1024 * 1024) return;
-      try { const content = await (await fetch(this.artifactContentUrl(item))).text(); if (this.artifactCenterSelected?.id !== item.id) return; this.artifactCenterSelected._content = content; this.artifactCenterSelected._rendered = isMarkdown ? marked.parse(content) : ''; }
-      catch (error) { this.artifactCenterSelected._content = `读取失败：${error.message}`; }
+      const name = this.artifactFileName(item);
+      const previewKind = this.artifactPreviewKind(name);
+      const previewRequestId = `${item.id}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+      const selected = {
+        ...item,
+        _previewRequestId: previewRequestId,
+        _previewKind: previewKind,
+        _isImage: previewKind === 'image',
+        _isMarkdown: previewKind === 'markdown',
+        _loading: false,
+        _notice: '',
+        _warning: '',
+        _error: '',
+        _content: '',
+        _rendered: '',
+      };
+      this.artifactCenterSelected = selected;
+      const currentSelection = () => {
+        const current = this.artifactCenterSelected;
+        return current?._previewRequestId === previewRequestId ? current : null;
+      };
+      if (previewKind === 'image') return;
+      if (previewKind === 'unsupported') {
+        currentSelection()._notice = '该文件类型不支持在线预览，请下载查看。';
+        return;
+      }
+      if (Number(item.size || 0) > 5 * 1024 * 1024) {
+        currentSelection()._notice = `文件过大（${this.formatBytes(item.size)}），在线预览上限为 5 MB，请下载查看。`;
+        return;
+      }
+      currentSelection()._loading = true;
+      try {
+        const payload = await request('GET', `/tasks/${item.task_id}/artifacts/${item.id}/content`);
+        const current = currentSelection();
+        if (!current) return;
+        const content = typeof payload?.content === 'string' ? payload.content : '';
+        current._content = content;
+        if (previewKind === 'markdown') {
+          current._rendered = marked.parse(content);
+        } else if (previewKind === 'json' && content.trim()) {
+          try {
+            current._content = JSON.stringify(JSON.parse(content), null, 2);
+          } catch (_) {
+            current._warning = 'JSON 格式无效，已按原文显示。';
+          }
+        }
+      } catch (error) {
+        const current = currentSelection();
+        if (current) current._error = `读取失败：${error.message}`;
+      } finally {
+        const current = currentSelection();
+        if (current) current._loading = false;
+      }
     },
     async archiveArtifactCenter(item) {
       if (!confirm(`归档产物 ${this.artifactFileName(item)}？`)) return;

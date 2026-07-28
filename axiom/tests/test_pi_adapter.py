@@ -5,7 +5,14 @@ from pathlib import Path
 import pytest
 
 from axiom.dispatcher.bootstrap import BootstrapExecutionTimeout
-from axiom.dispatcher.pi import PiBootstrapExecutor, _reason_tool_names
+from axiom.dispatcher.pi import (
+    PiBootstrapExecutor,
+    PiExploreExecutor,
+    PromptRenderer,
+    _explore_soft_reminder_timing,
+    _reason_tool_names,
+)
+from axiom.dispatcher.process import ProcessResult
 from axiom.modules.execution.schemas import ExecutionInput
 from axiom.modules.workers.schemas import Worker
 
@@ -157,3 +164,166 @@ def test_pi_adapter_streams_session_tool_activity_while_process_runs(tmp_path) -
 def test_reason_executor_always_keeps_bash_available_for_axiom_cli() -> None:
     assert _reason_tool_names(["read", "write"]) == ["read", "write", "bash"]
     assert _reason_tool_names(["read", "bash"]) == ["read", "bash"]
+
+
+def test_reason_prompt_requires_small_todos_and_intents_without_fixed_budget_example() -> None:
+    prompt = PromptRenderer().render(
+        "reason.md",
+        {
+            "task_id": "t_001",
+            "reason_run_id": "rr000001",
+            "intent_description": "规划下一轮",
+            "origin": "a.example.com",
+            "goal": "完成测试",
+            "context_manifest_path": "/tmp/context.json",
+            "run_dir": "/tmp/run",
+            "skill_directories": "- /tmp/skills",
+        },
+    )
+
+    assert "一个 Todo 只描述一个攻击主题" in prompt
+    assert "最多包含 2–3 个紧密相关" in prompt
+    assert "获取对象 ID、准备登录态" in prompt
+    assert "--execute-seconds 600 --conclude-seconds 120" not in prompt
+
+
+@pytest.mark.parametrize(
+    ("execute_seconds", "expected_reminder", "expected_remaining"),
+    [
+        (600, 420.0, 180),
+        (1200, 840.0, 360),
+        (1800, 1260.0, 540),
+    ],
+)
+def test_explore_soft_reminder_timing_is_dynamic(
+    execute_seconds,
+    expected_reminder,
+    expected_remaining,
+) -> None:
+    assert _explore_soft_reminder_timing(execute_seconds) == (
+        expected_reminder,
+        expected_remaining,
+    )
+
+
+@pytest.mark.parametrize(
+    ("execute_seconds", "expected_reminder"),
+    [(600, 420.0), (1200, 840.0), (1800, 1260.0)],
+)
+def test_explore_uses_rpc_without_print_prompt_and_reports_soft_reminder(
+    tmp_path,
+    execute_seconds,
+    expected_reminder,
+) -> None:
+    rpc = _RecordingRpcSupervisor(tmp_path)
+    activities = []
+    input_value = execution_input(tmp_path / "run").model_copy(
+        update={
+            "intent_kind": "explore",
+            "intent_description": "验证对象级授权",
+            "context_manifest_path": str(tmp_path / "context.json"),
+            "execute_timeout_seconds": execute_seconds,
+            "conclude_timeout_seconds": 180,
+        }
+    )
+    Path(input_value.context_manifest_path).write_text("{}", encoding="utf-8")
+
+    output = PiExploreExecutor(
+        pi_worker(tmp_path / "unused-pi"),
+        rpc_supervisor=rpc,
+        activity_reporter=activities.append,
+    ).execute(input_value, lease_active=lambda: True)
+
+    assert output == "FINISH"
+    assert len(rpc.specs) == 1
+    spec = rpc.specs[0]
+    assert spec.steer_after_seconds == expected_reminder
+    assert f"剩余约 {execute_seconds * 3 // 10} 秒" in (spec.steer_message or "")
+    assert spec.command[spec.command.index("--mode") + 1] == "rpc"
+    assert "-p" not in spec.command
+    assert activities[0].activity_kind == "soft_reminder"
+    assert activities[0].activity_summary == "已发送预算软提醒，正在整理本轮产物"
+
+
+def test_explore_conclude_also_uses_rpc_without_another_reminder(tmp_path) -> None:
+    rpc = _RecordingRpcSupervisor(tmp_path, invoke_steer=False)
+    input_value = execution_input(tmp_path / "run").model_copy(
+        update={
+            "intent_kind": "explore",
+            "intent_description": "验证对象级授权",
+            "context_manifest_path": str(tmp_path / "context.json"),
+            "execute_timeout_seconds": 600,
+            "conclude_timeout_seconds": 180,
+        }
+    )
+    Path(input_value.context_manifest_path).write_text("{}", encoding="utf-8")
+    executor = PiExploreExecutor(
+        pi_worker(tmp_path / "unused-pi"),
+        rpc_supervisor=rpc,
+    )
+    executor._session_id = "session-test"
+
+    output = executor.conclude(input_value, reason="execute_timeout", lease_active=lambda: True)
+
+    assert output == "FINISH"
+    assert len(rpc.specs) == 1
+    spec = rpc.specs[0]
+    assert spec.steer_after_seconds is None
+    assert spec.steer_message is None
+    assert spec.command[spec.command.index("--mode") + 1] == "rpc"
+    assert "-p" not in spec.command
+
+
+def test_explore_execute_and_conclude_reuse_the_same_pi_session(tmp_path) -> None:
+    rpc = _RecordingRpcSupervisor(tmp_path, invoke_steer=False)
+    input_value = execution_input(tmp_path / "run").model_copy(
+        update={
+            "intent_kind": "explore",
+            "intent_description": "验证对象级授权",
+            "context_manifest_path": str(tmp_path / "context.json"),
+            "execute_timeout_seconds": 600,
+            "conclude_timeout_seconds": 180,
+        }
+    )
+    Path(input_value.context_manifest_path).write_text("{}", encoding="utf-8")
+    executor = PiExploreExecutor(
+        pi_worker(tmp_path / "unused-pi"),
+        rpc_supervisor=rpc,
+    )
+
+    executor.execute(input_value, lease_active=lambda: True)
+    executor.conclude(input_value, reason="missing_finish", lease_active=lambda: True)
+
+    assert len(rpc.specs) == 2
+    session_ids = []
+    for spec in rpc.specs:
+        index = spec.command.index("--session-id")
+        session_ids.append(spec.command[index + 1])
+    assert session_ids[0] == session_ids[1]
+
+
+class _RecordingRpcSupervisor:
+    def __init__(self, tmp_path: Path, *, invoke_steer: bool = True):
+        self.tmp_path = tmp_path
+        self.invoke_steer = invoke_steer
+        self.specs = []
+
+    def run(self, spec, *, should_cancel=None, on_steer=None):
+        self.specs.append(spec)
+        assert should_cancel is None or should_cancel() is None
+        if self.invoke_steer and spec.steer_after_seconds is not None and on_steer is not None:
+            on_steer()
+        log_dir = self.tmp_path / "fake-rpc"
+        log_dir.mkdir(exist_ok=True)
+        stdout_path = log_dir / "stdout.log"
+        stderr_path = log_dir / "stderr.log"
+        stdout_path.write_text("", encoding="utf-8")
+        stderr_path.write_text("", encoding="utf-8")
+        return ProcessResult(
+            returncode=0,
+            stdout="",
+            stderr="",
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            last_assistant_text="FINISH",
+        )

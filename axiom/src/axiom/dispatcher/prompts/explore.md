@@ -39,6 +39,7 @@ axiom explore vulnerability report \
 
 7. 不要直接修改图谱、Todo 或其它 Intent。代码会根据 Artifact 和 CLI 上报结果生成 Fact、漏洞记录和下一次 Reason。
 8. 当前成功判据满足且证据足够复现后立即停止，不要为了耗尽预算重复请求或顺手测试无关方向。
+9. 运行中若收到“预算已使用约 70%”的系统软提醒，立即停止扩展新的独立测试方向；只完成当前分支、整理 `findings.md`、`leads.md` 与 `evidence/`、补报已确认漏洞，然后尽快返回 `FINISH`。软提醒不是新的测试要求，也不会延长硬超时。
 
 ## 完成协议
 

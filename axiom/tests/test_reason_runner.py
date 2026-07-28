@@ -255,7 +255,7 @@ def _valid_plan(fact_id: str = "f001") -> dict:
                 "description": "验证订单详情接口是否存在对象级授权问题",
                 "targets": ["a.example.com"],
                 "execute_seconds": 420,
-                "conclude_seconds": 90,
+                "conclude_seconds": 180,
             }
         ],
     }

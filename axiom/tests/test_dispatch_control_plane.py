@@ -104,7 +104,7 @@ def _task_with_two_pending_explores(client, **runtime_changes) -> tuple[dict, li
                     "description": f"验证方向 {number}",
                     "targets": ["explore-limits.example.com"],
                     "execute_seconds": 300,
-                    "conclude_seconds": 60,
+                    "conclude_seconds": 180,
                 },
             },
         )

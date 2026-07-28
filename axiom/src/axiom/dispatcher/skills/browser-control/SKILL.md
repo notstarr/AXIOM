@@ -62,6 +62,8 @@ bash "$(axiom skill path browser-control)/scripts/launch-chrome.sh"
 
 launch-chrome.sh 是幂等的——已运行则直接返回。多 worker 可各自安全调用。
 
+Chrome 由启动脚本以独立 Session 启动，标准输入/输出/错误均连接到 `/dev/null`，不会继承 Bash Tool Call 的管道。因此即使命令外层使用 `2>&1 | head` 或 `tail`，脚本也会在 CDP 就绪后正常返回，而共享 Chrome-SecTest 会继续运行。非标准安装路径或测试环境可通过 `CHROME_BIN=/path/to/chrome` 覆盖浏览器二进制。
+
 验证是否就绪：
 ```bash
 curl -s http://localhost:9223/json/list | python3 -c "import json,sys; print(f'Chrome-SecTest: {len(json.load(sys.stdin))} tab(s)')" 2>/dev/null || echo "未运行"

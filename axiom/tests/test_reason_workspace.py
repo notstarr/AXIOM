@@ -88,7 +88,7 @@ def test_reason_workspace_commits_todos_and_pending_intents_atomically(client, d
                 "description": "验证订单详情接口是否存在对象级授权问题",
                 "targets": ["a.example.com"],
                 "execute_seconds": 420,
-                "conclude_seconds": 90,
+                "conclude_seconds": 180,
             }
         ],
         "goal_assessment": {
@@ -118,7 +118,7 @@ def test_reason_workspace_commits_todos_and_pending_intents_atomically(client, d
     assert explore["status"] == "pending"
     assert explore["todo_id"] == "td001"
     assert explore["execute_timeout_seconds"] == 420
-    assert explore["conclude_timeout_seconds"] == 90
+    assert explore["conclude_timeout_seconds"] == 180
     assert client.get(f"/api/v1/tasks/{task['id']}").json()["phase"] == "explore"
     evaluation = client.get(f"/api/v1/tasks/{task['id']}/goal-evaluations").json()[0]
     assert evaluation["evidence_refs"] == ["todo:td001"]
@@ -174,7 +174,7 @@ def test_reason_rejects_unknown_goal_todo_ref_and_rolls_back(client) -> None:
                 "description": "验证订单详情接口是否存在对象级授权问题",
                 "targets": ["a.example.com"],
                 "execute_seconds": 420,
-                "conclude_seconds": 90,
+                "conclude_seconds": 180,
             }
         ],
         "goal_assessment": {
@@ -385,7 +385,7 @@ def test_reason_scope_failure_rolls_back_the_whole_plan(client) -> None:
                 "description": "测试其他系统",
                 "targets": ["b.example.com"],
                 "execute_seconds": 300,
-                "conclude_seconds": 60,
+                "conclude_seconds": 180,
             }
         ],
     }
@@ -433,7 +433,7 @@ def test_reason_rejects_goal_as_an_explore_intent_source(client) -> None:
                         "description": "不应从 Goal 派发 Explore Intent",
                         "targets": ["a.example.com"],
                         "execute_seconds": 300,
-                        "conclude_seconds": 60,
+                        "conclude_seconds": 180,
                     }
                 ],
         },
@@ -473,7 +473,7 @@ def test_reason_scope_accepts_the_explicit_origin_port(client) -> None:
                 "description": "复核起点端口上的服务",
                 "targets": ["http://127.0.0.1:18081"],
                 "execute_seconds": 300,
-                "conclude_seconds": 60,
+                "conclude_seconds": 180,
             }
         ],
     }
@@ -519,7 +519,7 @@ def test_reason_scope_rejects_a_different_port_on_the_origin_host(client) -> Non
                 "description": "访问未授权端口",
                 "targets": ["127.0.0.1:18080"],
                 "execute_seconds": 300,
-                "conclude_seconds": 60,
+                "conclude_seconds": 180,
             }
         ],
     }

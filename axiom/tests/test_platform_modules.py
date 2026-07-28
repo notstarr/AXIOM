@@ -270,6 +270,31 @@ def test_credential_refresh_keeps_id_until_removed_and_cascades(client) -> None:
     ).status_code == 404
 
 
+def test_text_and_json_artifacts_are_available_through_content_endpoint(client) -> None:
+    _project, task = _project_task(client)
+    samples = {
+        "result.txt": "第一行\n<script>alert(1)</script>",
+        "result.json": json.dumps(
+            {"name": "测试", "items": [1, 2]}, ensure_ascii=False
+        ),
+    }
+
+    for filename, content in samples.items():
+        uploaded = client.post(
+            f"/api/v1/tasks/{task['id']}/artifacts/upload",
+            files={"file": (filename, content.encode(), "application/octet-stream")},
+            data={"actor": "human", "summary": filename},
+        )
+        assert uploaded.status_code == 201, uploaded.text
+
+        response = client.get(
+            f"/api/v1/tasks/{task['id']}/artifacts/"
+            f"{uploaded.json()['id']}/content"
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["content"] == content
+
+
 def test_vulnerability_format_is_shared_by_internal_management(client) -> None:
     _project, task = _project_task(client)
     finding = client.post(

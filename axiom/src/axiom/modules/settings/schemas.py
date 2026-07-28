@@ -63,7 +63,7 @@ class RuntimeConfig(BaseModel):
     reason_max_new_intents_per_run: int = Field(default=4, ge=1, le=8)
     explore_execute_min_seconds: int = Field(default=60, ge=10, le=86_400)
     explore_execute_max_seconds: int = Field(default=3_600, ge=10, le=86_400)
-    explore_conclude_min_seconds: int = Field(default=30, ge=10, le=7_200)
+    explore_conclude_min_seconds: int = Field(default=180, ge=180, le=7_200)
     explore_conclude_max_seconds: int = Field(default=600, ge=10, le=7_200)
     network_proxy_mode: Literal["off", "http", "vpn"] = "off"
     network_proxy_url: str = "http://127.0.0.1:7890"

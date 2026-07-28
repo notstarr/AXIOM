@@ -171,7 +171,7 @@ class ExploreRunner:
             validate=self._validate_output,
             reason=reason,
             retry_errors=(StageOutputError,),
-            default_timeout_seconds=120,
+            default_timeout_seconds=180,
         )
 
     @staticmethod

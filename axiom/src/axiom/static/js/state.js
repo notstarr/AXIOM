@@ -177,7 +177,7 @@ window.AxiomModules.state = {
       reason_max_new_intents_per_run: 4,
       explore_execute_min_seconds: 60,
       explore_execute_max_seconds: 3600,
-      explore_conclude_min_seconds: 30,
+      explore_conclude_min_seconds: 180,
       explore_conclude_max_seconds: 600,
       bootstrap_concurrency: 1,
       reason_concurrency: 1,

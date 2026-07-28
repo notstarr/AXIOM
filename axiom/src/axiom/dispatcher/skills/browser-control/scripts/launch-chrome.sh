@@ -11,7 +11,8 @@ set -u
 
 CDP_PORT="${CDP_PORT:-9223}"
 PROFILE_DIR="$HOME/Library/Application Support/Chrome-SecTest"
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+CHROME="${CHROME_BIN:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
+PYTHON="${PYTHON_BIN:-python3}"
 PID_FILE="/tmp/chrome-sectest-${CDP_PORT}.pid"
 
 _cdp_alive() {
@@ -70,15 +71,35 @@ fi
 echo "🚀 Launching Chrome-SecTest..."
 
 _launch_chrome() {
-    "${CHROME}" \
-      --user-data-dir="${PROFILE_DIR}" \
-      --remote-debugging-port="${CDP_PORT}" \
-      --remote-allow-origins='*' \
-      --no-first-run \
-      --window-size=1280,800 \
-      "$@" \
-      2>/dev/null &
-    new_pid=$!
+    new_pid="$(
+        "${PYTHON}" - \
+          "${CHROME}" \
+          "--user-data-dir=${PROFILE_DIR}" \
+          "--remote-debugging-port=${CDP_PORT}" \
+          "--remote-allow-origins=*" \
+          "--no-first-run" \
+          "--window-size=1280,800" \
+          "$@" <<'PY'
+import subprocess
+import sys
+
+process = subprocess.Popen(
+    sys.argv[1:],
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    start_new_session=True,
+    close_fds=True,
+)
+print(process.pid)
+PY
+    )" || return 1
+    case "${new_pid}" in
+        ''|*[!0-9]*)
+            echo "❌ Chrome-SecTest launcher returned an invalid pid: ${new_pid}"
+            return 1
+            ;;
+    esac
 }
 
 if [ "${MITM_PROXY:-0}" = "1" ]; then
@@ -90,17 +111,30 @@ else
     _launch_chrome
 fi
 
-echo "${new_pid}" > "${PID_FILE}"
-
-# Wait up to 10s for port to be ready and confirm it's our expected process.
+# Wait up to 10s for port to be ready, then discover Chrome's actual process.
+# Chrome may replace its initial process during startup, so do not trust new_pid
+# as the durable PID until the command line has been verified.
 for i in $(seq 1 10); do
     sleep 1
-    if _cdp_alive && _is_expected_pid "${new_pid}"; then
-        echo "✅ Chrome-SecTest ready (${i}s, pid=${new_pid})"
-        exit 0
+    if _cdp_alive; then
+        ready_pid="$(_find_expected_pid || true)"
+        if [ -n "${ready_pid}" ]; then
+            echo "${ready_pid}" > "${PID_FILE}"
+            echo "✅ Chrome-SecTest ready (${i}s, pid=${ready_pid})"
+            exit 0
+        fi
     fi
 done
 
 echo "❌ Chrome-SecTest failed to start"
 rm -f "${PID_FILE}"
+cleanup_pid=""
+if _is_expected_pid "${new_pid}"; then
+    cleanup_pid="${new_pid}"
+else
+    cleanup_pid="$(_find_expected_pid || true)"
+fi
+if [ -n "${cleanup_pid}" ]; then
+    kill -TERM "${cleanup_pid}" 2>/dev/null || true
+fi
 exit 1

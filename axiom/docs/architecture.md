@@ -152,6 +152,8 @@ Runner 会把当前 AXIOM 虚拟环境的 `bin` 目录放到 Pi 子进程 `PATH`
 
 每个命令只提交一个小操作并立即校验、持久化。Reason 执行期间 Todo 更新和 Intent proposal 只存在于 Workspace，正式 Intent 表和图谱不变化。每个 Intent 的 `execute_seconds` / `conclude_seconds` 是结构化字段，不写入 description；Reason 不选择 Worker，也没有漏洞上报入口。
 
+Reason Prompt 对规划粒度有硬性文字约束：一个 Todo 只承载一个攻击主题，一个 Todo/Intent 最多包含 2–3 个紧密相关的独立测试分支；获取对象 ID、准备登录态和调用前置接口等同一攻击链步骤不单独算分支。超过三个方向必须拆开，额度不足的方向保留为 Todo 交给后续 ReasonRun。时间预算仍由 Reason 按每个 Intent 的实际复杂度单独决定，Prompt 不再提供可被机械复制的固定 `600/120` 示例。
+
 每轮新增 Intent 由后端强制限额：
 
 ```text
@@ -196,6 +198,24 @@ Worker 最后一条 assistant 文本必须精确等于 `FINISH`。Runner 只允�
 
 Explore Fact 由代码使用原 Intent description、findings/leads Artifact ID、证据数量和本轮 Vulnerability ID 生成，不使用模型尾部文本。`explore_result.json` 只是代码维护的内部状态/索引，不要求 Worker 编写，也不注册为 Artifact。
 
+Explore 是当前唯一使用 Pi RPC 模式的阶段。Runner 通过 stdin/stdout JSONL 发送初始 `prompt` 并持续读取 Pi 活动事件；当本 Intent 的 Execute 预算消耗到动态 70% 时发送一次 `steer`，例如 600/1200/1800 秒分别在 420/840/1260 秒提醒。提醒要求停止扩展新方向、完成当前分支并整理 findings/leads/evidence；它只进入模型上下文，不延长硬超时、不改变 lease，也不改变工具权限。若阶段已提前结束则不发送；发送或 Activity 上报失败只记录警告。Task 停止、lease 失效或硬超时时，RPC Supervisor 发送 `abort` 并清理整个进程组。
+
+Pi RPC 的会话完成边界是 `agent_settled`，不是 `agent_end`。一次会话可以依次出现多个 `agent_end`，其后仍可能发生 Pi 内部自动重试、Compaction 或处理排队的 steer；Supervisor 因此只把 `agent_end` 当作单轮活动事件。收到 `agent_settled` 后，Supervisor 才发送 `{"id":"axiom-final-text","type":"get_last_assistant_text"}`，并把成功响应中的 `data.text` 作为唯一权威最终文本。settled 前 EOF、最终文本响应前 EOF、查询失败或缺失文本均属于 RPC 协议错误；Pi 的真实非零退出码不会被完成事件覆盖成 0。
+
+`process/stdout.log` 在 RPC 模式下是过滤后的协议诊断日志，不再是完整事件镜像。Pi 的 `message_update`、`tool_execution_update` 和 `bash_execution_update` 都会携带累计内容，逐行原样保存会使日志随生成长度近似 O(n²) 增长；Reader 因此只保留响应、生命周期、重试、Compaction、工具开始/结束等诊断事件，并在 EOF 追加 `axiom_rpc_log_summary` 记录各类省略数量。控制队列也只接收 Supervisor 真正需要的 `response`、`agent_settled` 和 EOF。完整消息、Tool Call、Tool Result 与流式历史仍以 Pi Session JSONL 为唯一权威审计源，实时活动也继续增量读取 Session，不依赖被过滤的进程日志。
+
+生产 Pi 运行时固定在忽略版本控制的 `runtime/pi/0.82.1/`，启动器 `runtime/pi/0.82.1/bin/pi` 明确使用 `/Users/hexin/.workbuddy/binaries/node/versions/22.22.2/bin/node`，不依赖 `/usr/local/bin/pi` 的 shebang 或 LaunchAgent PATH。所有 Pi Worker 的既有 `config.binary` 均指向该启动器；Bootstrap、Reason 只升级运行时，仍使用 JSON 模式。
+
+共享 Chrome-SecTest 仍是跨 Lease 持久化的浏览器，不归任何单个 Worker 进程组管理。`launch-chrome.sh` 通过 Python `subprocess.Popen` 启动 Chrome，并显式使用 `DEVNULL` 关闭标准输入、输出和错误，设置 `start_new_session=True` 与 `close_fds=True`；因此即使命令被 `head`/`tail` 等管道包裹，Tool Call 也会在 CDP 就绪后正常收到 EOF，Chrome 则继续独立存活。CDP 就绪后脚本重新按专用 Profile 与端口扫描实际 Chrome PID 再写 PID 文件；启动失败只清理同时匹配这两个条件的进程，不操作个人 Chrome。`CHROME_BIN` 仅作为测试或非标准安装路径覆盖。
+
+Execute 超时后，Explore Conclude 使用同一 Pi session ID 启动新的 RPC 进程继续有界收口，但不会再次发送 70% 提醒。Explore 收口预算的正式下限为 180 秒、上限默认为 600 秒；Reason 提交低于下限的 Intent 会被 API 明确拒绝，不做静默修正。
+
+2026-07-27 的生产受控验收确认了两种路径：60 秒 Execute 在约第 42 秒产生 `soft_reminder`；提醒若落在工具调用中，会由 Pi 排队并在工具结束后的下一轮模型调用前注入。验收会话中该 steer 作为 user 消息落入 session，模型随后仅返回 `FINISH`，Intent 在 49.7 秒内完成且没有进入 Conclude 或重试。另一轮故意让慢请求撞上 Execute 硬超时，验证了同 session RPC Conclude 可继续整理并原子提交 Artifact/Fact。
+
+后续 `t_147` 生产受控验收专门覆盖 Pi 自身重试：本机兼容服务第一次返回 HTTP 500，Pi 自动发起第二次请求；动态 70% steer 被接受后触发第三次模型调用。最终 RPC 日志包含 2 次 `agent_end`、1 次 `auto_retry_start/end`、1 次 `agent_settled`，随后 `get_last_assistant_text` 返回精确 `FINISH`，代码成功注册 `explore.findings`、`explore.leads` 并生成 Fact。临时 Task、Project、Worker、服务和文件随后全部清理，正式 Runner 保持运行。
+
+2026-07-28 在生产 `t_148` 上验证了日志与浏览器修复：共享 Chrome-SecTest 以 `PPID=1`、独立 PGID 和三个 `/dev/null` 标准 FD 运行，管道包裹的启动命令可立即返回；新 RPC Lease 不再记录三类累计流式事件。`i014` 完成后的诊断日志为 47,107 B、Session 为 432,577 B，EOF 摘要记录省略 1,135 条 `message_update` 和 7 条 `tool_execution_update`，仍正常经过 `agent_settled → get_last_assistant_text(FINISH)` 完成 Intent 并生成 Fact。
+
 ### 统一完成协议
 
 三个阶段都只认最后一条 assistant 文本去除首尾空白后精确等于：
@@ -238,7 +258,7 @@ FileStore 使用外部 data-dir，Artifact 表只保存元数据、hash、size �
 
 任务详情的“概览”和“图谱”是两种人类视图：图谱不是执行事实源；右侧 Todo、事实、产物和漏洞分别从 V2 API 读取。ReasonRun 只显示为图谱上方的运行活动卡片，可查看 Worker、状态、当前活动、工具、心跳、触发器、预算和配置快照，不创建图谱节点。
 
-设置页只编辑真实 `RuntimeConfig`，分为“调度并发、阶段预算、Reason 触发与派发、高级可靠性”四组；Bootstrap/Reason 单 Task 并发以只读 `1（固定）` 展示。保存使用 `expected_version` 乐观锁，合法零值不会被 `||` 回填；Runner 每 tick 读取版本并回报真实 `applied_version/applied_at`。生产浏览器已验证保存、刷新、重启持久化和下一 tick 热应用。
+设置页只编辑真实 `RuntimeConfig`，分为“调度并发、阶段预算、Reason 触发与派发、高级可靠性”四组；Bootstrap/Reason 单 Task 并发以只读 `1（固定）` 展示。Explore Conclude 下限默认和前后端输入约束均为 180 秒。保存使用 `expected_version` 乐观锁，合法零值不会被 `||` 回填；Runner 每 tick 读取版本并回报真实 `applied_version/applied_at`。生产浏览器已验证保存、刷新、重启持久化和下一 tick 热应用。
 
 ## 9. 迁移与回滚
 
@@ -265,6 +285,8 @@ start.sh rollback
 
 ReasonRun/RuntimeConfig 迁移版本为 `20260727_0020`。迁移保留历史 Reason Intent、Workspace 和 Goal Evaluation，不重写历史图谱；新运行全部使用 `reason_run_id`。最终重启前一致性备份位于 `/Users/hexin/.local/share/axiom-v3/backups/20260727-131804-reasonrun-final/`。空库和包含真实 ReasonRun 数据的生产副本都完成 `upgrade → downgrade 0019 → upgrade 0020` 演练；回滚时 ReasonRun 会物化为旧版只读 Reason Intent，并同步 Workspace、Context、Goal Evaluation、Audit 和来源 Fact。SQLite integrity 为 `ok`，foreign key violation 为 0。
 
+`20260727_0023_explore_closeout_floor` 是单调数据迁移：把 RuntimeConfig 的 Explore Conclude 下限、未结束 Explore Intent 的收口预算，以及未结束 ReasonRun 的 Explore 收口范围快照提升到至少 180 秒；必要时同步抬高过低的 max。已进入进程的旧 ExecutionInput 不会被热改，下一次重试或重新领取才使用数据库中的新预算。降级保留已提升的安全预算，避免误改用户在升级后主动设置的 180 秒值。
+
 ## 10. 当前明确不属于主流程的内容
 
 - Bootstrap 没有改成 ASM；ASM 工具链不是当前阶段。
@@ -275,11 +297,10 @@ ReasonRun/RuntimeConfig 迁移版本为 `20260727_0020`。迁移保留历史 Rea
 ## 11. 验证基线
 
 ```text
-uv run pytest -q                         163 passed
+uv run pytest -q                         220 passed, 1 warning
 uv run ruff check .                      passed
-python -m compileall -q src tests        passed
-node --check <all static js>             passed
-bash -n start.sh restart.sh              passed
+python -m compileall -q src tests migrations  passed
+node --check <18 non-vendor static js>   passed
 ```
 
 以上测试已覆盖 FINISH 精确识别、同会话有界收口、阶段文件安全、Artifact/Fact 自动生成、ReasonRun 唯一性/lease/心跳/回收、Workspace 增量操作和派发额度、Reason 触发规则、全局/Task/阶段并发、公平领取、RuntimeConfig 版本冲突与热应用、Guard 真实配置，以及停止/Goal 完成后的立即取消；仅有 Starlette/httpx 弃用警告。
@@ -287,3 +308,5 @@ bash -n start.sh restart.sh              passed
 2026-07-27 生产受控 E2E `t_138` 完成 `Bootstrap → ReasonRun(rr000001) → Explore → ReasonRun(rr000002) → Goal`：正式图谱只有 Bootstrap/Explore 两个 Intent，两个 ReasonRun 均零重试完成；生成 4 个 Artifact、1 个 completed Todo 和两个代码生成 Fact，最终 `goal_from_fact_ids=[f002]`。Task completed 后开放 Intent、ReasonRun、Workspace 均为 0。
 
 最终重启后又执行 API-only 临时验收 `t_141`（随后删除）：Bootstrap 完成后创建独立 ReasonRun，图谱仍只有 Bootstrap Intent；打开 Workspace 后停止 Task，ReasonRun 立即 `cancelled`、Workspace 变为 `abandoned(task_stopped)`、旧 heartbeat 和 commit 均返回 409。临时 Task/Project/Worker 已清理，生产 RuntimeConfig 保存/应用版本均为 v210，活动 Intent、ReasonRun、open Workspace 均为 0。浏览器再次确认 `t_138` 图谱只有 2 个正式 Intent，设置页四组配置和 `Runner 已应用 v210` 正常显示；控制台仅保留既知 Tailwind CDN 警告。
+
+Explore RPC/动态提醒批次的生产一致性备份为 `/Users/hexin/.local/share/axiom-v3/backups/20260727-182223/`。空库及生产副本完成 `0022 → 0023 → 0022 → 0023`，生产库现为 `20260727_0023`，RuntimeConfig/Runner applied version 均为 v212，Explore Conclude 范围为 180–600 秒，SQLite integrity 为 `ok` 且 foreign key violation 为 0。临时生产验收 `t_146` 的两个 Explore Intent 分别验证“Execute 超时后 RPC Conclude 成功提交”和“工具调用期间 steer 排队后下一轮生效”；共生成 9 个正式 Artifact、2 个代码生成 Fact，执行/基础设施重试均为 0，临时 Task、Project、本机服务和 Pi 进程随后清理。
