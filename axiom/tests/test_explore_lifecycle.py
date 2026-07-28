@@ -331,7 +331,7 @@ def test_explore_rejects_worker_supplied_status(client) -> None:
     assert "status" in response.text
 
 
-def test_explore_rejects_reported_vulnerability_with_missing_evidence_file(client) -> None:
+def test_explore_keeps_reported_vulnerability_when_evidence_file_is_missing(client) -> None:
     task, intents = _task_with_explore_intents(client)
     claim = client.post(
         f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}/claim",
@@ -365,5 +365,50 @@ def test_explore_rejects_reported_vulnerability_with_missing_evidence_file(clien
         json={"lease_id": claim["lease_id"]},
     )
 
-    assert completed.status_code == 409
-    assert "evidence/missing.txt" in completed.json()["error"]["message"]
+    assert completed.status_code == 200, completed.text
+    vulnerability = completed.json()["vulnerabilities"][0]
+    assert vulnerability["finding_artifact"]["artifact_type"] == "explore.findings"
+    assert vulnerability["evidence_artifacts"] == []
+
+
+def test_explore_reports_vulnerability_without_evidence_paths(client) -> None:
+    task, intents = _task_with_explore_intents(client)
+    claim = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}/claim",
+        json={"worker_name": "worker-a"},
+    ).json()
+    base = f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}"
+    client.post(f"{base}/start", json={"lease_id": claim["lease_id"]})
+    execution_input = client.post(
+        f"{base}/input",
+        json={"lease_id": claim["lease_id"]},
+    ).json()
+    artifacts = Path(execution_input["run_dir"]) / "artifacts"
+    artifacts.mkdir(parents=True)
+    (artifacts / "findings.md").write_text("已确认越权行为", encoding="utf-8")
+    (artifacts / "leads.md").write_text("本轮无遗留待验证线索", encoding="utf-8")
+    report = client.post(
+        f"{base}/explore-vulnerabilities",
+        json={
+            "lease_id": claim["lease_id"],
+            "report": {
+                "title": "无证据文件的待验证越权",
+                "type": "越权",
+                "severity": "high",
+                "description": "当前会话观察到跨用户数据读取。",
+                "impact": "可能造成跨用户数据泄露。",
+            },
+        },
+    )
+    assert report.status_code == 200, report.text
+
+    completed = client.post(
+        f"{base}/explore-complete",
+        json={"lease_id": claim["lease_id"]},
+    )
+
+    assert completed.status_code == 200, completed.text
+    vulnerability = completed.json()["vulnerabilities"][0]
+    assert vulnerability["status"] == "待验证"
+    assert vulnerability["finding_artifact"]["artifact_type"] == "explore.findings"
+    assert vulnerability["evidence_artifacts"] == []

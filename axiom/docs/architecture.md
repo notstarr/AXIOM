@@ -192,15 +192,17 @@ Explore 执行一个明确 Intent，可以为完成当前 Intent 寻找必要依
 
 `findings.md` 保存本轮已确认事实和确认的漏洞发现，`leads.md` 保存已经发现但尚未验证或尚未完成的方向；二者必须始终存在且非空。没有对应内容时明确写“本轮无新增确认事实”或“本轮无遗留待验证线索”。请求、响应、工具原始输出、截图和漏洞证明只写入可选的 `evidence/**`。
 
-Worker 最后一条 assistant 文本必须精确等于 `FINISH`。Runner 只允许上述两个根文件和 `evidence/**`，拒绝 `analysis/`、`reproduction/`、其它根文件、symlink、越界/隐藏路径和内部运行文件。正式存储直接形成 `{intent_id}/findings.md`、`{intent_id}/leads.md` 和 `{intent_id}/evidence/**`，Artifact 类型分别为 `explore.findings`、`explore.leads`、`explore.evidence`；历史 `explore.analysis`、`explore.reproduction` 只读保留。
+Prompt 仍要求 Worker 最后一条 assistant 文本只包含 `FINISH`；Execute 正常返回时，Runner 继续使用 Explore 专用的有限格式归一化。进入 Conclude 后则以保住已有结果为优先：若收口最终缺少 FINISH、格式错误或超时，只要两个核心文件仍是安全、非空普通文件，本轮就直接提交并记录 `explore_closeout_core_fallback` warning，不再释放后从头重试。只有 `findings.md` 或 `leads.md` 缺失、为空或不安全时才拒绝完成。
 
-只有证据充分时，Explore 使用 `axiom explore vulnerability report` 逐条上报 Vulnerability，并通过可重复的 `--evidence-path evidence/...` 指向真实证据文件。模型不能设置漏洞状态；服务端自动补齐 `intent_id`、`source=explore`、`reported_by` 和 `status=待验证`。路径先进入 lease 级 Explore 状态，收口时才在 Artifact 注册后解析为正式关系；缺失、为空、越界或未收集的证据会阻止完成。Reason 不上报漏洞。
+Runner 的正式扫描范围仍只有两个核心文件和 `evidence/**`。Evidence 是可选审计材料：空文件、危险名称、symlink、越界/隐藏路径会被跳过且不读取；`analysis/`、`reproduction/` 和其它根目录内容不注册；合法 Evidence 按稳定路径最多注册 48 个，使单轮总 Artifact 保持最多 50 个。跳过项写结构化 warning，但不会阻止核心结果完成。正式存储直接形成 `{intent_id}/findings.md`、`{intent_id}/leads.md` 和实际采纳的 `{intent_id}/evidence/**`，Artifact 类型分别为 `explore.findings`、`explore.leads`、`explore.evidence`；历史 `explore.analysis`、`explore.reproduction` 只读保留。
+
+只有达到漏洞标准时，Explore 才使用 `axiom explore vulnerability report` 逐条上报 Vulnerability。`--evidence-path evidence/...` 现在可省略或重复；模型不能设置漏洞状态，服务端自动补齐 `intent_id`、`source=explore`、`reported_by` 和 `status=待验证`。路径先进入 lease 级 Explore 状态，收口时只把实际成功注册的 Evidence 解析为正式关系；缺失、为空或被跳过的引用只记录 warning。即使没有有效 Evidence，漏洞仍关联本轮 `findings.md` 并以“待验证”落库。Reason 不上报漏洞。
 
 漏洞表保存标题、类型、等级、目标、描述、前置条件、影响、修复建议、状态和来源元数据；详细发现只写入 findings，原始材料只保存在 evidence。`vulnerability_artifacts` 使用 `finding/evidence` 角色关联正式 Artifact，新漏洞不再写 `reproduction_steps`、`curl_command`、自由文本 `evidence` 或 `source_file`。旧漏洞保留 V1 列并通过只读 `legacy` 区域展示，不批量复制文件。
 
 Explore Fact 由代码使用原 Intent description、findings/leads Artifact ID、证据数量和本轮 Vulnerability ID 生成，不使用模型尾部文本。`explore_result.json` 只是代码维护的内部状态/索引，不要求 Worker 编写，也不注册为 Artifact。
 
-Explore 是当前唯一使用 Pi RPC 模式的阶段。Runner 通过 stdin/stdout JSONL 发送初始 `prompt` 并持续读取 Pi 活动事件；当本 Intent 的 Execute 预算消耗到动态 70% 时发送一次 `steer`，例如 600/1200/1800 秒分别在 420/840/1260 秒提醒。提醒要求停止扩展新方向、完成当前分支并整理 findings/leads/evidence；它只进入模型上下文，不延长硬超时、不改变 lease，也不改变工具权限。若阶段已提前结束则不发送；发送或 Activity 上报失败只记录警告。Task 停止、lease 失效或硬超时时，RPC Supervisor 发送 `abort` 并清理整个进程组。
+Explore 是当前唯一使用 Pi RPC 模式的阶段。Runner 通过 stdin/stdout JSONL 发送初始 `prompt` 并持续读取 Pi 活动事件；当本 Intent 的 Execute 预算消耗到动态 70% 时发送一次 `steer`，例如 600/1200/1800 秒分别在 420/840/1260 秒提醒。提醒要求停止扩展新方向、立即整理 findings/leads、把未完成分支如实写入 leads，并明确禁止为了补 Evidence 重跑大型测试；它只进入模型上下文，不延长硬超时、不改变 lease，也不改变工具权限。若阶段已提前结束则不发送；发送或 Activity 上报失败只记录警告。Task 停止、lease 失效或硬超时时，RPC Supervisor 发送 `abort` 并清理整个进程组。
 
 Pi RPC 的会话完成边界是 `agent_settled`，不是 `agent_end`。一次会话可以依次出现多个 `agent_end`，其后仍可能发生 Pi 内部自动重试、Compaction 或处理排队的 steer；Supervisor 因此只把 `agent_end` 当作单轮活动事件。收到 `agent_settled` 后，Supervisor 才发送 `{"id":"axiom-final-text","type":"get_last_assistant_text"}`，并把成功响应中的 `data.text` 作为唯一权威最终文本。settled 前 EOF、最终文本响应前 EOF、查询失败或缺失文本均属于 RPC 协议错误；Pi 的真实非零退出码不会被完成事件覆盖成 0。
 
@@ -218,15 +220,17 @@ Execute 超时后，Explore Conclude 使用同一 Pi session ID 启动新的 RPC
 
 2026-07-28 在生产 `t_148` 上验证了日志与浏览器修复：共享 Chrome-SecTest 以 `PPID=1`、独立 PGID 和三个 `/dev/null` 标准 FD 运行，管道包裹的启动命令可立即返回；新 RPC Lease 不再记录三类累计流式事件。`i014` 完成后的诊断日志为 47,107 B、Session 为 432,577 B，EOF 摘要记录省略 1,135 条 `message_update` 和 7 条 `tool_execution_update`，仍正常经过 `agent_settled → get_last_assistant_text(FINISH)` 完成 Intent 并生成 Fact。
 
-### 统一完成协议
+### 阶段完成协议
 
-三个阶段都只认最后一条 assistant 文本去除首尾空白后精确等于：
+三个阶段的 Prompt 都要求最后一条 assistant 文本只包含：
 
 ```text
 FINISH
 ```
 
-工具输出、代码块、`FINISH` 前后附加说明或大小写变化均不算完成。`FINISH` 只触发产物/Workspace 校验，不直接改状态；缺失项会在同一 Pi 会话和共享 conclude deadline 内最多收口 3 次，明确告诉 Worker 只补文件或 Workspace 操作，不重新执行网络探索。
+Bootstrap 和 Reason 仍严格匹配：工具输出、代码块、`FINISH` 前后附加说明或大小写变化均不算完成。Explore Execute 使用有限归一化，可接受无害 Markdown 包装或前置说明后以独立 FINISH 结尾；非精确通过会记录 warning。
+
+`FINISH` 通常只触发产物/Workspace 校验，不直接改状态；缺失项会在同一 Pi 会话和共享 conclude deadline 内最多收口 3 次。Explore Conclude 是唯一例外：收口最终没有 FINISH、格式错误或超时时，只要 `findings.md` 与 `leads.md` 已有效落地，代码就以核心文件为完成依据继续原子提交。Evidence 永远不能替代两个核心文件，也不再成为 Explore 成功门槛。Bootstrap、Reason 没有该兜底。
 
 ## 6. 渐进式披露 Context
 
@@ -299,16 +303,19 @@ ReasonRun/RuntimeConfig 迁移版本为 `20260727_0020`。迁移保留历史 Rea
 ## 11. 验证基线
 
 ```text
-uv run pytest -q                         220 passed, 1 warning
+uv run pytest                            281 passed, 1 warning
 uv run ruff check .                      passed
 python -m compileall -q src tests migrations  passed
 node --check <18 non-vendor static js>   passed
+git diff --check                         passed
 ```
 
-以上测试已覆盖 FINISH 精确识别、同会话有界收口、阶段文件安全、Artifact/Fact 自动生成、ReasonRun 唯一性/lease/心跳/回收、Workspace 增量操作和派发额度、Reason 触发规则、全局/Task/阶段并发、公平领取、RuntimeConfig 版本冲突与热应用、Guard 真实配置，以及停止/Goal 完成后的立即取消；仅有 Starlette/httpx 弃用警告。
+以上测试已覆盖 FINISH 精确识别与 Explore 有限归一化、同会话有界收口、Explore Conclude 核心文件兜底、可选 Evidence 的安全跳过与 48 文件上限、无 Evidence 漏洞、Artifact/Fact 自动生成、ReasonRun 唯一性/lease/心跳/回收、Workspace 增量操作和派发额度、Reason 触发规则、全局/Task/阶段并发、公平领取、RuntimeConfig 版本冲突与热应用、Guard 真实配置，以及停止/Goal 完成后的立即取消；仅有 Starlette/httpx 弃用警告。
 
 2026-07-27 生产受控 E2E `t_138` 完成 `Bootstrap → ReasonRun(rr000001) → Explore → ReasonRun(rr000002) → Goal`：正式图谱只有 Bootstrap/Explore 两个 Intent，两个 ReasonRun 均零重试完成；生成 4 个 Artifact、1 个 completed Todo 和两个代码生成 Fact，最终 `goal_from_fact_ids=[f002]`。Task completed 后开放 Intent、ReasonRun、Workspace 均为 0。
 
 最终重启后又执行 API-only 临时验收 `t_141`（随后删除）：Bootstrap 完成后创建独立 ReasonRun，图谱仍只有 Bootstrap Intent；打开 Workspace 后停止 Task，ReasonRun 立即 `cancelled`、Workspace 变为 `abandoned(task_stopped)`、旧 heartbeat 和 commit 均返回 409。临时 Task/Project/Worker 已清理，生产 RuntimeConfig 保存/应用版本均为 v210，活动 Intent、ReasonRun、open Workspace 均为 0。浏览器再次确认 `t_138` 图谱只有 2 个正式 Intent，设置页四组配置和 `Runner 已应用 v210` 正常显示；控制台仅保留既知 Tailwind CDN 警告。
 
 Explore RPC/动态提醒批次的生产一致性备份为 `/Users/hexin/.local/share/axiom-v3/backups/20260727-182223/`。空库及生产副本完成 `0022 → 0023 → 0022 → 0023`，生产库现为 `20260727_0023`，RuntimeConfig/Runner applied version 均为 v212，Explore Conclude 范围为 180–600 秒，SQLite integrity 为 `ok` 且 foreign key violation 为 0。临时生产验收 `t_146` 的两个 Explore Intent 分别验证“Execute 超时后 RPC Conclude 成功提交”和“工具调用期间 steer 排队后下一轮生效”；共生成 9 个正式 Artifact、2 个代码生成 Fact，执行/基础设施重试均为 0，临时 Task、Project、本机服务和 Pi 进程随后清理。
+
+2026-07-28 部署 Explore 核心产物优先协议时，先停止唯一运行任务 `t_150`，确认 Dispatcher 活动工作为 0，再重启 `com.xrayai.axiom` 与 `com.xrayai.axiom.runner` 并恢复任务。恢复后的 `rr000096` 正常提交 4 个 Explore Intent；新 Lease 的 Pi Session 已确认包含可选 Evidence、未完成写入 Leads 和“不要补跑”的新 Prompt。`i035-i037` 均一次完成且执行/基础设施重试为 0：`i035` 生成 2 个核心 Artifact、3 个 Evidence 和 5 个待验证漏洞，其中一个漏洞只有 Findings 关系、Evidence 为空；`i036` 只生成 findings/leads 两个核心 Artifact，也正常完成；`i037` 在 600 秒 Execute 的动态 70% 时点收到 steer，生成 2 个核心 Artifact、8 个 Evidence 和 `f035`。这些真实路径验证了可选 Evidence、无 Evidence 漏洞和常规 RPC 收口；缺少 FINISH/收口超时的核心文件兜底由自动化模拟测试覆盖。

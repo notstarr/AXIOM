@@ -20,7 +20,7 @@
 
 ## evidence-path 写法
 
-每个上报漏洞至少提供一个真实、非空的 `evidence/**` 相对路径：
+`--evidence-path` 是可选参数。已有证据时，提供安全的 `evidence/**` 相对路径：
 
 ```text
 ✅ evidence/request-01.txt
@@ -32,6 +32,8 @@
 ```
 
 请求与响应尽量拆分保存，文件中保留目标、方法、必要请求头、状态码和关键响应内容。不要在 CLI 参数或漏洞数据库中重复粘贴长证据。
+
+没有可用 Evidence 时可以省略该参数，漏洞仍会关联本轮 `findings.md` 并以“待验证”状态保存。填写但最终缺失、为空或未被收集的路径不会阻止 Explore 完成，只是不建立对应 Evidence Artifact 关系。
 
 ## 状态
 

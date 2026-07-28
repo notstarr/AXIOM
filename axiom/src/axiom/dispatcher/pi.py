@@ -540,9 +540,9 @@ def _explore_soft_reminder(remaining_seconds: int) -> str:
     return (
         "本次 Explore 执行预算已使用约 70%，"
         f"剩余约 {remaining_seconds} 秒。\n"
-        "不要再扩展新的独立测试方向。请完成当前分支，立即整理 "
-        "findings.md、leads.md 和 evidence，逐条上报已确认漏洞，"
-        "完成后仅返回 FINISH。"
+        "不要再扩展新的独立测试方向。请立即整理 findings.md 和 leads.md；"
+        "未完成分支如实写入 leads.md。Evidence 有则保留，没有也不要补跑。"
+        "宁可承认本轮未完成，也不要耗尽预算后从头重试。完成后仅返回 FINISH。"
     )
 
 

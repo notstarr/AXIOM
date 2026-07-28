@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import re
+from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -15,6 +17,9 @@ from pydantic import BaseModel, Field
 from axiom.modules.artifacts.schemas import Artifact
 from axiom.modules.vulnerabilities.schemas import StoredExploreVulnerability, Vulnerability
 from axiom.shared.errors import ConflictError
+
+
+logger = logging.getLogger(__name__)
 
 
 FINISH_MARKER = "FINISH"
@@ -30,6 +35,7 @@ BOOTSTRAP_FILES = (
 _SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 EXPLORE_FINDINGS_FILE = "findings.md"
 EXPLORE_LEADS_FILE = "leads.md"
+EXPLORE_MAX_EVIDENCE_FILES = 48
 
 
 class StageOutputError(ConflictError):
@@ -107,7 +113,11 @@ def bootstrap_files(run_dir: str | Path) -> list[StageFile]:
     return results
 
 
-def explore_files(run_dir: str | Path) -> list[StageFile]:
+def explore_files(
+    run_dir: str | Path,
+    *,
+    emit_warnings: bool = True,
+) -> list[StageFile]:
     run_root = Path(run_dir).resolve()
     root = run_root / "artifacts"
     if not root.is_dir() or root.is_symlink():
@@ -138,35 +148,131 @@ def explore_files(run_dir: str | Path) -> list[StageFile]:
     if errors:
         raise StageOutputError("Explore 核心产物未就绪：" + "；".join(errors))
 
-    for path in sorted(root.rglob("*")):
-        relative = path.relative_to(root)
-        for segment in relative.parts:
-            if not _SAFE_SEGMENT.fullmatch(segment) or segment.startswith("."):
-                raise StageOutputError(f"Explore 产物路径不安全：{relative.as_posix()}")
-        if path.is_symlink():
-            raise StageOutputError(f"阶段产物不能是符号链接：{relative.as_posix()}")
-        if relative.as_posix() in required:
-            continue
-        if relative.parts[0] != "evidence":
-            raise StageOutputError(
-                f"Explore 只允许 findings.md、leads.md 和 evidence/**：{relative.as_posix()}"
-            )
-        if path.is_dir():
-            continue
-        _require_regular_output(path, root)
-        _require_non_empty(path)
-        relative_name = relative.as_posix()
-        results.append(
-            StageFile(
-                relative_name=relative_name,
-                path=path,
-                artifact_type="explore.evidence",
-                summary=f"Explore 证据：{relative_name}",
-            )
-        )
-    if len(results) > 50:
-        raise StageOutputError("Explore 单次最多注册 50 个 Artifact")
+    evidence, skipped = _collect_optional_explore_evidence(root, required=set(required))
+    if len(evidence) > EXPLORE_MAX_EVIDENCE_FILES:
+        overflow = evidence[EXPLORE_MAX_EVIDENCE_FILES:]
+        evidence = evidence[:EXPLORE_MAX_EVIDENCE_FILES]
+        skipped["artifact_limit"].extend(item.relative_name for item in overflow)
+    results.extend(evidence)
+    if emit_warnings and skipped:
+        _log_skipped_explore_outputs(run_root, skipped, registered=len(evidence))
     return results
+
+
+def _collect_optional_explore_evidence(
+    root: Path,
+    *,
+    required: set[str],
+) -> tuple[list[StageFile], dict[str, list[str]]]:
+    skipped: dict[str, list[str]] = defaultdict(list)
+    try:
+        root_entries = sorted(root.iterdir(), key=lambda item: item.name)
+    except OSError as exc:
+        raise StageOutputError("无法读取 Explore Artifact 目录") from exc
+
+    for path in root_entries:
+        if path.name in required or path.name == "evidence":
+            continue
+        skipped["unsupported_root_entry"].append(path.name)
+
+    evidence_root = root / "evidence"
+    if not evidence_root.exists() and not evidence_root.is_symlink():
+        return [], skipped
+    if evidence_root.is_symlink():
+        skipped["symlink"].append("evidence")
+        return [], skipped
+    if not evidence_root.is_dir():
+        skipped["not_directory"].append("evidence")
+        return [], skipped
+
+    evidence: list[StageFile] = []
+    for current_root, directory_names, file_names in os.walk(
+        evidence_root,
+        topdown=True,
+        followlinks=False,
+    ):
+        current = Path(current_root)
+        directory_names.sort()
+        file_names.sort()
+
+        retained_directories: list[str] = []
+        for directory_name in directory_names:
+            path = current / directory_name
+            relative = path.relative_to(root)
+            if not _safe_explore_relative(relative):
+                skipped["unsafe_path"].append(relative.as_posix())
+            elif path.is_symlink():
+                skipped["symlink"].append(relative.as_posix())
+            else:
+                retained_directories.append(directory_name)
+        directory_names[:] = retained_directories
+
+        for file_name in file_names:
+            path = current / file_name
+            relative = path.relative_to(root)
+            relative_name = relative.as_posix()
+            if not _safe_explore_relative(relative):
+                skipped["unsafe_path"].append(relative_name)
+                continue
+            if path.is_symlink():
+                skipped["symlink"].append(relative_name)
+                continue
+            try:
+                _require_regular_output(path, root)
+            except StageOutputError:
+                skipped["not_regular_or_outside"].append(relative_name)
+                continue
+            try:
+                if path.stat().st_size <= 0:
+                    skipped["empty"].append(relative_name)
+                    continue
+            except OSError:
+                skipped["unreadable"].append(relative_name)
+                continue
+            evidence.append(
+                StageFile(
+                    relative_name=relative_name,
+                    path=path,
+                    artifact_type="explore.evidence",
+                    summary=f"Explore 证据：{relative_name}",
+                )
+            )
+
+    evidence.sort(key=lambda item: item.relative_name)
+    return evidence, skipped
+
+
+def _safe_explore_relative(relative: Path) -> bool:
+    return all(
+        bool(_SAFE_SEGMENT.fullmatch(segment)) and not segment.startswith(".")
+        for segment in relative.parts
+    )
+
+
+def _log_skipped_explore_outputs(
+    run_root: Path,
+    skipped: dict[str, list[str]],
+    *,
+    registered: int,
+) -> None:
+    total = 0
+    for reason, relative_names in sorted(skipped.items()):
+        if not relative_names:
+            continue
+        total += len(relative_names)
+        logger.warning(
+            "explore_optional_artifacts_skipped run_dir=%s reason=%s count=%s samples=%r",
+            run_root,
+            reason,
+            len(relative_names),
+            relative_names[:5],
+        )
+    logger.warning(
+        "explore_optional_artifact_summary run_dir=%s evidence_registered=%s skipped=%s",
+        run_root,
+        registered,
+        total,
+    )
 
 
 def initialize_explore_state(run_dir: str | Path) -> Path:

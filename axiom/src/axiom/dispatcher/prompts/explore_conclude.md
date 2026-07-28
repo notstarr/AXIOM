@@ -1,15 +1,17 @@
 # AXIOM Explore 收口
 
-停止继续扩展测试，只复用当前会话已经获得的证据。所有 Artifact 内容和漏洞说明必须使用中文。
+收口的唯一目标是保住当前会话已经取得的结果，不是继续完成原 Intent。停止网络探索，不要启动新的请求、扫描、爬虫、浏览器操作或其它耗时测试。所有 Artifact 内容和漏洞说明必须使用中文。
 
-收口前先确认当前会话已经完整读取 `whatisvul/SKILL.md`；若尚未读取或无法确认，必须运行 `axiom skill path whatisvul` 并完整读取，失败时运行 `axiom skill doctor whatisvul` 排障后重试。必须按该 Skill 逐项复核漏洞成立条件和严重性；未达到标准的内容只能保留为事实或线索，不得上报为漏洞。
+不要重复读取大量 Context、Skill 或历史文件。若当前 Session 尚未完整读取 `whatisvul`，只运行 `axiom skill path whatisvul` 并完整读取返回目录中的 `SKILL.md`；命令失败时运行 `axiom skill doctor whatisvul` 排障。已经读取过则直接复用会话记忆。不要为了补证据重新运行 Nuclei、SQLMap、浏览器、爬虫或其它大型命令。优先使用当前 Session 已有记忆和工作目录中的现有文件。
 
-1. 整理并检查 `{run_dir}/artifacts/findings.md` 和 `{run_dir}/artifacts/leads.md`，两个文件必须存在且非空；没有内容时写明“本轮无新增确认事实”或“本轮无遗留待验证线索”。
-2. 请求、响应、工具输出和漏洞证明只放入 `{run_dir}/artifacts/evidence/`；不要创建 `analysis/`、`reproduction/` 或其它 Artifact 路径，不得注册 `sessions/`、`process/`、`models.json`、凭证和日志。
-3. 若已达到漏洞标准，使用 `axiom explore vulnerability report` 逐条补报，并用 `--evidence-path` 关联真实证据文件；不要手动编辑 `explore_result.json`。
-4. 读取检查两个核心文件和所有已引用证据，确认路径与内容可用。
+1. 先检查 `{run_dir}/artifacts/findings.md` 和 `{run_dir}/artifacts/leads.md`。已有内容时只做最小补充，不要重写或重新验证。
+2. 文件缺失或内容不完整时，根据当前会话已经知道的结果快速写入：已确认事实进入 `findings.md`；未验证、未完成、来不及继续的分支进入 `leads.md`。
+3. 没做完没有关系。请明确写出本轮已完成什么、哪些结论尚未确认、后续应从哪里继续；宁可如实承认未完成，也不要让前面的工作因再次释放而从头重跑。
+4. 两个文件必须存在且非空；没有对应内容时分别写明“本轮无新增确认事实”和“本轮无遗留待验证线索”。
+5. `evidence/` 完全可选。已有证据照常保留；没有、为空、不完整或数量过多都不需要修复，也不能成为继续执行测试的理由。
+6. 若当前会话已经确认漏洞，可使用 `axiom explore vulnerability report` 补报；有现成证据时用 `--evidence-path` 关联，没有证据时可省略该参数。不要手动编辑 `explore_result.json`。
 
-完成所有工具调用后，不要描述检查结果或总结执行过程。最后一条 assistant 消息必须只包含 6 个 ASCII 字符：
+两个核心文件写好后立即停止工具调用。不要描述检查结果或总结执行过程。最后一条 assistant 消息必须只包含 6 个 ASCII 字符：
 
 FINISH
 

@@ -113,7 +113,7 @@ def test_explore_collects_only_artifacts_directory(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("relative_name", ["models.json", "sessions/output.md", "process/log.md"])
-def test_explore_rejects_internal_runtime_files_inside_artifacts(
+def test_explore_ignores_unknown_root_entries_inside_artifacts(
     tmp_path: Path,
     relative_name: str,
 ) -> None:
@@ -123,11 +123,12 @@ def test_explore_rejects_internal_runtime_files_inside_artifacts(
     (tmp_path / "artifacts" / "findings.md").write_text("已确认事实", encoding="utf-8")
     (tmp_path / "artifacts" / "leads.md").write_text("待验证线索", encoding="utf-8")
 
-    with pytest.raises(StageOutputError, match="只允许"):
-        explore_files(tmp_path)
+    outputs = explore_files(tmp_path)
+
+    assert [item.relative_name for item in outputs] == ["findings.md", "leads.md"]
 
 
-def test_explore_rejects_symlinks_that_escape_the_artifacts_directory(tmp_path: Path) -> None:
+def test_explore_skips_symlinks_that_escape_the_artifacts_directory(tmp_path: Path) -> None:
     outside = tmp_path / "outside.md"
     outside.write_text("外部内容", encoding="utf-8")
     artifacts = tmp_path / "run" / "artifacts"
@@ -137,8 +138,9 @@ def test_explore_rejects_symlinks_that_escape_the_artifacts_directory(tmp_path: 
     (artifacts / "evidence").mkdir()
     (artifacts / "evidence" / "response.md").symlink_to(outside)
 
-    with pytest.raises(StageOutputError, match="符号链接"):
-        explore_files(tmp_path / "run")
+    outputs = explore_files(tmp_path / "run")
+
+    assert [item.relative_name for item in outputs] == ["findings.md", "leads.md"]
 
 
 def test_explore_requires_both_non_empty_core_artifacts(tmp_path: Path) -> None:
@@ -163,7 +165,7 @@ def test_explore_allows_no_evidence_when_no_vulnerability_was_reported(tmp_path:
 
 
 @pytest.mark.parametrize("directory", ["analysis", "reproduction", "other"])
-def test_explore_rejects_old_or_unknown_directories(tmp_path: Path, directory: str) -> None:
+def test_explore_ignores_old_or_unknown_directories(tmp_path: Path, directory: str) -> None:
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
     (artifacts / "findings.md").write_text("已确认事实", encoding="utf-8")
@@ -171,5 +173,57 @@ def test_explore_rejects_old_or_unknown_directories(tmp_path: Path, directory: s
     (artifacts / directory).mkdir()
     (artifacts / directory / "output.txt").write_text("旧目录", encoding="utf-8")
 
-    with pytest.raises(StageOutputError, match="只允许"):
-        explore_files(tmp_path)
+    outputs = explore_files(tmp_path)
+
+    assert [item.relative_name for item in outputs] == ["findings.md", "leads.md"]
+
+
+def test_explore_skips_empty_and_unsafe_evidence_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    evidence = artifacts / "evidence"
+    evidence.mkdir(parents=True)
+    (artifacts / "findings.md").write_text("已确认事实", encoding="utf-8")
+    (artifacts / "leads.md").write_text("待验证线索", encoding="utf-8")
+    (evidence / "empty.log").touch()
+    (evidence / "unsafe=name.txt").write_text("ignored", encoding="utf-8")
+    (evidence / "response.txt").write_text("HTTP/1.1 200 OK", encoding="utf-8")
+
+    warnings: list[tuple[str, tuple[object, ...]]] = []
+    monkeypatch.setattr(
+        "axiom.modules.execution.stage_outputs.logger.warning",
+        lambda message, *args: warnings.append((message, args)),
+    )
+
+    outputs = explore_files(tmp_path)
+
+    assert [item.relative_name for item in outputs] == [
+        "findings.md",
+        "leads.md",
+        "evidence/response.txt",
+    ]
+    rendered = [message % args for message, args in warnings]
+    assert any("reason=empty count=1" in message for message in rendered)
+    assert any("reason=unsafe_path count=1" in message for message in rendered)
+    assert any("evidence_registered=1 skipped=2" in message for message in rendered)
+
+
+def test_explore_registers_at_most_48_optional_evidence_files(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    evidence = artifacts / "evidence"
+    evidence.mkdir(parents=True)
+    (artifacts / "findings.md").write_text("已确认事实", encoding="utf-8")
+    (artifacts / "leads.md").write_text("待验证线索", encoding="utf-8")
+    for number in range(60):
+        (evidence / f"proof-{number:02d}.txt").write_text(
+            f"proof {number}",
+            encoding="utf-8",
+        )
+
+    outputs = explore_files(tmp_path)
+
+    assert len(outputs) == 50
+    assert outputs[2].relative_name == "evidence/proof-00.txt"
+    assert outputs[-1].relative_name == "evidence/proof-47.txt"

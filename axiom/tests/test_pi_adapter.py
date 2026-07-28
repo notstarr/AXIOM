@@ -324,6 +324,31 @@ def test_explore_prompts_show_plain_finish_without_markdown_wrapping(template: s
     assert "不要描述检查结果或总结执行过程" in prompt
 
 
+def test_explore_prompts_prioritize_core_outputs_over_optional_evidence() -> None:
+    values = {
+        "task_id": "t_001",
+        "intent_id": "i002",
+        "todo_id": "td001",
+        "intent_description": "验证目标",
+        "intent_targets": '["a.example.com"]',
+        "origin": "a.example.com",
+        "goal": "完成测试",
+        "context_manifest_path": "/tmp/context.json",
+        "run_dir": "/tmp/run",
+        "skill_directories": "- /tmp/skills",
+    }
+
+    execute_prompt = PromptRenderer().render("explore.md", values)
+    conclude_prompt = PromptRenderer().render("explore_conclude.md", values)
+
+    assert "Evidence 是可选审计材料，不是阶段完成条件" in execute_prompt
+    assert "没有可用证据时直接省略" in execute_prompt
+    assert "补齐 Evidence" in execute_prompt
+    assert "没做完没有关系" in conclude_prompt
+    assert "不要为了补证据重新运行 Nuclei、SQLMap、浏览器、爬虫" in conclude_prompt
+    assert "`evidence/` 完全可选" in conclude_prompt
+
+
 @pytest.mark.parametrize(
     ("execute_seconds", "expected_reminder", "expected_remaining"),
     [
@@ -376,6 +401,7 @@ def test_explore_uses_rpc_without_print_prompt_and_reports_soft_reminder(
     spec = rpc.specs[0]
     assert spec.steer_after_seconds == expected_reminder
     assert f"剩余约 {execute_seconds * 3 // 10} 秒" in (spec.steer_message or "")
+    assert "Evidence 有则保留，没有也不要补跑" in (spec.steer_message or "")
     assert spec.command[spec.command.index("--mode") + 1] == "rpc"
     assert "-p" not in spec.command
     assert activities[0].activity_kind == "soft_reminder"

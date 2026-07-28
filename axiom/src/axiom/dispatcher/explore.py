@@ -160,24 +160,48 @@ class ExploreRunner:
         reason: str,
     ) -> None:
         heartbeat.ensure_active()
-        bounded_closeout(
-            execution_input=execution_input,
-            begin=lambda: self.control_plane.begin_conclude(work),
-            conclude=lambda attempt_input, attempt_reason: executor.conclude(
-                attempt_input,
-                reason=attempt_reason,
-                lease_active=heartbeat.is_active,
-            ),
-            validate=self._validate_output,
-            reason=reason,
-            retry_errors=(StageOutputError,),
-            default_timeout_seconds=180,
-        )
+        try:
+            bounded_closeout(
+                execution_input=execution_input,
+                begin=lambda: self.control_plane.begin_conclude(work),
+                conclude=lambda attempt_input, attempt_reason: executor.conclude(
+                    attempt_input,
+                    reason=attempt_reason,
+                    lease_active=heartbeat.is_active,
+                ),
+                validate=self._validate_output,
+                reason=reason,
+                retry_errors=(StageOutputError,),
+                default_timeout_seconds=180,
+            )
+        except (StageOutputError, TimeoutError) as exc:
+            heartbeat.ensure_active()
+            try:
+                outputs = explore_files(execution_input.run_dir, emit_warnings=False)
+            except StageOutputError as core_error:
+                raise core_error from exc
+            evidence_count = sum(
+                item.artifact_type == "explore.evidence" for item in outputs
+            )
+            logger.warning(
+                "explore_closeout_core_fallback task_id=%s intent_id=%s lease_id=%s "
+                "original_reason=%r closeout_error=%r finish_confirmed=false "
+                "evidence_count=%s",
+                execution_input.task_id,
+                execution_input.intent_id,
+                execution_input.lease_id,
+                reason,
+                str(exc),
+                evidence_count,
+            )
 
     @staticmethod
     def _validate_output(execution_input: ExecutionInput, raw_output: object) -> None:
         normalization = require_explore_finish(str(raw_output))
-        explore_files(execution_input.run_dir)
+        # Validation may run repeatedly during bounded closeout. Defer optional
+        # Artifact warnings to the single authoritative completion scan so a
+        # skipped Evidence file does not produce duplicate warnings per attempt.
+        explore_files(execution_input.run_dir, emit_warnings=False)
         if normalization is not None:
             logger.warning(
                 "explore_finish_normalized task_id=%s intent_id=%s lease_id=%s "

@@ -35,7 +35,6 @@ from axiom.modules.execution.schemas import (
 )
 from axiom.modules.execution.stage_outputs import (
     EXPLORE_FINDINGS_FILE,
-    StageOutputError,
     append_explore_vulnerability_locked,
     bootstrap_files,
     explore_state_guard,
@@ -606,14 +605,6 @@ class ExecutionService:
             with explore_state_guard(run_dir):
                 state = load_explore_state(run_dir)
                 available_outputs = {item.relative_name for item in outputs}
-                for report in state.vulnerabilities:
-                    missing = [
-                        path for path in report.evidence_paths if path not in available_outputs
-                    ]
-                    if missing:
-                        raise StageOutputError(
-                            "漏洞证据文件未就绪：" + "、".join(missing)
-                        )
                 with immediate_transaction(self.engine) as conn:
                     row = self.repository.input_row(conn, task_id, intent_id)
                     self._require_row(row, task_id, intent_id)
@@ -651,8 +642,28 @@ class ExecutionService:
                     finding_artifact = artifact_by_relative[EXPLORE_FINDINGS_FILE]
                     vulnerability_records = []
                     for report in state.vulnerabilities:
+                        missing_evidence_paths = [
+                            path
+                            for path in report.evidence_paths
+                            if path not in available_outputs
+                        ]
+                        if missing_evidence_paths:
+                            logger.warning(
+                                "explore_vulnerability_evidence_skipped task_id=%s "
+                                "intent_id=%s lease_id=%s title=%r count=%s paths=%r",
+                                task_id,
+                                intent_id,
+                                command.lease_id,
+                                report.title,
+                                len(missing_evidence_paths),
+                                missing_evidence_paths,
+                            )
                         evidence_artifact_ids = [
-                            artifact_by_relative[path].id for path in report.evidence_paths
+                            artifact_by_relative[path].id
+                            for path in report.evidence_paths
+                            if path in artifact_by_relative
+                            and artifact_by_relative[path].artifact_type
+                            == "explore.evidence"
                         ]
                         vulnerability_records.append(
                             self.vulnerabilities.create(

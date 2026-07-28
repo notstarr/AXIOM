@@ -159,8 +159,14 @@ def test_explore_cli_report_does_not_allow_worker_to_choose_identity(monkeypatch
     assert json.loads(result.output)["total"] == 1
 
 
-def test_explore_cli_requires_an_evidence_path(monkeypatch) -> None:
-    monkeypatch.setattr("axiom.worker_cli._request", lambda *_args: {"total": 1})
+def test_explore_cli_allows_report_without_an_evidence_path(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return {"total": 1, "duplicate": False}
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
     result = CliRunner().invoke(
         main,
         [
@@ -181,8 +187,8 @@ def test_explore_cli_requires_an_evidence_path(monkeypatch) -> None:
         env=_env(),
     )
 
-    assert result.exit_code != 0
-    assert "--evidence-path" in result.output
+    assert result.exit_code == 0, result.output
+    assert calls[0][2]["report"]["evidence_paths"] == []
 
 
 def test_credential_cli_lists_metadata_through_the_current_intent_lease(monkeypatch) -> None:

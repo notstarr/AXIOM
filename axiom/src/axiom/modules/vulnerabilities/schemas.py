@@ -43,7 +43,7 @@ class VulnerabilityDetails(BaseModel):
 class ExploreVulnerabilityReport(VulnerabilityDetails):
     """Worker fields. Execution identity, status and Artifact IDs are injected by AXIOM."""
 
-    evidence_paths: list[str] = Field(min_length=1, max_length=20)
+    evidence_paths: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("evidence_paths")
     @classmethod
@@ -66,8 +66,6 @@ class ExploreVulnerabilityReport(VulnerabilityDetails):
             candidate = path.as_posix()
             if candidate not in normalized:
                 normalized.append(candidate)
-        if not normalized:
-            raise ValueError("at least one evidence path is required")
         return normalized
 
 

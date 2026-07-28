@@ -266,7 +266,7 @@ def register_worker_commands(main: click.Group) -> None:
 
     @explore_group.group("vulnerability")
     def vulnerability_group() -> None:
-        """Report one evidence-backed vulnerability."""
+        """Report one vulnerability, with optional Artifact evidence."""
 
     @vulnerability_group.command("report")
     @click.option("--title", required=True)
@@ -284,7 +284,7 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--impact-file", type=click.Path(path_type=Path, dir_okay=False))
     @click.option("--remediation")
     @click.option("--remediation-file", type=click.Path(path_type=Path, dir_okay=False))
-    @click.option("--evidence-path", multiple=True, required=True)
+    @click.option("--evidence-path", multiple=True)
     @click.option("--affected-target", default="")
     def explore_vulnerability_report(
         title: str,
