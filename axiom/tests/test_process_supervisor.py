@@ -221,6 +221,111 @@ settle("FINISH")
     assert "STALE" in result.stdout
 
 
+def test_rpc_process_supervisor_returns_terminal_provider_failure_after_settle(
+    tmp_path,
+) -> None:
+    command_log = tmp_path / "commands.jsonl"
+    script = _rpc_script(
+        tmp_path,
+        """
+prompt = read_command()
+record(prompt)
+emit({"id": prompt["id"], "type": "response", "command": "prompt", "success": True})
+emit({
+    "type": "agent_end",
+    "willRetry": False,
+    "messages": [{
+        "role": "assistant",
+        "content": [],
+        "stopReason": "error",
+        "errorMessage": "HTTP 429: quota exhausted",
+    }],
+})
+emit({
+    "type": "auto_retry_end",
+    "success": False,
+    "attempt": 3,
+    "finalError": "HTTP 429: quota exhausted",
+})
+emit({"type": "agent_settled"})
+abort = read_command()
+record(abort)
+""",
+    )
+
+    result = RpcProcessSupervisor().run(
+        RpcProcessSpec(
+            command=[sys.executable, str(script)],
+            log_dir=tmp_path / "logs",
+            timeout_seconds=5,
+            poll_interval_seconds=0.01,
+            environment={"COMMAND_LOG": str(command_log)},
+            prompt="执行测试",
+        )
+    )
+
+    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
+    assert [command["type"] for command in commands] == ["prompt", "abort"]
+    assert result.returncode != 0
+    assert result.timed_out is False
+    assert result.last_assistant_text is None
+    assert "HTTP 429: quota exhausted" in result.stderr
+
+
+def test_rpc_process_supervisor_bounds_missing_settle_after_provider_failure(
+    tmp_path,
+) -> None:
+    command_log = tmp_path / "commands.jsonl"
+    script = _rpc_script(
+        tmp_path,
+        """
+prompt = read_command()
+record(prompt)
+emit({"id": prompt["id"], "type": "response", "command": "prompt", "success": True})
+emit({
+    "type": "agent_end",
+    "willRetry": False,
+    "messages": [{
+        "role": "assistant",
+        "content": [],
+        "stopReason": "error",
+        "errorMessage": "HTTP 503: unavailable",
+    }],
+})
+emit({
+    "type": "auto_retry_end",
+    "success": False,
+    "attempt": 3,
+    "finalError": "HTTP 503: unavailable",
+})
+abort = read_command()
+record(abort)
+""",
+    )
+    started = time.monotonic()
+
+    result = RpcProcessSupervisor().run(
+        RpcProcessSpec(
+            command=[sys.executable, str(script)],
+            log_dir=tmp_path / "logs",
+            timeout_seconds=5,
+            terminate_grace_seconds=0.5,
+            poll_interval_seconds=0.01,
+            provider_failure_grace_seconds=0.05,
+            environment={"COMMAND_LOG": str(command_log)},
+            prompt="执行测试",
+        )
+    )
+
+    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
+    assert [command["type"] for command in commands] == ["prompt", "abort"]
+    assert result.returncode != 0
+    assert result.timed_out is False
+    assert "did not settle within 0.05s" in result.stderr
+    assert "HTTP 503: unavailable" in result.stderr
+    assert time.monotonic() - started < 1
+
+
 def test_rpc_process_supervisor_omits_cumulative_stream_events_from_log(tmp_path) -> None:
     script = _rpc_script(
         tmp_path,

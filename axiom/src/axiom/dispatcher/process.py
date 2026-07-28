@@ -21,7 +21,15 @@ _RPC_PROMPT_ID = "axiom-initial-prompt"
 _RPC_STEER_ID = "axiom-soft-reminder"
 _RPC_FINAL_TEXT_ID = "axiom-final-text"
 _RPC_ABORT_ID = "axiom-abort"
-_RPC_CONTROL_EVENT_TYPES = frozenset({"response", "agent_settled"})
+_RPC_CONTROL_EVENT_TYPES = frozenset(
+    {
+        "response",
+        "agent_end",
+        "agent_settled",
+        "auto_retry_start",
+        "auto_retry_end",
+    }
+)
 _RPC_OMITTED_LOG_EVENT_TYPES = frozenset(
     {"message_update", "tool_execution_update", "bash_execution_update"}
 )
@@ -60,6 +68,7 @@ class RpcProcessSpec(ProcessSpec):
     prompt: str = ""
     steer_after_seconds: float | None = None
     steer_message: str | None = None
+    provider_failure_grace_seconds: float = 5.0
 
 
 class ProcessSupervisor:
@@ -189,6 +198,8 @@ class RpcProcessSupervisor(ProcessSupervisor):
         settled = False
         final_text_requested = False
         protocol_error = ""
+        provider_error = ""
+        provider_failure_deadline: float | None = None
         last_assistant_text: str | None = None
         reader_done = False
         events: queue.Queue[dict[str, Any] | None] = queue.Queue()
@@ -249,6 +260,15 @@ class RpcProcessSupervisor(ProcessSupervisor):
                             break
 
                     now = time.monotonic()
+                    if (
+                        provider_failure_deadline is not None
+                        and now >= provider_failure_deadline
+                    ):
+                        protocol_error = (
+                            "Pi RPC provider failed and did not settle within "
+                            f"{spec.provider_failure_grace_seconds:g}s: {provider_error}"
+                        )
+                        break
                     if now >= deadline:
                         timed_out = True
                         break
@@ -275,6 +295,8 @@ class RpcProcessSupervisor(ProcessSupervisor):
                     wait_until = deadline
                     if not steer_attempted and steer_deadline is not None:
                         wait_until = min(wait_until, steer_deadline)
+                    if provider_failure_deadline is not None:
+                        wait_until = min(wait_until, provider_failure_deadline)
                     wait_seconds = max(
                         0.01,
                         min(spec.poll_interval_seconds, wait_until - time.monotonic()),
@@ -344,10 +366,44 @@ class RpcProcessSupervisor(ProcessSupervisor):
                             completed = True
                             continue
 
+                    if event_type == "agent_end":
+                        terminal_error = _rpc_terminal_agent_error(event)
+                        if terminal_error:
+                            provider_error = terminal_error
+                            provider_failure_deadline = min(
+                                deadline,
+                                time.monotonic() + spec.provider_failure_grace_seconds,
+                            )
+                        continue
+
+                    if event_type == "auto_retry_start":
+                        provider_error = ""
+                        provider_failure_deadline = None
+                        continue
+
+                    if event_type == "auto_retry_end":
+                        if event.get("success") is True:
+                            provider_error = ""
+                            provider_failure_deadline = None
+                        else:
+                            provider_error = str(
+                                event.get("finalError")
+                                or provider_error
+                                or "Pi provider retries were exhausted"
+                            )
+                            provider_failure_deadline = min(
+                                deadline,
+                                time.monotonic() + spec.provider_failure_grace_seconds,
+                            )
+                        continue
+
                     # ``agent_end`` is deliberately not a completion boundary.
                     # Pi may still retry, compact, or process queued messages.
                     if event_type == "agent_settled" and not final_text_requested:
                         settled = True
+                        if provider_error:
+                            protocol_error = f"Pi RPC provider failed: {provider_error}"
+                            break
                         try:
                             _send_rpc(
                                 process,
@@ -364,11 +420,14 @@ class RpcProcessSupervisor(ProcessSupervisor):
                         final_text_requested = True
 
                 if reader_done and not completed and not timed_out and not cancelled and not protocol_error:
-                    protocol_error = (
-                        "Pi RPC stream ended before agent_settled"
-                        if not settled
-                        else "Pi RPC stream ended before final assistant text response"
-                    )
+                    if provider_error:
+                        protocol_error = f"Pi RPC provider failed: {provider_error}"
+                    else:
+                        protocol_error = (
+                            "Pi RPC stream ended before agent_settled"
+                            if not settled
+                            else "Pi RPC stream ended before final assistant text response"
+                        )
 
                 if timed_out or cancelled or protocol_error:
                     try:
@@ -433,6 +492,8 @@ class RpcProcessSupervisor(ProcessSupervisor):
             0 < spec.steer_after_seconds < spec.timeout_seconds
         ):
             raise ValueError("RPC steer timing must fall within the process timeout")
+        if spec.provider_failure_grace_seconds <= 0:
+            raise ValueError("RPC provider failure grace must be positive")
 
 
 def _read_rpc_lines(
@@ -462,7 +523,7 @@ def _read_rpc_lines(
                 log.flush()
 
             if event is not None and event_type in _RPC_CONTROL_EVENT_TYPES:
-                events.put(event)
+                events.put(_compact_rpc_control_event(event))
     finally:
         if omitted:
             summary = {
@@ -476,6 +537,65 @@ def _read_rpc_lines(
             )
             log.flush()
         events.put(None)
+
+
+def _compact_rpc_control_event(event: dict[str, Any]) -> dict[str, Any]:
+    event_type = str(event.get("type") or "")
+    if event_type == "agent_end":
+        return {
+            "type": event_type,
+            "willRetry": event.get("willRetry") is True,
+            "error": _rpc_agent_error(event),
+        }
+    if event_type == "auto_retry_start":
+        return {
+            "type": event_type,
+            "attempt": event.get("attempt"),
+            "maxAttempts": event.get("maxAttempts"),
+            "delayMs": event.get("delayMs"),
+            "errorMessage": event.get("errorMessage"),
+        }
+    if event_type == "auto_retry_end":
+        return {
+            "type": event_type,
+            "success": event.get("success") is True,
+            "attempt": event.get("attempt"),
+            "finalError": event.get("finalError"),
+        }
+    return event
+
+
+def _rpc_terminal_agent_error(event: dict[str, Any]) -> str:
+    if event.get("willRetry") is True:
+        return ""
+    return str(event.get("error") or "")
+
+
+def _rpc_agent_error(event: dict[str, Any]) -> str:
+    messages = event.get("messages")
+    if not isinstance(messages, list):
+        return ""
+    for message in reversed(messages):
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        if message.get("stopReason") != "error":
+            return ""
+        error = message.get("errorMessage")
+        if isinstance(error, str) and error.strip():
+            return error.strip()
+        content = message.get("content")
+        if isinstance(content, list):
+            text = "\n".join(
+                str(item.get("text"))
+                for item in content
+                if isinstance(item, dict)
+                and item.get("type") == "text"
+                and item.get("text")
+            ).strip()
+            if text:
+                return text
+        return "Pi provider returned an error response"
+    return ""
 
 
 def _send_rpc(process: subprocess.Popen, payload: dict[str, Any]) -> None:

@@ -174,6 +174,10 @@ class AxiomRunner:
 
     def _default_executor(self, worker: Worker, work: ClaimedWork) -> object:
         from axiom.dispatcher.pi import PiBootstrapExecutor, PiExploreExecutor, PiReasonExecutor
+        from axiom.modules.workers.pi_config import validate_pi_worker_runtime
+
+        settings = validate_pi_worker_runtime(worker.config)
+        worker = worker.model_copy(update={"config": settings.model_dump(mode="json")})
 
         def activity_reporter(command: ActivityCommand) -> None:
             self.control_plane.activity(work, command)
