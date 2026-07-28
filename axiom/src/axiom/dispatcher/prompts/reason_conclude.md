@@ -11,4 +11,6 @@
 
 使用 Axiom CLI 修正 Workspace：Goal 未达成时至少保留一个可执行 pending Explore Intent，Goal 达成时不得有新 Intent 且 evidence 至少包含真实 Fact。不要写整体 JSON 文件。
 
+先运行 `axiom reason status`，确认每个 `source_fact_id` 已通过 Todo source、Intent `from_fact` 或 Goal evidence 被消费；先修正受新 Fact 影响的已有 Todo，再处理 `todo_review_ids`。完成这两步前不要补建 Todo 或重复派发 Intent。
+
 最后一条 assistant 文本必须严格等于 `FINISH`，不得附带任何说明。

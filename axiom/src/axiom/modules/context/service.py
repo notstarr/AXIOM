@@ -223,6 +223,7 @@ class ContextService:
             "intents": [
                 {
                     "id": row["id"],
+                    "todo_id": row["todo_id"],
                     "kind": row["kind"],
                     "status": row["status"],
                     "preview": _preview(row["description"]),
@@ -235,7 +236,9 @@ class ContextService:
         todo_index = [
             {
                 "id": row["id"],
+                "title": row["title"],
                 "status": row["status"],
+                "status_reason": row["status_reason"],
                 "category": row["category"],
                 "theme": row["theme"],
                 "priority": row["priority"],

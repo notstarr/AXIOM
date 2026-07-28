@@ -386,6 +386,10 @@ class PiReasonExecutor(PiBootstrapExecutor):
                     "task_id": execution_input.task_id,
                     "reason_run_id": execution_input.reason_run_id or "",
                     "intent_description": execution_input.intent_description,
+                    "source_fact_ids": json.dumps(
+                        execution_input.intent_source_facts,
+                        ensure_ascii=False,
+                    ),
                     "origin": execution_input.origin,
                     "goal": execution_input.goal,
                     "context_manifest_path": execution_input.context_manifest_path,

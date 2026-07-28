@@ -1,6 +1,6 @@
 # AXIOM 当前生产架构
 
-> 状态：已核对至 2026-07-27。本文描述当前实际代码，不描述未落地的 ASM、容器化或爬虫方案。
+> 状态：已核对至 2026-07-28。本文描述当前实际代码，不描述未落地的 ASM、容器化或爬虫方案。
 
 ## 1. 运行边界
 
@@ -174,6 +174,10 @@ Reason 最后一条 assistant 文本精确等于 `FINISH` 后，Runner 先读取
 
 ReasonRun 创建时还会快照 `todo_review_ids`：这些 Todo 处于 pending/active、至少有一个终态 Explore，且已经没有开放 Explore。Reason 必须逐个明确收口为 completed/rejected/obsolete；若保持 active，必须填写原因并在同一 Workspace 为该 Todo 提交新的 Intent。readiness 会拒绝遗漏审查、空 active，以及“终态 Todo 同时派发 Intent”。审查集合固定在 ReasonRun 快照中，不会因并发 Explore 在执行期间结束而动态扩大。
 
+`axiom reason status` 同时返回本轮 `source_fact_ids`。Reason 必须先逐个读取这些新 Fact，再读取完整 `todos.json` 索引并按需展开相关 Todo：新证据可补充 pending/active Todo、恢复 completed/rejected/obsolete Todo，或证明主题已经完成。处理完新 Fact 和 `todo_review_ids` 后，才允许新增 Todo 或 proposal。Workspace readiness 要求每个新 Fact 至少出现在 Todo source、Intent `from_facts` 或 Goal evidence 中，防止新事实被静默遗漏；语义关联仍由 Reason 判断，后端不做模糊匹配。
+
+Todo 是长期攻击面索引。Reason 新增 Todo 前必须对照所有状态的历史 Todo；已有同义主题时复用原 Todo。派发 Intent 前通过 `graph.json` 的 `todo_id` 检查该 Todo 的开放和历史 Intent；只有增加新对象/角色、新端点/目标、新攻击条件或新 Fact 支撑方向时才允许继续派发。该规则属于 Prompt 驱动的语义决策，不等于后端自动语义去重。
+
 同一轮新增 Todo 可以使用临时 `ref` 被 Intent 或 Goal Assessment 引用。提交事务先创建 Todo，再将临时引用解析为真实 `tdXXX`；引用不存在时整批回滚，不会留下半套规划或错误的 Goal Evaluation。
 
 Reason Trigger Reconciler 在 Bootstrap/Explore 完成后立即评估，并在每个 Runner tick 周期评估。前置条件是 Task running、Bootstrap 已完成、Goal 未达成、没有活动 ReasonRun，且除初次外已满足最短间隔。满足以下任一条件时创建新 ReasonRun：未规划 Fact 达到批量数；开放 Explore 低于低水位且存在新 Fact、失败终态或未派发的可执行 Todo；最老未规划 Fact 达到最大等待。输入状态指纹防止同一低水位状态空转，Task 恢复只重新评估规则，不无条件触发。
@@ -253,7 +257,7 @@ contexts/{task_id}/r000001/
  └─ goal_evaluations.json
 ```
 
-索引中的 Fact/Intent/Artifact/Todo 只保留 preview 和 detail ref；Worker 先读 Manifest 与索引，需要时通过 detail 文件或 Context expand API 展开。这样不会把整个图谱和长产物重复塞进 Reason/Explore 上下文。
+Fact 和 Artifact 仍只保留 preview 与 detail ref；`todos.json` 额外提供完整 `title/status_reason`，`graph.json` 的 Intent 摘要额外提供 `todo_id`，使 Reason 能先做历史主题对照，再只展开相似 Todo/Intent。Worker 仍通过 detail 文件或 Context expand API 获取长内容，不会把整个图谱和产物正文重复塞进上下文。
 
 ## 7. 文件和产物
 

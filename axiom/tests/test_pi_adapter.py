@@ -208,6 +208,7 @@ def test_reason_prompt_requires_small_todos_and_intents_without_fixed_budget_exa
             "task_id": "t_001",
             "reason_run_id": "rr000001",
             "intent_description": "规划下一轮",
+            "source_fact_ids": '["f002", "f003"]',
             "origin": "a.example.com",
             "goal": "完成测试",
             "context_manifest_path": "/tmp/context.json",
@@ -221,6 +222,10 @@ def test_reason_prompt_requires_small_todos_and_intents_without_fixed_budget_exa
     assert "获取对象 ID、准备登录态" in prompt
     assert "完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`" in prompt
     assert "status_reason" in prompt
+    assert "本轮新 Fact：`[\"f002\", \"f003\"]`" in prompt
+    assert "完整读取 Context Manifest 中的 `todos.json` 索引" in prompt
+    assert "完成新 Fact 和 `todo_review_ids` 处理前，禁止新增 Todo 或派发 Intent" in prompt
+    assert "已有同义开放 Intent 时禁止重复派发" in prompt
     assert "--execute-seconds 600 --conclude-seconds 120" not in prompt
 
 
@@ -284,6 +289,7 @@ def test_all_stage_prompts_require_whatisvul_before_stage_work(template: str) ->
             "intent_id": "i002",
             "todo_id": "td001",
             "reason_run_id": "rr000001",
+            "source_fact_ids": '["f002"]',
             "workspace_id": "rw_000001",
             "intent_description": "验证目标",
             "intent_targets": '["a.example.com"]',

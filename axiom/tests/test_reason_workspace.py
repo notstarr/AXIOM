@@ -161,6 +161,7 @@ def test_reason_requires_explicit_review_when_a_todo_has_no_open_intent(client) 
         f"/api/v1/reason-workspaces/{workspace['id']}/status",
         json={"lease_id": claim["lease_id"]},
     ).json()
+    assert status["source_fact_ids"] == [fact_id]
     assert status["todo_review_ids"] == ["td001"]
     assert status["ready"] is False
     assert "Todo td001 已无开放 Intent，必须明确更新状态" in status["errors"]
@@ -171,6 +172,30 @@ def test_reason_requires_explicit_review_when_a_todo_has_no_open_intent(client) 
     )
     assert committed.status_code == 409
     assert client.get(f"/api/v1/tasks/{task['id']}/todos").json()[0]["status"] == "active"
+
+
+def test_reason_rejects_commit_when_a_source_fact_is_not_consumed(client) -> None:
+    task, reason_claim, completed = active_reason(client)
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=reason_claim)
+
+    status = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/status",
+        json={"lease_id": reason_claim["lease_id"]},
+    )
+    assert status.status_code == 200, status.text
+    body = status.json()
+    assert body["source_fact_ids"] == [completed["fact_id"]]
+    assert (
+        f"本轮新 Fact 尚未纳入规划或 Goal 评估：{completed['fact_id']}"
+        in body["errors"]
+    )
+
+    committed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        json={"lease_id": reason_claim["lease_id"]},
+    )
+    assert committed.status_code == 409
+    assert completed["fact_id"] in committed.text
 
 
 def test_reason_completes_a_reviewed_todo_and_records_completed_at(client) -> None:
@@ -372,6 +397,19 @@ def test_reason_workspace_commits_todos_and_pending_intents_atomically(client, d
     assert explore["todo_id"] == "td001"
     assert explore["execute_timeout_seconds"] == 420
     assert explore["conclude_timeout_seconds"] == 180
+
+    context = client.post(
+        f"/api/v1/tasks/{task['id']}/context",
+        json={"phase": "explore", "intent_id": "i002"},
+    ).json()
+    context_dir = Path(context["manifest_path"]).parent
+    todo_index = json.loads((context_dir / "todos.json").read_text(encoding="utf-8"))
+    intent_index = json.loads((context_dir / "graph.json").read_text(encoding="utf-8"))[
+        "intents"
+    ]
+    assert todo_index[0]["title"] == "验证对象级授权"
+    assert todo_index[0]["status_reason"] == ""
+    assert next(item for item in intent_index if item["id"] == "i002")["todo_id"] == "td001"
     assert client.get(f"/api/v1/tasks/{task['id']}").json()["phase"] == "explore"
     evaluation = client.get(f"/api/v1/tasks/{task['id']}/goal-evaluations").json()[0]
     assert evaluation["evidence_refs"] == ["todo:td001"]

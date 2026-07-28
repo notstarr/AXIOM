@@ -805,6 +805,7 @@ class ReasonService:
             return WorkspaceStatus(
                 workspace_id=workspace.id,
                 status=workspace.status,
+                source_fact_ids=run.source_fact_ids,
                 todo_add_count=len(workspace.draft.todo_adds),
                 todo_update_count=len(workspace.draft.todo_updates),
                 intent_proposal_count=len(workspace.draft.intent_proposals),
@@ -1153,6 +1154,12 @@ class ReasonService:
                 errors.append(
                     f"Todo {todo_id} 收口状态必须是 completed、rejected、obsolete 或 active"
                 )
+        unconsumed_fact_ids = self._unconsumed_source_fact_ids(workspace, run)
+        if unconsumed_fact_ids:
+            errors.append(
+                "本轮新 Fact 尚未纳入规划或 Goal 评估："
+                + ", ".join(unconsumed_fact_ids)
+            )
         open_count, limit, _remaining = self._intent_quota(conn, workspace, run)
         if len(draft.intent_proposals) > limit:
             errors.append(
@@ -1173,6 +1180,34 @@ class ReasonService:
             if not assessment.achieved and not draft.intent_proposals and not open_count:
                 errors.append("Goal 未达成时必须派发可执行 Intent，或保留已有活动 Explore")
         return list(dict.fromkeys(errors))
+
+    @staticmethod
+    def _unconsumed_source_fact_ids(
+        workspace: ReasonWorkspace,
+        run: ReasonRun,
+    ) -> list[str]:
+        consumed: set[str] = set()
+        for todo in workspace.draft.todo_adds:
+            consumed.update(
+                source.id for source in todo.sources if source.type == "fact"
+            )
+        for update_command in workspace.draft.todo_updates:
+            consumed.update(
+                source.id
+                for source in update_command.source_adds
+                if source.type == "fact"
+            )
+        for proposal in workspace.draft.intent_proposals:
+            consumed.update(proposal.from_facts)
+        assessment = workspace.draft.goal_assessment
+        if assessment is not None:
+            consumed.update(
+                item_id
+                for ref in assessment.evidence_refs
+                for kind, separator, item_id in [ref.partition(":")]
+                if separator and kind == "fact" and item_id
+            )
+        return [fact_id for fact_id in run.source_fact_ids if fact_id not in consumed]
 
     @staticmethod
     def _todo_review_ids(conn, task_id: str) -> list[str]:

@@ -166,6 +166,7 @@ class AssessWorkspaceGoal(WorkspaceWorkerCommand):
 class WorkspaceStatus(BaseModel):
     workspace_id: str
     status: Literal["open", "committed", "abandoned"]
+    source_fact_ids: list[str] = Field(default_factory=list)
     todo_add_count: int = 0
     todo_update_count: int = 0
     intent_proposal_count: int = 0
