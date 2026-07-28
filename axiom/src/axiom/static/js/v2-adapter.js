@@ -134,6 +134,10 @@
       created_at: task.created_at,
       updated_at: task.updated_at,
       completed_at: task.completed_at,
+      run_duration_seconds: task.run_duration_seconds ?? null,
+      run_started_at: task.run_started_at || null,
+      run_deadline_at: task.run_deadline_at || null,
+      last_pause_reason: task.last_pause_reason || null,
       fact_count: task.fact_count || 0,
       intent_count: task.intent_count || 0,
       working_intent_count: task.working_intent_count || 0,
@@ -514,6 +518,7 @@
         external_report_enabled: !!body.kk_report_enabled,
         worker_pool: body.worker_pool || [],
         scope: body.task_scope || null,
+        run_duration_seconds: body.run_duration_seconds ?? null,
       });
       return { project: mapTask(task) };
     }
@@ -526,7 +531,10 @@
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/status$/)) && method === 'PUT') {
       const endpoint = body.status === 'stopped' ? 'stop' : 'resume';
-      return mapTask(await request('POST', `/tasks/${match[1]}/${endpoint}`, {}));
+      const payload = endpoint === 'resume'
+        ? { run_duration_seconds: body.run_duration_seconds ?? null }
+        : {};
+      return mapTask(await request('POST', `/tasks/${match[1]}/${endpoint}`, payload));
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/worker-pool$/)) && method === 'PUT') {
       const result = await request('PATCH', `/tasks/${match[1]}`, { worker_pool: body.worker_pool || [] });

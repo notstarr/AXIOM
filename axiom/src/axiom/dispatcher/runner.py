@@ -61,6 +61,9 @@ class AxiomRunner:
         if self._closed:
             raise RuntimeError("Axiom Runner is closed")
         settings_version = self._refresh_runtime_settings()
+        reconcile_deadlines = getattr(self.control_plane, "reconcile_task_deadlines", None)
+        if reconcile_deadlines is not None:
+            reconcile_deadlines()
         reconcile = getattr(self.control_plane, "reconcile_reason_runs", None)
         if reconcile is not None:
             reconcile()

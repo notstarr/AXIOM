@@ -181,8 +181,10 @@ class DispatchRepository:
         )
 
     @staticmethod
-    def task_status(conn: Connection, task_id: str) -> str | None:
-        return conn.execute(select(tasks.c.status).where(tasks.c.id == task_id)).scalar_one_or_none()
+    def task_run_state(conn: Connection, task_id: str):
+        return conn.execute(
+            select(tasks.c.status, tasks.c.run_deadline_at).where(tasks.c.id == task_id)
+        ).mappings().one_or_none()
 
     @staticmethod
     def intent_row(conn: Connection, task_id: str, intent_id: str):

@@ -206,11 +206,13 @@ class DispatchService:
         now: str,
         owner_label: str,
     ):
-        task_status = self.repository.task_status(conn, task_id)
-        if task_status is None:
+        task_state = self.repository.task_run_state(conn, task_id)
+        if task_state is None:
             raise NotFoundError(f"Task not found: {task_id}")
-        if task_status != "running":
+        if task_state["status"] != "running":
             raise ConflictError("Only a running Task can dispatch work")
+        if task_state["run_deadline_at"] and parse_utc(task_state["run_deadline_at"]) <= parse_utc(now):
+            raise ConflictError("Task run deadline has elapsed")
         if status != "pending" or archived:
             raise ConflictError(f"{owner_label} is no longer pending")
         if next_retry_at and parse_utc(next_retry_at) > parse_utc(now):

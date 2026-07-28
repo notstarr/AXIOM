@@ -260,6 +260,97 @@ process.stdout.write(JSON.stringify(items.map(item => ({{
     return json.loads(result.stdout)
 
 
+def _run_task_run_window_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    projects = ROOT / "src/axiom/static/js/projects.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+eval(fs.readFileSync({json.dumps(str(projects))}, 'utf8'));
+const calls = [];
+const ctx = Object.assign({{}}, window.AxiomModules.projects.methods, {{
+  runClockNow: Date.parse('2026-07-28T10:00:00Z'),
+  newProject: {{ run_time_limited: true, run_hours: 2, run_minutes: 30 }},
+  resumeTaskDialog: {{ open: true, taskId: 't_150', title: '测试', limited: true, hours: 1, minutes: 15, submitting: false }},
+  formatDate: value => value,
+  setProjectStatus: async (taskId, status, options) => calls.push({{ taskId, status, options }}),
+  showToast: () => {{}},
+}});
+(async () => {{
+  const timedTask = {{ status: 'active', run_deadline_at: '2026-07-28T11:00:00Z' }};
+  const unlimitedTask = {{ status: 'active', run_deadline_at: null }};
+  const pausedTask = {{ status: 'stopped', run_deadline_at: '2026-07-28T10:00:00Z', last_pause_reason: 'run_deadline_reached' }};
+  const values = {{
+    createSeconds: ctx.newProjectRunDurationSeconds(),
+    createValid: ctx.newProjectRunDurationValid(),
+    timedLabel: ctx.taskRunWindowLabel(timedTask),
+    unlimitedLabel: ctx.taskRunWindowLabel(unlimitedTask),
+    pausedLabel: ctx.taskRunWindowLabel(pausedTask),
+    invalid: Number.isNaN(ctx.runDurationSeconds(true, 0, 0)),
+  }};
+  await ctx.confirmResumeTask();
+  process.stdout.write(JSON.stringify({{ values, calls, dialog: ctx.resumeTaskDialog }}));
+}})();
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def _run_task_run_window_adapter_fixture() -> list[dict[str, object]]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
+    program = f"""
+const fs = require('fs');
+const calls = [];
+global.window = {{ AxiomModules: {{
+  state: {{ state: {{}} }}, core: {{ methods: {{}} }}, projects: {{ methods: {{}} }},
+  graph: {{ methods: {{}} }}, files: {{ methods: {{}} }},
+}} }};
+global.location = {{ origin: 'http://testserver' }};
+global.fetch = async (url, init = {{}}) => {{
+  const body = init.body ? JSON.parse(init.body) : null;
+  calls.push({{ method: init.method || 'GET', url, body }});
+  const task = {{
+    id:'t_150', project_id:'prj_1', title:'测试', origin:{{host:'a.example.com',original_input:'a.example.com'}},
+    goal:'测试', status:'running', phase:'bootstrap', scope:{{enabled:true,targets:['a.example.com'],exclude:[]}},
+    worker_pool:[], guard_enabled:false, external_report_enabled:false, legacy_readonly:false,
+    created_at:'2026-07-28T00:00:00Z', updated_at:'2026-07-28T00:00:00Z',
+    run_duration_seconds:7200, run_started_at:'2026-07-28T00:00:00Z', run_deadline_at:'2026-07-28T02:00:00Z', last_pause_reason:null,
+  }};
+  return {{ status: 200, ok: true, text: async () => JSON.stringify(task) }};
+}};
+eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
+(async () => {{
+  await window.AxiomModules.core.methods.api('POST', '/projects', {{
+    parent_project_id:'prj_1', title:'测试', origin:'a.example.com', goal:'测试',
+    run_duration_seconds:7200,
+  }});
+  await window.AxiomModules.core.methods.api('PUT', '/projects/t_150/status', {{
+    status:'active', run_duration_seconds:4500,
+  }});
+  process.stdout.write(JSON.stringify(calls));
+}})();
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
 def _run_artifact_preview_fixture() -> dict[str, object]:
     node = shutil.which("node")
     if not node:
@@ -425,9 +516,10 @@ def test_frontend_and_static_assets_are_served(client):
     response = client.get("/")
     assert response.status_code == 200
     assert "<title>axiom</title>" in response.text
-    assert "/static/js/state.js?v=20260727.3" in response.text
+    assert "/static/js/state.js?v=20260728.1" in response.text
+    assert "/static/js/projects.js?v=20260728.1" in response.text
     assert "/static/js/skills.js?v=20260728.1" in response.text
-    assert "/static/js/v2-adapter.js?v=20260728.2" in response.text
+    assert "/static/js/v2-adapter.js?v=20260728.3" in response.text
     assert "/static/js/helpers.js?v=20260724.2" in response.text
     assert "/static/js/graph.js?v=20260727.3" in response.text
     assert "/static/js/human.js?v=20260727.1" in response.text
@@ -550,6 +642,39 @@ def test_artifact_center_classifies_new_explore_paths_by_type() -> None:
         {"phase": "explore", "label": "Leads", "icon": "↗"},
         {"phase": "explore", "label": "Evidence", "icon": "◈"},
     ]
+
+
+def test_task_run_window_helpers_and_shared_resume_dialog() -> None:
+    result = _run_task_run_window_fixture()
+
+    assert result["values"] == {
+        "createSeconds": 9_000,
+        "createValid": True,
+        "timedLabel": "剩余 01:00:00",
+        "unlimitedLabel": "不限时运行",
+        "pausedLabel": "已按计划自动暂停",
+        "invalid": True,
+    }
+    assert result["calls"] == [
+        {
+            "taskId": "t_150",
+            "status": "active",
+            "options": {"runDurationSeconds": 4_500},
+        }
+    ]
+    assert result["dialog"]["open"] is False
+
+
+def test_task_run_window_adapter_forwards_create_and_resume_duration() -> None:
+    calls = _run_task_run_window_adapter_fixture()
+
+    assert calls[0]["url"] == "/api/v1/tasks"
+    assert calls[0]["body"]["run_duration_seconds"] == 7_200
+    assert calls[1] == {
+        "method": "POST",
+        "url": "/api/v1/tasks/t_150/resume",
+        "body": {"run_duration_seconds": 4_500},
+    }
 
 
 def test_artifact_center_previews_text_and_formats_json_safely() -> None:

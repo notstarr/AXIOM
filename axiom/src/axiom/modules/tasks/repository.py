@@ -30,6 +30,9 @@ class TaskRepository:
         worker_pool: list[str],
         guard_enabled: bool,
         external_report_enabled: bool,
+        run_duration_seconds: int | None,
+        run_started_at: str,
+        run_deadline_at: str | None,
         hints: list[str],
         now: str,
     ) -> Task:
@@ -58,6 +61,10 @@ class TaskRepository:
             "created_at": now,
             "updated_at": now,
             "completed_at": None,
+            "run_duration_seconds": run_duration_seconds,
+            "run_started_at": run_started_at,
+            "run_deadline_at": run_deadline_at,
+            "last_pause_reason": None,
         }
         conn.execute(tasks.insert().values(**values))
         initialize_counter(conn, scope=task_id, kind="hint")
@@ -129,6 +136,75 @@ class TaskRepository:
             .values(status=status, phase=phase, updated_at=now)
         )
         return self.get(conn, task_id) if result.rowcount else None
+
+    def pause_running(
+        self,
+        conn: Connection,
+        task_id: str,
+        *,
+        reason: str,
+        now: str,
+        only_if_due: bool = False,
+    ) -> Task | None:
+        conditions = [tasks.c.id == task_id, tasks.c.status == "running"]
+        if only_if_due:
+            conditions.extend(
+                [
+                    tasks.c.run_deadline_at.is_not(None),
+                    tasks.c.run_deadline_at <= now,
+                ]
+            )
+        result = conn.execute(
+            update(tasks)
+            .where(*conditions)
+            .values(
+                status="stopped",
+                phase="none",
+                last_pause_reason=reason,
+                updated_at=now,
+            )
+        )
+        return self.get(conn, task_id) if result.rowcount else None
+
+    def resume_with_window(
+        self,
+        conn: Connection,
+        task_id: str,
+        *,
+        phase: str,
+        run_duration_seconds: int | None,
+        run_started_at: str,
+        run_deadline_at: str | None,
+        now: str,
+    ) -> Task | None:
+        result = conn.execute(
+            update(tasks)
+            .where(tasks.c.id == task_id, tasks.c.status == "stopped")
+            .values(
+                status="running",
+                phase=phase,
+                run_duration_seconds=run_duration_seconds,
+                run_started_at=run_started_at,
+                run_deadline_at=run_deadline_at,
+                last_pause_reason=None,
+                updated_at=now,
+            )
+        )
+        return self.get(conn, task_id) if result.rowcount else None
+
+    @staticmethod
+    def expired_running_ids(conn: Connection, *, now: str) -> list[str]:
+        return list(
+            conn.execute(
+                select(tasks.c.id)
+                .where(
+                    tasks.c.status == "running",
+                    tasks.c.run_deadline_at.is_not(None),
+                    tasks.c.run_deadline_at <= now,
+                )
+                .order_by(tasks.c.run_deadline_at, tasks.c.id)
+            ).scalars()
+        )
 
     def update(self, conn: Connection, task_id: str, command: UpdateTask, *, now: str) -> Task | None:
         values = command.model_dump(exclude_none=True)
@@ -221,4 +297,8 @@ class TaskRepository:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             completed_at=row["completed_at"],
+            run_duration_seconds=row.get("run_duration_seconds"),
+            run_started_at=row.get("run_started_at"),
+            run_deadline_at=row.get("run_deadline_at"),
+            last_pause_reason=row.get("last_pause_reason"),
         )

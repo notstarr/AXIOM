@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 
 from sqlalchemy import Engine, func, select, update
 
+from axiom.modules.audit.schemas import RecordAuditEvent
+from axiom.modules.audit.service import AuditService
 from axiom.modules.graph.repository import GraphRepository
 from axiom.modules.graph.tables import facts, intents
 from axiom.modules.projects.repository import ProjectRepository
@@ -15,6 +18,8 @@ from axiom.modules.tasks.schemas import (
     ActiveReasonRun,
     CreateTask,
     CreateTaskHint,
+    ResumeTask,
+    RunDeadlineReconcileReport,
     Task,
     TaskHint,
     TaskScope,
@@ -24,7 +29,8 @@ from axiom.modules.tasks.schemas import (
 from axiom.modules.tasks.tables import task_hints
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.tables import vulnerabilities
-from axiom.shared.clock import utcnow
+from axiom.shared.clock import format_utc, parse_utc, utcnow
+from axiom.shared.database import immediate_transaction
 from axiom.shared.errors import ConflictError, NotFoundError
 
 
@@ -35,6 +41,7 @@ class TaskService:
         self.tasks = TaskRepository()
         self.graph = GraphRepository()
         self.reason = ReasonRepository()
+        self.audit = AuditService(engine)
 
     def create(self, command: CreateTask) -> Task:
         origin = parse_origin(command.origin)
@@ -42,6 +49,7 @@ class TaskService:
         if scope.enabled and not scope.targets:
             scope = scope.model_copy(update={"targets": [origin.host]})
         now = utcnow()
+        deadline_at = self._deadline_at(now, command.run_duration_seconds)
         with self.engine.begin() as conn:
             project = self.projects.get(conn, command.project_id)
             if project is None:
@@ -58,10 +66,20 @@ class TaskService:
                 worker_pool=command.worker_pool,
                 guard_enabled=command.guard_enabled,
                 external_report_enabled=command.external_report_enabled,
+                run_duration_seconds=command.run_duration_seconds,
+                run_started_at=now,
+                run_deadline_at=deadline_at,
                 hints=command.hints,
                 now=now,
             )
             self.graph.seed_task(conn, task=task, now=now)
+            self._record_run_started(
+                conn,
+                task=task,
+                source="create",
+                duration_seconds=command.run_duration_seconds,
+                deadline_at=deadline_at,
+            )
         return self._decorate(task)
 
     def get(self, task_id: str) -> Task:
@@ -133,43 +151,72 @@ class TaskService:
             if task.status != "running":
                 raise ConflictError("Only a running Task can be stopped")
             now = utcnow()
-            self.graph.cancel_active_intents(conn, task_id, now=now)
-            self.reason.abandon_open(
+            stopped = self._pause_in(
                 conn,
-                task_id=task_id,
-                failure_reason="task_stopped",
-                now=now,
-            )
-            self.reason.cancel_open_for_task(conn, task_id, now=now)
-            stopped = self.tasks.set_lifecycle(
-                conn,
-                task_id,
-                status="stopped",
-                phase="none",
+                task=task,
+                pause_reason="manual",
+                failure_kind="task_stopped",
                 now=now,
             )
             assert stopped is not None
         return self._decorate(stopped)
 
-    def resume(self, task_id: str) -> Task:
+    def resume(self, task_id: str, command: ResumeTask | None = None) -> Task:
+        duration_seconds = command.run_duration_seconds if command is not None else None
+        now = utcnow()
+        deadline_at = self._deadline_at(now, duration_seconds)
         with self.engine.begin() as conn:
             task = self.tasks.get(conn, task_id)
             if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.status != "stopped":
                 raise ConflictError("Only a stopped Task can be resumed")
-            self.graph.restore_task_stopped_intents(conn, task_id)
+            self.graph.restore_paused_intents(conn, task_id)
             bootstrap = self.graph.get_intent(conn, task_id, "i001")
             phase = "waiting" if bootstrap and bootstrap.status == "completed" else "bootstrap"
-            resumed = self.tasks.set_lifecycle(
+            resumed = self.tasks.resume_with_window(
                 conn,
                 task_id,
-                status="running",
                 phase=phase,
-                now=utcnow(),
+                run_duration_seconds=duration_seconds,
+                run_started_at=now,
+                run_deadline_at=deadline_at,
+                now=now,
             )
             assert resumed is not None
+            self._record_run_started(
+                conn,
+                task=resumed,
+                source="resume",
+                duration_seconds=duration_seconds,
+                deadline_at=deadline_at,
+            )
         return self._decorate(resumed)
+
+    def reconcile_run_deadlines(self) -> RunDeadlineReconcileReport:
+        checked_at = utcnow()
+        with self.engine.connect() as conn:
+            candidates = self.tasks.expired_running_ids(conn, now=checked_at)
+        paused_task_ids: list[str] = []
+        for task_id in candidates:
+            with immediate_transaction(self.engine) as conn:
+                task = self.tasks.get(conn, task_id)
+                if task is None:
+                    continue
+                stopped = self._pause_in(
+                    conn,
+                    task=task,
+                    pause_reason="run_deadline_reached",
+                    failure_kind="run_deadline_reached",
+                    now=checked_at,
+                    only_if_due=True,
+                )
+                if stopped is not None:
+                    paused_task_ids.append(task_id)
+        return RunDeadlineReconcileReport(
+            checked_at=checked_at,
+            paused_task_ids=paused_task_ids,
+        )
 
     def delete(self, task_id: str) -> None:
         with self.engine.begin() as conn:
@@ -212,6 +259,94 @@ class TaskService:
         if updated is None:
             raise NotFoundError(f"Hint not found: {hint_id}")
         return updated
+
+    def _pause_in(
+        self,
+        conn,
+        *,
+        task: Task,
+        pause_reason: str,
+        failure_kind: str,
+        now: str,
+        only_if_due: bool = False,
+    ) -> Task | None:
+        stopped = self.tasks.pause_running(
+            conn,
+            task.id,
+            reason=pause_reason,
+            now=now,
+            only_if_due=only_if_due,
+        )
+        if stopped is None:
+            return None
+        self.graph.cancel_active_intents(
+            conn,
+            task.id,
+            now=now,
+            failure_kind=failure_kind,
+        )
+        self.reason.abandon_open(
+            conn,
+            task_id=task.id,
+            failure_reason=failure_kind,
+            now=now,
+        )
+        self.reason.cancel_open_for_task(
+            conn,
+            task.id,
+            now=now,
+            failure_kind=failure_kind,
+        )
+        self.audit.record_in(
+            conn,
+            RecordAuditEvent(
+                project_id=task.project_id,
+                task_id=task.id,
+                event_type="task.paused",
+                message=(
+                    "任务运行时间已到，系统已自动暂停"
+                    if pause_reason == "run_deadline_reached"
+                    else "任务已由用户暂停"
+                ),
+                payload={
+                    "reason": pause_reason,
+                    "run_started_at": task.run_started_at,
+                    "run_duration_seconds": task.run_duration_seconds,
+                    "run_deadline_at": task.run_deadline_at,
+                },
+            ),
+        )
+        return stopped
+
+    def _record_run_started(
+        self,
+        conn,
+        *,
+        task: Task,
+        source: str,
+        duration_seconds: int | None,
+        deadline_at: str | None,
+    ) -> None:
+        self.audit.record_in(
+            conn,
+            RecordAuditEvent(
+                project_id=task.project_id,
+                task_id=task.id,
+                event_type="task.run_window_started",
+                message="任务已开始新的运行窗口",
+                payload={
+                    "source": source,
+                    "run_duration_seconds": duration_seconds,
+                    "run_deadline_at": deadline_at,
+                },
+            ),
+        )
+
+    @staticmethod
+    def _deadline_at(now: str, duration_seconds: int | None) -> str | None:
+        if duration_seconds is None:
+            return None
+        return format_utc(parse_utc(now) + timedelta(seconds=duration_seconds))
 
     def _decorate(self, task: Task) -> Task:
         """Attach live counters and the current Reason activity to a Task."""

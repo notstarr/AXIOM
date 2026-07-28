@@ -32,6 +32,7 @@ from axiom.modules.reason.schemas import (
     WorkspaceStatus,
 )
 from axiom.modules.settings.schemas import RuntimeSettings
+from axiom.modules.tasks.schemas import RunDeadlineReconcileReport
 from axiom.modules.workers.schemas import Worker
 
 
@@ -88,6 +89,11 @@ class HttpControlPlane:
     def reconcile_reason_runs(self) -> ReasonReconcileReport:
         return ReasonReconcileReport.model_validate(
             self._request("POST", "/dispatch/reason-runs/reconcile", {})
+        )
+
+    def reconcile_task_deadlines(self) -> RunDeadlineReconcileReport:
+        return RunDeadlineReconcileReport.model_validate(
+            self._request("POST", "/dispatch/task-deadlines/reconcile", {})
         )
 
     def claim_work(self, action: ClaimAction) -> ClaimedWork | None:

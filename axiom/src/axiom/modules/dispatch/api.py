@@ -7,9 +7,17 @@ from axiom.composition import Container
 from axiom.dispatcher.schemas import ClaimedIntent, DispatcherSnapshot
 from axiom.modules.reason.schemas import ClaimedReasonRun
 from axiom.modules.dispatch.schemas import ClaimIntent, RecoverStaleIntents, RecoveryReport
+from axiom.modules.tasks.schemas import RunDeadlineReconcileReport
 
 
 router = APIRouter(prefix="/dispatch", tags=["dispatch"])
+
+
+@router.post("/task-deadlines/reconcile", response_model=RunDeadlineReconcileReport)
+def reconcile_task_deadlines(
+    container: Container = Depends(get_container),
+) -> RunDeadlineReconcileReport:
+    return container.tasks.reconcile_run_deadlines()
 
 
 @router.get("/snapshot", response_model=DispatcherSnapshot)

@@ -7,6 +7,7 @@ from axiom.composition import Container
 from axiom.modules.tasks.schemas import (
     CreateTask,
     CreateTaskHint,
+    ResumeTask,
     Task,
     TaskHint,
     UpdateTask,
@@ -82,8 +83,12 @@ def stop_task(task_id: str, container: Container = Depends(get_container)) -> Ta
 
 
 @router.post("/{task_id}/resume", response_model=Task)
-def resume_task(task_id: str, container: Container = Depends(get_container)) -> Task:
-    return container.tasks.resume(task_id)
+def resume_task(
+    task_id: str,
+    body: ResumeTask | None = None,
+    container: Container = Depends(get_container),
+) -> Task:
+    return container.tasks.resume(task_id, body)
 
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)

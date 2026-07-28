@@ -18,6 +18,10 @@
       <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-[0.12em] shrink-0"
         :class="projectStatusBadgeClass(project.project.status)"
         x-text="projectStatusLabel(project.project.status)"></span>
+      <span x-show="taskRunWindowLabel(project.project)" class="inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[10px] font-semibold tabular-nums shrink-0"
+        :class="taskRunWindowClass(project.project)" :title="taskRunDeadlineLabel(project.project)">
+        <span x-text="taskRunWindowLabel(project.project)"></span>
+      </span>
     </div>
     <div class="flex-1"></div>
     <div class="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">

@@ -72,12 +72,14 @@ running
   → completed       只有 Goal Evaluation 达成才进入
 
 任何运行态
-  → stopped         人工停止；Runner 取消本地 Pi/RPC 进程
+  → stopped         人工停止或本次运行窗口到期；Runner 取消本地 Pi/RPC 进程
 stopped
-  → running         人工继续；按当前阶段重新进入调度
+  → running         人工继续；选择新的单次运行窗口并按当前阶段重新进入调度
 ```
 
 Task 完成的唯一业务指标是 Goal Evaluation。没有 Intent、没有 Worker 或某一轮 Reason 结束都不能单独表示任务完成。
+
+新建和 Resume 可提供整分钟 `run_duration_seconds`；省略或 `null` 表示不限时。每次 Resume 都覆盖旧窗口，按自然时间计算 `run_deadline_at`，排队、Reason 间隔和重试都计入。到期由 Runner 下一 tick 调用 Deadline Reconciler 原子暂停，默认精度约 3 秒；服务中断期间过期的 Task 会在恢复后的首个 tick 暂停。
 
 ## 4. 调度和领取
 
@@ -85,9 +87,10 @@ Task 完成的唯一业务指标是 Goal Evaluation。没有 Intent、没有 Wor
 
 ```text
 读取 Runtime Settings
+→ POST Task Deadline Reconciler
+→ POST Reason Trigger Reconciler
 → recover-stale
 → 清理已完成 Future
-→ POST Reason Trigger Reconciler
 → GET dispatch/snapshot
 → Reconciler 从统一可领取工作视图计算 claim actions
 → WorkerAllocator 按 capability、Task worker_pool、disabled、cooldown、max_running 选择
@@ -98,6 +101,8 @@ Task 完成的唯一业务指标是 Goal Evaluation。没有 Intent、没有 Wor
 统一工作视图同时包含 Bootstrap/Explore Intent 和 ReasonRun，Task 内优先级为 `Bootstrap → Reason → Explore`；Task 之间按最近一次领取时间轮询，每轮优先给每个 Task 一个工作，避免低 ID Task 长期占满槽位。ReasonRun 占用全局和单 Task Run 槽位，但不计入 Intent 数量或 Explore 并发。
 
 有效领取会同时校验 `global_max_active_runs`、`global_max_active_tasks`、`per_task_max_active_runs`、`per_task_explore_concurrency`、Worker `max_running`、能力和 Task Worker Pool。纯调度计算先过滤一次，数据库 claim 事务再校验一次，防止多个 tick/Runner 并发越限。Bootstrap 和 Reason 的单 Task 并发固定为 1。
+
+Claim 事务和 Reason Trigger 还会校验 Task 的绝对 UTC 截止时间，防止 Deadline Reconciler 与领取之间的竞争窗口产生新工作。多个 Runner 同时发现到期 Task 时，只有命中 `status=running AND run_deadline_at<=now` 条件更新的实例能写入暂停状态和 Audit Event。
 
 Reason 提交后只创建 `pending` Explore Intent，不指定具体 Worker。空闲且兼容的 Worker 会自动领取；容量不足保持 pending，不记失败，也不要求 Reason 重新规划。
 
@@ -264,6 +269,8 @@ FileStore 使用外部 data-dir，Artifact 表只保存元数据、hash、size �
 
 任务详情的“概览”和“图谱”是两种人类视图：图谱不是执行事实源；右侧 Todo、事实、产物和漏洞分别从 V2 API 读取。ReasonRun 只显示为图谱上方的运行活动卡片，可查看 Worker、状态、当前活动、工具、心跳、触发器、预算和配置快照，不创建图谱节点。
 
+新建任务第二页和 stopped Task 的共享 Resume 弹窗支持“不限时/小时/分钟”。任务列表、概览和图谱共用一个秒级前端时钟展示剩余时间和本地时区截止时间；倒计时只负责显示，归零后等待服务端状态刷新，不在浏览器里擅自修改 Task。
+
 设置页只编辑真实 `RuntimeConfig`，分为“调度并发、阶段预算、Reason 触发与派发、高级可靠性”四组；Bootstrap/Reason 单 Task 并发以只读 `1（固定）` 展示。Explore Conclude 下限默认和前后端输入约束均为 180 秒。保存使用 `expected_version` 乐观锁，合法零值不会被 `||` 回填；Runner 每 tick 读取版本并回报真实 `applied_version/applied_at`。生产浏览器已验证保存、刷新、重启持久化和下一 tick 热应用。
 
 ## 9. 迁移与回滚
@@ -293,6 +300,8 @@ ReasonRun/RuntimeConfig 迁移版本为 `20260727_0020`。迁移保留历史 Rea
 
 `20260727_0023_explore_closeout_floor` 是单调数据迁移：把 RuntimeConfig 的 Explore Conclude 下限、未结束 Explore Intent 的收口预算，以及未结束 ReasonRun 的 Explore 收口范围快照提升到至少 180 秒；必要时同步抬高过低的 max。已进入进程的旧 ExecutionInput 不会被热改，下一次重试或重新领取才使用数据库中的新预算。降级保留已提升的安全预算，避免误改用户在升级后主动设置的 180 秒值。
 
+`20260728_0024_task_run_windows` 为 Task 增加本次运行时长、开始时间、UTC 截止时间和最近暂停原因，并建立 `status + run_deadline_at` 索引。历史记录保持 `NULL`，等价于不限时，不猜测旧任务的运行窗口。
+
 ## 10. 当前明确不属于主流程的内容
 
 - Bootstrap 没有改成 ASM；ASM 工具链不是当前阶段。
@@ -303,14 +312,14 @@ ReasonRun/RuntimeConfig 迁移版本为 `20260727_0020`。迁移保留历史 Rea
 ## 11. 验证基线
 
 ```text
-uv run pytest                            281 passed, 1 warning
+uv run pytest                            294 passed, 1 warning
 uv run ruff check .                      passed
 python -m compileall -q src tests migrations  passed
 node --check <18 non-vendor static js>   passed
 git diff --check                         passed
 ```
 
-以上测试已覆盖 FINISH 精确识别与 Explore 有限归一化、同会话有界收口、Explore Conclude 核心文件兜底、可选 Evidence 的安全跳过与 48 文件上限、无 Evidence 漏洞、Artifact/Fact 自动生成、ReasonRun 唯一性/lease/心跳/回收、Workspace 增量操作和派发额度、Reason 触发规则、全局/Task/阶段并发、公平领取、RuntimeConfig 版本冲突与热应用、Guard 真实配置，以及停止/Goal 完成后的立即取消；仅有 Starlette/httpx 弃用警告。
+以上测试已覆盖 FINISH 精确识别与 Explore 有限归一化、同会话有界收口、Explore Conclude 核心文件兜底、可选 Evidence、Artifact/Fact 自动生成、ReasonRun/Workspace 生命周期、Reason 触发和调度并发、RuntimeConfig 热应用、Guard，以及 Task 不限时/限时创建、Resume 新窗口、到期暂停、并发幂等、Reason/Claim 截止守卫和前端共享倒计时；仅有 Starlette/httpx 弃用警告。
 
 2026-07-27 生产受控 E2E `t_138` 完成 `Bootstrap → ReasonRun(rr000001) → Explore → ReasonRun(rr000002) → Goal`：正式图谱只有 Bootstrap/Explore 两个 Intent，两个 ReasonRun 均零重试完成；生成 4 个 Artifact、1 个 completed Todo 和两个代码生成 Fact，最终 `goal_from_fact_ids=[f002]`。Task completed 后开放 Intent、ReasonRun、Workspace 均为 0。
 

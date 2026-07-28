@@ -13,6 +13,11 @@
       </div>
       <div class="flex-1"></div>
       <div class="flex items-center gap-2">
+        <span x-show="taskRunWindowLabel(project?.project)" class="hidden md:inline-flex flex-col rounded-lg border px-2.5 py-1 leading-tight"
+          :class="taskRunWindowClass(project?.project)">
+          <span class="text-[10px] font-semibold tabular-nums" x-text="taskRunWindowLabel(project?.project)"></span>
+          <span class="text-[9px] opacity-75" x-text="taskRunDeadlineLabel(project?.project)"></span>
+        </span>
         <span class="hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-500">
           <span class="h-1.5 w-1.5 rounded-full" :class="project?.project?.status === 'active' ? 'bg-emerald-400' : project?.project?.status === 'completed' ? 'bg-slate-400' : 'bg-amber-400'"></span>
           <span x-text="humanGoalStatusLabel()"></span>

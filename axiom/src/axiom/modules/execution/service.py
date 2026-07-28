@@ -545,7 +545,12 @@ class ExecutionService:
                     source_fact_id=fact_id,
                     now=now,
                 )
-                self.repository.complete_task_phase(conn, task_id, now)
+                self.repository.complete_task_phase(
+                    conn,
+                    task_id,
+                    now,
+                    phase="reason" if next_reason_run_id else "waiting",
+                )
             transaction_committed = True
             try:
                 prepared.finish()

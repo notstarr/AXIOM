@@ -575,6 +575,134 @@ window.AxiomModules.projects = {
       return item?.diagnostic?.suggestions || [];
     },
 
+    runDurationSeconds(limited, hours, minutes) {
+      if (!limited) return null;
+      const parsedHours = Number(hours);
+      const parsedMinutes = Number(minutes);
+      if (!Number.isInteger(parsedHours) || !Number.isInteger(parsedMinutes)) return NaN;
+      if (parsedHours < 0 || parsedMinutes < 0 || parsedMinutes > 59) return NaN;
+      const seconds = (parsedHours * 60 + parsedMinutes) * 60;
+      if (seconds < 60 || seconds > 365 * 24 * 60 * 60) return NaN;
+      return seconds;
+    },
+
+    newProjectRunDurationSeconds() {
+      return this.runDurationSeconds(
+        !!this.newProject.run_time_limited,
+        this.newProject.run_hours,
+        this.newProject.run_minutes,
+      );
+    },
+
+    newProjectRunDurationValid() {
+      return !Number.isNaN(this.newProjectRunDurationSeconds());
+    },
+
+    resumeRunDurationSeconds() {
+      return this.runDurationSeconds(
+        !!this.resumeTaskDialog.limited,
+        this.resumeTaskDialog.hours,
+        this.resumeTaskDialog.minutes,
+      );
+    },
+
+    resumeRunDurationValid() {
+      return !Number.isNaN(this.resumeRunDurationSeconds());
+    },
+
+    runDeadlinePreview(limited, hours, minutes) {
+      const seconds = this.runDurationSeconds(limited, hours, minutes);
+      if (seconds === null) return '本次任务将不限时运行';
+      if (Number.isNaN(seconds)) return '限时运行至少 1 分钟，分钟需在 0–59 之间';
+      return `预计于 ${this.formatDate(new Date(this.runClockNow + seconds * 1000).toISOString())} 自动暂停`;
+    },
+
+    taskRunRemainingSeconds(task) {
+      if (!task || task.status !== 'active' || !task.run_deadline_at) return null;
+      const deadline = Date.parse(task.run_deadline_at);
+      if (!Number.isFinite(deadline)) return null;
+      return Math.max(0, Math.ceil((deadline - this.runClockNow) / 1000));
+    },
+
+    formatRunCountdown(totalSeconds) {
+      const seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const remainder = seconds % 60;
+      return [hours, minutes, remainder].map(value => String(value).padStart(2, '0')).join(':');
+    },
+
+    taskRunWindowLabel(task) {
+      if (!task) return '';
+      if (task.status === 'active') {
+        if (!task.run_deadline_at) return '不限时运行';
+        const remaining = this.taskRunRemainingSeconds(task);
+        if (remaining === null) return '运行截止时间无效';
+        return remaining > 0
+          ? `剩余 ${this.formatRunCountdown(remaining)}`
+          : '等待服务端自动暂停';
+      }
+      if (task.status === 'stopped' && task.last_pause_reason === 'run_deadline_reached') {
+        return '已按计划自动暂停';
+      }
+      return '';
+    },
+
+    taskRunDeadlineLabel(task) {
+      if (!task) return '';
+      if (task.status === 'active' && !task.run_deadline_at) return '本次运行不限时';
+      if (!task.run_deadline_at) return '';
+      if (task.status === 'stopped' && task.last_pause_reason === 'run_deadline_reached') {
+        return `计划截止：${this.formatDate(task.run_deadline_at)}`;
+      }
+      return `将于 ${this.formatDate(task.run_deadline_at)} 自动暂停`;
+    },
+
+    taskRunWindowClass(task) {
+      if (task?.status === 'stopped' && task?.last_pause_reason === 'run_deadline_reached') {
+        return 'border-amber-200 bg-amber-50 text-amber-700';
+      }
+      if (task?.status === 'active' && task?.run_deadline_at) {
+        return this.taskRunRemainingSeconds(task) > 0
+          ? 'border-sky-200 bg-sky-50 text-sky-700'
+          : 'border-amber-200 bg-amber-50 text-amber-700';
+      }
+      return 'border-slate-200 bg-slate-50 text-slate-500';
+    },
+
+    openResumeTaskDialog(projectId, title = '') {
+      if (!projectId) return;
+      this.resumeTaskDialog = {
+        open: true,
+        taskId: projectId,
+        title: title || projectId,
+        limited: false,
+        hours: 0,
+        minutes: 0,
+        submitting: false,
+      };
+    },
+
+    closeResumeTaskDialog() {
+      if (this.resumeTaskDialog.submitting) return;
+      this.resumeTaskDialog.open = false;
+    },
+
+    async confirmResumeTask() {
+      if (!this.resumeTaskDialog.taskId || !this.resumeRunDurationValid()) return;
+      this.resumeTaskDialog.submitting = true;
+      try {
+        await this.setProjectStatus(this.resumeTaskDialog.taskId, 'active', {
+          runDurationSeconds: this.resumeRunDurationSeconds(),
+        });
+        this.resumeTaskDialog.open = false;
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      } finally {
+        this.resumeTaskDialog.submitting = false;
+      }
+    },
+
     async createProject() {
       try {
         if (this.projectGroups.length === 0) await this.loadProjectGroups();
@@ -585,6 +713,11 @@ window.AxiomModules.projects = {
         }
 
         const actor = this.actorName();
+        const runDurationSeconds = this.newProjectRunDurationSeconds();
+        if (Number.isNaN(runDurationSeconds)) {
+          this.showToast('请填写有效的运行时长', 'error');
+          return;
+        }
         const body = {
           parent_project_id: parentProjectId,
           title: this.newProject.title,
@@ -602,6 +735,7 @@ window.AxiomModules.projects = {
             exclude: String(this.newProject.task_scope_exclude || '').split(/\n|,/).map(x => x.trim()).filter(Boolean),
             notes: this.newProject.task_scope_notes || '',
           },
+          run_duration_seconds: runDurationSeconds,
         };
         const data = await this.api('POST', '/projects', body);
         const pid = data.project.id;
@@ -612,7 +746,7 @@ window.AxiomModules.projects = {
           title:'', origin:'', goal:'对该系统进行渗透测试，并挖掘10个高置信度的漏洞',
           bootstrap: true, kk_report_enabled: false, depth_mode: false, guard_enabled: !!this.judgeSettings?.enabled_default, hints: '',
           task_scope_enabled: false, task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '',
-          depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], _guardTouched: false,
+          depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false,
         };
         await this.loadProjectGroups();
         await this.loadProjects();
@@ -764,6 +898,10 @@ window.AxiomModules.projects = {
     async toggleProjectStop() {
       if (!this.selectedProjectId || !this.project || this.project.project.status === 'completed') return;
       const nextStatus = this.project.project.status === 'active' ? 'stopped' : 'active';
+      if (nextStatus === 'active') {
+        this.openResumeTaskDialog(this.selectedProjectId, this.project.project.title);
+        return;
+      }
       try {
         await this.setProjectStatus(this.selectedProjectId, nextStatus);
       } catch (e) {
@@ -774,6 +912,11 @@ window.AxiomModules.projects = {
     async toggleProjectStopById(projectId, currentStatus) {
       if (!projectId || currentStatus === 'completed') return;
       const nextStatus = currentStatus === 'active' ? 'stopped' : 'active';
+      if (nextStatus === 'active') {
+        const summary = this.projects.find(item => item.id === projectId);
+        this.openResumeTaskDialog(projectId, summary?.title || projectId);
+        return;
+      }
       try {
         await this.setProjectStatus(projectId, nextStatus);
       } catch (e) {
@@ -782,16 +925,26 @@ window.AxiomModules.projects = {
     },
 
     async setProjectStatus(projectId, status, options = {}) {
-      const { reload = true, toast = true } = options;
-      const updated = await this.api('PUT', `/projects/${projectId}/status`, { status });
+      const { reload = true, toast = true, runDurationSeconds = null } = options;
+      const body = { status };
+      if (status === 'active') body.run_duration_seconds = runDurationSeconds;
+      const updated = await this.api('PUT', `/projects/${projectId}/status`, body);
       const projectSummary = this.projects.find(item => item.id === projectId);
       if (projectSummary) {
         projectSummary.status = updated.status;
         projectSummary.reason = updated.reason;
+        projectSummary.run_duration_seconds = updated.run_duration_seconds;
+        projectSummary.run_started_at = updated.run_started_at;
+        projectSummary.run_deadline_at = updated.run_deadline_at;
+        projectSummary.last_pause_reason = updated.last_pause_reason;
       }
       if (this.selectedProjectId === projectId && this.project) {
         this.project.project.status = updated.status;
         this.project.project.reason = updated.reason;
+        this.project.project.run_duration_seconds = updated.run_duration_seconds;
+        this.project.project.run_started_at = updated.run_started_at;
+        this.project.project.run_deadline_at = updated.run_deadline_at;
+        this.project.project.last_pause_reason = updated.last_pause_reason;
         if (!this.projectIsActive()) {
           this.showIntentModal = false;
           this.showConcludeModal = false;
@@ -975,6 +1128,9 @@ window.AxiomModules.projects = {
     startPolling() {
       if (this.pollTimer) clearInterval(this.pollTimer);
       if (this.intentActivityPollTimer) clearInterval(this.intentActivityPollTimer);
+      if (this.runClockTimer) clearInterval(this.runClockTimer);
+      this.runClockNow = Date.now();
+      this.runClockTimer = setInterval(() => { this.runClockNow = Date.now(); }, 1000);
       this.pollTimer = setInterval(async () => {
         if (!this.polling) return;
         if (this.selectedProjectId && ['graph', 'human'].includes(this.view) && this.activePage === 'task-detail') {

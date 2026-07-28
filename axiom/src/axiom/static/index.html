@@ -317,6 +317,42 @@
   </div>
 </div>
 
+<!-- Resume Task Run Window -->
+<div x-show="resumeTaskDialog.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="closeResumeTaskDialog()">
+  <div class="bg-white rounded-2xl shadow-2xl modal-enter w-full max-w-md p-6 border border-slate-200/60" @click.stop>
+    <h3 class="text-base font-semibold text-slate-700">继续任务</h3>
+    <p class="mt-1 text-xs text-slate-400 truncate" x-text="resumeTaskDialog.title"></p>
+    <p class="mt-4 text-[11px] text-slate-500">请选择这一次运行窗口。上一次未使用的剩余时间不会继承。</p>
+    <div class="mt-4 inline-flex w-full rounded-xl border border-slate-200 bg-slate-50 p-1 text-sm">
+      <button type="button" @click="resumeTaskDialog.limited = false"
+        class="flex-1 px-3 py-2 rounded-lg transition"
+        :class="!resumeTaskDialog.limited ? 'bg-white text-slate-800 shadow-sm font-medium' : 'text-slate-500'">不限时运行</button>
+      <button type="button" @click="resumeTaskDialog.limited = true"
+        class="flex-1 px-3 py-2 rounded-lg transition"
+        :class="resumeTaskDialog.limited ? 'bg-brand-500 text-white shadow-sm font-medium' : 'text-slate-500'">限时运行</button>
+    </div>
+    <div x-show="resumeTaskDialog.limited" x-cloak class="mt-4 grid grid-cols-2 gap-3">
+      <label class="text-[11px] text-slate-400">小时
+        <input type="number" min="0" max="8760" step="1" x-model.number="resumeTaskDialog.hours"
+          class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-100">
+      </label>
+      <label class="text-[11px] text-slate-400">分钟
+        <input type="number" min="0" max="59" step="1" x-model.number="resumeTaskDialog.minutes"
+          class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-100">
+      </label>
+    </div>
+    <div class="mt-4 rounded-xl border px-3 py-2 text-xs"
+      :class="resumeRunDurationValid() ? 'border-sky-100 bg-sky-50 text-sky-700' : 'border-rose-100 bg-rose-50 text-rose-700'"
+      x-text="runDeadlinePreview(resumeTaskDialog.limited, resumeTaskDialog.hours, resumeTaskDialog.minutes)"></div>
+    <div class="flex justify-end gap-2 mt-5">
+      <button @click="closeResumeTaskDialog()" :disabled="resumeTaskDialog.submitting" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40">取消</button>
+      <button @click="confirmResumeTask()" :disabled="resumeTaskDialog.submitting || !resumeRunDurationValid()"
+        class="px-5 py-2 text-sm bg-teal-500 text-white rounded-xl font-medium hover:bg-teal-600 transition disabled:opacity-30 shadow-sm shadow-teal-200"
+        x-text="resumeTaskDialog.submitting ? '继续中...' : '继续任务'"></button>
+    </div>
+  </div>
+</div>
+
 <!-- Rename Project -->
 <div x-show="showRenameModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showRenameModal = false">
   <div class="bg-white rounded-2xl shadow-2xl modal-enter w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
@@ -484,10 +520,10 @@
   <span x-text="toast ? toast.message : ''"></span>
 </div>
 
-<script src="/static/js/state.js?v=20260727.3"></script>
+<script src="/static/js/state.js?v=20260728.1"></script>
 <script src="/static/js/helpers.js?v=20260724.2"></script>
 <script src="/static/js/core.js?v=20260723.3"></script>
-<script src="/static/js/projects.js?v=20260727.1"></script>
+<script src="/static/js/projects.js?v=20260728.1"></script>
 <script src="/static/js/dashboard.js?v=20260727.1"></script>
 <script src="/static/js/skills.js?v=20260728.1"></script>
 <script src="/static/js/files.js?v=20260723.3"></script>
@@ -498,7 +534,7 @@
 <script src="/static/js/actions.js?v=20260723.3"></script>
 <script src="/static/js/dispatch.js?v=20260727.3"></script>
 <script src="/static/js/prompts.js?v=20260723.3"></script>
-<script src="/static/js/v2-adapter.js?v=20260728.2"></script>
+<script src="/static/js/v2-adapter.js?v=20260728.3"></script>
 <script src="/static/js/app.js?v=20260723.3"></script>
 </body>
 </html>

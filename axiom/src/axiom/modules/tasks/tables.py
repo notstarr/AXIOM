@@ -5,6 +5,8 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     ForeignKey,
+    Index,
+    Integer,
     PrimaryKeyConstraint,
     String,
     Table,
@@ -36,9 +38,24 @@ tasks = Table(
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
     Column("completed_at", String),
+    Column("run_duration_seconds", Integer),
+    Column("run_started_at", String),
+    Column("run_deadline_at", String),
+    Column("last_pause_reason", String),
     CheckConstraint("status IN ('running','stopped','completed','failed')", name="status"),
     CheckConstraint("phase IN ('bootstrap','reason','explore','waiting','none')", name="phase"),
+    CheckConstraint(
+        "run_duration_seconds IS NULL OR "
+        "(run_duration_seconds BETWEEN 60 AND 31536000 AND run_duration_seconds % 60 = 0)",
+        name="run_duration_seconds",
+    ),
+    CheckConstraint(
+        "last_pause_reason IS NULL OR last_pause_reason IN ('manual','run_deadline_reached')",
+        name="last_pause_reason",
+    ),
 )
+
+Index("ix_tasks_status_run_deadline", tasks.c.status, tasks.c.run_deadline_at)
 
 
 task_hints = Table(

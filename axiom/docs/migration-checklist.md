@@ -109,6 +109,10 @@
 | 设置版本与热应用状态 | 已验证 | `expected_version` / 409；已保存版本与 Runner applied 真实显示 |
 | 合法零值刷新不回退 | 已验证 | 浏览器将 low watermark 保存为 0、刷新持久化，再恢复默认 1 |
 | ReasonRun 活动卡片 | 已验证 | 显示 rr ID、Worker、活动、心跳、触发器、预算和配置快照；图谱无节点 |
+| Task 单次运行窗口 | 已验证 | 新建/Resume 支持不限时或整分钟时长；每次 Resume 覆盖旧窗口 |
+| 到期自动暂停 | 已验证 | Runner tick 先执行 Deadline Reconciler；原子取消 Intent、ReasonRun、Workspace 和 Lease |
+| 截止时间调度守卫 | 已验证 | Claim 与 Reason Trigger 在事务内拒绝已过期 Task |
+| 运行时间前端 | 已验证 | 任务列表、概览、图谱共用倒计时；Resume 使用共享弹窗 |
 | Dashboard 加载态 | 已验证 | 未完成加载不再误显示 0 |
 | Tailwind CDN 警告 | 已知非阻塞 | 后续可替换为构建 CSS |
 

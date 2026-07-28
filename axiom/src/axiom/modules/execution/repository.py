@@ -247,11 +247,17 @@ class ExecutionRepository:
         return bool(result.rowcount)
 
     @staticmethod
-    def complete_task_phase(conn: Connection, task_id: str, now: str) -> None:
+    def complete_task_phase(
+        conn: Connection,
+        task_id: str,
+        now: str,
+        *,
+        phase: str = "reason",
+    ) -> None:
         conn.execute(
             update(tasks)
             .where(tasks.c.id == task_id, tasks.c.status == "running")
-            .values(phase="reason", updated_at=now)
+            .values(phase=phase, updated_at=now)
         )
 
     @staticmethod

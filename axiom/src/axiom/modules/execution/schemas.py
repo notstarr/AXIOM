@@ -136,7 +136,7 @@ class BootstrapCompleted(BaseModel):
     task_id: str
     intent_id: str
     fact_id: str
-    next_reason_run_id: str
+    next_reason_run_id: str | None = None
     artifacts: list[Artifact]
     status: Literal["completed"] = "completed"
 

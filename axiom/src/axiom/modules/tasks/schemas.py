@@ -4,8 +4,18 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from axiom.shared.clock import parse_utc
+
 
 DEFAULT_GOAL = "对该系统进行渗透测试，并挖掘10个高置信度的漏洞"
+MIN_RUN_DURATION_SECONDS = 60
+MAX_RUN_DURATION_SECONDS = 365 * 24 * 60 * 60
+
+
+def _validate_run_duration(value: int | None) -> int | None:
+    if value is not None and value % 60:
+        raise ValueError("run_duration_seconds must use whole-minute precision")
+    return value
 
 
 class Origin(BaseModel):
@@ -45,6 +55,11 @@ class CreateTask(BaseModel):
     worker_pool: list[str] = Field(default_factory=list)
     guard_enabled: bool = False
     external_report_enabled: bool = False
+    run_duration_seconds: int | None = Field(
+        default=None,
+        ge=MIN_RUN_DURATION_SECONDS,
+        le=MAX_RUN_DURATION_SECONDS,
+    )
 
     @field_validator("project_id", "title", "origin", "goal")
     @classmethod
@@ -58,6 +73,18 @@ class CreateTask(BaseModel):
     @classmethod
     def normalize_lists(cls, values: list[str]) -> list[str]:
         return list(dict.fromkeys(value.strip() for value in values if value.strip()))
+
+    _whole_minute_duration = field_validator("run_duration_seconds")(_validate_run_duration)
+
+
+class ResumeTask(BaseModel):
+    run_duration_seconds: int | None = Field(
+        default=None,
+        ge=MIN_RUN_DURATION_SECONDS,
+        le=MAX_RUN_DURATION_SECONDS,
+    )
+
+    _whole_minute_duration = field_validator("run_duration_seconds")(_validate_run_duration)
 
 
 class ActiveReasonRun(BaseModel):
@@ -95,6 +122,10 @@ class Task(BaseModel):
     created_at: str
     updated_at: str
     completed_at: str | None = None
+    run_duration_seconds: int | None = None
+    run_started_at: str | None = None
+    run_deadline_at: str | None = None
+    last_pause_reason: Literal["manual", "run_deadline_reached"] | None = None
     fact_count: int = 0
     intent_count: int = 0
     working_intent_count: int = 0
@@ -109,6 +140,16 @@ class Task(BaseModel):
     reason_activity_started_at: str | None = None
     reason_activity_updated_at: str | None = None
     active_reason_run: ActiveReasonRun | None = None
+
+    def is_runnable_at(self, now: str) -> bool:
+        return self.status == "running" and (
+            self.run_deadline_at is None or parse_utc(self.run_deadline_at) > parse_utc(now)
+        )
+
+
+class RunDeadlineReconcileReport(BaseModel):
+    checked_at: str
+    paused_task_ids: list[str] = Field(default_factory=list)
 
 
 class TaskHint(BaseModel):

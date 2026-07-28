@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from axiom.dispatcher.schemas import ClaimAction, ClaimedWork, DispatcherSnapshot
+from axiom.modules.tasks.schemas import RunDeadlineReconcileReport
 
 
 class DispatchControlPlane(Protocol):
@@ -15,6 +16,9 @@ class DispatchControlPlane(Protocol):
     """
 
     def snapshot(self) -> DispatcherSnapshot:
+        ...
+
+    def reconcile_task_deadlines(self) -> RunDeadlineReconcileReport:
         ...
 
     def claim_work(self, action: ClaimAction) -> ClaimedWork | None:

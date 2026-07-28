@@ -243,13 +243,13 @@ class GraphRepository:
         return int(result.rowcount or 0)
 
     @staticmethod
-    def restore_task_stopped_intents(conn: Connection, task_id: str) -> int:
+    def restore_paused_intents(conn: Connection, task_id: str) -> int:
         result = conn.execute(
             update(intents)
             .where(
                 intents.c.task_id == task_id,
                 intents.c.status == "cancelled",
-                intents.c.last_failure_kind == "task_stopped",
+                intents.c.last_failure_kind.in_(["task_stopped", "run_deadline_reached"]),
             )
             .values(
                 status="pending",
@@ -269,3 +269,9 @@ class GraphRepository:
             )
         )
         return int(result.rowcount or 0)
+
+    @staticmethod
+    def restore_task_stopped_intents(conn: Connection, task_id: str) -> int:
+        """Backward-compatible alias for callers using the old lifecycle name."""
+
+        return GraphRepository.restore_paused_intents(conn, task_id)

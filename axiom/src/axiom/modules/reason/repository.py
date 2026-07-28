@@ -404,7 +404,13 @@ class ReasonRepository:
         return bool(result.rowcount)
 
     @staticmethod
-    def cancel_open_for_task(conn: Connection, task_id: str, *, now: str) -> int:
+    def cancel_open_for_task(
+        conn: Connection,
+        task_id: str,
+        *,
+        now: str,
+        failure_kind: str = "task_inactive",
+    ) -> int:
         result = conn.execute(
             update(reason_runs)
             .where(
@@ -418,10 +424,14 @@ class ReasonRepository:
                 claimed_at=None,
                 last_heartbeat_at=None,
                 next_retry_at=None,
-                last_failure_kind="task_inactive",
+                last_failure_kind=failure_kind,
                 failure_class="",
                 activity_kind="cancelled",
-                activity_summary="任务已停止，ReasonRun 已取消",
+                activity_summary=(
+                    "任务运行时间已到，ReasonRun 已取消"
+                    if failure_kind == "run_deadline_reached"
+                    else "任务已停止，ReasonRun 已取消"
+                ),
                 activity_tool="",
                 activity_updated_at=now,
                 updated_at=now,

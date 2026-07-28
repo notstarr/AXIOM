@@ -6,7 +6,7 @@ import logging
 import os
 from datetime import timedelta
 
-from sqlalchemy import Engine, exists, func, select, update
+from sqlalchemy import Engine, exists, func, or_, select, update
 
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
@@ -70,13 +70,15 @@ class ReasonService:
         task_id: str,
         source_fact_id: str,
         now: str,
-    ) -> str:
+    ) -> str | None:
         existing = self.repository.active_for_task(conn, task_id)
         if existing is not None:
             return existing.id
         task = self.tasks.get(conn, task_id)
         if task is None:
             raise NotFoundError(f"Task not found: {task_id}")
+        if not task.is_runnable_at(now):
+            return None
         fingerprint = self._fingerprint(
             source_fact_ids=[source_fact_id],
             failed_intent_ids=[],
@@ -111,7 +113,14 @@ class ReasonService:
             task_ids = list(
                 conn.execute(
                     select(tasks.c.id)
-                    .where(tasks.c.status == "running", tasks.c.legacy_readonly.is_(False))
+                    .where(
+                        tasks.c.status == "running",
+                        tasks.c.legacy_readonly.is_(False),
+                        or_(
+                            tasks.c.run_deadline_at.is_(None),
+                            tasks.c.run_deadline_at > now,
+                        ),
+                    )
                     .order_by(tasks.c.created_at, tasks.c.id)
                 ).scalars()
             )
@@ -125,7 +134,7 @@ class ReasonService:
 
     def _reconcile_task_in(self, conn, *, task_id: str, now: str) -> str | None:
         task = self.tasks.get(conn, task_id)
-        if task is None or task.status != "running" or task.legacy_readonly:
+        if task is None or not task.is_runnable_at(now) or task.legacy_readonly:
             return None
 
         active = self.repository.active_for_task(conn, task_id)
