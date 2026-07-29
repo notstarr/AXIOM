@@ -272,8 +272,17 @@ html, body {
 }
 .sidebar-collapse:hover { color: var(--text-primary); background: var(--bg-tertiary); }
 .sidebar-collapse svg { width: 15px; height: 15px; }
-.sidebar.is-collapsed .sidebar-brand,
-.sidebar.is-collapsed .sidebar-collapse { display: none; }
+.sidebar.is-collapsed .sidebar-brand { display: none; }
+.sidebar.is-collapsed .sidebar-collapse {
+  position: absolute;
+  top: 18px;
+  right: -11px;
+  display: inline-flex;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
 
 .sidebar-logo img {
   width: 42px;
