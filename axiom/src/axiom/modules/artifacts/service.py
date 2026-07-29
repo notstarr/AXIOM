@@ -7,7 +7,7 @@ from uuid import uuid4
 from sqlalchemy import Engine
 
 from axiom.modules.artifacts.repository import ArtifactRepository
-from axiom.modules.artifacts.schemas import Artifact, ArtifactContent
+from axiom.modules.artifacts.schemas import Artifact, ArtifactContent, ArtifactFolder
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.shared.clock import utcnow
 from axiom.shared.errors import ConflictError, NotFoundError
@@ -46,9 +46,13 @@ class ArtifactService:
         artifact_type: str | None = None,
         phase: str | None = None,
         source: str | None = None,
+        intent_id: str | None = None,
+        unscoped_only: bool = False,
         limit: int = 60,
         offset: int = 0,
     ) -> tuple[list[Artifact], int]:
+        if intent_id is not None and unscoped_only:
+            raise ConflictError("intent_id and unscoped_only are mutually exclusive")
         with self.engine.connect() as conn:
             if task_id is not None and self.tasks.get(conn, task_id) is None:
                 raise NotFoundError(f"Task not found: {task_id}")
@@ -60,9 +64,37 @@ class ArtifactService:
                 artifact_type=artifact_type,
                 phase=phase,
                 source=source,
+                intent_id=intent_id,
+                unscoped_only=unscoped_only,
                 limit=limit,
                 offset=offset,
             )
+
+    def list_folders(
+        self,
+        task_id: str,
+        *,
+        search: str = "",
+        limit: int = 60,
+        offset: int = 0,
+    ) -> tuple[list[ArtifactFolder], int]:
+        with self.engine.connect() as conn:
+            if self.tasks.get(conn, task_id) is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            return self.repository.list_folders(
+                conn,
+                task_id=task_id,
+                search=search,
+                limit=limit,
+                offset=offset,
+            )
+
+    def get(self, task_id: str, artifact_id: str) -> Artifact:
+        with self.engine.connect() as conn:
+            artifact = self.repository.get(conn, task_id, artifact_id)
+        if artifact is None:
+            raise NotFoundError(f"Artifact not found: {task_id}/{artifact_id}")
+        return artifact
 
     def content(self, task_id: str, artifact_id: str) -> ArtifactContent:
         with self.engine.connect() as conn:

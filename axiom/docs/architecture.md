@@ -293,7 +293,7 @@ Fact/Intent 归档使用 `archive_batches + archive_batch_members`，不是直�
 
 设置页只编辑真实 `RuntimeConfig`，分为“调度并发、阶段预算、Reason 触发与派发、高级可靠性”四组；Bootstrap/Reason 单 Task 并发以只读 `1（固定）` 展示。Explore Conclude 下限默认和前后端输入约束均为 180 秒。保存使用 `expected_version` 乐观锁，合法零值不会被 `||` 回填；Runner 每 tick 读取版本并回报真实 `applied_version/applied_at`。生产浏览器已验证保存、刷新、重启持久化和下一 tick 热应用。
 
-Artifact、Vulnerability 和 Todo 列表支持可选服务端分页、搜索和 `X-Total-Count`；未传分页参数时保持旧客户端全量行为。文件中心使用单个跨任务 `GET /api/v1/artifacts`，每页 60 条，不再按 Task 逐个请求 Artifact。漏洞列表每页 50 条，状态看板每列先取 25 条并独立加载更多；Human Artifact 每页 50 条，Workspace 只取最近 6 条。Intent/Fact 复用已加载 Graph 数据并限制首屏渲染。
+Artifact、Vulnerability 和 Todo 列表支持可选服务端分页、搜索和 `X-Total-Count`；未传分页参数时保持旧客户端全量行为。文件中心的“全部任务”继续使用单个跨任务 `GET /api/v1/artifacts`，每页 60 条，不再按 Task 逐个请求 Artifact。选中 Task 后改用 `GET /api/v1/tasks/{task_id}/artifact-folders` 显示 Intent 文件夹；无 `intent_id` 的上传文件归入固定的“任务文件”。进入文件夹后通过 `intent_id` 或 `unscoped_only=true` 只读取该目录的 Artifact，每页 50 条；单个 Artifact 元数据接口负责恢复深链接和跨分页定位。文件位置完整写入 `#/files?task=...&folder=...&artifact=...`，漏洞、图谱和 Human 页面统一通过 `openArtifactLocation()` 进入正确文件夹并高亮目标。漏洞列表每页 50 条，状态看板每列先取 25 条并独立加载更多；Human Artifact 每页 50 条，Workspace 只取最近 6 条。Intent/Fact 复用已加载 Graph 数据并限制首屏渲染。
 
 Dashboard 使用 `GET /api/v1/dashboard/summary` 获取 Task 状态、漏洞等级、开放 Intent、Token 汇总和最近 8 条事件，不再加载完整漏洞库和大量 Audit。`TaskService._decorate_many()` 使用一条 UNION 聚合计数查询和一条活动 ReasonRun 查询，Task 数量增长不会产生 N+1。
 
@@ -334,7 +334,9 @@ ReasonRun/RuntimeConfig 迁移版本为 `20260727_0020`。迁移保留历史 Rea
 
 `20260729_0026_frontend_query_indexes` 为 Artifact 和 Vulnerability 的分页、过滤和稳定倒序读取增加组合索引。迁移不改业务数据；生产副本已完成 `0026 → 0025 → 0026`，SQLite integrity 为 `ok`。
 
-2026-07-29 生产升级前备份位于 `/Users/hexin/.local/share/axiom-v3/backups/archive-batches-20260729T034510Z/axiom.db.pre-0025.bak`。生产库当前 revision 为 `20260729_0026`，API 与 Runner LaunchAgent 均正常运行，SQLite integrity 为 `ok` 且 foreign key violation 为 0。
+`20260729_0027_artifact_folder_index` 为 Task 内按 Intent 聚合和读取 Artifact 增加 `(task_id, archived, intent_id, created_at)` 索引。迁移不修改业务数据；生产副本完成 `0026 → 0027 → 0026 → 0027`，SQLite integrity 为 `ok`。
+
+2026-07-29 生产升级前备份位于 `/Users/hexin/.local/share/axiom-v3/backups/archive-batches-20260729T034510Z/axiom.db.pre-0025.bak`。生产库当前 revision 为 `20260729_0027`，API 与 Runner LaunchAgent 均正常运行，SQLite integrity 为 `ok` 且 foreign key violation 为 0。
 
 ## 10. 当前明确不属于主流程的内容
 

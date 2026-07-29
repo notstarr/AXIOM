@@ -268,8 +268,10 @@ window.AxiomModules.core = {
 
     handleRoute() {
       const hash = location.hash || '#/';
-      const taskMatch = hash.match(/^#\/tasks\/(.+)$/);
-      const legacyProjectMatch = hash.match(/^#\/projects\/(.+)$/);
+      const routeText = hash.replace(/^#\/?/, '') || 'dashboard';
+      const [routePath, routeQuery = ''] = routeText.split('?', 2);
+      const taskMatch = routePath.match(/^tasks\/(.+)$/);
+      const legacyProjectMatch = routePath.match(/^projects\/(.+)$/);
       if (taskMatch || legacyProjectMatch) {
         const id = decodeURIComponent((taskMatch || legacyProjectMatch)[1]);
         this.activePage = 'task-detail';
@@ -277,9 +279,12 @@ window.AxiomModules.core = {
         else this.mountCurrentPage();
         return;
       }
-      const page = (hash.replace(/^#\/?/, '') || 'dashboard').split('/')[0];
+      const page = routePath.split('/')[0];
       const allowed = ['dashboard', 'tasks', 'vulnerabilities', 'projects', 'guard-audit', 'skills', 'files', 'mcp', 'settings', 'prompts'];
       const newPage = allowed.includes(page) ? page : 'dashboard';
+      const sameMountedFilesPage = newPage === 'files'
+        && this.activePage === 'files'
+        && this.mountedPageTemplate === 'files';
       if (this.activePage !== newPage && !this._navigatingBack) {
         this.pageHistory.push(this.activePage);
       }
@@ -287,6 +292,13 @@ window.AxiomModules.core = {
       this.activePage = newPage;
       this.mobileSidebarOpen = false;
       if (this.activePage !== 'task-detail' && this.view !== 'list') this.backToList(true);
+      if (newPage === 'files') {
+        this.applyArtifactRouteParams?.(new URLSearchParams(routeQuery));
+        if (sameMountedFilesPage) {
+          this.loadArtifactCenter?.();
+          return;
+        }
+      }
       this.mountCurrentPage();
     },
 

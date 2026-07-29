@@ -1161,51 +1161,206 @@
   });
 
   Object.assign(M.files.methods, {
+    applyArtifactRouteParams(params) {
+      const nextTask = String(params?.get('task') || '');
+      const nextFolder = nextTask ? String(params?.get('folder') || '') : '';
+      const nextArtifact = nextFolder ? String(params?.get('artifact') || '') : '';
+      const locationChanged = nextTask !== this.artifactCenterSelectedTask
+        || nextFolder !== this.artifactCenterFolderKey;
+      this.artifactCenterSelectedTask = nextTask;
+      this.artifactCenterFolderKey = nextFolder;
+      this.artifactCenterRouteArtifactId = nextArtifact;
+      if (locationChanged) {
+        this.artifactCenterSearch = '';
+        this.artifactCenterType = 'all';
+        this.artifactCenterPhase = 'all';
+        this.artifactCenterSource = 'all';
+        this.artifactCenterPage = 0;
+        this.artifactCenterFolderPage = 0;
+        this.artifactCenterSelected = null;
+      } else if (!nextArtifact) {
+        this.artifactCenterSelected = null;
+      }
+    },
+    artifactCenterHash(taskId = '', folderKey = '', artifactId = '') {
+      const params = new URLSearchParams();
+      if (taskId) params.set('task', taskId);
+      if (taskId && folderKey) params.set('folder', folderKey);
+      if (taskId && folderKey && artifactId) params.set('artifact', artifactId);
+      const query = params.toString();
+      return `#/files${query ? `?${query}` : ''}`;
+    },
+    navigateArtifactCenter(taskId = '', folderKey = '', artifactId = '') {
+      const target = this.artifactCenterHash(taskId, folderKey, artifactId);
+      if (location.hash === target) {
+        this.applyArtifactRouteParams(new URLSearchParams(target.split('?')[1] || ''));
+        this.loadArtifactCenter();
+      } else {
+        location.hash = target;
+      }
+    },
+    artifactCenterMode() {
+      if (!this.artifactCenterSelectedTask) return 'global';
+      if (!this.artifactCenterFolderKey) return 'task-root';
+      return 'folder';
+    },
+    artifactCenterCurrentTask() {
+      return (this.artifactCenterTasks || []).find(task => task.id === this.artifactCenterSelectedTask) || null;
+    },
+    selectArtifactCenterTask(taskId) {
+      this.navigateArtifactCenter(taskId || '');
+    },
+    openArtifactFolder(folder) {
+      if (!this.artifactCenterSelectedTask || !folder?.folder_key) return;
+      this.navigateArtifactCenter(this.artifactCenterSelectedTask, folder.folder_key);
+    },
+    backArtifactCenterTask() {
+      if (!this.artifactCenterSelectedTask) return;
+      this.navigateArtifactCenter(this.artifactCenterSelectedTask);
+    },
+    closeArtifactCenterPreview() {
+      if (!this.artifactCenterSelectedTask || !this.artifactCenterFolderKey) {
+        this.artifactCenterSelected = null;
+        return;
+      }
+      this.navigateArtifactCenter(this.artifactCenterSelectedTask, this.artifactCenterFolderKey);
+    },
     async loadArtifactCenter() {
       const requestId = ++this._artifactCenterRequestId;
       this.artifactCenterLoading = true;
       try {
         const signal = this._pageAbortController?.signal;
         const tasks = (await request('GET', '/tasks', null, { signal })).map(mapTask);
+        const taskMap = new Map(tasks.map(task => [task.id, task]));
+        if (requestId !== this._artifactCenterRequestId) return;
+        this.artifactCenterTasks = tasks;
+        if (this.artifactCenterSelectedTask && !taskMap.has(this.artifactCenterSelectedTask)) {
+          this.showToast('任务不存在或已被删除', 'error');
+          this.navigateArtifactCenter();
+          return;
+        }
+
+        const mode = this.artifactCenterMode();
+        if (mode === 'task-root') {
+          const params = new URLSearchParams({
+            limit: String(this.artifactCenterFolderPageSize),
+            offset: String(this.artifactCenterFolderPage * this.artifactCenterFolderPageSize),
+          });
+          const search = String(this.artifactCenterSearch || '').trim();
+          if (search) params.set('search', search);
+          const page = await requestPage(
+            `/tasks/${this.artifactCenterSelectedTask}/artifact-folders?${params}`,
+            { signal },
+          );
+          if (requestId !== this._artifactCenterRequestId) return;
+          this.artifactCenterFolders = page.items;
+          this.artifactCenterFolderTotal = page.total;
+          this.artifactCenterItems = [];
+          this.artifactCenterTotal = 0;
+          this.artifactCenterSelected = null;
+          return;
+        }
+
         const params = new URLSearchParams({
-          limit: String(this.artifactCenterPageSize),
-          offset: String(this.artifactCenterPage * this.artifactCenterPageSize),
+          limit: String(mode === 'folder' ? 50 : this.artifactCenterPageSize),
+          offset: String(this.artifactCenterPage * (mode === 'folder' ? 50 : this.artifactCenterPageSize)),
         });
-        if (this.artifactCenterSelectedTask) params.set('task_id', this.artifactCenterSelectedTask);
-        if (String(this.artifactCenterSearch || '').trim()) params.set('search', String(this.artifactCenterSearch).trim());
+        const search = String(this.artifactCenterSearch || '').trim();
+        if (search) params.set('search', search);
         if (this.artifactCenterType !== 'all') params.set('artifact_type', this.artifactCenterType);
         if (this.artifactCenterPhase !== 'all') params.set('phase', this.artifactCenterPhase);
         if (this.artifactCenterSource !== 'all') params.set('source', this.artifactCenterSource);
-        const page = await requestPage(`/artifacts?${params}`, {
-          signal,
-        });
-        const taskMap = new Map(tasks.map(task => [task.id, task]));
+        let endpoint = '/artifacts';
+        if (mode === 'folder') {
+          endpoint = `/tasks/${this.artifactCenterSelectedTask}/artifacts`;
+          if (this.artifactCenterFolderKey === 'task') params.set('unscoped_only', 'true');
+          else params.set('intent_id', this.artifactCenterFolderKey);
+        }
+        const page = await requestPage(`${endpoint}?${params}`, { signal });
         const items = page.items.map(item => {
           const mapped = mapArtifact(item);
           const task = taskMap.get(item.task_id);
-          return { ...mapped, task_title: task?.title || item.task_id, phase: this.artifactSourcePhase(mapped), task_id: item.task_id };
+          return {
+            ...mapped,
+            task_title: task?.title || item.task_id,
+            phase: this.artifactSourcePhase(mapped),
+            task_id: item.task_id,
+          };
         });
         if (requestId !== this._artifactCenterRequestId) return;
-        this.artifactCenterTasks = tasks;
+        this.artifactCenterFolders = [];
         this.artifactCenterItems = items;
         this.artifactCenterTotal = page.total;
+        await this.restoreArtifactCenterSelection(requestId);
       } catch (error) { if (error?.name !== 'AbortError') this.showToast(error.message, 'error'); }
       finally {
         if (requestId === this._artifactCenterRequestId) this.artifactCenterLoading = false;
       }
     },
+    async restoreArtifactCenterSelection(requestId) {
+      const artifactId = this.artifactCenterRouteArtifactId;
+      if (!artifactId || !this.artifactCenterSelectedTask || !this.artifactCenterFolderKey) return;
+      if (this.artifactCenterSelected?.id === artifactId) return;
+      let target = (this.artifactCenterItems || []).find(item => item.id === artifactId);
+      if (!target) {
+        try {
+          const raw = await request(
+            'GET',
+            `/tasks/${this.artifactCenterSelectedTask}/artifacts/${artifactId}`,
+            null,
+            { signal: this._pageAbortController?.signal },
+          );
+          if (requestId !== this._artifactCenterRequestId) return;
+          target = mapArtifact(raw);
+          const realFolder = target.intent_id || 'task';
+          if (realFolder !== this.artifactCenterFolderKey) {
+            this.navigateArtifactCenter(this.artifactCenterSelectedTask, realFolder, target.id);
+            return;
+          }
+          const task = this.artifactCenterCurrentTask();
+          target = {
+            ...target,
+            task_title: task?.title || target.task_id,
+            phase: this.artifactSourcePhase(target),
+          };
+          this.artifactCenterItems = [
+            target,
+            ...(this.artifactCenterItems || []).filter(item => item.id !== target.id),
+          ];
+        } catch (error) {
+          if (error?.name === 'AbortError') return;
+          this.showToast('产物不存在或已归档', 'error');
+          this.navigateArtifactCenter(this.artifactCenterSelectedTask, this.artifactCenterFolderKey);
+          return;
+        }
+      }
+      await this.openArtifactCenter(target);
+      this.$nextTick(() => {
+        const selector = `[data-artifact-id="${CSS.escape(String(target.id))}"]`;
+        document.querySelector(selector)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+    },
     scheduleArtifactCenterSearch() {
       clearTimeout(this._artifactSearchTimer);
       this._artifactSearchTimer = setTimeout(() => {
-        this.artifactCenterPage = 0;
+        if (this.artifactCenterMode() === 'task-root') this.artifactCenterFolderPage = 0;
+        else this.artifactCenterPage = 0;
         this.loadArtifactCenter();
       }, 250);
     },
-    artifactCenterPageCount() { return Math.max(1, Math.ceil((this.artifactCenterTotal || 0) / this.artifactCenterPageSize)); },
+    artifactCenterEffectivePageSize() { return this.artifactCenterMode() === 'folder' ? 50 : this.artifactCenterPageSize; },
+    artifactCenterPageCount() { return Math.max(1, Math.ceil((this.artifactCenterTotal || 0) / this.artifactCenterEffectivePageSize())); },
     async setArtifactCenterPage(page) {
       const next = Math.max(0, Math.min(this.artifactCenterPageCount() - 1, Number(page) || 0));
       if (next === this.artifactCenterPage) return;
       this.artifactCenterPage = next;
+      await this.loadArtifactCenter();
+    },
+    artifactCenterFolderPageCount() { return Math.max(1, Math.ceil((this.artifactCenterFolderTotal || 0) / this.artifactCenterFolderPageSize)); },
+    async setArtifactCenterFolderPage(page) {
+      const next = Math.max(0, Math.min(this.artifactCenterFolderPageCount() - 1, Number(page) || 0));
+      if (next === this.artifactCenterFolderPage) return;
+      this.artifactCenterFolderPage = next;
       await this.loadArtifactCenter();
     },
     artifactCenterTypes() { return [...new Set((this.artifactCenterItems || []).map(item => item.artifact_type).filter(Boolean))].sort(); },
@@ -1245,7 +1400,41 @@
       this.humanArtifactPage = next;
       await this.loadHumanArtifactPage();
     },
+    artifactFolderLabel(folder) { return folder?.folder_key === 'task' ? '任务文件' : (folder?.folder_key || '未知目录'); },
+    artifactFolderDescription(folder) {
+      if (folder?.folder_key === 'task') return '人工上传及未关联 Intent 的任务级产物';
+      return folder?.intent_description || '该 Intent 的正式产物';
+    },
+    artifactFolderPhase(folder) { return folder?.folder_key === 'task' ? 'upload' : (folder?.intent_kind || 'intent'); },
     artifactFileName(item) { return String(item?.path || '').split('/').pop() || item?.id || 'artifact'; },
+    artifactDisplayPath(item) {
+      const path = String(item?.path || '');
+      if (this.artifactCenterFolderKey && this.artifactCenterFolderKey !== 'task') {
+        const prefix = `${this.artifactCenterFolderKey}/`;
+        return path.startsWith(prefix) ? path.slice(prefix.length) : path;
+      }
+      if (this.artifactCenterFolderKey === 'task') return this.artifactFileName(item);
+      return path;
+    },
+    isArtifactCenterSelected(item) { return !!item?.id && this.artifactCenterSelected?.id === item.id; },
+    selectArtifactCenterItem(item) {
+      if (!item?.id) return;
+      const taskId = item.task_id || this.artifactCenterSelectedTask;
+      const folderKey = item.intent_id || (this.artifactCenterFolderKey || 'task');
+      this.navigateArtifactCenter(taskId, folderKey, item.id);
+    },
+    async openArtifactLocation(taskId, artifactOrId) {
+      if (!taskId || !artifactOrId) return;
+      try {
+        const item = typeof artifactOrId === 'string'
+          ? await request('GET', `/tasks/${taskId}/artifacts/${artifactOrId}`)
+          : artifactOrId;
+        if (!item?.id) throw new Error('Artifact metadata is unavailable');
+        this.navigateArtifactCenter(taskId, item.intent_id || 'task', item.id);
+      } catch (error) {
+        this.showToast(error.message || '无法打开产物', 'error');
+      }
+    },
     artifactTypeIcon(type) { return type === 'upload' ? '↑' : /finding|vuln/i.test(type || '') ? '!' : /lead/i.test(type || '') ? '↗' : /evidence/i.test(type || '') ? '◈' : /api|asset|inventory/i.test(type || '') ? '◫' : '▤'; },
     artifactKindLabel(item) {
       const type = String(item?.artifact_type || '').toLowerCase();
@@ -1331,15 +1520,23 @@
     },
     async archiveArtifactCenter(item) {
       if (!confirm(`归档产物 ${this.artifactFileName(item)}？`)) return;
-      try { await request('DELETE', `/tasks/${item.task_id}/artifacts/${item.id}`); this.artifactCenterSelected = null; await this.loadArtifactCenter(); this.showToast('产物已归档'); }
+      try {
+        await request('DELETE', `/tasks/${item.task_id}/artifacts/${item.id}`);
+        this.showToast('产物已归档');
+        this.navigateArtifactCenter(item.task_id, item.intent_id || 'task');
+      }
       catch (error) { this.showToast(error.message, 'error'); }
     },
     async uploadArtifactCenter(event) {
       const file = event.target.files[0]; if (!file) return;
-      const taskId = this.artifactCenterSelectedTask || this.artifactCenterTasks[0]?.id;
+      const taskId = this.artifactCenterSelectedTask;
       if (!taskId) { this.showToast('请先选择一个任务', 'error'); event.target.value = ''; return; }
       const form = new FormData(); form.append('file', file); form.append('actor', this.actorName());
-      try { await request('POST', `/tasks/${taskId}/artifacts/upload`, form); await this.loadArtifactCenter(); this.showToast('产物已上传'); }
+      try {
+        const created = await request('POST', `/tasks/${taskId}/artifacts/upload`, form);
+        this.showToast('产物已上传到任务文件');
+        await this.openArtifactLocation(taskId, created);
+      }
       catch (error) { this.showToast(error.message, 'error'); }
       event.target.value = '';
     },

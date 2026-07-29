@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
-from axiom.modules.artifacts.schemas import Artifact, ArtifactContent
+from axiom.modules.artifacts.schemas import Artifact, ArtifactContent, ArtifactFolder
 
 
 router = APIRouter(tags=["artifacts"])
@@ -21,11 +21,16 @@ def list_artifacts(
     artifact_type: str | None = None,
     phase: str | None = None,
     source: str | None = None,
+    intent_id: str | None = None,
+    unscoped_only: bool = False,
     limit: int | None = Query(default=None, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     container: Container = Depends(get_container),
 ) -> list[Artifact]:
-    if limit is None:
+    has_filters = any(
+        [search.strip(), artifact_type, phase, source, intent_id, unscoped_only]
+    )
+    if limit is None and not has_filters:
         items = container.artifacts.list(task_id)
         response.headers["X-Total-Count"] = str(len(items))
         return items
@@ -35,6 +40,30 @@ def list_artifacts(
         artifact_type=artifact_type,
         phase=phase,
         source=source,
+        intent_id=intent_id,
+        unscoped_only=unscoped_only,
+        limit=limit or 200,
+        offset=offset,
+    )
+    response.headers["X-Total-Count"] = str(total)
+    return items
+
+
+@router.get(
+    "/tasks/{task_id}/artifact-folders",
+    response_model=list[ArtifactFolder],
+)
+def list_artifact_folders(
+    task_id: str,
+    response: Response,
+    search: str = "",
+    limit: int = Query(default=60, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    container: Container = Depends(get_container),
+) -> list[ArtifactFolder]:
+    items, total = container.artifacts.list_folders(
+        task_id,
+        search=search,
         limit=limit,
         offset=offset,
     )
@@ -67,6 +96,15 @@ def list_all_artifacts(
     )
     response.headers["X-Total-Count"] = str(total)
     return items
+
+
+@router.get("/tasks/{task_id}/artifacts/{artifact_id}", response_model=Artifact)
+def read_artifact(
+    task_id: str,
+    artifact_id: str,
+    container: Container = Depends(get_container),
+) -> Artifact:
+    return container.artifacts.get(task_id, artifact_id)
 
 
 @router.get("/tasks/{task_id}/artifacts/{artifact_id}/content", response_model=ArtifactContent)

@@ -489,12 +489,7 @@ window.AxiomModules.dashboard = {
 
     async openVulnerabilityArtifact(v, artifact) {
       if (!v?.project_id || !artifact?.id) return;
-      this.navigateTo('files');
-      await this.$nextTick();
-      this.artifactCenterSelectedTask = v.project_id;
-      await this.loadArtifactCenter();
-      const target = (this.artifactCenterItems || []).find(item => item.id === artifact.id);
-      if (target) await this.openArtifactCenter(target);
+      await this.openArtifactLocation(v.project_id, artifact);
     },
   }
 };

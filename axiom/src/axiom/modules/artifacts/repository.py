@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from sqlalchemy import Connection, func, or_, select, update
+from sqlalchemy import Connection, case, func, literal, or_, select, update
 
-from axiom.modules.artifacts.schemas import Artifact
+from axiom.modules.artifacts.schemas import Artifact, ArtifactFolder
 from axiom.modules.artifacts.tables import artifacts
+from axiom.modules.graph.tables import intents
 from axiom.modules.projects.tables import projects
 from axiom.modules.tasks.tables import tasks
 from axiom.shared.ids import allocate_id
@@ -137,6 +138,8 @@ class ArtifactRepository:
         artifact_type: str | None = None,
         phase: str | None = None,
         source: str | None = None,
+        intent_id: str | None = None,
+        unscoped_only: bool = False,
         limit: int,
         offset: int,
     ) -> tuple[list[Artifact], int]:
@@ -146,6 +149,10 @@ class ArtifactRepository:
             query = query.where(artifacts.c.task_id == task_id)
         if project_id:
             query = query.where(tasks.c.project_id == project_id)
+        if intent_id is not None:
+            query = query.where(artifacts.c.intent_id == intent_id)
+        elif unscoped_only:
+            query = query.where(artifacts.c.intent_id.is_(None))
         if artifact_type:
             query = query.where(artifacts.c.artifact_type == artifact_type)
         if phase:
@@ -180,6 +187,76 @@ class ArtifactRepository:
             .offset(offset)
         ).mappings()
         return [Artifact.model_validate(row) for row in rows], int(total)
+
+    def list_folders(
+        self,
+        conn: Connection,
+        *,
+        task_id: str,
+        search: str,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[ArtifactFolder], int]:
+        folder_key = func.coalesce(artifacts.c.intent_id, literal("task")).label(
+            "folder_key"
+        )
+        grouped = (
+            select(
+                folder_key,
+                artifacts.c.intent_id.label("intent_id"),
+                intents.c.kind.label("intent_kind"),
+                intents.c.status.label("intent_status"),
+                func.coalesce(intents.c.description, "").label("intent_description"),
+                func.count(artifacts.c.id).label("artifact_count"),
+                func.coalesce(func.sum(artifacts.c.size), 0).label("total_size"),
+                func.max(artifacts.c.created_at).label("latest_created_at"),
+            )
+            .select_from(
+                artifacts.outerjoin(
+                    intents,
+                    (intents.c.task_id == artifacts.c.task_id)
+                    & (intents.c.id == artifacts.c.intent_id),
+                )
+            )
+            .where(
+                artifacts.c.task_id == task_id,
+                artifacts.c.archived.is_(False),
+            )
+            .group_by(
+                artifacts.c.intent_id,
+                intents.c.kind,
+                intents.c.status,
+                intents.c.description,
+            )
+            .subquery()
+        )
+        query = select(grouped)
+        term = search.strip()
+        if term:
+            pattern = f"%{term}%"
+            query = query.where(
+                or_(
+                    grouped.c.folder_key.ilike(pattern),
+                    grouped.c.intent_description.ilike(pattern),
+                    case(
+                        (grouped.c.intent_id.is_(None), "任务文件"),
+                        else_="",
+                    ).ilike(pattern),
+                )
+            )
+        total = conn.execute(
+            select(func.count()).select_from(query.order_by(None).subquery())
+        ).scalar_one()
+        rows = conn.execute(
+            query.order_by(
+                case((grouped.c.intent_id.is_(None), 0), else_=1),
+                grouped.c.latest_created_at.desc(),
+                grouped.c.folder_key.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        ).mappings()
+        return [ArtifactFolder.model_validate(row) for row in rows], int(total)
 
     def get(self, conn: Connection, task_id: str, artifact_id: str) -> Artifact | None:
         row = conn.execute(

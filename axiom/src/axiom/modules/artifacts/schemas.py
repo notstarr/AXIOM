@@ -20,3 +20,14 @@ class Artifact(BaseModel):
 class ArtifactContent(BaseModel):
     artifact: Artifact
     content: str
+
+
+class ArtifactFolder(BaseModel):
+    folder_key: str
+    intent_id: str | None = None
+    intent_kind: str | None = None
+    intent_status: str | None = None
+    intent_description: str = ""
+    artifact_count: int
+    total_size: int
+    latest_created_at: str

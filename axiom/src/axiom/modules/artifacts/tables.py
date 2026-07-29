@@ -48,4 +48,11 @@ Index(
     artifacts.c.archived,
     artifacts.c.created_at,
 )
+Index(
+    "ix_artifacts_task_active_intent_created",
+    artifacts.c.task_id,
+    artifacts.c.archived,
+    artifacts.c.intent_id,
+    artifacts.c.created_at,
+)
 Index("ix_artifacts_type_created", artifacts.c.artifact_type, artifacts.c.created_at)

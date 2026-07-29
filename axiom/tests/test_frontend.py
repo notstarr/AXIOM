@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
@@ -310,6 +311,56 @@ process.stdout.write(JSON.stringify(items.map(item => ({{
   label: methods.artifactKindLabel(item),
   icon: methods.artifactTypeIcon(item.artifact_type),
 }}))));
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def _run_artifact_folder_navigation_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{
+  state: {{ state: {{}} }}, core: {{ methods: {{}} }}, projects: {{ methods: {{}} }},
+  graph: {{ methods: {{}} }}, files: {{ methods: {{}} }},
+}} }};
+global.location = {{ origin: 'http://testserver', hash: '#/files' }};
+global.fetch = async () => {{ throw new Error('unexpected request'); }};
+eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
+const methods = window.AxiomModules.files.methods;
+const ctx = Object.assign({{
+  artifactCenterSelectedTask: '', artifactCenterFolderKey: '', artifactCenterRouteArtifactId: '',
+  artifactCenterSearch: '', artifactCenterType: 'all', artifactCenterPhase: 'all', artifactCenterSource: 'all',
+  artifactCenterPage: 0, artifactCenterFolderPage: 0, artifactCenterSelected: null,
+  artifactCenterTasks: [{{ id:'t_150', title:'任务 150' }}], artifactCenterItems: [],
+  loadArtifactCenter: () => {{}}, showToast: () => {{}},
+}}, methods);
+ctx.applyArtifactRouteParams(new URLSearchParams('task=t_150&folder=i113&artifact=a686'));
+const applied = {{
+  task: ctx.artifactCenterSelectedTask,
+  folder: ctx.artifactCenterFolderKey,
+  artifact: ctx.artifactCenterRouteArtifactId,
+  mode: ctx.artifactCenterMode(),
+  taskTitle: ctx.artifactCenterCurrentTask().title,
+}};
+ctx.navigateArtifactCenter('t_150', 'i113', 'a686');
+const intentHash = location.hash;
+ctx.navigateArtifactCenter('t_150');
+const taskHash = location.hash;
+ctx.artifactCenterFolderKey = 'i113';
+const displayPath = ctx.artifactDisplayPath({{ id:'a686', path:'i113/evidence/request.txt' }});
+ctx.artifactCenterSelected = {{ id:'a686' }};
+const selected = ctx.isArtifactCenterSelected({{ id:'a686' }});
+process.stdout.write(JSON.stringify({{ applied, intentHash, taskHash, displayPath, selected }}));
 """
     result = subprocess.run(
         [node, "-e", program],
@@ -637,14 +688,13 @@ def test_frontend_and_static_assets_are_served(client):
     response = client.get("/")
     assert response.status_code == 200
     assert "<title>axiom</title>" in response.text
-    assert "/static/js/state.js?v=20260729.1" in response.text
-    assert "/static/js/projects.js?v=20260729.1" in response.text
-    assert "/static/js/skills.js?v=20260728.1" in response.text
-    assert "/static/js/v2-adapter.js?v=20260729.1" in response.text
-    assert "/static/js/helpers.js?v=20260724.2" in response.text
-    assert "/static/js/graph.js?v=20260729.1" in response.text
-    assert "/static/js/human.js?v=20260729.1" in response.text
-    assert "/static/js/timeline.js?v=20260724.3" in response.text
+    for script in [
+        "state", "projects", "skills", "v2-adapter", "helpers", "graph", "human", "timeline",
+    ]:
+        assert re.search(
+            rf'/static/js/{re.escape(script)}\.js\?v=[a-zA-Z0-9._-]+',
+            response.text,
+        )
     assert "/static/tailwind.generated.css" in response.text
     assert "/static/vendor/tailwindcss.js" not in response.text
     assert 'id="page-host"' in response.text
@@ -809,6 +859,22 @@ def test_artifact_center_classifies_new_explore_paths_by_type() -> None:
         {"phase": "explore", "label": "Leads", "icon": "↗"},
         {"phase": "explore", "label": "Evidence", "icon": "◈"},
     ]
+
+
+def test_artifact_center_routes_task_folder_and_selected_file() -> None:
+    assert _run_artifact_folder_navigation_fixture() == {
+        "applied": {
+            "task": "t_150",
+            "folder": "i113",
+            "artifact": "a686",
+            "mode": "folder",
+            "taskTitle": "任务 150",
+        },
+        "intentHash": "#/files?task=t_150&folder=i113&artifact=a686",
+        "taskHash": "#/files?task=t_150",
+        "displayPath": "evidence/request.txt",
+        "selected": True,
+    }
 
 
 def test_task_run_window_helpers_and_shared_resume_dialog() -> None:
