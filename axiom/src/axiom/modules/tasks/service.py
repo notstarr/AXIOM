@@ -111,7 +111,11 @@ class TaskService:
             if command.worker_pool is not None:
                 conn.execute(
                     update(intents)
-                    .where(intents.c.task_id == task_id, intents.c.status == "pending")
+                    .where(
+                        intents.c.task_id == task_id,
+                        intents.c.status == "pending",
+                        intents.c.archived.is_(False),
+                    )
                     .values(worker_pool_json=json.dumps(command.worker_pool, ensure_ascii=False))
                 )
                 conn.execute(

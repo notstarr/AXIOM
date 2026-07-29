@@ -135,6 +135,15 @@ class ArtifactRepository:
         ).mappings().one_or_none()
         return Artifact.model_validate(row) if row is not None else None
 
+    def get_any(self, conn: Connection, task_id: str, artifact_id: str) -> Artifact | None:
+        row = conn.execute(
+            select(artifacts).where(
+                artifacts.c.task_id == task_id,
+                artifacts.c.id == artifact_id,
+            )
+        ).mappings().one_or_none()
+        return Artifact.model_validate(row) if row is not None else None
+
     def archive(self, conn: Connection, task_id: str, artifact_id: str) -> Artifact | None:
         result = conn.execute(
             update(artifacts)

@@ -27,10 +27,9 @@ _is_expected_pid() {
 }
 
 _find_expected_pid() {
-    local line
-    while IFS= read -r line; do
-        local pid="${line%% *}"
-        local cmd="${line#* }"
+    local pid cmd
+    while read -r pid cmd; do
+        [ -n "${pid}" ] || continue
         [[ "${cmd}" == *"--remote-debugging-port=${CDP_PORT}"* ]] || continue
         [[ "${cmd}" == *"--user-data-dir=${PROFILE_DIR}"* ]] || continue
         echo "${pid}"

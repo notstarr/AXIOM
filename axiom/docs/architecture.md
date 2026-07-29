@@ -1,6 +1,6 @@
 # AXIOM 当前生产架构
 
-> 状态：已核对至 2026-07-28。本文描述当前实际代码，不描述未落地的 ASM、容器化或爬虫方案。
+> 状态：已核对至 2026-07-29。本文描述当前实际代码，不描述未落地的 ASM、容器化或爬虫方案。
 
 ## 1. 运行边界
 
@@ -45,6 +45,7 @@ API Router
  ├─ execution      claim 后的 start/input/heartbeat/complete/release
  ├─ dispatch       Snapshot、恢复、领取
  ├─ artifacts      文件产物元数据与内容
+ ├─ archives       Fact/Intent 下游链路的批次归档与恢复
  ├─ vulnerabilities 漏洞对象、状态、导出
  ├─ external_reports 外部上报与重试记录
  ├─ credentials    项目凭证
@@ -259,6 +260,8 @@ contexts/{task_id}/r000001/
 
 Fact 和 Artifact 仍只保留 preview 与 detail ref；`todos.json` 额外提供完整 `title/status_reason`，`graph.json` 的 Intent 摘要额外提供 `todo_id`，使 Reason 能先做历史主题对照，再只展开相似 Todo/Intent。Worker 仍通过 detail 文件或 Context expand API 获取长内容，不会把整个图谱和产物正文重复塞进上下文。
 
+新 Context Revision 会排除已归档 Fact、Intent、Todo、Artifact 和 Vulnerability；Intent 的来源/产出、Todo source、Artifact/Vulnerability 的 `intent_id` 也会移除指向归档实体的引用。引用归档证据的历史 Goal Evaluation 不进入 Worker Context，`/context/expand` 对归档实体返回不存在。已有 Lease 的不可变快照不回写，下一 Lease 才应用新的可见集合。
+
 ## 7. 文件和产物
 
 FileStore 使用外部 data-dir，Artifact 表只保存元数据、hash、size 和 storage key；文件内容仍进入现有文件管理体系。任务删除、Artifact 归档和迁移均不允许通过路径穿越访问外部文件。
@@ -267,9 +270,15 @@ FileStore 使用外部 data-dir，Artifact 表只保存元数据、hash、size �
 
 项目凭证、Task Hints、Project Knowledge 分别保存；凭证按阶段执行输入按需提供，不混入 Origin，也不写入 Fact、Artifact 摘要或命令参数。
 
+### 链路级联归档
+
+Fact/Intent 归档使用 `archive_batches + archive_batch_members`，不是直接翻转单条 `archived`。Fact 根会包含其生产 Intent、自身和所有下游 Intent/Fact；Intent 根会包含自身、产出 Fact 和后续下游，但永远不反向归档来源 Fact 或旁支。闭包内 Intent 的 Artifact、Vulnerability 和漏洞证据 Artifact 一并归档；Todo 仅在没有其它可见关联 Intent 时归档。Bootstrap Intent、Bootstrap 产出 Fact、`origin` 和 `goal` 受保护，活动 Intent 会阻塞归档。
+
+预览返回 `closure_hash`，提交在 SQLite `BEGIN IMMEDIATE` 中重算；闭包变化返回 409。恢复按批次执行，仍被其它 active 批次覆盖的成员继续保持归档。归档不删除文件、Session、Audit Event 或历史 Context；恢复也不改写 Intent/Todo/漏洞原业务状态。若归档与活动 ReasonRun 的 source 或 open Workspace 引用相交，ReasonRun 会被取消且 Workspace 被废弃；无关 Explore 不受影响。
+
 ## 8. 前端
 
-前端继续使用原有信息架构和图谱视觉，通过 V2 API 适配层对接模块化后端。当前主要页面：Dashboard、任务管理、任务新建、概览、可切换图谱、Todo、漏洞、文件、MCP、Worker、Skill、配置、Guard、项目。
+前端继续使用原有信息架构和图谱视觉，通过 V2 API 适配层对接模块化后端。任务详情提供“概览 / 图谱 / 归档”三种视图；归档视图按批次展示根节点、原因、操作者、成员类型、关系、Artifact 预览/下载和恢复历史。Fact/Intent 归档先展示闭包、阻塞项和影响数量，再原子提交；停止或完成 Task 仍可整理历史链路。
 
 任务详情的“概览”和“图谱”是两种人类视图：图谱不是执行事实源；右侧 Todo、事实、产物和漏洞分别从 V2 API 读取。ReasonRun 只显示为图谱上方的运行活动卡片，可查看 Worker、状态、当前活动、工具、心跳、触发器、预算和配置快照，不创建图谱节点。
 
@@ -306,6 +315,10 @@ ReasonRun/RuntimeConfig 迁移版本为 `20260727_0020`。迁移保留历史 Rea
 
 `20260728_0024_task_run_windows` 为 Task 增加本次运行时长、开始时间、UTC 截止时间和最近暂停原因，并建立 `status + run_deadline_at` 索引。历史记录保持 `NULL`，等价于不限时，不猜测旧任务的运行窗口。
 
+`20260729_0025_archive_batches` 新增归档批次和成员表。迁移前已归档的 Fact、Intent、Artifact、Vulnerability、Todo 会分别生成兼容批次；Todo 使用真实 `root_type=todo` 仅用于历史读取，新的交互式归档根仍限制为 Fact、Intent、Artifact 或 Vulnerability。降级只删除批次索引，不修改原实体的 `archived` 状态。
+
+2026-07-29 生产升级前备份位于 `/Users/hexin/.local/share/axiom-v3/backups/archive-batches-20260729T034510Z/axiom.db.pre-0025.bak`。生产库当前 revision 为 `20260729_0025`，API 与 Runner LaunchAgent 均正常运行，SQLite integrity 为 `ok` 且 foreign key violation 为 0。
+
 ## 10. 当前明确不属于主流程的内容
 
 - Bootstrap 没有改成 ASM；ASM 工具链不是当前阶段。
@@ -316,14 +329,14 @@ ReasonRun/RuntimeConfig 迁移版本为 `20260727_0020`。迁移保留历史 Rea
 ## 11. 验证基线
 
 ```text
-uv run pytest                            294 passed, 1 warning
+uv run pytest                            314 passed, 1 warning
 uv run ruff check .                      passed
 python -m compileall -q src tests migrations  passed
 node --check <18 non-vendor static js>   passed
 git diff --check                         passed
 ```
 
-以上测试已覆盖 FINISH 精确识别与 Explore 有限归一化、同会话有界收口、Explore Conclude 核心文件兜底、可选 Evidence、Artifact/Fact 自动生成、ReasonRun/Workspace 生命周期、Reason 触发和调度并发、RuntimeConfig 热应用、Guard，以及 Task 不限时/限时创建、Resume 新窗口、到期暂停、并发幂等、Reason/Claim 截止守卫和前端共享倒计时；仅有 Starlette/httpx 弃用警告。
+以上测试已覆盖 FINISH 精确识别与 Explore 有限归一化、同会话有界收口、Explore Conclude 核心文件兜底、可选 Evidence、Artifact/Fact 自动生成、ReasonRun/Workspace 生命周期、Reason 触发和调度并发、RuntimeConfig 热应用、Guard、Task 运行窗口，以及归档下游闭包、闭包哈希冲突、重叠批次恢复、pending 领取隔离、ReasonRun 失效、Context/Goal 引用过滤、Artifact 历史读取和迁移升降级；仅有 Starlette/httpx 弃用警告。
 
 2026-07-27 生产受控 E2E `t_138` 完成 `Bootstrap → ReasonRun(rr000001) → Explore → ReasonRun(rr000002) → Goal`：正式图谱只有 Bootstrap/Explore 两个 Intent，两个 ReasonRun 均零重试完成；生成 4 个 Artifact、1 个 completed Todo 和两个代码生成 Fact，最终 `goal_from_fact_ids=[f002]`。Task completed 后开放 Intent、ReasonRun、Workspace 均为 0。
 
@@ -332,3 +345,5 @@ git diff --check                         passed
 Explore RPC/动态提醒批次的生产一致性备份为 `/Users/hexin/.local/share/axiom-v3/backups/20260727-182223/`。空库及生产副本完成 `0022 → 0023 → 0022 → 0023`，生产库现为 `20260727_0023`，RuntimeConfig/Runner applied version 均为 v212，Explore Conclude 范围为 180–600 秒，SQLite integrity 为 `ok` 且 foreign key violation 为 0。临时生产验收 `t_146` 的两个 Explore Intent 分别验证“Execute 超时后 RPC Conclude 成功提交”和“工具调用期间 steer 排队后下一轮生效”；共生成 9 个正式 Artifact、2 个代码生成 Fact，执行/基础设施重试均为 0，临时 Task、Project、本机服务和 Pi 进程随后清理。
 
 2026-07-28 部署 Explore 核心产物优先协议时，先停止唯一运行任务 `t_150`，确认 Dispatcher 活动工作为 0，再重启 `com.xrayai.axiom` 与 `com.xrayai.axiom.runner` 并恢复任务。恢复后的 `rr000096` 正常提交 4 个 Explore Intent；新 Lease 的 Pi Session 已确认包含可选 Evidence、未完成写入 Leads 和“不要补跑”的新 Prompt。`i035-i037` 均一次完成且执行/基础设施重试为 0：`i035` 生成 2 个核心 Artifact、3 个 Evidence 和 5 个待验证漏洞，其中一个漏洞只有 Findings 关系、Evidence 为空；`i036` 只生成 findings/leads 两个核心 Artifact，也正常完成；`i037` 在 600 秒 Execute 的动态 70% 时点收到 steer，生成 2 个核心 Artifact、8 个 Evidence 和 `f035`。这些真实路径验证了可选 Evidence、无 Evidence 漏洞和常规 RPC 收口；缺少 FINISH/收口超时的核心文件兜底由自动化模拟测试覆盖。
+
+2026-07-29 归档生产 smoke 使用临时 `t_152` 完成 `Bootstrap → ReasonRun → Explore → Fact 根归档 → Context/Graph/Artifact 隔离 → 归档 Artifact 读取 → 批次恢复`。实际闭包包含 1 Fact、1 Intent、1 Todo 和 3 Artifact，恢复 6 项；`/context/expand` 对归档实体返回 404。临时 Task、Project、Worker 和文件均已清理，生产归档批次表恢复为 0 条。浏览器在 `t_150/f100` 上只执行只读预览，确认显示 2 Fact、2 Intent、2 Todo 和 54 Artifact；同时修复空 `blockers` 长度值 `0` 被 Alpine 作为 HTML boolean attribute 导致确认按钮错误禁用的问题，修复后按钮可用且未提交真实归档。

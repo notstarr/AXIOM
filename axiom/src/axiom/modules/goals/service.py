@@ -69,7 +69,7 @@ class GoalService:
             condition = condition & (intents.c.id != exclude_intent_id)
         conn.execute(
             update(intents)
-            .where(condition, open_intents)
+            .where(condition, open_intents, intents.c.archived.is_(False))
             .values(
                 status="cancelled",
                 worker=None,
@@ -127,11 +127,15 @@ class GoalService:
         achieved: bool = False,
     ) -> None:
         tables = {
-            "fact": (facts, facts.c.id),
-            "artifact": (artifacts, artifacts.c.id),
-            "vulnerability": (vulnerabilities, vulnerabilities.c.id),
-            "todo": (todos, todos.c.id),
-            "hint": (task_hints, task_hints.c.id),
+            "fact": (facts, facts.c.id, facts.c.archived),
+            "artifact": (artifacts, artifacts.c.id, artifacts.c.archived),
+            "vulnerability": (
+                vulnerabilities,
+                vulnerabilities.c.id,
+                vulnerabilities.c.archived,
+            ),
+            "todo": (todos, todos.c.id, todos.c.archived),
+            "hint": (task_hints, task_hints.c.id, task_hints.c.archived),
         }
         completion_fact_refs = 0
         for ref in refs:
@@ -140,9 +144,13 @@ class GoalService:
                 raise ConflictError(f"Unsupported Goal evidence ref: {ref}")
             if kind == "fact" and item_id == "goal":
                 raise ConflictError("Goal Fact cannot be used as Goal evidence")
-            table, id_column = tables[kind]
+            table, id_column, archived_column = tables[kind]
             exists = conn.execute(
-                select(id_column).where(table.c.task_id == task_id, id_column == item_id)
+                select(id_column).where(
+                    table.c.task_id == task_id,
+                    id_column == item_id,
+                    archived_column.is_(False),
+                )
             ).scalar_one_or_none()
             if exists is None:
                 raise ConflictError(f"Goal evidence not found: {ref}")

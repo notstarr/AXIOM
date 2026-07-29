@@ -2,8 +2,9 @@ window.AxiomModules = window.AxiomModules || {};
 window.AxiomModules.human = {
   methods: {
     switchTaskView(mode) {
-      this.view = mode === 'graph' ? 'graph' : 'human';
+      this.view = ['graph', 'archive'].includes(mode) ? mode : 'human';
       if (this.view === 'graph') this.$nextTick(() => { if (!this.cy) this.initGraph(); });
+      if (this.view === 'archive') this.loadArchives();
     },
 
     switchHumanTab(tab) {

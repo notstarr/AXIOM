@@ -18,6 +18,8 @@
 | 项目凭证 | 已验证 | 凭证模块和迁移数据 12 条 |
 | 项目级旧黑白名单 | 保留兼容 | 不再作为新 Scope 配置入口 |
 | 旧任务只读迁移 | 已验证 | `legacy_readonly`，禁止修改执行图谱 |
+| Fact/Intent 链路级联归档 | 已验证 | `archive_batches/archive_batch_members`、下游闭包、重叠批次恢复 |
+| 历史归档兼容迁移 | 已验证 | 0025 为 Fact/Intent/Artifact/Vulnerability/Todo 生成可读批次 |
 
 ## B. 调度和生命周期
 
@@ -76,6 +78,8 @@
 | Worker 文件安全收集 | 已验证 | 拒绝 symlink/越界/空文件；不扫描 session、process、models.json |
 | Artifact 单份正式内容 | 已验证 | 成功 adopt 后清理 run 副本；内部索引不注册为 Artifact |
 | Project Knowledge | 已验证 | 项目共享知识索引 |
+| 归档 Context 隔离 | 已验证 | 新 revision/expand 排除归档实体、关系和 Goal evidence；旧 revision 不改写 |
+| 归档 Artifact 保留 | 已验证 | 文件不删除，独立归档接口支持预览和下载 |
 
 ## E. 漏洞、上报和外围能力
 
@@ -103,6 +107,7 @@
 | 默认目标、Worker 全选 | 已验证 | 新建任务表单 |
 | 任务 Scope/Hints/Worker 配置 | 已验证 | 任务详情和新建任务 |
 | 概览/图谱切换 | 已验证 | 生产浏览器验收 |
+| 独立归档视图 | 已验证 | 批次列表/详情、影响预览、Artifact 查看、重叠恢复计数和恢复历史 |
 | 图谱 Todo 侧栏 | 已验证 | 任务图谱页面 |
 | Files / MCP / Worker / Settings | 已验证 | 生产页面验收 |
 | RuntimeConfig 四组设置 | 已验证 | 调度并发、阶段预算、Reason 触发与派发、高级可靠性 |
@@ -127,13 +132,16 @@
 | 旧 API 回滚 `/health` | `api: v2` |
 | 新 API/Runner LaunchAgent | 均运行 |
 | 回滚后恢复新运行时 | 已完成 |
-| Alembic Revision | `20260727_0020`；空库及包含真实 ReasonRun 数据的生产副本升级-回滚-再升级通过；回滚物化旧版 Reason Intent 保留关联审计 |
+| Alembic Revision | `20260729_0025`；0020 ReasonRun、0023 Explore 收口下限、0024 Task 运行窗口和 0025 归档批次均已进入生产 |
 | ReasonRun 生产备份 | `/Users/hexin/.local/share/axiom-v3/backups/20260727-131804-reasonrun-final/` |
+| 归档批次生产备份 | `/Users/hexin/.local/share/axiom-v3/backups/archive-batches-20260729T034510Z/axiom.db.pre-0025.bak` |
 | Reason CLI PATH | 已验证：Pi 子进程注入当前虚拟环境 `bin`，生产 `t_138` 直接调用 `axiom reason ...` |
 | ReasonRun/FINISH E2E | `t_138` 完成；2 Intent、2 ReasonRun、4 Artifact、1/1 Todo、零重试、`Fact f002 → Goal`、无活动工作 |
 | 停止即时取消 | 运行中 ReasonRun 转为 cancelled；Workspace abandoned；旧 heartbeat/commit 409；临时资源已清理 |
 | RuntimeConfig 热应用 | 浏览器保存/刷新/合法 0/Runner ACK 均通过；最终 saved/applied 均为 v210 |
 | 最终生产 smoke | 临时 `t_141` 验证 Bootstrap → ReasonRun → stop；图谱无 Reason Intent，活动工作和 open Workspace 均为 0 |
-| 全套测试 | 163 passed，1 个弃用警告 |
+| 归档生产 smoke | 临时 `t_152` 验证下游闭包、Context/Graph/Artifact 隔离、归档 Artifact 读取和 6 项恢复；临时数据已清理 |
+| 归档前端验收 | `t_150/f100` 只读预览显示 2 Fact、2 Intent、2 Todo、54 Artifact；空 blockers 时确认按钮可用 |
+| 全套测试 | 314 passed，1 个弃用警告 |
 
 最终生产数据目录：`/Users/hexin/.local/share/axiom-v3`。旧目录仍保留，回滚脚本不会删除旧数据。

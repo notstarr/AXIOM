@@ -661,6 +661,9 @@
     // established frontend API surface while the page itself no longer lives
     // inside Worker management.
     if (path === '/mcp' || path.startsWith('/mcp/')) return request(method, path, body);
+    if (/^\/tasks\/[^/]+\/archives(?:\/|$)/.test(path)) {
+      return request(method, `${path}${url.search}`, body);
+    }
 
     throw new Error(`Backend V2 尚未映射前端请求：${method} ${rawPath}`);
   }

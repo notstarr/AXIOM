@@ -47,6 +47,11 @@ class TodoService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.legacy_readonly:
                 raise ConflictError("Legacy Task is read-only")
+            current = self.repository.get(conn, task_id, todo_id)
+            if current is None:
+                raise NotFoundError(f"Todo not found: {todo_id}")
+            if current.archived:
+                raise ConflictError(f"Archived Todo cannot be updated: {todo_id}")
             for source in command.source_adds:
                 if not self.repository.source_exists(conn, task_id=task_id, source=source):
                     raise ConflictError(f"Todo source not found: {source.type}:{source.id}")

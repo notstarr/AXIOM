@@ -122,6 +122,10 @@
      data-page="human-view" x-init="loadPageTemplate('human-view')"
      class="flex-1 flex flex-col overflow-hidden min-w-0"></div>
 
+<div x-show="activePage === 'task-detail' && view === 'archive'" x-cloak
+     data-page="archive-view" x-init="loadPageTemplate('archive-view')"
+     class="flex-1 flex flex-col overflow-hidden min-w-0"></div>
+
 <div x-show="activePage === 'vulnerabilities'" x-cloak
      data-page="vulnerabilities" x-init="loadPageTemplate('vulnerabilities')"
      class="flex-1 flex flex-col overflow-hidden min-w-0">
@@ -508,6 +512,26 @@
 </div>
 
 <!-- Toast -->
+<div x-show="showArchivePreviewModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="closeArchivePreview()">
+  <div class="bg-white rounded-2xl shadow-2xl modal-enter w-full max-w-2xl mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
+    <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between"><div><h3 class="text-sm font-semibold text-slate-700">确认级联归档</h3><p class="mt-1 text-xs text-slate-400">仅归档下游链路，不会反向归档来源 Fact 或旁支。</p></div><button @click="closeArchivePreview()" class="text-slate-400 hover:text-slate-600 text-lg">&times;</button></div>
+    <div class="p-5 max-h-[65vh] overflow-y-auto">
+      <p x-show="archivePreviewLoading" class="py-10 text-center text-xs text-slate-400">正在计算归档闭包…</p>
+      <template x-if="archivePreview">
+        <div class="space-y-4">
+          <div class="rounded-xl border border-slate-200 bg-slate-50 p-3"><div class="text-xs text-slate-500">归档根</div><div class="mt-1 text-sm font-mono text-slate-700" x-text="`${archiveEntityLabel(archivePreview.root_type)} ${archivePreview.root_id}`"></div></div>
+          <div class="grid grid-cols-2 sm:grid-cols-5 gap-2"><template x-for="type in ['fact','intent','todo','vulnerability','artifact']" :key="`preview-${type}`"><div class="rounded-xl border border-slate-100 bg-slate-50 p-2.5"><div class="text-base font-semibold text-slate-700" x-text="archivePreview.counts[type] || 0"></div><div class="text-[9px] text-slate-400" x-text="archiveEntityLabel(type)"></div></div></template></div>
+          <div x-show="archivePreview.blockers?.length" class="rounded-xl border border-rose-200 bg-rose-50 p-3"><p class="text-xs font-semibold text-rose-700">当前不能归档</p><template x-for="blocker in archivePreview.blockers" :key="blocker"><p class="mt-1 text-xs text-rose-600" x-text="blocker"></p></template></div>
+          <div><label class="text-xs font-medium text-slate-500">归档原因（可选）</label><textarea x-model="archiveReason" rows="2" placeholder="例如：与现有攻击链重复" class="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-amber-100 focus:border-amber-300"></textarea></div>
+          <div class="rounded-xl border border-slate-200 overflow-hidden"><div class="px-3 py-2 bg-slate-50 text-xs font-medium text-slate-600">影响明细</div><div class="max-h-56 overflow-y-auto divide-y divide-slate-100"><template x-for="member in archivePreview.members" :key="`preview-member-${member.entity_type}-${member.entity_id}`"><div class="px-3 py-2 flex items-start gap-2"><span class="px-1.5 py-0.5 rounded bg-slate-100 text-[9px] font-mono text-slate-500" x-text="member.entity_id"></span><div class="min-w-0 flex-1"><p class="text-xs text-slate-600 truncate" x-text="member.title || archiveEntityLabel(member.entity_type)"></p><p class="text-[9px] text-slate-400" x-text="`${archiveEntityLabel(member.entity_type)} · ${archiveRelationLabel(member.relation)}`"></p></div></div></template></div></div>
+        </div>
+      </template>
+    </div>
+    <div class="px-5 py-3 border-t border-slate-100 flex justify-end gap-2"><button @click="closeArchivePreview()" :disabled="archiveSubmitting" class="px-4 py-2 text-sm rounded-xl border border-slate-200 text-slate-500">取消</button><button @click="confirmArchive()" :disabled="archiveSubmitting || archivePreviewLoading || !archivePreview || (archivePreview.blockers?.length > 0)" class="px-4 py-2 text-sm rounded-xl bg-amber-500 text-white font-medium hover:bg-amber-600 disabled:opacity-30" x-text="archiveSubmitting ? '归档中…' : '确认归档'"></button></div>
+  </div>
+</div>
+
+<!-- Toast -->
 <div x-show="toast && toast.show" x-cloak
   x-transition:enter="transition ease-out duration-300"
   x-transition:enter-start="opacity-0 translate-y-2"
@@ -530,6 +554,7 @@
 <script src="/static/js/mcp.js?v=20260723.3"></script>
   <script src="/static/js/graph.js?v=20260727.3"></script>
 <script src="/static/js/human.js?v=20260727.1"></script>
+<script src="/static/js/archives.js?v=20260729.1"></script>
 <script src="/static/js/timeline.js?v=20260724.3"></script>
 <script src="/static/js/actions.js?v=20260723.3"></script>
 <script src="/static/js/dispatch.js?v=20260727.3"></script>

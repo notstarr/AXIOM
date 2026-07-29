@@ -1128,6 +1128,9 @@ class ReasonService:
                     conn, workspace.task_id, item.todo_id
                 ) is None:
                     raise NotFoundError(f"Todo not found: {item.todo_id}")
+                persisted = self.todos.get(conn, workspace.task_id, item.todo_id)
+                if persisted is not None and persisted.archived:
+                    raise ConflictError(f"Todo is archived: {item.todo_id}")
             except (ConflictError, NotFoundError) as exc:
                 errors.append(str(exc))
         for proposal in draft.intent_proposals:
@@ -1354,6 +1357,8 @@ class ReasonService:
             todo = self.todos.get(conn, task_id, proposal.todo_id or "")
             if todo is None:
                 raise NotFoundError(f"Todo not found: {proposal.todo_id}")
+            if todo.archived:
+                raise ConflictError(f"Intent cannot reference archived Todo: {todo.id}")
             todo_id = proposal.todo_id or ""
         staged = next(
             (item for item in draft.todo_updates if item.todo_id == todo_id),

@@ -1,0 +1,89 @@
+<template x-if="activePage === 'task-detail' && view === 'archive' && project">
+<div class="h-full min-h-0 flex flex-col overflow-hidden min-w-0 bg-slate-50/40">
+  <header class="shrink-0 bg-white/90 backdrop-blur border-b border-slate-200/70 px-5 py-3 flex items-center gap-3">
+    <button @click="backToList()" class="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition" aria-label="返回任务列表">‹</button>
+    <div class="min-w-0">
+      <div class="flex items-center gap-2">
+        <h2 class="text-base font-semibold text-slate-800">归档</h2>
+        <span class="text-[11px] font-mono text-slate-400" x-text="project?.project?.id"></span>
+        <span class="text-xs text-slate-500 truncate" x-text="project?.project?.title"></span>
+      </div>
+      <p class="mt-0.5 text-xs text-slate-400">归档内容仅保留在人类视图中，不进入新的 Worker Context。</p>
+    </div>
+    <div class="flex-1"></div>
+    <div class="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+      <button @click="switchTaskView('human')" class="px-2.5 py-1 rounded-md text-[11px] text-slate-500 hover:bg-white">概览</button>
+      <button @click="switchTaskView('graph')" class="px-2.5 py-1 rounded-md text-[11px] text-slate-500 hover:bg-white">图谱</button>
+      <button class="px-2.5 py-1 rounded-md text-[11px] bg-white text-amber-700 shadow-sm">归档</button>
+    </div>
+    <button @click="loadArchives(selectedArchiveId)" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50">刷新</button>
+  </header>
+
+  <div class="flex-1 min-h-0 grid grid-cols-[340px_minmax(0,1fr)]">
+    <aside class="min-h-0 border-r border-slate-200 bg-white flex flex-col">
+      <div class="p-3 border-b border-slate-100 flex items-center gap-2">
+        <button @click="archiveStatusFilter='active'; changeArchiveStatusFilter()" class="flex-1 px-3 py-1.5 rounded-lg text-xs border" :class="archiveStatusFilter === 'active' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 text-slate-500'">当前归档</button>
+        <button @click="archiveStatusFilter='restored'; changeArchiveStatusFilter()" class="flex-1 px-3 py-1.5 rounded-lg text-xs border" :class="archiveStatusFilter === 'restored' ? 'border-slate-300 bg-slate-100 text-slate-700' : 'border-slate-200 text-slate-500'">恢复历史</button>
+      </div>
+      <div class="flex-1 min-h-0 overflow-y-auto divide-y divide-slate-100">
+        <template x-for="batch in archives" :key="batch.id">
+          <button @click="selectArchive(batch.id)" class="w-full text-left px-4 py-3 transition" :class="selectedArchiveId === batch.id ? 'bg-amber-50/70' : 'hover:bg-slate-50'">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs font-mono font-semibold text-slate-700" x-text="batch.id"></span>
+              <span class="px-1.5 py-0.5 rounded text-[9px]" :class="batch.status === 'active' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'" x-text="batch.status === 'active' ? '已归档' : '已恢复'"></span>
+            </div>
+            <p class="mt-1.5 text-xs text-slate-600 truncate" x-text="`${archiveEntityLabel(batch.root_type)} ${batch.root_id}`"></p>
+            <p class="mt-1 text-[10px] text-slate-400 line-clamp-2" x-text="batch.reason || '未填写归档原因'"></p>
+            <div class="mt-2 flex items-center justify-between text-[9px] text-slate-400"><span x-text="`${batch.members.length} 项`"></span><span x-text="formatTime(batch.created_at)"></span></div>
+          </button>
+        </template>
+        <p x-show="!archiveLoading && archives.length === 0" class="px-5 py-12 text-center text-xs text-slate-400">当前没有归档批次。</p>
+        <p x-show="archiveLoading" class="px-5 py-12 text-center text-xs text-slate-400">正在加载归档记录…</p>
+      </div>
+    </aside>
+
+    <main class="min-h-0 overflow-y-auto p-5">
+      <template x-if="selectedArchive">
+        <div class="max-w-[1200px] mx-auto space-y-4">
+          <section class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <div class="flex items-center gap-2"><span class="text-sm font-mono font-semibold text-slate-800" x-text="selectedArchive.id"></span><span class="text-[10px] text-slate-400" x-text="`${archiveEntityLabel(selectedArchive.root_type)} ${selectedArchive.root_id}`"></span></div>
+                <p class="mt-2 text-sm text-slate-600" x-text="selectedArchive.reason || '未填写归档原因'"></p>
+                <p class="mt-2 text-[10px] text-slate-400" x-text="`${selectedArchive.actor} · ${formatTime(selectedArchive.created_at)}`"></p>
+              </div>
+              <div x-show="selectedArchive.status === 'active'" class="text-right">
+                <button @click="restoreArchive(selectedArchive)" class="px-3 py-2 rounded-xl border border-emerald-200 text-xs text-emerald-700 hover:bg-emerald-50">恢复此批次</button>
+                <p class="mt-1.5 text-[9px] text-slate-400" x-text="`将恢复 ${selectedArchive.restored_count || 0} 项，${selectedArchive.retained_archived_count || 0} 项仍保持归档`"></p>
+              </div>
+            </div>
+            <div class="mt-4 grid grid-cols-2 md:grid-cols-5 gap-2">
+              <template x-for="type in ['fact','intent','todo','vulnerability','artifact']" :key="type">
+                <div class="rounded-xl bg-slate-50 border border-slate-100 p-3"><div class="text-lg font-semibold text-slate-700" x-text="selectedArchive.counts[type] || 0"></div><div class="text-[10px] text-slate-400" x-text="archiveEntityLabel(type)"></div></div>
+              </template>
+            </div>
+          </section>
+
+          <template x-for="type in ['fact','intent','todo','vulnerability','artifact']" :key="`archive-group-${type}`">
+            <section x-show="archiveMembers(type).length" class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between"><h3 class="text-sm font-semibold text-slate-700" x-text="archiveEntityLabel(type)"></h3><span class="text-xs text-slate-400" x-text="`${archiveMembers(type).length} 项`"></span></div>
+              <div class="divide-y divide-slate-100">
+                <template x-for="member in archiveMembers(type)" :key="`${member.entity_type}-${member.entity_id}`">
+                  <div class="px-5 py-3 flex items-start gap-3">
+                    <span class="mt-0.5 px-1.5 py-0.5 rounded bg-slate-100 text-[9px] font-mono text-slate-500" x-text="member.entity_id"></span>
+                    <div class="min-w-0 flex-1"><p class="text-xs text-slate-700 whitespace-pre-wrap break-words" x-text="member.title || '无摘要'"></p><div class="mt-1 flex gap-2 text-[9px] text-slate-400"><span x-text="archiveRelationLabel(member.relation)"></span><span x-show="member.status" x-text="member.status"></span></div></div>
+                    <template x-if="member.entity_type === 'artifact'">
+                      <div class="flex items-center gap-1"><button @click="previewArchivedArtifact(member)" class="px-2 py-1 rounded border border-slate-200 text-[10px] text-slate-500 hover:bg-slate-50">预览</button><a :href="archivedArtifactDownloadUrl(member)" download class="px-2 py-1 rounded border border-slate-200 text-[10px] text-slate-500 hover:bg-slate-50">下载</a></div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </section>
+          </template>
+        </div>
+      </template>
+      <p x-show="!selectedArchive && !archiveLoading" class="py-20 text-center text-sm text-slate-400">请选择一个归档批次。</p>
+    </main>
+  </div>
+</div>
+</template>

@@ -27,6 +27,7 @@
     <div class="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
       <button @click="switchTaskView('human')" class="px-2.5 py-1 rounded-md text-[11px] text-slate-500 hover:bg-white">概览</button>
       <button @click="switchTaskView('graph')" class="px-2.5 py-1 rounded-md text-[11px] bg-white text-brand-600 shadow-sm">图谱</button>
+      <button @click="switchTaskView('archive')" class="px-2.5 py-1 rounded-md text-[11px] text-amber-700 hover:bg-white">归档</button>
     </div>
     <div class="flex items-center gap-4 text-xs text-slate-400">
       <span x-text="`${project.facts.length} 事实`"></span>
@@ -313,19 +314,15 @@
                   }" x-text="selectedFactId()"></span>
                 <span class="text-[11px] text-slate-400 font-medium uppercase tracking-wider">事实</span>
               </div>
-              <div x-show="projectIsActive() && !project.project.legacy_readonly" class="flex items-center gap-1">
-                <button @click="openEditFact()" class="p-1 rounded-md hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition" title="编辑">
+              <div x-show="!project.project.legacy_readonly" class="flex items-center gap-1">
+                <button x-show="projectIsActive()" @click="openEditFact()" class="p-1 rounded-md hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition" title="编辑">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
                 </button>
                 <button x-show="selectedFactId() !== 'origin' && selectedFactId() !== 'goal'"
-                        @click="toggleArchiveFact(selectedFactId())"
-                        class="p-1 rounded-md transition" title="归档"
+                        @click="openArchivePreview('fact', selectedFactId())"
+                        class="p-1 rounded-md transition" title="级联归档"
                         :class="selectedFactRecord()?.archived ? 'bg-amber-100 text-amber-500 hover:bg-amber-200' : 'text-slate-400 hover:bg-slate-200 hover:text-slate-600'">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>
-                </button>
-                <button x-show="selectedFactId() !== 'origin' && selectedFactId() !== 'goal'"
-                        @click="deleteFact(selectedFactId())" class="p-1 rounded-md hover:bg-rose-100 text-slate-400 hover:text-rose-500 transition" title="删除">
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14Z"/></svg>
                 </button>
               </div>
             </div>
@@ -372,19 +369,15 @@
                 <span class="px-2 py-0.5 rounded-md bg-violet-100 text-violet-700 text-[10px] font-mono font-bold" x-text="selectedIntentId()"></span>
                 <span class="text-[11px] font-medium" :class="intentStatusClass(selectedIntentRecord())" x-text="intentStatusLabel(selectedIntentRecord())"></span>
               </div>
-              <div x-show="projectIsActive() && !project.project.legacy_readonly" class="flex items-center gap-1">
-                <button @click="openEditIntent()" class="p-1 rounded-md hover:bg-violet-200 text-slate-400 hover:text-violet-600 transition" title="编辑">
+              <div x-show="!project.project.legacy_readonly" class="flex items-center gap-1">
+                <button x-show="projectIsActive()" @click="openEditIntent()" class="p-1 rounded-md hover:bg-violet-200 text-slate-400 hover:text-violet-600 transition" title="编辑">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
                 </button>
                 <button x-show="selectedIntentId() !== 'i001' && !['claimed','running','concluding'].includes(selectedIntentRecord()?.status)"
-                        @click="toggleArchiveIntent(selectedIntentId())"
-                        class="p-1 rounded-md transition" title="归档"
+                        @click="openArchivePreview('intent', selectedIntentId())"
+                        class="p-1 rounded-md transition" title="级联归档"
                         :class="selectedIntentRecord()?.archived ? 'bg-amber-100 text-amber-500 hover:bg-amber-200' : 'text-slate-400 hover:bg-violet-200 hover:text-violet-600'">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>
-                </button>
-                <button x-show="selectedIntentId() !== 'i001' && ['pending','failed','cancelled'].includes(intentLifecycleState(selectedIntentRecord()))"
-                        @click="deleteIntent(selectedIntentId())" class="p-1 rounded-md hover:bg-rose-100 text-slate-400 hover:text-rose-500 transition" title="删除">
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14Z"/></svg>
                 </button>
               </div>
             </div>

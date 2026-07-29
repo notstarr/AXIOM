@@ -364,7 +364,9 @@ settle("FINISH")
         RpcProcessSpec(
             command=[sys.executable, str(script)],
             log_dir=tmp_path / "logs",
-            timeout_seconds=5,
+            # The fake producer intentionally serializes a growing O(n²) payload;
+            # this test asserts log filtering, not a five-second throughput SLO.
+            timeout_seconds=15,
             poll_interval_seconds=0.01,
             prompt="执行测试",
         )

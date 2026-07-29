@@ -44,6 +44,208 @@ def test_migrations_reach_head_without_metadata_drift(tmp_path) -> None:
         engine.dispose()
 
 
+def test_archive_batch_migration_wraps_all_historical_archived_entity_types(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "archive-batches-roundtrip.db"
+    config = alembic_config(database_path)
+    command.upgrade(config, "20260728_0024")
+    now = "2026-07-29T00:00:00Z"
+    engine = create_sqlite_engine(database_path)
+    try:
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "INSERT INTO projects "
+                "(id, title, description, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("prj_archive", "archive", "", "active", now, now),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO tasks "
+                "(id, project_id, title, origin_host, origin_scheme, origin_port, "
+                "origin_input, goal, status, phase, scope_json, worker_pool_json, "
+                "guard_enabled, external_report_enabled, legacy_readonly, created_at, "
+                "updated_at, completed_at, run_duration_seconds, run_started_at, "
+                "run_deadline_at, last_pause_reason) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "t_archive",
+                    "prj_archive",
+                    "archive",
+                    "archive.example.com",
+                    "https",
+                    "443",
+                    "https://archive.example.com",
+                    "goal",
+                    "completed",
+                    "none",
+                    "{}",
+                    "[]",
+                    False,
+                    False,
+                    False,
+                    now,
+                    now,
+                    now,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO facts (id, task_id, description, created_at, archived) "
+                "VALUES (?, ?, ?, ?, 1)",
+                ("f_archive", "t_archive", "archived fact", now),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO todos "
+                "(id, task_id, title, category, theme, priority, status, created_by, "
+                "status_reason, created_at, updated_at, completed_at, archived) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                (
+                    "td_archive",
+                    "t_archive",
+                    "archived todo",
+                    "recon",
+                    "archive",
+                    50,
+                    "completed",
+                    "test",
+                    "done",
+                    now,
+                    now,
+                    now,
+                ),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO intents "
+                "(id, task_id, todo_id, kind, description, status, creator, worker, "
+                "worker_pool_json, targets_json, retry_count, infrastructure_retry_count, "
+                "last_failure_kind, failure_class, activity_kind, activity_summary, "
+                "activity_tool, to_fact_id, created_at, concluded_at, archived) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                (
+                    "i_archive",
+                    "t_archive",
+                    "td_archive",
+                    "explore",
+                    "archived intent",
+                    "completed",
+                    "test",
+                    None,
+                    "[]",
+                    "[]",
+                    0,
+                    0,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "f_archive",
+                    now,
+                    now,
+                ),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO artifacts "
+                "(id, task_id, intent_id, artifact_type, storage_key, summary, "
+                "content_hash, size, created_by, created_at, archived) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                (
+                    "a_archive",
+                    "t_archive",
+                    "i_archive",
+                    "explore.findings",
+                    "tasks/t_archive/artifacts/i_archive/findings.md",
+                    "archived artifact",
+                    "0" * 64,
+                    10,
+                    "test",
+                    now,
+                ),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO vulnerabilities "
+                "(id, task_id, intent_id, title, type, severity, description, "
+                "prerequisites, impact, reproduction_steps_json, remediation, curl_command, "
+                "evidence_json, affected_target, status, status_reason, source, reported_by, "
+                "created_at, updated_at, archived, format_version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                (
+                    "v_archive",
+                    "t_archive",
+                    "i_archive",
+                    "archived vulnerability",
+                    "test",
+                    "low",
+                    "archived",
+                    "",
+                    "none",
+                    "[]",
+                    "",
+                    "",
+                    "[]",
+                    "archive.example.com",
+                    "重复",
+                    "duplicate",
+                    "test",
+                    "test",
+                    now,
+                    now,
+                    2,
+                ),
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, "head")
+    upgraded = create_sqlite_engine(database_path)
+    try:
+        with upgraded.connect() as conn:
+            batches = conn.exec_driver_sql(
+                "SELECT root_type, root_id FROM archive_batches ORDER BY root_type"
+            ).all()
+            assert batches == [
+                ("artifact", "a_archive"),
+                ("fact", "f_archive"),
+                ("intent", "i_archive"),
+                ("todo", "td_archive"),
+                ("vulnerability", "v_archive"),
+            ]
+            members = conn.exec_driver_sql(
+                "SELECT entity_type, entity_id FROM archive_batch_members "
+                "ORDER BY entity_type"
+            ).all()
+            assert members == batches
+            assert conn.exec_driver_sql("PRAGMA integrity_check").scalar_one() == "ok"
+            assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+    finally:
+        upgraded.dispose()
+
+    command.downgrade(config, "20260728_0024")
+    downgraded = create_sqlite_engine(database_path)
+    try:
+        with downgraded.connect() as conn:
+            assert "archive_batches" not in inspect(conn).get_table_names()
+            for table_name, entity_id in (
+                ("facts", "f_archive"),
+                ("intents", "i_archive"),
+                ("artifacts", "a_archive"),
+                ("vulnerabilities", "v_archive"),
+                ("todos", "td_archive"),
+            ):
+                assert conn.exec_driver_sql(
+                    f"SELECT archived FROM {table_name} WHERE id = ?",
+                    (entity_id,),
+                ).scalar_one() == 1
+            assert conn.exec_driver_sql("PRAGMA integrity_check").scalar_one() == "ok"
+            assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+    finally:
+        downgraded.dispose()
+
+
 def test_credential_text_migration_roundtrip_preserves_legacy_material(tmp_path) -> None:
     database_path = tmp_path / "credential-roundtrip.db"
     config = alembic_config(database_path)

@@ -151,7 +151,7 @@ class GraphRepository:
         ).scalar_one_or_none()
         goal_from_fact_ids = []
         if latest_goal_refs:
-            goal_from_fact_ids = list(
+            candidate_fact_ids = list(
                 dict.fromkeys(
                     item_id
                     for ref in json.loads(latest_goal_refs)
@@ -159,24 +159,52 @@ class GraphRepository:
                     if separator and kind == "fact" and item_id not in {"origin", "goal"}
                 )
             )
+            visible_fact_ids = set(
+                conn.execute(
+                    select(facts.c.id).where(
+                        facts.c.task_id == task_id,
+                        facts.c.id.in_(candidate_fact_ids),
+                        facts.c.archived.is_(False),
+                    )
+                ).scalars()
+            )
+            goal_from_fact_ids = [
+                fact_id for fact_id in candidate_fact_ids if fact_id in visible_fact_ids
+            ]
         return TaskGraph(
             facts=[Fact.model_validate(row) for row in fact_rows],
-            intents=[self._intent(conn, row) for row in intent_rows],
+            intents=[self._intent(conn, row, visible_relations_only=True) for row in intent_rows],
             goal_from_fact_ids=goal_from_fact_ids,
         )
 
     @staticmethod
-    def _intent(conn: Connection, row) -> Intent:
-        sources = list(
-            conn.execute(
-                select(intent_sources.c.fact_id)
-                .where(
-                    intent_sources.c.task_id == row["task_id"],
-                    intent_sources.c.intent_id == row["id"],
-                )
-                .order_by(intent_sources.c.fact_id)
-            ).scalars()
+    def _intent(conn: Connection, row, *, visible_relations_only: bool = False) -> Intent:
+        source_query = (
+            select(intent_sources.c.fact_id)
+            .where(
+                intent_sources.c.task_id == row["task_id"],
+                intent_sources.c.intent_id == row["id"],
+            )
+            .order_by(intent_sources.c.fact_id)
         )
+        if visible_relations_only:
+            source_query = source_query.join(
+                facts,
+                (facts.c.task_id == intent_sources.c.task_id)
+                & (facts.c.id == intent_sources.c.fact_id),
+            ).where(facts.c.archived.is_(False))
+        sources = list(conn.execute(source_query).scalars())
+        to_fact_id = row["to_fact_id"]
+        if visible_relations_only and to_fact_id is not None:
+            visible_output = conn.execute(
+                select(facts.c.id).where(
+                    facts.c.task_id == row["task_id"],
+                    facts.c.id == to_fact_id,
+                    facts.c.archived.is_(False),
+                )
+            ).scalar_one_or_none()
+            if visible_output is None:
+                to_fact_id = None
         return Intent(
             id=row["id"],
             task_id=row["task_id"],
@@ -204,7 +232,7 @@ class GraphRepository:
             activity_started_at=row["activity_started_at"],
             activity_updated_at=row["activity_updated_at"],
             next_retry_at=row["next_retry_at"],
-            to_fact_id=row["to_fact_id"],
+            to_fact_id=to_fact_id,
             created_at=row["created_at"],
             concluded_at=row["concluded_at"],
             archived=bool(row["archived"]),
@@ -223,6 +251,7 @@ class GraphRepository:
             .where(
                 intents.c.task_id == task_id,
                 intents.c.status.in_(["claimed", "running", "concluding"]),
+                intents.c.archived.is_(False),
             )
             .values(
                 status="cancelled",
@@ -250,6 +279,7 @@ class GraphRepository:
                 intents.c.task_id == task_id,
                 intents.c.status == "cancelled",
                 intents.c.last_failure_kind.in_(["task_stopped", "run_deadline_reached"]),
+                intents.c.archived.is_(False),
             )
             .values(
                 status="pending",

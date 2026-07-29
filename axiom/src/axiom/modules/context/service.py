@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import Engine, select
 
 from axiom.modules.artifacts.repository import ArtifactRepository
+from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.context.repository import ContextRepository
 from axiom.modules.context.schemas import ContextRevision, ExpandedContext
 from axiom.modules.graph.repository import GraphRepository
@@ -16,6 +17,7 @@ from axiom.modules.knowledge.tables import project_knowledge
 from axiom.modules.reason.tables import reason_runs
 from axiom.modules.tasks.tables import task_hints
 from axiom.modules.todos.repository import TodoRepository
+from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
 from axiom.modules.vulnerabilities.tables import vulnerabilities
 from axiom.shared.clock import utcnow
@@ -173,20 +175,51 @@ class ContextService:
         vulnerability_rows = self.repository.vulnerabilities(conn, task["id"])
         knowledge_rows = self.repository.knowledge(conn, task["project_id"])
         goal_rows = self.repository.goal_evaluations(conn, task["id"])
+        visible_fact_ids = {row["id"] for row in fact_rows}
+        visible_intent_ids = {row["id"] for row in intent_rows}
+        visible_goal_rows = [
+            row for row in goal_rows if self._goal_evaluation_visible(conn, task["id"], row)
+        ]
 
         for row in fact_rows:
             self._add_detail(files, f"fact:{row['id']}", dict(row))
         for row in intent_rows:
             intent = self.graph.get_intent(conn, task["id"], row["id"])
             assert intent is not None
+            intent = intent.model_copy(
+                update={
+                    "from_facts": [
+                        fact_id for fact_id in intent.from_facts if fact_id in visible_fact_ids
+                    ],
+                    "to_fact_id": (
+                        intent.to_fact_id if intent.to_fact_id in visible_fact_ids else None
+                    ),
+                }
+            )
             self._add_detail(files, f"intent:{row['id']}", intent.model_dump(mode="json"))
         for row in todo_rows:
             todo = self.todos.get(conn, task["id"], row["id"])
             assert todo is not None
+            todo = todo.model_copy(
+                update={
+                    "sources": [
+                        source
+                        for source in todo.sources
+                        if self.todos.source_exists(conn, task_id=task["id"], source=source)
+                    ]
+                }
+            )
             self._add_detail(files, f"todo:{row['id']}", todo.model_dump(mode="json"))
         for row in artifact_rows:
             artifact = self.artifacts.get(conn, task["id"], row["id"])
             assert artifact is not None
+            artifact = artifact.model_copy(
+                update={
+                    "intent_id": (
+                        artifact.intent_id if artifact.intent_id in visible_intent_ids else None
+                    )
+                }
+            )
             self._add_detail(
                 files,
                 f"artifact:{row['id']}",
@@ -200,6 +233,15 @@ class ContextService:
         for row in vulnerability_rows:
             vulnerability = self.vulnerabilities.get(conn, task["id"], row["id"])
             assert vulnerability is not None
+            vulnerability = vulnerability.model_copy(
+                update={
+                    "intent_id": (
+                        vulnerability.intent_id
+                        if vulnerability.intent_id in visible_intent_ids
+                        else None
+                    )
+                }
+            )
             self._add_detail(
                 files,
                 f"vulnerability:{row['id']}",
@@ -207,7 +249,7 @@ class ContextService:
             )
         for row in knowledge_rows:
             self._add_detail(files, f"knowledge:{row['id']}", dict(row))
-        for row in goal_rows:
+        for row in visible_goal_rows:
             self._add_detail(files, f"goal_evaluation:{row['id']}", dict(row))
 
         graph = {
@@ -279,7 +321,9 @@ class ContextService:
                 "type": row["type"],
                 "affected_target": row["affected_target"],
                 "source": row["source"],
-                "intent_id": row["intent_id"],
+                "intent_id": (
+                    row["intent_id"] if row["intent_id"] in visible_intent_ids else None
+                ),
                 "status_reason": row["status_reason"],
                 "preview": _preview(row["title"], 80),
                 "ref": f"vulnerability:{row['id']}",
@@ -308,7 +352,7 @@ class ContextService:
                 "ref": f"goal_evaluation:{row['id']}",
                 "detail": _detail_path(f"goal_evaluation:{row['id']}"),
             }
-            for row in goal_rows
+            for row in visible_goal_rows
         ]
         files.update(
             {
@@ -343,23 +387,76 @@ class ContextService:
     def _expand_one(self, conn, task_id: str, kind: str, item_id: str) -> Any:
         if kind == "fact":
             row = conn.execute(
-                select(facts).where(facts.c.task_id == task_id, facts.c.id == item_id)
+                select(facts).where(
+                    facts.c.task_id == task_id,
+                    facts.c.id == item_id,
+                    facts.c.archived.is_(False),
+                )
             ).mappings().one_or_none()
             if row is not None:
                 return dict(row)
         elif kind == "intent":
-            intent = self.graph.get_intent(conn, task_id, item_id)
+            visible = conn.execute(
+                select(intents.c.id).where(
+                    intents.c.task_id == task_id,
+                    intents.c.id == item_id,
+                    intents.c.archived.is_(False),
+                )
+            ).scalar_one_or_none()
+            intent = self.graph.get_intent(conn, task_id, item_id) if visible else None
             if intent is not None:
-                return intent.model_dump(mode="json")
+                visible_from_facts = set(
+                    conn.execute(
+                        select(facts.c.id).where(
+                            facts.c.task_id == task_id,
+                            facts.c.id.in_(intent.from_facts),
+                            facts.c.archived.is_(False),
+                        )
+                    ).scalars()
+                )
+                visible_to_fact = None
+                if intent.to_fact_id is not None:
+                    visible_to_fact = conn.execute(
+                        select(facts.c.id).where(
+                            facts.c.task_id == task_id,
+                            facts.c.id == intent.to_fact_id,
+                            facts.c.archived.is_(False),
+                        )
+                    ).scalar_one_or_none()
+                return intent.model_copy(
+                    update={
+                        "from_facts": [
+                            fact_id
+                            for fact_id in intent.from_facts
+                            if fact_id in visible_from_facts
+                        ],
+                        "to_fact_id": visible_to_fact,
+                    }
+                ).model_dump(mode="json")
         elif kind == "todo":
             todo = self.todos.get(conn, task_id, item_id)
-            if todo is not None:
-                return todo.model_dump(mode="json")
+            if todo is not None and not todo.archived:
+                return todo.model_copy(
+                    update={
+                        "sources": [
+                            source
+                            for source in todo.sources
+                            if self.todos.source_exists(conn, task_id=task_id, source=source)
+                        ]
+                    }
+                ).model_dump(mode="json")
         elif kind == "artifact":
             artifact = self.artifacts.get(conn, task_id, item_id)
             if artifact is not None:
+                visible_intent_id = self._visible_intent_id(
+                    conn,
+                    task_id,
+                    artifact.intent_id,
+                )
                 return {
-                    **artifact.model_dump(mode="json"),
+                    **artifact.model_copy(
+                        update={"intent_id": visible_intent_id}
+                    ).model_dump(mode="json"),
                     "content": self.store.read_text(artifact.storage_key),
                 }
         elif kind == "hint":
@@ -367,6 +464,7 @@ class ContextService:
                 select(task_hints).where(
                     task_hints.c.task_id == task_id,
                     task_hints.c.id == item_id,
+                    task_hints.c.archived.is_(False),
                 )
             ).mappings().one_or_none()
             if row is not None:
@@ -382,7 +480,15 @@ class ContextService:
             if vulnerability is not None:
                 model = self.vulnerabilities.get(conn, task_id, item_id)
                 assert model is not None
-                return model.model_dump(mode="json")
+                return model.model_copy(
+                    update={
+                        "intent_id": self._visible_intent_id(
+                            conn,
+                            task_id,
+                            model.intent_id,
+                        )
+                    }
+                ).model_dump(mode="json")
         elif kind == "knowledge":
             task = self.repository.task(conn, task_id)
             assert task is not None
@@ -403,9 +509,46 @@ class ContextService:
                     goal_evaluations.c.id == item_id,
                 )
             ).mappings().one_or_none()
-            if row is not None:
+            if row is not None and self._goal_evaluation_visible(conn, task_id, row):
                 return dict(row)
         raise NotFoundError(f"Context entry not found: {kind}:{item_id}")
+
+    @staticmethod
+    def _visible_intent_id(conn, task_id: str, intent_id: str | None) -> str | None:
+        if intent_id is None:
+            return None
+        return conn.execute(
+            select(intents.c.id).where(
+                intents.c.task_id == task_id,
+                intents.c.id == intent_id,
+                intents.c.archived.is_(False),
+            )
+        ).scalar_one_or_none()
+
+    @staticmethod
+    def _goal_evaluation_visible(conn, task_id: str, row) -> bool:
+        table_map = {
+            "fact": facts,
+            "artifact": artifacts,
+            "vulnerability": vulnerabilities,
+            "todo": todos,
+            "hint": task_hints,
+        }
+        for ref in json.loads(row["evidence_refs_json"] or "[]"):
+            kind, separator, item_id = ref.partition(":")
+            table = table_map.get(kind)
+            if not separator or table is None:
+                continue
+            visible = conn.execute(
+                select(table.c.id).where(
+                    table.c.task_id == task_id,
+                    table.c.id == item_id,
+                    table.c.archived.is_(False),
+                )
+            ).scalar_one_or_none()
+            if visible is None:
+                return False
+        return True
 
 
 def _preview(value: str, limit: int = PREVIEW_CHARS) -> str:

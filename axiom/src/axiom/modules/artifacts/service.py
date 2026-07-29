@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from sqlalchemy import Engine
@@ -12,13 +13,23 @@ from axiom.shared.clock import utcnow
 from axiom.shared.errors import ConflictError, NotFoundError
 from axiom.shared.storage import FileStore
 
+if TYPE_CHECKING:
+    from axiom.modules.archives.service import ArchiveService
+
 
 class ArtifactService:
-    def __init__(self, engine: Engine, store: FileStore):
+    def __init__(
+        self,
+        engine: Engine,
+        store: FileStore,
+        *,
+        archives: ArchiveService | None = None,
+    ):
         self.engine = engine
         self.store = store
         self.repository = ArtifactRepository()
         self.tasks = TaskRepository()
+        self.archives = archives
 
     def list(self, task_id: str) -> list[Artifact]:
         with self.engine.connect() as conn:
@@ -89,13 +100,10 @@ class ArtifactService:
             return artifact
 
     def archive(self, task_id: str, artifact_id: str) -> Artifact:
-        with self.engine.begin() as conn:
-            task = self.tasks.get(conn, task_id)
-            if task is None:
-                raise NotFoundError(f"Task not found: {task_id}")
-            if task.legacy_readonly:
-                raise ConflictError("Legacy Task is read-only")
-            artifact = self.repository.archive(conn, task_id, artifact_id)
-            if artifact is None:
-                raise NotFoundError(f"Artifact not found: {task_id}/{artifact_id}")
-            return artifact
+        if self.archives is None:
+            raise ConflictError("Archive service is unavailable")
+        self.archives.create_compat(task_id, root_type="artifact", root_id=artifact_id)
+        with self.engine.connect() as conn:
+            artifact = self.repository.get_any(conn, task_id, artifact_id)
+        assert artifact is not None
+        return artifact

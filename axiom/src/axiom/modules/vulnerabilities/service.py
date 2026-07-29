@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import Engine, select
 
 from axiom.modules.artifacts.repository import ArtifactRepository
@@ -10,13 +12,17 @@ from axiom.modules.vulnerabilities.schemas import Vulnerability, VulnerabilityRe
 from axiom.shared.clock import utcnow
 from axiom.shared.errors import ConflictError, NotFoundError
 
+if TYPE_CHECKING:
+    from axiom.modules.archives.service import ArchiveService
+
 
 class VulnerabilityService:
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, *, archives: ArchiveService | None = None):
         self.engine = engine
         self.repository = VulnerabilityRepository()
         self.artifacts = ArtifactRepository()
         self.tasks = TaskRepository()
+        self.archives = archives
 
     def report(self, task_id: str, body: VulnerabilityReport) -> Vulnerability:
         self._validate_status_reason(body.status, body.status_reason)
@@ -66,6 +72,10 @@ class VulnerabilityService:
             current = self.repository.get(conn, task_id, vulnerability_id)
             if current is None:
                 raise NotFoundError(f"Vulnerability not found: {vulnerability_id}")
+            if current.archived:
+                raise ConflictError(
+                    f"Archived Vulnerability cannot be updated: {vulnerability_id}"
+                )
             self._validate_status_reason(
                 body.status or current.status,
                 body.status_reason if body.status_reason is not None else current.status_reason,
@@ -98,11 +108,13 @@ class VulnerabilityService:
             return updated
 
     def archive(self, task_id: str, vulnerability_id: str) -> None:
-        with self.engine.begin() as conn:
-            if self.tasks.get(conn, task_id) is None:
-                raise NotFoundError(f"Task not found: {task_id}")
-            if not self.repository.archive(conn, task_id, vulnerability_id, now=utcnow()):
-                raise NotFoundError(f"Vulnerability not found: {vulnerability_id}")
+        if self.archives is None:
+            raise ConflictError("Archive service is unavailable")
+        self.archives.create_compat(
+            task_id,
+            root_type="vulnerability",
+            root_id=vulnerability_id,
+        )
 
     @staticmethod
     def _validate_status_reason(status: str, reason: str) -> None:

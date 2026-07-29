@@ -230,8 +230,9 @@ window.AxiomModules.core = {
           await Promise.all([this.loadProjectGroups(), this.loadProjects(), this.loadDispatchSettings()]);
         } else if (this.activePage === 'task-detail' && this.selectedProjectId) {
           await Promise.all([this.loadProject(this.selectedProjectId), this.loadSeeEvents(true), this.loadDispatchSettings()]);
+          if (this.view === 'archive') await this.loadArchives(this.selectedArchiveId);
           if (this.sideTab === 'board') await this.reloadBlackboardGroup(this.project?.project?.parent_project_id);
-          this.updateGraph();
+          if (this.view === 'graph') this.updateGraph();
         } else if (this.activePage === 'vulnerabilities') {
           await this.loadProjects();
           await this.loadAllProjectDetails(true);

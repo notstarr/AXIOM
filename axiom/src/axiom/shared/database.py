@@ -21,6 +21,8 @@ REQUIRED_TABLES = frozenset(
     {
         "alembic_version",
         "artifacts",
+        "archive_batches",
+        "archive_batch_members",
         "audit_events",
         "context_revisions",
         "credential_refreshes",

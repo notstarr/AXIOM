@@ -1119,6 +1119,12 @@ window.AxiomModules.projects = {
       this.selectedNode = null;
       this.selectedFacts = [];
       this.selectedTimelineEntryId = null;
+      this.archives = [];
+      this.selectedArchiveId = '';
+      this.selectedArchive = null;
+      this.archivePreview = null;
+      this.archiveReason = '';
+      this.showArchivePreviewModal = false;
       this.teardownAutoFit();
       if (this.cy) { this.cy.destroy(); this.cy = null; }
       if (!fromRoute) location.hash = '/tasks';
@@ -1133,13 +1139,14 @@ window.AxiomModules.projects = {
       this.runClockTimer = setInterval(() => { this.runClockNow = Date.now(); }, 1000);
       this.pollTimer = setInterval(async () => {
         if (!this.polling) return;
-        if (this.selectedProjectId && ['graph', 'human'].includes(this.view) && this.activePage === 'task-detail') {
+        if (this.selectedProjectId && ['graph', 'human', 'archive'].includes(this.view) && this.activePage === 'task-detail') {
           await Promise.all([
             this.loadProject(this.selectedProjectId),
             this.loadSeeEvents(false),
             this.loadDispatchSettings(),
           ]);
           if (this.view === 'graph') this.updateGraph();
+          if (this.view === 'archive') await this.loadArchives(this.selectedArchiveId);
         } else {
           await this.loadProjects();
           if (['dashboard', 'projects', 'vulnerabilities'].includes(this.activePage)) {

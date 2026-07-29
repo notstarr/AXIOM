@@ -12,6 +12,7 @@ function cairnApp() {
     M.mcp.methods,
     M.graph.methods,
     M.human.methods,
+    M.archives.methods,
     M.timeline.methods,
     M.actions.methods,
     M.dispatch.methods,
