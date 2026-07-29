@@ -101,6 +101,69 @@ class ReasonService:
     def advance_after_explore(self, conn, *, task_id: str, now: str) -> str | None:
         return self._reconcile_task_in(conn, task_id=task_id, now=now)
 
+    def trigger_manual(self, task_id: str, *, actor: str) -> ReasonRun:
+        now = utcnow()
+        actor = actor.strip() or "人工"
+        with immediate_transaction(self.engine) as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.legacy_readonly:
+                raise ConflictError("历史只读任务不能触发 Reason")
+            if not task.is_runnable_at(now):
+                raise ConflictError("只有运行中且未到期的任务可以触发 Reason")
+            active = self.repository.active_for_task(conn, task_id)
+            if active is not None:
+                raise ConflictError(f"ReasonRun {active.id} 已在进行中")
+            bootstrap_completed = conn.execute(
+                select(intents.c.id)
+                .where(
+                    intents.c.task_id == task_id,
+                    intents.c.kind == "bootstrap",
+                    intents.c.status == "completed",
+                    intents.c.archived.is_(False),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            if bootstrap_completed is None:
+                raise ConflictError("Bootstrap 完成后才能触发 Reason")
+
+            state = self._input_state(conn, task_id)
+            source_fact_ids = [row["id"] for row in state["unplanned_facts"]]
+            open_explore_ids = list(state["open_explore_ids"])
+            failed_intent_ids = list(state["failed_intent_ids"])
+            actionable_todo_ids = list(state["actionable_todo_ids"])
+            todo_review_ids = list(state["todo_review_ids"])
+            fingerprint = self._fingerprint(
+                source_fact_ids=source_fact_ids,
+                failed_intent_ids=failed_intent_ids,
+                actionable_todo_ids=actionable_todo_ids,
+                todo_review_ids=todo_review_ids,
+                open_explore_ids=open_explore_ids,
+            )
+            run = self._create_run(
+                conn,
+                task=task,
+                source_fact_ids=source_fact_ids,
+                trigger="manual",
+                trigger_payload={
+                    "actor": actor,
+                    "requested_at": now,
+                    "task_phase": task.phase,
+                    "unplanned_fact_count": len(source_fact_ids),
+                    "source_fact_ids": source_fact_ids,
+                    "open_explore_count": len(open_explore_ids),
+                    "open_explore_ids": open_explore_ids,
+                    "failed_intent_ids": failed_intent_ids,
+                    "actionable_todo_ids": actionable_todo_ids,
+                    "todo_review_ids": todo_review_ids,
+                },
+                input_fingerprint=fingerprint,
+                now=now,
+            )
+            self._set_phase(conn, task_id, "reason", now)
+            return run
+
     def reconcile_task(self, task_id: str) -> str | None:
         now = utcnow()
         with immediate_transaction(self.engine) as conn:

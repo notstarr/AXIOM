@@ -243,6 +243,18 @@ class ExecutionService:
             "low_watermark": "补充即将耗尽的 Explore 工作队列",
             "max_wait": "处理等待时间达到上限的新 Fact",
         }.get(run.trigger, f"根据触发原因 {run.trigger} 增量规划下一轮测试")
+        if run.trigger == "manual":
+            payload = run.trigger_payload
+            trigger_summary = (
+                f"人工 {payload.get('actor') or '操作员'} 请求立即复盘当前任务。"
+                "请结合最新 Context 全面检查新 Fact、Todo 收口、失败及开放 Explore 和 Goal；"
+                "不得为了响应人工操作而凑数派发，没有材料性新增方向时允许新增 0 个 Intent。"
+                f"触发快照：新 Fact {payload.get('unplanned_fact_count', 0)} 个，"
+                f"开放 Explore {payload.get('open_explore_count', 0)} 个，"
+                f"失败/取消 Explore {len(payload.get('failed_intent_ids') or [])} 个，"
+                f"待处理 Todo {len(payload.get('actionable_todo_ids') or [])} 个，"
+                f"待收口 Todo {len(payload.get('todo_review_ids') or [])} 个。"
+            )
         return ExecutionInput(
             task_id=task_id,
             project_id=task.project_id,

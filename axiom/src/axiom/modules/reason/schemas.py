@@ -139,6 +139,15 @@ class OpenWorkspace(BaseModel):
     context_revision: int = Field(ge=0)
 
 
+class TriggerReasonRun(BaseModel):
+    actor: str = "人工"
+
+    @field_validator("actor")
+    @classmethod
+    def normalize_actor(cls, value: str) -> str:
+        return value.strip() or "人工"
+
+
 class WorkspaceWorkerCommand(BaseModel):
     lease_id: str
 

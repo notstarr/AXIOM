@@ -1,6 +1,6 @@
 <template x-if="activePage === 'task-detail' && view === 'human' && project">
 <div class="h-full min-h-0 flex flex-col overflow-hidden min-w-0 bg-slate-50/40">
-  <header class="shrink-0 bg-white/90 backdrop-blur border-b border-slate-200/70">
+  <header class="app-page-header shrink-0 bg-white/90 backdrop-blur border-b border-slate-200/70">
     <div class="px-5 py-3 flex items-center gap-3">
       <button @click="backToList()" class="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition" aria-label="返回任务列表">‹</button>
       <div class="min-w-0">
@@ -22,6 +22,9 @@
           <span class="h-1.5 w-1.5 rounded-full" :class="project?.project?.status === 'active' ? 'bg-emerald-400' : project?.project?.status === 'completed' ? 'bg-slate-400' : 'bg-amber-400'"></span>
           <span x-text="humanGoalStatusLabel()"></span>
         </span>
+        <button @click="triggerManualReason()" :disabled="!canTriggerManualReason()" :title="manualReasonDisabledReason() || '立即触发一次人工 Reason 复盘'" class="manual-reason-trigger px-2.5 py-1 rounded-lg border text-xs transition disabled:cursor-not-allowed">
+          <span x-text="manualReasonTriggering ? '正在触发…' : '立刻 Reason'"></span>
+        </button>
         <button @click="refreshCurrentPage()" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition">刷新</button>
         <button @click="switchTaskView('graph')" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition">图谱</button>
         <button @click="switchTaskView('archive')" class="px-2.5 py-1 rounded-lg border border-amber-200 text-xs text-amber-700 hover:bg-amber-50 transition">归档</button>

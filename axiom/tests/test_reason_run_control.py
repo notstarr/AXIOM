@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
 from sqlalchemy import func, insert, select, update
 
-from axiom.modules.graph.tables import facts
+from axiom.modules.graph.tables import facts, intents
 from axiom.modules.reason.tables import reason_runs, reason_workspaces
+from axiom.modules.tasks.tables import tasks
 from axiom.shared.clock import utcnow
+from axiom.shared.errors import ConflictError
 from protocol_helpers import (
     claim_reason_run,
     complete_bootstrap,
@@ -84,6 +89,28 @@ def _proposal(number: int, fact_id: str) -> dict:
         "execute_seconds": 300,
         "conclude_seconds": 180,
     }
+
+
+def _finish_reason_run(engine, task_id: str, reason_run_id: str) -> None:
+    now = utcnow()
+    with engine.begin() as conn:
+        conn.execute(
+            update(reason_runs)
+            .where(reason_runs.c.task_id == task_id, reason_runs.c.id == reason_run_id)
+            .values(status="completed", concluded_at=now, updated_at=now)
+        )
+        conn.execute(
+            update(tasks)
+            .where(tasks.c.id == task_id)
+            .values(phase="waiting", updated_at=now)
+        )
+
+
+def _trigger_manual_reason(client, task_id: str, *, actor: str = "人工"):
+    return client.post(
+        f"/api/v1/tasks/{task_id}/reason-runs/trigger",
+        json={"actor": actor},
+    )
 
 
 def _add_todo(client, workspace: dict, lease_id: str, todo: dict):
@@ -187,6 +214,213 @@ def test_reason_run_is_unique_invisible_and_recovers_a_stale_lease(client) -> No
     assert workspace_after["failure_reason"] == "lease_expired"
     stale_heartbeat = client.post(f"{base}/heartbeat", json={"lease_id": claim["lease_id"]})
     assert stale_heartbeat.status_code == 409
+
+
+def test_manual_reason_can_run_while_waiting_without_new_facts_and_reuses_reason_input(
+    client,
+) -> None:
+    task, completed = _bootstrap_to_reason(client)
+    engine = client.app.state.container.engine
+    _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
+
+    response = _trigger_manual_reason(client, task["id"], actor="Alice")
+
+    assert response.status_code == 200, response.text
+    run = response.json()
+    assert run["trigger"] == "manual"
+    assert run["source_fact_ids"] == []
+    assert run["trigger_payload"] == {
+        "actor": "Alice",
+        "requested_at": run["created_at"],
+        "task_phase": "waiting",
+        "unplanned_fact_count": 0,
+        "source_fact_ids": [],
+        "open_explore_count": 0,
+        "open_explore_ids": [],
+        "failed_intent_ids": [],
+        "actionable_todo_ids": [],
+        "todo_review_ids": [],
+    }
+    assert client.get(f"/api/v1/tasks/{task['id']}").json()["phase"] == "reason"
+
+    claim, execution = claim_reason_run(
+        client,
+        task_id=task["id"],
+        reason_run_id=run["id"],
+    )
+    assert execution["reason_run_id"] == run["id"]
+    assert execution["intent_id"] is None
+    assert execution["intent_kind"] == "reason"
+    assert execution["intent_source_facts"] == []
+    assert "人工 Alice 请求立即复盘当前任务" in execution["intent_description"]
+    assert "允许新增 0 个 Intent" in execution["intent_description"]
+
+    duplicate = _trigger_manual_reason(client, task["id"])
+    assert duplicate.status_code == 409
+    assert run["id"] in duplicate.text
+
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    assessment = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/goal-assessment",
+        json={
+            "lease_id": claim["lease_id"],
+            "assessment": {
+                "achieved": False,
+                "reason": "人工复盘后没有发现材料性的新方向",
+                "evidence_refs": [],
+            },
+        },
+    )
+    assert assessment.status_code == 200, assessment.text
+    committed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        json={"lease_id": claim["lease_id"]},
+    )
+    assert committed.status_code == 200, committed.text
+    assert committed.json()["created_intent_ids"] == []
+    assert client.get(f"/api/v1/tasks/{task['id']}").json()["phase"] == "waiting"
+
+
+def test_manual_reason_snapshots_open_and_failed_explore_but_not_later_facts(client) -> None:
+    task, completed = _bootstrap_to_reason(client)
+    created_intent_ids = _commit_plan(client, task, completed, count=2)
+    engine = client.app.state.container.engine
+    now = utcnow()
+    with engine.begin() as conn:
+        conn.execute(
+            update(intents)
+            .where(
+                intents.c.task_id == task["id"],
+                intents.c.id == created_intent_ids[0],
+            )
+            .values(status="running", worker="worker-a", last_heartbeat_at=now)
+        )
+        conn.execute(
+            update(intents)
+            .where(
+                intents.c.task_id == task["id"],
+                intents.c.id == created_intent_ids[1],
+            )
+            .values(status="failed", concluded_at=now)
+        )
+
+    response = _trigger_manual_reason(client, task["id"])
+
+    assert response.status_code == 200, response.text
+    run = response.json()
+    assert run["trigger_payload"]["open_explore_ids"] == [created_intent_ids[0]]
+    assert run["trigger_payload"]["failed_intent_ids"] == [created_intent_ids[1]]
+    assert run["trigger_payload"]["open_explore_count"] == 1
+    original_source_ids = list(run["source_fact_ids"])
+
+    with engine.begin() as conn:
+        later_fact_id = "f999"
+        conn.execute(
+            insert(facts).values(
+                id=later_fact_id,
+                task_id=task["id"],
+                description="人工点击后才产生的新 Fact",
+                created_at=utcnow(),
+                archived=False,
+            )
+        )
+    run_after = client.get(f"/api/v1/tasks/{task['id']}/reason-runs/{run['id']}").json()
+    assert run_after["source_fact_ids"] == original_source_ids
+    assert later_fact_id not in run_after["source_fact_ids"]
+
+
+def test_manual_reason_rejects_unready_or_non_runnable_tasks(client) -> None:
+    project = client.post("/api/v1/projects", json={"title": "Manual Reason Guard"}).json()
+    fresh = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "Bootstrap 未完成",
+            "origin": "fresh.example.com",
+            "goal": "完成安全测试",
+        },
+    ).json()
+    not_bootstrapped = _trigger_manual_reason(client, fresh["id"])
+    assert not_bootstrapped.status_code == 409
+    assert "Bootstrap" in not_bootstrapped.text
+
+    task, completed = _bootstrap_to_reason(client)
+    engine = client.app.state.container.engine
+    _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
+    assert client.post(f"/api/v1/tasks/{task['id']}/stop").status_code == 200
+    assert _trigger_manual_reason(client, task["id"]).status_code == 409
+
+    with engine.begin() as conn:
+        conn.execute(
+            update(tasks)
+            .where(tasks.c.id == task["id"])
+            .values(
+                status="running",
+                phase="waiting",
+                legacy_readonly=False,
+                run_deadline_at="2000-01-01T00:00:00Z",
+            )
+        )
+    assert _trigger_manual_reason(client, task["id"]).status_code == 409
+
+    with engine.begin() as conn:
+        conn.execute(
+            update(tasks)
+            .where(tasks.c.id == task["id"])
+            .values(run_deadline_at=None, legacy_readonly=True)
+        )
+    readonly = _trigger_manual_reason(client, task["id"])
+    assert readonly.status_code == 409
+    assert "历史只读" in readonly.text
+
+
+def test_manual_reason_bypasses_automatic_interval_and_fingerprint_suppression(client) -> None:
+    task, completed = _bootstrap_to_reason(
+        client,
+        reason_min_interval_seconds=3600,
+    )
+    engine = client.app.state.container.engine
+    _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
+
+    automatic = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    assert automatic.status_code == 200, automatic.text
+    assert automatic.json()["created_reason_run_ids"] == []
+
+    manual = _trigger_manual_reason(client, task["id"])
+    assert manual.status_code == 200, manual.text
+    assert manual.json()["trigger"] == "manual"
+
+
+def test_concurrent_manual_reason_requests_create_only_one_active_run(client) -> None:
+    task, completed = _bootstrap_to_reason(client)
+    engine = client.app.state.container.engine
+    _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
+    service = client.app.state.container.reason
+    barrier = Barrier(2)
+
+    def trigger() -> str:
+        barrier.wait()
+        try:
+            return service.trigger_manual(task["id"], actor="并发测试").id
+        except ConflictError:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _index: trigger(), range(2)))
+
+    assert results.count("conflict") == 1
+    created = [item for item in results if item != "conflict"]
+    assert len(created) == 1
+    with engine.connect() as conn:
+        active_count = conn.execute(
+            select(func.count())
+            .select_from(reason_runs)
+            .where(
+                reason_runs.c.task_id == task["id"],
+                reason_runs.c.status.in_(["pending", "claimed", "running", "concluding"]),
+            )
+        ).scalar_one()
+    assert active_count == 1
 
 
 def test_stopping_a_task_cancels_reason_run_and_invalidates_its_lease(client) -> None:

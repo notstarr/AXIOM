@@ -19,6 +19,7 @@ from axiom.modules.reason.schemas import (
     ReasonReconcileReport,
     ReleasedReasonRun,
     StartedReasonRun,
+    TriggerReasonRun,
 )
 from axiom.modules.execution.schemas import ActivityCommand, ExecutionInput, LeaseCommand, ReleaseIntentCommand
 
@@ -31,6 +32,15 @@ def reconcile_reason_runs(
     container: Container = Depends(get_container),
 ) -> ReasonReconcileReport:
     return container.reason.reconcile_all()
+
+
+@router.post("/tasks/{task_id}/reason-runs/trigger", response_model=ReasonRun)
+def trigger_reason_run(
+    task_id: str,
+    body: TriggerReasonRun,
+    container: Container = Depends(get_container),
+) -> ReasonRun:
+    return container.reason.trigger_manual(task_id, actor=body.actor)
 
 
 @router.post("/tasks/{task_id}/reason/workspaces", response_model=ReasonWorkspace)

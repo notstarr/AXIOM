@@ -321,6 +321,81 @@ process.stdout.write(JSON.stringify(items.map(item => ({{
     return json.loads(result.stdout)
 
 
+def _run_manual_reason_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
+    program = f"""
+const fs = require('fs');
+const calls = [];
+const refreshed = [];
+const toasts = [];
+let requestCount = 0;
+global.window = {{ AxiomModules: {{
+  state: {{ state: {{ manualReasonTriggering: false }} }},
+  core: {{ methods: {{}} }},
+  projects: {{ methods: {{}} }},
+  graph: {{ methods: {{}} }},
+  files: {{ methods: {{}} }},
+}} }};
+global.location = {{ origin: 'http://testserver' }};
+global.fetch = async (url, init = {{}}) => {{
+  calls.push({{ method: init.method || 'GET', url, body: init.body ? JSON.parse(init.body) : null }});
+  requestCount += 1;
+  if (requestCount === 2) return {{
+    status: 409,
+    ok: false,
+    text: async () => JSON.stringify({{ detail: 'ReasonRun rr000124 已在进行中' }}),
+  }};
+  return {{
+    status: 200,
+    ok: true,
+    text: async () => JSON.stringify({{ id: 'rr000123', trigger: 'manual' }}),
+  }};
+}};
+eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
+const methods = window.AxiomModules.projects.methods;
+const ctx = Object.assign({{
+  selectedProjectId: 't_150',
+  manualReasonTriggering: false,
+  project: {{
+    project: {{
+      id: 't_150', status: 'active', legacy_readonly: false,
+      run_deadline_at: null, reason: null,
+    }},
+    intents: [{{ id: 'i001', kind: 'bootstrap', status: 'completed', archived: false }}],
+  }},
+  actorName: () => 'Alice',
+  loadProject: async taskId => refreshed.push(`task:${{taskId}}`),
+  loadProjects: async () => refreshed.push('tasks'),
+  showToast: (message, type = 'success') => toasts.push({{ message, type }}),
+}}, methods);
+(async () => {{
+  const enabled = ctx.canTriggerManualReason();
+  await ctx.triggerManualReason();
+  const afterSuccess = {{ loading: ctx.manualReasonTriggering, refreshed: [...refreshed], toasts: [...toasts] }};
+  ctx.project.project.reason = null;
+  await ctx.triggerManualReason();
+  const afterConflict = {{ loading: ctx.manualReasonTriggering, refreshed: [...refreshed], toasts: [...toasts] }};
+  ctx.project.project.reason = {{ id: 'rr000124' }};
+  const activeReason = {{ enabled: ctx.canTriggerManualReason(), reason: ctx.manualReasonDisabledReason() }};
+  ctx.project.project.reason = null;
+  ctx.project.project.status = 'stopped';
+  const stopped = {{ enabled: ctx.canTriggerManualReason(), reason: ctx.manualReasonDisabledReason() }};
+  process.stdout.write(JSON.stringify({{ enabled, calls, afterSuccess, afterConflict, activeReason, stopped }}));
+}})();
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
 def _run_artifact_folder_navigation_fixture() -> dict[str, object]:
     node = shutil.which("node")
     if not node:
@@ -746,12 +821,21 @@ def test_frontend_and_static_assets_are_served(client):
     assert graph.status_code == 200
     assert "ReasonRun" in graph.text
     assert "配置快照" in graph.text
+    assert "triggerManualReason()" in graph.text
+    assert "manual-reason-trigger" in graph.text
 
     human = client.get("/static/templates/human-view.html")
     assert human.status_code == 200
     assert 'x-if="humanTab === \'workspace\'"' in human.text
     assert 'x-if="humanTab === \'artifacts\'"' in human.text
     assert "humanArtifactPageCount" in human.text
+    assert "triggerManualReason()" in human.text
+    assert "manual-reason-trigger" in human.text
+
+    archive = client.get("/static/templates/archive-view.html")
+    assert archive.status_code == 200
+    assert "triggerManualReason()" in archive.text
+    assert "manual-reason-trigger" in archive.text
 
     core = client.get("/static/js/core.js").text
     projects = client.get("/static/js/projects.js").text
@@ -769,6 +853,39 @@ def test_frontend_and_static_assets_are_served(client):
     assert "_globalSearchAbortController?.abort()" in core
     assert "`/audit-events?task_id=${encodeURIComponent(taskId)}&limit=100`" not in adapter
     assert "const offset = append ? currentLength : 0" in adapter
+    assert "kind: intent.kind || ''" in adapter
+    assert "`/tasks/${taskId}/reason-runs/trigger`" in adapter
+
+    css = client.get("/static/apple.css").text
+    assert "@media (prefers-color-scheme: dark)" not in css
+    assert "#cy {\n  background: #f8fafc" not in css
+    assert "background-color: var(--surface-graph)" in css
+    assert "button.manual-reason-trigger" in css
+    assert "applyGraphTheme()" in graph_js
+    assert "edgeLabelBackground" in graph_js
+    assert "this.$nextTick(() => this.applyGraphTheme?.())" in core
+
+    for template_name in (
+        "dashboard",
+        "task-list",
+        "vulnerabilities",
+        "project-mgmt",
+        "guard-audit",
+        "skills",
+        "files",
+        "mcp",
+        "prompts",
+        "settings",
+        "crawler",
+        "assets",
+        "action-replay",
+        "human-view",
+        "graph-view",
+        "archive-view",
+    ):
+        template = client.get(f"/static/templates/{template_name}.html")
+        assert template.status_code == 200
+        assert "app-page-header" in template.text, template_name
 
     graph_script = client.get("/static/js/graph.js")
     assert graph_script.status_code == 200
@@ -803,6 +920,47 @@ def test_runtime_save_uses_the_put_response_and_does_not_touch_workers() -> None
     ]
     assert result["calls"][1]["body"]["expected_version"] == 5
     assert result["calls"][1]["body"]["config"]["reason_low_watermark"] == 0
+
+
+def test_manual_reason_button_uses_shared_trigger_and_disables_invalid_states() -> None:
+    result = _run_manual_reason_fixture()
+
+    assert result["enabled"] is True
+    assert result["calls"] == [
+        {
+            "method": "POST",
+            "url": "/api/v1/tasks/t_150/reason-runs/trigger",
+            "body": {"actor": "Alice"},
+        },
+        {
+            "method": "POST",
+            "url": "/api/v1/tasks/t_150/reason-runs/trigger",
+            "body": {"actor": "Alice"},
+        },
+    ]
+    assert result["afterSuccess"] == {
+        "loading": False,
+        "refreshed": ["task:t_150", "tasks"],
+        "toasts": [
+            {"message": "已触发 rr000123，等待 Reason Worker 领取", "type": "success"}
+        ],
+    }
+    assert result["afterConflict"] == {
+        "loading": False,
+        "refreshed": ["task:t_150", "tasks", "task:t_150"],
+        "toasts": [
+            {"message": "已触发 rr000123，等待 Reason Worker 领取", "type": "success"},
+            {"message": "ReasonRun rr000124 已在进行中", "type": "error"},
+        ],
+    }
+    assert result["activeReason"] == {
+        "enabled": False,
+        "reason": "rr000124 已在进行中",
+    }
+    assert result["stopped"] == {
+        "enabled": False,
+        "reason": "只有运行中的任务可以触发 Reason",
+    }
 
 
 def test_skill_toggle_uses_dedicated_patch_endpoint_and_server_state() -> None:

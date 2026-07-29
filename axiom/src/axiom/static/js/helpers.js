@@ -354,12 +354,12 @@ window.AxiomModules.helpers = {
 
     yamlSectionTint(sectionName) {
       const tints = {
-        project: { header: '#eff6ff', body: '#fafcff', itemA: '#f3f8ff', itemB: '#edf5ff' },
-        hints: { header: '#fffbeb', body: '#fffef8', itemA: '#fffaf0', itemB: '#fff6e8' },
-        facts: { header: '#eef2ff', body: '#fafaff', itemA: '#f5f7ff', itemB: '#eef3ff' },
-        intents: { header: '#ecfdf5', body: '#f8fdfb', itemA: '#f1fbf5', itemB: '#eaf8ef' },
+        project: { header: 'var(--status-info-bg)', body: 'var(--surface-card)', itemA: 'var(--surface-inset)', itemB: 'var(--surface-hover)' },
+        hints: { header: 'var(--status-warning-bg)', body: 'var(--surface-card)', itemA: 'var(--surface-inset)', itemB: 'var(--surface-hover)' },
+        facts: { header: 'var(--status-purple-bg)', body: 'var(--surface-card)', itemA: 'var(--surface-inset)', itemB: 'var(--surface-hover)' },
+        intents: { header: 'var(--status-success-bg)', body: 'var(--surface-card)', itemA: 'var(--surface-inset)', itemB: 'var(--surface-hover)' },
       };
-      return tints[sectionName] || { header: '#f8fafc', body: '#ffffff', itemA: '#f8fafc', itemB: '#f1f5f9' };
+      return tints[sectionName] || { header: 'var(--surface-hover)', body: 'var(--surface-card)', itemA: 'var(--surface-inset)', itemB: 'var(--surface-hover)' };
     },
 
     highlightYaml(text) {
@@ -407,19 +407,19 @@ window.AxiomModules.helpers = {
           background = activeItemStripe === 0 ? tint.itemA : tint.itemB;
         }
 
-        return `<div style="white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;padding:0 16px;background:${background};font-weight:${fontWeight};color:#0f172a">${lineHtml}</div>`;
+        return `<div style="white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;padding:0 16px;background:${background};font-weight:${fontWeight};color:var(--text-primary)">${lineHtml}</div>`;
       }).join('');
     },
 
     highlightTimeline(text) {
       const lines = String(text ?? '').split('\n');
-      const stripes = ['#fffbf5', '#fef5ee'];
+      const stripes = ['var(--surface-inset)', 'var(--surface-hover)'];
       let blockIndex = -1;
       return lines.map((line) => {
         if (/^\[/.test(line)) blockIndex++;
         const bg = blockIndex < 0 ? stripes[0] : stripes[blockIndex % 2];
         const isBlank = /^\s*$/.test(line);
-        return `<div style="white-space:pre;padding:0 16px;background:${bg};color:#0f172a">${isBlank ? '&nbsp;' : this.escapeHtml(line)}</div>`;
+        return `<div style="white-space:pre;padding:0 16px;background:${bg};color:var(--text-primary)">${isBlank ? '&nbsp;' : this.escapeHtml(line)}</div>`;
       }).join('');
     },
 

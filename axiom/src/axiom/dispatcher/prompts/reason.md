@@ -63,6 +63,6 @@ axiom reason goal assess --not-achieved --reason "仍需探索阶段独立验证
 
 先调用 `axiom reason status`，确认工作区已就绪，再执行任何必要的修正。最后一条助手消息必须严格等于：
 
-`FINISH`
+FINISH
 
-不要输出 JSON、Markdown 计划、解释或其它字符。运行器（Runner）看到精确的 `FINISH` 后只调用工作区的 `/commit`；由代码生成审计用 `reason_plan.json`。
+禁止反引号、代码块、句号、解释、总结或其它字符。

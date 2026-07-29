@@ -1,7 +1,7 @@
 <!-- ═══════════ GRAPH VIEW ═══════════ -->
 <template x-if="activePage === 'task-detail' && view === 'graph'">
 <div class="flex-1 flex flex-col overflow-hidden min-w-0">
-  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0 z-20">
+  <header class="app-page-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0 z-20">
     <button @click="backToList()" class="p-1.5 rounded-lg hover:bg-slate-100 transition text-slate-400 hover:text-slate-600">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
     </button>
@@ -60,6 +60,9 @@
           </button>
         </div>
       </template>
+      <button x-show="!replay.active" @click="triggerManualReason()" :disabled="!canTriggerManualReason()" :title="manualReasonDisabledReason() || '立即触发一次人工 Reason 复盘'" class="manual-reason-trigger px-2.5 py-1 rounded-lg border text-xs transition flex items-center gap-1.5 disabled:cursor-not-allowed">
+        <span x-text="manualReasonTriggering ? '正在触发…' : '立刻 Reason'"></span>
+      </button>
       <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition flex items-center gap-1.5 disabled:opacity-40">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
         刷新

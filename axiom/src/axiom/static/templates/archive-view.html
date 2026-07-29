@@ -1,6 +1,6 @@
 <template x-if="activePage === 'task-detail' && view === 'archive' && project">
 <div class="h-full min-h-0 flex flex-col overflow-hidden min-w-0 bg-slate-50/40">
-  <header class="shrink-0 bg-white/90 backdrop-blur border-b border-slate-200/70 px-5 py-3 flex items-center gap-3">
+  <header class="app-page-header shrink-0 bg-white/90 backdrop-blur border-b border-slate-200/70 px-5 py-3 flex items-center gap-3">
     <button @click="backToList()" class="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition" aria-label="返回任务列表">‹</button>
     <div class="min-w-0">
       <div class="flex items-center gap-2">
@@ -16,6 +16,9 @@
       <button @click="switchTaskView('graph')" class="px-2.5 py-1 rounded-md text-[11px] text-slate-500 hover:bg-white">图谱</button>
       <button class="px-2.5 py-1 rounded-md text-[11px] bg-white text-amber-700 shadow-sm">归档</button>
     </div>
+    <button @click="triggerManualReason()" :disabled="!canTriggerManualReason()" :title="manualReasonDisabledReason() || '立即触发一次人工 Reason 复盘'" class="manual-reason-trigger px-2.5 py-1 rounded-lg border text-xs transition disabled:cursor-not-allowed">
+      <span x-text="manualReasonTriggering ? '正在触发…' : '立刻 Reason'"></span>
+    </button>
     <button @click="loadArchives(selectedArchiveId)" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50">刷新</button>
   </header>
 

@@ -199,6 +199,7 @@
       from: intent.from_facts || [],
       to: intent.to_fact_id || null,
       todo_id: intent.todo_id || null,
+      kind: intent.kind || '',
       description: intent.description,
       status: intent.status,
       creator: intent.creator,
@@ -733,6 +734,41 @@
   });
 
   Object.assign(M.projects.methods, {
+    manualReasonDisabledReason() {
+      const task = this.project?.project;
+      if (!task) return '任务信息尚未加载';
+      if (this.manualReasonTriggering) return '正在提交人工 Reason 请求';
+      if (task.legacy_readonly) return '历史只读任务不能触发 Reason';
+      if (task.status !== 'active') return '只有运行中的任务可以触发 Reason';
+      if (task.run_deadline_at && Date.parse(task.run_deadline_at) <= Date.now()) return '任务运行时间已经结束';
+      if (task.reason) return `${task.reason.id || 'ReasonRun'} 已在进行中`;
+      const bootstrapCompleted = (this.project?.intents || []).some(intent => (
+        intent.kind === 'bootstrap' && intent.status === 'completed' && !intent.archived
+      ));
+      if (!bootstrapCompleted) return 'Bootstrap 完成后才能触发 Reason';
+      return '';
+    },
+    canTriggerManualReason() {
+      return !this.manualReasonDisabledReason();
+    },
+    async triggerManualReason() {
+      const taskId = this.selectedProjectId;
+      if (!taskId || !this.canTriggerManualReason()) return;
+      this.manualReasonTriggering = true;
+      try {
+        const run = await request('POST', `/tasks/${taskId}/reason-runs/trigger`, {
+          actor: this.actorName(),
+        });
+        await this.loadProject(taskId);
+        await this.loadProjects();
+        this.showToast(`已触发 ${run.id}，等待 Reason Worker 领取`);
+      } catch (error) {
+        if (error?.status === 409) await this.loadProject(taskId);
+        this.showToast(error?.message || '触发 Reason 失败', 'error');
+      } finally {
+        this.manualReasonTriggering = false;
+      }
+    },
     projectCanWriteHints() {
       return !this.replay.active
         && !this.project?.project?.legacy_readonly

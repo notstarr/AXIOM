@@ -34,6 +34,7 @@ window.AxiomModules.state = {
     vulnerabilityBoardLoading: { '待验证': false, '已验证': false, '忽略': false, '重复': false },
     _vulnerabilityBoardRequestIds: { '待验证': 0, '已验证': 0, '忽略': 0, '重复': 0 },
     refreshLoading: false,
+    manualReasonTriggering: false,
     crawlerResultsPageTab: 'pages',
     crawlerResultsPageData: null,
     treeExpanded: {},

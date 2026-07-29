@@ -152,6 +152,16 @@ window.AxiomModules.graph = {
 
     graphStyles() {
       const font = '-apple-system,BlinkMacSystemFont,Inter,sans-serif';
+      const dark = document.documentElement.classList.contains('dark');
+      const theme = dark ? {
+        edgeLabelBackground: '#252a31', edgeLabelText: '#aeb5bf',
+        mutedBackground: '#30353d', mutedText: '#aeb5bf', mutedBorder: '#657080',
+        cancelledBackground: '#30353d', cancelledText: '#aeb5bf', scopeEdge: '#657080',
+      } : {
+        edgeLabelBackground: '#ffffff', edgeLabelText: '#64748b',
+        mutedBackground: '#f1f5f9', mutedText: '#94a3b8', mutedBorder: '#cbd5e1',
+        cancelledBackground: '#e2e8f0', cancelledText: '#64748b', scopeEdge: '#cbd5e1',
+      };
       return [
         // ── Card nodes: transparent (visuals via html-label overlay) ──
         { selector: 'node[nodeType="origin"]', style: {
@@ -193,9 +203,9 @@ window.AxiomModules.graph = {
           'text-valign':'center', 'text-halign':'center', 'font-family':font,
         }},
         { selector: 'node[nodeType="unclaimed"]', style: {
-          shape:'ellipse', 'background-color':'#f1f5f9', 'background-opacity':0.8,
-          label:'data(label)', color:'#94a3b8', 'font-size':'11px', 'font-weight':'bold',
-          width:22, height:22, 'border-width':1.5, 'border-color':'#cbd5e1', 'border-style':'dashed',
+          shape:'ellipse', 'background-color':theme.mutedBackground, 'background-opacity':0.8,
+          label:'data(label)', color:theme.mutedText, 'font-size':'11px', 'font-weight':'bold',
+          width:22, height:22, 'border-width':1.5, 'border-color':theme.mutedBorder, 'border-style':'dashed',
           'text-valign':'center', 'text-halign':'center', 'font-family':font,
         }},
         { selector: 'node[nodeType="intent_completed"]', style: {
@@ -205,9 +215,9 @@ window.AxiomModules.graph = {
           'text-valign':'center', 'text-halign':'center', 'font-family':font,
         }},
         { selector: 'node[nodeType="intent_cancelled"]', style: {
-          shape:'ellipse', 'background-color':'#e2e8f0', 'background-opacity':0.95,
-          label:'data(label)', color:'#64748b', 'font-size':'12px', 'font-weight':'bold',
-          width:24, height:24, 'border-width':1.5, 'border-color':'#94a3b8',
+          shape:'ellipse', 'background-color':theme.cancelledBackground, 'background-opacity':0.95,
+          label:'data(label)', color:theme.cancelledText, 'font-size':'12px', 'font-weight':'bold',
+          width:24, height:24, 'border-width':1.5, 'border-color':theme.mutedBorder,
           'text-valign':'center', 'text-halign':'center', 'font-family':font,
         }},
         { selector: 'node[nodeType="intent_failed"]', style: {
@@ -231,10 +241,10 @@ window.AxiomModules.graph = {
         { selector: 'edge[status="concluded"]', style: {
           width:2, 'line-color':'#22c55e', 'target-arrow-color':'#22c55e',
           'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:'#64748b',
+          label:'data(label)', 'font-size':'7px', color:theme.edgeLabelText,
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
+          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.9,
         }},
         { selector: 'edge[status="goal_evidence"]', style: {
@@ -242,7 +252,7 @@ window.AxiomModules.graph = {
           'target-arrow-shape':'triangle', 'curve-style':'bezier',
           label:'data(label)', 'font-size':'8px', color:'#0f766e',
           'text-rotation':'autorotate', 'text-margin-y':-9,
-          'text-background-color':'#ffffff', 'text-background-opacity':0.92,
+          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.92,
           'text-background-padding':'2px', 'arrow-scale':1,
         }},
         { selector: 'edge[status="in_progress"]', style: {
@@ -251,16 +261,16 @@ window.AxiomModules.graph = {
           label:'data(label)', 'font-size':'7px', color:'#b45309',
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
+          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.9,
         }},
         { selector: 'edge[status="unclaimed"]', style: {
-          width:1.5, 'line-color':'#cbd5e1', 'line-style':'dashed', 'line-dash-pattern':[5,5],
-          'target-arrow-color':'#cbd5e1', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:'#94a3b8',
+          width:1.5, 'line-color':theme.mutedBorder, 'line-style':'dashed', 'line-dash-pattern':[5,5],
+          'target-arrow-color':theme.mutedBorder, 'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          label:'data(label)', 'font-size':'7px', color:theme.mutedText,
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
+          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.7,
         }},
         { selector: 'edge[status="intent_completed"]', style: {
@@ -269,16 +279,16 @@ window.AxiomModules.graph = {
           label:'data(label)', 'font-size':'7px', color:'#047857',
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
+          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.8,
         }},
         { selector: 'edge[status="intent_cancelled"]', style: {
           width:1.5, 'line-color':'#94a3b8', 'line-style':'dashed', 'line-dash-pattern':[4,5],
-          'target-arrow-color':'#94a3b8', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:'#64748b',
+          'target-arrow-color':theme.mutedBorder, 'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          label:'data(label)', 'font-size':'7px', color:theme.edgeLabelText,
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
+          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.7,
         }},
         { selector: 'edge[status="intent_failed"]', style: {
@@ -287,7 +297,7 @@ window.AxiomModules.graph = {
           label:'data(label)', 'font-size':'7px', color:'#b91c1c',
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
+          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.75,
         }},
         { selector: 'edge[status="bootstrap_pending"]', style: {
@@ -296,7 +306,7 @@ window.AxiomModules.graph = {
           label:'data(label)', 'font-size':'7px', color:'#c2410c',
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'88px', 'text-wrap':'ellipsis',
-          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
+          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.85,
         }},
         { selector: 'edge[status="bootstrap_running"]', style: {
@@ -305,14 +315,14 @@ window.AxiomModules.graph = {
           label:'data(label)', 'font-size':'7px', color:'#c2410c',
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'88px', 'text-wrap':'ellipsis',
-          'text-background-color':'#ffffff', 'text-background-opacity':0.9,
+          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.95,
         }},
         { selector: 'edge[edgeType="bootstrap_scope"]', style: {
           label:'', width:1.8, 'curve-style':'bezier',
           'line-style':'dotted', 'line-dash-pattern':[2,5],
           'target-arrow-shape':'triangle-backcurve', 'arrow-scale':0.75,
-          'target-distance-from-node':2, 'line-color':'#cbd5e1',
+          'target-distance-from-node':2, 'line-color':theme.scopeEdge,
         }},
 
         // ── Interaction states (overlay glow, not border — card owns border) ──
@@ -334,6 +344,13 @@ window.AxiomModules.graph = {
           'overlay-color':'#f59e0b', 'overlay-opacity':0.3, 'overlay-padding':4,
         }},
       ];
+    },
+
+    applyGraphTheme() {
+      if (!this.cy) return;
+      this.cy.style().fromJson(this.graphStyles()).update();
+      this.refreshGraphDecorations();
+      this.drawMinimap();
     },
 
     layoutOpts(animate = true) {
