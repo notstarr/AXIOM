@@ -7,6 +7,7 @@ from axiom.modules.archives.api import router as archives_router
 from axiom.modules.audit.api import router as audit_router
 from axiom.modules.context.api import router as context_router
 from axiom.modules.credentials.api import router as credentials_router
+from axiom.modules.dashboard.api import router as dashboard_router
 from axiom.modules.dispatch.api import router as dispatch_router
 from axiom.modules.diagnostics.api import router as diagnostics_router
 from axiom.modules.execution.api import router as execution_router
@@ -29,6 +30,7 @@ from axiom.modules.workers.api import router as workers_router
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(projects_router)
+router.include_router(dashboard_router)
 router.include_router(reason_router)
 router.include_router(tasks_router)
 router.include_router(graph_router)

@@ -4,6 +4,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     ForeignKeyConstraint,
+    Index,
     Integer,
     PrimaryKeyConstraint,
     String,
@@ -40,3 +41,11 @@ artifacts = Table(
     ),
     UniqueConstraint("task_id", "storage_key"),
 )
+Index("ix_artifacts_active_created", artifacts.c.archived, artifacts.c.created_at)
+Index(
+    "ix_artifacts_task_active_created",
+    artifacts.c.task_id,
+    artifacts.c.archived,
+    artifacts.c.created_at,
+)
+Index("ix_artifacts_type_created", artifacts.c.artifact_type, artifacts.c.created_at)

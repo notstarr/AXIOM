@@ -484,11 +484,11 @@ window.AxiomModules.dispatch = {
       }
     },
 
-    async loadSeeEvents(reset = false) {
+    async loadSeeEvents(reset = false, options = {}) {
       if (!this.selectedProjectId) {
         this.seeEvents = [];
         this.seeLastEventId = 0;
-        return;
+        return [];
       }
       if (reset) {
         this.seeLastEventId = 0;
@@ -497,7 +497,9 @@ window.AxiomModules.dispatch = {
       try {
         const events = await this.api(
           'GET',
-          `/projects/${this.selectedProjectId}/events?after_id=${this.seeLastEventId}&limit=200`
+          `/projects/${this.selectedProjectId}/events?after_id=${this.seeLastEventId}&limit=200`,
+          null,
+          options,
         );
         if (Array.isArray(events) && events.length > 0) {
           this.seeEvents.push(...events);
@@ -511,8 +513,10 @@ window.AxiomModules.dispatch = {
             if (el) el.scrollTop = el.scrollHeight;
           });
         }
+        return Array.isArray(events) ? events : [];
       } catch (e) {
-        console.error(e);
+        if (e?.name !== 'AbortError') console.error(e);
+        return [];
       }
     },
 

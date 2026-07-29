@@ -5,184 +5,69 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>axiom</title>
 <link rel="icon" href="/static/logo.jpg" type="image/jpeg">
-<link rel="stylesheet" href="/static/apple.css">
-<script src="/static/vendor/tailwindcss.js"></script>
-<script src="/static/vendor/dagre.min.js"></script>
-<script src="/static/vendor/cytoscape.min.js"></script>
-<script src="/static/vendor/cytoscape-dagre.js"></script>
-<script src="/static/vendor/elk.bundled.js"></script>
-<script src="/static/vendor/cytoscape-elk.js"></script>
-<script src="/static/vendor/cytoscape-html-label.js"></script>
-<script src="/static/vendor/marked.min.js"></script>
+<link rel="stylesheet" href="/static/apple.css?v=20260729.1">
+<link rel="stylesheet" href="/static/tailwind.generated.css?v=20260729.1">
 <script defer src="/static/vendor/alpine.min.js"></script>
 <link rel="stylesheet" href="/static/custom.css">
-<script>
-  tailwind.config = {
-    theme: {
-      fontFamily: { sans: ['-apple-system','BlinkMacSystemFont','SF Pro Text','Helvetica Neue','sans-serif'] },
-      extend: {
-        colors: {
-          brand: { 50:'#EFF6FF',100:'#DBEAFE',200:'#BFDBFE',300:'#93C5FD',400:'#60A5FA',500:'#0071E3',600:'#0064CC',700:'#0055B3',800:'#004499',900:'#003380' }
-        }
-      }
-    }
-  }
-</script>
 </head>
 <body class="h-screen overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="cairnApp()" style="background:var(--bg-secondary);color:var(--text-primary)">
 
 <!-- ═══════════ APPLE-STYLE SIDEBAR ═══════════ -->
-<aside class="sidebar">
-  <div class="sidebar-logo">
-    <img src="/static/logo.jpg" alt="axiom">
-  </div>
-  <button type="button" class="nav-item nav-back" data-tooltip="返回上一页"
-    x-show="pageHistory.length > 0" @click="goBack()" style="margin-bottom:4px">
-    <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
-  </button>
+<button type="button" class="mobile-nav-trigger" @click="mobileSidebarOpen = true" aria-label="打开导航">
+  <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+</button>
+<div class="mobile-sidebar-backdrop" x-show="mobileSidebarOpen" x-cloak @click="mobileSidebarOpen = false"></div>
+<aside class="sidebar" :class="{ 'is-collapsed': sidebarCollapsed, 'is-mobile-open': mobileSidebarOpen }">
+  <div class="sidebar-logo-row"><div class="sidebar-logo"><img src="/static/logo.jpg" alt="axiom"></div><span class="sidebar-brand">AXIOM</span><button type="button" class="sidebar-collapse" @click="toggleSidebar()" :aria-label="sidebarCollapsed ? '展开侧栏' : '折叠侧栏'"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path :d="sidebarCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'"/></svg></button></div>
+  <button type="button" class="nav-item nav-back" data-tooltip="返回上一页" x-show="pageHistory.length > 0" @click="goBack()"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg><span class="nav-label">返回</span></button>
   <nav class="sidebar-nav">
-    <button type="button" class="nav-item" data-tooltip="仪表盘"
-      :class="{ 'is-active': activePage === 'dashboard' }" @click="navigateTo('dashboard')">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6V4h-6v16ZM4 20h6v-4H4v4Z"/></svg>
-    </button>
-    <button type="button" class="nav-item" data-tooltip="任务管理"
-      :class="{ 'is-active': activePage === 'tasks' || activePage === 'task-detail' }" @click="navigateTo('tasks')">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-    </button>
-    <button type="button" class="nav-item" data-tooltip="漏洞管理"
-      :class="{ 'is-active': activePage === 'vulnerabilities' }" @click="navigateTo('vulnerabilities')">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 3 4.5 6v5.5c0 4.2 2.7 7.9 7.5 9.5 4.8-1.6 7.5-5.3 7.5-9.5V6L12 3Z"/><path d="M12 8v5m0 3h.01"/></svg>
-    </button>
-    <button type="button" class="nav-item" data-tooltip="项目管理"
-      :class="{ 'is-active': activePage === 'projects' }" @click="navigateTo('projects')">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Z"/><path d="m4 12 8 4.5 8-4.5"/><path d="m4 16.5 8 4.5 8-4.5"/></svg>
-    </button>
-    <button type="button" class="nav-item" data-tooltip="守门审计日志"
-      :class="{ 'is-active': activePage === 'guard-audit' }" @click="navigateTo('guard-audit')">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.2 2.8 7.9 7 9.5 4.2-1.6 7-5.3 7-9.5V6l-7-3Z"/><path d="M9 12h6"/><path d="M9 15h4"/><path d="M9 9h6"/></svg>
-    </button>
+    <button type="button" class="nav-item" data-tooltip="仪表盘" :class="{ 'is-active': activePage === 'dashboard' }" @click="navigateTo('dashboard')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6V4h-6v16ZM4 20h6v-4H4v4Z"/></svg><span class="nav-label">仪表盘</span></button>
+    <button type="button" class="nav-item" data-tooltip="任务" :class="{ 'is-active': activePage === 'tasks' || activePage === 'task-detail' }" @click="navigateTo('tasks')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span class="nav-label">任务</span></button>
+    <button type="button" class="nav-item" data-tooltip="漏洞" :class="{ 'is-active': activePage === 'vulnerabilities' }" @click="navigateTo('vulnerabilities')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 3 4.5 6v5.5c0 4.2 2.7 7.9 7.5 9.5 4.8-1.6 7.5-5.3 7.5-9.5V6L12 3Z"/><path d="M12 8v5m0 3h.01"/></svg><span class="nav-label">漏洞</span></button>
+    <button type="button" class="nav-item" data-tooltip="项目" :class="{ 'is-active': activePage === 'projects' }" @click="navigateTo('projects')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Z"/><path d="m4 12 8 4.5 8-4.5"/><path d="m4 16.5 8 4.5 8-4.5"/></svg><span class="nav-label">项目</span></button>
+    <button type="button" class="nav-item" data-tooltip="守门审计" :class="{ 'is-active': activePage === 'guard-audit' }" @click="navigateTo('guard-audit')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.2 2.8 7.9 7 9.5 4.2-1.6 7-5.3 7-9.5V6l-7-3Z"/><path d="M9 12h6M9 15h4M9 9h6"/></svg><span class="nav-label">守门审计</span></button>
     <div class="sidebar-divider"></div>
-
-
-    <button type="button" class="nav-item" data-tooltip="Skill"
-      :class="{ 'is-active': activePage === 'skills' }" @click="navigateTo('skills')">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M9 12h6m-3-3v6m-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v14l-4-2-4 2-4-2-4 2Z"/></svg>
-    </button>
-    <button type="button" class="nav-item" data-tooltip="Files"
-      :class="{ 'is-active': activePage === 'files' }" @click="navigateTo('files')">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v11Z"/></svg>
-    </button>
-    <button type="button" class="nav-item" data-tooltip="MCP 管理"
-      :class="{ 'is-active': activePage === 'mcp' }" @click="navigateTo('mcp')">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.5 6h7M7.5 8l3 7.5M16.5 8l-3 7.5"/></svg>
-    </button>
-    <button type="button" class="nav-item" data-tooltip="提示词备忘录"
-      :class="{ 'is-active': activePage === 'prompts' }" @click="navigateTo('prompts')">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
-    </button>
+    <button type="button" class="nav-item" data-tooltip="Skill" :class="{ 'is-active': activePage === 'skills' }" @click="navigateTo('skills')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M9 12h6m-3-3v6m-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v14l-4-2-4 2-4-2-4 2Z"/></svg><span class="nav-label">Skill</span></button>
+    <button type="button" class="nav-item" data-tooltip="文件" :class="{ 'is-active': activePage === 'files' }" @click="navigateTo('files')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v11Z"/></svg><span class="nav-label">文件</span></button>
+    <button type="button" class="nav-item" data-tooltip="MCP" :class="{ 'is-active': activePage === 'mcp' }" @click="navigateTo('mcp')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.5 6h7M7.5 8l3 7.5M16.5 8l-3 7.5"/></svg><span class="nav-label">MCP</span></button>
+    <button type="button" class="nav-item" data-tooltip="提示词" :class="{ 'is-active': activePage === 'prompts' }" @click="navigateTo('prompts')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg><span class="nav-label">提示词</span></button>
   </nav>
   <div class="sidebar-bottom">
-    <button type="button" class="nav-item" data-tooltip="全局搜索 (⌘K)"
-      @click.window.meta.k="showGlobalSearch = true" @click="showGlobalSearch = true">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-    </button>
-    <button type="button" class="nav-item" data-tooltip="深色模式"
-      @click="toggleDarkMode()">
-      <template x-if="!darkMode">
-        <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg>
-      </template>
-      <template x-if="darkMode">
-        <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-      </template>
-    </button>
-    <button type="button" class="nav-item" data-tooltip="系统设置"
-      :class="{ 'is-active': activePage === 'settings' }" @click="navigateTo('settings')">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.05.05a2 2 0 1 1-2.83 2.83l-.05-.05a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.07a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.05.05a2 2 0 1 1-2.83-2.83l.05-.05A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.07A1.7 1.7 0 0 0 4.6 8a1.7 1.7 0 0 0-.34-1.88l-.05-.05a2 2 0 1 1 2.83-2.83l.05.05A1.7 1.7 0 0 0 8.97 3.6 1.7 1.7 0 0 0 10 2.07V2a2 2 0 1 1 4 0v.07a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.05-.05a2 2 0 1 1 2.83 2.83l-.05.05A1.7 1.7 0 0 0 19.4 8c.18.6.7 1 1.56 1H21a2 2 0 1 1 0 4h-.07A1.7 1.7 0 0 0 19.4 15Z"/></svg>
-    </button>
+    <button type="button" class="nav-item" data-tooltip="搜索" @click="openGlobalSearch()"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span class="nav-label">搜索</span></button>
+    <button type="button" class="nav-item" data-tooltip="深色模式" @click="toggleDarkMode()"><template x-if="!darkMode"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg></template><template x-if="darkMode"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></template><span class="nav-label">深色模式</span></button>
+    <button type="button" class="nav-item" data-tooltip="设置" :class="{ 'is-active': activePage === 'settings' }" @click="navigateTo('settings')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.05.05a2 2 0 1 1-2.83 2.83l-.05-.05a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.07a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.05.05a2 2 0 1 1-2.83-2.83l.05-.05A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.07A1.7 1.7 0 0 0 4.6 8a1.7 1.7 0 0 0-.34-1.88l-.05-.05a2 2 0 1 1 2.83-2.83l.05.05A1.7 1.7 0 0 0 8.97 3.6 1.7 1.7 0 0 0 10 2.07V2a2 2 0 1 1 4 0v.07a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.05-.05a2 2 0 1 1 2.83 2.83l-.05-.05A1.7 1.7 0 0 0 19.4 8c.18.6.7 1 1.56 1H21a2 2 0 1 1 0 4h-.07A1.7 1.7 0 0 0 19.4 15Z"/></svg><span class="nav-label">设置</span></button>
   </div>
 </aside>
-
-<div class="main-content">
-<div x-show="activePage === 'dashboard'" x-cloak
-     data-page="dashboard" x-init="loadPageTemplate('dashboard')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0">
+<div class="main-content" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+  <div id="page-host" class="page-host flex-1 flex flex-col overflow-hidden min-w-0" aria-live="polite"><div class="page-skeleton"><span></span><span></span><span></span></div></div>
 </div>
 
-<div x-show="activePage === 'tasks'" x-cloak
-     data-page="task-list" x-init="loadPageTemplate('task-list')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0">
-</div>
-
-<div x-show="activePage === 'task-detail' && view === 'graph'" x-cloak
-     data-page="graph-view" x-init="loadPageTemplate('graph-view')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0">
-</div>
-
-<div x-show="activePage === 'task-detail' && view === 'human'" x-cloak
-     data-page="human-view" x-init="loadPageTemplate('human-view')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0"></div>
-
-<div x-show="activePage === 'task-detail' && view === 'archive'" x-cloak
-     data-page="archive-view" x-init="loadPageTemplate('archive-view')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0"></div>
-
-<div x-show="activePage === 'vulnerabilities'" x-cloak
-     data-page="vulnerabilities" x-init="loadPageTemplate('vulnerabilities')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0">
-</div>
-
-<div x-show="activePage === 'projects'" x-cloak
-     data-page="project-mgmt" x-init="loadPageTemplate('project-mgmt')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0">
-</div>
-
-<div x-show="activePage === 'guard-audit'" x-cloak
-     data-page="guard-audit" x-init="loadPageTemplate('guard-audit')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0">
-</div>
-
-<div x-show="activePage === 'skills'" x-cloak
-     data-page="skills" x-init="loadPageTemplate('skills')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0">
-</div>
-
-<div x-show="activePage === 'files'" x-cloak
-     data-page="files" x-init="loadPageTemplate('files')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0">
-</div>
-
-<div x-show="activePage === 'mcp'" x-cloak data-page="mcp" x-init="loadPageTemplate('mcp')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0"></div>
-
-
-<!-- Placeholder Pages -->
-<template x-for="page in placeholderPages()" :key="page.id">
-  <div x-show="activePage === page.id" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
-    <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 shrink-0">
-      <h2 class="text-base font-semibold text-slate-800 tracking-tight" x-text="page.title"></h2>
-      <p class="text-xs text-slate-400 mt-0.5" x-text="page.subtitle"></p>
-    </header>
-    <main class="flex-1 overflow-y-auto p-5">
-      <section class="rounded-2xl border border-dashed border-slate-200 bg-white px-6 py-16 text-center">
-        <h3 class="text-lg font-semibold text-slate-700" x-text="page.title"></h3>
-        <p class="mt-2 text-sm text-slate-400" x-text="page.description"></p>
-        <p class="mt-4 text-xs text-slate-400">当前版本先预留完整页面入口，后续接入后端能力。</p>
-      </section>
-    </main>
+<!-- ═══════════ GLOBAL SEARCH (Cmd+K) ═══════════ -->
+<div x-show="showGlobalSearch" x-cloak class="fixed inset-0 z-[60] flex items-start justify-center pt-[15vh] overlay" @click.self="closeGlobalSearch()" @keydown.escape.window="closeGlobalSearch()">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl mx-4 border border-slate-200/60 overflow-hidden modal-enter">
+    <div class="px-4 py-3 border-b border-slate-100 flex items-center gap-3">
+      <svg class="w-4 h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input x-model="globalSearchQuery" x-ref="globalSearchInput" @input="scheduleGlobalSearch()"
+        placeholder="搜索项目、任务、漏洞…"
+        class="flex-1 bg-transparent text-sm text-slate-700 placeholder-slate-400 focus:outline-none">
+      <kbd class="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">ESC</kbd>
+    </div>
+    <div class="max-h-[50vh] overflow-y-auto p-2">
+      <template x-if="!globalSearchQuery.trim()"><div class="py-8 text-center text-sm text-slate-400">输入关键词搜索</div></template>
+      <template x-if="globalSearchQuery.trim() && globalSearchLoading"><div class="py-8 text-center text-sm text-slate-400">正在搜索…</div></template>
+      <template x-if="globalSearchQuery.trim() && !globalSearchLoading && globalSearchResults().length === 0"><div class="py-8 text-center text-sm text-slate-400">未找到结果</div></template>
+      <template x-for="result in globalSearchResults()" :key="`${result.type}-${result.id}`">
+        <button @click="result.action(); closeGlobalSearch()"
+          class="w-full text-left rounded-xl px-3 py-2.5 hover:bg-slate-50 transition flex items-center gap-3">
+          <span class="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-mono font-semibold"
+            :class="{'bg-blue-50 text-blue-600': result.type === 'project', 'bg-emerald-50 text-emerald-600': result.type === 'group', 'bg-rose-50 text-rose-500': result.type === 'vuln'}"
+            x-text="result.type === 'project' ? 'T' : result.type === 'group' ? 'P' : 'V'"></span>
+          <div class="min-w-0 flex-1"><p class="text-sm font-medium text-slate-700 truncate" x-text="result.title"></p><p class="text-[11px] text-slate-400 truncate" x-text="result.subtitle"></p></div>
+        </button>
+      </template>
+    </div>
   </div>
-</template>
-
-<div x-show="activePage === 'prompts'" x-cloak
-     data-page="prompts" x-init="loadPageTemplate('prompts')" @keydown.meta.k.prevent="showPromptSearch = true"
-     class="flex-1 flex flex-col overflow-hidden min-w-0">
 </div>
-
-<div x-show="activePage === 'settings'" x-cloak
-     data-page="settings" x-init="loadPageTemplate('settings')"
-     class="flex-1 flex flex-col overflow-hidden min-w-0">
-</div>
-
-</div><!-- /main-content -->
 
 <!-- ═══════════ MODALS ═══════════ -->
 
@@ -544,22 +429,22 @@
   <span x-text="toast ? toast.message : ''"></span>
 </div>
 
-<script src="/static/js/state.js?v=20260728.1"></script>
+<script src="/static/js/state.js?v=20260729.1"></script>
 <script src="/static/js/helpers.js?v=20260724.2"></script>
-<script src="/static/js/core.js?v=20260723.3"></script>
-<script src="/static/js/projects.js?v=20260728.1"></script>
-<script src="/static/js/dashboard.js?v=20260727.1"></script>
+<script src="/static/js/core.js?v=20260729.1"></script>
+<script src="/static/js/projects.js?v=20260729.1"></script>
+<script src="/static/js/dashboard.js?v=20260729.1"></script>
 <script src="/static/js/skills.js?v=20260728.1"></script>
-<script src="/static/js/files.js?v=20260723.3"></script>
+<script src="/static/js/files.js?v=20260729.1"></script>
 <script src="/static/js/mcp.js?v=20260723.3"></script>
-  <script src="/static/js/graph.js?v=20260727.3"></script>
-<script src="/static/js/human.js?v=20260727.1"></script>
+<script src="/static/js/graph.js?v=20260729.1"></script>
+<script src="/static/js/human.js?v=20260729.1"></script>
 <script src="/static/js/archives.js?v=20260729.1"></script>
 <script src="/static/js/timeline.js?v=20260724.3"></script>
 <script src="/static/js/actions.js?v=20260723.3"></script>
-<script src="/static/js/dispatch.js?v=20260727.3"></script>
+<script src="/static/js/dispatch.js?v=20260729.1"></script>
 <script src="/static/js/prompts.js?v=20260723.3"></script>
-<script src="/static/js/v2-adapter.js?v=20260728.3"></script>
+<script src="/static/js/v2-adapter.js?v=20260729.1"></script>
 <script src="/static/js/app.js?v=20260723.3"></script>
 </body>
 </html>

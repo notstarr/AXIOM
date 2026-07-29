@@ -53,6 +53,21 @@ vulnerabilities = Table(
     ),
 )
 Index("ix_vulnerabilities_task_updated", vulnerabilities.c.task_id, vulnerabilities.c.updated_at)
+Index(
+    "ix_vulnerabilities_active_updated",
+    vulnerabilities.c.archived,
+    vulnerabilities.c.updated_at,
+)
+Index(
+    "ix_vulnerabilities_status_updated",
+    vulnerabilities.c.status,
+    vulnerabilities.c.updated_at,
+)
+Index(
+    "ix_vulnerabilities_severity_updated",
+    vulnerabilities.c.severity,
+    vulnerabilities.c.updated_at,
+)
 
 
 vulnerability_artifacts = Table(

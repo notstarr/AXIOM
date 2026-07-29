@@ -1181,8 +1181,43 @@ class ReasonService:
             if assessment.achieved and draft.intent_proposals:
                 errors.append("Goal 已达成时不能继续派发 Intent")
             if not assessment.achieved and not draft.intent_proposals and not open_count:
-                errors.append("Goal 未达成时必须派发可执行 Intent，或保留已有活动 Explore")
+                unresolved_todos = self._no_op_unresolved_todos(conn, workspace, run)
+                if unresolved_todos:
+                    errors.append(
+                        "本轮不派发 Intent 时，必须先收口无后续工作的 Todo："
+                        + ", ".join(unresolved_todos)
+                    )
         return list(dict.fromkeys(errors))
+
+    def _no_op_unresolved_todos(
+        self,
+        conn,
+        workspace: ReasonWorkspace,
+        run: ReasonRun,
+    ) -> list[str]:
+        updates = {item.todo_id: item for item in workspace.draft.todo_updates}
+        unresolved: list[str] = []
+
+        actionable_ids = run.trigger_payload.get("actionable_todo_ids", [])
+        if isinstance(actionable_ids, list):
+            for todo_id in actionable_ids:
+                if not isinstance(todo_id, str):
+                    continue
+                todo = self.todos.get(conn, workspace.task_id, todo_id)
+                if todo is None or todo.archived or todo.status not in {"pending", "active"}:
+                    continue
+                staged = updates.get(todo_id)
+                effective_status = staged.status if staged and staged.status else todo.status
+                if effective_status in {"pending", "active"}:
+                    unresolved.append(todo_id)
+
+        for todo in workspace.draft.todo_adds:
+            staged = updates.get(todo.ref)
+            effective_status = staged.status if staged and staged.status else todo.status
+            if effective_status in {"pending", "active"}:
+                unresolved.append(todo.ref)
+
+        return list(dict.fromkeys(unresolved))
 
     @staticmethod
     def _unconsumed_source_fact_ids(

@@ -53,7 +53,7 @@
 
   async function request(method, path, body, options = {}) {
     const headers = { ...(options.headers || {}) };
-    const init = { method, headers };
+    const init = { method, headers, signal: options.signal };
     if (body instanceof FormData) {
       init.body = body;
     } else if (body !== undefined && body !== null) {
@@ -77,6 +77,18 @@
       throw error;
     }
     return data;
+  }
+
+  async function requestPage(path, options = {}) {
+    const response = await fetch(`${apiRoot}${path}`, { signal: options.signal });
+    const text = await response.text();
+    let items = [];
+    try { items = text ? JSON.parse(text) : []; } catch (_) {}
+    if (!response.ok) throw new Error(items?.detail || text || `HTTP ${response.status}`);
+    return {
+      items: Array.isArray(items) ? items : [],
+      total: Number(response.headers.get('X-Total-Count') || items.length || 0),
+    };
   }
 
   function mapTask(task) {
@@ -143,6 +155,7 @@
       working_intent_count: task.working_intent_count || 0,
       hint_count: task.hint_count || 0,
       vulnerability_count: task.vulnerability_count || 0,
+      artifact_count: task.artifact_count || 0,
       todo_count: task.todo_count || 0,
       depth_mode: false,
     };
@@ -253,21 +266,19 @@
     };
   }
 
-  async function taskDetail(taskId) {
-    const [task, graph, hints, todos, vulnerabilities, artifacts, audit] = await Promise.all([
-      request('GET', `/tasks/${taskId}`),
-      request('GET', `/tasks/${taskId}/graph`),
-      request('GET', `/tasks/${taskId}/hints`),
-      request('GET', `/tasks/${taskId}/todos`),
-      request('GET', `/tasks/${taskId}/vulnerabilities`),
-      request('GET', `/tasks/${taskId}/artifacts`),
-      request('GET', `/audit-events?task_id=${encodeURIComponent(taskId)}&limit=500`),
+  async function taskDetail(taskId, options = {}) {
+    const [task, graph, hints, todos, vulnerabilities, artifacts] = await Promise.all([
+      request('GET', `/tasks/${taskId}`, null, options),
+      request('GET', `/tasks/${taskId}/graph`, null, options),
+      request('GET', `/tasks/${taskId}/hints`, null, options),
+      request('GET', `/tasks/${taskId}/todos?limit=200`, null, options),
+      request('GET', `/tasks/${taskId}/vulnerabilities?limit=20`, null, options),
+      request('GET', `/tasks/${taskId}/artifacts?limit=12`, null, options),
     ]);
-    const project = await request('GET', `/projects/${task.project_id}`).catch(() => null);
+    const project = await request('GET', `/projects/${task.project_id}`, null, options).catch(() => null);
     const mappedTask = mapTask(task);
     mappedTask.fact_count = graph.facts.length;
     mappedTask.intent_count = graph.intents.length;
-    mappedTask.vulnerability_count = vulnerabilities.length;
     return {
       project: mappedTask,
       facts: graph.facts,
@@ -277,7 +288,7 @@
       todos,
       vulns: vulnerabilities.map(item => mapVulnerability(item, task, project)),
       artifacts: artifacts.map(mapArtifact),
-      events: audit.map(mapAuditEvent),
+      events: [],
     };
   }
 
@@ -455,14 +466,14 @@
     return judgeSettings();
   }
 
-  async function legacyApi(method, rawPath, body) {
+  async function legacyApi(method, rawPath, body, options = {}) {
     const url = new URL(rawPath, location.origin);
     const path = url.pathname;
     const query = url.searchParams;
     let match;
 
     if (path === '/project-groups' && method === 'GET') {
-      const projects = await request('GET', '/projects');
+      const projects = await request('GET', '/projects', null, options);
       return projects.map(project => ({
         ...project,
         task_count: project.task_count || 0,
@@ -506,7 +517,7 @@
       }
     }
 
-    if (path === '/projects' && method === 'GET') return (await request('GET', `/tasks${url.search}`)).map(mapTask);
+    if (path === '/projects' && method === 'GET') return (await request('GET', `/tasks${url.search}`, null, options)).map(mapTask);
     if (path === '/projects' && method === 'POST') {
       const task = await request('POST', '/tasks', {
         project_id: body.parent_project_id,
@@ -523,7 +534,7 @@
       return { project: mapTask(task) };
     }
     if ((match = path.match(/^\/projects\/([^/]+)$/))) {
-      if (method === 'GET') return taskDetail(match[1]);
+      if (method === 'GET') return taskDetail(match[1], options);
       if (method === 'DELETE') return request('DELETE', `/tasks/${match[1]}`);
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/title$/)) && method === 'PUT') {
@@ -559,7 +570,7 @@
       return request('POST', `/tasks/${match[1]}/facts/${match[2]}/toggle-archive`, { actor: 'human.frontend' });
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/intents\/([^/]+)$/))) {
-      if (method === 'GET') return mapIntent(await request('GET', `/tasks/${match[1]}/intents/${match[2]}`));
+      if (method === 'GET') return mapIntent(await request('GET', `/tasks/${match[1]}/intents/${match[2]}`, null, options));
       if (method === 'PUT') return request('PATCH', `/tasks/${match[1]}/intents/${match[2]}`, {
         description: body.description,
         actor: body.actor || 'human.frontend',
@@ -573,7 +584,7 @@
       const params = new URLSearchParams({ limit: query.get('limit') || '500' });
       if (query.has('after_id')) params.set('after_id', query.get('after_id') || '0');
       params.set('task_id', match[1]);
-      const events = await request('GET', `/audit-events?${params.toString()}`);
+      const events = await request('GET', `/audit-events?${params.toString()}`, null, options);
       return (query.has('after_id') ? events : events.reverse()).map(mapAuditEvent);
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/maintainer-status$/)) && method === 'GET') return { maintaining_intent_ids: [] };
@@ -727,76 +738,179 @@
         && !this.project?.project?.legacy_readonly
         && ['active', 'stopped', 'completed'].includes(this.project?.project?.status);
     },
-    async loadAllProjectDetails(force = false) {
-      const taskIds = (this.projects || []).map(task => task.id);
-      const liveIds = new Set(taskIds);
-      for (const cache of [this.projectDetailsCache, this.projectEventsCache, this.taskDiagnostics, this.taskDiagnosticsLoading]) {
-        for (const id of Object.keys(cache || {})) {
-          if (!liveIds.has(id)) delete cache[id];
-        }
-      }
-      if (!force && this.projectDetailsLoaded
-        && taskIds.every(id => this.projectDetailsCache[id] && this.projectEventsCache[id])) return;
-
-      // Route changes, polling and the initial Alpine render can all request
-      // the same aggregate data at once.  Share one in-flight load instead of
-      // racing three full vulnerability/event responses against each other.
-      if (this._projectDetailsLoadPromise) {
-        await this._projectDetailsLoadPromise;
-        if (!force) return;
-      }
-
-      const load = (async () => {
-        this.projectDetailsLoading = true;
-        this.projectDetailsError = '';
-        try {
-        const [tasks, vulnerabilities, auditEvents] = await Promise.all([
-          request('GET', '/tasks'),
-          request('GET', '/vulnerabilities'),
-          request('GET', '/audit-events?limit=2000'),
-        ]);
-        const taskMap = new Map(tasks.map(task => [task.id, task]));
-        const projectMap = new Map((this.projectGroups || []).map(project => [project.id, project]));
-        const vulnsByTask = new Map();
-        for (const item of vulnerabilities) {
-          if (!vulnsByTask.has(item.task_id)) vulnsByTask.set(item.task_id, []);
-          vulnsByTask.get(item.task_id).push(item);
-        }
-        const eventsByTask = new Map();
-        for (const event of auditEvents) {
-          if (!event.task_id) continue;
-          if (!eventsByTask.has(event.task_id)) eventsByTask.set(event.task_id, []);
-          eventsByTask.get(event.task_id).push(mapAuditEvent(event));
-        }
-        for (const taskId of taskIds) {
-          const task = taskMap.get(taskId);
-          if (!task) continue;
-          const mapped = mapTask(task);
-          this.projectDetailsCache[taskId] = {
-            project: mapped,
-            facts: [],
-            intents: [],
-            hints: [],
-            todos: [],
-            vulns: (vulnsByTask.get(taskId) || []).map(item => mapVulnerability(item, task, projectMap.get(task.project_id))),
-            artifacts: [],
-            events: eventsByTask.get(taskId) || [],
-          };
-          this.projectEventsCache[taskId] = eventsByTask.get(taskId) || [];
-        }
-        this.projectDetailsLoaded = true;
-        } catch (error) {
-          this.projectDetailsError = error?.message || String(error);
-          console.error(error);
-        } finally {
-          this.projectDetailsLoading = false;
-        }
-      })();
-      this._projectDetailsLoadPromise = load;
+    async loadAllProjectDetails() {
+      await Promise.all([this.loadProjects(), this.loadDashboardSummary?.()]);
+      this.projectDetailsLoaded = true;
+    },
+    async loadDashboardSummary() {
       try {
-        await load;
+        this.dashboardSummary = await request('GET', '/dashboard/summary', null, {
+          signal: this._pageAbortController?.signal,
+        });
+        this.projectDetailsLoaded = true;
+        this.projectDetailsError = '';
+      } catch (error) {
+        this.projectDetailsError = error?.message || String(error);
+      }
+    },
+    async loadVulnerabilityPage(options = {}) {
+      const requestId = ++this._vulnerabilityListRequestId;
+      this.vulnerabilityLoading = true;
+      try {
+        const params = new URLSearchParams({
+          limit: String(this.vulnerabilityPageSize),
+          offset: String(this.vulnerabilityPage * this.vulnerabilityPageSize),
+        });
+        const keyword = String(this.vulnFilter.keyword || '').trim();
+        if (keyword) params.set('search', keyword);
+        if (this.vulnFilter.projectId) params.set('task_id', this.vulnFilter.projectId);
+        const page = await requestPage(`/vulnerabilities?${params}`, {
+          signal: this._pageAbortController?.signal,
+        });
+        const taskMap = new Map((this.projects || []).map(task => [task.id, task]));
+        const projectMap = new Map((this.projectGroups || []).map(project => [project.id, project]));
+        const items = page.items.map(item => {
+          const task = taskMap.get(item.task_id) || { id: item.task_id, project_id: '' };
+          return mapVulnerability(item, task, projectMap.get(task.project_id));
+        });
+        if (requestId !== this._vulnerabilityListRequestId) return;
+        this.vulnerabilityItems = items;
+        this.vulnerabilityTotal = page.total;
+        if (options.selectFirst !== false && this.vulnerabilityItems.length) {
+          this.selectedVulnerabilityKey = this.vulnerabilityKey(this.vulnerabilityItems[0]);
+        }
+      } catch (error) {
+        if (error?.name !== 'AbortError') this.showToast(error.message || String(error), 'error');
       } finally {
-        if (this._projectDetailsLoadPromise === load) this._projectDetailsLoadPromise = null;
+        if (requestId === this._vulnerabilityListRequestId) this.vulnerabilityLoading = false;
+      }
+    },
+    scheduleVulnerabilitySearch() {
+      clearTimeout(this._vulnerabilitySearchTimer);
+      this._vulnerabilitySearchTimer = setTimeout(() => {
+        this.vulnerabilityPage = 0;
+        if (this.showVulnBoard) this.loadVulnerabilityBoard(true);
+        else this.loadVulnerabilityPage();
+      }, 250);
+    },
+    async applyVulnerabilityFilters() {
+      this.vulnerabilityPage = 0;
+      if (this.showVulnBoard) await this.loadVulnerabilityBoard(true);
+      else await this.loadVulnerabilityPage();
+    },
+    vulnerabilityBoardColumns() {
+      return [
+        { status: '待验证', dotClass: 'bg-amber-400' },
+        { status: '已验证', dotClass: 'bg-blue-400' },
+        { status: '忽略', dotClass: 'bg-slate-400' },
+        { status: '重复', dotClass: 'bg-rose-400' },
+      ];
+    },
+    vulnerabilityBoardHasMore(status) {
+      return (this.vulnerabilityBoard?.[status]?.length || 0) < (this.vulnerabilityBoardTotals?.[status] || 0);
+    },
+    vulnerabilityPageCount() { return Math.max(1, Math.ceil((this.vulnerabilityTotal || 0) / this.vulnerabilityPageSize)); },
+    async setVulnerabilityPage(page) {
+      const next = Math.max(0, Math.min(this.vulnerabilityPageCount() - 1, Number(page) || 0));
+      if (next === this.vulnerabilityPage) return;
+      this.vulnerabilityPage = next;
+      await this.loadVulnerabilityPage();
+    },
+    async toggleVulnerabilityView() {
+      this.showVulnBoard = !this.showVulnBoard;
+      if (this.showVulnBoard) await this.loadVulnerabilityBoard(true);
+      else await this.loadVulnerabilityPage();
+    },
+    async loadVulnerabilityBoard(reset = true) {
+      const statuses = ['待验证', '已验证', '忽略', '重复'];
+      if (reset) {
+        this.vulnerabilityBoard = { '待验证': [], '已验证': [], '忽略': [], '重复': [] };
+        this.vulnerabilityBoardPages = { '待验证': 0, '已验证': 0, '忽略': 0, '重复': 0 };
+      }
+      try {
+        await Promise.all(statuses.map(status => {
+          if (!reset && this.vulnerabilityBoardLoading[status]) return Promise.resolve();
+          const currentLength = this.vulnerabilityBoard[status]?.length || 0;
+          if (!reset && currentLength > 200) return Promise.resolve();
+          const loaded = reset ? 25 : Math.max(25, currentLength);
+          return this.loadVulnerabilityBoardStatus(status, false, { limit: loaded });
+        }));
+      } catch (error) {
+        if (error?.name !== 'AbortError') this.showToast(error.message || String(error), 'error');
+      }
+    },
+    async loadVulnerabilityBoardStatus(status, append = true, options = {}) {
+      if (append && this.vulnerabilityBoardLoading[status]) return;
+      const requestId = (this._vulnerabilityBoardRequestIds[status] || 0) + 1;
+      this._vulnerabilityBoardRequestIds[status] = requestId;
+      this.vulnerabilityBoardLoading = { ...this.vulnerabilityBoardLoading, [status]: true };
+      const currentLength = this.vulnerabilityBoard[status]?.length || 0;
+      const offset = append ? currentLength : 0;
+      const limit = append ? 25 : Math.max(25, Number(options.limit) || 25);
+      const params = new URLSearchParams({ status, limit: String(limit), offset: String(offset) });
+      const keyword = String(this.vulnFilter.keyword || '').trim();
+      if (keyword) params.set('search', keyword);
+      if (this.vulnFilter.projectId) params.set('task_id', this.vulnFilter.projectId);
+      try {
+        const page = await requestPage(`/vulnerabilities?${params}`, {
+          signal: this._pageAbortController?.signal,
+        });
+        if (requestId !== this._vulnerabilityBoardRequestIds[status]) return;
+        const taskMap = new Map((this.projects || []).map(task => [task.id, task]));
+        const projectMap = new Map((this.projectGroups || []).map(project => [project.id, project]));
+        const mapped = page.items.map(item => {
+          const task = taskMap.get(item.task_id) || { id: item.task_id, project_id: '' };
+          return mapVulnerability(item, task, projectMap.get(task.project_id));
+        });
+        this.vulnerabilityBoard = {
+          ...this.vulnerabilityBoard,
+          [status]: append ? [...(this.vulnerabilityBoard[status] || []), ...mapped] : mapped,
+        };
+        this.vulnerabilityBoardTotals = { ...this.vulnerabilityBoardTotals, [status]: page.total };
+        this.vulnerabilityBoardPages = {
+          ...this.vulnerabilityBoardPages,
+          [status]: Math.max(1, Math.ceil((append ? currentLength + mapped.length : mapped.length) / 25)),
+        };
+      } finally {
+        if (requestId === this._vulnerabilityBoardRequestIds[status]) {
+          this.vulnerabilityBoardLoading = { ...this.vulnerabilityBoardLoading, [status]: false };
+        }
+      }
+    },
+    async refreshTaskDetailSections(events = [], force = false) {
+      const taskId = this.selectedProjectId;
+      if (!taskId || !this.project) return;
+      const signal = this._pageAbortController?.signal;
+      const eventTypes = new Set((events || []).map(event => event.event_type || event.event || ''));
+      const hasPrefix = (...prefixes) => [...eventTypes].some(type => prefixes.some(prefix => type.startsWith(prefix)));
+      const intentChanged = hasPrefix('intent.', 'reason.', 'reason_run.', 'archive.');
+      const resultChanged = hasPrefix('intent.completed', 'reason.committed', 'archive.');
+
+      const updates = [
+        request('GET', `/tasks/${taskId}`, null, { signal }).then(task => {
+          this.project.project = mapTask(task);
+        }),
+      ];
+      if (force || intentChanged) {
+        updates.push(request('GET', `/tasks/${taskId}/graph`, null, { signal }).then(graph => {
+          this.project.facts = graph.facts || [];
+          this.project.intents = (graph.intents || []).map(mapIntent);
+          this.project.goal_from_fact_ids = graph.goal_from_fact_ids || [];
+        }));
+      }
+      if (force || resultChanged) {
+        updates.push(request('GET', `/tasks/${taskId}/todos?limit=200`, null, { signal }).then(items => { this.project.todos = items || []; }));
+        updates.push(request('GET', `/tasks/${taskId}/vulnerabilities?limit=20`, null, { signal }).then(items => {
+          const task = this.project.project;
+          const group = (this.projectGroups || []).find(item => item.id === task.parent_project_id);
+          this.project.vulns = (items || []).map(item => mapVulnerability(item, { id: task.id, project_id: task.parent_project_id, title: task.title }, group));
+        }));
+        updates.push(request('GET', `/tasks/${taskId}/artifacts?limit=12`, null, { signal }).then(items => { this.project.artifacts = (items || []).map(mapArtifact); }));
+      }
+      try {
+        await Promise.all(updates);
+      } catch (error) {
+        if (error?.name !== 'AbortError') console.debug('Task detail incremental refresh failed', error);
       }
     },
     async loadGlobalSkillUsage() {
@@ -1048,19 +1162,51 @@
 
   Object.assign(M.files.methods, {
     async loadArtifactCenter() {
+      const requestId = ++this._artifactCenterRequestId;
       this.artifactCenterLoading = true;
       try {
-        const tasks = (await request('GET', '/tasks')).map(mapTask);
-        this.artifactCenterTasks = tasks;
-        const selected = this.artifactCenterSelectedTask;
-        const source = selected ? tasks.filter(item => item.id === selected) : tasks;
-        const groups = await Promise.all(source.map(async task => (await request('GET', `/tasks/${task.id}/artifacts`)).map(item => {
+        const signal = this._pageAbortController?.signal;
+        const tasks = (await request('GET', '/tasks', null, { signal })).map(mapTask);
+        const params = new URLSearchParams({
+          limit: String(this.artifactCenterPageSize),
+          offset: String(this.artifactCenterPage * this.artifactCenterPageSize),
+        });
+        if (this.artifactCenterSelectedTask) params.set('task_id', this.artifactCenterSelectedTask);
+        if (String(this.artifactCenterSearch || '').trim()) params.set('search', String(this.artifactCenterSearch).trim());
+        if (this.artifactCenterType !== 'all') params.set('artifact_type', this.artifactCenterType);
+        if (this.artifactCenterPhase !== 'all') params.set('phase', this.artifactCenterPhase);
+        if (this.artifactCenterSource !== 'all') params.set('source', this.artifactCenterSource);
+        const page = await requestPage(`/artifacts?${params}`, {
+          signal,
+        });
+        const taskMap = new Map(tasks.map(task => [task.id, task]));
+        const items = page.items.map(item => {
           const mapped = mapArtifact(item);
-          return { ...mapped, task_title: task.title, phase: this.artifactSourcePhase(mapped), task_id: task.id };
-        })));
-        this.artifactCenterItems = groups.flat();
-      } catch (error) { this.showToast(error.message, 'error'); }
-      finally { this.artifactCenterLoading = false; }
+          const task = taskMap.get(item.task_id);
+          return { ...mapped, task_title: task?.title || item.task_id, phase: this.artifactSourcePhase(mapped), task_id: item.task_id };
+        });
+        if (requestId !== this._artifactCenterRequestId) return;
+        this.artifactCenterTasks = tasks;
+        this.artifactCenterItems = items;
+        this.artifactCenterTotal = page.total;
+      } catch (error) { if (error?.name !== 'AbortError') this.showToast(error.message, 'error'); }
+      finally {
+        if (requestId === this._artifactCenterRequestId) this.artifactCenterLoading = false;
+      }
+    },
+    scheduleArtifactCenterSearch() {
+      clearTimeout(this._artifactSearchTimer);
+      this._artifactSearchTimer = setTimeout(() => {
+        this.artifactCenterPage = 0;
+        this.loadArtifactCenter();
+      }, 250);
+    },
+    artifactCenterPageCount() { return Math.max(1, Math.ceil((this.artifactCenterTotal || 0) / this.artifactCenterPageSize)); },
+    async setArtifactCenterPage(page) {
+      const next = Math.max(0, Math.min(this.artifactCenterPageCount() - 1, Number(page) || 0));
+      if (next === this.artifactCenterPage) return;
+      this.artifactCenterPage = next;
+      await this.loadArtifactCenter();
     },
     artifactCenterTypes() { return [...new Set((this.artifactCenterItems || []).map(item => item.artifact_type).filter(Boolean))].sort(); },
     artifactCenterPhases() { return [...new Set((this.artifactCenterItems || []).map(item => item.phase).filter(Boolean))].sort(); },
@@ -1072,15 +1218,32 @@
       return match ? match[1].toLowerCase() : (type === 'upload' ? 'upload' : 'unknown');
     },
     artifactCenterFiltered() {
-      const query = String(this.artifactCenterSearch || '').trim().toLowerCase();
       return (this.artifactCenterItems || []).filter(item => {
-        if (this.artifactCenterType !== 'all' && item.artifact_type !== this.artifactCenterType) return false;
-        if (this.artifactCenterPhase !== 'all' && item.phase !== this.artifactCenterPhase) return false;
-        if (this.artifactCenterSource === 'upload' && item.artifact_type !== 'upload') return false;
-        if (this.artifactCenterSource === 'worker' && item.artifact_type === 'upload') return false;
-        if (!query) return true;
-        return [item.path, item.summary, item.intent_id, item.task_title, item.artifact_type].some(value => String(value || '').toLowerCase().includes(query));
+        return !item.archived;
       });
+    },
+    async loadHumanArtifactPage() {
+      if (!this.selectedProjectId || !this.project) return;
+      const params = new URLSearchParams({
+        limit: String(this.humanArtifactPageSize),
+        offset: String(this.humanArtifactPage * this.humanArtifactPageSize),
+      });
+      try {
+        const page = await requestPage(`/tasks/${this.selectedProjectId}/artifacts?${params}`, {
+          signal: this._pageAbortController?.signal,
+        });
+        this.project.artifacts = page.items.map(mapArtifact);
+        this.humanArtifactTotal = page.total;
+      } catch (error) {
+        if (error?.name !== 'AbortError') this.showToast(error.message || String(error), 'error');
+      }
+    },
+    humanArtifactPageCount() { return Math.max(1, Math.ceil((this.humanArtifactTotal || 0) / this.humanArtifactPageSize)); },
+    async setHumanArtifactPage(page) {
+      const next = Math.max(0, Math.min(this.humanArtifactPageCount() - 1, Number(page) || 0));
+      if (next === this.humanArtifactPage) return;
+      this.humanArtifactPage = next;
+      await this.loadHumanArtifactPage();
     },
     artifactFileName(item) { return String(item?.path || '').split('/').pop() || item?.id || 'artifact'; },
     artifactTypeIcon(type) { return type === 'upload' ? '↑' : /finding|vuln/i.test(type || '') ? '!' : /lead/i.test(type || '') ? '↗' : /evidence/i.test(type || '') ? '◈' : /api|asset|inventory/i.test(type || '') ? '◫' : '▤'; },
@@ -1149,6 +1312,7 @@
         const content = typeof payload?.content === 'string' ? payload.content : '';
         current._content = content;
         if (previewKind === 'markdown') {
+          if (typeof marked === 'undefined') await this.ensureMarkdownRuntime?.();
           current._rendered = marked.parse(content);
         } else if (previewKind === 'json' && content.trim()) {
           try {
@@ -1197,7 +1361,7 @@
       this.fileFolder = folder;
       this.fileIsGroupLevel = false;
       this.filePreview = { open: false, name: '', path: '', content: '', isMarkdown: false, isImage: false, rawUrl: '', rendered: '' };
-      const artifacts = (await request('GET', `/tasks/${taskId}/artifacts`)).map(mapArtifact);
+      const artifacts = (await request('GET', `/tasks/${taskId}/artifacts?limit=200`)).map(mapArtifact);
       const filtered = artifacts.filter(item => folder === 'human' ? item.artifact_type === 'upload' : item.artifact_type !== 'upload');
       this.fileArtifactMap = {};
       this.fileList = filtered.map(item => {
@@ -1223,6 +1387,7 @@
       const response = await fetch(rawUrl);
       const content = await response.text();
       const isMarkdown = this.isMdFile(name);
+      if (isMarkdown && typeof marked === 'undefined') await this.ensureMarkdownRuntime?.();
       this.filePreview = { open: true, name, path, content, isMarkdown, isImage: false, rawUrl, rendered: isMarkdown ? marked.parse(content) : '' };
     },
     async deleteCurrentFile(path) {

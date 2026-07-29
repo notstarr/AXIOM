@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import mimetypes
 
-from fastapi import APIRouter, Depends, File, Form, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse
 
 from axiom.api.dependencies import get_container
@@ -10,18 +10,66 @@ from axiom.composition import Container
 from axiom.modules.artifacts.schemas import Artifact, ArtifactContent
 
 
-router = APIRouter(prefix="/tasks", tags=["artifacts"])
+router = APIRouter(tags=["artifacts"])
 
 
-@router.get("/{task_id}/artifacts", response_model=list[Artifact])
+@router.get("/tasks/{task_id}/artifacts", response_model=list[Artifact])
 def list_artifacts(
     task_id: str,
+    response: Response,
+    search: str = "",
+    artifact_type: str | None = None,
+    phase: str | None = None,
+    source: str | None = None,
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     container: Container = Depends(get_container),
 ) -> list[Artifact]:
-    return container.artifacts.list(task_id)
+    if limit is None:
+        items = container.artifacts.list(task_id)
+        response.headers["X-Total-Count"] = str(len(items))
+        return items
+    items, total = container.artifacts.list_page(
+        task_id=task_id,
+        search=search,
+        artifact_type=artifact_type,
+        phase=phase,
+        source=source,
+        limit=limit,
+        offset=offset,
+    )
+    response.headers["X-Total-Count"] = str(total)
+    return items
 
 
-@router.get("/{task_id}/artifacts/{artifact_id}/content", response_model=ArtifactContent)
+@router.get("/artifacts", response_model=list[Artifact])
+def list_all_artifacts(
+    response: Response,
+    task_id: str | None = None,
+    project_id: str | None = None,
+    search: str = "",
+    artifact_type: str | None = None,
+    phase: str | None = None,
+    source: str | None = None,
+    limit: int = Query(default=60, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    container: Container = Depends(get_container),
+) -> list[Artifact]:
+    items, total = container.artifacts.list_page(
+        task_id=task_id,
+        project_id=project_id,
+        search=search,
+        artifact_type=artifact_type,
+        phase=phase,
+        source=source,
+        limit=limit,
+        offset=offset,
+    )
+    response.headers["X-Total-Count"] = str(total)
+    return items
+
+
+@router.get("/tasks/{task_id}/artifacts/{artifact_id}/content", response_model=ArtifactContent)
 def read_artifact_content(
     task_id: str,
     artifact_id: str,
@@ -30,7 +78,7 @@ def read_artifact_content(
     return container.artifacts.content(task_id, artifact_id)
 
 
-@router.get("/{task_id}/artifacts/{artifact_id}/download", response_class=FileResponse)
+@router.get("/tasks/{task_id}/artifacts/{artifact_id}/download", response_class=FileResponse)
 def download_artifact(
     task_id: str,
     artifact_id: str,
@@ -47,7 +95,7 @@ def download_artifact(
 
 
 @router.post(
-    "/{task_id}/artifacts/upload",
+    "/tasks/{task_id}/artifacts/upload",
     response_model=Artifact,
     status_code=status.HTTP_201_CREATED,
 )
@@ -67,7 +115,7 @@ async def upload_artifact(
     )
 
 
-@router.delete("/{task_id}/artifacts/{artifact_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/tasks/{task_id}/artifacts/{artifact_id}", status_code=status.HTTP_204_NO_CONTENT)
 def archive_artifact(
     task_id: str,
     artifact_id: str,

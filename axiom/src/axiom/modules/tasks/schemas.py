@@ -132,6 +132,7 @@ class Task(BaseModel):
     hint_count: int = 0
     todo_count: int = 0
     vulnerability_count: int = 0
+    artifact_count: int = 0
     reason_worker: str | None = None
     reason_heartbeat_at: str | None = None
     reason_activity_kind: str = ""

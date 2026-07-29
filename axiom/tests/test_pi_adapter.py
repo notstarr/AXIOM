@@ -217,16 +217,34 @@ def test_reason_prompt_requires_small_todos_and_intents_without_fixed_budget_exa
         },
     )
 
-    assert "一个 Todo 只描述一个攻击主题" in prompt
+    assert "一个待办只描述一个攻击主题" in prompt
     assert "最多包含 2–3 个紧密相关" in prompt
     assert "获取对象 ID、准备登录态" in prompt
     assert "完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`" in prompt
     assert "status_reason" in prompt
-    assert "本轮新 Fact：`[\"f002\", \"f003\"]`" in prompt
-    assert "完整读取 Context Manifest 中的 `todos.json` 索引" in prompt
-    assert "完成新 Fact 和 `todo_review_ids` 处理前，禁止新增 Todo 或派发 Intent" in prompt
-    assert "已有同义开放 Intent 时禁止重复派发" in prompt
+    assert "本轮新事实（Fact）：`[\"f002\", \"f003\"]`" in prompt
+    assert "完整读取上下文清单中的 `todos.json` 索引" in prompt
+    assert "完成新事实和 `todo_review_ids` 处理前，禁止新增待办或派发执行意图" in prompt
+    assert "已有同义开放执行意图时禁止重复派发" in prompt
+    assert "本轮新增 0 个执行意图是合法结果" in prompt
+    assert "不得为了凑数派发重复执行意图" in prompt
     assert "--execute-seconds 600 --conclude-seconds 120" not in prompt
+
+
+def test_reason_conclude_prompt_allows_a_no_op_plan() -> None:
+    prompt = PromptRenderer().render(
+        "reason_conclude.md",
+        {
+            "task_id": "t_001",
+            "reason_run_id": "rr000001",
+            "workspace_id": "rw_000001",
+            "run_dir": "/tmp/run",
+        },
+    )
+
+    assert "本轮新增 0 个执行意图是合法结果" in prompt
+    assert "不得为了凑数重复派发" in prompt
+    assert "至少保留一个可执行" not in prompt
 
 
 def test_bootstrap_prompt_receives_manifest_and_requires_priority_context_reading() -> None:
@@ -243,7 +261,7 @@ def test_bootstrap_prompt_receives_manifest_and_requires_priority_context_readin
         },
     )
 
-    assert "Context Manifest：`/tmp/context.json`" in prompt
+    assert "上下文清单（Context Manifest）：`/tmp/context.json`" in prompt
     assert "完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`" in prompt
     assert "避免重复测试和重复上报" in prompt
 
@@ -267,7 +285,7 @@ def test_explore_prompt_requires_priority_context_before_progressive_details() -
 
     assert "完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`" in prompt
     assert "status_reason" in prompt
-    assert "再按需读取相关 Fact、Intent、Todo、Artifact、Evidence" in prompt
+    assert "再按需读取相关事实、执行意图、待办、产物、证据" in prompt
 
 
 @pytest.mark.parametrize(
@@ -347,9 +365,9 @@ def test_explore_prompts_prioritize_core_outputs_over_optional_evidence() -> Non
     execute_prompt = PromptRenderer().render("explore.md", values)
     conclude_prompt = PromptRenderer().render("explore_conclude.md", values)
 
-    assert "Evidence 是可选审计材料，不是阶段完成条件" in execute_prompt
+    assert "证据是可选审计材料，不是阶段完成条件" in execute_prompt
     assert "没有可用证据时直接省略" in execute_prompt
-    assert "补齐 Evidence" in execute_prompt
+    assert "补齐证据" in execute_prompt
     assert "没做完没有关系" in conclude_prompt
     assert "不要为了补证据重新运行 Nuclei、SQLMap、浏览器、爬虫" in conclude_prompt
     assert "`evidence/` 完全可选" in conclude_prompt

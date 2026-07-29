@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
@@ -22,9 +22,31 @@ def report_vulnerability(
 @router.get("/tasks/{task_id}/vulnerabilities", response_model=list[Vulnerability])
 def list_task_vulnerabilities(
     task_id: str,
+    response: Response,
+    search: str = "",
+    status_filter: str | None = Query(default=None, alias="status"),
+    severity: str | None = None,
+    include_archived: bool = False,
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     container: Container = Depends(get_container),
 ) -> list[Vulnerability]:
-    return container.vulnerabilities.list(task_id)
+    if limit is None and not any((search.strip(), status_filter, severity, include_archived)):
+        items = container.vulnerabilities.list(task_id)
+        response.headers["X-Total-Count"] = str(len(items))
+        return items
+    effective_limit = limit or 200
+    items, total = container.vulnerabilities.list_page(
+        task_id=task_id,
+        search=search,
+        status=status_filter,
+        severity=severity,
+        include_archived=include_archived,
+        limit=effective_limit,
+        offset=offset,
+    )
+    response.headers["X-Total-Count"] = str(total)
+    return items
 
 
 @router.get("/tasks/{task_id}/vulnerabilities/{vulnerability_id}", response_model=Vulnerability)
@@ -57,15 +79,18 @@ def archive_vulnerability(
 
 @router.get("/vulnerabilities", response_model=list[Vulnerability])
 def list_vulnerabilities(
+    response: Response,
     project_id: str | None = None,
     task_id: str | None = None,
     search: str = "",
     status_filter: str | None = Query(default=None, alias="status"),
     severity: str | None = None,
     include_archived: bool = False,
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     container: Container = Depends(get_container),
 ) -> list[Vulnerability]:
-    return container.vulnerabilities.list_all(
+    filters = dict(
         project_id=project_id,
         task_id=task_id,
         search=search,
@@ -73,3 +98,14 @@ def list_vulnerabilities(
         severity=severity,
         include_archived=include_archived,
     )
+    if limit is None:
+        items = container.vulnerabilities.list_all(**filters)
+        response.headers["X-Total-Count"] = str(len(items))
+        return items
+    items, total = container.vulnerabilities.list_page(
+        **filters,
+        limit=limit,
+        offset=offset,
+    )
+    response.headers["X-Total-Count"] = str(total)
+    return items

@@ -33,6 +33,27 @@ class TodoService:
                 raise NotFoundError(f"Task not found: {task_id}")
             return self.repository.list(conn, task_id)
 
+    def list_page(
+        self,
+        task_id: str,
+        *,
+        search: str = "",
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[Todo], int]:
+        with self.engine.connect() as conn:
+            if self.tasks.get(conn, task_id) is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            return self.repository.list_page(
+                conn,
+                task_id,
+                search=search,
+                status=status,
+                limit=limit,
+                offset=offset,
+            )
+
     def update(self, task_id: str, todo_id: str, command: UpdateTodo) -> Todo:
         now = utcnow()
         values = command.model_dump(exclude_none=True, exclude={"actor", "source_adds"})

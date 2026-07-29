@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
@@ -20,8 +20,28 @@ def create_todo(
 
 
 @router.get("", response_model=list[Todo])
-def list_todos(task_id: str, container: Container = Depends(get_container)) -> list[Todo]:
-    return container.todos.list(task_id)
+def list_todos(
+    task_id: str,
+    response: Response,
+    search: str = "",
+    status_filter: str | None = Query(default=None, alias="status"),
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    container: Container = Depends(get_container),
+) -> list[Todo]:
+    if limit is None and not search.strip() and status_filter is None:
+        items = container.todos.list(task_id)
+        response.headers["X-Total-Count"] = str(len(items))
+        return items
+    items, total = container.todos.list_page(
+        task_id,
+        search=search,
+        status=status_filter,
+        limit=limit or 200,
+        offset=offset,
+    )
+    response.headers["X-Total-Count"] = str(total)
+    return items
 
 
 @router.patch("/{todo_id}", response_model=Todo)

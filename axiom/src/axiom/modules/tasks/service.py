@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 
-from sqlalchemy import Engine, func, select, update
+from sqlalchemy import Engine, func, literal, select, union_all, update
 
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
+from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.graph.repository import GraphRepository
 from axiom.modules.graph.tables import facts, intents
 from axiom.modules.projects.repository import ProjectRepository
@@ -87,7 +88,7 @@ class TaskService:
             task = self.tasks.get(conn, task_id)
         if task is None:
             raise NotFoundError(f"Task not found: {task_id}")
-        return self._decorate(task)
+        return self._decorate_many([task])[0]
 
     def update(self, task_id: str, command: UpdateTask) -> Task:
         with self.engine.begin() as conn:
@@ -145,7 +146,7 @@ class TaskService:
                 phase=phase,
                 search=search,
             )
-        return [self._decorate(task) for task in result]
+        return self._decorate_many(result)
 
     def stop(self, task_id: str) -> Task:
         with self.engine.begin() as conn:
@@ -353,94 +354,124 @@ class TaskService:
         return format_utc(parse_utc(now) + timedelta(seconds=duration_seconds))
 
     def _decorate(self, task: Task) -> Task:
-        """Attach live counters and the current Reason activity to a Task."""
+        return self._decorate_many([task])[0]
+
+    def _decorate_many(self, tasks_to_decorate: list[Task]) -> list[Task]:
+        """Attach counters and active Reason state with a fixed number of bulk queries."""
+        if not tasks_to_decorate:
+            return []
+        task_ids = [task.id for task in tasks_to_decorate]
+
+        def count_query(table, metric: str, *conditions):
+            return (
+                select(
+                    table.c.task_id.label("task_id"),
+                    literal(metric).label("metric"),
+                    func.count().label("count"),
+                )
+                .where(
+                    table.c.task_id.in_(task_ids),
+                    table.c.archived.is_(False),
+                    *conditions,
+                )
+                .group_by(table.c.task_id)
+            )
+
         with self.engine.connect() as conn:
-            counts = {
-                "fact_count": conn.execute(
-                    select(func.count()).select_from(facts).where(
-                        facts.c.task_id == task.id, facts.c.archived.is_(False)
-                    )
-                ).scalar_one(),
-                "intent_count": conn.execute(
-                    select(func.count()).select_from(intents).where(
-                        intents.c.task_id == task.id, intents.c.archived.is_(False)
-                    )
-                ).scalar_one(),
-                "working_intent_count": conn.execute(
-                    select(func.count()).select_from(intents).where(
-                        intents.c.task_id == task.id,
-                        intents.c.archived.is_(False),
-                        intents.c.status.in_(["claimed", "running", "concluding"]),
+            count_rows = conn.execute(
+                union_all(
+                    count_query(facts, "facts"),
+                    count_query(task_hints, "hints"),
+                    count_query(todos, "todos"),
+                    count_query(vulnerabilities, "vulnerabilities"),
+                    count_query(artifacts, "artifacts"),
+                    count_query(intents, "intents"),
+                    count_query(
+                        intents,
+                        "working_intents",
                         intents.c.kind == "explore",
-                    )
-                ).scalar_one(),
-                "hint_count": conn.execute(
-                    select(func.count()).select_from(task_hints).where(
-                        task_hints.c.task_id == task.id, task_hints.c.archived.is_(False)
-                    )
-                ).scalar_one(),
-                "todo_count": conn.execute(
-                    select(func.count()).select_from(todos).where(
-                        todos.c.task_id == task.id, todos.c.archived.is_(False)
-                    )
-                ).scalar_one(),
-                "vulnerability_count": conn.execute(
-                    select(func.count()).select_from(vulnerabilities).where(
-                        vulnerabilities.c.task_id == task.id,
-                        vulnerabilities.c.archived.is_(False),
-                    )
-                ).scalar_one(),
-            }
-            reason = conn.execute(
+                        intents.c.status.in_(["claimed", "running", "concluding"]),
+                    ),
+                )
+            ).mappings()
+            counts: dict[str, dict[str, int]] = {}
+            for row in count_rows:
+                counts.setdefault(str(row["metric"]), {})[str(row["task_id"])] = int(
+                    row["count"] or 0
+                )
+            reason_rows = conn.execute(
                 select(reason_runs)
                 .where(
-                    reason_runs.c.task_id == task.id,
+                    reason_runs.c.task_id.in_(task_ids),
                     reason_runs.c.status.in_(["pending", "claimed", "running", "concluding"]),
                 )
-                .order_by(reason_runs.c.created_at.desc(), reason_runs.c.id.desc())
-                .limit(1)
-            ).mappings().one_or_none()
-        reason_present = reason is not None
-        return task.model_copy(
-            update={
-                **counts,
-                "reason_worker": reason["worker"] if reason_present else None,
-                "reason_heartbeat_at": reason["last_heartbeat_at"] if reason_present else None,
-                "reason_activity_kind": reason["activity_kind"] if reason_present else "",
-                "reason_activity_summary": (
-                    reason["activity_summary"]
-                    or "正在分析任务上下文并规划下一批 Intent"
-                ) if reason_present else "",
-                "reason_activity_tool": reason["activity_tool"] if reason_present else "",
-                "reason_activity_started_at": (
-                    (reason["activity_started_at"] or reason["claimed_at"])
-                    if reason_present else None
-                ),
-                "reason_activity_updated_at": (
-                    (reason["activity_updated_at"] or reason["last_heartbeat_at"])
-                    if reason_present else None
-                ),
-                "active_reason_run": (
-                    ActiveReasonRun(
-                        id=reason["id"],
-                        status=reason["status"],
-                        trigger=reason["trigger"],
-                        trigger_payload=json.loads(reason["trigger_payload_json"] or "{}"),
-                        worker=reason["worker"],
-                        lease_id=reason["lease_id"],
-                        settings_version=reason["settings_version"],
-                        execute_timeout_seconds=reason["execute_timeout_seconds"],
-                        conclude_timeout_seconds=reason["conclude_timeout_seconds"],
-                        last_heartbeat_at=reason["last_heartbeat_at"],
-                        activity_kind=reason["activity_kind"] or "",
-                        activity_summary=reason["activity_summary"] or "",
-                        activity_tool=reason["activity_tool"] or "",
-                        activity_started_at=reason["activity_started_at"],
-                        activity_updated_at=reason["activity_updated_at"],
-                        created_at=reason["created_at"],
-                    )
-                    if reason_present
-                    else None
-                ),
-            }
-        )
+                .order_by(
+                    reason_runs.c.task_id,
+                    reason_runs.c.created_at.desc(),
+                    reason_runs.c.id.desc(),
+                )
+            ).mappings()
+            reasons: dict[str, object] = {}
+            for row in reason_rows:
+                reasons.setdefault(str(row["task_id"]), row)
+
+        decorated: list[Task] = []
+        for task in tasks_to_decorate:
+            reason = reasons.get(task.id)
+            reason_present = reason is not None
+            decorated.append(
+                task.model_copy(
+                    update={
+                        "fact_count": counts.get("facts", {}).get(task.id, 0),
+                        "intent_count": counts.get("intents", {}).get(task.id, 0),
+                        "working_intent_count": counts.get("working_intents", {}).get(task.id, 0),
+                        "hint_count": counts.get("hints", {}).get(task.id, 0),
+                        "todo_count": counts.get("todos", {}).get(task.id, 0),
+                        "vulnerability_count": counts.get("vulnerabilities", {}).get(task.id, 0),
+                        "artifact_count": counts.get("artifacts", {}).get(task.id, 0),
+                        "reason_worker": reason["worker"] if reason_present else None,
+                        "reason_heartbeat_at": reason["last_heartbeat_at"] if reason_present else None,
+                        "reason_activity_kind": reason["activity_kind"] if reason_present else "",
+                        "reason_activity_summary": (
+                            reason["activity_summary"]
+                            or "正在分析任务上下文并规划下一批 Intent"
+                        )
+                        if reason_present
+                        else "",
+                        "reason_activity_tool": reason["activity_tool"] if reason_present else "",
+                        "reason_activity_started_at": (
+                            reason["activity_started_at"] or reason["claimed_at"]
+                            if reason_present
+                            else None
+                        ),
+                        "reason_activity_updated_at": (
+                            reason["activity_updated_at"] or reason["last_heartbeat_at"]
+                            if reason_present
+                            else None
+                        ),
+                        "active_reason_run": (
+                            ActiveReasonRun(
+                                id=reason["id"],
+                                status=reason["status"],
+                                trigger=reason["trigger"],
+                                trigger_payload=json.loads(reason["trigger_payload_json"] or "{}"),
+                                worker=reason["worker"],
+                                lease_id=reason["lease_id"],
+                                settings_version=reason["settings_version"],
+                                execute_timeout_seconds=reason["execute_timeout_seconds"],
+                                conclude_timeout_seconds=reason["conclude_timeout_seconds"],
+                                last_heartbeat_at=reason["last_heartbeat_at"],
+                                activity_kind=reason["activity_kind"] or "",
+                                activity_summary=reason["activity_summary"] or "",
+                                activity_tool=reason["activity_tool"] or "",
+                                activity_started_at=reason["activity_started_at"],
+                                activity_updated_at=reason["activity_updated_at"],
+                                created_at=reason["created_at"],
+                            )
+                            if reason_present
+                            else None
+                        ),
+                    }
+                )
+            )
+        return decorated

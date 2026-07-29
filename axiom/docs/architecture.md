@@ -49,6 +49,7 @@ API Router
  ├─ vulnerabilities 漏洞对象、状态、导出
  ├─ external_reports 外部上报与重试记录
  ├─ credentials    项目凭证
+ ├─ dashboard      Dashboard 聚合只读模型
  ├─ workers        Worker 能力、并发和 Pi 配置
  ├─ settings       Runtime / Reason 触发配置
  ├─ mcp            Server 导入、发现、工具元数据和启停
@@ -278,13 +279,27 @@ Fact/Intent 归档使用 `archive_batches + archive_batch_members`，不是直�
 
 ## 8. 前端
 
-前端继续使用原有信息架构和图谱视觉，通过 V2 API 适配层对接模块化后端。任务详情提供“概览 / 图谱 / 归档”三种视图；归档视图按批次展示根节点、原因、操作者、成员类型、关系、Artifact 预览/下载和恢复历史。Fact/Intent 归档先展示闭包、阻塞项和影响数量，再原子提交；停止或完成 Task 仍可整理历史链路。
+前端继续使用 Alpine 和原有图谱视觉，通过 V2 API 适配层对接模块化后端，不引入 React/Vue。Tailwind 固定为 `3.4.17` 并在开发时编译为 `tailwind.generated.css`；生产浏览器不再加载 Tailwind Runtime，也不依赖 Node。动态状态类通过显式 safelist 进入构建产物，连续构建必须产生相同文件。
+
+桌面侧栏默认宽 176px，显示图标和文字；可折叠为 56px 纯图标模式并写入 `localStorage`。移动端使用汉堡按钮和抽屉导航，选择页面后自动关闭。主内容宽度由侧栏状态联动，不使用固定 margin。
+
+页面使用单一 `#page-host` 按路由挂载。切换页面会 Abort 旧请求、执行 `Alpine.destroyTree()`、销毁 Cytoscape、Minimap、共享图谱动画和旧 DOM；模板文本只做内存缓存，未激活的 13 个页面不再常驻 DOM。任务详情 Human Tab 使用 `x-if`，只渲染当前 Workspace/Todo/Intent/Fact/Artifact 面板。
+
+任务详情提供“概览 / 图谱 / 归档”三种视图；归档视图按批次展示根节点、原因、操作者、成员类型、关系、Artifact 预览/下载和恢复历史。Fact/Intent 归档先展示闭包、阻塞项和影响数量，再原子提交；停止或完成 Task 仍可整理历史链路。
 
 任务详情的“概览”和“图谱”是两种人类视图：图谱不是执行事实源；右侧 Todo、事实、产物和漏洞分别从 V2 API 读取。ReasonRun 只显示为图谱上方的运行活动卡片，可查看 Worker、状态、当前活动、工具、心跳、触发器、预算和配置快照，不创建图谱节点。
 
 新建任务第二页和 stopped Task 的共享 Resume 弹窗支持“不限时/小时/分钟”。任务列表、概览和图谱共用一个秒级前端时钟展示剩余时间和本地时区截止时间；倒计时只负责显示，归零后等待服务端状态刷新，不在浏览器里擅自修改 Task。
 
 设置页只编辑真实 `RuntimeConfig`，分为“调度并发、阶段预算、Reason 触发与派发、高级可靠性”四组；Bootstrap/Reason 单 Task 并发以只读 `1（固定）` 展示。Explore Conclude 下限默认和前后端输入约束均为 180 秒。保存使用 `expected_version` 乐观锁，合法零值不会被 `||` 回填；Runner 每 tick 读取版本并回报真实 `applied_version/applied_at`。生产浏览器已验证保存、刷新、重启持久化和下一 tick 热应用。
+
+Artifact、Vulnerability 和 Todo 列表支持可选服务端分页、搜索和 `X-Total-Count`；未传分页参数时保持旧客户端全量行为。文件中心使用单个跨任务 `GET /api/v1/artifacts`，每页 60 条，不再按 Task 逐个请求 Artifact。漏洞列表每页 50 条，状态看板每列先取 25 条并独立加载更多；Human Artifact 每页 50 条，Workspace 只取最近 6 条。Intent/Fact 复用已加载 Graph 数据并限制首屏渲染。
+
+Dashboard 使用 `GET /api/v1/dashboard/summary` 获取 Task 状态、漏洞等级、开放 Intent、Token 汇总和最近 8 条事件，不再加载完整漏洞库和大量 Audit。`TaskService._decorate_many()` 使用一条 UNION 聚合计数查询和一条活动 ReasonRun 查询，Task 数量增长不会产生 N+1。
+
+轮询采用不可重入递归 `setTimeout`：Task Detail/Audit 为 5 秒，图谱当前活动 Intent 为 2 秒，Dashboard/Task/漏洞/文件/项目为 10 秒，静态管理页不发轮询请求。页面切换会 Abort；浏览器后台暂停；Audit `after_id` 决定需要刷新 Graph、Todo、Vulnerability 或 Artifact 的区域，每 60 秒执行一次安全刷新。全局搜索和列表搜索使用独立请求代次，旧响应不能覆盖新结果。
+
+Cytoscape、ELK、Dagre 只在首次进入图谱页时加载，Marked 只在首次预览 Markdown 时加载。图谱更新区分 topology、geometry 和 visual：只有节点/边或尺寸变化才运行布局；状态、Worker、心跳和活动文字只更新样式。活动边共用一个 RAF，Minimap 不监听普通 data 更新，离开图谱页后全部停止和销毁。
 
 ## 9. 迁移与回滚
 
@@ -317,30 +332,34 @@ ReasonRun/RuntimeConfig 迁移版本为 `20260727_0020`。迁移保留历史 Rea
 
 `20260729_0025_archive_batches` 新增归档批次和成员表。迁移前已归档的 Fact、Intent、Artifact、Vulnerability、Todo 会分别生成兼容批次；Todo 使用真实 `root_type=todo` 仅用于历史读取，新的交互式归档根仍限制为 Fact、Intent、Artifact 或 Vulnerability。降级只删除批次索引，不修改原实体的 `archived` 状态。
 
-2026-07-29 生产升级前备份位于 `/Users/hexin/.local/share/axiom-v3/backups/archive-batches-20260729T034510Z/axiom.db.pre-0025.bak`。生产库当前 revision 为 `20260729_0025`，API 与 Runner LaunchAgent 均正常运行，SQLite integrity 为 `ok` 且 foreign key violation 为 0。
+`20260729_0026_frontend_query_indexes` 为 Artifact 和 Vulnerability 的分页、过滤和稳定倒序读取增加组合索引。迁移不改业务数据；生产副本已完成 `0026 → 0025 → 0026`，SQLite integrity 为 `ok`。
+
+2026-07-29 生产升级前备份位于 `/Users/hexin/.local/share/axiom-v3/backups/archive-batches-20260729T034510Z/axiom.db.pre-0025.bak`。生产库当前 revision 为 `20260729_0026`，API 与 Runner LaunchAgent 均正常运行，SQLite integrity 为 `ok` 且 foreign key violation 为 0。
 
 ## 10. 当前明确不属于主流程的内容
 
 - Bootstrap 没有改成 ASM；ASM 工具链不是当前阶段。
 - 旧爬虫后端逻辑不作为 V2 新任务入口，前端不展示。
 - 每任务容器、VPN/SOCKS5 强制出口、MCP Bridge 是后续方案，不影响当前宿主机 Runner。
-- `cdn.tailwindcss.com` 仍产生浏览器生产警告，但不影响业务功能；后续可替换为构建产物。
+- 旧 `index-legacy.html` 仍保留历史整页实现和图谱脚本直载，仅用于只读对照；生产 `/` 使用按路由挂载的新入口。
 
 ## 11. 验证基线
 
 ```text
-uv run pytest                            314 passed, 1 warning
+uv run pytest                            322 passed, 1 warning
 uv run ruff check .                      passed
 python -m compileall -q src tests migrations  passed
 node --check <18 non-vendor static js>   passed
 git diff --check                         passed
 ```
 
-以上测试已覆盖 FINISH 精确识别与 Explore 有限归一化、同会话有界收口、Explore Conclude 核心文件兜底、可选 Evidence、Artifact/Fact 自动生成、ReasonRun/Workspace 生命周期、Reason 触发和调度并发、RuntimeConfig 热应用、Guard、Task 运行窗口，以及归档下游闭包、闭包哈希冲突、重叠批次恢复、pending 领取隔离、ReasonRun 失效、Context/Goal 引用过滤、Artifact 历史读取和迁移升降级；仅有 Starlette/httpx 弃用警告。
+以上测试已覆盖 FINISH 精确识别与 Explore 有限归一化、同会话有界收口、Explore Conclude 核心文件兜底、可选 Evidence、Artifact/Fact 自动生成、ReasonRun/Workspace 生命周期、Reason 触发和调度并发、RuntimeConfig 热应用、Guard、Task 运行窗口、归档下游闭包，以及前端分页、Dashboard 聚合、Task 固定查询数、搜索竞态、图谱纯视觉更新不触发布局和 Tailwind 可重复构建；仅有 Starlette/httpx 弃用警告。
+
+2026-07-29 前端生产数据浏览器验收：Dashboard/Task/Files/Vulnerability 非图谱页面分别为 592/1217/1258/839 个 DOM 节点；文件中心首屏 60 条、漏洞列表 50/565；非图谱冷启动没有图谱 Runtime，进入图谱后才加载 6 个依赖，离开后 Canvas 和图谱 DOM 清零；桌面侧栏 176→56px 且刷新持久化，390×844 移动端抽屉导航后自动关闭，控制台无 warning/error。生产数据库副本上的 `/api/v1/tasks` 60 次请求为 median 19.14ms、P95 28.71ms、max 36.16ms。
 
 2026-07-27 生产受控 E2E `t_138` 完成 `Bootstrap → ReasonRun(rr000001) → Explore → ReasonRun(rr000002) → Goal`：正式图谱只有 Bootstrap/Explore 两个 Intent，两个 ReasonRun 均零重试完成；生成 4 个 Artifact、1 个 completed Todo 和两个代码生成 Fact，最终 `goal_from_fact_ids=[f002]`。Task completed 后开放 Intent、ReasonRun、Workspace 均为 0。
 
-最终重启后又执行 API-only 临时验收 `t_141`（随后删除）：Bootstrap 完成后创建独立 ReasonRun，图谱仍只有 Bootstrap Intent；打开 Workspace 后停止 Task，ReasonRun 立即 `cancelled`、Workspace 变为 `abandoned(task_stopped)`、旧 heartbeat 和 commit 均返回 409。临时 Task/Project/Worker 已清理，生产 RuntimeConfig 保存/应用版本均为 v210，活动 Intent、ReasonRun、open Workspace 均为 0。浏览器再次确认 `t_138` 图谱只有 2 个正式 Intent，设置页四组配置和 `Runner 已应用 v210` 正常显示；控制台仅保留既知 Tailwind CDN 警告。
+最终重启后又执行 API-only 临时验收 `t_141`（随后删除）：Bootstrap 完成后创建独立 ReasonRun，图谱仍只有 Bootstrap Intent；打开 Workspace 后停止 Task，ReasonRun 立即 `cancelled`、Workspace 变为 `abandoned(task_stopped)`、旧 heartbeat 和 commit 均返回 409。临时 Task/Project/Worker 已清理，生产 RuntimeConfig 保存/应用版本均为 v210，活动 Intent、ReasonRun、open Workspace 均为 0。浏览器再次确认 `t_138` 图谱只有 2 个正式 Intent，设置页四组配置和 `Runner 已应用 v210` 正常显示；当时控制台仅保留既知 Tailwind CDN 警告。该警告已在 2026-07-29 静态 Tailwind 构建改造后消失。
 
 Explore RPC/动态提醒批次的生产一致性备份为 `/Users/hexin/.local/share/axiom-v3/backups/20260727-182223/`。空库及生产副本完成 `0022 → 0023 → 0022 → 0023`，生产库现为 `20260727_0023`，RuntimeConfig/Runner applied version 均为 v212，Explore Conclude 范围为 180–600 秒，SQLite integrity 为 `ok` 且 foreign key violation 为 0。临时生产验收 `t_146` 的两个 Explore Intent 分别验证“Execute 超时后 RPC Conclude 成功提交”和“工具调用期间 steer 排队后下一轮生效”；共生成 9 个正式 Artifact、2 个代码生成 Fact，执行/基础设施重试均为 0，临时 Task、Project、本机服务和 Pi 进程随后清理。
 

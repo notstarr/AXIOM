@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>axiom</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/static/apple.css">
-<script src="/static/vendor/tailwindcss.js"></script>
+<link rel="stylesheet" href="/static/apple.css?v=20260729.1">
+<link rel="stylesheet" href="/static/tailwind.generated.css?v=20260729.1">
 <script src="/static/vendor/dagre.min.js"></script>
 <script src="/static/vendor/cytoscape.min.js"></script>
 <script src="/static/vendor/cytoscape-dagre.js"></script>
@@ -251,18 +251,6 @@
   /* Tab indicator slide */
   .tab-indicator { transition: all 250ms cubic-bezier(0.16, 1, 0.3, 1); }
 </style>
-<script>
-  tailwind.config = {
-    theme: {
-      fontFamily: { sans: ['-apple-system','BlinkMacSystemFont','SF Pro Text','Helvetica Neue','sans-serif'] },
-      extend: {
-        colors: {
-          brand: { 50:'#EFF6FF',100:'#DBEAFE',200:'#BFDBFE',300:'#93C5FD',400:'#60A5FA',500:'#0071E3',600:'#0064CC',700:'#0055B3',800:'#004499',900:'#003380' }
-        }
-      }
-    }
-  }
-</script>
 </head>
 <body class="h-screen overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="cairnApp()" style="background:var(--bg-secondary);color:var(--text-primary)">
 

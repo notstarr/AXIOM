@@ -6,7 +6,7 @@
       <p class="text-xs text-slate-400 mt-0.5">跨任务聚合漏洞，按卡片查看证据、影响和修复建议</p>
     </div>
     <div class="flex-1"></div>
-    <button @click="showVulnBoard = !showVulnBoard" class="h-8 px-3 rounded-lg border border-slate-200 text-xs transition"
+    <button @click="toggleVulnerabilityView()" class="h-8 px-3 rounded-lg border border-slate-200 text-xs transition"
       :class="showVulnBoard ? 'bg-brand-500 text-white border-brand-500' : 'text-slate-600 hover:bg-slate-50'">
       <span x-show="!showVulnBoard">看板视图</span>
       <span x-show="showVulnBoard">列表视图</span>
@@ -16,8 +16,8 @@
   <!-- Filter bar - sticky above scroll area -->
   <div class="shrink-0 px-5 py-3 border-b border-slate-100 bg-white">
     <div class="flex items-center gap-3">
-      <input x-model="vulnFilter.keyword" placeholder="搜索标题、类型、描述" class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-      <select x-model="vulnFilter.projectId" class="px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+      <input x-model="vulnFilter.keyword" @input="scheduleVulnerabilitySearch()" placeholder="搜索标题、类型、描述" class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+      <select x-model="vulnFilter.projectId" @change="applyVulnerabilityFilters()" class="px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
         <option value="">全部任务</option>
         <template x-for="p in projects" :key="`vuln-filter-${p.id}`">
           <option :value="p.id" x-text="`${p.id} ${p.title}`"></option>
@@ -26,65 +26,37 @@
       <button @click="exportCurrentTaskVulnReport()" :disabled="!vulnFilter.projectId && !selectedVulnerability()" class="px-3 py-2 text-xs rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed">导出报告</button>
       <button @click="openVulnEditor()" class="px-3 py-2 text-xs rounded-lg bg-rose-500 text-white hover:bg-rose-600">新增漏洞</button>
     </div>
-    <p class="mt-2 text-xs text-slate-400" x-text="`显示 ${filteredVulnerabilities().length} / ${allVulnerabilities().length}`"></p>
+    <p class="mt-2 text-xs text-slate-400" x-text="showVulnBoard ? `看板已加载 ${allVulnerabilities().length} / ${Object.values(vulnerabilityBoardTotals).reduce((sum, value) => sum + Number(value || 0), 0)}` : `显示 ${filteredVulnerabilities().length} / ${vulnerabilityTotal}`"></p>
   </div>
 
   <main class="flex-1 min-h-0 p-5">
     <!-- Board view -->
     <template x-if="showVulnBoard">
       <div class="grid grid-cols-4 gap-4 h-full overflow-x-auto">
-        <div class="space-y-2">
-          <div class="flex items-center gap-2 px-1 pb-2">
-            <span class="h-2 w-2 rounded-full bg-amber-400"></span>
-            <span class="text-xs font-semibold text-slate-600">待验证</span>
-            <span class="text-[10px] text-slate-400" x-text="filteredVulnerabilities().filter(v => vulnStatusKey(v.status) === 'pending').length"></span>
-          </div>
-          <template x-for="v in filteredVulnerabilities().filter(v => vulnStatusKey(v.status) === 'pending')" :key="v.id + v.project_id">
-            <div @click="openVulnStatusQuick(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer min-w-0 overflow-hidden">
-              <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
-              <p class="text-[10px] text-slate-400 mt-1 font-mono truncate" x-text="v.project_id"></p>
+        <template x-for="column in vulnerabilityBoardColumns()" :key="column.status">
+          <section class="min-w-[220px] flex flex-col min-h-0">
+            <div class="flex items-center gap-2 px-1 pb-2 shrink-0">
+              <span class="h-2 w-2 rounded-full" :class="column.dotClass"></span>
+              <span class="text-xs font-semibold text-slate-600" x-text="column.status"></span>
+              <span class="text-[10px] text-slate-400" x-text="vulnerabilityBoardTotals[column.status] || 0"></span>
             </div>
-          </template>
-        </div>
-        <div class="space-y-2">
-          <div class="flex items-center gap-2 px-1 pb-2">
-            <span class="h-2 w-2 rounded-full bg-rose-400"></span>
-            <span class="text-xs font-semibold text-slate-600">已验证</span>
-            <span class="text-[10px] text-slate-400" x-text="filteredVulnerabilities().filter(v => vulnStatusKey(v.status) === 'verified').length"></span>
-          </div>
-          <template x-for="v in filteredVulnerabilities().filter(v => vulnStatusKey(v.status) === 'verified')" :key="v.id + v.project_id">
-            <div @click="openVulnStatusQuick(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer min-w-0 overflow-hidden">
-              <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
-              <p class="text-[10px] text-slate-400 mt-1 font-mono truncate" x-text="v.project_id"></p>
+            <div class="space-y-2 overflow-y-auto min-h-0 pr-1">
+              <template x-for="v in (vulnerabilityBoard[column.status] || [])" :key="`${column.status}-${v.project_id}-${v.id}`">
+                <div @click="openVulnStatusQuick(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer min-w-0 overflow-hidden">
+                  <div class="flex items-center gap-1.5">
+                    <span class="px-1.5 py-0.5 rounded-md text-[9px] font-semibold" :class="vulnSeverityClass(v.severity)" x-text="vulnSeverityLabel(v.severity)"></span>
+                    <span class="text-[10px] text-slate-400 font-mono truncate" x-text="v.project_id"></span>
+                  </div>
+                  <p class="text-sm font-medium text-slate-700 mt-1.5 line-clamp-2" x-text="v.title"></p>
+                </div>
+              </template>
+              <button x-show="vulnerabilityBoardHasMore(column.status)" @click="loadVulnerabilityBoardStatus(column.status, true)"
+                :disabled="vulnerabilityBoardLoading[column.status]"
+                class="w-full py-2 rounded-xl border border-dashed border-slate-200 text-xs text-slate-500 hover:bg-white disabled:opacity-40"
+                x-text="vulnerabilityBoardLoading[column.status] ? '加载中…' : '加载更多'"></button>
             </div>
-          </template>
-        </div>
-        <div class="space-y-2">
-          <div class="flex items-center gap-2 px-1 pb-2">
-            <span class="h-2 w-2 rounded-full bg-slate-400"></span>
-            <span class="text-xs font-semibold text-slate-600">忽略</span>
-            <span class="text-[10px] text-slate-400" x-text="filteredVulnerabilities().filter(v => vulnStatusKey(v.status) === 'ignored').length"></span>
-          </div>
-          <template x-for="v in filteredVulnerabilities().filter(v => vulnStatusKey(v.status) === 'ignored')" :key="v.id + v.project_id">
-            <div @click="openVulnStatusQuick(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer min-w-0 overflow-hidden">
-              <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
-              <p class="text-[10px] text-slate-400 mt-1 font-mono truncate" x-text="v.project_id"></p>
-            </div>
-          </template>
-        </div>
-        <div class="space-y-2">
-          <div class="flex items-center gap-2 px-1 pb-2">
-            <span class="h-2 w-2 rounded-full bg-rose-400"></span>
-            <span class="text-xs font-semibold text-slate-600">重复</span>
-            <span class="text-[10px] text-slate-400" x-text="filteredVulnerabilities().filter(v => vulnStatusKey(v.status) === 'duplicate').length"></span>
-          </div>
-          <template x-for="v in filteredVulnerabilities().filter(v => vulnStatusKey(v.status) === 'duplicate')" :key="v.id + v.project_id">
-            <div @click="openVulnStatusQuick(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer min-w-0 overflow-hidden">
-              <p class="text-sm font-medium text-slate-700 truncate" x-text="v.title"></p>
-              <p class="text-[10px] text-slate-400 mt-1 font-mono truncate" x-text="v.project_id"></p>
-            </div>
-          </template>
-        </div>
+          </section>
+        </template>
       </div>
     </template>
     <!-- List view -->
@@ -113,6 +85,11 @@
             <p class="mt-1.5 text-sm font-semibold text-slate-700 line-clamp-2" x-text="v.title"></p>
           </button>
           </template>
+          <div class="sticky bottom-0 mt-3 pt-3 border-t border-slate-100 bg-white flex items-center justify-between gap-2">
+            <button @click="setVulnerabilityPage(vulnerabilityPage - 1)" :disabled="vulnerabilityLoading || vulnerabilityPage <= 0" class="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[11px] text-slate-500 disabled:opacity-30">上一页</button>
+            <span class="text-[10px] text-slate-400 tabular-nums" x-text="`${vulnerabilityPage + 1} / ${vulnerabilityPageCount()}`"></span>
+            <button @click="setVulnerabilityPage(vulnerabilityPage + 1)" :disabled="vulnerabilityLoading || vulnerabilityPage + 1 >= vulnerabilityPageCount()" class="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[11px] text-slate-500 disabled:opacity-30">下一页</button>
+          </div>
         </aside>
         <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-y-auto">
           <template x-if="!selectedVulnerability()">

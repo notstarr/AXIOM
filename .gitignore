@@ -12,3 +12,5 @@ node_modules/
 cairn/logs/
 package.json
 package-lock.json
+!axiom/package.json
+!axiom/package-lock.json

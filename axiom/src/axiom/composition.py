@@ -10,6 +10,7 @@ from axiom.modules.archives.service import ArchiveService
 from axiom.modules.audit.service import AuditService
 from axiom.modules.context.service import ContextService
 from axiom.modules.credentials.service import CredentialService
+from axiom.modules.dashboard.service import DashboardService
 from axiom.modules.dispatch.service import DispatchService
 from axiom.modules.diagnostics.service import DiagnosticsService
 from axiom.modules.execution.service import ExecutionService
@@ -58,6 +59,7 @@ class Container:
     goals: GoalService
     exports: ExportService
     diagnostics: DiagnosticsService
+    dashboard: DashboardService
 
     @classmethod
     def build(cls, engine: Engine, *, data_dir: Path) -> "Container":
@@ -93,4 +95,5 @@ class Container:
             goals=GoalService(engine),
             exports=ExportService(engine),
             diagnostics=DiagnosticsService(engine),
+            dashboard=DashboardService(engine),
         )

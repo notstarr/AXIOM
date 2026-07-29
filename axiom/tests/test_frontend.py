@@ -39,7 +39,7 @@ const intents = {{
   running_without_worker: {{ id:'i006', from:['f001'], to:null, description:'running', status:'running', worker:null }},
   legacy_worker: {{ id:'i007', from:['f001'], to:null, description:'legacy', worker:'worker-a' }},
 }};
-const ctx = Object.assign({{
+const ctx = Object.assign({{}}, methods, {{
   project: {{
     project: {{ depth_mode:false }},
     goal_from_fact_ids: ['f001'],
@@ -50,7 +50,7 @@ const ctx = Object.assign({{
     ],
     intents: Object.values(intents),
   }},
-}}, methods);
+}});
 const rows = Object.fromEntries(Object.entries(intents).map(([name, intent]) => [name, {{
   state: ctx.intentLifecycleState(intent),
   type: ctx.openIntentNodeType(intent),
@@ -159,6 +159,66 @@ ctx.toggleSkillFromEditor().then(() => process.stdout.write(JSON.stringify({{
   editorEnabled: ctx.skillEditor.enabled,
   loading: ctx.skillToggleLoading,
 }})));
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def _run_global_search_race_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    core = ROOT / "src/axiom/static/js/core.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+const pending = [];
+global.fetch = (url, options = {{}}) => new Promise((resolve, reject) => {{
+  const request = {{ url, signal: options.signal, resolve, reject }};
+  pending.push(request);
+  options.signal?.addEventListener('abort', () => {{
+    const error = new Error('aborted');
+    error.name = 'AbortError';
+    reject(error);
+  }}, {{ once: true }});
+}});
+eval(fs.readFileSync({json.dumps(str(core))}, 'utf8'));
+const ctx = Object.assign({{
+  globalSearchQuery: 'old',
+  globalSearchVulnerabilities: [],
+  globalSearchLoading: false,
+  showGlobalSearch: true,
+  _globalSearchGeneration: 0,
+  _globalSearchAbortController: null,
+}}, window.AxiomModules.core.methods);
+(async () => {{
+  const first = ctx.searchGlobalVulnerabilities('old');
+  ctx.globalSearchQuery = 'new';
+  const second = ctx.searchGlobalVulnerabilities('new');
+  pending[1].resolve({{ ok: true, json: async () => [{{ id: 'v-new', title: 'new' }}] }});
+  await Promise.all([first, second]);
+  const beforeClose = {{
+    firstAborted: pending[0].signal.aborted,
+    ids: ctx.globalSearchVulnerabilities.map(item => item.id),
+    loading: ctx.globalSearchLoading,
+  }};
+  ctx.closeGlobalSearch();
+  process.stdout.write(JSON.stringify({{
+    beforeClose,
+    afterClose: {{
+      query: ctx.globalSearchQuery,
+      resultCount: ctx.globalSearchVulnerabilities.length,
+      loading: ctx.globalSearchLoading,
+      open: ctx.showGlobalSearch,
+    }},
+  }}));
+}})();
 """
     result = subprocess.run(
         [node, "-e", program],
@@ -351,6 +411,67 @@ eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
     return json.loads(result.stdout)
 
 
+def _run_graph_visual_update_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    graph = ROOT / "src/axiom/static/js/graph.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+eval(fs.readFileSync({json.dumps(str(graph))}, 'utf8'));
+const methods = window.AxiomModules.graph.methods;
+const element = (data, kind) => ({{
+  length: 1,
+  _data: {{ ...data }},
+  data(keyOrObject) {{
+    if (typeof keyOrObject === 'string') return this._data[keyOrObject];
+    this._data = {{ ...this._data, ...keyOrObject }};
+  }},
+  id() {{ return this._data.id; }},
+  remove() {{}},
+  source() {{ return {{ id: () => this._data.source }}; }},
+  target() {{ return {{ id: () => this._data.target }}; }},
+}});
+const nodeElement = element({{ id:'f001', label:'旧状态', width:120, height:54, nodeType:'fact' }}, 'node');
+const edgeElement = element({{ id:'e001', source:'f001', target:'goal', status:'unclaimed', label:'' }}, 'edge');
+let layouts = 0;
+let decorations = 0;
+const ctx = Object.assign({{}}, methods, {{
+  project: {{}},
+  cy: {{
+    nodes: () => [nodeElement],
+    edges: () => [edgeElement],
+    getElementById: id => id === 'f001' ? nodeElement : edgeElement,
+    add: () => {{ throw new Error('unexpected add'); }},
+    layout: () => ({{ run: () => {{ layouts += 1; }} }}),
+  }},
+  buildElements: () => ({{
+    nodes: [{{ data: {{ id:'f001', label:'新状态', width:120, height:54, nodeType:'fact' }} }}],
+    edges: [{{ data: {{ id:'e001', source:'f001', target:'goal', status:'in_progress', label:'' }} }}],
+  }}),
+  snapshotNodePositions: () => new Map(),
+  pulseActive: () => {{}},
+  refreshGraphDecorations: () => {{ decorations += 1; }},
+}});
+ctx.updateGraph();
+process.stdout.write(JSON.stringify({{
+  layouts,
+  decorations,
+  nodeLabel: nodeElement.data('label'),
+  edgeStatus: edgeElement.data('status'),
+}}));
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
 def _run_artifact_preview_fixture() -> dict[str, object]:
     node = shutil.which("node")
     if not node:
@@ -516,14 +637,21 @@ def test_frontend_and_static_assets_are_served(client):
     response = client.get("/")
     assert response.status_code == 200
     assert "<title>axiom</title>" in response.text
-    assert "/static/js/state.js?v=20260728.1" in response.text
-    assert "/static/js/projects.js?v=20260728.1" in response.text
+    assert "/static/js/state.js?v=20260729.1" in response.text
+    assert "/static/js/projects.js?v=20260729.1" in response.text
     assert "/static/js/skills.js?v=20260728.1" in response.text
-    assert "/static/js/v2-adapter.js?v=20260728.3" in response.text
+    assert "/static/js/v2-adapter.js?v=20260729.1" in response.text
     assert "/static/js/helpers.js?v=20260724.2" in response.text
-    assert "/static/js/graph.js?v=20260727.3" in response.text
-    assert "/static/js/human.js?v=20260727.1" in response.text
+    assert "/static/js/graph.js?v=20260729.1" in response.text
+    assert "/static/js/human.js?v=20260729.1" in response.text
     assert "/static/js/timeline.js?v=20260724.3" in response.text
+    assert "/static/tailwind.generated.css" in response.text
+    assert "/static/vendor/tailwindcss.js" not in response.text
+    assert 'id="page-host"' in response.text
+    assert response.text.count('data-page=') == 0
+    assert 'class="nav-label">仪表盘' in response.text
+    assert 'class="nav-label">设置' in response.text
+    assert "localStorage" not in response.text
 
     asset = client.get("/static/js/v2-adapter.js")
     assert asset.status_code == 200
@@ -568,6 +696,29 @@ def test_frontend_and_static_assets_are_served(client):
     assert graph.status_code == 200
     assert "ReasonRun" in graph.text
     assert "配置快照" in graph.text
+
+    human = client.get("/static/templates/human-view.html")
+    assert human.status_code == 200
+    assert 'x-if="humanTab === \'workspace\'"' in human.text
+    assert 'x-if="humanTab === \'artifacts\'"' in human.text
+    assert "humanArtifactPageCount" in human.text
+
+    core = client.get("/static/js/core.js").text
+    projects = client.get("/static/js/projects.js").text
+    graph_js = client.get("/static/js/graph.js").text
+    adapter = client.get("/static/js/v2-adapter.js").text
+    assert "Alpine.destroyTree(host)" in core
+    assert "localStorage.setItem('axiom.sidebarCollapsed'" in core
+    assert "setInterval(async" not in projects
+    assert "loadDispatchSettings()," not in projects[projects.index("startPolling()"):]
+    assert "topologyChanged || geometryChanged" in graph_js
+    assert "pan zoom layoutstop add remove data" not in graph_js
+    assert "source.map(async task" not in adapter
+    assert "if (fromRoute) this.mountCurrentPage()" not in projects
+    assert "this.navigateTo('tasks'); this.openProject" not in core
+    assert "_globalSearchAbortController?.abort()" in core
+    assert "`/audit-events?task_id=${encodeURIComponent(taskId)}&limit=100`" not in adapter
+    assert "const offset = append ? currentLength : 0" in adapter
 
     graph_script = client.get("/static/js/graph.js")
     assert graph_script.status_code == 200
@@ -620,6 +771,22 @@ def test_skill_toggle_uses_dedicated_patch_endpoint_and_server_state() -> None:
     assert result["toasts"] == [
         {"message": "browser-control 已禁用", "type": "success"}
     ]
+
+
+def test_global_search_aborts_stale_requests_and_only_keeps_latest_results() -> None:
+    assert _run_global_search_race_fixture() == {
+        "beforeClose": {
+            "firstAborted": True,
+            "ids": ["v-new"],
+            "loading": False,
+        },
+        "afterClose": {
+            "query": "",
+            "resultCount": 0,
+            "loading": False,
+            "open": False,
+        },
+    }
 
 
 def test_skill_editor_hides_frontmatter_and_saves_body_only() -> None:
@@ -790,4 +957,15 @@ def test_intent_lifecycle_uses_status_instead_of_retained_worker():
         "state": "running",
         "type": "in_progress",
         "label": "进行中",
+    }
+
+
+def test_graph_visual_updates_do_not_trigger_layout() -> None:
+    result = _run_graph_visual_update_fixture()
+
+    assert result == {
+        "layouts": 0,
+        "decorations": 1,
+        "nodeLabel": "新状态",
+        "edgeStatus": "in_progress",
     }

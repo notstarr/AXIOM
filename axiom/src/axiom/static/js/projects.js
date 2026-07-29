@@ -21,11 +21,11 @@ window.AxiomModules.projects = {
       return this.projectIsActive() && this.selectedFacts.length > 0 && !this.selectedFacts.includes('goal');
     },
 
-    async loadProjects() {
+    async loadProjects(options = {}) {
       this.projectsLoading = true;
       this.projectsError = '';
       try {
-        this.projects = await this.api('GET', '/projects');
+        this.projects = await this.api('GET', '/projects', null, options);
         this.projectsLoaded = true;
         this.pruneDeletedProjectCaches();
         if (!this.selectedTaskManagementId && this.projects.length > 0) {
@@ -35,6 +35,7 @@ window.AxiomModules.projects = {
           this.selectedProjectManagementTaskId = this.tasksForGroup(this.selectedProjectManagementId)[0]?.id || '';
         }
       } catch(e) {
+        if (e?.name === 'AbortError') return;
         this.projectsError = e?.message || String(e);
         console.error(e);
       } finally {
@@ -59,16 +60,16 @@ window.AxiomModules.projects = {
       }
     },
 
-    async loadProjectGroups() {
+    async loadProjectGroups(options = {}) {
       try {
-        this.projectGroups = await this.api('GET', '/project-groups');
+        this.projectGroups = await this.api('GET', '/project-groups', null, options);
         if (!this.selectedProjectManagementId && this.projectGroups.length > 0) {
           this.selectedProjectManagementId = this.projectGroups[0].id;
         }
         if (!this.newProject.parent_project_id && this.projectGroups.length > 0) {
           this.newProject.parent_project_id = this.projectGroups[0].id;
         }
-      } catch(e) { console.error(e); }
+      } catch(e) { if (e?.name !== 'AbortError') console.error(e); }
     },
 
     async createProjectGroup() {
@@ -169,10 +170,12 @@ window.AxiomModules.projects = {
     },
 
     async refreshDashboardPage(options = {}) {
-      await this.loadProjectGroups();
-      await this.loadProjects();
-      await this.loadAllProjectDetails(true);
-      await this.loadGlobalSkillUsage();
+      await Promise.all([
+        this.loadProjectGroups(),
+        this.loadProjects(),
+        this.loadDashboardSummary?.(),
+        this.loadGlobalSkillUsage(),
+      ]);
       if (!options.silent) this.showToast('仪表盘已刷新');
     },
 
@@ -396,11 +399,11 @@ window.AxiomModules.projects = {
       return vulns[0];
     },
 
-    async loadProject(id) {
+    async loadProject(id, options = {}) {
       try {
-        this.project = await this.api('GET', `/projects/${id}`);
+        this.project = await this.api('GET', `/projects/${id}`, null, options);
         this.projectDetailsCache[id] = this.project;
-      } catch(e) { this.showToast(e.message, 'error'); }
+      } catch(e) { if (e?.name !== 'AbortError') this.showToast(e.message, 'error'); }
     },
 
     async loadConversation(projectId = '', options = {}) {
@@ -1057,6 +1060,7 @@ window.AxiomModules.projects = {
     },
 
     async openProject(id, fromRoute = false, initialView = 'human') {
+      const generation = ++this._projectOpenGeneration;
       if (this.replay.active) {
         this.stopReplayTimer();
         this.replay.active = false;
@@ -1077,26 +1081,33 @@ window.AxiomModules.projects = {
       this.selectedNode = null;
       this.selectedFacts = [];
       this.selectedTimelineEntryId = null;
-      await this.loadProject(id);
-      await this.loadSeeEvents(true);
-      await this.loadDispatchSettings();
       this.humanTab = 'workspace';
       this.view = initialView === 'graph' ? 'graph' : 'human';
       this.activePage = 'task-detail';
-      if (!fromRoute && location.hash !== `#/tasks/${id}`) location.hash = `/tasks/${id}`;
+      this.cleanupMountedPage?.();
+      this.showPageSkeleton();
+      const signal = this._pageAbortController?.signal;
+      await this.loadProject(id, { signal });
+      if (generation !== this._projectOpenGeneration || this.selectedProjectId !== id) return;
+      await this.loadSeeEvents(true, { signal });
+      if (generation !== this._projectOpenGeneration || this.selectedProjectId !== id) return;
+      if (!fromRoute && location.hash !== `#/tasks/${id}`) {
+        history.pushState(null, '', `#/tasks/${encodeURIComponent(id)}`);
+      }
+      await this.mountCurrentPage();
+      if (generation !== this._projectOpenGeneration || this.selectedProjectId !== id) return;
       this.$nextTick(() => {
         const clampedWidth = this.clampPanelWidth(this.sidePanelWidth);
         if (clampedWidth !== this.sidePanelWidth) {
           this.sidePanelWidth = clampedWidth;
           this.saveSidePanelWidth();
         }
-        this.teardownAutoFit();
-        if (this.cy) { this.cy.destroy(); this.cy = null; }
-        if (this.view === 'graph') this.initGraph();
+        if (this.view === 'graph' && !this.cy) this.initGraph();
       });
     },
 
     backToList(fromRoute) {
+      this._projectOpenGeneration += 1;
       if (this.replay.active) {
         this.stopReplayTimer();
         this.replay.active = false;
@@ -1128,35 +1139,85 @@ window.AxiomModules.projects = {
       this.teardownAutoFit();
       if (this.cy) { this.cy.destroy(); this.cy = null; }
       if (!fromRoute) location.hash = '/tasks';
-      this.loadProjects().then(() => this.restoreProjectListScroll());
     },
 
     startPolling() {
-      if (this.pollTimer) clearInterval(this.pollTimer);
-      if (this.intentActivityPollTimer) clearInterval(this.intentActivityPollTimer);
+      if (this.pollTimer) clearTimeout(this.pollTimer);
+      if (this.intentActivityPollTimer) clearTimeout(this.intentActivityPollTimer);
       if (this.runClockTimer) clearInterval(this.runClockTimer);
+      const generation = ++this._pollGeneration;
       this.runClockNow = Date.now();
       this.runClockTimer = setInterval(() => { this.runClockNow = Date.now(); }, 1000);
-      this.pollTimer = setInterval(async () => {
-        if (!this.polling) return;
-        if (this.selectedProjectId && ['graph', 'human', 'archive'].includes(this.view) && this.activePage === 'task-detail') {
-          await Promise.all([
-            this.loadProject(this.selectedProjectId),
-            this.loadSeeEvents(false),
-            this.loadDispatchSettings(),
-          ]);
-          if (this.view === 'graph') this.updateGraph();
-          if (this.view === 'archive') await this.loadArchives(this.selectedArchiveId);
-        } else {
-          await this.loadProjects();
-          if (['dashboard', 'projects', 'vulnerabilities'].includes(this.activePage)) {
-            await this.loadAllProjectDetails();
-          }
+
+      const mainTick = async () => {
+        if (generation !== this._pollGeneration) return;
+        const delay = this.activePage === 'task-detail' ? 5000 : 10000;
+        if (this.polling && !document.hidden && !this._pollInFlight) {
+          this._pollInFlight = true;
+          try { await this.pollCurrentRoute(); }
+          catch (error) { if (error?.name !== 'AbortError') console.debug('Page polling failed', error); }
+          finally { this._pollInFlight = false; }
         }
-      }, 5000);
-      this.intentActivityPollTimer = setInterval(() => {
-        this.refreshSelectedIntentActivity();
-      }, 2000);
+        if (generation === this._pollGeneration) this.pollTimer = setTimeout(mainTick, delay);
+      };
+      const activityTick = async () => {
+        if (generation !== this._pollGeneration) return;
+        if (this.polling && !document.hidden && !this._activityPollInFlight) {
+          this._activityPollInFlight = true;
+          try { await this.refreshSelectedIntentActivity(); }
+          finally { this._activityPollInFlight = false; }
+        }
+        if (generation === this._pollGeneration) this.intentActivityPollTimer = setTimeout(activityTick, 2000);
+      };
+      this._pollTick = mainTick;
+      this._activityPollTick = activityTick;
+      if (!this._pollVisibilityHandler) {
+        this._pollVisibilityHandler = () => {
+          if (document.hidden) return;
+          this.pulseActive?.();
+          clearTimeout(this.pollTimer);
+          clearTimeout(this.intentActivityPollTimer);
+          this.pollTimer = setTimeout(() => this._pollTick?.(), 0);
+          this.intentActivityPollTimer = setTimeout(() => this._activityPollTick?.(), 0);
+        };
+        document.addEventListener('visibilitychange', this._pollVisibilityHandler);
+      }
+      this.pollTimer = setTimeout(mainTick, 10000);
+      this.intentActivityPollTimer = setTimeout(activityTick, 2000);
+    },
+
+    routeSafeRefreshDue(routeKey) {
+      const now = Date.now();
+      const last = Number(this._lastSafeRefreshByRoute?.[routeKey] || 0);
+      if (now - last < 60000) return false;
+      this._lastSafeRefreshByRoute[routeKey] = now;
+      return true;
+    },
+
+    async pollCurrentRoute() {
+      const signal = this._pageAbortController?.signal;
+      if (this.activePage === 'task-detail' && this.selectedProjectId) {
+        const routeKey = `task:${this.selectedProjectId}:${this.view}`;
+        const force = this.routeSafeRefreshDue(routeKey);
+        const events = await this.loadSeeEvents(false, { signal });
+        await this.refreshTaskDetailSections?.(events, force);
+        if (this.view === 'graph' && (force || events.length)) this.updateGraph();
+        if (this.view === 'archive' && (force || events.length)) await this.loadArchives(this.selectedArchiveId);
+        return;
+      }
+      if (this.activePage === 'dashboard') {
+        await Promise.all([this.loadProjectGroups({ signal }), this.loadProjects({ signal }), this.loadDashboardSummary?.()]);
+      } else if (this.activePage === 'tasks') {
+        await this.loadProjects({ signal });
+      } else if (this.activePage === 'vulnerabilities') {
+        await this.loadProjects({ signal });
+        if (this.showVulnBoard) await this.loadVulnerabilityBoard(true);
+        else await this.loadVulnerabilityPage({ selectFirst: false });
+      } else if (this.activePage === 'files') {
+        await this.loadArtifactCenter();
+      } else if (this.activePage === 'projects') {
+        await Promise.all([this.loadProjectGroups({ signal }), this.loadProjects({ signal })]);
+      }
     },
 
     async refreshSelectedIntentActivity() {
@@ -1166,13 +1227,18 @@ window.AxiomModules.projects = {
       const current = this.selectedIntentRecord();
       if (!current || !['claimed', 'running', 'concluding'].includes(current.status)) return;
       try {
-        const latest = await this.api('GET', `/projects/${this.selectedProjectId}/intents/${intentId}`);
+        const latest = await this.api(
+          'GET',
+          `/projects/${this.selectedProjectId}/intents/${intentId}`,
+          null,
+          { signal: this._pageAbortController?.signal },
+        );
         const index = (this.project?.intents || []).findIndex(item => item.id === intentId);
         if (index >= 0) this.project.intents.splice(index, 1, latest);
       } catch (error) {
         // Full-page polling remains the fallback. A transient activity refresh
         // must not distract the operator with repeated toast errors.
-        console.debug('Intent activity refresh failed', error);
+        if (error?.name !== 'AbortError') console.debug('Intent activity refresh failed', error);
       }
     },
 

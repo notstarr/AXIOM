@@ -2,28 +2,20 @@ window.AxiomModules = window.AxiomModules || {};
 window.AxiomModules.dashboard = {
   methods: {
     dashboardStats() {
-      const details = this.allProjectDetails();
-      const vulns = this.allVulnerabilities();
-      const events = Object.values(this.projectEventsCache || {}).flat();
-      const tokenStats = events.reduce((acc, event) => {
-        const usage = this.extractTokenUsage(event.payload || {});
-        if (!usage) return acc;
-        acc.input += usage.input;
-        acc.output += usage.output;
-        acc.total += usage.total;
-        return acc;
-      }, { input: 0, output: 0, total: 0 });
-      const intents = details.flatMap(detail => detail?.intents || []);
+      const summary = this.dashboardSummary || {};
+      const taskCounts = summary.task_status_counts || {};
+      const severityCounts = summary.vulnerability_severity_counts || {};
+      const tokenStats = summary.token_usage || { input: 0, output: 0, total: 0 };
       return {
-        runningProjects: this.countProjectsByStatus('active'),
-        pausedProjects: this.countProjectsByStatus('stopped'),
-        completedProjects: this.countProjectsByStatus('completed'),
-        vulnTotal: vulns.length,
-        criticalVulns: vulns.filter(v => String(v.severity || '').toLowerCase() === 'critical').length,
-        highVulns: vulns.filter(v => String(v.severity || '').toLowerCase() === 'high').length,
-        workingIntents: intents.filter(intent => this.intentLifecycleState(intent) === 'running').length,
-        unclaimedIntents: intents.filter(intent => this.intentLifecycleState(intent) === 'pending').length,
-        eventTotal: events.length,
+        runningProjects: taskCounts.running || 0,
+        pausedProjects: taskCounts.stopped || 0,
+        completedProjects: taskCounts.completed || 0,
+        vulnTotal: Object.values(severityCounts).reduce((sum, value) => sum + Number(value || 0), 0),
+        criticalVulns: severityCounts.critical || 0,
+        highVulns: severityCounts.high || 0,
+        workingIntents: summary.active_intent_count || 0,
+        unclaimedIntents: summary.pending_intent_count || 0,
+        eventTotal: (summary.recent_events || []).length,
         tokenInput: tokenStats.input,
         tokenOutput: tokenStats.output,
         tokenTotal: tokenStats.total,
@@ -32,34 +24,11 @@ window.AxiomModules.dashboard = {
 
     // 按任务统计 Token 消耗，按总量降序
     tokenByProject() {
-      const cache = this.projectEventsCache || {};
-      const totalAll = Object.values(cache).flat().reduce((sum, e) => {
-        const u = this.extractTokenUsage(e.payload || {});
-        return sum + (u ? u.total : 0);
-      }, 0);
-      const rows = Object.entries(cache).map(([projectId, events]) => {
-        const usage = (events || []).reduce((acc, e) => {
-          const u = this.extractTokenUsage(e.payload || {});
-          if (!u) return acc;
-          acc.input += u.input;
-          acc.output += u.output;
-          acc.total += u.total;
-          return acc;
-        }, { input: 0, output: 0, total: 0 });
-        if (usage.total === 0) return null;
-        const proj = this.projects.find(p => p.id === projectId);
-        return {
-          id: projectId,
-          title: proj?.title || projectId,
-          status: proj?.status || '',
-          input: usage.input,
-          output: usage.output,
-          total: usage.total,
-          pct: totalAll > 0 ? Math.round(usage.total / totalAll * 100) : 0,
-        };
-      }).filter(Boolean);
-      rows.sort((a, b) => b.total - a.total);
-      return rows;
+      const totalAll = Number(this.dashboardSummary?.token_usage?.total || 0);
+      return (this.dashboardSummary?.token_by_task || []).map(item => {
+        const task = (this.projects || []).find(project => project.id === item.task_id);
+        return { id: item.task_id, title: item.title || task?.title || item.task_id, status: task?.status || '', input: item.input || 0, output: item.output || 0, total: item.total || 0, pct: totalAll > 0 ? Math.round((item.total || 0) / totalAll * 100) : 0 };
+      });
     },
 
     // Token usage for the currently selected project (from its cached events)
@@ -78,10 +47,10 @@ window.AxiomModules.dashboard = {
     },
 
     recentGlobalEvents() {
-      return Object.entries(this.projectEventsCache || {})
-        .flatMap(([projectId, events]) => (events || []).map(event => ({ ...event, project_id: projectId })))
-        .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
-        .slice(0, 8);
+      return (this.dashboardSummary?.recent_events || []).map(event => ({
+        ...event,
+        project_id: event.task_id || event.project_id || '',
+      }));
     },
 
     placeholderPages() {
@@ -97,31 +66,12 @@ window.AxiomModules.dashboard = {
     },
 
     allVulnerabilities() {
-      return this.allProjectDetails().flatMap((detail) => {
-        const projectId = detail?.project?.id || '';
-        const projectTitle = detail?.project?.title || projectId;
-        const parentProjectId = detail?.project?.parent_project_id || '';
-        return (detail?.vulns || []).map(vuln => ({
-          ...vuln,
-          project_id: projectId,
-          project_title: projectTitle,
-          task_id: projectId,
-          task_title: projectTitle,
-          parent_project_id: parentProjectId,
-          project_group_title: this.projectGroupTitle(parentProjectId),
-        }));
-      });
+      if (!this.showVulnBoard) return this.vulnerabilityItems || [];
+      return Object.values(this.vulnerabilityBoard || {}).flat();
     },
 
     filteredVulnerabilities() {
-      const keyword = (this.vulnFilter.keyword || '').trim().toLowerCase();
-      const projectId = this.vulnFilter.projectId;
-      return this.allVulnerabilities().filter((vuln) => {
-        if (projectId && vuln.project_id !== projectId) return false;
-        if (!keyword) return true;
-        return [vuln.title, vuln.description, vuln.prerequisites, vuln.impact, vuln.project_title, vuln.project_group_title]
-          .some(value => String(value || '').toLowerCase().includes(keyword));
-      });
+      return this.allVulnerabilities();
     },
 
     _seeTokenUsageEvents() {
@@ -434,7 +384,7 @@ window.AxiomModules.dashboard = {
           await this.api('PUT', `/projects/${ed.project_id}/vulns/${ed.id}`, body);
         }
         this.vulnEditor.open = false;
-        await this.loadAllProjectDetails(true);
+        await Promise.all([this.loadVulnerabilityPage(), this.loadDashboardSummary?.()]);
         this.showToast(ed.isNew ? '漏洞已创建' : '漏洞已更新');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
@@ -445,7 +395,7 @@ window.AxiomModules.dashboard = {
       if (!confirm(`删除 ${v.title}？`)) return;
       try {
         await this.api('DELETE', `/projects/${v.project_id}/vulns/${v.id}`);
-        await this.loadAllProjectDetails(true);
+        await Promise.all([this.loadVulnerabilityPage(), this.loadDashboardSummary?.()]);
         this.showToast('已删除');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
@@ -503,7 +453,9 @@ window.AxiomModules.dashboard = {
       try {
         await this.api('PUT', `/projects/${current.project_id}/vulns/${current.id}`, body);
         this.closeVulnStatusQuick();
-        await this.loadAllProjectDetails(true);
+        if (this.showVulnBoard) await this.loadVulnerabilityBoard(true);
+        else await this.loadVulnerabilityPage();
+        await this.loadDashboardSummary?.();
         this.showToast(`状态已更新为 ${nextStatus}`);
       } catch (e) {
         this.showToast(e.message, 'error');

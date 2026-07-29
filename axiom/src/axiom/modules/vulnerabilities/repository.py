@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import Connection, delete, or_, select, update
+from sqlalchemy import Connection, delete, func, or_, select, update
 
 from axiom.modules.artifacts.schemas import Artifact
 from axiom.modules.artifacts.tables import artifacts
@@ -125,6 +125,55 @@ class VulnerabilityRepository:
             ).mappings()
         )
         return self._models(conn, rows)
+
+    def list_page(
+        self,
+        conn: Connection,
+        *,
+        project_id: str | None = None,
+        task_id: str | None = None,
+        search: str = "",
+        status: str | None = None,
+        severity: str | None = None,
+        include_archived: bool = False,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[Vulnerability], int]:
+        query = select(vulnerabilities).join(tasks, tasks.c.id == vulnerabilities.c.task_id)
+        if project_id:
+            query = query.where(tasks.c.project_id == project_id)
+        if task_id:
+            query = query.where(vulnerabilities.c.task_id == task_id)
+        if status:
+            query = query.where(vulnerabilities.c.status == status)
+        if severity:
+            query = query.where(vulnerabilities.c.severity == severity)
+        if not include_archived:
+            query = query.where(vulnerabilities.c.archived.is_(False))
+        if search.strip():
+            pattern = f"%{search.strip()}%"
+            query = query.join(projects, projects.c.id == tasks.c.project_id).where(
+                or_(
+                    vulnerabilities.c.id.ilike(pattern),
+                    vulnerabilities.c.title.ilike(pattern),
+                    vulnerabilities.c.type.ilike(pattern),
+                    vulnerabilities.c.description.ilike(pattern),
+                    vulnerabilities.c.affected_target.ilike(pattern),
+                    tasks.c.title.ilike(pattern),
+                    projects.c.title.ilike(pattern),
+                )
+            )
+        total = conn.execute(
+            select(func.count()).select_from(query.order_by(None).subquery())
+        ).scalar_one()
+        rows = list(
+            conn.execute(
+                query.order_by(vulnerabilities.c.updated_at.desc(), vulnerabilities.c.id.desc())
+                .limit(limit)
+                .offset(offset)
+            ).mappings()
+        )
+        return self._models(conn, rows), int(total)
 
     def update(
         self,

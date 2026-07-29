@@ -1,0 +1,10 @@
+{
+  "name": "axiom-static-ui",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -c tailwind.config.js -i src/axiom/static/tailwind.input.css -o src/axiom/static/tailwind.generated.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.17"
+  }
+}

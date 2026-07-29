@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from sqlalchemy import Connection, select, update
+from sqlalchemy import Connection, func, or_, select, update
 
 from axiom.modules.artifacts.schemas import Artifact
 from axiom.modules.artifacts.tables import artifacts
+from axiom.modules.projects.tables import projects
+from axiom.modules.tasks.tables import tasks
 from axiom.shared.ids import allocate_id
 from axiom.shared.storage import PreparedFile
 
@@ -124,6 +126,60 @@ class ArtifactRepository:
             .order_by(artifacts.c.created_at, artifacts.c.id)
         ).mappings()
         return [Artifact.model_validate(row) for row in rows]
+
+    def list_page(
+        self,
+        conn: Connection,
+        *,
+        task_id: str | None = None,
+        project_id: str | None = None,
+        search: str = "",
+        artifact_type: str | None = None,
+        phase: str | None = None,
+        source: str | None = None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[Artifact], int]:
+        query = select(artifacts).join(tasks, tasks.c.id == artifacts.c.task_id)
+        query = query.where(artifacts.c.archived.is_(False))
+        if task_id:
+            query = query.where(artifacts.c.task_id == task_id)
+        if project_id:
+            query = query.where(tasks.c.project_id == project_id)
+        if artifact_type:
+            query = query.where(artifacts.c.artifact_type == artifact_type)
+        if phase:
+            query = query.where(artifacts.c.artifact_type.like(f"{phase}.%"))
+        if source == "upload":
+            query = query.where(artifacts.c.artifact_type == "upload")
+        elif source == "worker":
+            query = query.where(artifacts.c.artifact_type != "upload")
+        if search.strip():
+            pattern = f"%{search.strip()}%"
+            query = query.join(projects, projects.c.id == tasks.c.project_id).where(
+                or_(
+                    artifacts.c.id.ilike(pattern),
+                    artifacts.c.intent_id.ilike(pattern),
+                    artifacts.c.storage_key.ilike(pattern),
+                    artifacts.c.summary.ilike(pattern),
+                    artifacts.c.artifact_type.ilike(pattern),
+                    tasks.c.title.ilike(pattern),
+                    projects.c.title.ilike(pattern),
+                )
+            )
+        total = conn.execute(
+            select(func.count()).select_from(query.order_by(None).subquery())
+        ).scalar_one()
+        rows = conn.execute(
+            query.order_by(
+                artifacts.c.created_at.desc(),
+                artifacts.c.task_id.desc(),
+                artifacts.c.id.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        ).mappings()
+        return [Artifact.model_validate(row) for row in rows], int(total)
 
     def get(self, conn: Connection, task_id: str, artifact_id: str) -> Artifact | None:
         row = conn.execute(

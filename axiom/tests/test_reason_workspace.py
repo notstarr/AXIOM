@@ -198,6 +198,115 @@ def test_reason_rejects_commit_when_a_source_fact_is_not_consumed(client) -> Non
     assert completed["fact_id"] in committed.text
 
 
+def test_reason_allows_a_non_achieved_no_op_and_enters_waiting(client) -> None:
+    update_runtime_settings(client, reason_min_interval_seconds=0)
+    task, reason_claim, completed = active_reason(client)
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=reason_claim)
+
+    committed = apply_reason_draft(
+        client,
+        workspace["id"],
+        reason_claim["lease_id"],
+        {
+            "goal_assessment": {
+                "achieved": False,
+                "reason": "现有证据不足以达成目标，但本轮没有材料性的新方向",
+                "evidence_refs": [f"fact:{completed['fact_id']}"],
+            }
+        },
+    )
+
+    assert committed.status_code == 200, committed.text
+    assert committed.json()["created_intent_ids"] == []
+    task_after = client.get(f"/api/v1/tasks/{task['id']}").json()
+    assert task_after["phase"] == "waiting"
+    evaluations = client.get(f"/api/v1/tasks/{task['id']}/goal-evaluations").json()
+    assert evaluations[-1]["achieved"] is False
+    reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    assert reconciled.status_code == 200, reconciled.text
+    assert reconciled.json()["created_reason_run_ids"] == []
+
+
+def test_reason_no_op_requires_actionable_todos_to_be_closed(client) -> None:
+    update_runtime_settings(client, reason_min_interval_seconds=0)
+    task, first_claim, completed = active_reason(client)
+    first_workspace = open_reason_workspace(client, task_id=task["id"], claim=first_claim)
+    first_commit = apply_reason_draft(
+        client,
+        first_workspace["id"],
+        first_claim["lease_id"],
+        {
+            "goal_assessment": {
+                "achieved": False,
+                "reason": "本轮没有材料性的新方向",
+                "evidence_refs": [f"fact:{completed['fact_id']}"],
+            }
+        },
+    )
+    assert first_commit.status_code == 200, first_commit.text
+
+    created_todo = client.post(
+        f"/api/v1/tasks/{task['id']}/todos",
+        json={
+            "title": "待判断但尚无执行意图的方向",
+            "category": "other",
+            "sources": [{"type": "fact", "id": completed["fact_id"]}],
+        },
+    )
+    assert created_todo.status_code == 201, created_todo.text
+    todo_id = created_todo.json()["id"]
+
+    reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={}).json()
+    [reason_run_id] = reconciled["created_reason_run_ids"]
+    claim, _ = claim_reason_run(
+        client,
+        task_id=task["id"],
+        reason_run_id=reason_run_id,
+        worker_name="worker-a",
+    )
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    assessed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/goal-assessment",
+        json={
+            "lease_id": claim["lease_id"],
+            "assessment": {
+                "achieved": False,
+                "reason": "该方向不再值得继续执行",
+                "evidence_refs": [],
+            },
+        },
+    )
+    assert assessed.status_code == 200, assessed.text
+
+    rejected = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        json={"lease_id": claim["lease_id"]},
+    )
+    assert rejected.status_code == 409
+    assert f"必须先收口无后续工作的 Todo：{todo_id}" in rejected.text
+
+    updated = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/todo-updates",
+        json={
+            "lease_id": claim["lease_id"],
+            "update": {
+                "todo_id": todo_id,
+                "status": "obsolete",
+                "status_reason": "现有材料不足且没有材料性的新验证方向",
+            },
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    committed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        json={"lease_id": claim["lease_id"]},
+    )
+    assert committed.status_code == 200, committed.text
+    assert committed.json()["created_intent_ids"] == []
+    todo = client.get(f"/api/v1/tasks/{task['id']}/todos").json()[0]
+    assert todo["status"] == "obsolete"
+
+
 def test_reason_completes_a_reviewed_todo_and_records_completed_at(client) -> None:
     task, claim, workspace = todo_review_workspace(client)
     fact_id = client.get(f"/api/v1/tasks/{task['id']}/graph").json()["facts"][-1]["id"]

@@ -37,6 +37,33 @@ class ArtifactService:
                 raise NotFoundError(f"Task not found: {task_id}")
             return self.repository.list(conn, task_id)
 
+    def list_page(
+        self,
+        *,
+        task_id: str | None = None,
+        project_id: str | None = None,
+        search: str = "",
+        artifact_type: str | None = None,
+        phase: str | None = None,
+        source: str | None = None,
+        limit: int = 60,
+        offset: int = 0,
+    ) -> tuple[list[Artifact], int]:
+        with self.engine.connect() as conn:
+            if task_id is not None and self.tasks.get(conn, task_id) is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            return self.repository.list_page(
+                conn,
+                task_id=task_id,
+                project_id=project_id,
+                search=search,
+                artifact_type=artifact_type,
+                phase=phase,
+                source=source,
+                limit=limit,
+                offset=offset,
+            )
+
     def content(self, task_id: str, artifact_id: str) -> ArtifactContent:
         with self.engine.connect() as conn:
             artifact = self.repository.get(conn, task_id, artifact_id)

@@ -442,10 +442,12 @@ window.AxiomModules.graph = {
       const wantNodes = new Set(nodes.map(n => n.data.id));
       const wantEdges = new Set(edges.map(e => e.data.id));
       const previousPositions = this.snapshotNodePositions();
-      let changed = false;
+      let topologyChanged = false;
+      let geometryChanged = false;
+      let visualChanged = false;
 
-      this.cy.nodes().forEach(n => { if (!wantNodes.has(n.id())) { n.remove(); changed = true; } });
-      this.cy.edges().forEach(e => { if (!wantEdges.has(e.id())) { e.remove(); changed = true; } });
+      this.cy.nodes().forEach(n => { if (!wantNodes.has(n.id())) { n.remove(); topologyChanged = true; } });
+      this.cy.edges().forEach(e => { if (!wantEdges.has(e.id())) { e.remove(); topologyChanged = true; } });
 
       for (const n of nodes) {
         const ex = this.cy.getElementById(n.data.id);
@@ -453,17 +455,16 @@ window.AxiomModules.graph = {
           const initialPosition = this.initialPositionForNode(n.data, previousPositions);
           const a = this.cy.add(initialPosition ? { ...n, position: initialPosition } : n);
           this.fadeInFreshElement(a);
-          changed = true;
-        } else if (
-          ex.data('nodeType') !== n.data.nodeType ||
-          ex.data('label') !== n.data.label ||
-          ex.data('description') !== n.data.description ||
-          ex.data('title') !== n.data.title ||
-          ex.data('iconType') !== n.data.iconType ||
-          ex.data('width') !== n.data.width ||
-          ex.data('height') !== n.data.height
-        ) {
-          ex.data(n.data); changed = true;
+          topologyChanged = true;
+        } else {
+          const nextData = n.data;
+          const sizeChanged = ex.data('width') !== nextData.width || ex.data('height') !== nextData.height;
+          const dataChanged = Object.entries(nextData).some(([key, value]) => ex.data(key) !== value);
+          if (dataChanged) {
+            ex.data(nextData);
+            visualChanged = true;
+            geometryChanged ||= sizeChanged;
+          }
         }
       }
       for (const e of edges) {
@@ -471,12 +472,17 @@ window.AxiomModules.graph = {
         if (ex.length === 0) {
           const a = this.cy.add(e);
           this.fadeInFreshElement(a);
-          changed = true;
-        } else if (ex.data('status') !== e.data.status) {
+          topologyChanged = true;
+        } else if (ex.source().id() !== e.data.source || ex.target().id() !== e.data.target) {
+          ex.remove();
+          this.cy.add(e);
+          topologyChanged = true;
+        } else if (Object.entries(e.data).some(([key, value]) => ex.data(key) !== value)) {
           ex.data(e.data);
+          visualChanged = true;
         }
       }
-      if (changed) {
+      if (topologyChanged || geometryChanged) {
         this.cy.layout(this.layoutOpts()).run();
         setTimeout(() => {
           if (this.cy && this.cy.zoom() < 0.5) this.cy.zoom(0.5);
@@ -484,7 +490,7 @@ window.AxiomModules.graph = {
         }, 450);
       }
       this.pulseActive();
-      this.refreshGraphDecorations();
+      if (topologyChanged || geometryChanged || visualChanged) this.refreshGraphDecorations();
     },
 
     pulseActive() {
@@ -498,30 +504,32 @@ window.AxiomModules.graph = {
           node.removeClass('node-pulse');
         }
       });
-      this.cy.edges('[status="in_progress"], [status="bootstrap_running"]').forEach(edge => {
-        if (edge.scratch('_flowActive')) return;
-        edge.scratch('_flowActive', true);
-        const isBootstrap = edge.data('status') === 'bootstrap_running';
-        const dashOffset = isBootstrap ? -16 : -12;
-        const flow = () => {
-          if (!edge.inside() || !['in_progress', 'bootstrap_running'].includes(edge.data('status'))) {
-            edge.removeScratch('_flowActive');
-            return;
-          }
-          edge.animate({ style:{'line-dash-offset':dashOffset} }, {
-            duration:isBootstrap ? 620 : 700,
-            complete:() => {
-              if (!edge.inside() || !['in_progress', 'bootstrap_running'].includes(edge.data('status'))) {
-                edge.removeScratch('_flowActive');
-                return;
-              }
-              edge.style('line-dash-offset', 0);
-              flow();
-            }
-          });
-        };
-        flow();
-      });
+      this.startGraphActivityAnimation();
+    },
+
+    startGraphActivityAnimation() {
+      if (this._graphActivityRaf || !this.cy || document.hidden) return;
+      const tick = timestamp => {
+        if (!this.cy || this.activePage !== 'task-detail' || this.view !== 'graph' || document.hidden) {
+          this.stopGraphActivityAnimation();
+          return;
+        }
+        const activeEdges = this.cy.edges('[status="in_progress"], [status="bootstrap_running"]');
+        if (!activeEdges.length) {
+          this.stopGraphActivityAnimation();
+          return;
+        }
+        const offset = -((timestamp / 45) % 16);
+        activeEdges.style('line-dash-offset', offset);
+        this._graphActivityRaf = requestAnimationFrame(tick);
+      };
+      this._graphActivityRaf = requestAnimationFrame(tick);
+    },
+
+    stopGraphActivityAnimation() {
+      if (this._graphActivityRaf) cancelAnimationFrame(this._graphActivityRaf);
+      this._graphActivityRaf = null;
+      if (this.cy) this.cy.edges('[status="in_progress"], [status="bootstrap_running"]').removeStyle('line-dash-offset');
     },
 
     fitGraph() {
@@ -554,7 +562,7 @@ window.AxiomModules.graph = {
           self.drawMinimap();
         });
       };
-      this.cy.on('pan zoom layoutstop add remove data', schedule);
+      this.cy.on('pan zoom layoutstop add remove', schedule);
       this._minimapSchedule = schedule;
     },
 

@@ -3,13 +3,19 @@ window.AxiomModules.human = {
   methods: {
     switchTaskView(mode) {
       this.view = ['graph', 'archive'].includes(mode) ? mode : 'human';
-      if (this.view === 'graph') this.$nextTick(() => { if (!this.cy) this.initGraph(); });
-      if (this.view === 'archive') this.loadArchives();
+      this.showPageSkeleton();
+      this.mountCurrentPage();
     },
 
     switchHumanTab(tab) {
       const allowed = ['workspace', 'todos', 'intents', 'facts', 'artifacts'];
       this.humanTab = allowed.includes(tab) ? tab : 'workspace';
+      if (this.humanTab === 'intents') this.humanIntentLimit = 50;
+      if (this.humanTab === 'facts') this.humanFactLimit = 50;
+      if (this.humanTab === 'artifacts') {
+        this.humanArtifactPage = 0;
+        this.loadHumanArtifactPage?.();
+      }
     },
 
     humanTodoGroups() {

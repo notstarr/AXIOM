@@ -2,7 +2,8 @@ window.AxiomModules = window.AxiomModules || {};
 window.AxiomModules.core = {
   methods: {
     _templateCache: {},
-    _loadedTemplates: {},
+    _loadedScripts: {},
+    _pageMountGeneration: 0,
     async loadTemplate(name) {
       if (this._templateCache[name]) return this._templateCache[name];
       try {
@@ -16,19 +17,104 @@ window.AxiomModules.core = {
         return '<div class="p-4 text-red-500">Template load failed: ' + name + '</div>';
       }
     },
-    async loadPageTemplate(name) {
-      if (this._loadedTemplates[name]) return;
-      this._loadedTemplates[name] = true;
-      const html = await this.loadTemplate(name);
-      const container = document.querySelector('[data-page="' + name + '"]');
-      if (!container) {
-        console.error('No container for page:', name);
-        return;
+    pageTemplateName() {
+      if (this.activePage === 'task-detail') {
+        if (this.view === 'graph') return 'graph-view';
+        if (this.view === 'archive') return 'archive-view';
+        return 'human-view';
       }
-      container.innerHTML = html;
-      this.$nextTick(() => {
-        if (window.Alpine) window.Alpine.initTree(container);
+      return ({
+        dashboard: 'dashboard', tasks: 'task-list', vulnerabilities: 'vulnerabilities',
+        projects: 'project-mgmt', 'guard-audit': 'guard-audit', skills: 'skills',
+        files: 'files', mcp: 'mcp', prompts: 'prompts', settings: 'settings',
+      })[this.activePage] || 'dashboard';
+    },
+
+    async loadScriptOnce(src) {
+      if (this._loadedScripts[src]) return this._loadedScripts[src];
+      this._loadedScripts[src] = new Promise((resolve, reject) => {
+        const existing = document.querySelector(`script[data-lazy-src="${src}"]`);
+        if (existing?.dataset.loaded === 'true') { resolve(); return; }
+        const script = existing || document.createElement('script');
+        script.src = src;
+        script.async = false;
+        script.dataset.lazySrc = src;
+        script.addEventListener('load', () => { script.dataset.loaded = 'true'; resolve(); }, { once: true });
+        script.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)), { once: true });
+        if (!existing) document.head.appendChild(script);
       });
+      return this._loadedScripts[src];
+    },
+
+    async ensureGraphRuntime() {
+      for (const src of [
+        '/static/vendor/dagre.min.js', '/static/vendor/cytoscape.min.js',
+        '/static/vendor/cytoscape-dagre.js', '/static/vendor/elk.bundled.js',
+        '/static/vendor/cytoscape-elk.js', '/static/vendor/cytoscape-html-label.js',
+      ]) await this.loadScriptOnce(src);
+    },
+
+    async ensureMarkdownRuntime() {
+      if (!window.marked) await this.loadScriptOnce('/static/vendor/marked.min.js');
+    },
+
+    showPageSkeleton() {
+      const host = document.getElementById('page-host');
+      if (!host) return;
+      if (window.Alpine && host.firstElementChild) window.Alpine.destroyTree(host);
+      host.innerHTML = '<div class="page-skeleton"><span></span><span></span><span></span></div>';
+      this.mountedPageTemplate = '';
+    },
+
+    cleanupMountedPage() {
+      this._pageAbortController?.abort();
+      this._pageAbortController = new AbortController();
+      if (this._minimapRaf) cancelAnimationFrame(this._minimapRaf);
+      this._minimapRaf = null;
+      if (this.cy) { this.teardownAutoFit(); this.stopGraphActivityAnimation?.(); this.cy.destroy(); this.cy = null; }
+    },
+
+    async mountCurrentPage() {
+      const name = this.pageTemplateName();
+      const generation = ++this._pageMountGeneration;
+      const host = document.getElementById('page-host');
+      if (!host) return;
+      this.pageMountLoading = true;
+      this.cleanupMountedPage();
+      if (window.Alpine && host.firstElementChild) window.Alpine.destroyTree(host);
+      host.innerHTML = '<div class="page-skeleton"><span></span><span></span><span></span></div>';
+      if (name === 'graph-view') await this.ensureGraphRuntime();
+      const html = await this.loadTemplate(name);
+      if (generation !== this._pageMountGeneration) return;
+      host.innerHTML = html;
+      this.mountedPageTemplate = name;
+      if (window.Alpine) window.Alpine.initTree(host);
+      this.pageMountLoading = false;
+      await this.activateMountedPage(name);
+    },
+
+    async activateMountedPage(name) {
+      if (name === 'dashboard') {
+        await Promise.all([
+          this.loadProjectGroups(), this.loadProjects(),
+          this.loadDashboardSummary?.(), this.loadGlobalSkillUsage?.(),
+        ]);
+      } else if (name === 'task-list') {
+        await Promise.all([this.loadProjects(), this.loadDispatchSettings()]);
+        this.$nextTick(() => this.restoreProjectListScroll?.());
+      } else if (name === 'vulnerabilities') {
+        await Promise.all([this.loadProjects(), this.loadVulnerabilityPage?.()]);
+      } else if (name === 'project-mgmt') {
+        await Promise.all([this.loadProjectGroups(), this.loadProjects()]);
+        if (this.selectedProjectManagementId) await this.loadProjectCredentials(this.selectedProjectManagementId);
+      } else if (name === 'guard-audit') await this.loadGuardAuditEvents();
+      else if (name === 'skills') await this.loadSkills();
+      else if (name === 'files') await this.loadArtifactCenter();
+      else if (name === 'mcp') await this.loadMcpPage();
+      else if (name === 'settings') await this.loadSettings();
+      else if (name === 'prompts') this.loadPrompts();
+      else if (name === 'graph-view') this.$nextTick(() => { if (!this.cy && this.project) this.initGraph(); });
+      else if (name === 'archive-view') await this.loadArchives();
     },
 
     async init() {
@@ -37,18 +123,28 @@ window.AxiomModules.core = {
       window.addEventListener('pointermove', this._panelResizeMove);
       window.addEventListener('pointerup', this._panelResizeStop);
       this.loadLocalPrefs();
+      this.sidebarCollapsed = localStorage.getItem('axiom.sidebarCollapsed') === 'true';
       this.initDarkMode();
       this.loadPrompts();
-      await this.loadProjectGroups();
-      await this.loadProjects();
-      await this.loadSettings();
+      this._pageAbortController = new AbortController();
       this.startPolling();
       window.addEventListener('hashchange', () => this.handleRoute());
       window.addEventListener('keydown', (e) => {
-        if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); this.showGlobalSearch = true; }
-        if (e.key === 'Escape') { this.showGlobalSearch = false; if (this.errorDetail) this.errorDetail = null; }
+        if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); this.openGlobalSearch(); }
+        if (e.key === 'Escape') {
+          if (this.showGlobalSearch) this.closeGlobalSearch();
+          if (this.errorDetail) this.errorDetail = null;
+        }
       });
       this.handleRoute();
+    },
+
+    toggleSidebar() {
+      this.sidebarCollapsed = !this.sidebarCollapsed;
+      localStorage.setItem('axiom.sidebarCollapsed', String(this.sidebarCollapsed));
+      this.$nextTick(() => {
+        if (this.cy) { this.cy.resize(); this.drawMinimap(); }
+      });
     },
 
     initDarkMode() {
@@ -66,6 +162,66 @@ window.AxiomModules.core = {
       else document.documentElement.classList.remove('dark');
     },
 
+    async openGlobalSearch() {
+      this.showGlobalSearch = true;
+      await Promise.all([
+        this.projectsLoaded ? Promise.resolve() : this.loadProjects(),
+        this.projectGroups.length ? Promise.resolve() : this.loadProjectGroups(),
+      ]);
+      this.$nextTick(() => this.$refs.globalSearchInput?.focus());
+    },
+
+    closeGlobalSearch() {
+      clearTimeout(this._globalSearchTimer);
+      this._globalSearchAbortController?.abort();
+      this._globalSearchAbortController = null;
+      this._globalSearchGeneration += 1;
+      this.showGlobalSearch = false;
+      this.globalSearchQuery = '';
+      this.globalSearchVulnerabilities = [];
+      this.globalSearchLoading = false;
+    },
+
+    scheduleGlobalSearch() {
+      clearTimeout(this._globalSearchTimer);
+      const query = this.globalSearchQuery.trim();
+      if (!query) {
+        this._globalSearchAbortController?.abort();
+        this._globalSearchAbortController = null;
+        this._globalSearchGeneration += 1;
+        this.globalSearchVulnerabilities = [];
+        this.globalSearchLoading = false;
+        return;
+      }
+      this._globalSearchTimer = setTimeout(() => this.searchGlobalVulnerabilities(query), 250);
+    },
+
+    async searchGlobalVulnerabilities(query) {
+      const generation = ++this._globalSearchGeneration;
+      this._globalSearchAbortController?.abort();
+      const controller = new AbortController();
+      this._globalSearchAbortController = controller;
+      this.globalSearchLoading = true;
+      try {
+        const params = new URLSearchParams({ search: query, limit: '10', offset: '0' });
+        const response = await fetch(`/api/v1/vulnerabilities?${params}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const items = await response.json();
+        if (generation === this._globalSearchGeneration && query === this.globalSearchQuery.trim()) {
+          this.globalSearchVulnerabilities = items;
+        }
+      } catch (error) {
+        if (error?.name !== 'AbortError') console.debug('Global vulnerability search failed', error);
+      } finally {
+        if (generation === this._globalSearchGeneration) {
+          this.globalSearchLoading = false;
+          this._globalSearchAbortController = null;
+        }
+      }
+    },
+
     globalSearchResults() {
       if (!this.globalSearchQuery.trim()) return [];
       const q = this.globalSearchQuery.toLowerCase();
@@ -74,7 +230,7 @@ window.AxiomModules.core = {
         const title = (p.title || '').toLowerCase();
         const id = (p.id || '').toLowerCase();
         if (title.includes(q) || id.includes(q)) {
-          results.push({type: 'project', id: p.id, title: p.title || p.id, subtitle: p.id, action: () => { this.navigateTo('tasks'); this.openProject(p.id, true); }});
+          results.push({type: 'project', id: p.id, title: p.title || p.id, subtitle: p.id, action: () => this.openTaskOverview(p.id)});
         }
       }
       for (const g of this.projectGroups || []) {
@@ -82,10 +238,15 @@ window.AxiomModules.core = {
           results.push({type: 'group', id: g.id, title: g.title, subtitle: g.id, action: () => { this.navigateTo('projects'); this.selectManagedProject(g.id); }});
         }
       }
-      for (const v of this.allVulnerabilities()) {
-        if ((v.title || '').toLowerCase().includes(q)) {
-          results.push({type: 'vuln', id: v.id, title: v.title, subtitle: v.project_id, action: () => { this.navigateTo('vulnerabilities'); }});
-        }
+      for (const v of this.globalSearchVulnerabilities || []) {
+        results.push({
+          type: 'vuln', id: v.id, title: v.title, subtitle: v.task_id,
+          action: () => {
+            this.vulnFilter.projectId = v.task_id || '';
+            this.vulnFilter.keyword = v.title || '';
+            this.navigateTo('vulnerabilities');
+          },
+        });
       }
       return results;
     },
@@ -113,6 +274,7 @@ window.AxiomModules.core = {
         const id = decodeURIComponent((taskMatch || legacyProjectMatch)[1]);
         this.activePage = 'task-detail';
         if (this.selectedProjectId !== id || !this.project) this.openTaskOverview(id, true);
+        else this.mountCurrentPage();
         return;
       }
       const page = (hash.replace(/^#\/?/, '') || 'dashboard').split('/')[0];
@@ -123,22 +285,9 @@ window.AxiomModules.core = {
       }
       this._navigatingBack = false;
       this.activePage = newPage;
+      this.mobileSidebarOpen = false;
       if (this.activePage !== 'task-detail' && this.view !== 'list') this.backToList(true);
-      if (this.activePage === 'vulnerabilities' || this.activePage === 'projects' || this.activePage === 'dashboard') {
-        this.loadAllProjectDetails();
-      }
-      if (this.activePage === 'dashboard') this.loadGlobalSkillUsage();
-      if (this.activePage === 'projects' && this.selectedProjectManagementId) {
-        this.loadProjectCredentials(this.selectedProjectManagementId);
-      }
-      if (this.activePage === 'skills') {
-        this.loadSkills();
-      }
-      if (this.activePage === 'settings') this.loadSettings();
-      if (this.activePage === 'tasks') this.loadDispatchSettings();
-      if (this.activePage === 'guard-audit') this.loadGuardAuditEvents();
-      if (this.activePage === 'files') this.loadArtifactCenter();
-      if (this.activePage === 'mcp') this.loadMcpPage();
+      this.mountCurrentPage();
     },
 
     navigateTo(page) {
@@ -154,8 +303,9 @@ window.AxiomModules.core = {
         settings: '#/settings',
         prompts: '#/prompts',
       };
-      location.hash = routes[page] || '#/dashboard';
-      this.handleRoute();
+      const target = routes[page] || '#/dashboard';
+      if (location.hash === target) this.handleRoute();
+      else location.hash = target;
     },
 
     goBack() {
@@ -168,8 +318,9 @@ window.AxiomModules.core = {
         settings: '#/settings',
         prompts: '#/prompts', 'task-detail': '#/task-detail',
       };
-      location.hash = routes[prev] || '#/dashboard';
-      this.handleRoute();
+      const target = routes[prev] || '#/dashboard';
+      if (location.hash === target) this.handleRoute();
+      else location.hash = target;
     },
 
     async api(method, path, body) {
@@ -229,33 +380,23 @@ window.AxiomModules.core = {
         } else if (this.activePage === 'tasks') {
           await Promise.all([this.loadProjectGroups(), this.loadProjects(), this.loadDispatchSettings()]);
         } else if (this.activePage === 'task-detail' && this.selectedProjectId) {
-          await Promise.all([this.loadProject(this.selectedProjectId), this.loadSeeEvents(true), this.loadDispatchSettings()]);
+          await Promise.all([this.loadProject(this.selectedProjectId), this.loadSeeEvents(true)]);
           if (this.view === 'archive') await this.loadArchives(this.selectedArchiveId);
           if (this.sideTab === 'board') await this.reloadBlackboardGroup(this.project?.project?.parent_project_id);
           if (this.view === 'graph') this.updateGraph();
         } else if (this.activePage === 'vulnerabilities') {
           await this.loadProjects();
-          await this.loadAllProjectDetails(true);
+          if (this.showVulnBoard) await this.loadVulnerabilityBoard(true);
+          else await this.loadVulnerabilityPage();
         } else if (this.activePage === 'projects') {
           await Promise.all([this.loadProjectGroups(), this.loadProjects()]);
-          await this.loadAllProjectDetails(true);
           if (this.selectedProjectManagementTaskId) await this.loadProjectDetailForManagement(this.selectedProjectManagementTaskId);
           if (this.selectedProjectManagementId) await this.loadProjectCredentials(this.selectedProjectManagementId);
         } else if (this.activePage === 'skills') {
           await this.loadSkills();
           if (this.skillEditor?.name && !this.skillEditor.fileDirty) await this.loadSkillFiles();
         } else if (this.activePage === 'files') {
-          const selected = {
-            groupId: this.fileGroupId,
-            taskId: this.fileTaskId,
-            folder: this.fileFolder,
-            isGroupLevel: this.fileIsGroupLevel,
-          };
-          await Promise.all([this.loadProjectGroups(), this.loadProjects()]);
-          await this.loadFileTree();
-          if (selected.folder && (selected.isGroupLevel ? selected.groupId : selected.taskId)) {
-            await this.selectFolder(selected.groupId, selected.taskId, selected.folder, selected.isGroupLevel);
-          }
+          await this.loadArtifactCenter();
         } else if (this.activePage === 'settings') {
           await Promise.all([this.loadSettings(), this.loadDispatchSettings()]);
         } else if (this.activePage === 'prompts') {

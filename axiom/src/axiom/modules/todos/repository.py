@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Connection, select, update
+from sqlalchemy import Connection, func, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from axiom.modules.artifacts.tables import artifacts
@@ -49,12 +49,56 @@ class TodoRepository:
         return self._todo(conn, row) if row is not None else None
 
     def list(self, conn: Connection, task_id: str) -> list[Todo]:
-        rows = conn.execute(
+        rows = list(conn.execute(
             select(todos)
             .where(todos.c.task_id == task_id, todos.c.archived.is_(False))
             .order_by(todos.c.status, todos.c.priority.desc(), todos.c.created_at, todos.c.id)
-        ).mappings()
-        return [self._todo(conn, row) for row in rows]
+        ).mappings())
+        return self._todos(conn, rows)
+
+    def list_page(
+        self,
+        conn: Connection,
+        task_id: str,
+        *,
+        search: str = "",
+        status: str | None = None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[Todo], int]:
+        query = select(todos).where(
+            todos.c.task_id == task_id,
+            todos.c.archived.is_(False),
+        )
+        if status:
+            query = query.where(todos.c.status == status)
+        if search.strip():
+            pattern = f"%{search.strip()}%"
+            query = query.where(
+                or_(
+                    todos.c.id.ilike(pattern),
+                    todos.c.title.ilike(pattern),
+                    todos.c.category.ilike(pattern),
+                    todos.c.theme.ilike(pattern),
+                    todos.c.status_reason.ilike(pattern),
+                )
+            )
+        total = conn.execute(
+            select(func.count()).select_from(query.order_by(None).subquery())
+        ).scalar_one()
+        rows = list(
+            conn.execute(
+                query.order_by(
+                    todos.c.status,
+                    todos.c.priority.desc(),
+                    todos.c.created_at,
+                    todos.c.id,
+                )
+                .limit(limit)
+                .offset(offset)
+            ).mappings()
+        )
+        return self._todos(conn, rows), int(total)
 
     def update(self, conn: Connection, task_id: str, todo_id: str, values: dict) -> Todo | None:
         result = conn.execute(
@@ -151,3 +195,35 @@ class TodoRepository:
             )
         ]
         return Todo.model_validate({**row, "sources": sources})
+
+    def _todos(self, conn: Connection, rows: list) -> list[Todo]:
+        if not rows:
+            return []
+        task_ids = {str(row["task_id"]) for row in rows}
+        todo_ids = {str(row["id"]) for row in rows}
+        sources_by_key: dict[tuple[str, str], list[TodoSource]] = {}
+        for item in conn.execute(
+            select(todo_sources).where(
+                todo_sources.c.task_id.in_(task_ids),
+                todo_sources.c.todo_id.in_(todo_ids),
+            )
+            .order_by(
+                todo_sources.c.task_id,
+                todo_sources.c.todo_id,
+                todo_sources.c.source_type,
+                todo_sources.c.source_id,
+            )
+        ).mappings():
+            key = (str(item["task_id"]), str(item["todo_id"]))
+            sources_by_key.setdefault(key, []).append(
+                TodoSource(type=item["source_type"], id=item["source_id"])
+            )
+        return [
+            Todo.model_validate(
+                {
+                    **row,
+                    "sources": sources_by_key.get((str(row["task_id"]), str(row["id"])), []),
+                }
+            )
+            for row in rows
+        ]

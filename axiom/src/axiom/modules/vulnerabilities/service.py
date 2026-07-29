@@ -64,6 +64,13 @@ class VulnerabilityService:
         with self.engine.connect() as conn:
             return self.repository.list_all(conn, **filters)
 
+    def list_page(self, **filters) -> tuple[list[Vulnerability], int]:
+        with self.engine.connect() as conn:
+            task_id = filters.get("task_id")
+            if task_id is not None and self.tasks.get(conn, task_id) is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            return self.repository.list_page(conn, **filters)
+
     def update(self, task_id: str, vulnerability_id: str, body: UpdateVulnerability) -> Vulnerability:
         with self.engine.begin() as conn:
             task = self.tasks.get(conn, task_id)

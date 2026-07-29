@@ -129,6 +129,7 @@ window.AxiomModules.files = {
         const resp = await fetch(url);
         if (resp.ok) {
           const data = await resp.json();
+          if (isMd) await this.ensureMarkdownRuntime();
           const rendered = isMd ? marked.parse(data.content || '') : '';
           this.filePreview = { open: true, name, path, content: data.content, isMarkdown: isMd, isImage: false, rawUrl, rendered };
         }
