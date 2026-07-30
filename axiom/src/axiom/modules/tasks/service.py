@@ -10,13 +10,18 @@ from axiom.modules.audit.service import AuditService
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.graph.repository import GraphRepository
 from axiom.modules.graph.tables import facts, intents
+from axiom.modules.goals.repository import GoalRepository
+from axiom.modules.goals.tables import task_goal_cycles
 from axiom.modules.projects.repository import ProjectRepository
 from axiom.modules.reason.repository import ReasonRepository
+from axiom.modules.reason.service import ReasonService
 from axiom.modules.reason.tables import reason_runs
 from axiom.modules.tasks.origin import parse_origin
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.tasks.schemas import (
     ActiveReasonRun,
+    ContinueTask,
+    ContinueTaskResult,
     CreateTask,
     CreateTaskHint,
     ResumeTask,
@@ -27,7 +32,7 @@ from axiom.modules.tasks.schemas import (
     UpdateTask,
     UpdateTaskHint,
 )
-from axiom.modules.tasks.tables import task_hints
+from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.tables import vulnerabilities
 from axiom.shared.clock import format_utc, parse_utc, utcnow
@@ -41,7 +46,9 @@ class TaskService:
         self.projects = ProjectRepository()
         self.tasks = TaskRepository()
         self.graph = GraphRepository()
+        self.goals = GoalRepository()
         self.reason = ReasonRepository()
+        self.reason_service = ReasonService(engine)
         self.audit = AuditService(engine)
 
     def create(self, command: CreateTask) -> Task:
@@ -73,6 +80,21 @@ class TaskService:
                 hints=command.hints,
                 now=now,
             )
+            cycle = self.goals.create_cycle(
+                conn,
+                task_id=task.id,
+                goal=task.goal,
+                continuation_reason="",
+                focus="",
+                actor="system.create",
+                now=now,
+            )
+            conn.execute(
+                update(tasks)
+                .where(tasks.c.id == task.id)
+                .values(current_goal_cycle_id=cycle.id)
+            )
+            task = task.model_copy(update={"current_goal_cycle_id": cycle.id})
             self.graph.seed_task(conn, task=task, now=now)
             self._record_run_started(
                 conn,
@@ -97,6 +119,8 @@ class TaskService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.legacy_readonly:
                 raise ConflictError("Legacy Task is read-only")
+            if command.goal is not None and task.status == "completed":
+                raise ConflictError("已完成任务必须通过继续任务创建新的 Goal")
             if command.scope is not None and command.scope.enabled and not command.scope.targets:
                 command = command.model_copy(
                     update={"scope": command.scope.model_copy(update={"targets": [task.origin.host]})}
@@ -108,6 +132,29 @@ class TaskService:
                     update(facts)
                     .where(facts.c.task_id == task_id, facts.c.id == "goal")
                     .values(description=command.goal)
+                )
+                if task.current_goal_cycle_id:
+                    conn.execute(
+                        update(task_goal_cycles)
+                        .where(
+                            task_goal_cycles.c.id == task.current_goal_cycle_id,
+                            task_goal_cycles.c.status == "active",
+                        )
+                        .values(goal=command.goal)
+                    )
+                self.audit.record_in(
+                    conn,
+                    RecordAuditEvent(
+                        project_id=task.project_id,
+                        task_id=task.id,
+                        event_type="task.goal_updated",
+                        message="当前 Goal 已更新",
+                        payload={
+                            "goal_cycle_id": task.current_goal_cycle_id,
+                            "previous_goal": task.goal,
+                            "goal": command.goal,
+                        },
+                    ),
                 )
             if command.worker_pool is not None:
                 conn.execute(
@@ -129,6 +176,94 @@ class TaskService:
                 )
         assert updated is not None
         return self._decorate(updated)
+
+    def continue_task(self, task_id: str, command: ContinueTask) -> ContinueTaskResult:
+        now = utcnow()
+        deadline_at = self._deadline_at(now, command.run_duration_seconds)
+        with immediate_transaction(self.engine) as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.legacy_readonly:
+                raise ConflictError("历史只读任务不能继续运行")
+            if task.status != "completed":
+                raise ConflictError("只有已完成任务可以继续运行")
+            if self.reason.active_for_task(conn, task_id) is not None:
+                raise ConflictError("任务已有活动 ReasonRun")
+
+            previous_goal = task.goal
+            cycle = self.goals.create_cycle(
+                conn,
+                task_id=task_id,
+                goal=command.goal,
+                continuation_reason=command.reason,
+                focus=command.focus,
+                actor=command.actor,
+                now=now,
+            )
+            conn.execute(
+                update(tasks)
+                .where(tasks.c.id == task_id, tasks.c.status == "completed")
+                .values(
+                    goal=command.goal,
+                    current_goal_cycle_id=cycle.id,
+                    status="running",
+                    phase="reason",
+                    completed_at=None,
+                    run_duration_seconds=command.run_duration_seconds,
+                    run_started_at=now,
+                    run_deadline_at=deadline_at,
+                    last_pause_reason=None,
+                    updated_at=now,
+                )
+            )
+            conn.execute(
+                update(facts)
+                .where(facts.c.task_id == task_id, facts.c.id == "goal")
+                .values(description=command.goal)
+            )
+            continued = self.tasks.get(conn, task_id)
+            assert continued is not None
+            reason_run = self.reason_service.create_continuation_in(
+                conn,
+                task=continued,
+                previous_goal=previous_goal,
+                continuation_reason=command.reason,
+                focus=command.focus,
+                actor=command.actor,
+                now=now,
+            )
+            self._record_run_started(
+                conn,
+                task=continued,
+                source="continuation",
+                duration_seconds=command.run_duration_seconds,
+                deadline_at=deadline_at,
+            )
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=continued.project_id,
+                    task_id=task_id,
+                    reason_run_id=reason_run.id,
+                    event_type="task.continued",
+                    message=f"任务已进入 Goal 第 {cycle.sequence} 轮",
+                    payload={
+                        "goal_cycle_id": cycle.id,
+                        "sequence": cycle.sequence,
+                        "previous_goal": previous_goal,
+                        "goal": command.goal,
+                        "reason": command.reason,
+                        "focus": command.focus,
+                        "actor": command.actor,
+                    },
+                ),
+            )
+        return ContinueTaskResult(
+            task=self._decorate(continued),
+            goal_cycle=cycle,
+            reason_run_id=reason_run.id,
+        )
 
     def list(
         self,

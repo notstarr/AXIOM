@@ -4,10 +4,18 @@ from fastapi import APIRouter, Depends, status
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
-from axiom.modules.goals.schemas import AssessGoal, GoalEvaluation
+from axiom.modules.goals.schemas import AssessGoal, GoalCycle, GoalEvaluation
 
 
 router = APIRouter(prefix="/tasks", tags=["goals"])
+
+
+@router.get("/{task_id}/goal-cycles", response_model=list[GoalCycle])
+def list_goal_cycles(
+    task_id: str,
+    container: Container = Depends(get_container),
+) -> list[GoalCycle]:
+    return container.goals.list_cycles(task_id)
 
 
 @router.get("/{task_id}/goal-evaluations", response_model=list[GoalEvaluation])

@@ -75,6 +75,35 @@ window.AxiomModules.graph = {
             edgeType: 'goal_evidence',
           }});
         }
+        if (this.showGoalHistory) {
+          for (const history of this.project.goal_history || []) {
+            const historyNodeId = `_goal_history_${history.goal_cycle_id}`;
+            const label = history.goal || `第 ${history.sequence} 轮 Goal`;
+            const size = this.factNodeSize(label, 'goal');
+            nodes.push({ data: {
+              id: historyNodeId,
+              label,
+              description: label,
+              nodeType: 'goal_history',
+              title: `历史目标 · 第 ${history.sequence} 轮`,
+              iconType: 'target',
+              width: size.width,
+              height: size.height,
+              completedAt: history.completed_at || '',
+            }});
+            for (const factId of history.evidence_fact_ids || []) {
+              if (!nodes.some(node => node.data.id === factId)) continue;
+              edges.push({ data: {
+                id: `_history_goal_evidence_${history.goal_cycle_id}_${factId}`,
+                source: factId,
+                target: historyNodeId,
+                label: `第 ${history.sequence} 轮达成证据`,
+                status: 'goal_evidence_history',
+                edgeType: 'goal_evidence_history',
+              }});
+            }
+          }
+        }
       }
       return { nodes, edges };
     },
@@ -94,7 +123,7 @@ window.AxiomModules.graph = {
     },
 
     nodeCardTpl(data) {
-      const cardTypes = ['origin','depth_origin','goal','fact','depth_plan','depth_fact','bootstrap_pending','bootstrap_running'];
+      const cardTypes = ['origin','depth_origin','goal','goal_history','fact','depth_plan','depth_fact','bootstrap_pending','bootstrap_running'];
       if (!cardTypes.includes(data.nodeType)) return '';
       const title = data.title || '';
       const icon = this.nodeIconSvg(data.iconType);
@@ -157,10 +186,12 @@ window.AxiomModules.graph = {
         edgeLabelBackground: '#252a31', edgeLabelText: '#aeb5bf',
         mutedBackground: '#30353d', mutedText: '#aeb5bf', mutedBorder: '#657080',
         cancelledBackground: '#30353d', cancelledText: '#aeb5bf', scopeEdge: '#657080',
+        goalGold: '#f6c85f', goalGoldText: '#ffe09a', historyGold: '#b9913f',
       } : {
         edgeLabelBackground: '#ffffff', edgeLabelText: '#64748b',
         mutedBackground: '#f1f5f9', mutedText: '#94a3b8', mutedBorder: '#cbd5e1',
         cancelledBackground: '#e2e8f0', cancelledText: '#64748b', scopeEdge: '#cbd5e1',
+        goalGold: '#c58b00', goalGoldText: '#8a6100', historyGold: '#d5b56a',
       };
       return [
         // ── Card nodes: transparent (visuals via html-label overlay) ──
@@ -173,6 +204,11 @@ window.AxiomModules.graph = {
           shape:'round-rectangle', 'background-color':'transparent', 'background-opacity':0,
           label:'', width:'data(width)', height:'data(height)',
           'border-width':0, padding:'0',
+        }},
+        { selector: 'node[nodeType="goal_history"]', style: {
+          shape:'round-rectangle', 'background-color':'transparent', 'background-opacity':0,
+          label:'', width:'data(width)', height:'data(height)',
+          'border-width':0, padding:'0', opacity:0.82,
         }},
         { selector: 'node[nodeType="fact"]', style: {
           shape:'round-rectangle', 'background-color':'transparent', 'background-opacity':0,
@@ -248,12 +284,21 @@ window.AxiomModules.graph = {
           'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.9,
         }},
         { selector: 'edge[status="goal_evidence"]', style: {
-          width:2.5, 'line-color':'#14b8a6', 'target-arrow-color':'#14b8a6',
+          width:3, 'line-color':theme.goalGold, 'target-arrow-color':theme.goalGold,
           'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'8px', color:'#0f766e',
+          label:'data(label)', 'font-size':'8px', color:theme.goalGoldText,
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.92,
           'text-background-padding':'2px', 'arrow-scale':1,
+        }},
+        { selector: 'edge[status="goal_evidence_history"]', style: {
+          width:2, 'line-color':theme.historyGold, 'target-arrow-color':theme.historyGold,
+          'line-style':'dashed', 'line-dash-pattern':[7,5], opacity:0.7,
+          'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          label:'data(label)', 'font-size':'7px', color:theme.historyGold,
+          'text-rotation':'autorotate', 'text-margin-y':-9,
+          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
+          'text-background-padding':'2px', 'arrow-scale':0.85,
         }},
         { selector: 'edge[status="in_progress"]', style: {
           width:2, 'line-color':'#f59e0b', 'line-style':'dashed', 'line-dash-pattern':[8,4],
@@ -976,7 +1021,7 @@ window.AxiomModules.graph = {
     onEdgeTap(e) {
       const intentId = e.target.data('intentId');
       if (intentId) this.selectIntent(intentId);
-      else if (e.target.data('edgeType') === 'goal_evidence') this.selectFact(e.target.data('source'));
+      else if (['goal_evidence', 'goal_evidence_history'].includes(e.target.data('edgeType'))) this.selectFact(e.target.data('source'));
       if (this.sideTab === 'log') this.scrollTimelineToSelection();
       else this.sideTab = 'detail';
     },

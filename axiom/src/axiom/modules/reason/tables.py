@@ -23,6 +23,7 @@ reason_runs = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("task_id", String, ForeignKey(tasks.c.id, ondelete="CASCADE"), nullable=False),
+    Column("goal_cycle_id", String),
     Column("status", String, nullable=False, default="pending"),
     Column("trigger", String, nullable=False),
     Column("trigger_payload_json", Text, nullable=False, default="{}"),

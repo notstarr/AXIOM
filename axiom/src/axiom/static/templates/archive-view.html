@@ -16,9 +16,10 @@
       <button @click="switchTaskView('graph')" class="px-2.5 py-1 rounded-md text-[11px] text-slate-500 hover:bg-white">图谱</button>
       <button class="px-2.5 py-1 rounded-md text-[11px] bg-white text-amber-700 shadow-sm">归档</button>
     </div>
-    <button @click="triggerManualReason()" :disabled="!canTriggerManualReason()" :title="manualReasonDisabledReason() || '立即触发一次人工 Reason 复盘'" class="manual-reason-trigger px-2.5 py-1 rounded-lg border text-xs transition disabled:cursor-not-allowed">
-      <span x-text="manualReasonTriggering ? '正在触发…' : '立刻 Reason'"></span>
-    </button>
+      <button @click="triggerManualReason()" :disabled="!canTriggerManualReason()" :title="manualReasonDisabledReason() || '立即触发一次人工 Reason 复盘'" class="manual-reason-trigger px-2.5 py-1 rounded-lg border text-xs transition disabled:cursor-not-allowed">
+        <span x-text="manualReasonTriggering ? '正在触发…' : '立刻 Reason'"></span>
+      </button>
+      <button x-show="project?.project?.status === 'completed' && !project?.project?.legacy_readonly" @click="openTaskContinuation(project.project)" class="px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-xs font-medium text-amber-800 hover:bg-amber-100 transition">继续任务</button>
     <button @click="loadArchives(selectedArchiveId)" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50">刷新</button>
   </header>
 

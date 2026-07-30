@@ -923,11 +923,9 @@ def test_reason_run_migration_can_downgrade_after_real_runs(tmp_path) -> None:
     try:
         with downgraded.connect() as conn:
             assert "reason_runs" not in inspect(conn).get_table_names()
-            legacy = conn.execute(
-                select(intents).where(
-                    intents.c.task_id == "t_001",
-                    intents.c.kind == "reason",
-                )
+            legacy = conn.exec_driver_sql(
+                "SELECT * FROM intents WHERE task_id = ? AND kind = ?",
+                ("t_001", "reason"),
             ).mappings().one()
             assert legacy["id"] == "i002"
             assert legacy["to_fact_id"] == "goal"

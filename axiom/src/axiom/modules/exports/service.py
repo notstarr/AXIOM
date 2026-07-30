@@ -81,6 +81,7 @@ class ExportService:
             artifacts = self.artifacts.list(conn, task_id)
             vulnerabilities = self.vulnerabilities.list(conn, task_id)
             goals = self.goals.list(conn, task_id)
+            goal_cycles = self.goals.list_cycles(conn, task_id)
             knowledge = [
                 {
                     "id": row["id"],
@@ -127,6 +128,7 @@ class ExportService:
             ],
             "vulnerabilities": [item.model_dump(mode="json") for item in vulnerabilities],
             "goal_evaluations": [item.model_dump(mode="json") for item in goals],
+            "goal_cycles": [item.model_dump(mode="json") for item in goal_cycles],
             "knowledge": knowledge,
             "hints": [item.model_dump(mode="json") for item in self._hints(task_id)],
         }

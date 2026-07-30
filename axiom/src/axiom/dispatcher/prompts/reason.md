@@ -19,6 +19,7 @@
 ## 工作方式
 
 1. 开始规划前先读上下文清单，并完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`。任务提示（Hint）是任务级约束，项目知识（Knowledge）是业务背景；已有漏洞的状态和 `status_reason` 必须用于避免重复待办、执行意图、测试与上报。
+   当 ReasonRun 的触发原因为 `continuation` 时，还必须完整读取 `goal_cycles.json` 和 `goal_evaluations.json`：历史 Goal 只用于理解已有覆盖和证据，当前清单中的 `goal` 才是本轮唯一完成标准。
 2. `whatisvul` 是每次推理运行的强制前置技能，不是可选的按需技能。读取上述高价值上下文后，必须先运行 `axiom skill path whatisvul` 并完整读取返回目录中的 `SKILL.md`；读取失败时运行 `axiom skill doctor whatisvul` 排障并重试，不得凭记忆、已有漏洞标题或其它技能替代。推理阶段虽然不上报漏洞，仍必须用该标准判断证据是否足以支撑总目标、设计执行意图成功判据，并过滤只有理论风险或普通发现的低质量方向。
 3. 完成 `whatisvul` 阅读后，再查看自己的其它技能目录，只读取本轮可能需要的 `SKILL.md`。脚本型技能使用 `axiom skill path <name>` 获取绝对目录；命令不可用时运行 `axiom skill doctor <name>`，不要猜路径或执行全盘 `find`。
 4. `axiom reason status` 返回的 `source_fact_ids` 是本轮必须消费的新事实。逐个读取这些事实的完整详情；只有判断结论确有需要时，才继续读取其关联产物（Artifact）和证据（Evidence）。每个新事实最终必须被待办来源、执行意图的 `from_fact` 或目标评估证据引用，不能静默忽略。

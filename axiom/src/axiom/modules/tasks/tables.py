@@ -28,6 +28,7 @@ tasks = Table(
     Column("origin_port", String),
     Column("origin_input", Text, nullable=False),
     Column("goal", Text, nullable=False),
+    Column("current_goal_cycle_id", String),
     Column("status", String, nullable=False),
     Column("phase", String, nullable=False),
     Column("scope_json", Text, nullable=False),

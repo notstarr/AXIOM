@@ -20,6 +20,9 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
   .overlay { background: rgba(15,23,42,0.25); backdrop-filter: blur(6px); }
+  .app-modal-surface { background: var(--surface-modal, #fff); border-color: var(--border-default, #e2e8f0); color: var(--text-primary, #1e293b); }
+  .app-input { background: var(--surface-inset, #fff); border: 1px solid var(--border-default, #e2e8f0); color: var(--text-primary, #1e293b); outline: none; }
+  .app-input:focus { border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96,165,250,0.15); }
   .timeline-flash { animation: timelineFlash 1s ease-out; }
   .timeline-scroll::-webkit-scrollbar { height: 4px; }
   .timeline-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
@@ -276,6 +279,9 @@
   .node-card--goal { border: 1.5px solid #fecaca; background: #fef2f2; }
   .node-card--goal .node-card__header { background: #ffe4e6; color: #be123c; }
   .node-card--goal .node-card__body { color: #9f1239; }
+  .node-card--goal_history { border: 1.5px dashed #d5b56a; background: #fffbeb; opacity: 0.88; }
+  .node-card--goal_history .node-card__header { background: #fef3c7; color: #8a6100; }
+  .node-card--goal_history .node-card__body { color: #7c5a0b; }
   .node-card--fact { border: 1.5px solid #e2e8f0; background: #ffffff; }
   .node-card--fact .node-card__header { background: #f1f5f9; color: #475569; }
   .node-card--fact .node-card__body { color: #334155; font-size: 10px; font-weight: 500; }
@@ -309,6 +315,9 @@
     color: var(--status-danger-fg);
   }
   .dark .node-card--goal .node-card__body { color: var(--status-danger-fg); }
+  .dark .node-card--goal_history { border-color: #b9913f; background: color-mix(in srgb, #6b531f 28%, var(--surface-card)); }
+  .dark .node-card--goal_history .node-card__header { background: color-mix(in srgb, #6b531f 42%, var(--surface-card)); color: #f6c85f; }
+  .dark .node-card--goal_history .node-card__body { color: #ffe09a; }
   .dark .node-card--fact {
     border-color: var(--border-strong); background: var(--surface-card);
   }

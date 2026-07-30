@@ -25,6 +25,7 @@
         <button @click="triggerManualReason()" :disabled="!canTriggerManualReason()" :title="manualReasonDisabledReason() || '立即触发一次人工 Reason 复盘'" class="manual-reason-trigger px-2.5 py-1 rounded-lg border text-xs transition disabled:cursor-not-allowed">
           <span x-text="manualReasonTriggering ? '正在触发…' : '立刻 Reason'"></span>
         </button>
+        <button x-show="project?.project?.status === 'completed' && !project?.project?.legacy_readonly" @click="openTaskContinuation(project.project)" class="px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-xs font-medium text-amber-800 hover:bg-amber-100 transition">继续任务</button>
         <button @click="refreshCurrentPage()" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition">刷新</button>
         <button @click="switchTaskView('graph')" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition">图谱</button>
         <button @click="switchTaskView('archive')" class="px-2.5 py-1 rounded-lg border border-amber-200 text-xs text-amber-700 hover:bg-amber-50 transition">归档</button>
@@ -121,6 +122,18 @@
             <div class="mt-4 rounded-xl bg-slate-50 border border-slate-100 p-3">
               <p class="text-[10px] text-slate-400">当前判定</p>
               <p class="mt-1 text-xs leading-5 text-slate-600" x-text="humanGoalExplanation()"></p>
+            </div>
+            <div x-show="(project?.goal_cycles || []).length > 1" class="mt-4 border-t border-slate-100 pt-4">
+              <div class="flex items-center justify-between"><p class="text-[10px] uppercase tracking-[0.14em] text-slate-400">Goal 历史</p><span class="text-[10px] text-slate-400" x-text="`${project.goal_cycles.length} 轮`"></span></div>
+              <div class="mt-2 space-y-2">
+                <template x-for="cycle in project.goal_cycles" :key="cycle.id">
+                  <div class="rounded-xl border px-3 py-2" :class="cycle.id === project.project.current_goal_cycle_id ? 'border-amber-200 bg-amber-50/70' : 'border-slate-100 bg-slate-50'">
+                    <div class="flex items-center justify-between gap-2"><span class="text-[10px] font-semibold" :class="cycle.id === project.project.current_goal_cycle_id ? 'text-amber-800' : 'text-slate-500'" x-text="`第 ${cycle.sequence} 轮${cycle.id === project.project.current_goal_cycle_id ? ' · 当前' : ''}`"></span><span class="text-[9px] text-slate-400" x-text="cycle.status === 'completed' ? `完成于 ${formatTime(cycle.completed_at)}` : '进行中'"></span></div>
+                    <p class="mt-1 text-xs leading-5 text-slate-600" x-text="cycle.goal"></p>
+                    <p x-show="cycle.continuation_reason" class="mt-1 text-[10px] text-slate-400" x-text="`续跑原因：${cycle.continuation_reason}`"></p>
+                  </div>
+                </template>
+              </div>
             </div>
           </div>
           <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

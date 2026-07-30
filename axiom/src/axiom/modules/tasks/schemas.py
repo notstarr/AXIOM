@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from axiom.shared.clock import parse_utc
+from axiom.modules.goals.schemas import GoalCycle
 
 
 DEFAULT_GOAL = "对该系统进行渗透测试，并挖掘10个高置信度的漏洞"
@@ -87,6 +88,33 @@ class ResumeTask(BaseModel):
     _whole_minute_duration = field_validator("run_duration_seconds")(_validate_run_duration)
 
 
+class ContinueTask(BaseModel):
+    goal: str
+    reason: str
+    focus: str = ""
+    actor: str = "human.frontend"
+    run_duration_seconds: int | None = Field(
+        default=None,
+        ge=MIN_RUN_DURATION_SECONDS,
+        le=MAX_RUN_DURATION_SECONDS,
+    )
+
+    @field_validator("goal", "reason", "actor")
+    @classmethod
+    def require_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("focus")
+    @classmethod
+    def normalize_focus(cls, value: str) -> str:
+        return value.strip()
+
+    _whole_minute_duration = field_validator("run_duration_seconds")(_validate_run_duration)
+
+
 class ActiveReasonRun(BaseModel):
     id: str
     status: Literal["pending", "claimed", "running", "concluding"]
@@ -112,6 +140,7 @@ class Task(BaseModel):
     title: str
     origin: Origin
     goal: str
+    current_goal_cycle_id: str | None = None
     status: Literal["running", "stopped", "completed", "failed"]
     phase: Literal["bootstrap", "reason", "explore", "waiting", "none"]
     scope: TaskScope
@@ -146,6 +175,12 @@ class Task(BaseModel):
         return self.status == "running" and (
             self.run_deadline_at is None or parse_utc(self.run_deadline_at) > parse_utc(now)
         )
+
+
+class ContinueTaskResult(BaseModel):
+    task: Task
+    goal_cycle: GoalCycle
+    reason_run_id: str
 
 
 class RunDeadlineReconcileReport(BaseModel):

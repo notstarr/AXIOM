@@ -164,6 +164,68 @@ class ReasonService:
             self._set_phase(conn, task_id, "reason", now)
             return run
 
+    def create_continuation_in(
+        self,
+        conn,
+        *,
+        task,
+        previous_goal: str,
+        continuation_reason: str,
+        focus: str,
+        actor: str,
+        now: str,
+    ) -> ReasonRun:
+        state = self._input_state(conn, task.id)
+        source_fact_ids = [row["id"] for row in state["unplanned_facts"]]
+        open_explore_ids = list(state["open_explore_ids"])
+        failed_intent_ids = list(state["failed_intent_ids"])
+        actionable_todo_ids = list(state["actionable_todo_ids"])
+        todo_review_ids = list(state["todo_review_ids"])
+        cancelled_intent_ids = list(
+            conn.execute(
+                select(intents.c.id)
+                .where(
+                    intents.c.task_id == task.id,
+                    intents.c.status == "cancelled",
+                    intents.c.last_failure_kind == "goal_achieved",
+                    intents.c.archived.is_(False),
+                )
+                .order_by(intents.c.created_at, intents.c.id)
+            ).scalars()
+        )
+        base_fingerprint = self._fingerprint(
+            source_fact_ids=source_fact_ids,
+            failed_intent_ids=failed_intent_ids,
+            actionable_todo_ids=actionable_todo_ids,
+            todo_review_ids=todo_review_ids,
+            open_explore_ids=open_explore_ids,
+        )
+        fingerprint = hashlib.sha256(
+            f"continuation:{task.current_goal_cycle_id}:{base_fingerprint}".encode()
+        ).hexdigest()
+        return self._create_run(
+            conn,
+            task=task,
+            source_fact_ids=source_fact_ids,
+            trigger="continuation",
+            trigger_payload={
+                "actor": actor,
+                "requested_at": now,
+                "previous_goal": previous_goal,
+                "current_goal": task.goal,
+                "continuation_reason": continuation_reason,
+                "focus": focus,
+                "source_fact_ids": source_fact_ids,
+                "open_explore_ids": open_explore_ids,
+                "failed_intent_ids": failed_intent_ids,
+                "actionable_todo_ids": actionable_todo_ids,
+                "todo_review_ids": todo_review_ids,
+                "goal_achieved_cancelled_intent_ids": cancelled_intent_ids,
+            },
+            input_fingerprint=fingerprint,
+            now=now,
+        )
+
     def reconcile_task(self, task_id: str) -> str | None:
         now = utcnow()
         with immediate_transaction(self.engine) as conn:
@@ -314,6 +376,7 @@ class ReasonService:
         run = self.repository.create_run(
             conn,
             task_id=task.id,
+            goal_cycle_id=task.current_goal_cycle_id,
             source_fact_ids=source_fact_ids,
             trigger=trigger,
             trigger_payload=trigger_payload,
@@ -388,6 +451,10 @@ class ReasonService:
                     intents.c.task_id == task_id,
                     intents.c.kind == "explore",
                     intents.c.status.in_(["failed", "cancelled"]),
+                    ~(
+                        (intents.c.status == "cancelled")
+                        & (intents.c.last_failure_kind == "goal_achieved")
+                    ),
                     intents.c.archived.is_(False),
                 )
                 .order_by(intents.c.created_at, intents.c.id)
@@ -1012,6 +1079,7 @@ class ReasonService:
                         intents.insert().values(
                             id=intent_id,
                             task_id=workspace.task_id,
+                            goal_cycle_id=run.goal_cycle_id,
                             todo_id=todo_id,
                             kind="explore",
                             description=proposal.description,
@@ -1063,6 +1131,7 @@ class ReasonService:
                 self.goals.create(
                     conn,
                     task_id=workspace.task_id,
+                    goal_cycle_id=run.goal_cycle_id,
                     assessment=assessment,
                     evaluator=workspace.worker,
                     reason_run_id=run.id,
@@ -1075,6 +1144,7 @@ class ReasonService:
                         workspace.task_id,
                         now=now,
                         exclude_workspace_id=workspace.id,
+                        goal_cycle_id=run.goal_cycle_id,
                     )
                 else:
                     open_count = self._open_explore_count(conn, workspace.task_id)

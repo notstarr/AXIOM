@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -52,8 +52,22 @@ class GoalEvaluation(GoalAssessment):
 
     id: str
     task_id: str
+    goal_cycle_id: str | None = None
     intent_id: str | None = None
     reason_run_id: str | None = None
     workspace_id: str | None = None
     evaluator: str
     created_at: str
+
+
+class GoalCycle(BaseModel):
+    id: str
+    task_id: str
+    sequence: int
+    goal: str
+    status: Literal["active", "completed"]
+    continuation_reason: str = ""
+    focus: str = ""
+    actor: str
+    started_at: str
+    completed_at: str | None = None

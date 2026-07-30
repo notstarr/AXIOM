@@ -112,6 +112,7 @@
       title: task.title,
       origin: originText(task),
       goal: task.goal,
+      current_goal_cycle_id: task.current_goal_cycle_id || '',
       status: taskStatus(task.status),
       phase: task.phase,
       bootstrap_enabled: true,
@@ -268,13 +269,15 @@
   }
 
   async function taskDetail(taskId, options = {}) {
-    const [task, graph, hints, todos, vulnerabilities, artifacts] = await Promise.all([
+    const [task, graph, hints, todos, vulnerabilities, artifacts, goalCycles, goalEvaluations] = await Promise.all([
       request('GET', `/tasks/${taskId}`, null, options),
       request('GET', `/tasks/${taskId}/graph`, null, options),
       request('GET', `/tasks/${taskId}/hints`, null, options),
       request('GET', `/tasks/${taskId}/todos?limit=200`, null, options),
       request('GET', `/tasks/${taskId}/vulnerabilities?limit=20`, null, options),
       request('GET', `/tasks/${taskId}/artifacts?limit=12`, null, options),
+      request('GET', `/tasks/${taskId}/goal-cycles`, null, options),
+      request('GET', `/tasks/${taskId}/goal-evaluations`, null, options),
     ]);
     const project = await request('GET', `/projects/${task.project_id}`, null, options).catch(() => null);
     const mappedTask = mapTask(task);
@@ -285,6 +288,9 @@
       facts: graph.facts,
       intents: graph.intents.map(mapIntent),
       goal_from_fact_ids: graph.goal_from_fact_ids || [],
+      goal_history: graph.goal_history || [],
+      goal_cycles: goalCycles || [],
+      goal_evaluations: goalEvaluations || [],
       hints,
       todos,
       vulns: vulnerabilities.map(item => mapVulnerability(item, task, project)),
@@ -769,6 +775,53 @@
         this.manualReasonTriggering = false;
       }
     },
+    openTaskContinuation(task = null) {
+      const selected = task || this.project?.project || this.selectedTaskSummary();
+      if (!selected || selected.legacy_readonly || selected.status !== 'completed') return;
+      this.continuationForm = {
+        open: true,
+        projectId: selected.id,
+        projectTitle: selected.title || '',
+        goal: selected.goal || '',
+        reason: '',
+        focus: '',
+        durationMinutes: Math.max(1, Math.round(Number(selected.run_duration_seconds || 14400) / 60)),
+        saving: false,
+      };
+    },
+    closeTaskContinuation() {
+      if (this.continuationForm.saving) return;
+      this.continuationForm.open = false;
+    },
+    async continueCompletedTask() {
+      const form = this.continuationForm;
+      if (!form.projectId || !String(form.goal || '').trim() || !String(form.reason || '').trim() || form.saving) return;
+      form.saving = true;
+      try {
+        const result = await request('POST', `/tasks/${form.projectId}/continuations`, {
+          goal: String(form.goal).trim(),
+          reason: String(form.reason).trim(),
+          focus: String(form.focus || '').trim(),
+          run_duration_seconds: Math.max(1, Number(form.durationMinutes || 1)) * 60,
+          actor: this.actorName(),
+        });
+        this.continuationForm.open = false;
+        await this.loadProjects();
+        if (this.selectedProjectId === form.projectId) {
+          await this.loadProject(form.projectId);
+          if (this.view === 'graph') this.updateGraph();
+        }
+        this.showToast(`任务已进入 Goal 第 ${result.goal_cycle.sequence} 轮，${result.reason_run_id} 等待领取`);
+      } catch (error) {
+        if (error?.status === 409) {
+          await this.loadProjects();
+          if (this.selectedProjectId === form.projectId) await this.loadProject(form.projectId);
+        }
+        this.showToast(error?.message || '继续任务失败', 'error');
+      } finally {
+        form.saving = false;
+      }
+    },
     projectCanWriteHints() {
       return !this.replay.active
         && !this.project?.project?.legacy_readonly
@@ -919,7 +972,7 @@
       const signal = this._pageAbortController?.signal;
       const eventTypes = new Set((events || []).map(event => event.event_type || event.event || ''));
       const hasPrefix = (...prefixes) => [...eventTypes].some(type => prefixes.some(prefix => type.startsWith(prefix)));
-      const intentChanged = hasPrefix('intent.', 'reason.', 'reason_run.', 'archive.');
+      const intentChanged = hasPrefix('intent.', 'reason.', 'reason_run.', 'archive.', 'task.continued');
       const resultChanged = hasPrefix('intent.completed', 'reason.committed', 'archive.');
 
       const updates = [
@@ -932,7 +985,10 @@
           this.project.facts = graph.facts || [];
           this.project.intents = (graph.intents || []).map(mapIntent);
           this.project.goal_from_fact_ids = graph.goal_from_fact_ids || [];
+          this.project.goal_history = graph.goal_history || [];
         }));
+        updates.push(request('GET', `/tasks/${taskId}/goal-cycles`, null, { signal }).then(items => { this.project.goal_cycles = items || []; }));
+        updates.push(request('GET', `/tasks/${taskId}/goal-evaluations`, null, { signal }).then(items => { this.project.goal_evaluations = items || []; }));
       }
       if (force || resultChanged) {
         updates.push(request('GET', `/tasks/${taskId}/todos?limit=200`, null, { signal }).then(items => { this.project.todos = items || []; }));

@@ -5,7 +5,7 @@ from sqlalchemy import Connection, select
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.context.tables import context_revisions
 from axiom.modules.graph.tables import facts, intents
-from axiom.modules.goals.tables import goal_evaluations
+from axiom.modules.goals.tables import goal_evaluations, task_goal_cycles
 from axiom.modules.knowledge.tables import project_knowledge
 from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.modules.todos.tables import todos
@@ -77,6 +77,13 @@ class ContextRepository:
             select(goal_evaluations)
             .where(goal_evaluations.c.task_id == task_id)
             .order_by(goal_evaluations.c.created_at, goal_evaluations.c.id)
+        ).mappings().all()
+
+    def goal_cycles(self, conn: Connection, task_id: str):
+        return conn.execute(
+            select(task_goal_cycles)
+            .where(task_goal_cycles.c.task_id == task_id)
+            .order_by(task_goal_cycles.c.sequence)
         ).mappings().all()
 
     def insert_revision(self, conn: Connection, values: dict) -> None:

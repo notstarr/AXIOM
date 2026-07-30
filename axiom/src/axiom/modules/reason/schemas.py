@@ -211,6 +211,7 @@ ReasonRunStatus = Literal[
 class ReasonRun(BaseModel):
     id: str
     task_id: str
+    goal_cycle_id: str | None = None
     status: ReasonRunStatus
     trigger: str
     trigger_payload: dict[str, Any] = Field(default_factory=dict)

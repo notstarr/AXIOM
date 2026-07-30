@@ -255,6 +255,18 @@ class ExecutionService:
                 f"待处理 Todo {len(payload.get('actionable_todo_ids') or [])} 个，"
                 f"待收口 Todo {len(payload.get('todo_review_ids') or [])} 个。"
             )
+        elif run.trigger == "continuation":
+            payload = run.trigger_payload
+            trigger_summary = (
+                f"人工 {payload.get('actor') or '操作员'} 已将已完成任务续跑。"
+                f"上一轮 Goal：{payload.get('previous_goal') or '未记录'}。"
+                f"当前唯一 Goal：{payload.get('current_goal') or task.goal}。"
+                f"续跑原因：{payload.get('continuation_reason') or '未说明'}。"
+                f"本轮重点：{payload.get('focus') or '全面复盘'}。"
+                "请复用历史 Fact、Todo、Intent、Artifact 和漏洞，但只评估当前 Goal；"
+                "不要自动恢复旧的 cancelled Intent，应按当前 Goal 选择性复用 Todo并提出新 Intent。"
+                "历史证据足以证明当前 Goal时允许直接评估达成；没有材料性新增方向时允许新增 0 个 Intent。"
+            )
         return ExecutionInput(
             task_id=task_id,
             project_id=task.project_id,

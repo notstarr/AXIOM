@@ -19,6 +19,7 @@ class ReasonRepository:
         conn: Connection,
         *,
         task_id: str,
+        goal_cycle_id: str | None,
         source_fact_ids: list[str],
         trigger: str,
         trigger_payload: dict,
@@ -45,6 +46,7 @@ class ReasonRepository:
         values = {
             "id": run_id,
             "task_id": task_id,
+            "goal_cycle_id": goal_cycle_id,
             "status": "pending",
             "trigger": trigger,
             "trigger_payload_json": json.dumps(trigger_payload, ensure_ascii=False),
@@ -631,6 +633,7 @@ class ReasonRepository:
         return ReasonWorkspace(
             id=row["id"],
             task_id=row["task_id"],
+            goal_cycle_id=row.get("goal_cycle_id"),
             intent_id=row.get("intent_id"),
             reason_run_id=row.get("reason_run_id"),
             lease_id=row["lease_id"],
@@ -649,6 +652,7 @@ class ReasonRepository:
         return ReasonRun(
             id=row["id"],
             task_id=row["task_id"],
+            goal_cycle_id=row.get("goal_cycle_id"),
             status=row["status"],
             trigger=row["trigger"],
             trigger_payload=json.loads(row["trigger_payload_json"] or "{}"),

@@ -63,6 +63,8 @@
       <button x-show="!replay.active" @click="triggerManualReason()" :disabled="!canTriggerManualReason()" :title="manualReasonDisabledReason() || '立即触发一次人工 Reason 复盘'" class="manual-reason-trigger px-2.5 py-1 rounded-lg border text-xs transition flex items-center gap-1.5 disabled:cursor-not-allowed">
         <span x-text="manualReasonTriggering ? '正在触发…' : '立刻 Reason'"></span>
       </button>
+      <button x-show="!replay.active && project.project.status === 'completed' && !project.project.legacy_readonly" @click="openTaskContinuation(project.project)" class="px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-xs font-medium text-amber-800 hover:bg-amber-100 transition">继续任务</button>
+      <button x-show="!replay.active && (project.goal_history || []).length" @click="showGoalHistory = !showGoalHistory; updateGraph()" class="px-2.5 py-1 rounded-lg border text-xs transition" :class="showGoalHistory ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-slate-200 text-slate-500 hover:bg-slate-50'" x-text="showGoalHistory ? '隐藏历史 Goal' : '历史 Goal'"></button>
       <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition flex items-center gap-1.5 disabled:opacity-40">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
         刷新

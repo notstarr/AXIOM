@@ -1,9 +1,28 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Column, ForeignKey, Index, String, Table, Text
+from sqlalchemy import Boolean, CheckConstraint, Column, ForeignKey, Index, Integer, String, Table, Text, UniqueConstraint
 
 from axiom.modules.tasks.tables import tasks
 from axiom.shared.database import metadata
+
+
+task_goal_cycles = Table(
+    "task_goal_cycles",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("task_id", String, ForeignKey(tasks.c.id, ondelete="CASCADE"), nullable=False),
+    Column("sequence", Integer, nullable=False),
+    Column("goal", Text, nullable=False),
+    Column("status", String, nullable=False),
+    Column("continuation_reason", Text, nullable=False, default=""),
+    Column("focus", Text, nullable=False, default=""),
+    Column("actor", String, nullable=False),
+    Column("started_at", String, nullable=False),
+    Column("completed_at", String),
+    CheckConstraint("status IN ('active','completed')", name="status"),
+    UniqueConstraint("task_id", "sequence", name="uq_task_goal_cycles_task_sequence"),
+)
+Index("ix_task_goal_cycles_task_sequence", task_goal_cycles.c.task_id, task_goal_cycles.c.sequence)
 
 
 goal_evaluations = Table(
@@ -11,6 +30,7 @@ goal_evaluations = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("task_id", String, ForeignKey(tasks.c.id, ondelete="CASCADE"), nullable=False),
+    Column("goal_cycle_id", String),
     Column("intent_id", String),
     Column("reason_run_id", String),
     Column("workspace_id", String),

@@ -57,7 +57,17 @@ class Intent(BaseModel):
 class TaskGraph(BaseModel):
     facts: list[Fact]
     intents: list[Intent]
+    current_goal_cycle_id: str | None = None
     goal_from_fact_ids: list[str] = Field(default_factory=list)
+    goal_history: list["GoalHistory"] = Field(default_factory=list)
+
+
+class GoalHistory(BaseModel):
+    goal_cycle_id: str
+    sequence: int
+    goal: str
+    completed_at: str | None = None
+    evidence_fact_ids: list[str] = Field(default_factory=list)
 
 
 class UpdateFact(BaseModel):

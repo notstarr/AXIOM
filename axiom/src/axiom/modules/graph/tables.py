@@ -34,6 +34,7 @@ intents = Table(
     metadata,
     Column("id", String, nullable=False),
     Column("task_id", String, nullable=False),
+    Column("goal_cycle_id", String),
     Column("todo_id", String),
     Column("kind", String, nullable=False, default="explore"),
     Column("description", Text, nullable=False),

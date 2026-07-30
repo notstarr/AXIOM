@@ -4,11 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>axiom</title>
-<link rel="icon" href="/static/logo.jpg?v=20260729b1" type="image/jpeg">
-<link rel="stylesheet" href="/static/apple.css?v=20260729b1">
-<link rel="stylesheet" href="/static/tailwind.generated.css?v=20260729b1">
-<script defer src="/static/vendor/alpine.min.js?v=20260729b1"></script>
-<link rel="stylesheet" href="/static/custom.css?v=20260729b1">
+<link rel="icon" href="/static/logo.jpg?v=4433fc7019da" type="image/jpeg">
+<link rel="stylesheet" href="/static/apple.css?v=4433fc7019da">
+<link rel="stylesheet" href="/static/tailwind.generated.css?v=4433fc7019da">
+<script defer src="/static/vendor/alpine.min.js?v=4433fc7019da"></script>
+<link rel="stylesheet" href="/static/custom.css?v=4433fc7019da">
 </head>
 <body class="h-screen overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="cairnApp()" style="background:var(--bg-secondary);color:var(--text-primary)">
 
@@ -18,7 +18,7 @@
 </button>
 <div class="mobile-sidebar-backdrop" x-show="mobileSidebarOpen" x-cloak @click="mobileSidebarOpen = false"></div>
 <aside class="sidebar" :class="{ 'is-collapsed': sidebarCollapsed, 'is-mobile-open': mobileSidebarOpen }">
-  <div class="sidebar-logo-row"><div class="sidebar-logo"><img src="/static/logo.jpg?v=20260729b1" alt="axiom"></div><span class="sidebar-brand">AXIOM</span><button type="button" class="sidebar-collapse" @click="toggleSidebar()" :aria-label="sidebarCollapsed ? '展开侧栏' : '折叠侧栏'"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path :d="sidebarCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'"/></svg></button></div>
+  <div class="sidebar-logo-row"><div class="sidebar-logo"><img src="/static/logo.jpg?v=4433fc7019da" alt="axiom"></div><span class="sidebar-brand">AXIOM</span><button type="button" class="sidebar-collapse" @click="toggleSidebar()" :aria-label="sidebarCollapsed ? '展开侧栏' : '折叠侧栏'"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path :d="sidebarCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'"/></svg></button></div>
   <button type="button" class="nav-item nav-back" data-tooltip="返回上一页" x-show="pageHistory.length > 0" @click="goBack()"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg><span class="nav-label">返回</span></button>
   <nav class="sidebar-nav">
     <button type="button" class="nav-item" data-tooltip="仪表盘" :class="{ 'is-active': activePage === 'dashboard' }" @click="navigateTo('dashboard')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6V4h-6v16ZM4 20h6v-4H4v4Z"/></svg><span class="nav-label">仪表盘</span></button>
@@ -202,6 +202,46 @@
       <button @click="showReopenModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
       <button @click="reopenProject()" :disabled="!reopenForm.projectId || !reopenForm.description"
         class="px-5 py-2 text-sm bg-sky-500 text-white rounded-xl font-medium hover:bg-sky-600 transition disabled:opacity-30 shadow-sm shadow-sky-200">重新打开</button>
+    </div>
+  </div>
+</div>
+
+<!-- Continue completed Task with a new Goal -->
+<div x-show="continuationForm.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="closeTaskContinuation()">
+  <div class="app-modal-surface rounded-2xl shadow-2xl modal-enter w-full max-w-2xl p-6 border" @click.stop>
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <h3 class="text-base font-semibold text-slate-700">继续任务并设置新 Goal</h3>
+        <p class="mt-1 text-xs text-slate-400" x-text="projectLabel(continuationForm.projectId, continuationForm.projectTitle)"></p>
+      </div>
+      <button @click="closeTaskContinuation()" :disabled="continuationForm.saving" class="text-slate-400 hover:text-slate-600 text-lg">&times;</button>
+    </div>
+    <div class="mt-5 space-y-4">
+      <label class="block">
+        <span class="text-xs font-medium text-slate-600">新 Goal</span>
+        <textarea x-model="continuationForm.goal" rows="3" placeholder="本轮唯一有效的任务目标" class="app-input mt-1.5 w-full px-3 py-2 rounded-xl text-sm"></textarea>
+      </label>
+      <label class="block">
+        <span class="text-xs font-medium text-slate-600">继续原因</span>
+        <textarea x-model="continuationForm.reason" rows="3" placeholder="为什么需要继续运行？" class="app-input mt-1.5 w-full px-3 py-2 rounded-xl text-sm"></textarea>
+      </label>
+      <label class="block">
+        <span class="text-xs font-medium text-slate-600">本轮重点（可选）</span>
+        <textarea x-model="continuationForm.focus" rows="2" placeholder="希望 Reason 优先关注的方向" class="app-input mt-1.5 w-full px-3 py-2 rounded-xl text-sm"></textarea>
+      </label>
+      <label class="block">
+        <span class="text-xs font-medium text-slate-600">运行时长（分钟）</span>
+        <input x-model.number="continuationForm.durationMinutes" type="number" min="1" step="1" class="app-input mt-1.5 w-full px-3 py-2 rounded-xl text-sm">
+      </label>
+      <div class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+        不会重新执行 Bootstrap，也不会恢复上一轮被取消的 Intent。系统会立即创建 Continuation ReasonRun，由 Reason 根据新 Goal 复用历史结果并选择性续接。
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 mt-5">
+      <button @click="closeTaskContinuation()" :disabled="continuationForm.saving" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
+      <button @click="continueCompletedTask()" :disabled="continuationForm.saving || !String(continuationForm.goal || '').trim() || !String(continuationForm.reason || '').trim() || Number(continuationForm.durationMinutes || 0) < 1"
+        class="px-5 py-2 text-sm bg-amber-500 text-white rounded-xl font-medium hover:bg-amber-600 transition disabled:opacity-30 shadow-sm shadow-amber-200"
+        x-text="continuationForm.saving ? '正在创建新一轮…' : '继续任务'"></button>
     </div>
   </div>
 </div>
@@ -429,22 +469,22 @@
   <span x-text="toast ? toast.message : ''"></span>
 </div>
 
-<script src="/static/js/state.js?v=20260729b1"></script>
-<script src="/static/js/helpers.js?v=20260729b1"></script>
-<script src="/static/js/core.js?v=20260729b1"></script>
-<script src="/static/js/projects.js?v=20260729b1"></script>
-<script src="/static/js/dashboard.js?v=20260729b1"></script>
-<script src="/static/js/skills.js?v=20260729b1"></script>
-<script src="/static/js/files.js?v=20260729b1"></script>
-<script src="/static/js/mcp.js?v=20260729b1"></script>
-<script src="/static/js/graph.js?v=20260729b1"></script>
-<script src="/static/js/human.js?v=20260729b1"></script>
-<script src="/static/js/archives.js?v=20260729b1"></script>
-<script src="/static/js/timeline.js?v=20260729b1"></script>
-<script src="/static/js/actions.js?v=20260729b1"></script>
-<script src="/static/js/dispatch.js?v=20260729b1"></script>
-<script src="/static/js/prompts.js?v=20260729b1"></script>
-<script src="/static/js/v2-adapter.js?v=20260729b1"></script>
-<script src="/static/js/app.js?v=20260729b1"></script>
+<script src="/static/js/state.js?v=4433fc7019da"></script>
+<script src="/static/js/helpers.js?v=4433fc7019da"></script>
+<script src="/static/js/core.js?v=4433fc7019da"></script>
+<script src="/static/js/projects.js?v=4433fc7019da"></script>
+<script src="/static/js/dashboard.js?v=4433fc7019da"></script>
+<script src="/static/js/skills.js?v=4433fc7019da"></script>
+<script src="/static/js/files.js?v=4433fc7019da"></script>
+<script src="/static/js/mcp.js?v=4433fc7019da"></script>
+<script src="/static/js/graph.js?v=4433fc7019da"></script>
+<script src="/static/js/human.js?v=4433fc7019da"></script>
+<script src="/static/js/archives.js?v=4433fc7019da"></script>
+<script src="/static/js/timeline.js?v=4433fc7019da"></script>
+<script src="/static/js/actions.js?v=4433fc7019da"></script>
+<script src="/static/js/dispatch.js?v=4433fc7019da"></script>
+<script src="/static/js/prompts.js?v=4433fc7019da"></script>
+<script src="/static/js/v2-adapter.js?v=4433fc7019da"></script>
+<script src="/static/js/app.js?v=4433fc7019da"></script>
 </body>
 </html>

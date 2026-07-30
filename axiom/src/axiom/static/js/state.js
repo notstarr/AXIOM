@@ -35,6 +35,8 @@ window.AxiomModules.state = {
     _vulnerabilityBoardRequestIds: { '待验证': 0, '已验证': 0, '忽略': 0, '重复': 0 },
     refreshLoading: false,
     manualReasonTriggering: false,
+    showGoalHistory: false,
+    continuationForm: { open: false, projectId: '', projectTitle: '', goal: '', reason: '', focus: '', durationMinutes: 240, saving: false },
     crawlerResultsPageTab: 'pages',
     crawlerResultsPageData: null,
     treeExpanded: {},

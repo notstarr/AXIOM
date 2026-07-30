@@ -823,6 +823,8 @@ def test_frontend_and_static_assets_are_served(client):
     assert "配置快照" in graph.text
     assert "triggerManualReason()" in graph.text
     assert "manual-reason-trigger" in graph.text
+    assert "openTaskContinuation(project.project)" in graph.text
+    assert "showGoalHistory" in graph.text
 
     human = client.get("/static/templates/human-view.html")
     assert human.status_code == 200
@@ -831,11 +833,14 @@ def test_frontend_and_static_assets_are_served(client):
     assert "humanArtifactPageCount" in human.text
     assert "triggerManualReason()" in human.text
     assert "manual-reason-trigger" in human.text
+    assert "Goal 历史" in human.text
+    assert "openTaskContinuation(project.project)" in human.text
 
     archive = client.get("/static/templates/archive-view.html")
     assert archive.status_code == 200
     assert "triggerManualReason()" in archive.text
     assert "manual-reason-trigger" in archive.text
+    assert "openTaskContinuation(project.project)" in archive.text
 
     core = client.get("/static/js/core.js").text
     projects = client.get("/static/js/projects.js").text
@@ -855,6 +860,8 @@ def test_frontend_and_static_assets_are_served(client):
     assert "const offset = append ? currentLength : 0" in adapter
     assert "kind: intent.kind || ''" in adapter
     assert "`/tasks/${taskId}/reason-runs/trigger`" in adapter
+    assert "`/tasks/${form.projectId}/continuations`" in adapter
+    assert "goal_history: graph.goal_history || []" in adapter
 
     css = client.get("/static/apple.css").text
     assert "@media (prefers-color-scheme: dark)" not in css
@@ -863,6 +870,8 @@ def test_frontend_and_static_assets_are_served(client):
     assert "button.manual-reason-trigger" in css
     assert "applyGraphTheme()" in graph_js
     assert "edgeLabelBackground" in graph_js
+    assert "goal_evidence_history" in graph_js
+    assert "goalGold" in graph_js
     assert "this.$nextTick(() => this.applyGraphTheme?.())" in core
 
     for template_name in (

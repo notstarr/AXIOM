@@ -112,6 +112,7 @@ class ContextService:
                         "vulnerabilities": f"{base_key}/vulnerabilities.json",
                         "knowledge": f"{base_key}/knowledge.json",
                         "goal_evaluations": f"{base_key}/goal_evaluations.json",
+                        "goal_cycles": f"{base_key}/goal_cycles.json",
                     },
                     "detail_resolution": "将索引条目的 detail 与 manifest 所在目录拼接后读取",
                     "expansion": f"POST /api/v1/tasks/{task_id}/context/expand with refs",
@@ -175,6 +176,7 @@ class ContextService:
         vulnerability_rows = self.repository.vulnerabilities(conn, task["id"])
         knowledge_rows = self.repository.knowledge(conn, task["project_id"])
         goal_rows = self.repository.goal_evaluations(conn, task["id"])
+        goal_cycle_rows = self.repository.goal_cycles(conn, task["id"])
         visible_fact_ids = {row["id"] for row in fact_rows}
         visible_intent_ids = {row["id"] for row in intent_rows}
         visible_goal_rows = [
@@ -354,6 +356,7 @@ class ContextService:
             }
             for row in visible_goal_rows
         ]
+        goal_cycle_index = [dict(row) for row in goal_cycle_rows]
         files.update(
             {
                 "graph.json": _json(graph),
@@ -363,6 +366,7 @@ class ContextService:
                 "vulnerabilities.json": _json(vulnerability_index),
                 "knowledge.json": _json(knowledge_index),
                 "goal_evaluations.json": _json(goal_index),
+                "goal_cycles.json": _json(goal_cycle_index),
             }
         )
         return files

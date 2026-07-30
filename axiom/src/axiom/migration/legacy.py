@@ -18,7 +18,7 @@ from axiom.modules.audit.tables import audit_events
 from axiom.modules.context.tables import context_revisions
 from axiom.modules.credentials.tables import credential_refreshes, credentials
 from axiom.modules.external_reports.tables import external_report_attempts
-from axiom.modules.goals.tables import goal_evaluations
+from axiom.modules.goals.tables import goal_evaluations, task_goal_cycles
 from axiom.modules.graph.tables import facts, intent_sources, intents
 from axiom.modules.knowledge.tables import project_knowledge
 from axiom.modules.mcp.tables import mcp_servers, mcp_tools
@@ -176,6 +176,7 @@ def _migrate(
         _insert_runtime_settings(conn, source, report, now)
         _insert_audit(conn, source, report)
         _insert_goal_evaluations(conn, source, task_ids, report, now)
+        _insert_goal_cycles(conn, task_ids, report, now)
         _rebuild_counters(conn, report)
 
     _verify(engine, report)
@@ -900,6 +901,41 @@ def _insert_goal_evaluations(conn, source, task_ids, report, now) -> None:
         report.add("goal_evaluations")
 
 
+def _insert_goal_cycles(conn, task_ids, report, now) -> None:
+    for task_id in sorted(task_ids):
+        task = conn.execute(select(tasks).where(tasks.c.id == task_id)).mappings().one_or_none()
+        if task is None:
+            continue
+        cycle_id = f"legacy_gc_{task_id}"
+        completed = task["status"] == "completed"
+        conn.execute(
+            task_goal_cycles.insert().values(
+                id=cycle_id,
+                task_id=task_id,
+                sequence=1,
+                goal=task["goal"],
+                status="completed" if completed else "active",
+                continuation_reason="",
+                focus="",
+                actor="migration.legacy",
+                started_at=task["created_at"] or now,
+                completed_at=task["completed_at"] if completed else None,
+            )
+        )
+        conn.execute(
+            tasks.update().where(tasks.c.id == task_id).values(current_goal_cycle_id=cycle_id)
+        )
+        conn.execute(
+            intents.update().where(intents.c.task_id == task_id).values(goal_cycle_id=cycle_id)
+        )
+        conn.execute(
+            goal_evaluations.update()
+            .where(goal_evaluations.c.task_id == task_id)
+            .values(goal_cycle_id=cycle_id)
+        )
+        report.add("goal_cycles")
+
+
 def _rebuild_counters(conn, report) -> None:
     conn.execute(delete(id_counters))
     rows: list[dict[str, Any]] = []
@@ -927,6 +963,7 @@ def _rebuild_counters(conn, report) -> None:
             "ge",
         )
     )
+    rows.extend(_counter_rows(conn, task_goal_cycles, "global", "goal_cycle", "gc"))
     for task_id in _values(conn, tasks, "id"):
         for table, kind, prefix in (
             (facts, "fact", "f"),
@@ -965,6 +1002,7 @@ def _verify(engine: Engine, report: MigrationReport) -> None:
             mcp_servers,
             mcp_tools,
             goal_evaluations,
+            task_goal_cycles,
         )
         checks = {
             table.name: int(

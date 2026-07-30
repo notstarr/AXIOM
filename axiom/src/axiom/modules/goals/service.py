@@ -4,7 +4,7 @@ from sqlalchemy import Engine, select, update
 
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.goals.repository import GoalRepository
-from axiom.modules.goals.schemas import AssessGoal, GoalEvaluation
+from axiom.modules.goals.schemas import AssessGoal, GoalCycle, GoalEvaluation
 from axiom.modules.graph.tables import facts, intents
 from axiom.modules.reason.repository import ReasonRepository
 from axiom.modules.reason.tables import reason_runs
@@ -29,6 +29,12 @@ class GoalService:
                 raise NotFoundError(f"Task not found: {task_id}")
             return self.repository.list(conn, task_id)
 
+    def list_cycles(self, task_id: str) -> list[GoalCycle]:
+        with self.engine.connect() as conn:
+            if self.tasks.get(conn, task_id) is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            return self.repository.list_cycles(conn, task_id)
+
     def assess(self, task_id: str, command: AssessGoal) -> GoalEvaluation:
         with immediate_transaction(self.engine) as conn:
             task = self.tasks.get(conn, task_id)
@@ -46,12 +52,18 @@ class GoalService:
             evaluation = self.repository.create(
                 conn,
                 task_id=task_id,
+                goal_cycle_id=task.current_goal_cycle_id,
                 assessment=command,
                 evaluator=command.evaluator,
                 now=now,
             )
             if command.achieved:
-                self.complete_task(conn, task_id, now=now)
+                self.complete_task(
+                    conn,
+                    task_id,
+                    now=now,
+                    goal_cycle_id=task.current_goal_cycle_id,
+                )
             return evaluation
 
     @staticmethod
@@ -62,6 +74,7 @@ class GoalService:
         now: str,
         exclude_intent_id: str | None = None,
         exclude_workspace_id: str | None = None,
+        goal_cycle_id: str | None = None,
     ) -> None:
         open_intents = intents.c.status.in_(["pending", "claimed", "running", "concluding"])
         condition = intents.c.task_id == task_id
@@ -112,6 +125,12 @@ class GoalService:
             now=now,
             exclude_workspace_id=exclude_workspace_id,
         )
+        if goal_cycle_id is None:
+            goal_cycle_id = conn.execute(
+                select(tasks.c.current_goal_cycle_id).where(tasks.c.id == task_id)
+            ).scalar_one_or_none()
+        if goal_cycle_id:
+            GoalRepository.complete_cycle(conn, goal_cycle_id, now=now)
         conn.execute(
             update(tasks)
             .where(tasks.c.id == task_id)
