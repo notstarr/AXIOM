@@ -395,6 +395,7 @@ window.AxiomModules.projects = {
       if (vulns.length === 0) return null;
       const selected = vulns.find(vuln => this.vulnerabilityKey(vuln) === this.selectedVulnerabilityKey);
       if (selected) return selected;
+      if (this.vulnerabilitySelectionBlocked) return null;
       this.selectedVulnerabilityKey = this.vulnerabilityKey(vulns[0]);
       return vulns[0];
     },

@@ -18,6 +18,15 @@
 
 未确认内容只能进入 `leads.md`，不能调用漏洞上报命令。
 
+## 必填文字字段
+
+Explore 上报每个确认漏洞时必须填写：
+
+- `prerequisites` / `--prerequisites`：利用前提，包括所需账号权限、认证状态、目标条件和必要的前置步骤；没有特殊条件时明确写“无需额外权限”或等价说明。
+- `remediation` / `--remediation`：可执行的修复建议，优先说明服务端认证、授权、输入校验、隔离或配置修复位置，不得只写“加强安全”。
+
+两项可以使用 `--prerequisites-file`、`--remediation-file` 提交长文本，但不能为空。人工漏洞录入保留可选兼容性；历史漏洞空字段不回填、不推测。
+
 ## evidence-path 写法
 
 `--evidence-path` 是可选参数。已有证据时，提供安全的 `evidence/**` 相对路径：

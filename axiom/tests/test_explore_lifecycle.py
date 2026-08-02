@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from protocol_helpers import (
     bootstrap_files_from_legacy,
     claim_reason_run,
@@ -258,7 +260,9 @@ def test_explore_reports_vulnerability_incrementally_and_fact_keeps_its_referenc
         "type": "越权",
         "severity": "high",
         "description": "低权限用户可以读取其他订单详情。",
+        "prerequisites": "需要任意低权限账号。",
         "impact": "导致跨用户数据泄露。",
+        "remediation": "服务端校验订单所属用户。",
         "evidence_paths": ["evidence/response-1.md"],
         "affected_target": "https://a.example.com/api/orders/2",
     }
@@ -320,7 +324,9 @@ def test_explore_rejects_worker_supplied_status(client) -> None:
                 "type": "信息泄露",
                 "severity": "low",
                 "description": "描述",
+                "prerequisites": "无需额外权限",
                 "impact": "影响",
+                "remediation": "限制敏感信息返回",
                 "evidence_paths": ["evidence/proof.txt"],
                 "status": "忽略",
                 "status_reason": "不够",
@@ -329,6 +335,50 @@ def test_explore_rejects_worker_supplied_status(client) -> None:
     )
     assert response.status_code == 422
     assert "status" in response.text
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("prerequisites", None),
+        ("prerequisites", "   "),
+        ("remediation", None),
+        ("remediation", "   "),
+    ],
+)
+def test_explore_api_requires_prerequisites_and_remediation(
+    client,
+    field: str,
+    value: str | None,
+) -> None:
+    task, intents = _task_with_explore_intents(client)
+    claim = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}/claim",
+        json={"worker_name": "worker-a"},
+    ).json()
+    base = f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}"
+    client.post(f"{base}/start", json={"lease_id": claim["lease_id"]})
+    report = {
+        "title": "对象级授权缺失",
+        "type": "越权",
+        "severity": "high",
+        "description": "低权限用户可以读取其他用户对象。",
+        "prerequisites": "需要任意低权限账号。",
+        "impact": "导致跨用户数据泄露。",
+        "remediation": "服务端校验对象归属。",
+    }
+    if value is None:
+        report.pop(field)
+    else:
+        report[field] = value
+
+    response = client.post(
+        f"{base}/explore-vulnerabilities",
+        json={"lease_id": claim["lease_id"], "report": report},
+    )
+
+    assert response.status_code == 422
+    assert field in response.text
 
 
 def test_explore_keeps_reported_vulnerability_when_evidence_file_is_missing(client) -> None:
@@ -353,7 +403,9 @@ def test_explore_keeps_reported_vulnerability_when_evidence_file_is_missing(clie
                 "type": "越权",
                 "severity": "high",
                 "description": "描述",
+                "prerequisites": "需要低权限账号",
                 "impact": "影响",
+                "remediation": "校验对象归属",
                 "evidence_paths": ["evidence/missing.txt"],
             },
         },
@@ -396,7 +448,9 @@ def test_explore_reports_vulnerability_without_evidence_paths(client) -> None:
                 "type": "越权",
                 "severity": "high",
                 "description": "当前会话观察到跨用户数据读取。",
+                "prerequisites": "需要任意低权限账号。",
                 "impact": "可能造成跨用户数据泄露。",
+                "remediation": "服务端校验对象归属。",
             },
         },
     )

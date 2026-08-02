@@ -300,6 +300,9 @@ window.AxiomModules.core = {
           return;
         }
       }
+      if (newPage === 'vulnerabilities') {
+        this.applyVulnerabilityRouteParams?.(new URLSearchParams(routeQuery));
+      }
       this.mountCurrentPage();
     },
 

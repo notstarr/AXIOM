@@ -43,7 +43,18 @@ class VulnerabilityDetails(BaseModel):
 class ExploreVulnerabilityReport(VulnerabilityDetails):
     """Worker fields. Execution identity, status and Artifact IDs are injected by AXIOM."""
 
+    prerequisites: str
+    remediation: str
+
     evidence_paths: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("prerequisites", "remediation")
+    @classmethod
+    def require_explore_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
 
     @field_validator("evidence_paths")
     @classmethod

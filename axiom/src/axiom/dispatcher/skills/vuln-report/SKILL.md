@@ -5,7 +5,7 @@ description: 上报确认漏洞前阅读，包含去重、证据和通用字段�
 
 # Vulnerability reporting
 
-本 Skill 只给 **Explore** 阶段使用。发现不等于漏洞：必须有明确的实际行为和影响，并按同一根因去重。应尽可能保存请求、响应和证明文件，但 Artifact Evidence 是可选审计材料，不得因为来不及补证据而阻塞 Explore 收口。Bootstrap 只记录线索；Reason 不得上报漏洞。
+本 Skill 只给 **Explore** 阶段使用。发现不等于漏洞：必须有明确的实际行为和影响，并按同一根因去重。每个漏洞都必须填写“利用前提”和“修复建议”；前者说明攻击者需要的身份、权限、环境或前置步骤，后者必须是可执行的服务端修复方向。应尽可能保存请求、响应和证明文件，但 Artifact Evidence 是可选审计材料，不得因为来不及补证据而阻塞 Explore 收口。Bootstrap 只记录线索；Reason 不得上报漏洞。
 
 不要创建漏洞 JSON 文件，也不要使用旧的 `axiom-tool vulnerability report`。在当前 Explore lease 中，使用 Axiom CLI 逐条上报：
 

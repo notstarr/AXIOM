@@ -67,7 +67,7 @@
             <div class="px-4 py-10 text-sm text-center text-slate-400">暂无漏洞记录</div>
           </template>
           <template x-for="v in filteredVulnerabilities()" :key="`${v.project_id}-${v.id}`">
-           <button type="button" @click="selectedVulnerabilityKey = vulnerabilityKey(v)" class="w-full flex flex-col items-start text-left rounded-xl border p-3 transition overflow-hidden"
+           <button type="button" @click="selectVulnerability(v)" class="w-full flex flex-col items-start text-left rounded-xl border p-3 transition overflow-hidden"
             :class="selectedVulnerabilityKey === vulnerabilityKey(v) ? 'border-rose-200 bg-rose-50/60' : 'border-slate-200 hover:bg-slate-50'">
             <div class="flex items-center gap-1.5">
               <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-mono font-bold whitespace-nowrap" x-text="v.id"></span>
@@ -132,9 +132,11 @@
                   <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">描述</p>
                   <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="selectedVulnerability().description"></p>
                 </div>
-                <div x-show="selectedVulnerability().prerequisites">
+                <div>
                   <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">利用前提</p>
-                  <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="selectedVulnerability().prerequisites"></p>
+                  <p class="text-sm whitespace-pre-wrap break-words"
+                    :class="selectedVulnerability().prerequisites ? 'text-slate-700' : 'text-slate-400 italic'"
+                    x-text="selectedVulnerability().prerequisites || '未填写'"></p>
                 </div>
                 <div>
                   <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">影响</p>
@@ -162,9 +164,11 @@
                     </div>
                   </div>
                 </template>
-                <div x-show="selectedVulnerability().remediation">
+                <div>
                   <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">修复建议</p>
-                  <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="selectedVulnerability().remediation"></p>
+                  <p class="text-sm whitespace-pre-wrap break-words"
+                    :class="selectedVulnerability().remediation ? 'text-slate-700' : 'text-slate-400 italic'"
+                    x-text="selectedVulnerability().remediation || '未填写'"></p>
                 </div>
                 <template x-if="selectedVulnerability().legacy">
                   <div class="rounded-xl border border-amber-200 bg-amber-50/60 p-3 space-y-3">

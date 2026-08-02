@@ -72,6 +72,271 @@ process.stdout.write(JSON.stringify(rows));
     return json.loads(result.stdout)
 
 
+def _run_goal_history_selection_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    graph = ROOT / "src/axiom/static/js/graph.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+eval(fs.readFileSync({json.dumps(str(graph))}, 'utf8'));
+const methods = window.AxiomModules.graph.methods;
+let highlighted = null;
+let factSelections = 0;
+const ctx = Object.assign({{}}, methods, {{
+  project: {{
+    project: {{ depth_mode:false }},
+    goal_from_fact_ids: [],
+    goal_history: [{{
+      goal_cycle_id:'gc001', sequence:1, goal:'第一轮目标',
+      completed_at:'2026-07-29T02:00:00Z', evidence_fact_ids:['f001','f002'],
+    }}],
+    goal_cycles: [{{
+      id:'gc001', sequence:1, goal:'第一轮目标', status:'completed',
+      continuation_reason:'结果需要继续深入', focus:'越权链路', actor:'human.frontend',
+      started_at:'2026-07-28T01:00:00Z', completed_at:'2026-07-29T02:00:00Z',
+    }}],
+    goal_evaluations: [{{
+      id:'ge001', goal_cycle_id:'gc001', achieved:true,
+      reason:'证据已经证明目标达成', evaluator:'reason-worker',
+      evidence_refs:['fact:f001','fact:f002'], created_at:'2026-07-29T02:00:00Z',
+    }}],
+    facts: [
+      {{ id:'origin', description:'origin' }},
+      {{ id:'f001', description:'证据一' }},
+      {{ id:'f002', description:'证据二' }},
+      {{ id:'goal', description:'当前目标' }},
+    ],
+    intents: [],
+  }},
+  selectedNode: null,
+  selectedFacts: ['f001'],
+  selectedTimelineEntryId: 'event-1',
+  sideTab: 'detail',
+  showGoalHistory: true,
+  applyGoalHistoryHighlight: id => {{ highlighted = id; }},
+  selectFact: () => {{ factSelections += 1; }},
+}});
+const data = {{
+  id:'_goal_history_gc001', nodeType:'goal_history', goalCycleId:'gc001',
+}};
+ctx.onNodeTap({{
+  target: {{ data: key => data[key] }},
+  originalEvent: {{ shiftKey:false }},
+}});
+const elements = ctx.buildElements();
+process.stdout.write(JSON.stringify({{
+  selectedNode: ctx.selectedNode,
+  selectedFacts: ctx.selectedFacts,
+  selectedTimelineEntryId: ctx.selectedTimelineEntryId,
+  history: ctx.selectedGoalHistoryRecord(),
+  cycle: ctx.selectedGoalCycleRecord(),
+  evaluation: ctx.selectedGoalEvaluationRecord(),
+  evidenceFactIds: ctx.selectedGoalEvidenceFacts().map(item => item.id),
+  highlighted,
+  factSelections,
+  nodeGoalCycleId: elements.nodes.find(item => item.data.nodeType === 'goal_history')?.data.goalCycleId || null,
+}}));
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def _run_fact_reference_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    graph = ROOT / "src/axiom/static/js/graph.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+eval(fs.readFileSync({json.dumps(str(graph))}, 'utf8'));
+const calls = [];
+const ctx = Object.assign({{}}, window.AxiomModules.graph.methods, {{
+  selectedProjectId: 't_153',
+  project: {{ project: {{ id:'t_153' }} }},
+  openArtifactLocation: (taskId, artifactId) => calls.push({{ kind:'artifact', taskId, artifactId }}),
+  openVulnerabilityLocation: (taskId, vulnerabilityId) => calls.push({{ kind:'vulnerability', taskId, vulnerabilityId }}),
+}});
+const description = '已确认事实：artifact:a016；待验证线索：artifact:a017；本轮上报漏洞：vulnerability:v001；未知 artifact:x001；<script>alert(1)</script>';
+const segments = ctx.factDescriptionSegments(description);
+for (const segment of segments.filter(item => item.kind !== 'text')) ctx.openFactReference(segment);
+process.stdout.write(JSON.stringify({{
+  segments,
+  calls,
+  hasHtmlSegment: segments.some(item => item.text.includes('<script>')),
+}}));
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def _run_vulnerability_deep_link_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    helpers = ROOT / "src/axiom/static/js/helpers.js"
+    adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{
+  state: {{ state: {{}} }}, core: {{ methods: {{}} }}, projects: {{ methods: {{}} }},
+  dashboard: {{ methods: {{}} }}, graph: {{ methods: {{}} }}, files: {{ methods: {{}} }},
+}} }};
+global.location = {{ origin:'http://testserver', hash:'#/task-detail/t_153' }};
+global.window.history = {{ replaceState: (_state, _title, url) => {{ global.location.hash = url; }} }};
+const calls = [];
+const pageItems = [{{
+  id:'v002', task_id:'t_153', title:'另一个漏洞', type:'越权', severity:'low',
+  description:'d', prerequisites:'p', impact:'i', remediation:'r',
+  status:'待验证', finding_artifact:null, evidence_artifacts:[],
+}}];
+const target = {{
+  id:'v001', task_id:'t_153', title:'目标漏洞', type:'越权', severity:'high',
+  description:'d', prerequisites:'需要低权限账号', impact:'i', remediation:'校验对象归属',
+  status:'待验证', finding_artifact:null, evidence_artifacts:[], archived:false,
+}};
+global.fetch = async (url, init = {{}}) => {{
+  calls.push({{ url, method:init.method || 'GET' }});
+  if (url.startsWith('/api/v1/vulnerabilities?')) return {{
+    ok:true, status:200,
+    headers:{{ get: name => name === 'X-Total-Count' ? '2' : null }},
+    text: async () => JSON.stringify(pageItems),
+  }};
+  if (url === '/api/v1/tasks/t_153/vulnerabilities/v001') return {{
+    ok:true, status:200, text: async () => JSON.stringify(target),
+  }};
+  throw new Error(`unexpected ${{url}}`);
+}};
+for (const script of [{json.dumps(str(helpers))}, {json.dumps(str(adapter))}]) eval(fs.readFileSync(script, 'utf8'));
+const methods = Object.assign({{}}, window.AxiomModules.helpers.methods, window.AxiomModules.projects.methods);
+const ctx = Object.assign({{}}, methods, {{
+  vulnFilter: {{ projectId:'', keyword:'' }},
+  vulnerabilityPage:0, vulnerabilityPageSize:50, vulnerabilityLoading:false,
+  vulnerabilityItems:[], vulnerabilityTotal:0, vulnerabilityBoard:{{}},
+  showVulnBoard:true, selectedVulnerabilityKey:'', vulnerabilityRouteTaskId:'', vulnerabilityRouteId:'',
+  vulnerabilitySelectionBlocked:false,
+  _vulnerabilityListRequestId:0, projects:[{{ id:'t_153', title:'任务 153', project_id:'p001' }}], projectGroups:[],
+  showToast: message => calls.push({{ toast:message }}),
+}});
+(async () => {{
+  const hash = ctx.vulnerabilityHash('t_153', 'v001');
+  ctx.applyVulnerabilityRouteParams(new URLSearchParams('task=t_153&vulnerability=v001'));
+  await ctx.loadVulnerabilityPage();
+  process.stdout.write(JSON.stringify({{
+    hash,
+    showVulnBoard:ctx.showVulnBoard,
+    taskFilter:ctx.vulnFilter.projectId,
+    selected:ctx.selectedVulnerabilityKey,
+    first:ctx.vulnerabilityItems[0]?.id || null,
+    detailFetch:calls.some(item => item.url === '/api/v1/tasks/t_153/vulnerabilities/v001'),
+  }}));
+}})();
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def _run_vulnerability_deep_link_error_fixture(*, archived: bool) -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    scripts = [
+        ROOT / "src/axiom/static/js/helpers.js",
+        ROOT / "src/axiom/static/js/projects.js",
+        ROOT / "src/axiom/static/js/v2-adapter.js",
+    ]
+    archived_js = "true" if archived else "false"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{
+  state: {{ state: {{}} }}, core: {{ methods: {{}} }}, projects: {{ methods: {{}} }},
+  dashboard: {{ methods: {{}} }}, graph: {{ methods: {{}} }}, files: {{ methods: {{}} }},
+}} }};
+global.location = {{ origin:'http://testserver', hash:'#/vulnerabilities?task=t_153&vulnerability=v404' }};
+global.window.history = {{ replaceState: (_state, _title, url) => {{ global.location.hash = url; }} }};
+const calls = [];
+const pageItems = [{{
+  id:'v002', task_id:'t_153', title:'不应被误选的漏洞', type:'越权', severity:'low',
+  description:'d', prerequisites:'p', impact:'i', remediation:'r',
+  status:'待验证', finding_artifact:null, evidence_artifacts:[],
+}}];
+global.fetch = async (url, init = {{}}) => {{
+  calls.push({{ url, method:init.method || 'GET' }});
+  if (url.startsWith('/api/v1/vulnerabilities?')) return {{
+    ok:true, status:200,
+    headers:{{ get: name => name === 'X-Total-Count' ? '1' : null }},
+    text: async () => JSON.stringify(pageItems),
+  }};
+  if (url === '/api/v1/tasks/t_153/vulnerabilities/v404') return {archived_js}
+    ? {{
+        ok:true, status:200,
+        text: async () => JSON.stringify({{ ...pageItems[0], id:'v404', archived:true }}),
+      }}
+    : {{
+        ok:false, status:404,
+        text: async () => JSON.stringify({{ detail:'Vulnerability not found: v404' }}),
+      }};
+  throw new Error(`unexpected ${{url}}`);
+}};
+for (const script of {json.dumps([str(path) for path in scripts])}) eval(fs.readFileSync(script, 'utf8'));
+const methods = Object.assign(
+  {{}},
+  window.AxiomModules.helpers.methods,
+  window.AxiomModules.projects.methods,
+);
+const ctx = Object.assign({{}}, methods, {{
+  vulnFilter: {{ projectId:'', keyword:'' }},
+  vulnerabilityPage:0, vulnerabilityPageSize:50, vulnerabilityLoading:false,
+  vulnerabilityItems:[], vulnerabilityTotal:0, vulnerabilityBoard:{{}},
+  showVulnBoard:true, selectedVulnerabilityKey:'', vulnerabilityRouteTaskId:'', vulnerabilityRouteId:'',
+  vulnerabilitySelectionBlocked:false,
+  _vulnerabilityListRequestId:0, projects:[{{ id:'t_153', title:'任务 153', project_id:'p001' }}], projectGroups:[],
+  showToast: (message, type) => calls.push({{ toast:message, type }}),
+}});
+ctx.filteredVulnerabilities = () => ctx.vulnerabilityItems;
+(async () => {{
+  ctx.applyVulnerabilityRouteParams(new URLSearchParams('task=t_153&vulnerability=v404'));
+  await ctx.loadVulnerabilityPage();
+  process.stdout.write(JSON.stringify({{
+    hash:global.location.hash,
+    selectedKey:ctx.selectedVulnerabilityKey,
+    selectedRecord:ctx.selectedVulnerability(),
+    blocked:ctx.vulnerabilitySelectionBlocked,
+    routeId:ctx.vulnerabilityRouteId,
+    toast:calls.find(item => item.toast)?.toast || '',
+  }}));
+}})();
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
 def _run_runtime_save_fixture() -> dict[str, object]:
     node = shutil.which("node")
     if not node:
@@ -825,6 +1090,11 @@ def test_frontend_and_static_assets_are_served(client):
     assert "manual-reason-trigger" in graph.text
     assert "openTaskContinuation(project.project)" in graph.text
     assert "showGoalHistory" in graph.text
+    assert "selectedNode.type === 'goal_history'" in graph.text
+    assert "selectedGoalEvaluationRecord()" in graph.text
+    assert "达成证据 Fact" in graph.text
+    assert "v.prerequisites || '未填写'" in graph.text
+    assert "v.remediation || '未填写'" in graph.text
 
     human = client.get("/static/templates/human-view.html")
     assert human.status_code == 200
@@ -862,6 +1132,13 @@ def test_frontend_and_static_assets_are_served(client):
     assert "`/tasks/${taskId}/reason-runs/trigger`" in adapter
     assert "`/tasks/${form.projectId}/continuations`" in adapter
     assert "goal_history: graph.goal_history || []" in adapter
+    assert "applyVulnerabilityRouteParams" in adapter
+    assert "openVulnerabilityLocation" in adapter
+    assert "factDescriptionSegments" in graph_js
+    assert "openFactReference" in graph_js
+    assert "x-html" not in graph.text
+    assert "selectedVulnerability().prerequisites || '未填写'" in vulnerabilities.text
+    assert "selectedVulnerability().remediation || '未填写'" in vulnerabilities.text
 
     css = client.get("/static/apple.css").text
     assert "@media (prefers-color-scheme: dark)" not in css
@@ -1190,6 +1467,80 @@ def test_intent_lifecycle_uses_status_instead_of_retained_worker():
         "state": "running",
         "type": "in_progress",
         "label": "进行中",
+    }
+
+
+def test_goal_history_node_selects_cycle_details_instead_of_virtual_fact() -> None:
+    result = _run_goal_history_selection_fixture()
+
+    assert result["selectedNode"] == {"type": "goal_history", "id": "gc001"}
+    assert result["selectedFacts"] == []
+    assert result["selectedTimelineEntryId"] is None
+    assert result["history"]["goal"] == "第一轮目标"
+    assert result["cycle"]["continuation_reason"] == "结果需要继续深入"
+    assert result["cycle"]["focus"] == "越权链路"
+    assert result["evaluation"]["reason"] == "证据已经证明目标达成"
+    assert result["evidenceFactIds"] == ["f001", "f002"]
+    assert result["highlighted"] == "gc001"
+    assert result["factSelections"] == 0
+    assert result["nodeGoalCycleId"] == "gc001"
+
+
+def test_fact_references_are_safe_inline_links_with_precise_targets() -> None:
+    result = _run_fact_reference_fixture()
+    linked = [
+        (segment["kind"], segment["id"], segment["text"])
+        for segment in result["segments"]
+        if segment["kind"] != "text"
+    ]
+
+    assert linked == [
+        ("artifact", "a016", "artifact:a016"),
+        ("artifact", "a017", "artifact:a017"),
+        ("vulnerability", "v001", "vulnerability:v001"),
+    ]
+    assert "artifact:x001" in "".join(segment["text"] for segment in result["segments"])
+    assert result["hasHtmlSegment"] is True
+    assert result["calls"] == [
+        {"kind": "artifact", "taskId": "t_153", "artifactId": "a016"},
+        {"kind": "artifact", "taskId": "t_153", "artifactId": "a017"},
+        {"kind": "vulnerability", "taskId": "t_153", "vulnerabilityId": "v001"},
+    ]
+
+
+def test_vulnerability_deep_link_selects_an_item_outside_the_current_page() -> None:
+    result = _run_vulnerability_deep_link_fixture()
+
+    assert result == {
+        "hash": "#/vulnerabilities?task=t_153&vulnerability=v001",
+        "showVulnBoard": False,
+        "taskFilter": "t_153",
+        "selected": "t_153:v001",
+        "first": "v001",
+        "detailFetch": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("archived", "message"),
+    [
+        (False, "漏洞不存在或无法打开"),
+        (True, "漏洞已归档，无法在当前列表中打开"),
+    ],
+)
+def test_broken_vulnerability_deep_link_never_selects_a_different_record(
+    archived: bool,
+    message: str,
+) -> None:
+    result = _run_vulnerability_deep_link_error_fixture(archived=archived)
+
+    assert result == {
+        "hash": "#/vulnerabilities?task=t_153",
+        "selectedKey": "",
+        "selectedRecord": None,
+        "blocked": True,
+        "routeId": "",
+        "toast": message,
     }
 
 

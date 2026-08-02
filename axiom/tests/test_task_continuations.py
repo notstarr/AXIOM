@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from sqlalchemy import select
 
 from axiom.modules.graph.tables import intents
@@ -93,6 +96,19 @@ def test_continuation_reason_can_finish_without_new_intents(client) -> None:
         reason_run_id=continued["reason_run_id"],
     )
     assert "当前唯一 Goal：复核第一轮目标" in execution["intent_description"]
+    assert "人工续跑原因：第一轮结果不够深入" in execution["intent_description"]
+    assert "本轮重点：优先复盘授权边界" in execution["intent_description"]
+    assert "人工说明是有效的规划依据" in execution["intent_description"]
+    assert "即使本轮没有新 Fact" in execution["intent_description"]
+    assert "上一轮 Goal" not in execution["intent_description"]
+    context_dir = Path(execution["context_manifest_path"]).parent
+    manifest = json.loads(
+        Path(execution["context_manifest_path"]).read_text(encoding="utf-8")
+    )
+    assert "goal_evaluations" not in manifest["indexes"]
+    assert "goal_cycles" not in manifest["indexes"]
+    assert not (context_dir / "goal_evaluations.json").exists()
+    assert not (context_dir / "goal_cycles.json").exists()
     workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
     base = f"/api/v1/reason-workspaces/{workspace['id']}"
     assessed = client.post(
@@ -206,7 +222,98 @@ def test_continuation_reason_creates_intents_in_current_goal_cycle(client, engin
     assert cycle_id == continued["goal_cycle"]["id"]
 
 
-def test_zero_intent_continuation_does_not_auto_retrigger_on_old_goal_cancellations(client) -> None:
+def test_continuation_can_reopen_completed_todo_without_new_fact(client) -> None:
+    task = _completed_task(client)
+    created = client.post(
+        f"/api/v1/tasks/{task['id']}/todos",
+        json={
+            "title": "复核历史线索中的 Host 碰撞方向",
+            "category": "recon",
+            "sources": [{"type": "fact", "id": "origin"}],
+        },
+    )
+    assert created.status_code == 201, created.text
+    todo_id = created.json()["id"]
+    completed = client.patch(
+        f"/api/v1/tasks/{task['id']}/todos/{todo_id}",
+        json={
+            "status": "completed",
+            "status_reason": "上一轮错误地认为该方向已覆盖",
+        },
+    )
+    assert completed.status_code == 200, completed.text
+
+    continued = _continue(client, task["id"], goal="继续验证 Host 碰撞危害")
+    client.put(
+        "/api/v1/workers/worker-a",
+        json={"capabilities": ["reason"], "max_running": 1},
+    )
+    claim, _execution = claim_reason_run(
+        client,
+        task_id=task["id"],
+        reason_run_id=continued["reason_run_id"],
+    )
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    base = f"/api/v1/reason-workspaces/{workspace['id']}"
+
+    updated = client.post(
+        f"{base}/todo-updates",
+        json={
+            "lease_id": claim["lease_id"],
+            "update": {
+                "todo_id": todo_id,
+                "status": "active",
+                "status_reason": "续跑说明和历史线索仍要求验证 Host 碰撞的实际危害",
+            },
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    proposed = client.post(
+        f"{base}/intents",
+        json={
+            "lease_id": claim["lease_id"],
+            "intent": {
+                "todo_id": todo_id,
+                "from_facts": ["origin"],
+                "description": "验证历史 Host 碰撞线索是否能访问内网服务并形成实际影响",
+                "targets": ["a.example.com"],
+                "execute_seconds": 300,
+                "conclude_seconds": 180,
+            },
+        },
+    )
+    assert proposed.status_code == 200, proposed.text
+    assessed = client.post(
+        f"{base}/goal-assessment",
+        json={
+            "lease_id": claim["lease_id"],
+            "assessment": {
+                "achieved": False,
+                "reason": "历史线索仍有可执行的材料性验证方向",
+                "evidence_refs": ["fact:origin"],
+            },
+        },
+    )
+    assert assessed.status_code == 200, assessed.text
+    committed = client.post(f"{base}/commit", json={"lease_id": claim["lease_id"]})
+    assert committed.status_code == 200, committed.text
+    result = committed.json()
+    assert result["created_todo_ids"] == []
+    [intent_id] = result["created_intent_ids"]
+
+    todos = client.get(f"/api/v1/tasks/{task['id']}/todos").json()
+    assert todos[0]["id"] == todo_id
+    assert todos[0]["status"] == "active"
+    graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
+    intent = next(item for item in graph["intents"] if item["id"] == intent_id)
+    assert intent["todo_id"] == todo_id
+    assert client.get(f"/api/v1/tasks/{task['id']}").json()["phase"] == "explore"
+
+
+def test_zero_intent_continuation_does_not_auto_retrigger_on_old_goal_cancellations(
+    client,
+    engine,
+) -> None:
     task = _completed_task(client)
     continued = _continue(client, task["id"])
     client.put(
@@ -238,3 +345,26 @@ def test_zero_intent_continuation_does_not_auto_retrigger_on_old_goal_cancellati
 
     reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile").json()
     assert reconciled["created_reason_run_ids"] == []
+
+    with engine.begin() as conn:
+        conn.execute(
+            intents.update()
+            .where(intents.c.task_id == task["id"], intents.c.id == "i001")
+            .values(status="completed", last_failure_kind="")
+        )
+    manual = client.post(
+        f"/api/v1/tasks/{task['id']}/reason-runs/trigger",
+        json={"actor": "human.test"},
+    )
+    assert manual.status_code == 200, manual.text
+    _manual_claim, manual_execution = claim_reason_run(
+        client,
+        task_id=task["id"],
+        reason_run_id=manual.json()["id"],
+    )
+    assert "当前 Goal Cycle 的人工续跑原因：第一轮结果不够深入" in (
+        manual_execution["intent_description"]
+    )
+    assert "本轮重点：优先复盘授权边界" in manual_execution["intent_description"]
+    assert "人工说明是有效的规划依据" in manual_execution["intent_description"]
+    assert "上一轮 Goal" not in manual_execution["intent_description"]

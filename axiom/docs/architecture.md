@@ -1,6 +1,6 @@
 # AXIOM 当前生产架构
 
-> 状态：已核对至 2026-07-29。本文描述当前实际代码，不描述未落地的 ASM、容器化或爬虫方案。
+> 状态：已核对至 2026-08-02。本文描述当前实际代码，不描述未落地的 ASM、容器化或爬虫方案。
 
 ## 1. 运行边界
 
@@ -172,13 +172,13 @@ remaining = min(
 
 开放 Explore 包括 `pending/claimed/running/concluding`。额度耗尽时 CLI 立即返回当前开放数、目标数和剩余额度；commit 在同一事务中再次校验。Todo 数量不与 Intent 额度绑定。
 
-Reason 最后一条 assistant 文本精确等于 `FINISH` 后，Runner 先读取 Workspace readiness：必须存在 Goal assessment，并且要么继续派发工作，要么用真实 Fact 证据证明 Goal 已达成。校验通过才调用 `/commit`。提交后由代码生成 `reason_plan.json` 审计文件；`/submit` 不再存在。
+Reason 最后一条 assistant 文本精确等于 `FINISH` 后，Runner 先读取 Workspace readiness：必须存在 Goal assessment；Goal 达成时必须有真实 Fact 证据且不能继续派发；Goal 未达成且 0 proposal 时，至少要把没有后续工作的可执行 Todo 明确收口，材料性与阻塞判断由 Prompt 合同约束。校验通过才调用 `/commit`。提交后由代码生成 `reason_plan.json` 审计文件；`/submit` 不再存在。
 
 ReasonRun 创建时还会快照 `todo_review_ids`：这些 Todo 处于 pending/active、至少有一个终态 Explore，且已经没有开放 Explore。Reason 必须逐个明确收口为 completed/rejected/obsolete；若保持 active，必须填写原因并在同一 Workspace 为该 Todo 提交新的 Intent。readiness 会拒绝遗漏审查、空 active，以及“终态 Todo 同时派发 Intent”。审查集合固定在 ReasonRun 快照中，不会因并发 Explore 在执行期间结束而动态扩大。
 
-`axiom reason status` 同时返回本轮 `source_fact_ids`。Reason 必须先逐个读取这些新 Fact，再读取完整 `todos.json` 索引并按需展开相关 Todo：新证据可补充 pending/active Todo、恢复 completed/rejected/obsolete Todo，或证明主题已经完成。处理完新 Fact 和 `todo_review_ids` 后，才允许新增 Todo 或 proposal。Workspace readiness 要求每个新 Fact 至少出现在 Todo source、Intent `from_facts` 或 Goal evidence 中，防止新事实被静默遗漏；语义关联仍由 Reason 判断，后端不做模糊匹配。
+`axiom reason status` 同时返回本轮 `source_fact_ids`。列表非空时，Reason 必须逐个读取新 Fact，并在 Workspace 中通过 Todo source、Intent `from_facts` 或 Goal evidence 消费，防止新事实被静默遗漏；列表为空时仍可依据当前 Goal、人工续跑原因/重点和历史 `findings.md` / `leads.md` 规划，不能把“没有新 Fact”当作没有工作的证明。处理完新 Fact（若有）和 `todo_review_ids` 后，才允许新增 Todo 或 proposal；语义关联仍由 Reason 判断，后端不做模糊匹配。
 
-Todo 是长期攻击面索引。Reason 新增 Todo 前必须对照所有状态的历史 Todo；已有同义主题时复用原 Todo。派发 Intent 前通过 `graph.json` 的 `todo_id` 检查该 Todo 的开放和历史 Intent；只有增加新对象/角色、新端点/目标、新攻击条件或新 Fact 支撑方向时才允许继续派发。该规则属于 Prompt 驱动的语义决策，不等于后端自动语义去重。
+Todo 是长期攻击面索引。Reason 新增 Todo 前必须对照所有状态的历史 Todo；已有同义主题时复用原 Todo。`completed/rejected/obsolete` Todo 在新 Fact、当前 Goal 变化、当前 Goal Cycle 的人工说明/重点，或 findings/leads 明确留下尚未执行且当前可执行的材料性方向时，可以恢复为 `active`，但必须复用原 Todo ID、填写新的状态原因，并使用真实已有 Fact 作为来源。派发 Intent 前通过 `graph.json` 的 `todo_id` 检查该 Todo 的开放和历史 Intent；只有增加新对象/角色、新端点/目标、新攻击条件、新 Fact 支撑方向，或 findings/leads 中明确未执行的具体验证分支时才允许继续派发。该规则属于 Prompt 驱动的语义决策，不等于后端自动语义去重。
 
 同一轮新增 Todo 可以使用临时 `ref` 被 Intent 或 Goal Assessment 引用。提交事务先创建 Todo，再将临时引用解析为真实 `tdXXX`；引用不存在时整批回滚，不会留下半套规划或错误的 Goal Evaluation。
 
@@ -186,7 +186,9 @@ Reason Trigger Reconciler 在 Bootstrap/Explore 完成后立即评估，并在�
 
 输入指纹去重同时覆盖 `completed` 和重试耗尽后的 `failed` ReasonRun，避免相同终态输入在每个 tick 被无限重建；人工停止产生的 `cancelled` 不参与去重，因此恢复 Task 后仍可按当前事实重新评估。
 
-Goal 未达成时，Workspace 必须已有开放 Explore 或至少提交一个 proposal；Goal 达成时禁止 proposal，并要求至少一个真实 `fact:<id>` 证据。完成事务创建 Goal Evaluation、取消其它开放 Intent/ReasonRun 并结束 Task。新图谱不创建 Reason 节点，最新 Goal 证据直接显示为 `Fact(s) → Goal`；历史 Reason Intent 保持只读原样。
+每轮都必须提交 Goal assessment。Goal 达成时禁止 proposal，并要求至少一个真实 `fact:<id>` 证据；Goal 未达成时允许 0 个新 Intent，但只有两种合法情况：确实没有材料性方向，或方向只受预算、工具、凭证、外部条件阻塞且没有可执行替代。只要存在材料性、当前可执行且没有同义开放 Intent 的方向，就必须复用/恢复原 Todo 并在额度允许时派发非重复 Intent。完成事务创建 Goal Evaluation；达成时取消其它开放 Intent/ReasonRun 并结束 Task。新图谱不创建 Reason 节点，当前 Goal 证据直接显示为 `Fact(s) → Goal`；历史 Reason Intent 保持只读原样。
+
+已完成 Task 续跑时会创建新的 `task_goal_cycles` 轮次，将新 Goal 设为唯一当前目标，不重新 Bootstrap，也不自动恢复上一轮 cancelled Intent。Continuation ReasonRun 复用历史原始 Fact、Todo、Intent、Artifact 和漏洞，但 Reason Context 刻意不披露历史 Goal Cycle、Goal Evaluation 及其证据，避免旧的达成结论锚定新判断。人工续跑原因和重点从当前 Goal Cycle 注入本轮以及后续 ReasonRun，属于有效规划依据，但不是 Fact，不能伪造为 Todo source、Intent `from_facts` 或 Goal evidence。历史 Goal 和评估仍保留给人类在概览、图谱和详情中查看。
 
 Task stop、人工/Reason Goal 完成、ReasonRun release 和 stale recovery 都会在同一事务中把对应 `open` Workspace 标记为 `abandoned`，旧 lease 随即失效。当前正在完成 Goal 的 Workspace 会被排除在批量废弃之外，并在事务尾部正常标记为 `committed`，避免出现终态 Task 下仍可写入的僵尸 Workspace。
 
@@ -209,7 +211,7 @@ Runner 的正式扫描范围仍只有两个核心文件和 `evidence/**`。Evide
 
 只有达到漏洞标准时，Explore 才使用 `axiom explore vulnerability report` 逐条上报 Vulnerability。`--evidence-path evidence/...` 现在可省略或重复；模型不能设置漏洞状态，服务端自动补齐 `intent_id`、`source=explore`、`reported_by` 和 `status=待验证`。路径先进入 lease 级 Explore 状态，收口时只把实际成功注册的 Evidence 解析为正式关系；缺失、为空或被跳过的引用只记录 warning。即使没有有效 Evidence，漏洞仍关联本轮 `findings.md` 并以“待验证”落库。Reason 不上报漏洞。
 
-漏洞表保存标题、类型、等级、目标、描述、前置条件、影响、修复建议、状态和来源元数据；详细发现只写入 findings，原始材料只保存在 evidence。`vulnerability_artifacts` 使用 `finding/evidence` 角色关联正式 Artifact，新漏洞不再写 `reproduction_steps`、`curl_command`、自由文本 `evidence` 或 `source_file`。旧漏洞保留 V1 列并通过只读 `legacy` 区域展示，不批量复制文件。
+漏洞表保存标题、类型、等级、目标、描述、前置条件、影响、修复建议、状态和来源元数据；详细发现只写入 findings，原始材料只保存在 evidence。Explore Worker 上报时 `prerequisites` 与 `remediation` 是非空必填字段，CLI 和执行 API 都会在落库前拒绝缺失或空白值；人工新建/编辑仍允许留空，历史空值不回填。`vulnerability_artifacts` 使用 `finding/evidence` 角色关联正式 Artifact，新漏洞不再写 `reproduction_steps`、`curl_command`、自由文本 `evidence` 或 `source_file`。旧漏洞保留 V1 列并通过只读 `legacy` 区域展示，不批量复制文件。
 
 Explore Fact 由代码使用原 Intent description、findings/leads Artifact ID、证据数量和本轮 Vulnerability ID 生成，不使用模型尾部文本。`explore_result.json` 只是代码维护的内部状态/索引，不要求 Worker 编写，也不注册为 Artifact。
 
@@ -256,10 +258,11 @@ contexts/{task_id}/r000001/
  ├─ hints.json
  ├─ vulnerabilities.json
  ├─ knowledge.json
- └─ goal_evaluations.json
+ ├─ goal_evaluations.json   # Bootstrap / Explore
+ └─ goal_cycles.json        # Bootstrap / Explore
 ```
 
-Fact 和 Artifact 仍只保留 preview 与 detail ref；`todos.json` 额外提供完整 `title/status_reason`，`graph.json` 的 Intent 摘要额外提供 `todo_id`，使 Reason 能先做历史主题对照，再只展开相似 Todo/Intent。Worker 仍通过 detail 文件或 Context expand API 获取长内容，不会把整个图谱和产物正文重复塞进上下文。
+Fact 和 Artifact 仍只保留 preview 与 detail ref；`todos.json` 额外提供完整 `title/status_reason`，`graph.json` 的 Intent 摘要额外提供 `todo_id`，使 Reason 能先做历史主题对照，再只展开相似 Todo/Intent。Reason phase 的 Manifest 不包含 `goal_evaluations` 与 `goal_cycles` 索引，也不会生成这两个文件；当前 Goal 仍直接存在于 Manifest，续跑原因/重点由 ExecutionInput 注入。Bootstrap/Explore 保持历史索引兼容。Worker 仍通过 detail 文件或 Context expand API 获取长内容，不会把整个图谱和产物正文重复塞进上下文。
 
 新 Context Revision 会排除已归档 Fact、Intent、Todo、Artifact 和 Vulnerability；Intent 的来源/产出、Todo source、Artifact/Vulnerability 的 `intent_id` 也会移除指向归档实体的引用。引用归档证据的历史 Goal Evaluation 不进入 Worker Context，`/context/expand` 对归档实体返回不存在。已有 Lease 的不可变快照不回写，下一 Lease 才应用新的可见集合。
 
@@ -293,7 +296,9 @@ Fact/Intent 归档使用 `archive_batches + archive_batch_members`，不是直�
 
 设置页只编辑真实 `RuntimeConfig`，分为“调度并发、阶段预算、Reason 触发与派发、高级可靠性”四组；Bootstrap/Reason 单 Task 并发以只读 `1（固定）` 展示。Explore Conclude 下限默认和前后端输入约束均为 180 秒。保存使用 `expected_version` 乐观锁，合法零值不会被 `||` 回填；Runner 每 tick 读取版本并回报真实 `applied_version/applied_at`。生产浏览器已验证保存、刷新、重启持久化和下一 tick 热应用。
 
-Artifact、Vulnerability 和 Todo 列表支持可选服务端分页、搜索和 `X-Total-Count`；未传分页参数时保持旧客户端全量行为。文件中心的“全部任务”继续使用单个跨任务 `GET /api/v1/artifacts`，每页 60 条，不再按 Task 逐个请求 Artifact。选中 Task 后改用 `GET /api/v1/tasks/{task_id}/artifact-folders` 显示 Intent 文件夹；无 `intent_id` 的上传文件归入固定的“任务文件”。进入文件夹后通过 `intent_id` 或 `unscoped_only=true` 只读取该目录的 Artifact，每页 50 条；单个 Artifact 元数据接口负责恢复深链接和跨分页定位。文件位置完整写入 `#/files?task=...&folder=...&artifact=...`，漏洞、图谱和 Human 页面统一通过 `openArtifactLocation()` 进入正确文件夹并高亮目标。漏洞列表每页 50 条，状态看板每列先取 25 条并独立加载更多；Human Artifact 每页 50 条，Workspace 只取最近 6 条。Intent/Fact 复用已加载 Graph 数据并限制首屏渲染。
+Artifact、Vulnerability 和 Todo 列表支持可选服务端分页、搜索和 `X-Total-Count`；未传分页参数时保持旧客户端全量行为。文件中心的“全部任务”继续使用单个跨任务 `GET /api/v1/artifacts`，每页 60 条，不再按 Task 逐个请求 Artifact。选中 Task 后改用 `GET /api/v1/tasks/{task_id}/artifact-folders` 显示 Intent 文件夹；无 `intent_id` 的上传文件归入固定的“任务文件”。进入文件夹后通过 `intent_id` 或 `unscoped_only=true` 只读取该目录的 Artifact，每页 50 条；单个 Artifact 元数据接口负责恢复深链接和跨分页定位。文件位置完整写入 `#/files?task=...&folder=...&artifact=...`，漏洞、图谱和 Human 页面统一通过 `openArtifactLocation()` 进入正确文件夹并高亮目标。
+
+图谱右侧 Fact 详情把代码生成描述中的 `artifact:aXXX` 与 `vulnerability:vXXX` 安全拆分为普通文本和内联蓝链。普通文本始终使用 `x-text`，不执行 Fact 内容中的 HTML。Artifact 引用复用文件中心深链；漏洞引用进入 `#/vulnerabilities?task=...&vulnerability=...`，自动切换列表模式、锁定 Task，并在目标不在当前页时复用单漏洞 GET 接口补入并选中。目标不存在或已归档时会提示并清除精确目标参数，不会误选同 Task 的其它漏洞。漏洞列表每页 50 条，状态看板每列先取 25 条并独立加载更多；Human Artifact 每页 50 条，Workspace 只取最近 6 条。Intent/Fact 复用已加载 Graph 数据并限制首屏渲染。
 
 Dashboard 使用 `GET /api/v1/dashboard/summary` 获取 Task 状态、漏洞等级、开放 Intent、Token 汇总和最近 8 条事件，不再加载完整漏洞库和大量 Audit。`TaskService._decorate_many()` 使用一条 UNION 聚合计数查询和一条活动 ReasonRun 查询，Task 数量增长不会产生 N+1。
 
@@ -348,14 +353,14 @@ ReasonRun/RuntimeConfig 迁移版本为 `20260727_0020`。迁移保留历史 Rea
 ## 11. 验证基线
 
 ```text
-uv run pytest                            322 passed, 1 warning
+uv run pytest                            349 passed, 1 warning
 uv run ruff check .                      passed
 python -m compileall -q src tests migrations  passed
 node --check <18 non-vendor static js>   passed
 git diff --check                         passed
 ```
 
-以上测试已覆盖 FINISH 精确识别与 Explore 有限归一化、同会话有界收口、Explore Conclude 核心文件兜底、可选 Evidence、Artifact/Fact 自动生成、ReasonRun/Workspace 生命周期、Reason 触发和调度并发、RuntimeConfig 热应用、Guard、Task 运行窗口、归档下游闭包，以及前端分页、Dashboard 聚合、Task 固定查询数、搜索竞态、图谱纯视觉更新不触发布局和 Tailwind 可重复构建；仅有 Starlette/httpx 弃用警告。
+以上测试已覆盖 FINISH 精确识别与 Explore 有限归一化、同会话有界收口、Explore Conclude 核心文件兜底、可选 Evidence、Artifact/Fact 自动生成、ReasonRun/Workspace 生命周期、Goal Cycle 续跑、Reason 历史 Goal Context 隔离、无新 Fact 的材料性 Todo 恢复、Reason 触发和调度并发、RuntimeConfig 热应用、Guard、Task 运行窗口、归档下游闭包，以及前端分页、Dashboard 聚合、Task 固定查询数、搜索竞态、历史 Goal 详情、图谱 Fact 安全引用/漏洞跨分页深链、图谱纯视觉更新不触发布局和 Tailwind 可重复构建；仅有 Starlette/httpx 弃用警告。
 
 2026-07-29 前端生产数据浏览器验收：Dashboard/Task/Files/Vulnerability 非图谱页面分别为 592/1217/1258/839 个 DOM 节点；文件中心首屏 60 条、漏洞列表 50/565；非图谱冷启动没有图谱 Runtime，进入图谱后才加载 6 个依赖，离开后 Canvas 和图谱 DOM 清零；桌面侧栏 176→56px 且刷新持久化，390×844 移动端抽屉导航后自动关闭，控制台无 warning/error。生产数据库副本上的 `/api/v1/tasks` 60 次请求为 median 19.14ms、P95 28.71ms、max 36.16ms。
 

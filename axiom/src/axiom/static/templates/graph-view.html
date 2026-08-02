@@ -290,7 +290,7 @@
                   </div>
                 </div>
                 <div class="p-4 space-y-3">
-                  <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="fact.description"></p>
+                  <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words"><template x-for="(segment, segmentIndex) in factDescriptionSegments(fact)" :key="`${fact.id}-${segmentIndex}-${segment.kind}`"><span><template x-if="segment.kind === 'text'"><span x-text="segment.text"></span></template><template x-if="segment.kind !== 'text'"><button type="button" @click.stop="openFactReference(segment)" class="inline appearance-none border-0 bg-transparent p-0 font-mono text-blue-600 hover:text-blue-700 hover:underline break-all" x-text="segment.text"></button></template></span></template></p>
                   <div class="text-xs text-slate-400 space-y-1.5">
                     <template x-if="fact.id === 'origin'">
                       <p>项目起点</p>
@@ -332,7 +332,7 @@
               </div>
             </div>
             <div class="p-4 space-y-4">
-              <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="selectedFactRecord().description"></p>
+              <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words"><template x-for="(segment, segmentIndex) in factDescriptionSegments(selectedFactRecord())" :key="`${selectedFactId()}-${segmentIndex}-${segment.kind}`"><span><template x-if="segment.kind === 'text'"><span x-text="segment.text"></span></template><template x-if="segment.kind !== 'text'"><button type="button" @click.stop="openFactReference(segment)" class="inline appearance-none border-0 bg-transparent p-0 font-mono text-blue-600 hover:text-blue-700 hover:underline break-all" x-text="segment.text"></button></template></span></template></p>
               <div class="space-y-3 text-xs">
                 <template x-if="selectedFactId() === 'origin'">
                   <div class="pt-4 border-t border-slate-100">
@@ -363,6 +363,85 @@
                     <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">结束时间</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedFactProducingIntent().concluded_at || selectedFactProducingIntent().created_at)"></span></div>
                   </div>
                 </template>
+              </div>
+            </div>
+          </section>
+        </template>
+        <template x-if="selectedNode && selectedNode.type === 'goal_history' && selectedGoalHistoryRecord()">
+          <section class="rounded-2xl border border-amber-200/80 bg-white shadow-sm overflow-hidden">
+            <div class="px-4 py-3 border-b border-amber-100 bg-amber-50/70 flex items-center justify-between gap-3">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[10px] font-mono font-bold shrink-0"
+                  x-text="`第 ${selectedGoalHistoryRecord().sequence} 轮`"></span>
+                <span class="text-[11px] font-medium text-amber-700 truncate">历史目标 · 已完成</span>
+              </div>
+              <span class="text-[10px] text-amber-700/70 shrink-0" x-text="formatDate(selectedGoalHistoryRecord().completed_at)"></span>
+            </div>
+            <div class="p-4 space-y-4">
+              <div>
+                <p class="text-[10px] font-semibold text-amber-600 uppercase tracking-widest mb-1.5">Goal</p>
+                <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="selectedGoalHistoryRecord().goal"></p>
+              </div>
+
+              <div class="pt-4 border-t border-slate-100 space-y-3 text-xs">
+                <div class="flex items-start justify-between gap-3">
+                  <span class="text-slate-400 shrink-0">状态</span>
+                  <span class="text-emerald-600 font-medium text-right">已完成</span>
+                </div>
+                <div class="flex items-start justify-between gap-3">
+                  <span class="text-slate-400 shrink-0">开始时间</span>
+                  <span class="text-slate-600 text-right break-words" x-text="formatDate(selectedGoalCycleRecord()?.started_at)"></span>
+                </div>
+                <div class="flex items-start justify-between gap-3">
+                  <span class="text-slate-400 shrink-0">完成时间</span>
+                  <span class="text-slate-600 text-right break-words" x-text="formatDate(selectedGoalHistoryRecord().completed_at || selectedGoalCycleRecord()?.completed_at)"></span>
+                </div>
+                <div class="flex items-start justify-between gap-3">
+                  <span class="text-slate-400 shrink-0">操作者</span>
+                  <span class="text-slate-600 text-right break-words" x-text="selectedGoalCycleRecord()?.actor || '—'"></span>
+                </div>
+                <template x-if="selectedGoalCycleRecord()?.continuation_reason">
+                  <div class="pt-1">
+                    <p class="text-slate-400 mb-1">续跑原因</p>
+                    <p class="text-slate-600 leading-relaxed whitespace-pre-wrap break-words" x-text="selectedGoalCycleRecord().continuation_reason"></p>
+                  </div>
+                </template>
+                <template x-if="selectedGoalCycleRecord()?.focus">
+                  <div class="pt-1">
+                    <p class="text-slate-400 mb-1">本轮重点</p>
+                    <p class="text-slate-600 leading-relaxed whitespace-pre-wrap break-words" x-text="selectedGoalCycleRecord().focus"></p>
+                  </div>
+                </template>
+              </div>
+
+              <template x-if="selectedGoalEvaluationRecord()">
+                <div class="pt-4 border-t border-slate-100 space-y-3">
+                  <div class="flex items-center justify-between gap-3">
+                    <p class="text-[10px] font-semibold text-amber-600 uppercase tracking-widest">Goal Evaluation</p>
+                    <span class="text-[10px] text-slate-400" x-text="formatDate(selectedGoalEvaluationRecord().created_at)"></span>
+                  </div>
+                  <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="selectedGoalEvaluationRecord().reason"></p>
+                  <p class="text-[11px] text-slate-400">评估者：<span class="text-slate-600" x-text="selectedGoalEvaluationRecord().evaluator || '—'"></span></p>
+                </div>
+              </template>
+
+              <div class="pt-4 border-t border-slate-100">
+                <div class="flex items-center justify-between gap-3 mb-2">
+                  <p class="text-[10px] font-semibold text-amber-600 uppercase tracking-widest">达成证据 Fact</p>
+                  <span class="text-[10px] text-slate-400" x-text="`${selectedGoalEvidenceFacts().length} 条`"></span>
+                </div>
+                <template x-if="selectedGoalEvidenceFacts().length === 0">
+                  <p class="text-xs text-slate-400">本轮未保存可展示的 Fact 证据。</p>
+                </template>
+                <div class="space-y-2">
+                  <template x-for="fact in selectedGoalEvidenceFacts()" :key="`history-${selectedGoalHistoryId()}-${fact.id}`">
+                    <button type="button" @click="selectFact(fact.id); sideTab = 'detail'"
+                      class="w-full rounded-xl border border-amber-100 bg-amber-50/40 px-3 py-2 text-left hover:border-amber-300 hover:bg-amber-50 transition">
+                      <span class="font-mono text-[10px] font-semibold text-amber-700" x-text="fact.id"></span>
+                      <p class="mt-1 text-xs text-slate-600 leading-relaxed line-clamp-3" x-text="fact.description"></p>
+                    </button>
+                  </template>
+                </div>
               </div>
             </div>
           </section>
@@ -511,6 +590,12 @@
                 <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="v.description"></p>
               </div>
               <div>
+                <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">利用前提</p>
+                <p class="text-sm whitespace-pre-wrap break-words"
+                  :class="v.prerequisites ? 'text-slate-700' : 'text-slate-400 italic'"
+                  x-text="v.prerequisites || '未填写'"></p>
+              </div>
+              <div>
                 <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">影响</p>
                 <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="v.impact"></p>
               </div>
@@ -532,9 +617,11 @@
               </template>
               <div>
                 <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">修复建议</p>
-                <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="v.recommendation"></p>
+                <p class="text-sm whitespace-pre-wrap break-words"
+                  :class="v.remediation ? 'text-slate-700' : 'text-slate-400 italic'"
+                  x-text="v.remediation || '未填写'"></p>
               </div>
-              <p class="text-[11px] text-slate-400">影响范围：<span class="text-slate-600" x-text="v.affected_scope"></span></p>
+              <p class="text-[11px] text-slate-400">影响范围：<span class="text-slate-600" x-text="v.affected_target || '—'"></span></p>
             </div>
           </article>
         </template>

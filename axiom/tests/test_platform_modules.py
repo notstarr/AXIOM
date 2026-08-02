@@ -356,6 +356,27 @@ def test_vulnerability_format_is_shared_by_internal_management(client) -> None:
     assert old_shape.status_code == 422
 
 
+def test_human_vulnerability_can_omit_prerequisites_and_remediation(client) -> None:
+    _project, task = _project_task(client)
+
+    reported = client.post(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities",
+        json={
+            "title": "人工待补充漏洞",
+            "type": "配置问题",
+            "severity": "medium",
+            "description": "人工先记录核心现象。",
+            "impact": "可能造成敏感配置暴露。",
+            "source": "human",
+            "reported_by": "human",
+        },
+    )
+
+    assert reported.status_code == 201, reported.text
+    assert reported.json()["prerequisites"] == ""
+    assert reported.json()["remediation"] == ""
+
+
 def test_vulnerability_artifact_roles_are_validated(client) -> None:
     _project, task = _project_task(client)
     now = "2026-07-27T00:00:00Z"

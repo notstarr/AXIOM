@@ -31,10 +31,12 @@
 axiom explore vulnerability report \
   --title "漏洞标题" --type "漏洞类型" --severity high \
   --description "漏洞简述" \
+  --prerequisites "利用所需的身份、权限或环境条件" \
+  --remediation "可执行的服务端修复方案" \
   --impact "实际影响"
 ```
 
-`--evidence-path` 是可选、可重复参数。有现成证据时再追加并关联已经写入的 `evidence/**` 相对路径；没有可用证据时直接省略，漏洞仍会以“待验证”状态落库并关联本轮 `findings.md`。CLI 会从执行环境自动补齐 `intent_id`、`source`、`reported_by`，并通过 HTTP API 校验当前租约。重复执行同一上报是幂等的。
+`--prerequisites` 和 `--remediation` 必须填写，分别说明利用所需条件和可执行的修复方案；长文本可使用对应的 `--*-file` 参数。`--evidence-path` 是可选、可重复参数。有现成证据时再追加并关联已经写入的 `evidence/**` 相对路径；没有可用证据时直接省略，漏洞仍会以“待验证”状态落库并关联本轮 `findings.md`。CLI 会从执行环境自动补齐 `intent_id`、`source`、`reported_by`，并通过 HTTP API 校验当前租约。重复执行同一上报是幂等的。
 
 8. 不要直接修改图谱、待办或其它执行意图。代码会根据产物和 CLI 上报结果生成事实、漏洞记录并触发下一次推理规划。
 9. 当前执行意图已形成可写入 `findings.md` 和 `leads.md` 的结论后立即停止，不要为了耗尽预算、补齐证据或追求表面完整而重复请求，也不要顺手测试无关方向。

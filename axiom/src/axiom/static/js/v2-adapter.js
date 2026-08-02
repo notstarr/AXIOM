@@ -842,6 +842,48 @@
         this.projectDetailsError = error?.message || String(error);
       }
     },
+    applyVulnerabilityRouteParams(params) {
+      const taskId = String(params?.get('task') || '');
+      const vulnerabilityId = taskId ? String(params?.get('vulnerability') || '') : '';
+      this.vulnerabilityRouteTaskId = taskId;
+      this.vulnerabilityRouteId = vulnerabilityId;
+      this.vulnerabilitySelectionBlocked = false;
+      if (!taskId) return;
+      this.showVulnBoard = false;
+      this.vulnFilter = { ...(this.vulnFilter || {}), projectId: taskId, keyword: '' };
+      this.vulnerabilityPage = 0;
+      this.selectedVulnerabilityKey = vulnerabilityId ? `${taskId}:${vulnerabilityId}` : '';
+    },
+    vulnerabilityHash(taskId = '', vulnerabilityId = '') {
+      const params = new URLSearchParams();
+      if (taskId) params.set('task', taskId);
+      if (taskId && vulnerabilityId) params.set('vulnerability', vulnerabilityId);
+      const query = params.toString();
+      return `#/vulnerabilities${query ? `?${query}` : ''}`;
+    },
+    openVulnerabilityLocation(taskId, vulnerabilityId) {
+      if (!taskId || !vulnerabilityId) return;
+      const target = this.vulnerabilityHash(taskId, vulnerabilityId);
+      if (location.hash === target) {
+        this.applyVulnerabilityRouteParams(new URLSearchParams(target.split('?')[1] || ''));
+        this.loadVulnerabilityPage();
+      } else {
+        location.hash = target;
+      }
+    },
+    clearVulnerabilityRouteTarget(taskId = '') {
+      const retainedTaskId = String(taskId || this.vulnerabilityRouteTaskId || '');
+      this.vulnerabilityRouteTaskId = retainedTaskId;
+      this.vulnerabilityRouteId = '';
+      if (window.history?.replaceState) {
+        window.history.replaceState(null, '', this.vulnerabilityHash(retainedTaskId));
+      }
+    },
+    selectVulnerability(vulnerability) {
+      if (!vulnerability) return;
+      this.vulnerabilitySelectionBlocked = false;
+      this.selectedVulnerabilityKey = this.vulnerabilityKey(vulnerability);
+    },
     async loadVulnerabilityPage(options = {}) {
       const requestId = ++this._vulnerabilityListRequestId;
       this.vulnerabilityLoading = true;
@@ -858,14 +900,45 @@
         });
         const taskMap = new Map((this.projects || []).map(task => [task.id, task]));
         const projectMap = new Map((this.projectGroups || []).map(project => [project.id, project]));
-        const items = page.items.map(item => {
+        let items = page.items.map(item => {
           const task = taskMap.get(item.task_id) || { id: item.task_id, project_id: '' };
           return mapVulnerability(item, task, projectMap.get(task.project_id));
         });
+        const routeTaskId = String(this.vulnerabilityRouteTaskId || '');
+        const routeVulnerabilityId = String(this.vulnerabilityRouteId || '');
+        let routeLookupFailed = false;
+        let routeTarget = routeTaskId && routeVulnerabilityId
+          ? items.find(item => item.task_id === routeTaskId && item.id === routeVulnerabilityId)
+          : null;
+        if (routeTaskId && routeVulnerabilityId && !routeTarget) {
+          try {
+            const raw = await request(
+              'GET',
+              `/tasks/${routeTaskId}/vulnerabilities/${routeVulnerabilityId}`,
+              null,
+              { signal: this._pageAbortController?.signal },
+            );
+            if (raw?.archived) throw new Error('漏洞已归档');
+            const task = taskMap.get(routeTaskId) || { id: routeTaskId, project_id: '' };
+            routeTarget = mapVulnerability(raw, task, projectMap.get(task.project_id));
+            items = [routeTarget, ...items.filter(item => this.vulnerabilityKey(item) !== this.vulnerabilityKey(routeTarget))];
+          } catch (error) {
+            if (error?.name === 'AbortError') return;
+            routeLookupFailed = true;
+            this.vulnerabilitySelectionBlocked = true;
+            this.selectedVulnerabilityKey = '';
+            this.clearVulnerabilityRouteTarget(routeTaskId);
+            this.showToast(error?.message === '漏洞已归档' ? '漏洞已归档，无法在当前列表中打开' : '漏洞不存在或无法打开', 'error');
+          }
+        }
         if (requestId !== this._vulnerabilityListRequestId) return;
         this.vulnerabilityItems = items;
         this.vulnerabilityTotal = page.total;
-        if (options.selectFirst !== false && this.vulnerabilityItems.length) {
+        if (routeTarget) {
+          this.vulnerabilitySelectionBlocked = false;
+          this.selectedVulnerabilityKey = this.vulnerabilityKey(routeTarget);
+        } else if (!routeLookupFailed && options.selectFirst !== false && this.vulnerabilityItems.length) {
+          this.vulnerabilitySelectionBlocked = false;
           this.selectedVulnerabilityKey = this.vulnerabilityKey(this.vulnerabilityItems[0]);
         }
       } catch (error) {

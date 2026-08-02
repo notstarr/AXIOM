@@ -133,8 +133,12 @@ def test_explore_cli_report_does_not_allow_worker_to_choose_identity(monkeypatch
             "high",
             "--description",
             "低权限用户读取了其他用户的数据。",
+            "--prerequisites",
+            "需要任意低权限账号。",
             "--impact",
             "导致数据泄露。",
+            "--remediation",
+            "服务端校验对象归属。",
             "--evidence-path",
             "evidence/request.txt",
             "--evidence-path",
@@ -152,6 +156,8 @@ def test_explore_cli_report_does_not_allow_worker_to_choose_identity(monkeypatch
     assert "source" not in payload["report"]
     assert "reported_by" not in payload["report"]
     assert "status" not in payload["report"]
+    assert payload["report"]["prerequisites"] == "需要任意低权限账号。"
+    assert payload["report"]["remediation"] == "服务端校验对象归属。"
     assert payload["report"]["evidence_paths"] == [
         "evidence/request.txt",
         "evidence/response.txt",
@@ -181,14 +187,100 @@ def test_explore_cli_allows_report_without_an_evidence_path(monkeypatch) -> None
             "high",
             "--description",
             "描述",
+            "--prerequisites",
+            "无需额外权限",
             "--impact",
             "影响",
+            "--remediation",
+            "增加服务端鉴权",
         ],
         env=_env(),
     )
 
     assert result.exit_code == 0, result.output
     assert calls[0][2]["report"]["evidence_paths"] == []
+
+
+def test_explore_cli_requires_prerequisites_and_remediation(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        "axiom.worker_cli._request",
+        lambda method, path, payload: calls.append((method, path, payload)),
+    )
+    base = [
+        "explore",
+        "vulnerability",
+        "report",
+        "--title",
+        "对象级授权缺失",
+        "--type",
+        "越权",
+        "--severity",
+        "high",
+        "--description",
+        "描述",
+        "--impact",
+        "影响",
+    ]
+
+    missing_prerequisites = CliRunner().invoke(
+        main,
+        [*base, "--remediation", "增加服务端鉴权"],
+        env=_env(),
+    )
+    missing_remediation = CliRunner().invoke(
+        main,
+        [*base, "--prerequisites", "无需额外权限"],
+        env=_env(),
+    )
+
+    assert missing_prerequisites.exit_code == 2
+    assert "prerequisites is required" in missing_prerequisites.output
+    assert missing_remediation.exit_code == 2
+    assert "remediation is required" in missing_remediation.output
+    assert calls == []
+
+
+def test_explore_cli_reads_required_fields_from_files(monkeypatch, tmp_path: Path) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return {"total": 1, "duplicate": False}
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+    prerequisites = tmp_path / "prerequisites.txt"
+    remediation = tmp_path / "remediation.txt"
+    prerequisites.write_text("需要低权限账号\n", encoding="utf-8")
+    remediation.write_text("校验对象归属\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "explore",
+            "vulnerability",
+            "report",
+            "--title",
+            "对象级授权缺失",
+            "--type",
+            "越权",
+            "--severity",
+            "high",
+            "--description",
+            "描述",
+            "--prerequisites-file",
+            str(prerequisites),
+            "--impact",
+            "影响",
+            "--remediation-file",
+            str(remediation),
+        ],
+        env=_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls[0][2]["report"]["prerequisites"] == "需要低权限账号"
+    assert calls[0][2]["report"]["remediation"] == "校验对象归属"
 
 
 def test_credential_cli_lists_metadata_through_the_current_intent_lease(monkeypatch) -> None:

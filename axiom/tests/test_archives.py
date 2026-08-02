@@ -545,10 +545,13 @@ def test_goal_evaluation_and_goal_edge_hide_archived_evidence(client, engine) ->
         json={"phase": "reason"},
     ).json()
     context_dir = Path(revision["manifest_path"]).parent
-    evaluations = json.loads(
-        (context_dir / "goal_evaluations.json").read_text(encoding="utf-8")
+    manifest = json.loads(
+        Path(revision["manifest_path"]).read_text(encoding="utf-8")
     )
-    assert evaluations == []
+    assert "goal_evaluations" not in manifest["indexes"]
+    assert "goal_cycles" not in manifest["indexes"]
+    assert not (context_dir / "goal_evaluations.json").exists()
+    assert not (context_dir / "goal_cycles.json").exists()
     expanded = client.post(
         f"/api/v1/tasks/{task['id']}/context/expand",
         json={"refs": ["goal_evaluation:ge_archive_test"]},

@@ -229,6 +229,11 @@ class ExecutionService:
             if task.status != "running":
                 raise LeaseInactiveError("Task is not running")
             hints = self.repository.hints(conn, task_id)
+            goal_cycle = (
+                self.reason.goals.get_cycle(conn, task_id, task.current_goal_cycle_id)
+                if task.current_goal_cycle_id
+                else None
+            )
 
         context = self.context.build(
             task_id=task_id,
@@ -243,6 +248,15 @@ class ExecutionService:
             "low_watermark": "补充即将耗尽的 Explore 工作队列",
             "max_wait": "处理等待时间达到上限的新 Fact",
         }.get(run.trigger, f"根据触发原因 {run.trigger} 增量规划下一轮测试")
+        goal_cycle_guidance = ""
+        if goal_cycle is not None and goal_cycle.sequence > 1:
+            goal_cycle_guidance = (
+                f"当前 Goal Cycle 的人工续跑原因：{goal_cycle.continuation_reason or '未说明'}。"
+                f"本轮重点：{goal_cycle.focus or '全面复盘'}。"
+                "该人工说明是有效的规划依据，可以结合已有 findings/leads 恢复仍有材料性工作的终态 Todo，"
+                "即使本轮没有新 Fact；但它不是 Fact，不能伪造为 Todo source、Intent from_fact 或 Goal evidence。"
+                "请依据当前 Goal 和原始 Fact、Todo、Intent、Artifact、漏洞独立判断，不要寻找或继承历史 Goal Evaluation。"
+            )
         if run.trigger == "manual":
             payload = run.trigger_payload
             trigger_summary = (
@@ -257,16 +271,25 @@ class ExecutionService:
             )
         elif run.trigger == "continuation":
             payload = run.trigger_payload
+            continuation_reason = (
+                goal_cycle.continuation_reason
+                if goal_cycle is not None
+                else payload.get("continuation_reason") or ""
+            )
+            focus = goal_cycle.focus if goal_cycle is not None else payload.get("focus") or ""
             trigger_summary = (
                 f"人工 {payload.get('actor') or '操作员'} 已将已完成任务续跑。"
-                f"上一轮 Goal：{payload.get('previous_goal') or '未记录'}。"
-                f"当前唯一 Goal：{payload.get('current_goal') or task.goal}。"
-                f"续跑原因：{payload.get('continuation_reason') or '未说明'}。"
-                f"本轮重点：{payload.get('focus') or '全面复盘'}。"
+                f"当前唯一 Goal：{task.goal}。"
+                f"人工续跑原因：{continuation_reason or '未说明'}。"
+                f"本轮重点：{focus or '全面复盘'}。"
                 "请复用历史 Fact、Todo、Intent、Artifact 和漏洞，但只评估当前 Goal；"
                 "不要自动恢复旧的 cancelled Intent，应按当前 Goal 选择性复用 Todo并提出新 Intent。"
-                "历史证据足以证明当前 Goal时允许直接评估达成；没有材料性新增方向时允许新增 0 个 Intent。"
+                "历史 Goal、Goal Evaluation 及其证据不会作为本轮上下文提供，"
+                "必须依据当前可见的原始事实和产物独立判断；人工续跑说明/重点可以作为恢复 Todo 和规划新 Intent 的依据，"
+                "没有材料性方向时才允许新增 0 个 Intent。"
             )
+        if goal_cycle_guidance:
+            trigger_summary += goal_cycle_guidance
         return ExecutionInput(
             task_id=task_id,
             project_id=task.project_id,

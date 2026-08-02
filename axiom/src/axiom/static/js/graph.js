@@ -82,6 +82,7 @@ window.AxiomModules.graph = {
             const size = this.factNodeSize(label, 'goal');
             nodes.push({ data: {
               id: historyNodeId,
+              goalCycleId: history.goal_cycle_id,
               label,
               description: label,
               nodeType: 'goal_history',
@@ -994,6 +995,13 @@ window.AxiomModules.graph = {
         else this.sideTab = 'detail';
         return;
       }
+      if (nt === 'goal_history') {
+        const goalCycleId = node.data('goalCycleId') || String(id).replace(/^_goal_history_/, '');
+        this.selectGoalHistory(goalCycleId);
+        if (keepLogFocus) this.scrollTimelineToSelection();
+        else this.sideTab = 'detail';
+        return;
+      }
       if (e.originalEvent.shiftKey) {
         this.toggleFactSelection(id);
         if (keepLogFocus) this.scrollTimelineToSelection();
@@ -1048,6 +1056,14 @@ window.AxiomModules.graph = {
       this.applyLineageHighlightForFact(factId);
     },
 
+    selectGoalHistory(goalCycleId) {
+      if (!goalCycleId) return;
+      this.selectedFacts = [];
+      this.selectedTimelineEntryId = null;
+      this.selectedNode = { type:'goal_history', id: goalCycleId };
+      this.applyGoalHistoryHighlight(goalCycleId);
+    },
+
     refreshGraphDecorations() {
       if (!this.selectedNode) {
         this.syncFactSelections();
@@ -1060,6 +1076,9 @@ window.AxiomModules.graph = {
           return;
         }
         this.applyLineageHighlightForFact(this.selectedNode.id);
+      }
+      if (this.selectedNode.type === 'goal_history') {
+        this.applyGoalHistoryHighlight(this.selectedNode.id);
       }
     },
 
@@ -1160,6 +1179,29 @@ window.AxiomModules.graph = {
       this.syncFactSelections();
     },
 
+    applyGoalHistoryHighlight(goalCycleId) {
+      if (!this.cy || !goalCycleId) return;
+      const history = (this.project?.goal_history || []).find(item => item.goal_cycle_id === goalCycleId);
+      if (!history) return;
+
+      const historyNodeId = `_goal_history_${goalCycleId}`;
+      const evidenceFactIds = new Set(history.evidence_fact_ids || []);
+      const historyNode = this.cy.getElementById(historyNodeId);
+      const evidenceNodes = this.cy.nodes().filter(node => evidenceFactIds.has(node.id()));
+      const evidenceEdges = this.cy.edges().filter(edge => (
+        edge.data('edgeType') === 'goal_evidence_history'
+        && edge.data('target') === historyNodeId
+      ));
+
+      this.cy.elements().removeClass('highlight focus faded selected-fact');
+      historyNode.addClass('highlight focus');
+      evidenceNodes.addClass('highlight');
+      evidenceEdges.addClass('highlight');
+
+      const visible = historyNode.add(evidenceNodes).add(evidenceEdges);
+      this.cy.elements().not(visible).addClass('faded');
+    },
+
     getProducingIntent(fid) {
       return this.project ? this.project.intents.find(i => i.to === fid) || null : null;
     },
@@ -1185,6 +1227,36 @@ window.AxiomModules.graph = {
       return this.selectedFacts.map(fid => factsById.get(fid)).filter(Boolean);
     },
 
+    factDescriptionSegments(factOrDescription) {
+      const description = typeof factOrDescription === 'string'
+        ? factOrDescription
+        : String(factOrDescription?.description || '');
+      const pattern = /\b(?:artifact:a[0-9A-Za-z_-]+|vulnerability:v[0-9A-Za-z_-]+)\b/g;
+      const segments = [];
+      let cursor = 0;
+      for (const match of description.matchAll(pattern)) {
+        if (match.index > cursor) {
+          segments.push({ kind:'text', text:description.slice(cursor, match.index) });
+        }
+        const [kind, id] = match[0].split(':', 2);
+        segments.push({ kind, id, text:match[0] });
+        cursor = match.index + match[0].length;
+      }
+      if (cursor < description.length) segments.push({ kind:'text', text:description.slice(cursor) });
+      if (segments.length === 0) segments.push({ kind:'text', text:description });
+      return segments;
+    },
+
+    openFactReference(segment) {
+      const taskId = this.project?.project?.id || this.selectedProjectId || '';
+      if (!taskId || !segment?.id) return;
+      if (segment.kind === 'artifact') {
+        this.openArtifactLocation(taskId, segment.id);
+      } else if (segment.kind === 'vulnerability') {
+        this.openVulnerabilityLocation(taskId, segment.id);
+      }
+    },
+
     selectedIntentId() {
       return this.selectedNode?.type === 'intent' ? this.selectedNode.id : null;
     },
@@ -1193,6 +1265,36 @@ window.AxiomModules.graph = {
       const intentId = this.selectedIntentId();
       if (!this.project || !intentId) return null;
       return this.project.intents.find(i => i.id === intentId) || null;
+    },
+
+    selectedGoalHistoryId() {
+      return this.selectedNode?.type === 'goal_history' ? this.selectedNode.id : null;
+    },
+
+    selectedGoalHistoryRecord() {
+      const goalCycleId = this.selectedGoalHistoryId();
+      if (!this.project || !goalCycleId) return null;
+      return (this.project.goal_history || []).find(item => item.goal_cycle_id === goalCycleId) || null;
+    },
+
+    selectedGoalCycleRecord() {
+      const goalCycleId = this.selectedGoalHistoryId();
+      if (!this.project || !goalCycleId) return null;
+      return (this.project.goal_cycles || []).find(item => item.id === goalCycleId) || null;
+    },
+
+    selectedGoalEvaluationRecord() {
+      const goalCycleId = this.selectedGoalHistoryId();
+      if (!this.project || !goalCycleId) return null;
+      const evaluations = (this.project.goal_evaluations || []).filter(item => item.goal_cycle_id === goalCycleId);
+      return evaluations.find(item => item.achieved) || evaluations[0] || null;
+    },
+
+    selectedGoalEvidenceFacts() {
+      const history = this.selectedGoalHistoryRecord();
+      if (!this.project || !history) return [];
+      const factsById = new Map((this.project.facts || []).map(fact => [fact.id, fact]));
+      return (history.evidence_fact_ids || []).map(factId => factsById.get(factId)).filter(Boolean);
     },
 
     intentActivityVisible(intent) {

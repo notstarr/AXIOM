@@ -221,10 +221,13 @@ def test_reason_prompt_requires_small_todos_and_intents_without_fixed_budget_exa
     assert "最多包含 2–3 个紧密相关" in prompt
     assert "获取对象 ID、准备登录态" in prompt
     assert "完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`" in prompt
+    assert "Reason 上下文不会披露历史 Goal、Goal Evaluation 及其证据" in prompt
+    assert "goal_cycles.json" not in prompt
+    assert "goal_evaluations.json" not in prompt
     assert "status_reason" in prompt
     assert "本轮新事实（Fact）：`[\"f002\", \"f003\"]`" in prompt
     assert "完整读取上下文清单中的 `todos.json` 索引" in prompt
-    assert "完成新事实和 `todo_review_ids` 处理前，禁止新增待办或派发执行意图" in prompt
+    assert "完成新事实（若有）和 `todo_review_ids` 处理前，禁止新增待办或派发执行意图" in prompt
     assert "已有同义开放执行意图时禁止重复派发" in prompt
     assert "本轮新增 0 个执行意图是合法结果" in prompt
     assert "不得为了凑数派发重复执行意图" in prompt
@@ -244,6 +247,7 @@ def test_reason_conclude_prompt_allows_a_no_op_plan() -> None:
 
     assert "本轮新增 0 个执行意图是合法结果" in prompt
     assert "不得为了凑数重复派发" in prompt
+    assert "没有新 Fact" in prompt
     assert "至少保留一个可执行" not in prompt
 
 

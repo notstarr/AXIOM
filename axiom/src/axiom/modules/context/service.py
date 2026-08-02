@@ -93,8 +93,28 @@ class ContextService:
 
                 revision = allocate_sequence(conn, scope=task_id, kind="context_revision")
                 base_key = f"contexts/{task_id}/r{revision:06d}"
-                files = self._index_files(conn, task)
+                include_goal_history = phase != "reason"
+                files = self._index_files(
+                    conn,
+                    task,
+                    include_goal_history=include_goal_history,
+                )
                 manifest_key = f"{base_key}/manifest.json"
+                indexes = {
+                    "graph": f"{base_key}/graph.json",
+                    "todos": f"{base_key}/todos.json",
+                    "artifacts": f"{base_key}/artifacts.json",
+                    "hints": f"{base_key}/hints.json",
+                    "vulnerabilities": f"{base_key}/vulnerabilities.json",
+                    "knowledge": f"{base_key}/knowledge.json",
+                }
+                if include_goal_history:
+                    indexes.update(
+                        {
+                            "goal_evaluations": f"{base_key}/goal_evaluations.json",
+                            "goal_cycles": f"{base_key}/goal_cycles.json",
+                        }
+                    )
                 manifest = {
                     "task_id": task_id,
                     "revision": revision,
@@ -104,16 +124,7 @@ class ContextService:
                     "lease_id": lease_id,
                     "goal": task["goal"],
                     "origin": task["origin_input"],
-                    "indexes": {
-                        "graph": f"{base_key}/graph.json",
-                        "todos": f"{base_key}/todos.json",
-                        "artifacts": f"{base_key}/artifacts.json",
-                        "hints": f"{base_key}/hints.json",
-                        "vulnerabilities": f"{base_key}/vulnerabilities.json",
-                        "knowledge": f"{base_key}/knowledge.json",
-                        "goal_evaluations": f"{base_key}/goal_evaluations.json",
-                        "goal_cycles": f"{base_key}/goal_cycles.json",
-                    },
+                    "indexes": indexes,
                     "detail_resolution": "将索引条目的 detail 与 manifest 所在目录拼接后读取",
                     "expansion": f"POST /api/v1/tasks/{task_id}/context/expand with refs",
                 }
@@ -166,7 +177,13 @@ class ContextService:
                 entries[ref] = self._expand_one(conn, task_id, kind, item_id)
         return ExpandedContext(task_id=task_id, entries=entries)
 
-    def _index_files(self, conn, task) -> dict[str, str]:
+    def _index_files(
+        self,
+        conn,
+        task,
+        *,
+        include_goal_history: bool,
+    ) -> dict[str, str]:
         files: dict[str, str] = {}
         fact_rows = self.repository.facts(conn, task["id"])
         intent_rows = self.repository.intents(conn, task["id"])
@@ -175,8 +192,16 @@ class ContextService:
         hint_rows = self.repository.hints(conn, task["id"])
         vulnerability_rows = self.repository.vulnerabilities(conn, task["id"])
         knowledge_rows = self.repository.knowledge(conn, task["project_id"])
-        goal_rows = self.repository.goal_evaluations(conn, task["id"])
-        goal_cycle_rows = self.repository.goal_cycles(conn, task["id"])
+        goal_rows = (
+            self.repository.goal_evaluations(conn, task["id"])
+            if include_goal_history
+            else []
+        )
+        goal_cycle_rows = (
+            self.repository.goal_cycles(conn, task["id"])
+            if include_goal_history
+            else []
+        )
         visible_fact_ids = {row["id"] for row in fact_rows}
         visible_intent_ids = {row["id"] for row in intent_rows}
         visible_goal_rows = [
@@ -365,10 +390,15 @@ class ContextService:
                 "hints.json": _json(hint_index),
                 "vulnerabilities.json": _json(vulnerability_index),
                 "knowledge.json": _json(knowledge_index),
-                "goal_evaluations.json": _json(goal_index),
-                "goal_cycles.json": _json(goal_cycle_index),
             }
         )
+        if include_goal_history:
+            files.update(
+                {
+                    "goal_evaluations.json": _json(goal_index),
+                    "goal_cycles.json": _json(goal_cycle_index),
+                }
+            )
         return files
 
     @staticmethod

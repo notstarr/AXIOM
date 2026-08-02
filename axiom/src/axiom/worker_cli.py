@@ -315,9 +315,15 @@ def register_worker_commands(main: click.Group) -> None:
                 prerequisites,
                 prerequisites_file,
                 "prerequisites",
+                required=True,
             ),
             "impact": _text_value(impact, impact_file, "impact", required=True),
-            "remediation": _text_value(remediation, remediation_file, "remediation"),
+            "remediation": _text_value(
+                remediation,
+                remediation_file,
+                "remediation",
+                required=True,
+            ),
             "evidence_paths": list(evidence_path),
             "affected_target": affected_target,
         }

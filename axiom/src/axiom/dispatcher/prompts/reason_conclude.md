@@ -9,9 +9,9 @@
 - 工作区（Workspace）：`{workspace_id}`
 - 运行目录：`{run_dir}`
 
-使用 Axiom CLI 修正工作区。本轮新增 0 个执行意图是合法结果：没有材料性的新方向时，不得为了凑数重复派发；如果当前也没有开放探索执行意图，先将 `todos.json` 中所有无后续工作的 `pending/active` 待办收口为 `completed/rejected/obsolete`，再提交目标未达成的评估，任务将进入 `waiting`。目标达成时不得有新执行意图，且证据至少包含真实事实。不要写整体 JSON 文件。
+使用 Axiom CLI 修正工作区。本轮新增 0 个执行意图是合法结果，但不得为了凑数重复派发，也不能把“没有新 Fact”“Todo 已是终态”或“当前没有开放 Explore”直接当成没有工作的证明。收口前必须依据当前 Goal、人工续跑说明/重点以及已读取的 findings/leads 判断：若存在材料性、当前可执行且尚无同义开放 Intent 的遗留方向，复用/恢复原 Todo（不得新建同义 Todo），必要时更新为 `active` 并派发非重复 Intent；只有确实没有材料性方向，或方向仅被预算、工具、凭证等外部条件阻塞且没有可执行替代时，才允许 0 Intent 并进入 `waiting`，并明确原因。目标达成时不得有新执行意图，且证据至少包含真实事实。不要写整体 JSON 文件。
 
-先运行 `axiom reason status`，确认每个 `source_fact_id` 已通过待办来源、执行意图的 `from_fact` 或目标证据被消费；先修正受新事实影响的已有待办，再处理 `todo_review_ids`。完成这两步前不要补建待办或重复派发执行意图。
+先运行 `axiom reason status`，如果存在 `source_fact_id`，确认每个新 Fact 已通过待办来源、执行意图的 `from_fact` 或目标证据被消费；如果为空，仍要检查当前 Goal、人工续跑说明/重点和历史 findings/leads 是否要求恢复终态 Todo。先修正受新事实或上述规划依据影响的已有待办，再处理 `todo_review_ids`；完成这两步前不要补建待办或重复派发执行意图。人工说明可以指导恢复 Todo，但不是 Fact，不能写成伪造的 Fact source 或 Goal evidence。
 
 最后一条助手消息必须严格等于：
 
