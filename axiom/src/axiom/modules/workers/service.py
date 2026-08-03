@@ -4,6 +4,7 @@ import httpx
 from sqlalchemy import Engine, func, select
 
 from axiom.modules.graph.tables import intents
+from axiom.modules.reason.tables import reason_runs
 from axiom.modules.workers.pi_config import PiWorkerConfig, canonicalize_pi_worker_config
 from axiom.modules.workers.repository import WorkerRepository
 from axiom.modules.workers.schemas import (
@@ -72,6 +73,16 @@ class WorkerService:
             ).scalar_one()
             if active:
                 raise ConflictError("Worker with active Intents cannot be deleted")
+            active_reason_runs = conn.execute(
+                select(func.count())
+                .select_from(reason_runs)
+                .where(
+                    reason_runs.c.worker == name,
+                    reason_runs.c.status.in_(["claimed", "running", "concluding"]),
+                )
+            ).scalar_one()
+            if active_reason_runs:
+                raise ConflictError("Worker with active ReasonRuns cannot be deleted")
             self.repository.delete(conn, name)
 
     def list_models(

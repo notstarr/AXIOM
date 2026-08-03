@@ -7,6 +7,14 @@ from pathlib import Path
 from typing import Iterable
 
 
+_NMAP_REQUIRED_DATA = (
+    "nmap-services",
+    "nmap-protocols",
+    "nse_main.lua",
+    "scripts/script.db",
+)
+
+
 def build_tool_path(
     *,
     inherited: str | None = None,
@@ -40,6 +48,39 @@ def build_tool_path(
         *_split(inherited if inherited is not None else os.environ.get("PATH", "")),
     ]
     return os.pathsep.join(dict.fromkeys(path for path in candidates if path))
+
+
+def discover_tool_environment(
+    inherited: dict[str, str] | None = None,
+    *,
+    home: Path | None = None,
+) -> dict[str, str]:
+    """Discover environment variables required by locally installed tools.
+
+    Some standalone security-tool binaries are installed separately from their
+    runtime data.  Nmap is the important case: the binary can return a valid
+    version while service detection and NSE both fail unless ``NMAPDIR`` points
+    at the matching data directory.  Only inject a directory after validating
+    the complete minimum dataset, and never override an operator supplied
+    ``NMAPDIR``.
+    """
+
+    environment = inherited or {}
+    if environment.get("NMAPDIR"):
+        return {}
+
+    user_home = home or Path(environment.get("HOME") or Path.home())
+    configured = environment.get("AXIOM_NMAP_DATA_DIR", "").strip()
+    candidates = [
+        *([Path(configured).expanduser()] if configured else []),
+        user_home / ".local" / "share" / "nmap",
+        Path("/opt/homebrew/share/nmap"),
+        Path("/usr/local/share/nmap"),
+    ]
+    for candidate in candidates:
+        if all((candidate / relative).is_file() for relative in _NMAP_REQUIRED_DATA):
+            return {"NMAPDIR": str(candidate.resolve())}
+    return {}
 
 
 def prepare_runtime_bin(

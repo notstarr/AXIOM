@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Response, status
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
+from axiom.modules.axiom_tools.schemas import WorkerOverview
 from axiom.modules.workers.schemas import (
     UpsertWorker,
     Worker,
@@ -15,6 +16,13 @@ from axiom.modules.workers.schemas import (
 
 
 router = APIRouter(prefix="/workers", tags=["workers"])
+
+
+@router.get("/overview", response_model=list[WorkerOverview])
+def list_worker_overview(
+    container: Container = Depends(get_container),
+) -> list[WorkerOverview]:
+    return container.axiom_tools.worker_overview()
 
 
 @router.put("/{name}", response_model=Worker)

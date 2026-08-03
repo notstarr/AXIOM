@@ -23,6 +23,7 @@ REQUIRED_TABLES = frozenset(
         "artifacts",
         "archive_batches",
         "archive_batch_members",
+        "axiom_tools",
         "audit_events",
         "context_revisions",
         "credential_refreshes",
@@ -48,6 +49,7 @@ REQUIRED_TABLES = frozenset(
         "goal_evaluations",
         "todo_sources",
         "workers",
+        "worker_axiom_tool_bindings",
         "llm_token_usage",
         "llm_token_usage_sources",
     }

@@ -25,16 +25,27 @@ mitm_addon.py — mitmproxy addon，记录 HTTP 流量到 JSONL 文件
 """
 
 import gzip
+import fcntl
 import json
 import os
 import time
 import uuid
 import zlib
+from pathlib import Path
 
 from mitmproxy import tls
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 FLOW_FILE = os.getenv("PROXY_FLOW_FILE", "/tmp/proxy_flows.jsonl")
 TARGET_HOST = os.getenv("MITM_TARGET_HOST", "")
+FLOW_MAX_BYTES = max(_env_int("PROXY_FLOW_MAX_BYTES", 64 * 1024 * 1024), 1024 * 1024)
+FLOW_BACKUPS = min(max(_env_int("PROXY_FLOW_BACKUPS", 3), 0), 20)
 
 # 直接跳过的静态资源后缀
 SKIP_EXTENSIONS = {
@@ -87,6 +98,37 @@ def _body_text(content: bytes, content_type: str) -> str:
         return content.decode(charset or "utf-8", errors="replace")[:10000]
     except Exception:
         return ""
+
+
+def _rotate_flow_file(path: Path) -> None:
+    if not path.exists():
+        return
+    if FLOW_BACKUPS <= 0:
+        path.unlink(missing_ok=True)
+        return
+    Path(f"{path}.{FLOW_BACKUPS}").unlink(missing_ok=True)
+    for index in range(FLOW_BACKUPS - 1, 0, -1):
+        source = Path(f"{path}.{index}")
+        if source.exists():
+            os.replace(source, Path(f"{path}.{index + 1}"))
+    os.replace(path, Path(f"{path}.1"))
+
+
+def _append_record(record: dict) -> None:
+    path = Path(FLOW_FILE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = (json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8")
+    lock_path = Path(f"{path}.lock")
+    with lock_path.open("a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            current_size = path.stat().st_size if path.exists() else 0
+            if current_size and current_size + len(encoded) > FLOW_MAX_BYTES:
+                _rotate_flow_file(path)
+            with path.open("ab") as output:
+                output.write(encoded)
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 class TlsPassthrough:
@@ -143,9 +185,7 @@ class FlowRecorder:
         }
 
         try:
-            os.makedirs(os.path.dirname(FLOW_FILE) or ".", exist_ok=True)
-            with open(FLOW_FILE, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            _append_record(record)
         except Exception:
             pass
 

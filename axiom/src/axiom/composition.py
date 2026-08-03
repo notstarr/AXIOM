@@ -6,6 +6,7 @@ from pathlib import Path
 from sqlalchemy import Engine
 
 from axiom.modules.artifacts.service import ArtifactService
+from axiom.modules.axiom_tools.service import AxiomToolService
 from axiom.modules.archives.service import ArchiveService
 from axiom.modules.audit.service import AuditService
 from axiom.modules.context.service import ContextService
@@ -39,6 +40,7 @@ class Container:
     projects: ProjectService
     tasks: TaskService
     graph: GraphService
+    axiom_tools: AxiomToolService
     workers: WorkerService
     dispatch: DispatchService
     artifacts: ArtifactService
@@ -70,6 +72,8 @@ class Container:
         context = ContextService(engine, store)
         reason = ReasonService(engine, store=store)
         skills = SkillService(data_dir, engine=engine)
+        axiom_tools = AxiomToolService(engine, data_dir, skills=skills)
+        axiom_tools.scan()
         settings = RuntimeSettingsService(engine)
         token_usage = TokenUsageService(engine)
         return cls(
@@ -77,13 +81,21 @@ class Container:
             projects=ProjectService(engine),
             tasks=TaskService(engine),
             graph=GraphService(engine, archives=archives),
+            axiom_tools=axiom_tools,
             workers=WorkerService(engine),
             dispatch=DispatchService(engine),
             artifacts=ArtifactService(engine, store, archives=archives),
             archives=archives,
             audit=AuditService(engine),
             store=store,
-            execution=ExecutionService(engine, store, context, reason, skills),
+            execution=ExecutionService(
+                engine,
+                store,
+                context,
+                reason,
+                skills,
+                axiom_tools,
+            ),
             todos=TodoService(engine),
             reason=reason,
             context=context,

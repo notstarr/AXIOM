@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -17,6 +18,10 @@ PI_NODE_BINARY = Path(
     "/Users/hexin/.workbuddy/binaries/node/versions/22.22.2/bin/node"
 )
 _LEGACY_PI_BINARIES = frozenset({"", "pi", "/usr/local/bin/pi"})
+_PI_PACKAGE_RELATIVE_PATH = Path(
+    "node_modules", "@earendil-works", "pi-coding-agent", "package.json"
+)
+_PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent"
 PiThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh", "max"]
 _PI_THINKING_LEVELS = frozenset({"minimal", "low", "medium", "high", "xhigh", "max"})
 
@@ -163,15 +168,64 @@ def _validate_pi_runtime(binary: str) -> None:
             "Pi Worker 必须使用版本化运行时："
             f"{expected}；当前配置为：{binary}"
         )
-    _require_runtime_version(expected, PI_RUNTIME_VERSION, label="Pi")
+    _require_pi_runtime_version(expected, PI_RUNTIME_VERSION)
     _require_runtime_version(PI_NODE_BINARY, PI_NODE_VERSION, label="Node")
 
 
-def _require_runtime_version(binary: Path, expected: str, *, label: str) -> None:
+def _require_pi_runtime_version(binary: Path, expected: str) -> None:
+    """Validate Pi without starting its full CLI/bootstrap path.
+
+    ``pi --version`` is not a cheap metadata lookup in Pi 0.82.x: it can load
+    extensions and perform startup/catalog work.  Running it during every
+    Runner claim made a healthy Bootstrap lease look like
+    ``runner_dispatch_failed`` when the five-second probe timed out.  The
+    pinned package metadata is local and authoritative for the version check.
+    """
+
+    _require_executable(binary, label="Pi")
+    metadata = binary.expanduser().parent.parent / _PI_PACKAGE_RELATIVE_PATH
+    if not metadata.is_file():
+        raise PiRuntimeError(f"Pi 运行时元数据不存在：{metadata}")
+    try:
+        payload = json.loads(metadata.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PiRuntimeError(f"无法读取 Pi 运行时元数据：{metadata}") from exc
+    if not isinstance(payload, dict):
+        raise PiRuntimeError(f"Pi 运行时元数据格式错误：{metadata}")
+
+    package_name = str(payload.get("name") or "").strip()
+    if package_name != _PI_PACKAGE_NAME:
+        raise PiRuntimeError(
+            f"Pi 运行时包错误：期望 {_PI_PACKAGE_NAME}，实际 {package_name or '未知'}"
+        )
+    actual_version = str(payload.get("version") or "").strip()
+    if actual_version != expected:
+        raise PiRuntimeError(
+            f"Pi 运行时版本错误：期望 {expected}，实际 {actual_version or '未知'}"
+        )
+
+    package_root = metadata.parent.resolve()
+    bin_field = payload.get("bin")
+    cli_relative = bin_field.get("pi") if isinstance(bin_field, dict) else ""
+    if not isinstance(cli_relative, str) or not cli_relative.strip():
+        raise PiRuntimeError(f"Pi 运行时元数据缺少 bin.pi：{metadata}")
+    try:
+        cli_entry = (package_root / cli_relative).resolve()
+        cli_entry.relative_to(package_root)
+    except (OSError, ValueError) as exc:
+        raise PiRuntimeError(f"Pi CLI 入口越界或无法解析：{cli_relative}") from exc
+    _require_executable(cli_entry, label="Pi CLI")
+
+
+def _require_executable(binary: Path, *, label: str) -> None:
     if not binary.is_file():
         raise PiRuntimeError(f"{label} 运行时不存在：{binary}")
     if not binary.stat().st_mode & 0o111:
         raise PiRuntimeError(f"{label} 运行时不可执行：{binary}")
+
+
+def _require_runtime_version(binary: Path, expected: str, *, label: str) -> None:
+    _require_executable(binary, label=label)
     try:
         result = subprocess.run(
             [str(binary), "--version"],

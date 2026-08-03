@@ -109,6 +109,46 @@ def test_pi_json_and_rpc_modes_append_the_shared_context_attention_rule(tmp_path
         assert "不得用记忆、常识或其它 Skill 替代" in argv[index + 1]
 
 
+@pytest.mark.parametrize("mode", ["json", "rpc"])
+def test_pi_adapter_loads_only_selected_axiom_tool_extensions(
+    tmp_path: Path, mode: str
+) -> None:
+    executor = PiBootstrapExecutor(pi_worker(tmp_path / "unused-pi"))
+    package_extension = tmp_path / "search_text" / "index.ts"
+    package_extension.parent.mkdir()
+    package_extension.write_text("export default function () {}\n", encoding="utf-8")
+
+    argv = executor._build_argv(
+        "测试提示",
+        tmp_path / "sessions",
+        ["read", "bash"],
+        mode=mode,
+        axiom_tool_extensions=[str(package_extension)],
+        axiom_tool_keys=["search_text"],
+    )
+
+    assert argv[argv.index("--tools") + 1] == "read,bash,search_text"
+    extensions = [argv[index + 1] for index, value in enumerate(argv) if value == "--extension"]
+    assert extensions[0] == str(package_extension)
+    assert extensions[-1].endswith("/extensions/axiom-tool-activation/index.ts")
+    assert "find_files" not in " ".join(argv)
+    assert ("-p" in argv) is (mode == "json")
+
+
+def test_pi_adapter_does_not_load_activation_without_selected_tools(tmp_path: Path) -> None:
+    executor = PiBootstrapExecutor(pi_worker(tmp_path / "unused-pi"))
+
+    argv = executor._build_argv(
+        "测试提示",
+        tmp_path / "sessions",
+        ["read"],
+        axiom_tool_extensions=[],
+        axiom_tool_keys=[],
+    )
+
+    assert "axiom-tool-activation" not in " ".join(argv)
+
+
 @pytest.mark.parametrize(
     ("enabled", "level", "expected_level"),
     [(False, "high", "off"), (True, "high", "high"), (True, "max", "max")],
@@ -191,6 +231,88 @@ def test_pi_adapter_materializes_custom_provider_and_shared_skill_paths(tmp_path
     models = (run_dir / "models.json").read_text(encoding="utf-8")
     assert '"providers":{"axiom"' in models
     assert '"apiKey":"test-key"' in models
+
+
+def test_pi_adapter_injects_discovered_nmap_data_directory(
+    tmp_path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    data_dir = home / ".local" / "share" / "nmap"
+    for relative in (
+        "nmap-services",
+        "nmap-protocols",
+        "nse_main.lua",
+        "scripts/script.db",
+    ):
+        path = data_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("test", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    script = make_script(
+        tmp_path,
+        "test \"$NMAPDIR\" = \"$EXPECTED_NMAPDIR\"\n"
+        "printf '# 资产' > \"$AXIOM_RUN_DIR/asset_inventory.md\"\n"
+        "printf '# 线索' > \"$AXIOM_RUN_DIR/initial_leads.md\"\n"
+        "printf '# 无漏洞' > \"$AXIOM_RUN_DIR/findings.md\"\n"
+        "printf 'FINISH'",
+    )
+    worker = pi_worker(script).model_copy(
+        update={
+            "config": {
+                "binary": str(script),
+                "model": "test-model",
+                "environment": {"EXPECTED_NMAPDIR": str(data_dir.resolve())},
+            }
+        }
+    )
+
+    output = PiBootstrapExecutor(worker).execute(
+        execution_input(tmp_path / "run"), lease_active=lambda: True
+    )
+
+    assert output == "FINISH"
+
+
+def test_pi_adapter_closes_browser_tabs_registered_to_finished_lease(
+    tmp_path: Path,
+) -> None:
+    browser_skill = tmp_path / "browser-control"
+    cleanup_script = browser_skill / "scripts" / "cdp_ctl.py"
+    cleanup_script.parent.mkdir(parents=True)
+    cleanup_script.write_text(
+        "import json, os, pathlib, sys\n"
+        "pathlib.Path(os.environ['CLEANUP_RECORD']).write_text("
+        "json.dumps(sys.argv), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    record = tmp_path / "cleanup.json"
+    script = make_script(
+        tmp_path,
+        "printf '# 资产' > \"$AXIOM_RUN_DIR/asset_inventory.md\"\n"
+        "printf '# 线索' > \"$AXIOM_RUN_DIR/initial_leads.md\"\n"
+        "printf '# 无漏洞' > \"$AXIOM_RUN_DIR/findings.md\"\n"
+        "printf 'FINISH'",
+    )
+    worker = pi_worker(script).model_copy(
+        update={
+            "config": {
+                "binary": str(script),
+                "model": "test-model",
+                "environment": {"CLEANUP_RECORD": str(record)},
+            }
+        }
+    )
+    input_value = execution_input(tmp_path / "run").model_copy(
+        update={"skill_directories": [str(browser_skill)]}
+    )
+
+    output = PiBootstrapExecutor(worker).execute(
+        input_value, lease_active=lambda: True
+    )
+
+    assert output == "FINISH"
+    argv = json.loads(record.read_text(encoding="utf-8"))
+    assert argv[-2:] == ["close-lease-tabs", "lease_test"]
 
 
 def test_pi_adapter_converts_process_timeout_to_closeout_signal(tmp_path) -> None:
@@ -479,6 +601,9 @@ def test_explore_conclude_also_uses_rpc_without_another_reminder(tmp_path) -> No
             "context_manifest_path": str(tmp_path / "context.json"),
             "execute_timeout_seconds": 600,
             "conclude_timeout_seconds": 180,
+            "axiom_tool_keys": ["search_text"],
+            "axiom_tool_extensions": [str(tmp_path / "search_text" / "index.ts")],
+            "axiom_tool_snapshot_path": str(tmp_path / "axiom-tools.json"),
         }
     )
     Path(input_value.context_manifest_path).write_text("{}", encoding="utf-8")
@@ -497,6 +622,8 @@ def test_explore_conclude_also_uses_rpc_without_another_reminder(tmp_path) -> No
     assert spec.steer_message is None
     assert spec.command[spec.command.index("--mode") + 1] == "rpc"
     assert "-p" not in spec.command
+    assert "search_text/index.ts" not in " ".join(spec.command)
+    assert "axiom-tool-activation" not in " ".join(spec.command)
 
 
 def test_explore_execute_and_conclude_reuse_the_same_pi_session(tmp_path) -> None:

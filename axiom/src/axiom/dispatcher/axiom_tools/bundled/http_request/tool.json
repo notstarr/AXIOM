@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "key": "http_request",
+  "title": "HTTP 请求",
+  "version": "1.0.0",
+  "description": "在任务 Scope 内发送结构化 HTTP 请求并返回受限响应。",
+  "entrypoint": "index.ts",
+  "supported_phases": ["bootstrap", "explore"],
+  "risk_tags": ["network", "scope-sensitive"],
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "url": {"type": "string", "description": "完整 HTTP 或 HTTPS URL"},
+      "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"], "default": "GET"},
+      "headers": {"type": "object", "additionalProperties": {"type": "string"}},
+      "body": {"type": "string", "description": "可选请求正文"},
+      "timeout_ms": {"type": "integer", "minimum": 100, "maximum": 30000, "default": 10000}
+    },
+    "required": ["url"],
+    "additionalProperties": false
+  },
+  "prompt_guidelines": ["使用 http_request 时只访问当前任务 Scope 内的目标；先复用已有漏洞和证据，避免重复请求。"]
+}

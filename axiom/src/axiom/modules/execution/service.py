@@ -44,6 +44,7 @@ from axiom.modules.execution.stage_outputs import (
     write_bootstrap_index,
 )
 from axiom.modules.graph.tables import facts
+from axiom.modules.axiom_tools.service import AxiomToolService
 from axiom.modules.reason.service import ReasonService
 from axiom.modules.settings.service import load_runtime_config
 from axiom.modules.workers.tables import workers
@@ -68,6 +69,7 @@ class ExecutionService:
         context: ContextService,
         reason: ReasonService,
         skills: SkillService,
+        axiom_tools: AxiomToolService,
     ):
         self.engine = engine
         self.store = store
@@ -76,6 +78,7 @@ class ExecutionService:
         self.context = context
         self.reason = reason
         self.skills = skills
+        self.axiom_tools = axiom_tools
         self.credentials = CredentialRepository()
         self.vulnerabilities = VulnerabilityRepository()
         self.audit = AuditService(engine)
@@ -178,6 +181,20 @@ class ExecutionService:
             intent_id=intent_id,
             lease_id=command.lease_id,
         )
+        run_dir = str(
+            self.store.run_directory(
+                task_id=task_id,
+                intent_id=intent_id,
+                lease_id=command.lease_id,
+            )
+        )
+        axiom_tool_keys, axiom_tool_extensions, axiom_tool_snapshot_path = (
+            self.axiom_tools.snapshot_for_lease(
+                worker_name=values["worker_name"],
+                phase=values["phase"],
+                run_dir=run_dir,
+            )
+        )
         return ExecutionInput(
             task_id=task_id,
             project_id=row["project_id"],
@@ -195,17 +212,14 @@ class ExecutionService:
             skill_directories=self.skills.active_paths(),
             guard_enabled=bool(row["guard_enabled"]),
             scope=values["scope"],
-            run_dir=str(
-                self.store.run_directory(
-                    task_id=task_id,
-                    intent_id=intent_id,
-                    lease_id=command.lease_id,
-                )
-            ),
+            run_dir=run_dir,
             execute_timeout_seconds=values["execute_timeout_seconds"],
             conclude_timeout_seconds=values["conclude_timeout_seconds"],
             context_revision=context.revision,
             context_manifest_path=context.manifest_path,
+            axiom_tool_keys=axiom_tool_keys,
+            axiom_tool_extensions=axiom_tool_extensions,
+            axiom_tool_snapshot_path=axiom_tool_snapshot_path,
         )
 
     def reason_input(
@@ -290,6 +304,20 @@ class ExecutionService:
             )
         if goal_cycle_guidance:
             trigger_summary += goal_cycle_guidance
+        run_dir = str(
+            self.store.run_directory(
+                task_id=task_id,
+                reason_run_id=reason_run_id,
+                lease_id=command.lease_id,
+            )
+        )
+        axiom_tool_keys, axiom_tool_extensions, axiom_tool_snapshot_path = (
+            self.axiom_tools.snapshot_for_lease(
+                worker_name=run.worker or "",
+                phase="reason",
+                run_dir=run_dir,
+            )
+        )
         return ExecutionInput(
             task_id=task_id,
             project_id=task.project_id,
@@ -308,17 +336,14 @@ class ExecutionService:
             skill_directories=self.skills.active_paths(),
             guard_enabled=task.guard_enabled,
             scope=task.scope.model_dump(mode="json"),
-            run_dir=str(
-                self.store.run_directory(
-                    task_id=task_id,
-                    reason_run_id=reason_run_id,
-                    lease_id=command.lease_id,
-                )
-            ),
+            run_dir=run_dir,
             execute_timeout_seconds=run.execute_timeout_seconds,
             conclude_timeout_seconds=run.conclude_timeout_seconds,
             context_revision=context.revision,
             context_manifest_path=context.manifest_path,
+            axiom_tool_keys=axiom_tool_keys,
+            axiom_tool_extensions=axiom_tool_extensions,
+            axiom_tool_snapshot_path=axiom_tool_snapshot_path,
         )
 
     def start(self, *, task_id: str, intent_id: str, command: LeaseCommand) -> StartedIntent:

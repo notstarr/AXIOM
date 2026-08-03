@@ -1,6 +1,7 @@
 """Import every SQLAlchemy table exactly once for metadata discovery."""
 
 from axiom.modules.artifacts.tables import artifacts
+from axiom.modules.axiom_tools.tables import axiom_tools, worker_axiom_tool_bindings
 from axiom.modules.archives.tables import archive_batch_members, archive_batches
 from axiom.modules.audit.tables import audit_events
 from axiom.modules.context.tables import context_revisions
@@ -30,6 +31,8 @@ ALL_TABLES = (
     intents,
     intent_sources,
     workers,
+    axiom_tools,
+    worker_axiom_tool_bindings,
     artifacts,
     archive_batches,
     archive_batch_members,

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "key": "search_text",
+  "title": "搜索文本",
+  "version": "1.0.0",
+  "description": "在本轮运行目录内搜索文本或正则表达式，并返回受限的文件命中摘要。",
+  "entrypoint": "index.ts",
+  "supported_phases": ["bootstrap", "reason", "explore"],
+  "risk_tags": ["filesystem-read"],
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": {"type": "string", "description": "要搜索的文本或正则表达式"},
+      "path": {"type": "string", "description": "运行目录内的相对路径，默认是运行目录"},
+      "regex": {"type": "boolean", "default": false},
+      "max_results": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}
+    },
+    "required": ["query"],
+    "additionalProperties": false
+  },
+  "prompt_guidelines": ["使用 search_text 查找本轮运行目录中已经产生的文件内容；不要用它替代新的网络测试。"]
+}

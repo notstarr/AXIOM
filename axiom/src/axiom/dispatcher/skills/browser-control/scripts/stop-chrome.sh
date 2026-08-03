@@ -21,6 +21,7 @@ _is_expected_pid() {
     fi
     local cmd
     cmd="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+    [[ "${cmd}" != *"--type="* ]] || return 1
     [[ "${cmd}" == *"--remote-debugging-port=${CDP_PORT}"* ]] || return 1
     [[ "${cmd}" == *"--user-data-dir=${PROFILE_DIR}"* ]] || return 1
     return 0
@@ -30,6 +31,7 @@ _find_expected_pid() {
     local pid cmd
     while read -r pid cmd; do
         [ -n "${pid}" ] || continue
+        [[ "${cmd}" != *"--type="* ]] || continue
         [[ "${cmd}" == *"--remote-debugging-port=${CDP_PORT}"* ]] || continue
         [[ "${cmd}" == *"--user-data-dir=${PROFILE_DIR}"* ]] || continue
         echo "${pid}"
@@ -60,10 +62,14 @@ if [ -z "${target_pid}" ]; then
 fi
 
 echo "🛑 Stopping Chrome-SecTest pid=${target_pid} ..."
-kill -TERM "${target_pid}" 2>/dev/null || true
+target_pgid="$(ps -p "${target_pid}" -o pgid= 2>/dev/null | tr -d ' ' || true)"
+if [ -z "${target_pgid}" ]; then
+    target_pgid="${target_pid}"
+fi
+kill -TERM "-${target_pgid}" 2>/dev/null || true
 
 for _ in $(seq 1 10); do
-    if ! ps -p "${target_pid}" >/dev/null 2>&1; then
+    if ! kill -0 "-${target_pgid}" 2>/dev/null; then
         rm -f "${PID_FILE}"
         echo "✅ Chrome-SecTest stopped"
         exit 0
@@ -72,7 +78,7 @@ for _ in $(seq 1 10); do
 done
 
 echo "⚠️ Graceful stop timeout, force killing pid=${target_pid}"
-kill -KILL "${target_pid}" 2>/dev/null || true
+kill -KILL "-${target_pgid}" 2>/dev/null || true
 rm -f "${PID_FILE}"
 echo "✅ Chrome-SecTest force stopped"
 exit 0

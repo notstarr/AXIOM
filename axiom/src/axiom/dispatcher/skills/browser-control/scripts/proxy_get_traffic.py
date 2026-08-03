@@ -33,10 +33,13 @@ proxy_get_traffic.py — AI 调用此脚本查询 mitmproxy 捕获的流量
 import argparse
 import json
 import os
-import sys
 from pathlib import Path
 
 DEFAULT_FILE = "/tmp/proxy_flows.jsonl"
+DEFAULT_BACKUPS = 3
+MAX_QUERY_RESULTS = 5000
+STATUS_COUNT_LIMIT = 1000
+READ_BLOCK_SIZE = 64 * 1024
 
 API_CONTENT_TYPES = (
     "application/json", "application/xml", "text/xml",
@@ -53,58 +56,108 @@ def classify(content_type: str) -> str:
     return "other"
 
 
-def load_flows(file_path: str, filter_kw: str, type_filter: str, last: int):
-    p = Path(file_path)
-    if not p.exists():
-        return []
+def _backup_count() -> int:
+    try:
+        return min(max(int(os.environ.get("PROXY_FLOW_BACKUPS", DEFAULT_BACKUPS)), 0), 20)
+    except (TypeError, ValueError):
+        return DEFAULT_BACKUPS
 
+
+def _flow_files(file_path: str) -> list[Path]:
+    path = Path(file_path)
+    return [path, *(Path(f"{path}.{index}") for index in range(1, _backup_count() + 1))]
+
+
+def _iter_lines_reverse(path: Path):
+    """Yield UTF-8 JSONL records newest-first without loading the file."""
+
+    if not path.is_file():
+        return
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        position = handle.tell()
+        remainder = b""
+        while position > 0:
+            size = min(READ_BLOCK_SIZE, position)
+            position -= size
+            handle.seek(position)
+            remainder = handle.read(size) + remainder
+            parts = remainder.split(b"\n")
+            remainder = parts[0]
+            for line in reversed(parts[1:]):
+                if line:
+                    yield line.decode("utf-8", errors="replace")
+        if remainder:
+            yield remainder.decode("utf-8", errors="replace")
+
+
+def load_flows(file_path: str, filter_kw: str, type_filter: str, last: int):
+    limit = min(max(int(last or 1), 1), MAX_QUERY_RESULTS)
     flows = []
-    with open(p, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
+    for path in _flow_files(file_path):
+        for line in _iter_lines_reverse(path):
             try:
                 flow = json.loads(line)
-            except Exception:
+            except (TypeError, ValueError):
                 continue
-
             if filter_kw and filter_kw not in flow.get("url", ""):
                 continue
-
-            ct = flow.get("content_type", "")
-            kind = classify(ct)
-            flow["_type"] = kind
-
+            kind = classify(flow.get("content_type", ""))
             if type_filter != "all" and kind != type_filter:
                 continue
-
+            flow["_type"] = kind
             flows.append(flow)
-
-    return flows[-last:] if last else flows
+            if len(flows) >= limit:
+                return list(reversed(flows))
+    return list(reversed(flows))
 
 
 def cmd_clear(file_path: str):
-    p = Path(file_path)
-    if p.exists():
-        p.unlink()
-        print(f"✅ 已清空: {file_path}")
+    removed = 0
+    for path in _flow_files(file_path):
+        if path.exists():
+            path.unlink()
+            removed += 1
+    if removed:
+        print(f"✅ 已清空: {file_path}（{removed} 个日志分片）")
     else:
         print(f"(文件不存在: {file_path})")
 
 
 def cmd_status(file_path: str):
     p = Path(file_path)
-    if not p.exists():
+    existing = [path for path in _flow_files(file_path) if path.exists()]
+    if not existing:
         print(f"流量文件不存在: {file_path}")
         return
-    lines = p.read_text(encoding="utf-8").strip().splitlines()
     print(f"流量文件: {file_path}")
-    print(f"已捕获: {len(lines)} 条")
+    print(f"当前大小: {p.stat().st_size if p.exists() else 0} bytes")
+    print(f"含轮转分片: {len(existing)} 个，共 {sum(path.stat().st_size for path in existing)} bytes")
+    recent_count = 0
+    exhausted = True
+    for path in existing:
+        for _line in _iter_lines_reverse(path):
+            recent_count += 1
+            if recent_count >= STATUS_COUNT_LIMIT:
+                exhausted = False
+                break
+        if not exhausted:
+            break
+    qualifier = "" if exhausted else "至少 "
+    print(f"已捕获: {qualifier}{recent_count} 条（快速统计，不全量扫描大文件）")
     # 检查 mitmdump 是否在运行
     import subprocess
-    result = subprocess.run(["pgrep", "-f", "mitmdump"], capture_output=True, text=True)
-    if result.returncode == 0:
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "mitmdump"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        result = None
+    if result is not None and result.returncode == 0:
         print(f"mitmdump 运行中 (pid={result.stdout.strip()})")
     else:
         print("mitmdump 未运行")
@@ -135,7 +188,7 @@ def print_full(flows):
     for f in flows:
         print(f"\n{'='*60}")
         print(f"[{f.get('_type','?')}][{f.get('status_code')}] {f.get('method')} {f.get('url')}")
-        print(f"\n--- 请求 Headers (安全相关) ---")
+        print("\n--- 请求 Headers (安全相关) ---")
         sec_keys = {'cookie','authorization','x-csrf-token','x-token','content-type','x-auth-token'}
         for k, v in f.get("request_headers", {}).items():
             if k.lower() in sec_keys:

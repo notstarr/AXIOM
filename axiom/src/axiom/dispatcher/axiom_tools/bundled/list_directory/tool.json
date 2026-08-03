@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "key": "list_directory",
+  "title": "列出目录",
+  "version": "1.0.0",
+  "description": "列出本轮运行目录内一个目录的受限子项。",
+  "entrypoint": "index.ts",
+  "supported_phases": ["bootstrap", "reason", "explore"],
+  "risk_tags": ["filesystem-read"],
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "path": {"type": "string", "description": "运行目录内的相对目录，默认是运行目录"},
+      "max_entries": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100}
+    },
+    "additionalProperties": false
+  },
+  "prompt_guidelines": ["使用 list_directory 了解运行目录结构；不要通过 bash 绕过阶段工具边界。"]
+}

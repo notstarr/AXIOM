@@ -83,3 +83,55 @@ def test_skill_doctor_fails_when_a_required_tool_is_missing(tmp_path: Path) -> N
 
     assert result.exit_code == 1
     assert json.loads(result.output)["ok"] is False
+
+
+def test_skill_doctor_runs_functional_probe_with_skill_placeholder(
+    tmp_path: Path,
+) -> None:
+    skill = _skill(
+        tmp_path,
+        "functional",
+        "requirements:\n"
+        "  probes:\n"
+        "    - name: functional-read\n"
+        "      command: [python3, '{skill}/scripts/probe.py']\n"
+        "      contains: functional-ok\n",
+    )
+    probe = skill / "scripts" / "probe.py"
+    probe.parent.mkdir()
+    probe.write_text("print('functional-ok')\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        main,
+        ["skill", "doctor", "functional"],
+        env={"AXIOM_SKILL_DIRECTORIES": str(skill)},
+    )
+
+    assert result.exit_code == 0, result.output
+    check = json.loads(result.output)["skills"][0]["checks"][-1]
+    assert check["kind"] == "probe"
+    assert check["name"] == "functional-read"
+    assert check["ok"] is True
+
+
+def test_skill_doctor_reports_functional_probe_timeout(tmp_path: Path) -> None:
+    skill = _skill(
+        tmp_path,
+        "slow",
+        "requirements:\n"
+        "  probes:\n"
+        "    - name: slow-probe\n"
+        "      command: [python3, '-c', 'import time; time.sleep(1)']\n"
+        "      timeout_seconds: 0.1\n",
+    )
+
+    result = CliRunner().invoke(
+        main,
+        ["skill", "doctor", "slow"],
+        env={"AXIOM_SKILL_DIRECTORIES": str(skill)},
+    )
+
+    assert result.exit_code == 1
+    check = json.loads(result.output)["skills"][0]["checks"][-1]
+    assert check["ok"] is False
+    assert "timed out" in check["error"]

@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from axiom.modules.artifacts.api import router as artifacts_router
+from axiom.modules.axiom_tools.api import router as axiom_tools_router
 from axiom.modules.archives.api import router as archives_router
 from axiom.modules.audit.api import router as audit_router
 from axiom.modules.context.api import router as context_router
@@ -35,6 +36,7 @@ router.include_router(dashboard_router)
 router.include_router(reason_router)
 router.include_router(tasks_router)
 router.include_router(graph_router)
+router.include_router(axiom_tools_router)
 router.include_router(workers_router)
 router.include_router(dispatch_router)
 router.include_router(diagnostics_router)

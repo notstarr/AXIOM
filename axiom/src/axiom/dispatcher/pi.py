@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import uuid
 from collections.abc import Callable
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from axiom.dispatcher.bootstrap import (
+    AxiomToolLoadError,
     BootstrapExecutionTimeout,
     TransientWorkerError,
 )
@@ -23,7 +25,11 @@ from axiom.dispatcher.process import (
     RpcProcessSupervisor,
 )
 from axiom.dispatcher.reason import ReasonExecutionTimeout
-from axiom.dispatcher.tool_path import build_tool_path, prepare_runtime_bin
+from axiom.dispatcher.tool_path import (
+    build_tool_path,
+    discover_tool_environment,
+    prepare_runtime_bin,
+)
 from axiom.modules.execution.schemas import ActivityCommand, ExecutionInput
 from axiom.modules.reason.schemas import ReasonWorkspace
 from axiom.modules.token_usage.schemas import TokenUsageBatchCommand
@@ -132,6 +138,7 @@ class PiBootstrapExecutor:
             lease_active=lease_active,
             timeout_seconds=execution_input.conclude_timeout_seconds or self.default_conclude_seconds,
             tool_names=["read", "write", "edit"],
+            enable_axiom_tools=False,
         )
         if result.cancelled:
             raise LeaseLostError(result.cancel_reason or "worker cancelled")
@@ -152,6 +159,7 @@ class PiBootstrapExecutor:
         rpc: bool = False,
         steer_after_seconds: float | None = None,
         steer_message: str | None = None,
+        enable_axiom_tools: bool = True,
     ) -> ProcessResult:
         session_dir = Path(self.settings.session_dir or Path(execution_input.run_dir) / "sessions")
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -170,6 +178,18 @@ class PiBootstrapExecutor:
                 "PI_CODING_AGENT_DIR": str(agent_dir),
                 "AXIOM_SKILL_DIRECTORIES": ":".join(execution_input.skill_directories),
                 "AXIOM_SERVER": self.api_url,
+                "AXIOM_SCOPE_JSON": json.dumps(
+                    execution_input.scope,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                "AXIOM_TOOL_KEYS": json.dumps(
+                    execution_input.axiom_tool_keys,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                "AXIOM_TOOL_SNAPSHOT_PATH": execution_input.axiom_tool_snapshot_path or "",
+                "AXIOM_PYTHON": sys.executable,
             }
         )
         if execution_input.intent_id:
@@ -199,6 +219,11 @@ class PiBootstrapExecutor:
             runtime_bin=runtime_bin,
             fallback_bins=[venv_bin],
         )
+        discovered_environment = discover_tool_environment(
+            {**os.environ, **environment}
+        )
+        for name, value in discovered_environment.items():
+            environment.setdefault(name, value)
         argv = self._build_argv(
             prompt,
             session_dir,
@@ -206,6 +231,12 @@ class PiBootstrapExecutor:
             skill_paths=execution_input.skill_directories,
             guard_enabled=execution_input.guard_enabled,
             mode="rpc" if rpc else "json",
+            axiom_tool_extensions=(
+                execution_input.axiom_tool_extensions if enable_axiom_tools else []
+            ),
+            axiom_tool_keys=(
+                execution_input.axiom_tool_keys if enable_axiom_tools else []
+            ),
         )
         tracker = None
         if self.activity_reporter is not None or self.token_usage_reporter is not None:
@@ -252,9 +283,57 @@ class PiBootstrapExecutor:
         finally:
             if tracker is not None:
                 tracker.stop()
+            self._cleanup_browser_tabs(execution_input, environment)
         if tracker is not None and tracker.lease_lost:
             raise LeaseLostError("Intent activity lease is no longer active")
         return result
+
+    @staticmethod
+    def _cleanup_browser_tabs(
+        execution_input: ExecutionInput, environment: dict[str, str]
+    ) -> None:
+        """Best-effort cleanup for tabs created by this Worker Lease.
+
+        Browser tabs live outside the Pi process group.  Without an explicit
+        Lease cleanup they accumulate across retries and eventually make
+        Playwright's CDP attachment unusable.  The browser script only closes
+        tabs registered by ``cdp_ctl.py`` for this exact Lease; human tabs and
+        tabs owned by concurrent Workers are never selected.
+        """
+
+        if environment.get("AXIOM_BROWSER_PRESERVE_LEASE_TABS") == "1":
+            return
+        script = next(
+            (
+                Path(directory) / "scripts" / "cdp_ctl.py"
+                for directory in execution_input.skill_directories
+                if Path(directory).name == "browser-control"
+                and (Path(directory) / "scripts" / "cdp_ctl.py").is_file()
+            ),
+            None,
+        )
+        if script is None:
+            return
+        command = [
+            sys.executable,
+            str(script),
+            "--cdp",
+            environment.get("CDP_URL", "http://localhost:9223"),
+            "close-lease-tabs",
+            execution_input.lease_id,
+        ]
+        try:
+            subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=8,
+                check=False,
+                env={**os.environ, **environment},
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
     def _build_argv(
         self,
@@ -265,6 +344,8 @@ class PiBootstrapExecutor:
         skill_paths: list[str] | None = None,
         guard_enabled: bool = False,
         mode: str = "json",
+        axiom_tool_extensions: list[str] | None = None,
+        axiom_tool_keys: list[str] | None = None,
     ) -> list[str]:
         argv = [
             self.settings.binary,
@@ -285,13 +366,31 @@ class PiBootstrapExecutor:
         # session, so omitting the flag is weaker than explicitly selecting
         # ``off`` for a Worker whose thinking switch is disabled.
         argv.extend(["--thinking", self.settings.effective_thinking_level])
-        if tool_names:
-            argv.extend(["--tools", ",".join(tool_names)])
+        # Pi treats ``--tools`` as an allowlist for *all* tools, including
+        # extension-registered tools.  Passing only the four native names
+        # would therefore hide a correctly loaded AXIOM Tool before the
+        # activation extension gets a chance to call ``setActiveTools``.
+        # Keep the stage's native allowlist and add only this Lease's AXIOM
+        # keys; unrelated AXIOM Tools remain neither loaded nor exposed.
+        selected_keys = list(dict.fromkeys(axiom_tool_keys or []))
+        allowed_tools = list(dict.fromkeys([*tool_names, *selected_keys]))
+        if allowed_tools:
+            argv.extend(["--tools", ",".join(allowed_tools)])
         for path in dict.fromkeys([*self.settings.skill_paths, *(skill_paths or [])]):
             argv.extend(["--skill", path])
         if guard_enabled:
             extension = Path(__file__).with_name("extensions") / "axiom-guard" / "index.ts"
             argv.extend(["--extension", str(extension)])
+        selected_extensions = list(dict.fromkeys(axiom_tool_extensions or []))
+        for extension in selected_extensions:
+            argv.extend(["--extension", extension])
+        if selected_keys:
+            activation = (
+                Path(__file__).with_name("extensions")
+                / "axiom-tool-activation"
+                / "index.ts"
+            )
+            argv.extend(["--extension", str(activation)])
         if mode != "rpc":
             argv.extend(["-p", prompt])
         return argv
@@ -356,6 +455,15 @@ class PiBootstrapExecutor:
 
     @staticmethod
     def _raise_on_process_failure(result: ProcessResult) -> None:
+        # Pi currently reports extension event failures on stderr even when
+        # the outer CLI exits with status 0.  AXIOM Tool activation is a
+        # pre-model contract, so never let that marker degrade into a later
+        # FINISH/artifact error merely because Pi normalized its exit code.
+        combined_detail = "\n".join(
+            value.strip() for value in (result.stderr, result.stdout) if value.strip()
+        )
+        if "axiom_tool_load_failed" in combined_detail:
+            raise AxiomToolLoadError(combined_detail[-2_000:])
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or "Pi exited unsuccessfully"
             raise TransientWorkerError(detail[-2_000:])
@@ -460,6 +568,7 @@ class PiReasonExecutor(PiBootstrapExecutor):
             or self.default_conclude_seconds,
             tool_names=_reason_tool_names(self.settings.tools),
             extra_environment={"AXIOM_REASON_WORKSPACE_ID": workspace.id},
+            enable_axiom_tools=False,
         )
         if result.cancelled:
             raise LeaseLostError(result.cancel_reason or "worker cancelled")
@@ -533,6 +642,7 @@ class PiExploreExecutor(PiBootstrapExecutor):
             or self.default_conclude_seconds,
             tool_names=["read", "write", "edit", "bash"],
             rpc=True,
+            enable_axiom_tools=False,
         )
         if result.cancelled:
             raise LeaseLostError(result.cancel_reason or "worker cancelled")

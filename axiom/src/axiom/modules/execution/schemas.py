@@ -85,6 +85,9 @@ class ExecutionInput(BaseModel):
     conclude_timeout_seconds: int | None = None
     context_revision: int | None = None
     context_manifest_path: str | None = None
+    axiom_tool_keys: list[str] = Field(default_factory=list)
+    axiom_tool_extensions: list[str] = Field(default_factory=list)
+    axiom_tool_snapshot_path: str | None = None
 
     @model_validator(mode="after")
     def require_one_execution_owner(self) -> "ExecutionInput":

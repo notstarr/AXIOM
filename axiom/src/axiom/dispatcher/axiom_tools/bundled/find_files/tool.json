@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "key": "find_files",
+  "title": "查找文件",
+  "version": "1.0.0",
+  "description": "在本轮运行目录内按名称模式查找文件。",
+  "entrypoint": "index.ts",
+  "supported_phases": ["bootstrap", "reason", "explore"],
+  "risk_tags": ["filesystem-read"],
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "pattern": {"type": "string", "description": "文件名模式，例如 *.json"},
+      "path": {"type": "string", "description": "运行目录内的相对路径，默认是运行目录"},
+      "max_results": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100}
+    },
+    "required": ["pattern"],
+    "additionalProperties": false
+  },
+  "prompt_guidelines": ["使用 find_files 先定位文件，再用 read 或 search_text 读取内容。"]
+}

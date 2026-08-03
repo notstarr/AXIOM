@@ -56,21 +56,62 @@ window.AxiomModules.human = {
 
     humanBootstrapStatus() {
       const intent = this.humanBootstrapIntent();
-      if (!intent) return { key: 'pending', label: '尚未开始' };
+      if (!intent) {
+        const task = this.project?.project || {};
+        if (task.phase === 'bootstrap' || task.bootstrap_status === 'running') {
+          return { key: 'running', label: '运行中', icon: '↻' };
+        }
+        return { key: 'waiting', label: '尚未开始', icon: '•' };
+      }
       const key = this.humanIntentStatusKey(intent);
-      if (key === 'completed') return { key, label: '已完成' };
-      if (key === 'working') return { key, label: '运行中' };
-      if (key === 'failed') return { key, label: '执行失败' };
-      return { key: 'queued', label: '等待执行' };
+      if (key === 'completed') return { key: 'completed', label: '已完成', icon: '✓' };
+      if (key === 'working') return { key: 'running', label: '运行中', icon: '↻' };
+      if (key === 'failed') return { key: 'failed', label: '执行失败', icon: '!' };
+      return { key: 'waiting', label: '等待执行', icon: '•' };
     },
 
     humanTimelineEvents() {
-      const events = (this.project?.events?.length ? this.project.events : (this.seeEvents || [])).slice();
-      return events.sort((a, b) => new Date(a.timestamp || a.created_at || 0) - new Date(b.timestamp || b.created_at || 0));
+      const source = this.project?.events?.length ? this.project.events : (this.seeEvents || []);
+      const seen = new Set();
+      return (Array.isArray(source) ? source : [])
+        .filter(event => {
+          const key = event?.id || `${event?.event_type || event?.event || ''}:${event?.created_at || event?.timestamp || ''}:${event?.workspace_id || ''}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .sort((a, b) => {
+          const time = this.humanEventTime(a) - this.humanEventTime(b);
+          return time || String(a?.id || '').localeCompare(String(b?.id || ''));
+        });
     },
 
     humanEventType(event) {
       return event?.event_type || event?.event || '';
+    },
+
+    humanEventTime(event) {
+      const parsed = Date.parse(event?.timestamp || event?.created_at || '');
+      return Number.isFinite(parsed) ? parsed : 0;
+    },
+
+    humanEventPayload(event) {
+      if (event?.payload && typeof event.payload === 'object') return event.payload;
+      try { return JSON.parse(event?.payload || '{}'); } catch (_) { return {}; }
+    },
+
+    humanReasonEventType(event) {
+      const type = String(this.humanEventType(event) || '');
+      return ({
+        'reason_workspace.opened': 'reason.workspace_opened',
+        'reason_workspace.abandoned': 'reason.workspace_abandoned',
+        'reason_workspace.committed': 'reason.committed',
+      }[type] || type);
+    },
+
+    humanReasonRunId(event) {
+      const payload = this.humanEventPayload(event);
+      return String(event?.reason_run_id || payload.reason_run_id || payload.run_id || (event?.workspace_id ? `workspace:${event.workspace_id}` : '') || '');
     },
 
     humanCycleModel() {
@@ -78,72 +119,176 @@ window.AxiomModules.human = {
       const bootstrap = this.humanBootstrapIntent();
       const exploreIntents = allIntents.filter(intent => !bootstrap || intent.id !== bootstrap.id);
       const intentMap = new Map(exploreIntents.map(intent => [intent.id, intent]));
-      const used = new Set();
       const events = this.humanTimelineEvents();
-      const commits = events.filter(event => this.humanEventType(event) === 'reason_workspace.committed');
-      const cycles = commits.map((event, index) => {
-        const ids = Array.isArray(event.payload?.created_intent_ids) ? event.payload.created_intent_ids : [];
-        const intents = ids.map(id => intentMap.get(id)).filter(Boolean);
-        ids.forEach(id => used.add(id));
-        return {
-          number: index + 1,
-          workspaceId: event.workspace_id || event.payload?.workspace_id || '',
-          reasonWorker: event.worker || '',
-          createdAt: event.timestamp || event.created_at || '',
-          todoIds: Array.isArray(event.payload?.created_todo_ids) ? event.payload.created_todo_ids : [],
-          intents,
-          status: this.humanCycleStatus(intents, ids.length === 0),
-        };
+      const reasonEvents = events.filter(event => {
+        const type = this.humanReasonEventType(event);
+        return type.startsWith('reason_run.') || type.startsWith('reason.workspace_') || type === 'reason.committed';
       });
-
-      const fallback = exploreIntents.filter(intent => !used.has(intent.id));
-      if (fallback.length) {
-        cycles.unshift({
-          number: 1,
-          workspaceId: '',
-          reasonWorker: fallback[0]?.creator || '',
-          createdAt: fallback[0]?.created_at || '',
-          todoIds: fallback.map(intent => intent.todo_id).filter(Boolean),
-          intents: fallback,
-          status: this.humanCycleStatus(fallback, false),
-          inferred: true,
-        });
-        cycles.forEach((cycle, index) => { cycle.number = index + 1; });
+      const byId = new Map();
+      const ensure = (reasonRunId, event) => {
+        const id = reasonRunId || `event:${event?.id || this.humanEventTime(event)}`;
+        if (!byId.has(id)) {
+          byId.set(id, {
+            reasonRunId: id,
+            key: `reason-cycle-${id}`,
+            createdAt: '',
+            finishedAt: '',
+            reasonWorker: '',
+            trigger: 'scheduler',
+            state: 'pending',
+            failureReason: '',
+            eventIds: new Set(),
+            workspaceIds: new Set(),
+            intentIds: new Set(),
+            todoIds: new Set(),
+            goalAchieved: false,
+            committed: false,
+            associationKnown: false,
+          });
+        }
+        return byId.get(id);
+      };
+      for (const event of reasonEvents) {
+        const cycle = ensure(this.humanReasonRunId(event), event);
+        const type = this.humanReasonEventType(event);
+        const payload = this.humanEventPayload(event);
+        const timestamp = event?.timestamp || event?.created_at || '';
+        cycle.eventIds.add(event?.id || `${type}:${timestamp}`);
+        if (!cycle.createdAt || this.humanEventTime(event) < Date.parse(cycle.createdAt)) cycle.createdAt = timestamp;
+        if (event?.worker || payload.worker) cycle.reasonWorker = event.worker || payload.worker;
+        if (payload.trigger) cycle.trigger = payload.trigger;
+        if (event?.workspace_id || payload.workspace_id) cycle.workspaceIds.add(event.workspace_id || payload.workspace_id);
+        else if (type === 'reason.workspace_opened') cycle.workspaceIds.add(`event:${event?.id || timestamp}`);
+        if (type === 'reason_run.created') {
+          cycle.state = 'pending';
+          cycle.finishedAt = '';
+        } else if (type === 'reason_run.claimed') {
+          cycle.state = 'claimed';
+          cycle.finishedAt = '';
+        } else if (type === 'reason_run.started' || type === 'reason.workspace_opened') {
+          cycle.state = 'running';
+          cycle.finishedAt = '';
+        }
+        else if (type === 'reason.workspace_abandoned') {
+          cycle.state = 'abandoned';
+          cycle.failureReason = payload.failure_reason || event.message || cycle.failureReason;
+          cycle.finishedAt = timestamp;
+        } else if (type === 'reason_run.released') {
+          const terminal = payload.terminal === true || payload.terminal === 'true';
+          cycle.state = terminal ? 'failed' : 'retrying';
+          cycle.failureReason = payload.failure_kind || event.message || cycle.failureReason;
+          cycle.finishedAt = terminal ? timestamp : '';
+        } else if (type === 'reason_run.lease_expired') {
+          const terminal = payload.terminal === true || payload.terminal === 'true';
+          cycle.state = terminal ? 'failed' : 'retrying';
+          cycle.failureReason = payload.failure_kind || 'lease_expired';
+          cycle.finishedAt = terminal ? timestamp : '';
+        } else if (type === 'reason.committed') {
+          cycle.state = 'committed';
+          cycle.committed = true;
+          cycle.finishedAt = timestamp;
+          cycle.goalAchieved = payload.goal_achieved === true;
+          const intentIds = Array.isArray(payload.created_intent_ids) ? payload.created_intent_ids : [];
+          const todoIds = Array.isArray(payload.created_todo_ids) ? payload.created_todo_ids : [];
+          intentIds.forEach(id => cycle.intentIds.add(id));
+          todoIds.forEach(id => cycle.todoIds.add(id));
+          if (intentIds.length) cycle.associationKnown = true;
+        }
       }
 
-      const latestTerminal = [...events].reverse().find(event => ['reason_workspace.committed', 'reason_workspace.abandoned'].includes(this.humanEventType(event)));
-      const latestOpened = [...events].reverse().find(event => this.humanEventType(event) === 'reason_workspace.opened');
-      const reasonRunning = this.project?.project?.phase === 'reason'
-        && latestOpened
-        && (!latestTerminal || new Date(latestOpened.timestamp || latestOpened.created_at || 0) > new Date(latestTerminal.timestamp || latestTerminal.created_at || 0));
-      if (reasonRunning) {
+      // A task payload can expose an active ReasonRun before its first audit event
+      // arrives. Keep a synthetic row so the UI does not jump back to old work.
+      const activeReason = this.project?.project?.reason;
+      if (activeReason?.id && !byId.has(activeReason.id)) {
+        const cycle = ensure(activeReason.id, {});
+        cycle.createdAt = activeReason.created_at || activeReason.activity_started_at || '';
+        cycle.reasonWorker = activeReason.worker || '';
+        cycle.trigger = activeReason.trigger || 'scheduler';
+        cycle.state = activeReason.status || 'running';
+      }
+
+      const cycles = [...byId.values()].map(cycle => {
+        cycle.intents = [...cycle.intentIds].map(id => intentMap.get(id)).filter(Boolean);
+        cycle.todoIds = [...cycle.todoIds];
+        cycle.workspaceIds = [...cycle.workspaceIds];
+        cycle.eventIds = [...cycle.eventIds];
+        cycle.workspaceAttempts = cycle.workspaceIds.length;
+        cycle.status = this.humanCycleStatus(cycle);
+        cycle.endAt = cycle.finishedAt || (cycle.state === 'committed' ? cycle.createdAt : '');
+        return cycle;
+      }).sort((a, b) => {
+        const time = this.humanEventTime({ timestamp: a.createdAt }) - this.humanEventTime({ timestamp: b.createdAt });
+        return time || String(a.reasonRunId).localeCompare(String(b.reasonRunId));
+      });
+      cycles.forEach((cycle, index) => { cycle.number = index + 1; });
+
+      // If audit history predates ReasonRun IDs, only use the creation-time
+      // fallback when no committed batch can be associated at all.
+      const associationAvailable = cycles.some(cycle => cycle.associationKnown);
+      if (!cycles.length && exploreIntents.length) {
         cycles.push({
-          number: cycles.length + 1,
-          workspaceId: latestOpened.workspace_id || '',
-          reasonWorker: latestOpened.worker || this.project?.project?.reason?.worker || '',
-          createdAt: latestOpened.timestamp || latestOpened.created_at || '',
-          todoIds: [],
-          intents: [],
-          status: 'reason_running',
+          number: 1,
+          reasonRunId: '',
+          key: 'reason-cycle-inferred',
+          workspaceId: '',
+          workspaceAttempts: 0,
+          reasonWorker: exploreIntents[0]?.creator || '',
+          trigger: 'legacy',
+          createdAt: exploreIntents[0]?.created_at || '',
+          finishedAt: '',
+          todoIds: [...new Set(exploreIntents.map(intent => intent.todo_id).filter(Boolean))],
+          intents: this.humanSortedIntents(exploreIntents).slice(0, 8),
+          eventIds: [],
+          state: 'committed',
+          status: this.humanCycleStatus({ state: 'committed', intents: exploreIntents, goalAchieved: false }),
+          associationKnown: false,
+          inferred: true,
+          committed: true,
         });
-      }
-
-      if (!cycles.length && exploreIntents.length === 0 && this.project?.project?.phase === 'reason') {
-        cycles.push({ number: 1, workspaceId: '', reasonWorker: this.project?.project?.reason?.worker || '', createdAt: '', todoIds: [], intents: [], status: 'reason_running' });
+      } else if (!associationAvailable && exploreIntents.length) {
+        // Keep the real ReasonRun rows intact; the caller may use this only as
+        // a last-resort display batch, never as a new cycle.
+        cycles.creationFallbackIntents = this.humanSortedIntents(exploreIntents).slice(0, 8);
       }
 
       const current = cycles.length ? cycles[cycles.length - 1] : null;
-      return { cycles, current, history: current ? cycles.slice(0, -1).reverse() : [] };
+      const history = current ? cycles.slice(0, -1).reverse() : [];
+      return {
+        cycles,
+        current,
+        history,
+        reasonCount: cycles.length,
+        exploreCount: exploreIntents.length,
+        associationAvailable,
+        fallbackIntents: cycles.creationFallbackIntents || [],
+      };
     },
 
-    humanCycleStatus(intents, emptyCommit = false) {
-      if (emptyCommit) return this.project?.project?.status === 'completed' ? 'goal_complete' : 'reason_complete';
-      if (!intents.length) return 'reason_running';
-      const keys = intents.map(intent => this.humanIntentStatusKey(intent));
-      if (keys.some(key => key === 'working')) return 'exploring';
-      if (keys.some(key => key === 'queued')) return 'queued';
-      if (keys.some(key => ['failed', 'retry_exhausted'].includes(key))) return 'attention';
-      if (keys.every(key => key === 'completed')) return 'completed';
+    humanCycleStatus(cycleOrIntents, emptyCommit = false) {
+      // Keep the old call shape for other templates/tests while making the
+      // ReasonRun state authoritative for the new cycle model.
+      if (Array.isArray(cycleOrIntents)) {
+        if (emptyCommit) return this.project?.project?.status === 'completed' ? 'goal_complete' : 'reason_complete';
+        const keys = cycleOrIntents.map(intent => this.humanIntentStatusKey(intent));
+        if (keys.some(key => key === 'working')) return 'exploring';
+        if (keys.some(key => key === 'queued')) return 'queued';
+        if (keys.some(key => ['failed', 'retry_exhausted'].includes(key))) return 'attention';
+        if (keys.length && keys.every(key => key === 'completed')) return 'completed';
+        return 'mixed';
+      }
+      const cycle = cycleOrIntents || {};
+      if (cycle.state === 'failed' || cycle.state === 'abandoned') return 'attention';
+      if (cycle.state === 'retrying') return 'retrying';
+      if (cycle.state === 'pending' || cycle.state === 'claimed' || cycle.state === 'running') return 'reason_running';
+      if (cycle.state === 'committed') {
+        const intents = cycle.intents || [];
+        if (cycle.goalAchieved) return 'goal_complete';
+        if (intents.some(intent => ['running', 'concluding', 'claimed'].includes(String(intent.status)))) return 'exploring';
+        if (intents.some(intent => intent.status === 'pending')) return 'queued';
+        if (intents.some(intent => ['failed', 'cancelled'].includes(String(intent.status)))) return 'attention';
+        if (intents.length && intents.every(intent => intent.status === 'completed')) return 'completed';
+        return 'reason_complete';
+      }
       return 'mixed';
     },
 
@@ -154,6 +299,7 @@ window.AxiomModules.human = {
         exploring: '并发执行中',
         queued: '等待 Worker',
         attention: '需要重新规划',
+        retrying: '等待 Reason 重试',
         completed: '本轮已完成',
         goal_complete: 'Goal 已确认',
         mixed: '处理中',
@@ -165,6 +311,7 @@ window.AxiomModules.human = {
       if (status === 'exploring' || status === 'reason_running') return 'bg-blue-50 text-blue-700 border-blue-100';
       if (status === 'queued' || status === 'reason_complete') return 'bg-amber-50 text-amber-700 border-amber-100';
       if (status === 'attention') return 'bg-rose-50 text-rose-700 border-rose-100';
+      if (status === 'retrying') return 'bg-amber-50 text-amber-700 border-amber-100';
       return 'bg-slate-100 text-slate-600 border-slate-200';
     },
 
@@ -206,26 +353,120 @@ window.AxiomModules.human = {
       return 'bg-amber-50 text-amber-700 border-amber-100';
     },
 
+    humanIntentIconClass(intent) {
+      const status = String(intent?.status || '').toLowerCase();
+      if (['running', 'concluding', 'claimed'].includes(status)) return 'human-stage-icon human-stage-running';
+      if (status === 'pending') return 'human-stage-icon human-stage-waiting';
+      if (['failed', 'cancelled', 'canceled'].includes(status)) return 'human-stage-icon human-stage-failed';
+      return 'human-stage-icon human-stage-completed';
+    },
+
+    humanIntentIcon(intent) {
+      const status = String(intent?.status || '').toLowerCase();
+      if (['running', 'concluding', 'claimed'].includes(status)) return '↻';
+      if (status === 'pending') return '•';
+      if (['failed', 'cancelled', 'canceled'].includes(status)) return '!';
+      return '✓';
+    },
+
+    humanIntentSortPriority(intent) {
+      const status = String(intent?.status || '').toLowerCase();
+      return ({ running: 5, concluding: 5, claimed: 4, pending: 3, completed: 2, failed: 1, cancelled: 1, canceled: 1 }[status] || 0);
+    },
+
+    humanSortedIntents(intents) {
+      return [...(intents || [])].sort((a, b) => {
+        const priority = this.humanIntentSortPriority(b) - this.humanIntentSortPriority(a);
+        if (priority) return priority;
+        const created = (Date.parse(b?.created_at || '') || 0) - (Date.parse(a?.created_at || '') || 0);
+        return created || String(b?.id || '').localeCompare(String(a?.id || ''));
+      });
+    },
+
     humanCurrentIntents() {
-      return (this.project?.intents || []).filter(intent => {
-        const key = this.humanIntentStatusKey(intent);
-        return key === 'working' || key === 'queued';
-      }).filter(intent => intent !== this.humanBootstrapIntent()).slice(0, 12);
+      const bootstrapId = this.humanBootstrapIntent()?.id;
+      return this.humanSortedIntents((this.project?.intents || []).filter(intent => (
+        !intent.archived
+        && intent.id !== bootstrapId
+        && ['pending', 'claimed', 'running', 'concluding'].includes(String(intent.status || '').toLowerCase())
+      ))).slice(0, 12);
     },
 
     humanCycleDisplayIntents() {
       const active = this.humanCurrentIntents();
       if (active.length) return active;
-      const current = this.humanCycleModel().current;
-      if (current?.intents?.length) return current.intents.slice(0, 8);
-      return (this.project?.intents || []).filter(intent => intent !== this.humanBootstrapIntent()).slice(-6).reverse();
+      const model = this.humanCycleModel();
+      const latestNonEmpty = [...model.cycles].reverse().find(cycle => cycle.intents?.length);
+      if (latestNonEmpty) return this.humanSortedIntents(latestNonEmpty.intents).slice(0, 8);
+      return model.fallbackIntents || [];
+    },
+
+    humanCycleDisplaySourceLabel() {
+      if (this.humanCurrentIntents().length) return '当前开放 Intent';
+      const latestNonEmpty = [...this.humanCycleModel().cycles].reverse().find(cycle => cycle.intents?.length);
+      return latestNonEmpty ? `第 ${latestNonEmpty.number} 轮 · ${latestNonEmpty.reasonRunId}` : '暂无可关联批次';
+    },
+
+    humanStageState(stage) {
+      const task = this.project?.project || {};
+      if (stage === 'bootstrap') {
+        return this.humanBootstrapStatus();
+      }
+      if (stage === 'reason') {
+        const model = this.humanCycleModel();
+        const current = model.current;
+        if (['pending', 'claimed', 'running', 'concluding'].includes(current?.state)) {
+          const state = current?.state;
+          if (state === 'pending') return { state: 'waiting', label: '等待领取', icon: '•' };
+          if (state === 'claimed' || state === 'running') return { state: 'running', label: '运行中', icon: '↻' };
+          if (state === 'concluding') return { state: 'running', label: '收口中', icon: '↻' };
+          return { state: 'running', label: '运行中', icon: '↻' };
+        }
+        if (task.phase === 'reason' && !current) return { state: 'running', label: '运行中', icon: '↻' };
+        if (current?.state === 'failed' || current?.state === 'abandoned') return { state: 'failed', label: '执行失败', icon: '!' };
+        if (current?.state === 'retrying') return { state: 'waiting', label: '等待重试', icon: '•' };
+        if (current?.committed || ['waiting', 'completed'].includes(task.phase) || task.status === 'completed') return { state: 'completed', label: '已完成', icon: '✓' };
+        return { state: 'waiting', label: '等待启动', icon: '•' };
+      }
+      const currentIntents = this.humanCurrentIntents();
+      if (currentIntents.some(intent => ['running', 'concluding', 'claimed'].includes(String(intent.status || '').toLowerCase()))) {
+        return { state: 'running', label: '执行中', icon: '↻' };
+      }
+      if (currentIntents.some(intent => String(intent.status || '').toLowerCase() === 'pending')) {
+        return { state: 'waiting', label: '等待 Worker', icon: '•' };
+      }
+      const model = this.humanCycleModel();
+      if (model.current?.intents?.length) {
+        const failed = model.current.intents.some(intent => ['failed', 'cancelled'].includes(String(intent.status || '').toLowerCase()));
+        return failed ? { state: 'failed', label: '有失败 Intent', icon: '!' } : { state: 'completed', label: '本轮完成', icon: '✓' };
+      }
+      if (task.phase === 'explore') return { state: 'waiting', label: '等待 Intent', icon: '•' };
+      return { state: task.status === 'completed' ? 'completed' : 'waiting', label: task.status === 'completed' ? '已结束' : '等待执行', icon: task.status === 'completed' ? '✓' : '•' };
+    },
+
+    humanStageStateClass(stage) {
+      const state = this.humanStageState(stage)?.state || 'waiting';
+      return `human-stage-icon human-stage-${state}`;
+    },
+
+    humanStageLabel(stage) {
+      return this.humanStageState(stage)?.label || '等待中';
+    },
+
+    humanCycleCounts() {
+      const model = this.humanCycleModel();
+      return {
+        reason: model.reasonCount || 0,
+        explore: model.exploreCount || 0,
+        active: this.humanCurrentIntents().length,
+      };
     },
 
     humanNextActionLabel() {
       if (this.project?.project?.status === 'completed') return 'Goal 已达成，运行循环已经结束。';
       if (this.project?.project?.status === 'stopped') return '任务已暂停，恢复后将从当前状态继续。';
       if (this.project?.project?.status === 'failed') return '任务失败，需要人工检查失败原因。';
-      if (this.project?.project?.phase === 'reason') return 'Reason 正在汇总 Facts、更新 Todo 并决定下一批 Intent。';
+      if (this.humanStageState('reason').state === 'running') return 'Reason 正在汇总 Facts、更新 Todo 并决定下一批 Intent。';
       const active = this.humanCurrentIntents();
       if (active.length) return `等待 ${active.length} 个 Intent 返回结果，之后进入下一轮 Reason。`;
       return '等待调度器进入下一轮 Reason。';
@@ -274,12 +515,138 @@ window.AxiomModules.human = {
       this.navigateTo('vulnerabilities');
     },
 
-    humanRecentFacts(limit = 5) {
-      return (this.project?.facts || []).filter(fact => !fact.archived && !['goal', 'origin'].includes(fact.id)).slice(-limit).reverse();
+    humanFactCount() {
+      return (this.project?.facts || []).filter(fact => !fact.archived && !['goal', 'origin'].includes(fact.id)).length;
     },
 
-    humanLeadArtifacts(limit = 5) {
-      return (this.project?.artifacts || []).filter(item => String(item.artifact_type || '').toLowerCase().includes('lead')).slice(-limit).reverse();
+    humanIntentCount() {
+      return (this.project?.intents || []).filter(intent => !intent.archived && intent !== this.humanBootstrapIntent()).length;
+    },
+
+    humanArtifactCount() {
+      const value = this.project?.project?.artifact_count;
+      return Number.isFinite(Number(value)) ? Number(value) : (this.project?.artifacts || []).filter(item => !item.archived).length;
+    },
+
+    humanVulnerabilityCount() {
+      const value = this.project?.project?.vulnerability_count;
+      return Number.isFinite(Number(value)) ? Number(value) : (this.project?.vulns || []).filter(item => !item.archived).length;
+    },
+
+    humanSortedByCreated(items) {
+      return [...(items || [])].sort((a, b) => {
+        const created = (Date.parse(b?.created_at || '') || 0) - (Date.parse(a?.created_at || '') || 0);
+        return created || String(b?.id || '').localeCompare(String(a?.id || ''));
+      });
+    },
+
+    humanRecentFacts(limit = 3) {
+      return this.humanSortedByCreated((this.project?.facts || []).filter(fact => (
+        !fact.archived && !['goal', 'origin'].includes(fact.id)
+      ))).slice(0, limit);
+    },
+
+    humanAllKnownArtifacts() {
+      const items = [
+        ...(this.project?.artifacts || []),
+        ...(this.project?.lead_artifacts || []),
+        ...(this.humanArtifactItems || []),
+      ];
+      return [...new Map(items.filter(item => item?.id).map(item => [item.id, item])).values()];
+    },
+
+    humanLeadArtifacts(limit = 3) {
+      const known = (this.project?.lead_artifacts || []).filter(item => !item.archived);
+      let items = known.filter(item => String(item.artifact_type || '').toLowerCase() === 'explore.leads');
+      if (!items.length) {
+        items = known.filter(item => {
+          const type = String(item.artifact_type || '').toLowerCase();
+          return type === 'bootstrap.initial_leads' || (type.startsWith('bootstrap.') && type.includes('lead'));
+        });
+      }
+      if (!items.length) {
+        items = (this.project?.artifacts || []).filter(item => (
+          !item.archived && ['explore.leads', 'bootstrap.initial_leads'].includes(String(item.artifact_type || '').toLowerCase())
+        ));
+      }
+      return this.humanSortedByCreated(items).slice(0, limit);
+    },
+
+    humanRecentArtifacts(limit = 6) {
+      return this.humanSortedByCreated((this.project?.artifacts || []).filter(item => !item.archived)).slice(0, limit);
+    },
+
+    humanIntentRecord(intentId) {
+      return (this.project?.intents || []).find(intent => intent.id === intentId) || null;
+    },
+
+    humanFactProducer(fact) {
+      if (!fact?.id) return null;
+      return (this.project?.intents || []).find(intent => (
+        intent.to === fact.id || intent.to_fact_id === fact.id
+      )) || null;
+    },
+
+    humanSourceIntent(item) {
+      const intentId = item?.intent_id || item?.producer_intent_id || '';
+      return intentId ? this.humanIntentRecord(intentId) : null;
+    },
+
+    humanSourceLabel(item, fallback = '任务级') {
+      const intent = item?.id?.startsWith?.('f') ? this.humanFactProducer(item) : this.humanSourceIntent(item);
+      if (!intent) return fallback;
+      return `来源 ${intent.id} · ${String(intent.description || '未命名 Intent').slice(0, 64)}`;
+    },
+
+    humanFactReferenceIds(fact) {
+      const text = String(fact?.description || '');
+      return [...text.matchAll(/\bartifact:(a[0-9A-Za-z_-]+)\b/g)].map(match => match[1]);
+    },
+
+    humanArtifactForIntent(intentId, type = '') {
+      return this.humanSortedByCreated(this.humanAllKnownArtifacts().filter(item => (
+        !item.archived && item.intent_id === intentId && (!type || item.artifact_type === type)
+      )))[0] || null;
+    },
+
+    humanFactArtifact(fact) {
+      const artifacts = this.humanAllKnownArtifacts();
+      const referenced = this.humanFactReferenceIds(fact)
+        .map(id => artifacts.find(item => item.id === id))
+        .find(Boolean);
+      if (referenced) return referenced;
+      const producer = this.humanFactProducer(fact);
+      if (!producer) return null;
+      const bootstrap = this.humanBootstrapIntent();
+      if (producer.id === bootstrap?.id) return this.humanArtifactForIntent(producer.id, 'bootstrap.findings');
+      return this.humanArtifactForIntent(producer.id, 'explore.findings');
+    },
+
+    async openHumanFact(fact) {
+      const taskId = this.selectedProjectId || this.project?.project?.id || '';
+      if (!taskId || !fact?.id) return;
+      const referencedIds = this.humanFactReferenceIds(fact);
+      if (referencedIds.length) {
+        await this.openArtifactLocation(taskId, referencedIds[0]);
+        return;
+      }
+      const artifact = this.humanFactArtifact(fact);
+      if (artifact?.id) {
+        await this.openArtifactLocation(taskId, artifact.id);
+        return;
+      }
+      const producer = this.humanFactProducer(fact);
+      if (producer?.id) {
+        this.navigateArtifactCenter(taskId, producer.id);
+        this.showToast?.(`已打开 ${producer.id} 的产物目录`);
+        return;
+      }
+      this.showToast?.('该事实没有可定位的产物或生产 Intent', 'error');
+    },
+
+    openHumanArtifact(item) {
+      const taskId = this.selectedProjectId || this.project?.project?.id || item?.task_id || '';
+      if (taskId && item?.id) this.openArtifactLocation(taskId, item);
     },
 
     humanArtifactLabel(item) {

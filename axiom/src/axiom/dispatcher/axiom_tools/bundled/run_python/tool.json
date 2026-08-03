@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "key": "run_python",
+  "title": "运行 Python",
+  "version": "1.0.0",
+  "description": "使用 AXIOM 固定 Python 解释器运行受限的短脚本。",
+  "entrypoint": "index.ts",
+  "supported_phases": ["explore"],
+  "risk_tags": ["code-execution", "filesystem", "network"],
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "code": {"type": "string", "description": "要执行的 Python 代码"},
+      "args": {"type": "array", "items": {"type": "string"}},
+      "timeout_ms": {"type": "integer", "minimum": 100, "maximum": 30000, "default": 10000}
+    },
+    "required": ["code"],
+    "additionalProperties": false
+  },
+  "prompt_guidelines": ["使用 run_python 做小型解析或计算；不要安装依赖，不要把它当作无限制 Shell。"]
+}

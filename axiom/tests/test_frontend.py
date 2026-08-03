@@ -1024,6 +1024,168 @@ ctx.loadProjectCredentials = async projectId => loaded.push(projectId);
     return json.loads(result.stdout)
 
 
+def _run_human_overview_cycle_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    scripts = [
+        ROOT / "src/axiom/static/js/helpers.js",
+        ROOT / "src/axiom/static/js/human.js",
+    ]
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+for (const script of {json.dumps([str(path) for path in scripts])}) eval(fs.readFileSync(script, 'utf8'));
+const methods = Object.assign({{}}, window.AxiomModules.helpers.methods, window.AxiomModules.human.methods);
+const makeEvent = (id, type, run, at, payload = {{}}, extra = {{}}) => ({{ id, event_type:type, reason_run_id:run, created_at:at, payload, ...extra }});
+const ctx = Object.assign({{}}, methods, {{
+  project: {{
+    project: {{ id:'t_150', phase:'waiting', status:'active' }},
+    intents: [
+      {{ id:'i001', creator:'dispatcher.bootstrap', description:'bootstrap', status:'completed', created_at:'2026-07-28T00:00:00Z' }},
+      {{ id:'i112', description:'旧批次', status:'completed', created_at:'2026-07-29T01:00:00Z' }},
+      {{ id:'i113', description:'最新批次', status:'completed', created_at:'2026-07-29T03:00:00Z' }},
+      {{ id:'i114', description:'等待领取', status:'completed', created_at:'2026-07-29T02:00:00Z' }},
+      {{ id:'i115', description:'正在执行', status:'completed', created_at:'2026-07-29T01:30:00Z' }},
+      {{ id:'i116', description:'待执行', status:'completed', created_at:'2026-07-29T04:00:00Z' }},
+    ],
+  }},
+  seeEvents: [
+    makeEvent('e1','reason_run.created','rr0001','2026-07-29T01:00:00Z',{{trigger:'scheduler'}}),
+    makeEvent('e2','reason_workspace.opened','rr0001','2026-07-29T01:01:00Z',{{}},{{workspace_id:'rw1',worker:'reason-a'}}),
+    makeEvent('e3','reason_workspace.abandoned','rr0001','2026-07-29T01:02:00Z',{{failure_reason:'第一次失败'}},{{workspace_id:'rw1'}}),
+    makeEvent('e4','reason_workspace.opened','rr0001','2026-07-29T01:03:00Z',{{}},{{workspace_id:'rw2',worker:'reason-a'}}),
+    makeEvent('e5','reason.committed','rr0001','2026-07-29T01:04:00Z',{{created_intent_ids:['i112'],created_todo_ids:[]}},{{workspace_id:'rw2'}}),
+    makeEvent('e6','reason_run.created','rr0002','2026-07-29T03:00:00Z',{{trigger:'manual'}}),
+    makeEvent('e7','reason.committed','rr0002','2026-07-29T03:01:00Z',{{created_intent_ids:['i113'],created_todo_ids:[]}}),
+  ],
+}});
+const first = ctx.humanCycleModel();
+const firstDisplay = ctx.humanCycleDisplayIntents().map(item => item.id);
+ctx.project.intents.forEach(item => {{ if (['i114','i115','i116'].includes(item.id)) item.status = ({{i114:'claimed',i115:'running',i116:'pending'}})[item.id]; }});
+const activeOrder = ctx.humanCurrentIntents().map(item => item.id);
+ctx.project.intents.forEach(item => {{ if (['i114','i115','i116'].includes(item.id)) item.status = 'completed'; }});
+ctx.seeEvents.push(makeEvent('e8','reason_run.created','rr0003','2026-07-29T05:00:00Z',{{trigger:'scheduler'}}));
+ctx.seeEvents.push(makeEvent('e9','reason.committed','rr0003','2026-07-29T05:01:00Z',{{created_intent_ids:[],created_todo_ids:[]}}));
+const zero = ctx.humanCycleModel();
+process.stdout.write(JSON.stringify({{
+  count:first.reasonCount,
+  current:first.current.reasonRunId,
+  history:first.history.map(item => ({{ id:item.reasonRunId, attempts:item.workspaceAttempts, intents:item.intents.map(intent => intent.id), reason:item.failureReason }})),
+  display:firstDisplay,
+  activeOrder,
+  zeroCurrent:zero.current.reasonRunId,
+  zeroDisplay:ctx.humanCycleDisplayIntents().map(item => item.id),
+}}));
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def _run_human_overview_content_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    scripts = [
+        ROOT / "src/axiom/static/js/helpers.js",
+        ROOT / "src/axiom/static/js/human.js",
+    ]
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+for (const script of {json.dumps([str(path) for path in scripts])}) eval(fs.readFileSync(script, 'utf8'));
+const calls = [];
+const ctx = Object.assign({{}}, window.AxiomModules.helpers.methods, window.AxiomModules.human.methods, {{
+  selectedProjectId:'t_150',
+  project: {{
+    project: {{ id:'t_150', artifact_count:99, vulnerability_count:7 }},
+    intents: [
+      {{ id:'i113', description:'验证最新方向', status:'completed', to:'f113' }},
+      {{ id:'i114', description:'另一方向', status:'completed', to:'f112' }},
+    ],
+    facts: [
+      {{ id:'f112', description:'较旧事实', created_at:'2026-07-29T01:00:00Z' }},
+      {{ id:'f113', description:'已确认事实：artifact:a679', created_at:'2026-07-29T03:00:00Z' }},
+    ],
+    artifacts: [
+      {{ id:'a679', intent_id:'i113', artifact_type:'explore.findings', path:'i113/findings.md', created_at:'2026-07-29T03:10:00Z' }},
+      {{ id:'a685', intent_id:'i113', artifact_type:'explore.evidence', path:'i113/evidence/x.txt', created_at:'2026-07-29T03:20:00Z' }},
+      {{ id:'a686', intent_id:'i113', artifact_type:'explore.findings', path:'i113/findings-latest.md', created_at:'2026-07-29T03:30:00Z' }},
+    ],
+    lead_artifacts: [
+      {{ id:'a680', intent_id:'i113', artifact_type:'explore.leads', path:'i113/leads.md', created_at:'2026-07-29T03:11:00Z' }},
+      {{ id:'a681', intent_id:'i114', artifact_type:'explore.leads', path:'i114/leads.md', created_at:'2026-07-29T02:11:00Z' }},
+      {{ id:'a001', intent_id:'i001', artifact_type:'bootstrap.initial_leads', path:'i001/initial_leads.md', created_at:'2026-07-28T00:10:00Z' }},
+    ],
+  }},
+  openArtifactLocation: (taskId, target) => calls.push({{ taskId, target }}),
+  navigateArtifactCenter: (taskId, folder) => calls.push({{ taskId, folder }}),
+  showToast: (message, type) => calls.push({{ message, type }}),
+}});
+(async () => {{
+  await ctx.openHumanFact(ctx.project.facts[1]);
+  ctx.openHumanArtifact(ctx.project.lead_artifacts[0]);
+  const leads = ctx.humanLeadArtifacts(3).map(item => item.id);
+  const source = ctx.humanSourceLabel(ctx.project.lead_artifacts[0]);
+  ctx.project.lead_artifacts = ctx.project.lead_artifacts.filter(item => item.artifact_type === 'bootstrap.initial_leads');
+  process.stdout.write(JSON.stringify({{
+    facts:ctx.humanRecentFacts(3).map(item => item.id),
+    leads,
+    bootstrapLeads:ctx.humanLeadArtifacts(3).map(item => item.id),
+    artifacts:ctx.humanRecentArtifacts(3).map(item => item.id),
+    source,
+    counts:[ctx.humanFactCount(),ctx.humanArtifactCount(),ctx.humanVulnerabilityCount()],
+    calls,
+  }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def _run_human_event_initial_load_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    dispatch = ROOT / "src/axiom/static/js/dispatch.js"
+    adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{
+  state: {{ state: {{}} }}, core: {{ methods: {{}} }}, projects: {{ methods: {{}} }},
+  dashboard: {{ methods: {{}} }}, graph: {{ methods: {{}} }}, files: {{ methods: {{}} }},
+}} }};
+global.location = {{ origin:'http://testserver', hash:'#/tasks/t_150' }};
+const calls = [];
+global.fetch = async (url, init = {{}}) => {{
+  calls.push(url);
+  if (url.includes('after_id=e002')) return {{ ok:true, status:200, text:async () => JSON.stringify([{{id:'e003', event_type:'reason_run.created', created_at:'2026-08-03T03:00:00Z', payload:{{}}, task_id:'t_150'}}]) }};
+  if (url.includes('/audit-events?')) return {{ ok:true, status:200, text:async () => JSON.stringify([
+    {{id:'e002', event_type:'reason_run.started', created_at:'2026-08-03T02:00:00Z', payload:{{}}, task_id:'t_150'}},
+    {{id:'e001', event_type:'reason_run.created', created_at:'2026-08-03T01:00:00Z', payload:{{}}, task_id:'t_150'}},
+  ]) }};
+  throw new Error(`unexpected ${{url}}`);
+}};
+for (const script of [{json.dumps(str(dispatch))}, {json.dumps(str(adapter))}]) eval(fs.readFileSync(script, 'utf8'));
+const ctx = Object.assign({{}}, window.AxiomModules.core.methods, window.AxiomModules.dispatch.methods, {{
+  selectedProjectId:'t_150', seeEvents:[], seeLastEventId:0,
+  workerStreams:() => [], $nextTick:fn => fn(),
+}});
+(async () => {{
+  await ctx.loadSeeEvents(true);
+  const first = ctx.seeEvents.map(item => item.id);
+  const cursor = ctx.seeLastEventId;
+  await ctx.loadSeeEvents(false);
+  process.stdout.write(JSON.stringify({{ first, cursor, after:ctx.seeEvents.map(item => item.id), calls }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
 def test_frontend_and_static_assets_are_served(client):
     response = client.get("/")
     assert response.status_code == 200
@@ -1086,10 +1248,15 @@ def test_frontend_and_static_assets_are_served(client):
     assert "Bootstrap 并发" in settings.text
     assert "Reason 并发" in settings.text
     assert settings.text.count("1（固定）") >= 2
-    assert "思考模式" in settings.text
-    assert "pi_thinking_enabled" in settings.text
-    assert "pi_thinking_level" in settings.text
-    assert '<option value="max">max</option>' in settings.text
+    assert "Worker 管理已迁移" in settings.text
+    assert "打开 Worker 管理" in settings.text
+
+    workers = client.get("/static/templates/workers.html")
+    assert workers.status_code == 200
+    assert "思考模式" in workers.text
+    assert "pi_thinking_enabled" in workers.text
+    assert "pi_thinking_level" in workers.text
+    assert '<option value="max">max</option>' in workers.text
     assert "thinkingBadgeClass" not in settings.text
 
     graph = client.get("/static/templates/graph-view.html")
@@ -1570,3 +1737,45 @@ def test_graph_visual_updates_do_not_trigger_layout() -> None:
         "nodeLabel": "新状态",
         "edgeStatus": "in_progress",
     }
+
+
+def test_human_overview_groups_reason_retries_into_one_cycle_and_keeps_latest_batch() -> None:
+    result = _run_human_overview_cycle_fixture()
+
+    assert result["count"] == 2
+    assert result["current"] == "rr0002"
+    assert result["history"] == [{
+        "id": "rr0001",
+        "attempts": 2,
+        "intents": ["i112"],
+        "reason": "第一次失败",
+    }]
+    assert result["display"] == ["i113"]
+    assert result["activeOrder"][:3] == ["i115", "i114", "i116"]
+    assert result["zeroCurrent"] == "rr0003"
+    assert result["zeroDisplay"] == ["i113"]
+
+
+def test_human_overview_sorts_recent_items_and_resolves_fact_and_source_deep_links() -> None:
+    result = _run_human_overview_content_fixture()
+
+    assert result["facts"] == ["f113", "f112"]
+    assert result["leads"] == ["a680", "a681"]
+    assert result["bootstrapLeads"] == ["a001"]
+    assert result["artifacts"] == ["a686", "a685", "a679"]
+    assert result["source"].startswith("来源 i113")
+    assert result["counts"] == [2, 99, 7]
+    assert result["calls"] == [
+        {"taskId": "t_150", "target": "a679"},
+        {"taskId": "t_150", "target": {"id": "a680", "intent_id": "i113", "artifact_type": "explore.leads", "path": "i113/leads.md", "created_at": "2026-07-29T03:11:00Z"}},
+    ]
+
+
+def test_human_overview_initial_audit_load_uses_recent_window_then_cursor_increment() -> None:
+    result = _run_human_event_initial_load_fixture()
+
+    assert result["first"] == ["e001", "e002"]
+    assert result["cursor"] == "e002"
+    assert result["after"] == ["e001", "e002", "e003"]
+    assert "limit=2000" in result["calls"][0]
+    assert "after_id=e002" in result["calls"][1]

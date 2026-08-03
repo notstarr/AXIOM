@@ -30,6 +30,7 @@
 | Reason 创建 pending Intent | 已验证 | ReasonRun Workspace commit 后一次性创建，不指定 Worker |
 | 空闲 Worker 自动领取 pending Intent | 已验证 | Reconciler + Claim API + E2E |
 | Claim lease 与 heartbeat | 已验证 | claim 后立即心跳，初始化阶段也覆盖 |
+| Pi 运行时非启动式预检 | 已验证 | 固定路径 + package metadata + Node 版本；不再用完整 `pi --version` 阻塞 Bootstrap claim |
 | ReasonRun 独立生命周期 | 已验证 | claim/start/input/heartbeat/activity/conclude/release/stale recovery；终态输入指纹去重 |
 | 同 Task 单活动 ReasonRun | 已验证 | 数据库唯一约束 + Service 双重校验 |
 | Reason Workspace 终态清理 | 已验证 | stop/Goal/release/stale 同事务 abandon；当前 Goal commit Workspace 保持 committed |
@@ -119,6 +120,11 @@
 | Task 单次运行窗口 | 已验证 | 新建/Resume 支持不限时或整分钟时长；每次 Resume 覆盖旧窗口 |
 | 到期自动暂停 | 已验证 | Runner tick 先执行 Deadline Reconciler；原子取消 Intent、ReasonRun、Workspace 和 Lease |
 | 截止时间调度守卫 | 已验证 | Claim 与 Reason Trigger 在事务内拒绝已过期 Task |
+| 任务概览实时循环 | 已验证 | 最近 2000 条 Audit 首次还原、`after_id` 增量、ReasonRun/Workspace 重试合并、历史循环详情 |
+| 概览阶段状态动画 | 已验证 | Bootstrap/Reason/Explore 运行、等待、完成、失败状态及 `prefers-reduced-motion` |
+| 当前/最近 Intent 选择 | 已验证 | 活动状态优先；无活动时展示最近非空 ReasonRun 批次，不回退到最早 Intent |
+| Fact / Leads / Artifact 来源深链 | 已验证 | 显示生产 Intent，统一进入文件中心并定位目标 Artifact；缺失/归档对象明确提示 |
+| 概览聚合计数 | 已验证 | 使用 Task 的 artifact/vulnerability 总数，Fact 排除 `goal/origin`，Leads 独立读取 |
 | 运行时间前端 | 已验证 | 任务列表、概览、图谱共用倒计时；Resume 使用共享弹窗 |
 | Dashboard 加载态 | 已验证 | 未完成加载不再误显示 0 |
 | Tailwind CDN 警告 | 已知非阻塞 | 后续可替换为构建 CSS |

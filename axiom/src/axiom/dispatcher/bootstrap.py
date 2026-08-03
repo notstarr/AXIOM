@@ -32,6 +32,10 @@ class TransientWorkerError(RuntimeError):
     """Provider/process infrastructure failed before a valid result existed."""
 
 
+class AxiomToolLoadError(TransientWorkerError):
+    """A selected AXIOM Tool package failed before the model could run."""
+
+
 class BootstrapExecutor(Protocol):
     def execute(
         self,
@@ -135,6 +139,13 @@ class BootstrapRunner:
             self._release_best_effort(
                 work,
                 failure_kind="lease_heartbeat_lost",
+                failure_class="transient",
+            )
+            raise
+        except AxiomToolLoadError:
+            self._release_best_effort(
+                work,
+                failure_kind="axiom_tool_load_failed",
                 failure_class="transient",
             )
             raise

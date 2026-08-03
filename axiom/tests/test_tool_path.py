@@ -3,7 +3,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from axiom.dispatcher.tool_path import build_tool_path, prepare_runtime_bin
+from axiom.dispatcher.tool_path import (
+    build_tool_path,
+    discover_tool_environment,
+    prepare_runtime_bin,
+)
 
 
 def test_tool_path_prefers_operator_and_system_tools_over_virtualenv(
@@ -64,3 +68,33 @@ def test_runtime_bin_exposes_only_controlled_python_and_axiom(tmp_path: Path) ->
     assert str(axiom.absolute()) in (runtime / "axiom").read_text(encoding="utf-8")
     assert os.access(runtime / "python3", os.X_OK)
     assert not (runtime / "httpx").exists()
+
+
+def test_tool_environment_discovers_complete_local_nmap_data(tmp_path: Path) -> None:
+    data_dir = tmp_path / ".local" / "share" / "nmap"
+    for relative in (
+        "nmap-services",
+        "nmap-protocols",
+        "nse_main.lua",
+        "scripts/script.db",
+    ):
+        path = data_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("test", encoding="utf-8")
+
+    assert discover_tool_environment({"HOME": str(tmp_path)}) == {
+        "NMAPDIR": str(data_dir.resolve())
+    }
+
+
+def test_tool_environment_does_not_override_or_use_incomplete_nmap_data(
+    tmp_path: Path,
+) -> None:
+    incomplete = tmp_path / ".local" / "share" / "nmap"
+    incomplete.mkdir(parents=True)
+    incomplete.joinpath("nmap-services").write_text("test", encoding="utf-8")
+
+    assert discover_tool_environment({"HOME": str(tmp_path)}) == {}
+    assert discover_tool_environment(
+        {"HOME": str(tmp_path), "NMAPDIR": "/operator/nmap"}
+    ) == {}

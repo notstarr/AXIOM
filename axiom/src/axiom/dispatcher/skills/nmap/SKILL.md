@@ -6,6 +6,11 @@ requirements:
     - name: nmap
       args: [--version]
       contains: Nmap version
+  probes:
+    - name: nmap-data-and-nse
+      command: [nmap, --script-help, default]
+      contains: "Categories:"
+      timeout_seconds: 12
 ---
 
 ## 工具
@@ -22,6 +27,7 @@ nmap example.com
 ```bash
 command -v nmap
 nmap --version
+nmap --script-help default >/dev/null
 ```
 
 - 如果输出包含 `Unable to find nmap-services`、`nmap-protocols` 或

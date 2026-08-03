@@ -27,6 +27,7 @@ window.AxiomModules.core = {
         dashboard: 'dashboard', tasks: 'task-list', vulnerabilities: 'vulnerabilities',
         projects: 'project-mgmt', 'guard-audit': 'guard-audit', skills: 'skills',
         files: 'files', mcp: 'mcp', prompts: 'prompts', settings: 'settings',
+        workers: 'workers', tools: 'tools',
       })[this.activePage] || 'dashboard';
     },
 
@@ -112,6 +113,8 @@ window.AxiomModules.core = {
       else if (name === 'files') await this.loadArtifactCenter();
       else if (name === 'mcp') await this.loadMcpPage();
       else if (name === 'settings') await this.loadSettings();
+      else if (name === 'workers') await this.loadAxiomWorkersPage();
+      else if (name === 'tools') await this.loadAxiomToolsPage();
       else if (name === 'prompts') this.loadPrompts();
       else if (name === 'graph-view') this.$nextTick(() => { if (!this.cy && this.project) this.initGraph(); });
       else if (name === 'archive-view') await this.loadArchives();
@@ -281,7 +284,7 @@ window.AxiomModules.core = {
         return;
       }
       const page = routePath.split('/')[0];
-      const allowed = ['dashboard', 'tasks', 'vulnerabilities', 'projects', 'guard-audit', 'skills', 'files', 'mcp', 'settings', 'prompts'];
+      const allowed = ['dashboard', 'tasks', 'vulnerabilities', 'projects', 'guard-audit', 'skills', 'files', 'mcp', 'settings', 'prompts', 'workers', 'tools'];
       const newPage = allowed.includes(page) ? page : 'dashboard';
       const sameMountedFilesPage = newPage === 'files'
         && this.activePage === 'files'
@@ -318,6 +321,8 @@ window.AxiomModules.core = {
         mcp: '#/mcp',
         settings: '#/settings',
         prompts: '#/prompts',
+        workers: '#/workers',
+        tools: '#/tools',
       };
       const target = routes[page] || '#/dashboard';
       if (location.hash === target) this.handleRoute();
@@ -332,7 +337,7 @@ window.AxiomModules.core = {
         dashboard: '#/dashboard', tasks: '#/tasks', vulnerabilities: '#/vulnerabilities',
         projects: '#/projects', 'guard-audit': '#/guard-audit', skills: '#/skills', files: '#/files', mcp: '#/mcp',
         settings: '#/settings',
-        prompts: '#/prompts', 'task-detail': '#/task-detail',
+        prompts: '#/prompts', workers: '#/workers', tools: '#/tools', 'task-detail': '#/task-detail',
       };
       const target = routes[prev] || '#/dashboard';
       if (location.hash === target) this.handleRoute();

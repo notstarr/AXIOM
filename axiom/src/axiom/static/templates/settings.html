@@ -94,126 +94,13 @@
     </section>
 
     <section x-show="activeSettingsTab === 'workers'" x-cloak class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-      <div class="flex items-center justify-between">
+      <div class="flex items-start justify-between gap-5">
         <div>
-          <h3 class="text-sm font-semibold text-slate-700">PI Workers</h3>
-          <p class="text-xs text-slate-400 mt-0.5">每个 worker 独立配置 Base URL、模型、API Key、并发和可运行阶段。</p>
+          <h3 class="text-sm font-semibold text-slate-700">Worker 管理已迁移</h3>
+          <p class="text-xs text-slate-400 mt-1 leading-5">模型、Base URL、Key、并发、参与阶段以及 AXIOM Tool 分阶段绑定现在统一在独立 Worker 页面维护，避免两套表单产生配置漂移。</p>
+          <p class="text-[11px] text-slate-400 mt-2">系统运行预算和 Dispatcher 参数仍保留在本设置页。</p>
         </div>
-        <button @click="addPiWorker()" class="h-8 px-3 rounded-lg bg-slate-800 text-white text-xs hover:bg-slate-900 transition">新增 PI Worker</button>
-      </div>
-      <div class="mt-4 space-y-3">
-        <template x-for="(worker, idx) in dispatchSettings.workers" :key="worker._draftId || idx">
-          <div class="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-4" :class="{ 'opacity-50': worker.disabled }">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <p class="text-sm font-semibold text-slate-700" x-text="worker.name || `pi-worker-${idx + 1}`"></p>
-              </div>
-              <div class="flex items-center gap-2">
-                <button @click="toggleWorkerDisabled(worker)" class="px-3 py-1.5 text-xs border rounded-lg transition"
-                  :class="worker.disabled ? 'border-amber-200 text-amber-600 bg-amber-50 hover:bg-amber-100' : 'border-teal-200 text-teal-600 bg-teal-50 hover:bg-teal-100'"
-                  x-text="worker.disabled ? '已禁用' : '已启用'"></button>
-                <button @click="removePiWorker(idx)" class="px-3 py-1.5 text-xs border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50 transition">删除</button>
-              </div>
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <div>
-                <label class="text-[11px] text-slate-400 mb-1 block font-medium">Worker 名称</label>
-                <input x-model="worker.name" placeholder="deepseek-v4-pro" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-              </div>
-              <div>
-                <label class="text-[11px] text-slate-400 mb-1 block font-medium">参与阶段</label>
-                <div class="space-y-2">
-                  <div class="flex flex-wrap items-center gap-2">
-                    <button type="button" @click="toggleWorkerPhase(worker, 'phase_bootstrap')" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition"
-                      :class="phaseToggleClass(worker.phase_bootstrap)" :style="phaseToggleStyle(worker.phase_bootstrap)" x-text="worker.phase_bootstrap ? '✓ bootstrap' : 'bootstrap'"></button>
-                    <button type="button" @click="toggleWorkerPhase(worker, 'phase_reason')" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition"
-                      :class="phaseToggleClass(worker.phase_reason)" :style="phaseToggleStyle(worker.phase_reason)" x-text="worker.phase_reason ? '✓ reason' : 'reason'"></button>
-                    <button type="button" @click="toggleWorkerPhase(worker, 'phase_explore')" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold transition"
-                      :class="phaseToggleClass(worker.phase_explore)" :style="phaseToggleStyle(worker.phase_explore)" x-text="worker.phase_explore ? '✓ explore' : 'explore'"></button>
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label class="text-[11px] text-slate-400 mb-1 block font-medium">最大并发</label>
-                <input type="number" x-model.number="worker.max_running" min="1" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-              </div>
-              <div>
-                <label class="text-[11px] text-slate-400 mb-1 block font-medium">优先级</label>
-                <input type="number" x-model.number="worker.priority" min="0" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-              </div>
-              <div class="md:col-span-2">
-                <label class="text-[11px] text-slate-400 mb-1 block font-medium">Base URL</label>
-                <input x-model="worker.pi_base_url" placeholder="https://api.example.com/v1" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-              </div>
-              <div>
-                <label class="text-[11px] text-slate-400 mb-1 block font-medium">模型名称</label>
-                <div class="space-y-2 relative">
-                  <div class="flex gap-2">
-                    <input x-model="worker.pi_model" placeholder="模型 ID（可手动输入）" class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm">
-                    <button @click="fetchPiModels(worker)" :disabled="worker.models_loading || !worker.pi_base_url" class="px-3 py-2 text-xs border border-slate-200 rounded-xl hover:bg-white transition disabled:opacity-40 whitespace-nowrap" x-text="worker.models_loading ? '获取中...' : '获取模型'"></button>
-                    <button @click="toggleWorkerModelDropdown(worker)" type="button" class="w-9 h-9 border border-slate-200 rounded-xl text-slate-500 hover:bg-white transition flex items-center justify-center" title="展开模型下拉">
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
-                    </button>
-                  </div>
-                  <div x-show="worker.show_model_dropdown && (worker.available_models || []).length > 0" x-cloak class="absolute z-20 mt-1 right-0 w-80 max-h-56 overflow-auto rounded-xl border border-slate-200 bg-white shadow-lg">
-                    <template x-for="model in (worker.available_models || [])" :key="model.id">
-                      <button type="button" @click="chooseWorkerModel(worker, model.id)" class="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 border-b last:border-b-0 border-slate-100">
-                        <div class="font-medium text-slate-700" x-text="model.id"></div>
-                        <div class="text-[11px] text-slate-400" x-text="`${((model.context_window || 0) / 1000).toFixed(0)}k context`"></div>
-                      </button>
-                    </template>
-                  </div>
-                  <p x-show="worker.models_error" class="text-[11px] text-rose-500" x-text="worker.models_error"></p>
-                </div>
-              </div>
-              <div>
-                <label class="text-[11px] text-slate-400 mb-1 block font-medium">上下文窗口</label>
-                <input x-model="worker.pi_model_context_window" placeholder="200000" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-                <p class="text-[11px] text-slate-400 mt-1">用于 Pi 的上下文预算与自动 Compaction；支持 200000 / 500k / 1m，但不能扩大模型真实上限。</p>
-              </div>
-              <div>
-                <label class="text-[11px] text-slate-400 mb-1 block font-medium">思考模式</label>
-                <button type="button" @click="worker.pi_thinking_enabled = !worker.pi_thinking_enabled"
-                  :aria-pressed="worker.pi_thinking_enabled ? 'true' : 'false'"
-                  class="w-full px-3 py-2 border rounded-xl text-sm font-medium transition flex items-center justify-between"
-                  :class="worker.pi_thinking_enabled ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-100 text-slate-500'">
-                  <span x-text="worker.pi_thinking_enabled ? '已开启' : '已关闭'"></span>
-                  <span class="relative inline-flex h-5 w-9 rounded-full transition"
-                    :class="worker.pi_thinking_enabled ? 'bg-emerald-500' : 'bg-slate-300'">
-                    <span class="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all"
-                      :class="worker.pi_thinking_enabled ? 'left-[18px]' : 'left-0.5'"></span>
-                  </span>
-                </button>
-                <p class="text-[11px] text-slate-400 mt-1">关闭时 Pi 显式使用 off；开启时才向模型声明 reasoning 能力。</p>
-              </div>
-              <div>
-                <label class="text-[11px] text-slate-400 mb-1 block font-medium">思考强度</label>
-                <select x-model="worker.pi_thinking_level" :disabled="!worker.pi_thinking_enabled"
-                  class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white disabled:opacity-50 disabled:cursor-not-allowed">
-                  <option value="minimal">minimal</option>
-                  <option value="low">low</option>
-                  <option value="medium">medium</option>
-                  <option value="high">high</option>
-                  <option value="xhigh">xhigh</option>
-                  <option value="max">max</option>
-                </select>
-                <p class="text-[11px] text-slate-400 mt-1">Pi 0.82.1 支持以上等级；xhigh / max 仍要求上游模型实际兼容。</p>
-              </div>
-              <div class="md:col-span-2">
-                <label class="text-[11px] text-slate-400 mb-1 block font-medium">API Key</label>
-                <input type="password" x-model="worker.pi_api_key" :placeholder="worker.pi_api_key_masked ? `已保存：${worker.pi_api_key_masked}（留空不改）` : '留空则保持当前 worker 的密钥'" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-              </div>
-              <div class="md:col-span-4 flex flex-wrap items-center justify-end gap-2">
-                <span class="text-xs" :class="worker.test_result?.ok ? 'text-teal-600' : 'text-rose-600'" x-show="worker.test_result?.message" x-text="worker.test_result?.message || ''"></span>
-                <button @click="testPiWorkerConnection(worker)" :disabled="worker.testing || !worker.pi_base_url || !worker.pi_model" class="px-4 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl hover:bg-white transition disabled:opacity-40" x-text="worker.testing ? '测试中...' : '测试连接'"></button>
-                <button @click="savePiWorker(worker)" :disabled="!worker.name || !worker.pi_base_url || !worker.pi_model" class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-40">保存此 Worker</button>
-              </div>
-            </div>
-          </div>
-        </template>
-        <template x-if="dispatchSettings.workers.length === 0">
-          <p class="text-sm text-slate-400 text-center py-8">暂无 PI Worker，点击右上角新增。</p>
-        </template>
+        <button @click="navigateTo('workers')" class="shrink-0 h-8 px-3 rounded-lg bg-brand-500 text-white text-xs hover:bg-brand-600">打开 Worker 管理</button>
       </div>
     </section>
 

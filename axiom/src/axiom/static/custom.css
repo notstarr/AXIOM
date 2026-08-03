@@ -136,6 +136,22 @@
   .animate-spin { animation: spin 1s linear infinite; }
   .reason-chip-running { animation: reasonChipGlow 1.8s ease-in-out infinite; }
   .intent-chip-running { animation: intentChipGlow 1.8s ease-in-out infinite; }
+  .human-stage-icon { border: 1px solid transparent; transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease; }
+  .human-stage-running { color: #2563eb; background: #dbeafe; border-color: #bfdbfe; animation: humanStageSpin 1.25s linear infinite; }
+  .human-stage-waiting { color: #b7791f; background: #fef3c7; border-color: #fde68a; animation: humanStageBreathe 1.8s ease-in-out infinite; }
+  .human-stage-completed { color: #047857; background: #d1fae5; border-color: #a7f3d0; }
+  .human-stage-failed { color: #be123c; background: #ffe4e6; border-color: #fecdd3; }
+  .human-cycle-history { max-height: 28rem; overflow-y: auto; scrollbar-width: thin; }
+  .human-link-card { cursor: pointer; }
+  .dark .human-stage-running { color: #93c5fd; background: rgba(37, 99, 235, 0.22); border-color: rgba(96, 165, 250, 0.38); }
+  .dark .human-stage-waiting { color: #fcd34d; background: rgba(180, 83, 9, 0.22); border-color: rgba(251, 191, 36, 0.36); }
+  .dark .human-stage-completed { color: #6ee7b7; background: rgba(5, 150, 105, 0.22); border-color: rgba(52, 211, 153, 0.36); }
+  .dark .human-stage-failed { color: #fda4af; background: rgba(190, 24, 93, 0.22); border-color: rgba(251, 113, 133, 0.36); }
+  @keyframes humanStageSpin { to { transform: rotate(360deg); } }
+  @keyframes humanStageBreathe { 0%, 100% { opacity: .72; transform: scale(.94); } 50% { opacity: 1; transform: scale(1.06); } }
+  @media (prefers-reduced-motion: reduce) {
+    .human-stage-icon, .reason-chip-running, .intent-chip-running, .reason-panel-running::before { animation: none !important; }
+  }
   .reason-panel-running::before {
     content: "";
     position: absolute;

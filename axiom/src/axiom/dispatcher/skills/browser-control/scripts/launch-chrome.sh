@@ -10,10 +10,12 @@
 set -u
 
 CDP_PORT="${CDP_PORT:-9223}"
+MITM_PORT="${MITM_PORT:-18080}"
 PROFILE_DIR="$HOME/Library/Application Support/Chrome-SecTest"
 CHROME="${CHROME_BIN:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 PYTHON="${PYTHON_BIN:-python3}"
 PID_FILE="/tmp/chrome-sectest-${CDP_PORT}.pid"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 _cdp_alive() {
     curl -s "http://localhost:${CDP_PORT}/json/version" >/dev/null 2>&1
@@ -26,6 +28,7 @@ _is_expected_pid() {
     fi
     local cmd
     cmd="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+    [[ "${cmd}" != *"--type="* ]] || return 1
     [[ "${cmd}" == *"--remote-debugging-port=${CDP_PORT}"* ]] || return 1
     [[ "${cmd}" == *"--user-data-dir=${PROFILE_DIR}"* ]] || return 1
     return 0
@@ -35,6 +38,7 @@ _find_expected_pid() {
     local pid cmd
     while read -r pid cmd; do
         [ -n "${pid}" ] || continue
+        [[ "${cmd}" != *"--type="* ]] || continue
         [[ "${cmd}" == *"--remote-debugging-port=${CDP_PORT}"* ]] || continue
         [[ "${cmd}" == *"--user-data-dir=${PROFILE_DIR}"* ]] || continue
         echo "${pid}"
@@ -43,11 +47,34 @@ _find_expected_pid() {
     return 1
 }
 
+_uses_expected_proxy() {
+    local pid="$1"
+    local cmd
+    cmd="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+    [[ "${cmd}" == *"--proxy-server=http://127.0.0.1:${MITM_PORT}"* ]]
+}
+
+_ensure_proxy() {
+    if [ "${MITM_PROXY:-0}" != "1" ] || [ "${MITM_AUTO_START:-1}" = "0" ]; then
+        return 0
+    fi
+    MITM_PORT="${MITM_PORT}" bash "${SCRIPT_DIR}/launch-proxy.sh"
+}
+
 mkdir -p "${PROFILE_DIR}"
+
+if ! _ensure_proxy; then
+    exit 1
+fi
 
 if [ -f "${PID_FILE}" ]; then
     existing_pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
     if _is_expected_pid "${existing_pid}" && _cdp_alive; then
+        if [ "${MITM_PROXY:-0}" = "1" ] && ! _uses_expected_proxy "${existing_pid}"; then
+            echo "❌ Chrome-SecTest 正在无代理模式运行，不能热切换到 MITM 模式。"
+            echo "   请在没有活动浏览器 Lease 时先执行 stop-chrome.sh，再重新启动。"
+            exit 3
+        fi
         echo "✅ Chrome-SecTest already running on port ${CDP_PORT} (pid=${existing_pid})"
         exit 0
     fi
@@ -57,6 +84,10 @@ fi
 if _cdp_alive; then
     # Port is up, but if it's not our dedicated profile process, do not hijack it.
     if pid="$(_find_expected_pid)"; then
+        if [ "${MITM_PROXY:-0}" = "1" ] && ! _uses_expected_proxy "${pid}"; then
+            echo "❌ Chrome-SecTest 正在无代理模式运行，不能热切换到 MITM 模式。"
+            exit 3
+        fi
         echo "${pid}" > "${PID_FILE}"
         echo "✅ Chrome-SecTest already running on port ${CDP_PORT} (pid=${pid})"
         exit 0
@@ -101,11 +132,19 @@ PY
     esac
 }
 
-if [ "${MITM_PROXY:-0}" = "1" ]; then
-    echo "🔀 mitmproxy mode: traffic → 127.0.0.1:18080"
+if [ "${MITM_PROXY:-0}" = "1" ] && [ "${CHROME_HEADLESS:-0}" = "1" ]; then
+    echo "🔀 mitmproxy mode: traffic → 127.0.0.1:${MITM_PORT}"
     _launch_chrome \
-      --proxy-server=http://127.0.0.1:18080 \
+      --headless \
+      --proxy-server=http://127.0.0.1:${MITM_PORT} \
       --ignore-certificate-errors
+elif [ "${MITM_PROXY:-0}" = "1" ]; then
+    echo "🔀 mitmproxy mode: traffic → 127.0.0.1:${MITM_PORT}"
+    _launch_chrome \
+      --proxy-server=http://127.0.0.1:${MITM_PORT} \
+      --ignore-certificate-errors
+elif [ "${CHROME_HEADLESS:-0}" = "1" ]; then
+    _launch_chrome --headless
 else
     _launch_chrome
 fi
@@ -134,6 +173,11 @@ else
     cleanup_pid="$(_find_expected_pid || true)"
 fi
 if [ -n "${cleanup_pid}" ]; then
-    kill -TERM "${cleanup_pid}" 2>/dev/null || true
+    cleanup_pgid="$(ps -p "${cleanup_pid}" -o pgid= 2>/dev/null | tr -d ' ' || true)"
+    if [ -n "${cleanup_pgid}" ]; then
+        kill -TERM "-${cleanup_pgid}" 2>/dev/null || true
+    else
+        kill -TERM "${cleanup_pid}" 2>/dev/null || true
+    fi
 fi
 exit 1

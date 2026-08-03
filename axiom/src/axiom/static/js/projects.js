@@ -1112,6 +1112,9 @@ window.AxiomModules.projects = {
       this.selectedFacts = [];
       this.selectedTimelineEntryId = null;
       this.humanTab = 'workspace';
+      this.humanArtifactItems = [];
+      this.humanArtifactPage = 0;
+      this.humanArtifactTotal = 0;
       this.view = initialView === 'graph' ? 'graph' : 'human';
       this.activePage = 'task-detail';
       this.cleanupMountedPage?.();
@@ -1154,6 +1157,9 @@ window.AxiomModules.projects = {
       this.shouldRestoreProjectListScroll = true;
       this.project = null;
       this.selectedProjectId = '';
+      this.humanArtifactItems = [];
+      this.humanArtifactPage = 0;
+      this.humanArtifactTotal = 0;
       this.seeEvents = [];
       this.seeLastEventId = 0;
       this.selectedWorkerStream = '';

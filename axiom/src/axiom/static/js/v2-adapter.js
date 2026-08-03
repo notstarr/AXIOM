@@ -200,7 +200,9 @@
       id: intent.id,
       from: intent.from_facts || [],
       to: intent.to_fact_id || null,
+      to_fact_id: intent.to_fact_id || null,
       todo_id: intent.todo_id || null,
+      goal_cycle_id: intent.goal_cycle_id || null,
       kind: intent.kind || '',
       description: intent.description,
       status: intent.status,
@@ -270,13 +272,15 @@
   }
 
   async function taskDetail(taskId, options = {}) {
-    const [task, graph, hints, todos, vulnerabilities, artifacts, goalCycles, goalEvaluations] = await Promise.all([
+    const [task, graph, hints, todos, vulnerabilities, artifacts, leadArtifacts, bootstrapLeadArtifacts, goalCycles, goalEvaluations] = await Promise.all([
       request('GET', `/tasks/${taskId}`, null, options),
       request('GET', `/tasks/${taskId}/graph`, null, options),
       request('GET', `/tasks/${taskId}/hints`, null, options),
       request('GET', `/tasks/${taskId}/todos?limit=200`, null, options),
-      request('GET', `/tasks/${taskId}/vulnerabilities?limit=20`, null, options),
+      request('GET', `/tasks/${taskId}/vulnerabilities?limit=200`, null, options),
       request('GET', `/tasks/${taskId}/artifacts?limit=12`, null, options),
+      request('GET', `/tasks/${taskId}/artifacts?artifact_type=explore.leads&limit=20`, null, options),
+      request('GET', `/tasks/${taskId}/artifacts?artifact_type=bootstrap.initial_leads&limit=20`, null, options),
       request('GET', `/tasks/${taskId}/goal-cycles`, null, options),
       request('GET', `/tasks/${taskId}/goal-evaluations`, null, options),
     ]);
@@ -296,6 +300,7 @@
       todos,
       vulns: vulnerabilities.map(item => mapVulnerability(item, task, project)),
       artifacts: artifacts.map(mapArtifact),
+      lead_artifacts: [...leadArtifacts, ...bootstrapLeadArtifacts].map(mapArtifact),
       events: [],
     };
   }
@@ -505,6 +510,25 @@
     const query = url.searchParams;
     let match;
 
+    // AXIOM Tool and Worker overview are native V2 resources.  Keep them in
+    // the shared adapter so both management pages use the same API boundary
+    // as the rest of the application instead of inventing a second fetch
+    // helper or duplicating Worker state in the browser.
+    if (path === '/axiom-tools' || path.startsWith('/axiom-tools/')) {
+      return request(method, `${path}${url.search}`, body, options);
+    }
+    if (path === '/workers/overview') {
+      return request(method, `${path}${url.search}`, body, options);
+    }
+    if ((match = path.match(/^\/workers\/([^/]+)\/axiom-tools$/))) {
+      return request(
+        method,
+        `/workers/${encodeURIComponent(decodeURIComponent(match[1]))}/axiom-tools${url.search}`,
+        body,
+        options,
+      );
+    }
+
     if (path === '/project-groups' && method === 'GET') {
       const projects = await request('GET', '/projects', null, options);
       return projects.map(project => ({
@@ -614,11 +638,13 @@
       return request('POST', `/tasks/${match[1]}/intents/${match[2]}/toggle-archive`, { actor: 'human.frontend' });
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/events$/)) && method === 'GET') {
-      const params = new URLSearchParams({ limit: query.get('limit') || '500' });
-      if (query.has('after_id')) params.set('after_id', query.get('after_id') || '0');
+      const afterId = query.get('after_id') || '';
+      const initialLoad = !afterId || afterId === '0';
+      const params = new URLSearchParams({ limit: initialLoad ? '2000' : (query.get('limit') || '500') });
+      if (!initialLoad) params.set('after_id', afterId);
       params.set('task_id', match[1]);
       const events = await request('GET', `/audit-events?${params.toString()}`, null, options);
-      return (query.has('after_id') ? events : events.reverse()).map(mapAuditEvent);
+      return (initialLoad ? events.reverse() : events).map(mapAuditEvent);
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/maintainer-status$/)) && method === 'GET') return { maintaining_intent_ids: [] };
     if ((match = path.match(/^\/projects\/([^/]+)\/diagnostics$/)) && method === 'GET') {
@@ -1075,8 +1101,8 @@
       const signal = this._pageAbortController?.signal;
       const eventTypes = new Set((events || []).map(event => event.event_type || event.event || ''));
       const hasPrefix = (...prefixes) => [...eventTypes].some(type => prefixes.some(prefix => type.startsWith(prefix)));
-      const intentChanged = hasPrefix('intent.', 'reason.', 'reason_run.', 'archive.', 'task.continued');
-      const resultChanged = hasPrefix('intent.completed', 'reason.committed', 'archive.');
+      const intentChanged = hasPrefix('intent.', 'reason.', 'reason_workspace.', 'reason_run.', 'archive.', 'task.continued');
+      const resultChanged = hasPrefix('intent.completed', 'reason.committed', 'reason_workspace.committed', 'archive.');
 
       const updates = [
         request('GET', `/tasks/${taskId}`, null, { signal }).then(task => {
@@ -1095,12 +1121,18 @@
       }
       if (force || resultChanged) {
         updates.push(request('GET', `/tasks/${taskId}/todos?limit=200`, null, { signal }).then(items => { this.project.todos = items || []; }));
-        updates.push(request('GET', `/tasks/${taskId}/vulnerabilities?limit=20`, null, { signal }).then(items => {
+        updates.push(request('GET', `/tasks/${taskId}/vulnerabilities?limit=200`, null, { signal }).then(items => {
           const task = this.project.project;
           const group = (this.projectGroups || []).find(item => item.id === task.parent_project_id);
           this.project.vulns = (items || []).map(item => mapVulnerability(item, { id: task.id, project_id: task.parent_project_id, title: task.title }, group));
         }));
         updates.push(request('GET', `/tasks/${taskId}/artifacts?limit=12`, null, { signal }).then(items => { this.project.artifacts = (items || []).map(mapArtifact); }));
+        updates.push(Promise.all([
+          request('GET', `/tasks/${taskId}/artifacts?artifact_type=explore.leads&limit=20`, null, { signal }),
+          request('GET', `/tasks/${taskId}/artifacts?artifact_type=bootstrap.initial_leads&limit=20`, null, { signal }),
+        ]).then(([exploreLeads, bootstrapLeads]) => {
+          this.project.lead_artifacts = [...(exploreLeads || []), ...(bootstrapLeads || [])].map(mapArtifact);
+        }));
       }
       try {
         await Promise.all(updates);
@@ -1582,7 +1614,7 @@
         const page = await requestPage(`/tasks/${this.selectedProjectId}/artifacts?${params}`, {
           signal: this._pageAbortController?.signal,
         });
-        this.project.artifacts = page.items.map(mapArtifact);
+        this.humanArtifactItems = page.items.map(mapArtifact);
         this.humanArtifactTotal = page.total;
       } catch (error) {
         if (error?.name !== 'AbortError') this.showToast(error.message || String(error), 'error');
@@ -1625,6 +1657,7 @@
           ? await request('GET', `/tasks/${taskId}/artifacts/${artifactOrId}`)
           : artifactOrId;
         if (!item?.id) throw new Error('Artifact metadata is unavailable');
+        if (item.archived) throw new Error('产物已归档，无法在当前文件中心打开');
         this.navigateArtifactCenter(taskId, item.intent_id || 'task', item.id);
       } catch (error) {
         this.showToast(error.message || '无法打开产物', 'error');

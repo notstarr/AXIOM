@@ -5,7 +5,7 @@ import threading
 from collections.abc import Callable
 from typing import Protocol
 
-from axiom.dispatcher.bootstrap import TransientWorkerError
+from axiom.dispatcher.bootstrap import AxiomToolLoadError, TransientWorkerError
 from axiom.dispatcher.closeout import bounded_closeout
 from axiom.dispatcher.heartbeat import LeaseHeartbeat, LeaseLostError
 from axiom.dispatcher.schemas import ClaimedIntent
@@ -130,6 +130,13 @@ class ExploreRunner:
             self._release_best_effort(
                 work,
                 failure_kind="lease_heartbeat_lost",
+                failure_class="transient",
+            )
+            raise
+        except AxiomToolLoadError:
+            self._release_best_effort(
+                work,
+                failure_kind="axiom_tool_load_failed",
                 failure_class="transient",
             )
             raise

@@ -6,12 +6,17 @@ requirements:
     - name: katana
       args: [-version]
       contains: Current version
+  probes:
+    - name: katana-supported-flags
+      command: [katana, -h]
+      contains: "-crawl-scope"
+      timeout_seconds: 8
 ---
 
 ## 工具
 
 ```bash
-katana -u https://example.com
+katana -duc -u https://example.com
 ```
 
 ## 工具路径规范
@@ -19,39 +24,40 @@ katana -u https://example.com
 - 始终使用规范命令名 `katana`，真实路径由 AXIOM Runner 统一注入 `PATH`。
 - 只允许用 `command -v katana` 检查可用性；不可用时直接记录并跳过。
 - 禁止猜测绝对路径，禁止通过 `find /` 搜索工具或浏览器依赖。
+- AXIOM 执行爬取时默认使用 `-duc`，避免自动更新检查占用 Explore 预算。
 
 ## 常用参数
 
 ```bash
 # 基础爬取
-katana -u https://example.com
+katana -duc -u https://example.com
 
 # 指定深度
-katana -u https://example.com -d 3
+katana -duc -u https://example.com -d 3
 
 # 无头浏览器模式（渲染 JS，发现动态内容）
-katana -u https://example.com -headless
+katana -duc -u https://example.com -headless
 
 # 爬取并存储到文件
-katana -u https://example.com -o crawled.txt
+katana -duc -u https://example.com -o crawled.txt
 
-# JSON 输出（包含更多信息）
-katana -u https://example.com -json -o crawled.json
+# JSONL 输出（包含更多信息）
+katana -duc -u https://example.com -j -o crawled.jsonl
 
-# 只爬同域
-katana -u https://example.com -domain-scope example.com
+# 只爬目标完整域名；自定义多域范围使用 `-cs '<正则>'`
+katana -duc -u https://example.com -fs fqdn
 
 # 并发控制
-katana -u https://example.com -c 20
+katana -duc -u https://example.com -c 20
 
 # 限制爬取速率
-katana -u https://example.com -rl 50
+katana -duc -u https://example.com -rl 50
 
 # 发现表单
-katana -u https://example.com -form-extraction
+katana -duc -u https://example.com -form-extraction -j
 
 # 从文件读取多个目标
-katana -list urls.txt
+katana -duc -list urls.txt
 ```
 
 ## 输出示例
@@ -68,7 +74,7 @@ https://example.com/assets/app.js
 
 ```bash
 # 1. 爬取目标站点
-katana -u https://example.com -d 3 -headless -o endpoints.txt
+katana -duc -u https://example.com -d 3 -headless -o endpoints.txt
 
 # 2. 筛选出 API 端点
 grep -E "/api/|/v[0-9]/" endpoints.txt > api_endpoints.txt
@@ -77,7 +83,7 @@ grep -E "/api/|/v[0-9]/" endpoints.txt > api_endpoints.txt
 cat api_endpoints.txt | httpx -status-code -title
 
 # 4. 用 nuclei 扫描
-cat endpoints.txt | nuclei -as
+cat endpoints.txt | nuclei -duc -as
 ```
 
 ## 注意事项

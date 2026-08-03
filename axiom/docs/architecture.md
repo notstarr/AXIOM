@@ -224,9 +224,19 @@ Pi RPC 的会话完成边界是 `agent_settled`，不是 `agent_end`。一次会
 
 生产 Pi 运行时固定在忽略版本控制的 `runtime/pi/0.82.1/`，启动器 `runtime/pi/0.82.1/bin/pi` 明确使用 `/Users/hexin/.workbuddy/binaries/node/versions/22.22.2/bin/node`，不依赖 `/usr/local/bin/pi` 的 shebang 或 LaunchAgent PATH。所有 Pi Worker 的既有 `config.binary` 均指向该启动器；Bootstrap、Reason 只升级运行时，仍使用 JSON 模式。
 
+Runner 创建阶段 Executor 前仍强制校验固定 Pi/Node 路径和版本，但生产 Pi 版本从安装目录的 `@earendil-works/pi-coding-agent/package.json` 本地元数据读取，不再执行可能触发完整 CLI 初始化的 `pi --version`。这避免冷启动超过 5 秒时把健康 Bootstrap Lease 错误释放为 `runner_dispatch_failed`。校验同时确认包名、版本、`bin.pi` 和包内可执行 CLI 入口；不提供 `--offline` 或其它启动式回退。Node 的固定绝对路径继续使用轻量 `--version` 校验。成功结果在 Runner 进程内缓存，不影响阶段预算、Lease 或 Pi JSON/RPC 协议。
+
 Pi Worker 的模型运行参数只保留真实参与运行的 `context_window`、`thinking_enabled` 和 `thinking_level`。`context_window` 写入 lease 隔离目录的 `models.json.contextWindow`，用于 Pi 的 Token 预算与自动 Compaction，不能扩大上游模型的真实上下文上限。思考开关关闭时，模型元数据写入 `reasoning=false` 且命令行显式传递 `--thinking off`；开启时写入 `reasoning=true` 并传递 `minimal/low/medium/high/xhigh/max` 中的所选等级。Pi 0.82.1 对 `xhigh/max` 要求模型显式 opt-in，因此 AXIOM 会为用户选中的高等级生成对应 `thinkingLevelMap`；上游兼容服务仍可能忽略或拒绝自身不支持的等级。历史单字段 `thinking=off|level` 在读取和下一 Lease 时自动拆分，用户保存 Worker 后持久化为两个独立字段；旧的伪能力测试字段不再披露或保存。配置不会热改已经运行的 Pi 进程，只对新 Lease 生效。
 
+Worker 的安全工具可用性由受控 PATH、工具附属数据环境和 Skill Probe 三层共同保证。`build_tool_path()` 仍避免 Axiom venv 中的同名 console script 覆盖 ProjectDiscovery 等安全工具；`discover_tool_environment()` 在每个 Pi 进程和 `axiom skill doctor` 中复用，只在完整验证 `nmap-services`、`nmap-protocols`、`nse_main.lua` 与 `scripts/script.db` 后自动注入 `NMAPDIR`，且不会覆盖人工设置。这样 `nmap --version` 成功但 NSE/服务数据库实际不可用的状态不会再被当成健康。
+
+Skill frontmatter 的 `requirements.probes` 是无 shell 的命令数组，支持 `{skill}` 路径替换、超时、返回码和输出包含检查。Nmap 使用 `nmap --script-help default` 验证数据与 NSE；Nuclei 使用禁用更新检查的模板校验；Katana 验证当前安装真实支持的参数；Browser-control 直接检查共享 CDP。Skill 文档中的 Nuclei/Katana 示例也统一使用当前 CLI 参数和 `-duc`，避免自动更新、废弃参数或错误输出格式占用 Explore 预算。2026-08-03 对生产启用的 14 个 Skill 执行 Doctor，结果为 14/14 通过。
+
 共享 Chrome-SecTest 仍是跨 Lease 持久化的浏览器，不归任何单个 Worker 进程组管理。`launch-chrome.sh` 通过 Python `subprocess.Popen` 启动 Chrome，并显式使用 `DEVNULL` 关闭标准输入、输出和错误，设置 `start_new_session=True` 与 `close_fds=True`；因此即使命令被 `head`/`tail` 等管道包裹，Tool Call 也会在 CDP 就绪后正常收到 EOF，Chrome 则继续独立存活。CDP 就绪后脚本重新按专用 Profile 与端口扫描实际 Chrome PID 再写 PID 文件；启动失败只清理同时匹配这两个条件的进程，不操作个人 Chrome。`CHROME_BIN` 仅作为测试或非标准安装路径覆盖。
+
+Chrome PID 扫描会排除带 `--type=` 的 Renderer/Helper，只登记专用 Profile 和 CDP 端口匹配的主进程；停止时按该主进程的 PGID 清理整个浏览器进程组。`cdp_ctl.py` 对连接设置 10 秒上限，`url/title` 走轻量 CDP HTTP；新建 Tab 写入 `/tmp/axiom-cdp-tabs-<port>.json`，记录 Lease、Task、Intent、别名和活动时间。别名只在当前 Lease 内解析，Runner 在每个 Pi 阶段结束后调用 `close-lease-tabs`，不会因不同 Task 复用 `i001` 等别名而关闭其它 Lease 页面。
+
+Browser-control 的 MITM 代理由 `launch-proxy.sh/stop-proxy.sh` 独立管理。代理进程使用环境白名单启动，不继承 `PI_API_KEY`、Task/Intent/Lease 标识或其它 Worker 私密环境；标准流均为 `DEVNULL` 且使用独立 Session。流量 JSONL 默认每 64 MiB 轮转并保留 3 个分片，addon 通过文件锁避免多实例竞争；读取器从文件尾反向分块读取并覆盖轮转分片，`--status` 不再扫描或加载数 GiB 历史日志。共享 Chrome 请求 MITM 模式时会先确认代理就绪；已经以无代理模式运行的 Chrome 必须安全停止后重启，禁止热切换。
 
 Execute 超时后，Explore Conclude 使用同一 Pi session ID 启动新的 RPC 进程继续有界收口，但不会再次发送 70% 提醒。Explore 收口预算的正式下限为 180 秒、上限默认为 600 秒；Reason 提交低于下限的 Intent 会被 API 明确拒绝，不做静默修正。
 
@@ -309,6 +319,10 @@ Fact/Intent 归档使用 `archive_batches + archive_batch_members`，不是直�
 
 Artifact、Vulnerability 和 Todo 列表支持可选服务端分页、搜索和 `X-Total-Count`；未传分页参数时保持旧客户端全量行为。文件中心的“全部任务”继续使用单个跨任务 `GET /api/v1/artifacts`，每页 60 条，不再按 Task 逐个请求 Artifact。选中 Task 后改用 `GET /api/v1/tasks/{task_id}/artifact-folders` 显示 Intent 文件夹；无 `intent_id` 的上传文件归入固定的“任务文件”。进入文件夹后通过 `intent_id` 或 `unscoped_only=true` 只读取该目录的 Artifact，每页 50 条；单个 Artifact 元数据接口负责恢复深链接和跨分页定位。文件位置完整写入 `#/files?task=...&folder=...&artifact=...`，漏洞、图谱和 Human 页面统一通过 `openArtifactLocation()` 进入正确文件夹并高亮目标。
 
+任务概览的循环卡片以唯一 `ReasonRun` 作为一轮模型，合并该轮的 Workspace 重试和 Lease，不把重试重复计数。首次加载 Audit 时读取最近 2000 条并按时间正序还原，之后用 `after_id` 游标增量轮询；同时兼容 `reason.*`、`reason_run.*` 和历史 `reason_workspace.*` 事件。当前/历史循环显示 Worker、状态、开始/结束时间、Workspace 尝试次数、创建的 Intent 和失败原因；Bootstrap、Reason、Explore 的运行/等待/完成/失败状态使用统一动画类，并遵守 `prefers-reduced-motion`。
+
+概览当前执行区按 `running/concluding > claimed > pending > completed > failed/cancelled` 选择 Intent；没有活动 Intent 时展示最近一个非空 ReasonRun 批次，不会回退到最早历史 Intent。Fact、Leads、最近 Artifact 显示来源 Intent；Fact、Leads 和产物统一复用文件中心深链，缺失或归档对象会提示而不误定位。Fact 计数排除 `goal/origin`，产物和漏洞总数使用 Task 聚合计数，Leads 单独增量读取并在没有 Explore Leads 时回退 Bootstrap 初始线索。静态资源缓存版本为 `20260803-overview-loop-v2`。
+
 图谱右侧 Fact 详情把代码生成描述中的 `artifact:aXXX` 与 `vulnerability:vXXX` 安全拆分为普通文本和内联蓝链。普通文本始终使用 `x-text`，不执行 Fact 内容中的 HTML。Artifact 引用复用文件中心深链；漏洞引用进入 `#/vulnerabilities?task=...&vulnerability=...`，自动切换列表模式、锁定 Task，并在目标不在当前页时复用单漏洞 GET 接口补入并选中。目标不存在或已归档时会提示并清除精确目标参数，不会误选同 Task 的其它漏洞。漏洞列表每页 50 条，状态看板每列先取 25 条并独立加载更多；Human Artifact 每页 50 条，Workspace 只取最近 6 条。Intent/Fact 复用已加载 Graph 数据并限制首屏渲染。
 
 Dashboard 使用 `GET /api/v1/dashboard/summary` 获取 Task 状态、漏洞等级、开放 Intent、Token 汇总和最近 8 条事件，不再加载完整漏洞库和大量 Audit。`TaskService._decorate_many()` 使用一条 UNION 聚合计数查询和一条活动 ReasonRun 查询，Task 数量增长不会产生 N+1。
@@ -366,14 +380,14 @@ ReasonRun/RuntimeConfig 迁移版本为 `20260727_0020`。迁移保留历史 Rea
 ## 11. 验证基线
 
 ```text
-uv run pytest                            349 passed, 1 warning
+uv run pytest                            406 passed, 1 warning
 uv run ruff check .                      passed
 python -m compileall -q src tests migrations  passed
 node --check <18 non-vendor static js>   passed
 git diff --check                         passed
 ```
 
-以上测试已覆盖 FINISH 精确识别与 Explore 有限归一化、同会话有界收口、Explore Conclude 核心文件兜底、可选 Evidence、Artifact/Fact 自动生成、ReasonRun/Workspace 生命周期、Goal Cycle 续跑、Reason 历史 Goal Context 隔离、无新 Fact 的材料性 Todo 恢复、Reason 触发和调度并发、RuntimeConfig 热应用、Guard、Task 运行窗口、归档下游闭包，以及前端分页、Dashboard 聚合、Task 固定查询数、搜索竞态、历史 Goal 详情、图谱 Fact 安全引用/漏洞跨分页深链、图谱纯视觉更新不触发布局和 Tailwind 可重复构建；仅有 Starlette/httpx 弃用警告。
+以上测试已覆盖 FINISH 精确识别与 Explore 有限归一化、同会话有界收口、Explore Conclude 核心文件兜底、可选 Evidence、Artifact/Fact 自动生成、ReasonRun/Workspace 生命周期、Goal Cycle 续跑、Reason 历史 Goal Context 隔离、无新 Fact 的材料性 Todo 恢复、Reason 触发和调度并发、RuntimeConfig 热应用、Guard、Task 运行窗口、归档下游闭包，以及前端分页、Dashboard 聚合、Task 固定查询数、搜索竞态、历史 Goal 详情、任务概览循环还原与状态动画、Fact/Leads/Artifact 来源和深链、图谱 Fact 安全引用/漏洞跨分页深链、图谱纯视觉更新不触发布局和 Tailwind 可重复构建；仅有 Starlette/httpx 弃用警告。
 
 2026-07-29 前端生产数据浏览器验收：Dashboard/Task/Files/Vulnerability 非图谱页面分别为 592/1217/1258/839 个 DOM 节点；文件中心首屏 60 条、漏洞列表 50/565；非图谱冷启动没有图谱 Runtime，进入图谱后才加载 6 个依赖，离开后 Canvas 和图谱 DOM 清零；桌面侧栏 176→56px 且刷新持久化，390×844 移动端抽屉导航后自动关闭，控制台无 warning/error。生产数据库副本上的 `/api/v1/tasks` 60 次请求为 median 19.14ms、P95 28.71ms、max 36.16ms。
 
