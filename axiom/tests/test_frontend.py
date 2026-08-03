@@ -1054,6 +1054,11 @@ def test_frontend_and_static_assets_are_served(client):
 
     dashboard = client.get("/static/templates/dashboard.html")
     assert dashboard.status_code == 200
+    assert "LLM Token 消耗" in dashboard.text
+    assert "dashboardTokenModel" in dashboard.text
+    assert "tokenChartRows()" in dashboard.text
+    for label in ("输入（未命中）", "缓存命中", "缓存写入", "输出", "任务占比"):
+        assert label in dashboard.text
 
     vulnerabilities = client.get("/static/templates/vulnerabilities.html")
     assert vulnerabilities.status_code == 200
@@ -1110,6 +1115,9 @@ def test_frontend_and_static_assets_are_served(client):
     assert "manual-reason-trigger" in human.text
     assert "Goal 历史" in human.text
     assert "openTaskContinuation(project.project)" in human.text
+    assert "本任务 Token 消耗" in human.text
+    assert "taskTokenModel" in human.text
+    assert "taskTokenRange" in human.text
 
     archive = client.get("/static/templates/archive-view.html")
     assert archive.status_code == 200
@@ -1141,6 +1149,8 @@ def test_frontend_and_static_assets_are_served(client):
     assert "openVulnerabilityLocation" in adapter
     assert "thinking_enabled" in adapter
     assert "thinking_level" in adapter
+    assert "token_range: this.dashboardTokenRange" in adapter
+    assert "model: this.dashboardTokenModel" in adapter
     assert "factDescriptionSegments" in graph_js
     assert "openFactReference" in graph_js
     assert "x-html" not in graph.text

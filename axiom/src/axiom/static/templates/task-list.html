@@ -385,11 +385,15 @@
                     <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
                       <div>
                         <p class="text-xs font-semibold text-slate-700">Token 消耗排行榜</p>
-                        <p class="mt-0.5 text-[11px] text-slate-400" x-text="`总 ${formatTokenCount(tokenRankings().totals?.total_tokens)} tokens · ${tokenRankings().totals?.calls || 0} 次模型调用`"></p>
+                        <p class="mt-0.5 text-[11px] text-slate-400" x-text="`总 ${formatTokenCount(tokenRankings().totals?.total_tokens)} tokens · 缓存命中率 ${tokenCacheHitRateLabel(tokenRankings().totals?.cache_hit_rate)} · ${tokenRankings().totals?.calls || 0} 次用量记录`"></p>
                       </div>
-                      <span class="px-2 py-1 rounded-lg bg-slate-50 text-[10px] font-semibold text-slate-500">按消耗从高到低</span>
+                      <div class="flex flex-wrap items-center gap-2">
+                        <select class="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-500" :value="taskTokenModel" @change="setTaskTokenModel($event.target.value)"><option value="all">全部模型</option><template x-for="model in (tokenRankings().available_models || [])" :key="`managed-token-model-${model.key}`"><option :value="model.key" x-text="model.key"></option></template></select>
+                        <div class="token-range-switch inline-flex items-center gap-0.5 rounded-lg border border-slate-200 p-0.5"><template x-for="option in tokenRangeOptions()" :key="`managed-token-range-${option.value}`"><button type="button" @click="setTaskTokenRange(option.value)" class="rounded-md px-1.5 py-1 text-[9px] font-medium" :class="taskTokenRange === option.value ? 'bg-slate-900 text-white' : 'text-slate-500'" x-text="option.label"></button></template></div>
+                      </div>
                     </div>
-                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                    <div x-show="tokenRankings().totals?.complete === false" class="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[10px] text-amber-800" x-text="`${tokenRankings().totals?.incomplete_sources || 0} 个 Session 来源不完整；未估算缺失 Token。`"></div>
+                    <div class="grid grid-cols-1 xl:grid-cols-3 gap-3">
                       <div class="rounded-xl bg-slate-50 p-3">
                         <p class="text-[11px] font-semibold text-slate-500 mb-2">按 Worker 分类</p>
                         <template x-if="!(tokenRankings().by_worker || []).length">
@@ -428,9 +432,22 @@
                           </template>
                         </div>
                       </div>
+                      <div class="rounded-xl bg-slate-50 p-3">
+                        <p class="text-[11px] font-semibold text-slate-500 mb-2">按实际模型分类</p>
+                        <template x-if="!(tokenRankings().by_model || []).length"><p class="rounded-lg bg-white p-2 text-[11px] text-slate-400">暂无模型记录。</p></template>
+                        <div class="space-y-2 max-h-64 overflow-y-auto">
+                          <template x-for="(row, index) in (tokenRankings().by_model || [])" :key="`token-model-${row.model_key}`">
+                            <div class="rounded-lg bg-white p-2">
+                              <div class="flex items-center gap-2"><span class="w-5 h-5 rounded-full bg-slate-50 border border-slate-200 text-[10px] font-semibold text-slate-500 inline-flex items-center justify-center" x-text="index + 1"></span><span class="text-xs font-semibold text-slate-800 truncate" x-text="row.model_key"></span><span class="ml-auto text-xs font-semibold text-brand-600 tabular-nums" x-text="formatTokenCount(row.total_tokens)"></span></div>
+                              <p class="mt-1 text-[11px] text-slate-400" x-text="`${row.calls || 0} 次记录 · ${(row.phases || []).map(phase => diagnosticPhaseLabel(phase).replace(' 榜', '')).join(' / ')}`"></p>
+                              <p class="mt-1 text-[11px] text-slate-500" x-text="tokenBreakdownText(row)"></p>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
                     </div>
                     <template x-if="tokenRankings().notes && tokenRankings().notes.length">
-                      <p class="mt-2 text-[10px] text-slate-400" x-text="tokenRankings().notes[0]"></p>
+                      <div class="mt-2 space-y-1"><template x-for="note in tokenRankings().notes" :key="note"><p class="text-[10px] text-slate-400" x-text="note"></p></template></div>
                     </template>
                   </div>
                 </div>

@@ -170,58 +170,148 @@
 
     </section>
 
-    <!-- 按任务 Token 消耗 -->
-    <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-      <div class="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <h3 class="text-sm font-semibold text-slate-700">Token 消耗明细</h3>
-          <span class="text-[11px] text-slate-400">按任务</span>
+    <!-- LLM Token 消耗 -->
+    <section class="token-usage-panel rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center gap-3">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="token-usage-icon inline-flex h-8 w-8 items-center justify-center rounded-xl">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg>
+          </span>
+          <div>
+            <h3 class="text-sm font-semibold text-slate-700">LLM Token 消耗</h3>
+            <p class="text-[11px] text-slate-400" x-text="`${dashboardTokenTaskCount()} 个任务 · ${dashboardTokenSummary().calls || 0} 次用量记录`"></p>
+          </div>
         </div>
-        <span class="text-[10px] text-slate-400" x-text="projectDetailsLoaded ? `共 ${dashboardStats().tokenTotal.toLocaleString()} tokens` : '正在加载…'"></span>
-      </div>
-      <div class="overflow-x-auto">
-        <template x-if="tokenByProject().length === 0">
-          <div x-show="!projectDetailsLoaded" class="px-5 py-10 text-center text-sm text-slate-300" x-text="projectDetailsError ? '加载失败，请刷新' : '正在加载 Token 记录…'"></div>
-          <div x-show="projectDetailsLoaded && tokenByProject().length === 0" class="px-5 py-10 text-center text-sm text-slate-300">暂无 Token 记录 — 等待任务执行后自动统计</div>
-        </template>
-        <table x-show="tokenByProject().length > 0" class="w-full text-[12px]">
-          <thead>
-            <tr class="border-b border-slate-100">
-              <th class="px-5 py-2.5 text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wide">任务</th>
-              <th class="px-4 py-2.5 text-right text-[11px] font-semibold text-slate-400 uppercase tracking-wide">输入</th>
-              <th class="px-4 py-2.5 text-right text-[11px] font-semibold text-slate-400 uppercase tracking-wide">输出</th>
-              <th class="px-5 py-2.5 text-right text-[11px] font-semibold text-slate-400 uppercase tracking-wide">合计</th>
-              <th class="px-5 py-2.5 text-right text-[11px] font-semibold text-slate-400 uppercase tracking-wide w-32">占比</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="row in tokenByProject()" :key="row.id">
-              <tr class="border-b border-slate-50 hover:bg-slate-50/60 transition cursor-pointer" @click="openProject(row.id)">
-                <td class="px-5 py-3">
-                  <div class="flex items-center gap-2">
-                    <span class="font-mono text-slate-400 text-[10px] tabular-nums shrink-0" x-text="row.id"></span>
-                    <span class="text-slate-700 font-medium truncate max-w-[200px]" x-text="row.title"></span>
-                    <span class="px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
-                      :class="row.status === 'active' ? 'bg-teal-50 text-teal-600' : row.status === 'completed' ? 'bg-slate-100 text-slate-500' : 'bg-amber-50 text-amber-600'"
-                      x-text="row.status === 'active' ? '运行中' : row.status === 'completed' ? '已完成' : '已暂停'"></span>
-                  </div>
-                </td>
-                <td class="px-4 py-3 text-right tabular-nums text-slate-500" x-text="row.input.toLocaleString()"></td>
-                <td class="px-4 py-3 text-right tabular-nums text-slate-500" x-text="row.output.toLocaleString()"></td>
-                <td class="px-5 py-3 text-right tabular-nums font-semibold text-slate-700" x-text="row.total.toLocaleString()"></td>
-                <td class="px-5 py-3">
-                  <div class="flex items-center justify-end gap-2">
-                    <div class="w-20 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                      <div class="h-full rounded-full bg-violet-400 transition-all duration-300"
-                        :style="`width:${row.pct}%`"></div>
-                    </div>
-                    <span class="text-[10px] text-slate-400 tabular-nums w-8 text-right" x-text="row.pct + '%'"></span>
-                  </div>
-                </td>
-              </tr>
+        <div class="flex-1"></div>
+        <label class="token-filter-select inline-flex items-center gap-1.5 text-[11px] text-slate-400">
+          <span>模型</span>
+          <select class="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 focus:outline-none" :value="dashboardTokenModel" @change="setDashboardTokenModel($event.target.value)">
+            <option value="all">全部模型</option>
+            <template x-for="model in (dashboardSummary?.available_models || [])" :key="`dashboard-model-${model.key}`">
+              <option :value="model.key" x-text="model.key"></option>
             </template>
-          </tbody>
-        </table>
+          </select>
+        </label>
+        <div class="token-range-switch inline-flex items-center gap-0.5 rounded-xl border border-slate-200 p-0.5">
+          <template x-for="option in tokenRangeOptions()" :key="`dashboard-range-${option.value}`">
+            <button type="button" @click="setDashboardTokenRange(option.value)" class="rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition" :class="dashboardTokenRange === option.value ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'" x-text="option.label"></button>
+          </template>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-0">
+        <aside class="token-usage-summary border-b xl:border-b-0 xl:border-r border-slate-100 p-5 space-y-4">
+          <div>
+            <p class="text-[11px] text-slate-400">总 Token</p>
+            <p class="mt-1 text-3xl font-semibold tracking-tight text-slate-800 tabular-nums" x-text="formatTokenCount(dashboardTokenSummary().total)"></p>
+          </div>
+          <div class="token-metric-row">
+            <div class="flex items-center justify-between gap-2"><span class="text-xs text-slate-500">输入（未命中）</span><strong class="text-xs tabular-nums token-fg-input" x-text="formatTokenCount(dashboardTokenSummary().input_uncached ?? dashboardTokenSummary().input)"></strong></div>
+            <div class="token-metric-track"><span class="token-metric-fill token-fill-input" :style="`width:${dashboardTokenSummary().total ? (((dashboardTokenSummary().input_uncached ?? dashboardTokenSummary().input) || 0) / dashboardTokenSummary().total * 100) : 0}%`"></span></div>
+          </div>
+          <div class="token-metric-row">
+            <div class="flex items-center justify-between gap-2"><span class="text-xs text-slate-500">缓存命中</span><strong class="text-xs tabular-nums token-fg-cache" x-text="formatTokenCount(dashboardTokenSummary().cache_read)"></strong></div>
+            <div class="token-metric-track"><span class="token-metric-fill token-fill-cache" :style="`width:${dashboardTokenSummary().total ? ((dashboardTokenSummary().cache_read || 0) / dashboardTokenSummary().total * 100) : 0}%`"></span></div>
+          </div>
+          <div class="token-metric-row">
+            <div class="flex items-center justify-between gap-2"><span class="text-xs text-slate-500">缓存写入</span><strong class="text-xs tabular-nums token-fg-cache-write" x-text="formatTokenCount(dashboardTokenSummary().cache_write)"></strong></div>
+            <div class="token-metric-track"><span class="token-metric-fill token-fill-cache-write" :style="`width:${dashboardTokenSummary().total ? ((dashboardTokenSummary().cache_write || 0) / dashboardTokenSummary().total * 100) : 0}%`"></span></div>
+          </div>
+          <div class="token-metric-row">
+            <div class="flex items-center justify-between gap-2"><span class="text-xs text-slate-500">输出</span><strong class="text-xs tabular-nums token-fg-output" x-text="formatTokenCount(dashboardTokenSummary().output)"></strong></div>
+            <div class="token-metric-track"><span class="token-metric-fill token-fill-output" :style="`width:${dashboardTokenSummary().total ? ((dashboardTokenSummary().output || 0) / dashboardTokenSummary().total * 100) : 0}%`"></span></div>
+          </div>
+          <div class="token-hit-rate rounded-xl border border-slate-200 px-3 py-2.5 flex items-center justify-between gap-2">
+            <span class="text-xs text-slate-500">缓存命中率</span>
+            <strong class="text-sm tabular-nums token-fg-cache" x-text="tokenCacheHitRateLabel(dashboardTokenSummary().cache_hit_rate)"></strong>
+          </div>
+        </aside>
+
+        <div class="token-chart-panel p-5 min-w-0">
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3 text-[11px] text-slate-500">
+            <span class="inline-flex items-center gap-1.5"><i class="token-legend-dot token-fill-input"></i>输入（未命中）</span>
+            <span class="inline-flex items-center gap-1.5"><i class="token-legend-dot token-fill-cache"></i>缓存命中</span>
+            <span class="inline-flex items-center gap-1.5"><i class="token-legend-dot token-fill-cache-write"></i>缓存写入</span>
+            <span class="inline-flex items-center gap-1.5"><i class="token-legend-dot token-fill-output"></i>输出</span>
+          </div>
+          <template x-if="tokenChartRows().length === 0">
+            <div class="token-chart-empty h-56 flex items-center justify-center text-sm text-slate-400">当前范围暂无 Token 记录</div>
+          </template>
+          <div x-show="tokenChartRows().length > 0" class="token-chart-scroll overflow-x-auto">
+            <div class="token-chart" :style="`min-width:${tokenChartMinWidth()}px`">
+              <div class="token-chart-grid" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+              <div class="token-chart-columns">
+                <template x-for="row in tokenChartRows()" :key="`token-bar-${row.bucket}`">
+                  <div class="token-chart-column" @mouseenter="dashboardTokenHover = row.bucket" @mouseleave="dashboardTokenHover = null">
+                    <div x-show="dashboardTokenHover === row.bucket" class="token-chart-tooltip">
+                      <p class="font-semibold text-slate-800" x-text="row.bucket"></p>
+                      <p><span>输入</span><b x-text="formatTokenCount(row.input)"></b></p>
+                      <p><span>缓存读</span><b x-text="formatTokenCount(row.cacheRead)"></b></p>
+                      <p><span>缓存写</span><b x-text="formatTokenCount(row.cacheWrite)"></b></p>
+                      <p><span>输出</span><b x-text="formatTokenCount(row.output)"></b></p>
+                      <p class="border-t border-slate-100 pt-1 mt-1"><span>合计</span><b x-text="formatTokenCount(row.total)"></b></p>
+                    </div>
+                    <div class="token-chart-bar-area">
+                      <div class="token-chart-bar" :style="`height:${row.heightPct}%`">
+                        <template x-for="segment in row.segments" :key="`${row.bucket}-${segment.key}`">
+                          <span :class="`token-segment token-segment-${segment.key}`" :style="`height:${segment.pct}%`"></span>
+                        </template>
+                      </div>
+                    </div>
+                    <span class="token-chart-label" x-show="tokenChartLabelVisible(row.index, tokenChartRows().length)" x-text="tokenChartBucketLabel(row.bucket)"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div x-show="dashboardTokenSummary().complete === false || dashboardTokenSummary().incomplete_sources > 0" class="mx-5 mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        当前统计存在 <span class="font-semibold" x-text="dashboardTokenSummary().incomplete_sources || 0"></span> 个不完整 Session 来源；系统没有估算缺失 Token。
+      </div>
+
+      <div class="border-t border-slate-100">
+        <div class="px-5 py-3.5 flex items-center justify-between gap-3">
+          <div><h4 class="text-sm font-semibold text-slate-700">按任务明细</h4><p class="text-[11px] text-slate-400">包含任务全生命周期中可恢复的 Session 用量</p></div>
+          <span class="text-[10px] text-slate-400" x-text="`${dashboardTokenTaskCount()} 个任务`"></span>
+        </div>
+        <div class="overflow-x-auto">
+          <template x-if="tokenByProject().length === 0">
+            <div class="px-5 py-8 text-center text-sm text-slate-400">暂无 Token 记录 — 等待任务执行后自动统计</div>
+          </template>
+          <table x-show="tokenByProject().length > 0" class="w-full text-[12px]">
+            <thead><tr class="border-b border-slate-100">
+              <th class="px-5 py-2.5 text-left text-[11px] font-semibold text-slate-400">任务</th>
+              <th class="px-3 py-2.5 text-right text-[11px] font-semibold text-slate-400">输入</th>
+              <th class="px-3 py-2.5 text-right text-[11px] font-semibold text-slate-400">缓存读</th>
+              <th class="px-3 py-2.5 text-right text-[11px] font-semibold text-slate-400">缓存写</th>
+              <th class="px-3 py-2.5 text-right text-[11px] font-semibold text-slate-400">输出</th>
+              <th class="px-3 py-2.5 text-right text-[11px] font-semibold text-slate-400">命中率</th>
+              <th class="px-3 py-2.5 text-right text-[11px] font-semibold text-slate-400">任务占比</th>
+              <th class="px-5 py-2.5 text-right text-[11px] font-semibold text-slate-400">合计</th>
+            </tr></thead>
+            <tbody>
+              <template x-for="row in tokenByProject()" :key="row.id">
+                <tr class="border-b border-slate-50 hover:bg-slate-50/60 transition cursor-pointer" @click="openProject(row.id)">
+                  <td class="px-5 py-3"><div class="flex items-center gap-2"><span class="font-mono text-slate-400 text-[10px] shrink-0" x-text="row.id"></span><span class="text-slate-700 font-medium truncate max-w-[200px]" x-text="row.title"></span><span class="px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0" :class="row.status === 'active' ? 'bg-teal-50 text-teal-600' : row.status === 'completed' ? 'bg-slate-100 text-slate-500' : 'bg-amber-50 text-amber-600'" x-text="row.status === 'active' ? '运行中' : row.status === 'completed' ? '已完成' : '已暂停'"></span><span x-show="!row.complete" class="text-[10px] text-amber-600">数据不完整</span></div></td>
+                  <td class="px-3 py-3 text-right tabular-nums text-slate-500" x-text="formatTokenCount(row.input)"></td>
+                  <td class="px-3 py-3 text-right tabular-nums token-fg-cache" x-text="formatTokenCount(row.cacheRead)"></td>
+                  <td class="px-3 py-3 text-right tabular-nums token-fg-cache-write" x-text="formatTokenCount(row.cacheWrite)"></td>
+                  <td class="px-3 py-3 text-right tabular-nums token-fg-output" x-text="formatTokenCount(row.output)"></td>
+                  <td class="px-3 py-3 text-right tabular-nums text-slate-500" x-text="tokenCacheHitRateLabel(row.cacheHitRate)"></td>
+                  <td class="px-3 py-3">
+                    <div class="flex items-center justify-end gap-2">
+                      <div class="token-metric-track w-16"><span class="token-metric-fill token-fill-input" :style="`width:${row.pct}%`"></span></div>
+                      <span class="w-8 text-right text-[10px] tabular-nums text-slate-400" x-text="`${row.pct}%`"></span>
+                    </div>
+                  </td>
+                  <td class="px-5 py-3 text-right tabular-nums font-semibold text-slate-700" x-text="formatTokenCount(row.total)"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
 

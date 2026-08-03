@@ -10,6 +10,7 @@ from axiom.modules.audit.service import AuditService
 from axiom.modules.graph.tables import intents
 from axiom.modules.settings.service import RuntimeSettingsService
 from axiom.modules.tasks.repository import TaskRepository
+from axiom.modules.token_usage.service import TokenUsageService
 from axiom.modules.workers.service import WorkerService
 
 
@@ -24,14 +25,21 @@ REASON_LABELS = {
 
 
 class DiagnosticsService:
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, *, token_usage: TokenUsageService | None = None):
         self.engine = engine
         self.tasks = TaskRepository()
         self.audit = AuditService(engine)
         self.settings = RuntimeSettingsService(engine)
         self.workers = WorkerService(engine)
+        self.token_usage = token_usage or TokenUsageService(engine)
 
-    def task(self, task_id: str) -> dict[str, Any]:
+    def task(
+        self,
+        task_id: str,
+        *,
+        token_range: str = "all",
+        model: str = "all",
+    ) -> dict[str, Any]:
         with self.engine.connect() as conn:
             task = self.tasks.get(conn, task_id)
             if task is None:
@@ -56,7 +64,11 @@ class DiagnosticsService:
                 "applied_at": runtime.applied_at,
             },
             "worker_rankings": self._worker_rankings(events),
-            "token_rankings": self._token_rankings(events),
+            "token_rankings": self.token_usage.rankings(
+                task_id=task_id,
+                token_range=token_range,
+                model=model,
+            ),
             "recent_events": [item.model_dump(mode="json") for item in events[:80]],
         }
 
@@ -159,31 +171,6 @@ class DiagnosticsService:
             boards[phase]["reasons"] = sorted(reasons[phase].values(), key=lambda item: (-item["count"], item["code"]))
         return {"boards": boards, "notes": ["统计基于已持久化的 Intent 生命周期事件；旧数据没有事件时不会臆造执行结果。"]}
 
-    def _token_rankings(self, events) -> dict[str, Any]:
-        totals = _token_bucket("总计")
-        by_worker: dict[str, dict[str, Any]] = {}
-        by_phase: dict[str, dict[str, Any]] = {}
-        for event in events:
-            usage = event.payload.get("token_usage") if isinstance(event.payload, dict) else None
-            if not isinstance(usage, dict):
-                continue
-            phase = str(event.payload.get("phase") or "unknown")
-            worker = event.worker or "未标记 Worker"
-            worker_row = by_worker.setdefault(worker, _token_bucket(worker))
-            phase_row = by_phase.setdefault(phase, _token_bucket(phase))
-            _add_usage(totals, usage)
-            _add_usage(worker_row, usage)
-            _add_usage(phase_row, usage)
-            worker_row["phases"].add(phase)
-            phase_row["workers"].add(worker)
-        return {
-            "totals": _finalize_tokens(totals),
-            "by_worker": [_finalize_tokens(item) for item in sorted(by_worker.values(), key=lambda x: -x["total_tokens"])],
-            "by_phase": [_finalize_tokens(item) for item in sorted(by_phase.values(), key=lambda x: -x["total_tokens"])],
-            "notes": ["当前仅统计带 token_usage 的持久化事件；没有该事件时显示为 0，不从文本猜测 token。"],
-        }
-
-
 def _parse_time(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -196,47 +183,3 @@ def _parse_time(value: str | None) -> datetime | None:
 
 def _preview(value: str, limit: int = 180) -> str:
     return " ".join(str(value or "").split())[:limit]
-
-
-def _token_bucket(name: str) -> dict[str, Any]:
-    return {
-        "name": name,
-        "worker": name,
-        "phase": name,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-        "reasoning_tokens": 0,
-        "total_tokens": 0,
-        "calls": 0,
-        "phases": set(),
-        "workers": set(),
-    }
-
-
-def _add_usage(bucket: dict[str, Any], raw: dict[str, Any]) -> None:
-    mapping = {
-        "input_tokens": ("input_tokens", "input", "prompt_tokens"),
-        "output_tokens": ("output_tokens", "output", "completion_tokens"),
-        "cache_read_tokens": ("cache_read_tokens", "cacheRead", "cache_read"),
-        "cache_write_tokens": ("cache_write_tokens", "cacheWrite", "cache_write"),
-        "reasoning_tokens": ("reasoning_tokens", "reasoning", "reasoningTokens"),
-        "total_tokens": ("total_tokens", "total", "totalTokens"),
-    }
-    for destination, keys in mapping.items():
-        for key in keys:
-            if key in raw:
-                try:
-                    bucket[destination] += int(raw[key] or 0)
-                except (TypeError, ValueError):
-                    pass
-                break
-    bucket["calls"] += 1
-
-
-def _finalize_tokens(bucket: dict[str, Any]) -> dict[str, Any]:
-    result = dict(bucket)
-    result["phases"] = sorted(result.get("phases") or [])
-    result["workers"] = sorted(result.get("workers") or [])
-    return result

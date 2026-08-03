@@ -16,6 +16,7 @@ from axiom.dispatcher.schemas import ClaimedWork, DispatchReport
 from axiom.modules.execution.schemas import ActivityCommand, ReleaseIntentCommand
 from axiom.modules.reason.schemas import ClaimedReasonRun
 from axiom.modules.workers.schemas import Worker
+from axiom.modules.token_usage.schemas import TokenUsageBatchCommand
 
 
 logger = logging.getLogger(__name__)
@@ -185,8 +186,14 @@ class AxiomRunner:
         def activity_reporter(command: ActivityCommand) -> None:
             self.control_plane.activity(work, command)
 
+        def token_usage_reporter(command: TokenUsageBatchCommand) -> None:
+            reporter = getattr(self.control_plane, "token_usage", None)
+            if reporter is not None:
+                reporter(work, command)
+
         common = {
             "activity_reporter": activity_reporter,
+            "token_usage_reporter": token_usage_reporter,
             "api_url": getattr(self.control_plane, "api_url", "http://127.0.0.1:8899"),
             "service_token": getattr(self.control_plane, "service_token", ""),
         }

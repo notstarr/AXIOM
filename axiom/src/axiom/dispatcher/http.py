@@ -33,6 +33,7 @@ from axiom.modules.reason.schemas import (
 )
 from axiom.modules.settings.schemas import RuntimeSettings
 from axiom.modules.tasks.schemas import RunDeadlineReconcileReport
+from axiom.modules.token_usage.schemas import TokenUsageBatchCommand, TokenUsageBatchResult
 from axiom.modules.workers.schemas import Worker
 
 
@@ -166,6 +167,19 @@ class HttpControlPlane:
             if exc.code == "lease_inactive":
                 raise LeaseLostError(str(exc)) from exc
             raise
+
+    def token_usage(
+        self,
+        work: ClaimedWork,
+        command: TokenUsageBatchCommand,
+    ) -> TokenUsageBatchResult:
+        return TokenUsageBatchResult.model_validate(
+            self._request(
+                "POST",
+                self._work_path("token-usage", work),
+                command.model_dump(mode="json"),
+            )
+        )
 
     def input(self, work: ClaimedWork) -> ExecutionInput:
         return ExecutionInput.model_validate(

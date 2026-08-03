@@ -26,6 +26,7 @@ from axiom.dispatcher.reason import ReasonExecutionTimeout
 from axiom.dispatcher.tool_path import build_tool_path, prepare_runtime_bin
 from axiom.modules.execution.schemas import ActivityCommand, ExecutionInput
 from axiom.modules.reason.schemas import ReasonWorkspace
+from axiom.modules.token_usage.schemas import TokenUsageBatchCommand
 from axiom.modules.workers.pi_config import PiWorkerConfig
 from axiom.modules.workers.schemas import Worker
 
@@ -69,6 +70,7 @@ class PiBootstrapExecutor:
         prompt_renderer: PromptRenderer | None = None,
         default_conclude_seconds: int = 180,
         activity_reporter: Callable[[ActivityCommand], None] | None = None,
+        token_usage_reporter: Callable[[TokenUsageBatchCommand], None] | None = None,
         api_url: str = "http://127.0.0.1:8899",
         service_token: str = "",
     ):
@@ -79,6 +81,7 @@ class PiBootstrapExecutor:
         self.prompts = prompt_renderer or PromptRenderer()
         self.default_conclude_seconds = default_conclude_seconds
         self.activity_reporter = activity_reporter
+        self.token_usage_reporter = token_usage_reporter
         self.api_url = api_url.rstrip("/")
         self.service_token = service_token
         self._session_id: str | None = None
@@ -204,11 +207,16 @@ class PiBootstrapExecutor:
             guard_enabled=execution_input.guard_enabled,
             mode="rpc" if rpc else "json",
         )
-        tracker = (
-            SessionActivityTracker(session_dir, execution_input.lease_id, self.activity_reporter)
-            if self.activity_reporter is not None
-            else None
-        )
+        tracker = None
+        if self.activity_reporter is not None or self.token_usage_reporter is not None:
+            tracker = SessionActivityTracker(
+                session_dir,
+                execution_input.lease_id,
+                self.activity_reporter,
+                usage_reporter=self.token_usage_reporter,
+                session_id=self._session_id,
+                process_dir=Path(execution_input.run_dir) / "process",
+            )
         if tracker is not None:
             tracker.start()
         try:

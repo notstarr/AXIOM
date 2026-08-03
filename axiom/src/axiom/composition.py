@@ -27,6 +27,7 @@ from axiom.modules.goals.service import GoalService
 from axiom.modules.settings.service import RuntimeSettingsService
 from axiom.modules.tasks.service import TaskService
 from axiom.modules.todos.service import TodoService
+from axiom.modules.token_usage.service import TokenUsageService
 from axiom.modules.vulnerabilities.service import VulnerabilityService
 from axiom.modules.workers.service import WorkerService
 from axiom.shared.storage import FileStore
@@ -60,6 +61,7 @@ class Container:
     exports: ExportService
     diagnostics: DiagnosticsService
     dashboard: DashboardService
+    token_usage: TokenUsageService
 
     @classmethod
     def build(cls, engine: Engine, *, data_dir: Path) -> "Container":
@@ -69,6 +71,7 @@ class Container:
         reason = ReasonService(engine, store=store)
         skills = SkillService(data_dir, engine=engine)
         settings = RuntimeSettingsService(engine)
+        token_usage = TokenUsageService(engine)
         return cls(
             engine=engine,
             projects=ProjectService(engine),
@@ -94,6 +97,7 @@ class Container:
             guard=GuardService(engine, settings),
             goals=GoalService(engine),
             exports=ExportService(engine),
-            diagnostics=DiagnosticsService(engine),
-            dashboard=DashboardService(engine),
+            diagnostics=DiagnosticsService(engine, token_usage=token_usage),
+            dashboard=DashboardService(engine, token_usage=token_usage),
+            token_usage=token_usage,
         )

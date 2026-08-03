@@ -23,6 +23,110 @@
   .app-modal-surface { background: var(--surface-modal, #fff); border-color: var(--border-default, #e2e8f0); color: var(--text-primary, #1e293b); }
   .app-input { background: var(--surface-inset, #fff); border: 1px solid var(--border-default, #e2e8f0); color: var(--text-primary, #1e293b); outline: none; }
   .app-input:focus { border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96,165,250,0.15); }
+  .token-usage-panel { background: var(--surface-card); border-color: var(--border); }
+  .token-usage-icon { color: #7c3aed; background: rgba(124, 58, 237, 0.10); }
+  .token-filter-select select,
+  .token-range-switch { background: var(--surface-inset); border-color: var(--border); color: var(--text-secondary); }
+  .token-usage-summary,
+  .token-chart-panel { background: var(--surface-card); }
+  .token-metric-row { display: grid; gap: 7px; }
+  .token-metric-track { height: 7px; overflow: hidden; border-radius: 999px; background: var(--surface-inset); }
+  .token-metric-fill { display: block; height: 100%; min-width: 0; border-radius: inherit; transition: width 240ms ease; }
+  .token-fill-input, .token-segment-input { background: #3b82f6; }
+  .token-fill-cache, .token-segment-cache-read { background: #2ebd8b; }
+  .token-fill-cache-write, .token-segment-cache-write { background: #f59e0b; }
+  .token-fill-output, .token-segment-output { background: #8b5cf6; }
+  .token-fg-input { color: #3b82f6; }
+  .token-fg-cache { color: #18a875; }
+  .token-fg-cache-write { color: #d88706; }
+  .token-fg-output { color: #8b5cf6; }
+  .token-hit-rate { background: var(--surface-inset); border-color: var(--border); }
+  .token-legend-dot { width: 8px; height: 8px; border-radius: 999px; flex: none; }
+  .token-chart-scroll { padding: 4px 2px 0; scrollbar-width: thin; }
+  .token-chart {
+    position: relative;
+    height: 235px;
+    padding: 0 4px;
+  }
+  .token-chart-grid {
+    position: absolute;
+    inset: 4px 4px 30px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    pointer-events: none;
+  }
+  .token-chart-grid span { display: block; border-top: 1px solid var(--border); }
+  .token-chart-columns {
+    position: absolute;
+    inset: 4px 4px 0;
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+  }
+  .token-chart-column {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 22px;
+    display: grid;
+    grid-template-rows: 201px 26px;
+    align-items: end;
+  }
+  .token-chart-column:hover { background: color-mix(in srgb, var(--surface-hover) 52%, transparent); }
+  .token-chart-bar-area {
+    height: 196px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 0 2px;
+  }
+  .token-chart-bar {
+    width: min(28px, 76%);
+    min-width: 7px;
+    max-width: 28px;
+    display: flex;
+    flex-direction: column-reverse;
+    overflow: hidden;
+    border-radius: 6px 6px 2px 2px;
+    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.03);
+    transition: height 240ms ease, filter 140ms ease;
+  }
+  .token-chart-column:hover .token-chart-bar { filter: saturate(1.08) brightness(1.03); }
+  .token-segment { display: block; width: 100%; min-height: 0; }
+  .token-chart-label {
+    align-self: center;
+    justify-self: center;
+    color: var(--text-tertiary);
+    font-size: 9px;
+    line-height: 20px;
+    white-space: nowrap;
+  }
+  .token-chart-tooltip {
+    position: absolute;
+    z-index: 8;
+    left: 50%;
+    bottom: 215px;
+    width: 150px;
+    transform: translateX(-50%);
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text-secondary);
+    background: var(--surface-panel);
+    box-shadow: var(--shadow-lg);
+    font-size: 10px;
+    pointer-events: none;
+  }
+  .token-chart-tooltip p { display: flex; justify-content: space-between; gap: 10px; margin: 2px 0; }
+  .token-chart-tooltip p:first-child { display: block; margin-bottom: 5px; }
+  .token-chart-tooltip b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .token-chart-empty { border-radius: 12px; background: var(--surface-inset); }
+  .dark .token-usage-icon { color: #c4a7ff; background: rgba(139, 92, 246, 0.18); }
+  .dark .token-fg-input { color: #75aaff; }
+  .dark .token-fg-cache { color: #5ed7ae; }
+  .dark .token-fg-cache-write { color: #ffc15c; }
+  .dark .token-fg-output { color: #bd9cff; }
+  .dark .token-chart-bar { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05); }
   .timeline-flash { animation: timelineFlash 1s ease-out; }
   .timeline-scroll::-webkit-scrollbar { height: 4px; }
   .timeline-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }

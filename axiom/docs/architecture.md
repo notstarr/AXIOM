@@ -1,6 +1,6 @@
 # AXIOM 当前生产架构
 
-> 状态：已核对至 2026-08-02。本文描述当前实际代码，不描述未落地的 ASM、容器化或爬虫方案。
+> 状态：已核对至 2026-08-03。本文描述当前实际代码，不描述未落地的 ASM、容器化或爬虫方案。
 
 ## 1. 运行边界
 
@@ -58,6 +58,7 @@ API Router
  ├─ goals          Goal Evaluation
  ├─ audit          追加式审计
  ├─ diagnostics    任务健康、Worker、失败和 Token 统计
+ ├─ token_usage    Pi Session 用量采集、幂等持久化、回填和聚合
  └─ exports        任务、漏洞和报告导出
 ```
 
@@ -229,6 +230,14 @@ Pi Worker 的模型运行参数只保留真实参与运行的 `context_window`�
 
 Execute 超时后，Explore Conclude 使用同一 Pi session ID 启动新的 RPC 进程继续有界收口，但不会再次发送 70% 提醒。Explore 收口预算的正式下限为 180 秒、上限默认为 600 秒；Reason 提交低于下限的 Intent 会被 API 明确拒绝，不做静默修正。
 
+### Token 用量持久化
+
+Pi Session JSONL 是实时和历史 Token 用量的主要事实源。Session tailer 在 Bootstrap、Reason、Explore 的 JSON/RPC 执行中共用，解析 assistant message、toolResult、compaction 和 branch summary 中明确报告的 usage；不从文本长度估算，也不递归读取 `retainedTail`。明细写入 `llm_token_usage`，以 `session_file + session_id + session_entry_id + usage_kind` 的稳定键幂等去重；HTTP 上报失败只写入当前 Lease 的 `process/token-usage.pending.jsonl`，不会让阶段失败。
+
+每条用量保留任务、Intent/ReasonRun、Lease、阶段、Worker、provider、实际响应模型、Session entry 和四类 Token：未命中输入、缓存命中、缓存写入、输出。总量为四类之和，`reasoning` 是输出子集，不重复加入；缓存命中率为 `cacheRead / (input + cacheRead + cacheWrite)`，分母为零时为空。`llm_token_usage_sources` 记录 Session 是否完整；路径缺失、JSONL 截断、字段无法恢复的历史来源标记为 `incomplete`，不伪造缺失数量。
+
+Dashboard 和任务 Diagnostics 通过已有汇总接口支持时间范围和实际 `provider/model` 筛选，任务明细覆盖所有 Goal Cycle、成功、失败、超时、重试、Execute 和 Conclude。`axiom token-usage-backfill` 扫描 `runs/**/sessions/*.jsonl` 并复用同一幂等写入服务；旧 Audit Event 的 Token 只作为标记为 `legacy/incomplete` 的兼容来源，已有 Session 记录时不重复导入。
+
 2026-07-27 的生产受控验收确认了两种路径：60 秒 Execute 在约第 42 秒产生 `soft_reminder`；提醒若落在工具调用中，会由 Pi 排队并在工具结束后的下一轮模型调用前注入。验收会话中该 steer 作为 user 消息落入 session，模型随后仅返回 `FINISH`，Intent 在 49.7 秒内完成且没有进入 Conclude 或重试。另一轮故意让慢请求撞上 Execute 硬超时，验证了同 session RPC Conclude 可继续整理并原子提交 Artifact/Fact。
 
 后续 `t_147` 生产受控验收专门覆盖 Pi 自身重试：本机兼容服务第一次返回 HTTP 500，Pi 自动发起第二次请求；动态 70% steer 被接受后触发第三次模型调用。最终 RPC 日志包含 2 次 `agent_end`、1 次 `auto_retry_start/end`、1 次 `agent_settled`，随后 `get_last_assistant_text` 返回精确 `FINISH`，代码成功注册 `explore.findings`、`explore.leads` 并生成 Fact。临时 Task、Project、Worker、服务和文件随后全部清理，正式 Runner 保持运行。
@@ -343,7 +352,9 @@ ReasonRun/RuntimeConfig 迁移版本为 `20260727_0020`。迁移保留历史 Rea
 
 `20260729_0027_artifact_folder_index` 为 Task 内按 Intent 聚合和读取 Artifact 增加 `(task_id, archived, intent_id, created_at)` 索引。迁移不修改业务数据；生产副本完成 `0026 → 0027 → 0026 → 0027`，SQLite integrity 为 `ok`。
 
-2026-07-29 生产升级前备份位于 `/Users/hexin/.local/share/axiom-v3/backups/archive-batches-20260729T034510Z/axiom.db.pre-0025.bak`。生产库当前 revision 为 `20260729_0027`，API 与 Runner LaunchAgent 均正常运行，SQLite integrity 为 `ok` 且 foreign key violation 为 0。
+`20260803_0029_llm_token_usage` 新增 Session Token 明细和来源完整性表，以及任务/模型/时间索引。迁移不改写历史 Session 或 Audit Event；生产切换时先升级数据库，再使用 `axiom token-usage-backfill --dry-run` 检查可识别 Lease、合法 usage 记录和不完整来源，确认报告后再正式回填。回填和实时上报共用稳定键，不会因 Runner 重启或重复扫描重复计数。
+
+2026-07-29 生产升级前备份位于 `/Users/hexin/.local/share/axiom-v3/backups/archive-batches-20260729T034510Z/axiom.db.pre-0025.bak`。截至本文状态，生产库 revision 为 `20260729_0028`；`20260803_0029_llm_token_usage` 尚未迁移。API 与 Runner LaunchAgent 均正常运行，SQLite integrity 为 `ok` 且 foreign key violation 为 0。
 
 ## 10. 当前明确不属于主流程的内容
 

@@ -148,6 +148,43 @@
           </div>
         </section>
 
+        <section class="token-usage-panel rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="flex flex-wrap items-start gap-3">
+            <div>
+              <p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">LLM usage</p>
+              <h3 class="mt-1 text-base font-semibold text-slate-800">本任务 Token 消耗</h3>
+              <p class="mt-1 text-xs text-slate-400">包含所有 Goal 轮次、失败、超时、重试、Execute 与 Conclude。</p>
+            </div>
+            <div class="flex-1"></div>
+            <label class="token-filter-select inline-flex items-center gap-1.5 text-[11px] text-slate-400">
+              <span>模型</span>
+              <select class="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 focus:outline-none" :value="taskTokenModel" @change="setTaskTokenModel($event.target.value)">
+                <option value="all">全部模型</option>
+                <template x-for="model in (tokenRankings().available_models || [])" :key="`task-token-model-${model.key}`"><option :value="model.key" x-text="model.key"></option></template>
+              </select>
+            </label>
+            <div class="token-range-switch inline-flex items-center gap-0.5 rounded-xl border border-slate-200 p-0.5">
+              <template x-for="option in tokenRangeOptions()" :key="`task-token-range-${option.value}`"><button type="button" @click="setTaskTokenRange(option.value)" class="rounded-lg px-2 py-1.5 text-[11px] font-medium transition" :class="taskTokenRange === option.value ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'" x-text="option.label"></button></template>
+            </div>
+          </div>
+          <template x-if="!selectedTaskDiagnostics()">
+            <div class="mt-4 rounded-xl bg-slate-50 p-4 text-xs text-slate-400">正在读取本任务 Token 明细…</div>
+          </template>
+          <template x-if="selectedTaskDiagnostics()">
+            <div class="mt-4 space-y-3">
+              <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
+                <div class="token-hit-rate rounded-xl border border-slate-200 p-3"><p class="text-[10px] text-slate-400">总 Token</p><p class="mt-1 text-lg font-semibold text-slate-800 tabular-nums" x-text="formatTokenCount(taskTokenSummary().total_tokens ?? taskTokenSummary().total)"></p></div>
+                <div class="token-hit-rate rounded-xl border border-slate-200 p-3"><p class="text-[10px] text-slate-400">输入（未命中）</p><p class="mt-1 text-lg font-semibold token-fg-input tabular-nums" x-text="formatTokenCount(taskTokenSummary().input_tokens ?? taskTokenSummary().input_uncached)"></p></div>
+                <div class="token-hit-rate rounded-xl border border-slate-200 p-3"><p class="text-[10px] text-slate-400">缓存命中</p><p class="mt-1 text-lg font-semibold token-fg-cache tabular-nums" x-text="formatTokenCount(taskTokenSummary().cache_read_tokens ?? taskTokenSummary().cache_read)"></p></div>
+                <div class="token-hit-rate rounded-xl border border-slate-200 p-3"><p class="text-[10px] text-slate-400">缓存写入</p><p class="mt-1 text-lg font-semibold token-fg-cache-write tabular-nums" x-text="formatTokenCount(taskTokenSummary().cache_write_tokens ?? taskTokenSummary().cache_write)"></p></div>
+                <div class="token-hit-rate rounded-xl border border-slate-200 p-3"><p class="text-[10px] text-slate-400">输出</p><p class="mt-1 text-lg font-semibold token-fg-output tabular-nums" x-text="formatTokenCount(taskTokenSummary().output_tokens ?? taskTokenSummary().output)"></p></div>
+                <div class="token-hit-rate rounded-xl border border-slate-200 p-3"><p class="text-[10px] text-slate-400">缓存命中率</p><p class="mt-1 text-lg font-semibold token-fg-cache tabular-nums" x-text="tokenCacheHitRateLabel(taskTokenSummary().cache_hit_rate)"></p></div>
+              </div>
+              <div x-show="taskTokenSummary().complete === false || taskTokenSummary().incomplete_sources > 0" class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">有 <span class="font-semibold" x-text="taskTokenSummary().incomplete_sources || 0"></span> 个 Session 来源不完整；缺失 Token 未被估算。</div>
+            </div>
+          </template>
+        </section>
+
         <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
             <div><h3 class="text-sm font-semibold text-slate-800" x-text="humanCurrentIntents().length ? '当前并发执行' : '最近一轮执行'"></h3><p class="mt-1 text-xs text-slate-400" x-text="humanCurrentIntents().length ? 'Reason 可以连续运行，Explore Intent 可以并发领取和执行。' : '当前没有活动 Intent，这里保留最近一轮执行结果。'"></p></div>

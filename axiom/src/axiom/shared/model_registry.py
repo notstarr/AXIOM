@@ -14,6 +14,7 @@ from axiom.modules.reason.tables import reason_run_sources, reason_runs, reason_
 from axiom.modules.mcp.tables import mcp_servers, mcp_tools
 from axiom.modules.settings.tables import runtime_settings
 from axiom.modules.tasks.tables import task_hints, tasks
+from axiom.modules.token_usage.tables import llm_token_usage, llm_token_usage_sources
 from axiom.modules.todos.tables import todo_sources, todos
 from axiom.modules.vulnerabilities.tables import vulnerability_artifacts, vulnerabilities
 from axiom.modules.workers.tables import workers
@@ -50,4 +51,6 @@ ALL_TABLES = (
     project_knowledge,
     task_goal_cycles,
     goal_evaluations,
+    llm_token_usage,
+    llm_token_usage_sources,
 )

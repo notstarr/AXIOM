@@ -48,6 +48,8 @@ REQUIRED_TABLES = frozenset(
         "goal_evaluations",
         "todo_sources",
         "workers",
+        "llm_token_usage",
+        "llm_token_usage_sources",
     }
 )
 

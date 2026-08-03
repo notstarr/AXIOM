@@ -622,7 +622,7 @@
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/maintainer-status$/)) && method === 'GET') return { maintaining_intent_ids: [] };
     if ((match = path.match(/^\/projects\/([^/]+)\/diagnostics$/)) && method === 'GET') {
-      return request('GET', `/tasks/${match[1]}/diagnostics`);
+      return request('GET', `/tasks/${match[1]}/diagnostics${url.search}`, null, options);
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/conversation(?:\/index)?$/)) && method === 'GET') {
       return { project_id: match[1], threads: [], items: [], stats: { workers: [], intents: [], thread_types: {}, timeout_count: 0, thread_count: 0, item_count: 0 }, filters: {} };
@@ -859,7 +859,11 @@
     },
     async loadDashboardSummary() {
       try {
-        this.dashboardSummary = await request('GET', '/dashboard/summary', null, {
+        const params = new URLSearchParams({
+          token_range: this.dashboardTokenRange || '30d',
+          model: this.dashboardTokenModel || 'all',
+        });
+        this.dashboardSummary = await request('GET', `/dashboard/summary?${params.toString()}`, null, {
           signal: this._pageAbortController?.signal,
         });
         this.projectDetailsLoaded = true;

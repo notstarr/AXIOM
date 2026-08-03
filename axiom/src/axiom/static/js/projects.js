@@ -211,17 +211,26 @@ window.AxiomModules.projects = {
     },
 
     selectedTaskDiagnostics() {
-      const selected = this.selectedTaskSummary();
-      if (!selected) return null;
-      return this.taskDiagnostics[selected.id] || null;
+      const id = this.activePage === 'task-detail'
+        ? this.selectedProjectId
+        : this.selectedTaskSummary()?.id;
+      if (!id) return null;
+      if (!this.taskDiagnostics[id] && !this.taskDiagnosticsLoading[id]) {
+        this.loadTaskDiagnostics(id, true);
+      }
+      return this.taskDiagnostics[id] || null;
     },
 
     async loadTaskDiagnostics(projectId = '', silent = false) {
-      const id = projectId || this.selectedTaskSummary()?.id || '';
+      const id = projectId || (this.activePage === 'task-detail' ? this.selectedProjectId : '') || this.selectedTaskSummary()?.id || '';
       if (!id) return null;
       try {
         this.taskDiagnosticsLoading[id] = true;
-        const data = await this.api('GET', `/projects/${id}/diagnostics`);
+        const params = new URLSearchParams({
+          token_range: this.taskTokenRange || 'all',
+          model: this.taskTokenModel || 'all',
+        });
+        const data = await this.api('GET', `/projects/${id}/diagnostics?${params.toString()}`);
         this.taskDiagnostics = { ...(this.taskDiagnostics || {}), [id]: data };
         if (!silent) this.showToast('任务诊断已刷新');
         return data;
@@ -303,7 +312,26 @@ window.AxiomModules.projects = {
     },
 
     tokenRankings() {
-      return this.selectedTaskDiagnostics()?.token_rankings || { totals: {}, by_worker: [], by_phase: [] };
+      return this.selectedTaskDiagnostics()?.token_rankings || {
+        totals: {}, by_worker: [], by_phase: [], by_model: [], available_models: [],
+      };
+    },
+
+    taskTokenSummary() {
+      return this.tokenRankings().totals || {};
+    },
+
+    async setTaskTokenRange(value) {
+      if (!value || value === this.taskTokenRange) return;
+      this.taskTokenRange = value;
+      await this.loadTaskDiagnostics(this.selectedProjectId || this.selectedTaskSummary()?.id || '');
+    },
+
+    async setTaskTokenModel(value) {
+      const next = value || 'all';
+      if (next === this.taskTokenModel) return;
+      this.taskTokenModel = next;
+      await this.loadTaskDiagnostics(this.selectedProjectId || this.selectedTaskSummary()?.id || '');
     },
 
     formatTokenCount(value) {
@@ -323,7 +351,8 @@ window.AxiomModules.projects = {
     },
 
     tokenBreakdownText(row) {
-      return `输入 ${this.formatTokenCount(row?.input_tokens)} · 输出 ${this.formatTokenCount(row?.output_tokens)} · 缓存 ${this.formatTokenCount((row?.cache_read_tokens || 0) + (row?.cache_write_tokens || 0))} · 推理 ${this.formatTokenCount(row?.reasoning_tokens)}`;
+      const reasoning = Number(row?.reasoning_tokens || row?.reasoning || 0);
+      return `输入（未命中）${this.formatTokenCount(row?.input_tokens ?? row?.input_uncached)} · 缓存命中 ${this.formatTokenCount(row?.cache_read_tokens ?? row?.cache_read)} · 缓存写入 ${this.formatTokenCount(row?.cache_write_tokens ?? row?.cache_write)} · 输出 ${this.formatTokenCount(row?.output_tokens ?? row?.output)}${reasoning ? `（推理 ${this.formatTokenCount(reasoning)}）` : ''}`;
     },
 
     enabledDispatchWorkers() {

@@ -5,7 +5,9 @@ window.AxiomModules.dashboard = {
       const summary = this.dashboardSummary || {};
       const taskCounts = summary.task_status_counts || {};
       const severityCounts = summary.vulnerability_severity_counts || {};
-      const tokenStats = summary.token_usage || { input: 0, output: 0, total: 0 };
+      const tokenStats = summary.token_usage || {
+        input: 0, input_uncached: 0, cache_read: 0, cache_write: 0, output: 0, total: 0,
+      };
       return {
         runningProjects: taskCounts.running || 0,
         pausedProjects: taskCounts.stopped || 0,
@@ -16,9 +18,12 @@ window.AxiomModules.dashboard = {
         workingIntents: summary.active_intent_count || 0,
         unclaimedIntents: summary.pending_intent_count || 0,
         eventTotal: (summary.recent_events || []).length,
-        tokenInput: tokenStats.input,
+        tokenInput: tokenStats.input_uncached ?? tokenStats.input ?? 0,
+        tokenCacheRead: tokenStats.cache_read || 0,
+        tokenCacheWrite: tokenStats.cache_write || 0,
         tokenOutput: tokenStats.output,
         tokenTotal: tokenStats.total,
+        tokenCacheHitRate: tokenStats.cache_hit_rate,
       };
     },
 
@@ -27,8 +32,117 @@ window.AxiomModules.dashboard = {
       const totalAll = Number(this.dashboardSummary?.token_usage?.total || 0);
       return (this.dashboardSummary?.token_by_task || []).map(item => {
         const task = (this.projects || []).find(project => project.id === item.task_id);
-        return { id: item.task_id, title: item.title || task?.title || item.task_id, status: task?.status || '', input: item.input || 0, output: item.output || 0, total: item.total || 0, pct: totalAll > 0 ? Math.round((item.total || 0) / totalAll * 100) : 0 };
+        const status = task?.status || ({ running: 'active', stopped: 'stopped' }[item.status] || item.status || '');
+        return {
+          id: item.task_id,
+          title: item.title || task?.title || item.task_id,
+          status,
+          input: item.input_uncached ?? item.input ?? 0,
+          cacheRead: item.cache_read || 0,
+          cacheWrite: item.cache_write || 0,
+          output: item.output || 0,
+          total: item.total || 0,
+          cacheHitRate: item.cache_hit_rate,
+          complete: item.complete !== false,
+          incompleteSources: item.incomplete_sources || 0,
+          pct: totalAll > 0 ? Math.round((item.total || 0) / totalAll * 100) : 0,
+        };
       });
+    },
+
+    tokenRangeOptions() {
+      return [
+        { value: '7d', label: '7天' },
+        { value: '30d', label: '30天' },
+        { value: '3m', label: '3月' },
+        { value: '6m', label: '6月' },
+        { value: '1y', label: '1年' },
+        { value: 'all', label: '全部' },
+      ];
+    },
+
+    async setDashboardTokenRange(value) {
+      if (!value || value === this.dashboardTokenRange) return;
+      this.dashboardTokenRange = value;
+      this.dashboardTokenHover = null;
+      await this.loadDashboardSummary();
+    },
+
+    async setDashboardTokenModel(value) {
+      const next = value || 'all';
+      if (next === this.dashboardTokenModel) return;
+      this.dashboardTokenModel = next;
+      this.dashboardTokenHover = null;
+      await this.loadDashboardSummary();
+    },
+
+    dashboardTokenSummary() {
+      return this.dashboardSummary?.token_usage || {
+        input: 0,
+        input_uncached: 0,
+        cache_read: 0,
+        cache_write: 0,
+        output: 0,
+        total: 0,
+        cache_hit_rate: null,
+        complete: true,
+        incomplete_sources: 0,
+      };
+    },
+
+    dashboardTokenTaskCount() {
+      return (this.dashboardSummary?.token_by_task || []).length;
+    },
+
+    tokenCacheHitRateLabel(value) {
+      if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
+      return `${(Number(value) * 100).toFixed(1).replace(/\.0$/, '')}%`;
+    },
+
+    tokenChartRows() {
+      const series = this.dashboardSummary?.token_series || [];
+      const maxTotal = Math.max(1, ...series.map(item => Number(item.total || 0)));
+      return series.map((item, index) => {
+        const input = Number(item.input_uncached ?? item.input ?? 0);
+        const cacheRead = Number(item.cache_read || 0);
+        const cacheWrite = Number(item.cache_write || 0);
+        const output = Number(item.output || 0);
+        const total = Number(item.total ?? (input + cacheRead + cacheWrite + output));
+        const denominator = total || 1;
+        return {
+          ...item,
+          index,
+          input,
+          cacheRead,
+          cacheWrite,
+          output,
+          total,
+          heightPct: total > 0 ? Math.max(2, total / maxTotal * 100) : 0,
+          segments: [
+            { key: 'input', label: '输入（未命中）', value: input, pct: input / denominator * 100 },
+            { key: 'cache-read', label: '缓存命中', value: cacheRead, pct: cacheRead / denominator * 100 },
+            { key: 'cache-write', label: '缓存写入', value: cacheWrite, pct: cacheWrite / denominator * 100 },
+            { key: 'output', label: '输出', value: output, pct: output / denominator * 100 },
+          ],
+        };
+      });
+    },
+
+    tokenChartMinWidth() {
+      const count = this.dashboardSummary?.token_series?.length || 0;
+      return Math.max(640, count * 30);
+    },
+
+    tokenChartBucketLabel(bucket) {
+      const raw = String(bucket || '');
+      if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw.slice(5);
+      return raw;
+    },
+
+    tokenChartLabelVisible(index, count) {
+      if (count <= 14) return true;
+      const step = count <= 31 ? 5 : Math.ceil(count / 12);
+      return index === 0 || index === count - 1 || index % step === 0;
     },
 
     // Token usage for the currently selected project (from its cached events)

@@ -111,6 +111,8 @@
 | 图谱 Todo 侧栏 | 已验证 | 任务图谱页面 |
 | Files / MCP / Worker / Settings | 已验证 | 生产页面验收 |
 | RuntimeConfig 四组设置 | 已验证 | 调度并发、阶段预算、Reason 触发与派发、高级可靠性 |
+| Token 用量持久化 | 已验证 | Pi Session JSONL 明细、四类 Token、完整性状态和幂等回填 |
+| Dashboard / Task Token 统计 | 已验证 | 时间范围、实际模型、缓存命中率、任务占比及 Worker/阶段/模型排行 |
 | 设置版本与热应用状态 | 已验证 | `expected_version` / 409；已保存版本与 Runner applied 真实显示 |
 | 合法零值刷新不回退 | 已验证 | 浏览器将 low watermark 保存为 0、刷新持久化，再恢复默认 1 |
 | ReasonRun 活动卡片 | 已验证 | 显示 rr ID、Worker、活动、心跳、触发器、预算和配置快照；图谱无节点 |

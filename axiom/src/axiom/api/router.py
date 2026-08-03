@@ -24,6 +24,7 @@ from axiom.modules.reason.api import router as reason_router
 from axiom.modules.settings.api import router as settings_router
 from axiom.modules.tasks.api import router as tasks_router
 from axiom.modules.todos.api import router as todos_router
+from axiom.modules.token_usage.api import router as token_usage_router
 from axiom.modules.vulnerabilities.api import router as vulnerabilities_router
 from axiom.modules.workers.api import router as workers_router
 
@@ -53,3 +54,4 @@ router.include_router(knowledge_router)
 router.include_router(skills_router)
 router.include_router(guard_router)
 router.include_router(goals_router)
+router.include_router(token_usage_router)
