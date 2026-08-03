@@ -11,6 +11,7 @@
 
   const apiRoot = '/api/v1';
   const knowledgeCounts = new Map();
+  const piThinkingLevels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
   const runtimeConfigKeys = [
     'runner_interval_seconds',
     'global_max_active_runs',
@@ -303,9 +304,22 @@
     return worker?.config?.environment || {};
   }
 
+  function workerThinkingConfig(config) {
+    const legacy = String(config?.thinking || 'off').toLowerCase();
+    const configuredLevel = String(config?.thinking_level || '').toLowerCase();
+    const level = piThinkingLevels.includes(configuredLevel)
+      ? configuredLevel
+      : (piThinkingLevels.includes(legacy) ? legacy : 'medium');
+    const enabled = typeof config?.thinking_enabled === 'boolean'
+      ? config.thinking_enabled
+      : legacy !== 'off';
+    return { enabled, level };
+  }
+
   function mapWorker(worker) {
     const env = workerEnv(worker);
     const config = worker?.config || {};
+    const thinking = workerThinkingConfig(config);
     return {
       name: worker.name,
       persisted_name: worker.name,
@@ -320,9 +334,11 @@
       pi_model_context_window: String(config.context_window || '200000'),
       pi_api_key: '',
       pi_api_key_masked: config.api_key ? '••••••••' : '',
-      pi_thinking: config.thinking || 'off',
-      pi_thinking_capable: config.thinking_capable || 'unknown',
-      pi_thinking_tested_at: config.thinking_tested_at || '',
+      pi_thinking_enabled: thinking.enabled,
+      pi_thinking_level: thinking.level,
+      // Keep the old view model readable for index-legacy.html only. New
+      // saves persist the independent switch and strength fields below.
+      pi_thinking: thinking.enabled ? thinking.level : 'off',
       mcp_enabled: String(env.PI_MCP_ENABLED || 'false') === 'true',
       mcp_profile: env.PI_MCP_PROFILE || '',
       mcp_config_json: env.PI_MCP_CONFIG_JSON || '',
@@ -397,18 +413,28 @@
       ? await request('GET', `/workers/${encodeURIComponent(persistedName)}`).catch(() => null)
       : null;
     const oldConfig = existing?.config || {};
+    const legacyThinking = String(body.pi_thinking || 'off').toLowerCase();
+    const requestedLevel = String(body.pi_thinking_level || '').toLowerCase();
+    const thinkingLevel = piThinkingLevels.includes(requestedLevel)
+      ? requestedLevel
+      : (piThinkingLevels.includes(legacyThinking) ? legacyThinking : 'medium');
+    const thinkingEnabled = typeof body.pi_thinking_enabled === 'boolean'
+      ? body.pi_thinking_enabled
+      : legacyThinking !== 'off';
     const nextConfig = {
       ...oldConfig,
       model: body.pi_model || '',
       base_url: body.pi_base_url || '',
       provider_api: body.pi_provider_api || 'openai-completions',
       context_window: Number(body.pi_model_context_window ?? 200000),
-      thinking: body.pi_thinking || 'off',
-      thinking_capable: body.pi_thinking_capable || 'unknown',
-      thinking_tested_at: body.pi_thinking_tested_at || '',
+      thinking_enabled: thinkingEnabled,
+      thinking_level: thinkingLevel,
       environment: { ...(oldConfig.environment || {}) },
     };
     delete nextConfig.env;
+    delete nextConfig.thinking;
+    delete nextConfig.thinking_capable;
+    delete nextConfig.thinking_tested_at;
     if (body.pi_api_key) nextConfig.api_key = body.pi_api_key;
     await request('PUT', `/workers/${encodeURIComponent(targetName)}`, {
       worker_type: 'pi',

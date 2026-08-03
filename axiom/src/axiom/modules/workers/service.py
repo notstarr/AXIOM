@@ -30,18 +30,20 @@ class WorkerService:
                 update={"config": canonicalize_pi_worker_config(command.config)}
             )
         with self.engine.begin() as conn:
-            return self.repository.upsert(conn, name=name, command=command, now=utcnow())
+            return self._normalize_worker(
+                self.repository.upsert(conn, name=name, command=command, now=utcnow())
+            )
 
     def get(self, name: str) -> Worker:
         with self.engine.connect() as conn:
             worker = self.repository.get(conn, name)
         if worker is None:
             raise NotFoundError(f"Worker not found: {name}")
-        return worker
+        return self._normalize_worker(worker)
 
     def list(self) -> list[Worker]:
         with self.engine.connect() as conn:
-            return self.repository.list(conn)
+            return [self._normalize_worker(worker) for worker in self.repository.list(conn)]
 
     def set_cooldown(self, name: str, cooldown_until: str | None) -> Worker:
         with self.engine.begin() as conn:
@@ -53,7 +55,7 @@ class WorkerService:
             )
         if worker is None:
             raise NotFoundError(f"Worker not found: {name}")
-        return worker
+        return self._normalize_worker(worker)
 
     def delete(self, name: str) -> None:
         with self.engine.begin() as conn:
@@ -199,3 +201,19 @@ class WorkerService:
         if len(value) > 128:
             raise ConflictError("Worker name is too long")
         return value
+
+    @staticmethod
+    def _normalize_worker(worker: Worker) -> Worker:
+        """Expose legacy Pi Workers in the same shape used by new leases.
+
+        Existing rows are intentionally not rewritten during a read.  They
+        still receive the split thinking controls in API responses and in the
+        Runner's next lease, while an explicit save performs the durable
+        canonicalization through ``upsert``.
+        """
+
+        if worker.worker_type != "pi":
+            return worker
+        return worker.model_copy(
+            update={"config": canonicalize_pi_worker_config(worker.config)}
+        )

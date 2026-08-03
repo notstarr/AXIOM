@@ -27,6 +27,28 @@ def test_canonicalize_pi_worker_config_replaces_legacy_binary(monkeypatch, tmp_p
     assert normalized["binary"] == str(runtime)
 
 
+def test_canonicalize_pi_worker_config_splits_legacy_thinking_setting() -> None:
+    enabled = pi_config.canonicalize_pi_worker_config(
+        {"thinking": "HIGH", "thinking_capable": "true", "thinking_tested_at": "old"}
+    )
+    assert enabled["thinking_enabled"] is True
+    assert enabled["thinking_level"] == "high"
+    assert "thinking" not in enabled
+    assert "thinking_capable" not in enabled
+    assert "thinking_tested_at" not in enabled
+
+    disabled = pi_config.canonicalize_pi_worker_config({"thinking": "off"})
+    assert disabled["thinking_enabled"] is False
+    assert disabled["thinking_level"] == "medium"
+
+
+def test_pi_thinking_level_rejects_values_not_supported_by_pi() -> None:
+    with pytest.raises(ValueError):
+        pi_config.PiWorkerConfig.model_validate(
+            {"thinking_enabled": True, "thinking_level": "ultra"}
+        )
+
+
 def test_validate_pi_worker_runtime_checks_pinned_pi_and_node(monkeypatch, tmp_path) -> None:
     runtime = _version_script(tmp_path / "pi", pi_config.PI_RUNTIME_VERSION)
     node = _version_script(tmp_path / "node", pi_config.PI_NODE_VERSION)

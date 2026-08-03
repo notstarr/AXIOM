@@ -223,6 +223,8 @@ Pi RPC 的会话完成边界是 `agent_settled`，不是 `agent_end`。一次会
 
 生产 Pi 运行时固定在忽略版本控制的 `runtime/pi/0.82.1/`，启动器 `runtime/pi/0.82.1/bin/pi` 明确使用 `/Users/hexin/.workbuddy/binaries/node/versions/22.22.2/bin/node`，不依赖 `/usr/local/bin/pi` 的 shebang 或 LaunchAgent PATH。所有 Pi Worker 的既有 `config.binary` 均指向该启动器；Bootstrap、Reason 只升级运行时，仍使用 JSON 模式。
 
+Pi Worker 的模型运行参数只保留真实参与运行的 `context_window`、`thinking_enabled` 和 `thinking_level`。`context_window` 写入 lease 隔离目录的 `models.json.contextWindow`，用于 Pi 的 Token 预算与自动 Compaction，不能扩大上游模型的真实上下文上限。思考开关关闭时，模型元数据写入 `reasoning=false` 且命令行显式传递 `--thinking off`；开启时写入 `reasoning=true` 并传递 `minimal/low/medium/high/xhigh/max` 中的所选等级。Pi 0.82.1 对 `xhigh/max` 要求模型显式 opt-in，因此 AXIOM 会为用户选中的高等级生成对应 `thinkingLevelMap`；上游兼容服务仍可能忽略或拒绝自身不支持的等级。历史单字段 `thinking=off|level` 在读取和下一 Lease 时自动拆分，用户保存 Worker 后持久化为两个独立字段；旧的伪能力测试字段不再披露或保存。配置不会热改已经运行的 Pi 进程，只对新 Lease 生效。
+
 共享 Chrome-SecTest 仍是跨 Lease 持久化的浏览器，不归任何单个 Worker 进程组管理。`launch-chrome.sh` 通过 Python `subprocess.Popen` 启动 Chrome，并显式使用 `DEVNULL` 关闭标准输入、输出和错误，设置 `start_new_session=True` 与 `close_fds=True`；因此即使命令被 `head`/`tail` 等管道包裹，Tool Call 也会在 CDP 就绪后正常收到 EOF，Chrome 则继续独立存活。CDP 就绪后脚本重新按专用 Profile 与端口扫描实际 Chrome PID 再写 PID 文件；启动失败只清理同时匹配这两个条件的进程，不操作个人 Chrome。`CHROME_BIN` 仅作为测试或非标准安装路径覆盖。
 
 Execute 超时后，Explore Conclude 使用同一 Pi session ID 启动新的 RPC 进程继续有界收口，但不会再次发送 70% 提醒。Explore 收口预算的正式下限为 180 秒、上限默认为 600 秒；Reason 提交低于下限的 Intent 会被 API 明确拒绝，不做静默修正。

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -106,6 +107,39 @@ def test_pi_json_and_rpc_modes_append_the_shared_context_attention_rule(tmp_path
         assert "axiom skill path whatisvul" in argv[index + 1]
         assert "axiom skill doctor whatisvul" in argv[index + 1]
         assert "不得用记忆、常识或其它 Skill 替代" in argv[index + 1]
+
+
+@pytest.mark.parametrize(
+    ("enabled", "level", "expected_level"),
+    [(False, "high", "off"), (True, "high", "high"), (True, "max", "max")],
+)
+def test_pi_adapter_passes_explicit_thinking_state_to_pi(
+    tmp_path, enabled: bool, level: str, expected_level: str
+) -> None:
+    executor = PiBootstrapExecutor(
+        pi_worker(tmp_path / "unused-pi").model_copy(
+            update={
+                "config": {
+                    "model": "test-model",
+                    "base_url": "https://models.example/v1",
+                    "context_window": 500_000,
+                    "thinking_enabled": enabled,
+                    "thinking_level": level,
+                }
+            }
+        )
+    )
+    argv = executor._build_argv("测试", tmp_path / "sessions", ["read"])
+    thinking_index = argv.index("--thinking")
+    assert argv[thinking_index + 1] == expected_level
+
+    agent_dir = tmp_path / "run"
+    executor._write_models_file(agent_dir)
+    model = json.loads((agent_dir / "models.json").read_text())["providers"]["axiom"]["models"][0]
+    assert model["contextWindow"] == 500_000
+    assert model["reasoning"] is enabled
+    if level == "max" and enabled:
+        assert model["thinkingLevelMap"] == {"max": "max"}
 
 
 def test_pi_adapter_materializes_custom_provider_and_shared_skill_paths(tmp_path) -> None:

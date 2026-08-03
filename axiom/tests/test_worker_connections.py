@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+
 import httpx
+
+from axiom.modules.workers.tables import workers
 
 
 def test_pi_worker_config_is_stored_in_one_canonical_shape(client) -> None:
@@ -12,6 +16,7 @@ def test_pi_worker_config_is_stored_in_one_canonical_shape(client) -> None:
                     "PI_MODEL": "model-a",
                     "PI_BASE_URL": "https://models.example/v1",
                     "PI_API_KEY": "secret",
+                    "PI_THINKING": "high",
                     "PI_MODEL_CONTEXT_WINDOW": "128000",
                     "HTTP_PROXY": "http://127.0.0.1:7890",
                 }
@@ -25,8 +30,38 @@ def test_pi_worker_config_is_stored_in_one_canonical_shape(client) -> None:
     assert config["model"] == "model-a"
     assert config["base_url"] == "https://models.example/v1"
     assert config["api_key"] == "secret"
+    assert config["thinking_enabled"] is True
+    assert config["thinking_level"] == "high"
+    assert "thinking" not in config
     assert config["context_window"] == 128000
     assert config["environment"] == {"HTTP_PROXY": "http://127.0.0.1:7890"}
+
+
+def test_legacy_pi_worker_reads_with_split_thinking_controls(client, engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            workers.insert().values(
+                name="legacy-pi",
+                worker_type="pi",
+                capabilities_json=json.dumps(["explore"]),
+                max_running=1,
+                priority=0,
+                config_json=json.dumps(
+                    {"model": "legacy-model", "thinking": "xhigh"}
+                ),
+                disabled=False,
+                created_at="2026-08-03T00:00:00Z",
+                updated_at="2026-08-03T00:00:00Z",
+            )
+        )
+
+    response = client.get("/api/v1/workers/legacy-pi")
+
+    assert response.status_code == 200, response.text
+    config = response.json()["config"]
+    assert config["thinking_enabled"] is True
+    assert config["thinking_level"] == "xhigh"
+    assert "thinking" not in config
 
 
 def test_worker_models_uses_saved_connection_and_normalizes_response(client, monkeypatch) -> None:

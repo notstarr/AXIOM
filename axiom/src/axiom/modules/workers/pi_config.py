@@ -3,9 +3,9 @@ from __future__ import annotations
 import subprocess
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 PI_RUNTIME_VERSION = "0.82.1"
@@ -17,6 +17,8 @@ PI_NODE_BINARY = Path(
     "/Users/hexin/.workbuddy/binaries/node/versions/22.22.2/bin/node"
 )
 _LEGACY_PI_BINARIES = frozenset({"", "pi", "/usr/local/bin/pi"})
+PiThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh", "max"]
+_PI_THINKING_LEVELS = frozenset({"minimal", "low", "medium", "high", "xhigh", "max"})
 
 
 class PiRuntimeError(RuntimeError):
@@ -40,13 +42,52 @@ class PiWorkerConfig(BaseModel):
     base_url: str = ""
     provider_api: str = "openai-completions"
     api_key: str = ""
-    thinking: str = "off"
     context_window: int = Field(default=200_000, ge=1)
+    thinking_enabled: bool = False
+    thinking_level: PiThinkingLevel = "medium"
     tools: list[str] = Field(default_factory=lambda: ["read", "write", "bash", "edit"])
     skill_paths: list[str] = Field(default_factory=list)
     session_dir: str = ""
     session_flag: str = "--session-id"
     environment: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_thinking(cls, value: Any) -> Any:
+        """Split the historical ``thinking=off|level`` setting safely.
+
+        Pi treats model reasoning capability and the selected thinking level as
+        separate inputs.  AXIOM used to persist both concepts in one string,
+        and its generated ``models.json`` did not advertise reasoning at all,
+        so Pi clamped every requested non-off level back to ``off``.  Keep old
+        Workers readable while making the two real controls first-class.
+        """
+
+        if not isinstance(value, dict):
+            return value
+        source = dict(value)
+        legacy = str(source.pop("thinking", "") or "").strip().lower()
+        source.pop("thinking_capable", None)
+        source.pop("thinking_tested_at", None)
+
+        raw_level = str(source.get("thinking_level", "") or "").strip().lower()
+        if raw_level == "off":
+            source["thinking_enabled"] = False
+            source["thinking_level"] = "medium"
+        elif raw_level in _PI_THINKING_LEVELS:
+            source["thinking_level"] = raw_level
+        elif not raw_level and legacy in _PI_THINKING_LEVELS:
+            source["thinking_level"] = legacy
+
+        if "thinking_enabled" not in source and legacy:
+            source["thinking_enabled"] = legacy != "off"
+        return source
+
+    @property
+    def effective_thinking_level(self) -> str:
+        """Return the exact Pi 0.82.1 CLI level for this Worker."""
+
+        return self.thinking_level if self.thinking_enabled else "off"
 
 
 _LEGACY_ENV_FIELDS = {

@@ -259,6 +259,9 @@ window.AxiomModules.dispatch = {
 
     decorateWorkerDraft(worker) {
       const taskTypes = Array.isArray(worker.task_types) ? worker.task_types : [];
+      const legacyThinking = String(worker.pi_thinking || 'off').toLowerCase();
+      const thinkingLevels = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+      const configuredThinkingLevel = String(worker.pi_thinking_level || '').toLowerCase();
       return {
         ...worker,
         task_types: taskTypes,
@@ -270,9 +273,12 @@ window.AxiomModules.dispatch = {
         phase_plan: taskTypes.includes('plan'),
         phase_maintainer: taskTypes.includes('maintainer'),
         pi_api_key: '',
-        pi_thinking: worker.pi_thinking || 'off',
-        pi_thinking_capable: worker.pi_thinking_capable || 'unknown',
-        pi_thinking_tested_at: worker.pi_thinking_tested_at || '',
+        pi_thinking_enabled: typeof worker.pi_thinking_enabled === 'boolean'
+          ? worker.pi_thinking_enabled
+          : legacyThinking !== 'off',
+        pi_thinking_level: thinkingLevels.includes(configuredThinkingLevel)
+          ? configuredThinkingLevel
+          : (thinkingLevels.includes(legacyThinking) ? legacyThinking : 'medium'),
         mcp_enabled: !!worker.mcp_enabled,
         mcp_profile: worker.mcp_profile || '',
         mcp_config_json: worker.mcp_config_json || '',
@@ -304,20 +310,6 @@ window.AxiomModules.dispatch = {
       worker[phaseKey] = !worker[phaseKey];
     },
 
-    thinkingBadgeClass(worker) {
-      const capable = worker?.pi_thinking_capable || 'unknown';
-      if (capable === 'true') return 'bg-teal-50 text-teal-600 border-teal-100';
-      if (capable === 'false') return 'bg-amber-50 text-amber-600 border-amber-100';
-      return 'bg-slate-100 text-slate-500 border-slate-200';
-    },
-
-    thinkingBadgeText(worker) {
-      const capable = worker?.pi_thinking_capable || 'unknown';
-      if (capable === 'true') return '思考可用';
-      if (capable === 'false') return '思考未生效';
-      return '未测试';
-    },
-
     parseContextWindowInput(rawValue) {
       const value = String(rawValue ?? '').trim().toLowerCase();
       if (!value) return '';
@@ -338,6 +330,16 @@ window.AxiomModules.dispatch = {
       }
       worker.pi_model_context_window = normalized;
       return normalized;
+    },
+
+    normalizeWorkerThinkingLevel(worker) {
+      const level = String(worker.pi_thinking_level || '').trim().toLowerCase();
+      const allowed = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+      if (!allowed.includes(level)) {
+        throw new Error(`Worker ${worker.name || '未命名'} 的思考强度无效`);
+      }
+      worker.pi_thinking_level = level;
+      return level;
     },
 
     async fetchPiModels(worker) {
@@ -531,6 +533,7 @@ window.AxiomModules.dispatch = {
         throw new Error(`Worker ${worker.name || '未命名'} 至少要勾选一个参与阶段`);
       }
       const normalizedContextWindow = this.normalizeWorkerContextWindow(worker);
+      const normalizedThinkingLevel = this.normalizeWorkerThinkingLevel(worker);
       return {
         name: worker.name,
         task_types: taskTypes,
@@ -542,9 +545,8 @@ window.AxiomModules.dispatch = {
         pi_model_context_window: normalizedContextWindow,
         pi_api_key: worker.pi_api_key || '',
         pi_api_key_masked: worker.pi_api_key_masked || '',
-        pi_thinking: worker.pi_thinking || 'off',
-        pi_thinking_capable: worker.pi_thinking_capable || 'unknown',
-        pi_thinking_tested_at: worker.pi_thinking_tested_at || '',
+        pi_thinking_enabled: !!worker.pi_thinking_enabled,
+        pi_thinking_level: normalizedThinkingLevel,
         mcp_enabled: !!worker.mcp_enabled,
         mcp_profile: (worker.mcp_profile || '').trim(),
         mcp_config_json: (worker.mcp_config_json || '').trim(),
@@ -606,9 +608,8 @@ window.AxiomModules.dispatch = {
         pi_model_context_window: '200000',
         pi_api_key: '',
         pi_api_key_masked: '',
-        pi_thinking: 'off',
-        pi_thinking_capable: 'unknown',
-        pi_thinking_tested_at: '',
+        pi_thinking_enabled: false,
+        pi_thinking_level: 'medium',
         mcp_enabled: false,
         mcp_profile: '',
         mcp_config_json: '',
@@ -681,8 +682,6 @@ window.AxiomModules.dispatch = {
           pi_api_key: worker.pi_api_key || '',
         });
         worker.test_result = result;
-        if (result.thinking_capable) worker.pi_thinking_capable = result.thinking_capable;
-        if (result.thinking_tested_at) worker.pi_thinking_tested_at = result.thinking_tested_at;
         this.showToast(result.message, result.ok ? 'info' : 'error');
       } catch (e) {
         worker.test_result = { ok: false, message: e.message };

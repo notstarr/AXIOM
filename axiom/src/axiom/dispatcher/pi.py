@@ -273,8 +273,10 @@ class PiBootstrapExecutor:
         ]
         if self._session_id:
             argv.extend([self.settings.session_flag, self._session_id])
-        if self.settings.thinking and self.settings.thinking != "off":
-            argv.extend(["--thinking", self.settings.thinking])
+        # Always make the level explicit.  Pi persists thinking changes in a
+        # session, so omitting the flag is weaker than explicitly selecting
+        # ``off`` for a Worker whose thinking switch is disabled.
+        argv.extend(["--thinking", self.settings.effective_thinking_level])
         if tool_names:
             argv.extend(["--tools", ",".join(tool_names)])
         for path in dict.fromkeys([*self.settings.skill_paths, *(skill_paths or [])]):
@@ -312,7 +314,21 @@ class PiBootstrapExecutor:
             "id": self.settings.model,
             "name": self.settings.model,
             "contextWindow": self.settings.context_window,
+            # Pi only honors --thinking when the selected model advertises
+            # reasoning support.  Without this field it clamps every requested
+            # level to off before the first provider request.
+            "reasoning": self.settings.thinking_enabled,
         }
+        if self.settings.thinking_enabled and self.settings.thinking_level in {
+            "xhigh",
+            "max",
+        }:
+            # Pi 0.82.1 intentionally requires explicit model opt-in for the
+            # two levels above high.  Selecting one in AXIOM is that opt-in;
+            # an upstream provider may still reject a level it does not expose.
+            model["thinkingLevelMap"] = {
+                self.settings.thinking_level: self.settings.thinking_level
+            }
         provider: dict[str, Any] = {
             "baseUrl": self.settings.base_url,
             "api": self.settings.provider_api,

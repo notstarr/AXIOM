@@ -1081,6 +1081,11 @@ def test_frontend_and_static_assets_are_served(client):
     assert "Bootstrap 并发" in settings.text
     assert "Reason 并发" in settings.text
     assert settings.text.count("1（固定）") >= 2
+    assert "思考模式" in settings.text
+    assert "pi_thinking_enabled" in settings.text
+    assert "pi_thinking_level" in settings.text
+    assert '<option value="max">max</option>' in settings.text
+    assert "thinkingBadgeClass" not in settings.text
 
     graph = client.get("/static/templates/graph-view.html")
     assert graph.status_code == 200
@@ -1134,6 +1139,8 @@ def test_frontend_and_static_assets_are_served(client):
     assert "goal_history: graph.goal_history || []" in adapter
     assert "applyVulnerabilityRouteParams" in adapter
     assert "openVulnerabilityLocation" in adapter
+    assert "thinking_enabled" in adapter
+    assert "thinking_level" in adapter
     assert "factDescriptionSegments" in graph_js
     assert "openFactReference" in graph_js
     assert "x-html" not in graph.text
