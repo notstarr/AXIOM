@@ -13,6 +13,7 @@ from axiom.modules.context.tables import context_revisions
 from axiom.modules.graph.tables import intents
 from axiom.modules.reason.tables import reason_runs, reason_workspaces
 from axiom.modules.tasks.tables import tasks
+from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.token_usage.parser import normalize_usage, parse_session_file
 from axiom.modules.token_usage.schemas import (
     TokenUsageBatchCommand,
@@ -49,6 +50,7 @@ class OwnerMetadata:
     task_id: str
     intent_id: str | None
     reason_run_id: str | None
+    review_run_id: str | None
     lease_id: str
     phase: str
     worker: str
@@ -71,7 +73,7 @@ class TokenUsageBackfiller:
         selected = set(task_ids or ())
         report = BackfillReport(dry_run=dry_run, task_ids=sorted(selected))
         seen_leases: set[tuple[str, str, str]] = set()
-        session_usage_leases: set[tuple[str, str, str, str]] = set()
+        session_usage_leases: set[tuple[str, str, str, str, str]] = set()
         runs_root = self.data_dir / "runs"
         if runs_root.is_dir():
             skipped_unknown_tasks: set[str] = set()
@@ -144,7 +146,7 @@ class TokenUsageBackfiller:
         report: BackfillReport,
         *,
         dry_run: bool,
-        session_usage_leases: set[tuple[str, str, str, str]],
+        session_usage_leases: set[tuple[str, str, str, str, str]],
     ) -> None:
         session_dir = lease_dir / "sessions"
         session_files = sorted(session_dir.glob("*.jsonl")) if session_dir.is_dir() else []
@@ -237,6 +239,7 @@ class TokenUsageBackfiller:
                 task_id=owner.task_id,
                 intent_id=owner.intent_id,
                 reason_run_id=owner.reason_run_id,
+                review_run_id=owner.review_run_id,
                 lease_id=owner.lease_id,
                 phase=owner.phase,
                 worker=owner.worker,
@@ -251,6 +254,7 @@ class TokenUsageBackfiller:
                 task_id=owner.task_id,
                 intent_id=owner.intent_id,
                 reason_run_id=owner.reason_run_id,
+                review_run_id=owner.review_run_id,
                 lease_id=owner.lease_id,
                 phase=owner.phase,
                 worker=owner.worker,
@@ -273,7 +277,12 @@ class TokenUsageBackfiller:
         with self.engine.connect() as conn:
             rows = conn.execute(query).mappings().all()
         for row in rows:
-            owner_id = str(row["intent_id"] or row["reason_run_id"] or "")
+            owner_id = str(
+                row["intent_id"]
+                or row["reason_run_id"]
+                or row.get("review_run_id")
+                or ""
+            )
             lease_id = str(row["lease_id"] or "")
             task_id = str(row["task_id"])
             if not owner_id or not lease_id or (task_id, owner_id, lease_id) in seen_leases:
@@ -295,7 +304,7 @@ class TokenUsageBackfiller:
         report: BackfillReport,
         *,
         dry_run: bool,
-        session_usage_leases: set[tuple[str, str, str, str]],
+        session_usage_leases: set[tuple[str, str, str, str, str]],
     ) -> None:
         query = select(audit_events).where(audit_events.c.payload_json.like('%"token_usage"%'))
         if selected:
@@ -320,6 +329,10 @@ class TokenUsageBackfiller:
                 str(row["reason_run_id"] or payload.get("reason_run_id") or "").strip()
                 or None
             )
+            review_run_id = (
+                str(row.get("review_run_id") or payload.get("review_run_id") or "").strip()
+                or None
+            )
             normalized = normalize_usage(usage)
             if normalized is None:
                 continue
@@ -329,6 +342,7 @@ class TokenUsageBackfiller:
                 task_id,
                 intent_id or "",
                 reason_run_id or "",
+                review_run_id or "",
                 lease_id,
             )
             # Only suppress a legacy event when it identifies the same Lease
@@ -339,6 +353,7 @@ class TokenUsageBackfiller:
                 task_id,
                 intent_id,
                 reason_run_id,
+                review_run_id,
                 lease_id=lease_id,
             )
             if owner_key in session_usage_leases or same_lease_has_session:
@@ -367,8 +382,13 @@ class TokenUsageBackfiller:
                 task_id=task_id,
                 intent_id=intent_id,
                 reason_run_id=reason_run_id,
+                review_run_id=review_run_id,
                 lease_id=lease_id,
-                phase=phase if phase in {"bootstrap", "explore", "reason"} else "unknown",
+                phase=(
+                    phase
+                    if phase in {"bootstrap", "explore", "reason", "review"}
+                    else "unknown"
+                ),
                 worker=str(row["worker"] or ""),
             )
             report.legacy_imported += 1
@@ -384,7 +404,8 @@ class TokenUsageBackfiller:
                     context_revisions.c.task_id == task_id,
                     context_revisions.c.lease_id == lease_id,
                     (context_revisions.c.intent_id == owner_id)
-                    | (context_revisions.c.reason_run_id == owner_id),
+                    | (context_revisions.c.reason_run_id == owner_id)
+                    | (context_revisions.c.review_run_id == owner_id),
                 )
             ).mappings().one_or_none()
             intent = conn.execute(
@@ -397,6 +418,15 @@ class TokenUsageBackfiller:
                 select(reason_runs.c.worker, reason_runs.c.lease_id).where(
                     reason_runs.c.task_id == task_id,
                     reason_runs.c.id == owner_id,
+                )
+            ).mappings().one_or_none()
+            review = conn.execute(
+                select(
+                    vulnerability_review_runs.c.worker,
+                    vulnerability_review_runs.c.lease_id,
+                ).where(
+                    vulnerability_review_runs.c.task_id == task_id,
+                    vulnerability_review_runs.c.id == owner_id,
                 )
             ).mappings().one_or_none()
             workspace_worker = conn.execute(
@@ -413,12 +443,28 @@ class TokenUsageBackfiller:
                 lease_id=lease_id,
             )
 
+        if context is not None and context.get("review_run_id"):
+            review_id = str(context["review_run_id"])
+            return OwnerMetadata(
+                task_id=task_id,
+                intent_id=None,
+                reason_run_id=None,
+                review_run_id=review_id,
+                lease_id=lease_id,
+                phase="review",
+                worker=str(
+                    (review["worker"] if review and review["lease_id"] == lease_id else "")
+                    or audit_worker
+                    or ""
+                ),
+            )
         if context is not None and context["reason_run_id"]:
             reason_id = str(context["reason_run_id"])
             return OwnerMetadata(
                 task_id=task_id,
                 intent_id=None,
                 reason_run_id=reason_id,
+                review_run_id=None,
                 lease_id=lease_id,
                 phase="reason",
                 worker=str(
@@ -434,6 +480,7 @@ class TokenUsageBackfiller:
                 task_id=task_id,
                 intent_id=intent_id,
                 reason_run_id=None,
+                review_run_id=None,
                 lease_id=lease_id,
                 phase=str(context["phase"] or (intent["kind"] if intent else "unknown")),
                 worker=str(
@@ -442,11 +489,22 @@ class TokenUsageBackfiller:
                     or ""
                 ),
             )
+        if review is not None and review["lease_id"] == lease_id:
+            return OwnerMetadata(
+                task_id=task_id,
+                intent_id=None,
+                reason_run_id=None,
+                review_run_id=owner_id,
+                lease_id=lease_id,
+                phase="review",
+                worker=str(review["worker"] or audit_worker or ""),
+            )
         if reason is not None and reason["lease_id"] == lease_id:
             return OwnerMetadata(
                 task_id=task_id,
                 intent_id=None,
                 reason_run_id=owner_id,
+                review_run_id=None,
                 lease_id=lease_id,
                 phase="reason",
                 worker=str(
@@ -461,15 +519,29 @@ class TokenUsageBackfiller:
                 task_id=task_id,
                 intent_id=owner_id,
                 reason_run_id=None,
+                review_run_id=None,
                 lease_id=lease_id,
                 phase=str(intent["kind"] or "unknown"),
                 worker=str(intent["worker"] or audit_worker or ""),
+            )
+        if review is not None:
+            return OwnerMetadata(
+                task_id=task_id,
+                intent_id=None,
+                reason_run_id=None,
+                review_run_id=owner_id,
+                lease_id=lease_id,
+                phase="review",
+                worker=str(audit_worker or review["worker"] or ""),
+                recognized=False,
+                resolution_error="review_lease_not_found_in_context",
             )
         if reason is not None:
             return OwnerMetadata(
                 task_id=task_id,
                 intent_id=None,
                 reason_run_id=owner_id,
+                review_run_id=None,
                 lease_id=lease_id,
                 phase="reason",
                 worker=str(audit_worker or reason["worker"] or ""),
@@ -481,6 +553,7 @@ class TokenUsageBackfiller:
                 task_id=task_id,
                 intent_id=owner_id,
                 reason_run_id=None,
+                review_run_id=None,
                 lease_id=lease_id,
                 phase=str(intent["kind"] or "unknown"),
                 worker=str(audit_worker or intent["worker"] or ""),
@@ -491,6 +564,7 @@ class TokenUsageBackfiller:
             task_id=task_id,
             intent_id=None,
             reason_run_id=None,
+            review_run_id=None,
             lease_id=lease_id,
             phase="unknown",
             worker="",
@@ -510,6 +584,7 @@ class TokenUsageBackfiller:
             select(
                 audit_events.c.intent_id,
                 audit_events.c.reason_run_id,
+                audit_events.c.review_run_id,
                 audit_events.c.worker,
                 audit_events.c.payload_json,
             ).where(
@@ -527,8 +602,10 @@ class TokenUsageBackfiller:
             event_owner = str(
                 row["intent_id"]
                 or row["reason_run_id"]
+                or row.get("review_run_id")
                 or payload.get("intent_id")
                 or payload.get("reason_run_id")
+                or payload.get("review_run_id")
                 or ""
             )
             if event_owner and event_owner != owner_id:
@@ -547,6 +624,7 @@ class TokenUsageBackfiller:
         task_id: str,
         intent_id: str | None,
         reason_run_id: str | None,
+        review_run_id: str | None,
         *,
         lease_id: str | None,
     ) -> bool:
@@ -555,6 +633,8 @@ class TokenUsageBackfiller:
             conditions.append(llm_token_usage.c.intent_id == intent_id)
         elif reason_run_id:
             conditions.append(llm_token_usage.c.reason_run_id == reason_run_id)
+        elif review_run_id:
+            conditions.append(llm_token_usage.c.review_run_id == review_run_id)
         if lease_id:
             conditions.append(llm_token_usage.c.lease_id == lease_id)
         with self.engine.connect() as conn:
@@ -564,11 +644,12 @@ class TokenUsageBackfiller:
         return bool(count)
 
 
-def _owner_lease_key(owner: OwnerMetadata) -> tuple[str, str, str, str]:
+def _owner_lease_key(owner: OwnerMetadata) -> tuple[str, str, str, str, str]:
     return (
         owner.task_id,
         owner.intent_id or "",
         owner.reason_run_id or "",
+        owner.review_run_id or "",
         owner.lease_id,
     )
 

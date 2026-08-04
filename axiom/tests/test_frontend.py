@@ -337,6 +337,119 @@ ctx.filteredVulnerabilities = () => ctx.vulnerabilityItems;
     return json.loads(result.stdout)
 
 
+def _run_vulnerability_review_ui_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
+    program = f"""
+const fs = require('fs');
+const calls = [];
+const toasts = [];
+let queued = false;
+const vulnerability = {{
+  id:'v002', project_id:'t_153', task_id:'t_153', title:'待审核漏洞', status:'待验证', archived:false,
+}};
+const completed = {{
+  id:'vr000002', task_id:'t_153', vulnerability_id:'v002', status:'completed', trigger:'reported',
+  decision:'duplicate', decision_reason:'与更早漏洞属于同一根因', duplicate_of_vulnerability_id:'v001',
+  artifacts:[{{
+    id:'a_review', task_id:'t_153', review_run_id:'vr000002', intent_id:null,
+    artifact_type:'review.report', storage_key:'tasks/t_153/reviews/vr000002/review.md',
+    summary:'审核报告', content_hash:'hash', size:42, created_by:'reviewer', created_at:'now', archived:false,
+  }}],
+  input_fingerprint:'fingerprint', worker_pool:[], settings_version:1,
+  execute_timeout_seconds:300, conclude_timeout_seconds:120, retry_count:0,
+  infrastructure_retry_count:0, last_failure_kind:'', failure_class:'', activity_kind:'completed',
+  activity_summary:'done', activity_tool:'', decision_reason:'与更早漏洞属于同一根因',
+  created_at:'now', updated_at:'now', concluded_at:'now',
+}};
+const pending = {{ ...completed, id:'vr000003', status:'pending', trigger:'manual', decision:null,
+  decision_reason:'', duplicate_of_vulnerability_id:null, artifacts:[], concluded_at:null }};
+global.window = {{ AxiomModules: {{
+  state: {{ state: {{}} }}, core: {{ methods: {{}} }}, projects: {{ methods: {{}} }},
+  graph: {{ methods: {{}} }}, files: {{ methods: {{}} }},
+}} }};
+global.location = {{ origin:'http://testserver', hash:'#/vulnerabilities?task=t_153&vulnerability=v002' }};
+global.window.history = {{ replaceState: (_state, _title, url) => {{ global.location.hash = url; }} }};
+global.window.confirm = () => true;
+global.confirm = global.window.confirm;
+global.fetch = async (url, init = {{}}) => {{
+  const method = init.method || 'GET';
+  const body = init.body ? JSON.parse(init.body) : null;
+  calls.push({{ url, method, body }});
+  let payload;
+  if (method === 'GET' && url === '/api/v1/tasks/t_153/vulnerabilities/v002/reviews') {{
+    payload = queued ? [pending, completed] : [completed];
+  }} else if (method === 'POST' && url === '/api/v1/tasks/t_153/vulnerabilities/v002/reviews') {{
+    queued = true;
+    payload = pending;
+  }} else if (method === 'POST' && url === '/api/v1/tasks/t_153/vulnerabilities/v002/external-report') {{
+    payload = {{ attempt: {{ status:'succeeded' }} }};
+  }} else {{
+    throw new Error(`unexpected request: ${{method}} ${{url}}`);
+  }}
+  return {{ status:200, ok:true, text:async () => JSON.stringify(payload) }};
+}};
+eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
+const methods = Object.assign(
+  {{}},
+  window.AxiomModules.projects.methods,
+  window.AxiomModules.files.methods,
+);
+const ctx = Object.assign({{}}, methods, {{
+  vulnerabilityReviews:[], vulnerabilityReviewsLoading:false, vulnerabilityReviewsError:'',
+  vulnerabilityReviewSubmitting:false, _vulnerabilityReviewRequestId:0,
+  vulnerabilityItems:[vulnerability], selectedVulnerabilityKey:'t_153:v002',
+  selectedVulnerability:() => vulnerability,
+  vulnerabilityKey:item => `${{item.project_id || item.task_id}}:${{item.id}}`,
+  actorName:() => '人工',
+  loadVulnerabilityPage:async () => calls.push({{ action:'reload-page' }}),
+  showToast:(message, type='success') => toasts.push({{ message, type }}),
+  artifactCenterSelectedTask:'', artifactCenterFolderKey:'', artifactCenterRouteArtifactId:'',
+  artifactCenterSearch:'', artifactCenterType:'all', artifactCenterPhase:'all', artifactCenterSource:'all',
+  artifactCenterPage:0, artifactCenterFolderPage:0, artifactCenterSelected:null,
+}});
+(async () => {{
+  await ctx.loadVulnerabilityReviews(vulnerability);
+  const loaded = {{
+    latest:ctx.latestVulnerabilityReview().id,
+    decision:ctx.vulnerabilityReviewDecisionLabel(ctx.latestVulnerabilityReview().decision),
+    retry:ctx.vulnerabilityReviewCanRetry(),
+    artifactReviewRun:ctx.latestVulnerabilityReview().artifacts[0].review_run_id,
+  }};
+  ctx.openReviewDuplicate(ctx.latestVulnerabilityReview());
+  const duplicateHash = location.hash;
+  await ctx.openArtifactLocation('t_153', ctx.latestVulnerabilityReview().artifacts[0]);
+  const artifactHash = location.hash;
+  await ctx.triggerVulnerabilityReview(vulnerability);
+  const afterTrigger = {{
+    latest:ctx.latestVulnerabilityReview().id,
+    state:ctx.vulnerabilityReviewStateLabel(ctx.latestVulnerabilityReview()),
+    retry:ctx.vulnerabilityReviewCanRetry(),
+    submitting:ctx.vulnerabilityReviewSubmitting,
+  }};
+  await ctx.reportExternalVulnerability(vulnerability);
+  const blockedExternalPosts = calls.filter(item => item.url?.endsWith('/external-report')).length;
+  vulnerability.status = '已验证';
+  await ctx.reportExternalVulnerability(vulnerability);
+  const successfulExternalPosts = calls.filter(item => item.url?.endsWith('/external-report')).length;
+  process.stdout.write(JSON.stringify({{
+    loaded, duplicateHash, artifactHash, afterTrigger, blockedExternalPosts,
+    successfulExternalPosts, calls, toasts,
+  }}));
+}})();
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
 def _run_runtime_save_fixture() -> dict[str, object]:
     node = shutil.which("node")
     if not node:
@@ -1198,12 +1311,12 @@ global.window = {{ AxiomModules: {{}} }};
 eval(fs.readFileSync({json.dumps(str(worker_tools))}, 'utf8'));
 const methods = window.AxiomModules.workerTools.methods;
 const items = [
-  {{ capability_kind:'skill', capability_key:'all-skill', title:'All Skill', enabled:true, ready:true, status:'ready', supported_phases:['bootstrap','reason','explore'], scopes:['common'], locked_scopes:[], inactive_reasons:{{}}, metadata:{{}} }},
-  {{ capability_kind:'skill', capability_key:'locked-skill', title:'Locked Skill', enabled:true, ready:true, status:'ready', supported_phases:['bootstrap','reason','explore'], scopes:['common'], locked_scopes:['common'], inactive_reasons:{{}}, metadata:{{}} }},
-  {{ capability_kind:'skill', capability_key:'disabled-new', title:'Disabled', enabled:false, ready:true, status:'ready', supported_phases:['bootstrap','reason','explore'], scopes:[], locked_scopes:[], inactive_reasons:{{}}, metadata:{{}} }},
-  {{ capability_kind:'skill', capability_key:'disabled-old', title:'Disabled Existing', enabled:false, ready:true, status:'ready', supported_phases:['bootstrap','reason','explore'], scopes:['reason'], locked_scopes:[], inactive_reasons:{{reason:'Skill 已全局停用'}}, metadata:{{}} }},
-  {{ capability_kind:'mcp_tool', capability_key:'mcp-1', title:'One', description:'first', enabled:true, ready:true, status:'ready', server_id:'server-1', server_name:'Browser', supported_phases:['bootstrap','reason','explore'], scopes:['reason'], locked_scopes:[], inactive_reasons:{{}}, metadata:{{tool_name:'one'}} }},
-  {{ capability_kind:'mcp_tool', capability_key:'mcp-2', title:'Two', description:'second', enabled:true, ready:true, status:'ready', server_id:'server-1', server_name:'Browser', supported_phases:['bootstrap','reason','explore'], scopes:[], locked_scopes:[], inactive_reasons:{{}}, metadata:{{tool_name:'two'}} }},
+  {{ capability_kind:'skill', capability_key:'all-skill', title:'All Skill', enabled:true, ready:true, status:'ready', supported_phases:['bootstrap','reason','explore','review'], scopes:['common'], locked_scopes:[], inactive_reasons:{{}}, metadata:{{}} }},
+  {{ capability_kind:'skill', capability_key:'locked-skill', title:'Locked Skill', enabled:true, ready:true, status:'ready', supported_phases:['bootstrap','reason','explore','review'], scopes:['common'], locked_scopes:['common'], inactive_reasons:{{}}, metadata:{{}} }},
+  {{ capability_kind:'skill', capability_key:'disabled-new', title:'Disabled', enabled:false, ready:true, status:'ready', supported_phases:['bootstrap','reason','explore','review'], scopes:[], locked_scopes:[], inactive_reasons:{{}}, metadata:{{}} }},
+  {{ capability_kind:'skill', capability_key:'disabled-old', title:'Disabled Existing', enabled:false, ready:true, status:'ready', supported_phases:['bootstrap','reason','explore','review'], scopes:['reason'], locked_scopes:[], inactive_reasons:{{reason:'Skill 已全局停用'}}, metadata:{{}} }},
+  {{ capability_kind:'mcp_tool', capability_key:'mcp-1', title:'One', description:'first', enabled:true, ready:true, status:'ready', server_id:'server-1', server_name:'Browser', supported_phases:['bootstrap','reason','explore','review'], scopes:['reason'], locked_scopes:[], inactive_reasons:{{}}, metadata:{{tool_name:'one'}} }},
+  {{ capability_kind:'mcp_tool', capability_key:'mcp-2', title:'Two', description:'second', enabled:true, ready:true, status:'ready', server_id:'server-1', server_name:'Browser', supported_phases:['bootstrap','reason','explore','review'], scopes:[], locked_scopes:[], inactive_reasons:{{}}, metadata:{{tool_name:'two'}} }},
   {{ capability_kind:'axiom_tool', capability_key:'partial-tool', title:'Partial', enabled:true, ready:true, status:'ready', supported_phases:['bootstrap','explore'], scopes:['bootstrap'], locked_scopes:[], inactive_reasons:{{}}, metadata:{{}} }},
 ];
 const calls = [];
@@ -1294,7 +1407,7 @@ const ctx = Object.assign({{}}, methods, {{
   workerCapabilityDraft:{{}}, workerCapabilityBaseline:{{}},
   phaseCapabilities:{{ scopes:{{}}, items:[{{
     capability_kind:'skill', capability_key:'agent-mail', title:'Agent-Mail',
-    enabled:true, ready:true, status:'ready', supported_phases:['bootstrap','reason','explore'],
+    enabled:true, ready:true, status:'ready', supported_phases:['bootstrap','reason','explore','review'],
     scopes:['reason'], locked_scopes:[], inactive_reasons:{{}}, metadata:{{}},
   }}], builtin_tools:[] }},
   phaseCapabilityDraft:{{}}, axiomToolsCatalog:[], selectedBuiltinTool:'',
@@ -1302,6 +1415,7 @@ const ctx = Object.assign({{}}, methods, {{
     {{phase:'bootstrap', title:'Bootstrap Worker', backends:[]}},
     {{phase:'reason', title:'Reason Worker', backends:[]}},
     {{phase:'explore', title:'Explore Worker', backends:[]}},
+    {{phase:'review', title:'Reviewer Worker', backends:[]}},
   ],
   selectedAxiomWorker:'',
   loadDispatchSettings:async () => calls.push('dispatch'),
@@ -1399,6 +1513,11 @@ def test_frontend_and_static_assets_are_served(client):
     assert 'x-model="vulnEditor.evidence"' not in vulnerabilities.text
     assert "finding_artifact" in vulnerabilities.text
     assert "evidence_artifacts" in vulnerabilities.text
+    assert "Reviewer 审核" in vulnerabilities.text
+    assert "重新审核" in vulnerabilities.text
+    assert "vulnerabilityReviewDecisionLabel" in vulnerabilities.text
+    assert "只有已验证漏洞可以外部上报" in vulnerabilities.text
+    assert "duplicate_of_vulnerability_id" in vulnerabilities.text
 
     files = client.get("/static/templates/files.html")
     assert files.status_code == 200
@@ -1423,8 +1542,8 @@ def test_frontend_and_static_assets_are_served(client):
 
     workers = client.get("/static/templates/workers.html")
     assert workers.status_code == 200
-    assert "三阶段 Worker" in workers.text
-    assert "系统只有三个逻辑 Worker" in workers.text
+    assert "四阶段 Worker" in workers.text
+    assert "系统有四个逻辑 Worker" in workers.text
     assert "模型执行后端" in workers.text
     assert "workerPhases" in workers.text
     assert "能力管理" in workers.text
@@ -1465,7 +1584,7 @@ def test_frontend_and_static_assets_are_served(client):
 
     mcp = client.get("/static/templates/mcp.html")
     assert mcp.status_code == 200
-    assert "三阶段 MCP 可见性" in mcp.text
+    assert "四阶段 MCP 可见性" in mcp.text
     assert "阶段分配由 Worker 统一管理" in mcp.text
     assert "Worker 可见性" in mcp.text
     assert "navigateToWorkerCapability('mcp_tool'" in mcp.text
@@ -1749,6 +1868,44 @@ def test_artifact_center_routes_task_folder_and_selected_file() -> None:
         "taskHash": "#/files?task=t_150",
         "displayPath": "evidence/request.txt",
         "selected": True,
+    }
+
+
+def test_vulnerability_review_history_retry_deep_links_and_external_gate() -> None:
+    result = _run_vulnerability_review_ui_fixture()
+
+    assert result["loaded"] == {
+        "latest": "vr000002",
+        "decision": "重复",
+        "retry": True,
+        "artifactReviewRun": "vr000002",
+    }
+    assert result["duplicateHash"] == "#/vulnerabilities?task=t_153&vulnerability=v001"
+    assert result["artifactHash"] == "#/files?task=t_153&folder=vr000002&artifact=a_review"
+    assert result["afterTrigger"] == {
+        "latest": "vr000003",
+        "state": "等待审核",
+        "retry": False,
+        "submitting": False,
+    }
+    assert result["blockedExternalPosts"] == 0
+    assert result["successfulExternalPosts"] == 1
+    review_posts = [
+        item
+        for item in result["calls"]
+        if item.get("method") == "POST" and item.get("url", "").endswith("/reviews")
+    ]
+    assert review_posts == [
+        {
+            "url": "/api/v1/tasks/t_153/vulnerabilities/v002/reviews",
+            "method": "POST",
+            "body": {"actor": "人工", "reason": "人工要求重新审核"},
+        }
+    ]
+    assert {item["message"] for item in result["toasts"]} >= {
+        "已创建 Reviewer 审核任务",
+        "只有 Reviewer 或人工裁决为已验证的漏洞才能外部上报",
+        "外部上报成功",
     }
 
 
@@ -2036,6 +2193,7 @@ def test_worker_capability_drawer_normalizes_scopes_and_saves_one_matrix() -> No
     assert "all-skill" in subset["bootstrap"]["skill"]
     assert "all-skill" in subset["reason"]["skill"]
     assert "all-skill" not in subset["explore"]["skill"]
+    assert "all-skill" in subset["review"]["skill"]
 
     common = result["commonPayload"]
     assert "all-skill" in common["common"]["skill"]

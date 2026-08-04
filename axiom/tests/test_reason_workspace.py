@@ -518,6 +518,7 @@ def test_reason_workspace_commits_todos_and_pending_intents_atomically(client, d
     ]
     assert todo_index[0]["title"] == "验证对象级授权"
     assert todo_index[0]["status_reason"] == ""
+    assert "preview" not in todo_index[0]
     assert next(item for item in intent_index if item["id"] == "i002")["todo_id"] == "td001"
     assert client.get(f"/api/v1/tasks/{task['id']}").json()["phase"] == "explore"
     evaluation = client.get(f"/api/v1/tasks/{task['id']}/goal-evaluations").json()[0]

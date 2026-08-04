@@ -24,7 +24,8 @@ def _write_tool(root: Path, key: str, *, phases=None, schema=None) -> Path:
                 "version": "1.0.0",
                 "description": "test tool",
                 "entrypoint": "index.ts",
-                "supported_phases": phases or ["bootstrap", "reason", "explore"],
+                "supported_phases": phases
+                or ["bootstrap", "reason", "explore", "review"],
                 "risk_tags": ["test"],
                 "parameters": schema
                 if schema is not None
@@ -191,7 +192,12 @@ def test_binding_is_validated_and_global_disable_keeps_effective_state(
     overview = client.get("/api/v1/workers/overview")
     assert overview.status_code == 200, overview.text
     worker = next(item for item in overview.json() if item["name"] == "worker-a")
-    assert worker["axiom_tool_counts"] == {"bootstrap": 0, "reason": 0, "explore": 1}
+    assert worker["axiom_tool_counts"] == {
+        "bootstrap": 0,
+        "reason": 0,
+        "explore": 1,
+        "review": 0,
+    }
     enabled = client.patch("/api/v1/axiom-tools/shared_probe", json={"enabled": True})
     assert enabled.status_code == 200
 

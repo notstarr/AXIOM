@@ -78,6 +78,11 @@ window.AxiomModules.state = {
     vulnerabilityRouteTaskId: '',
     vulnerabilityRouteId: '',
     vulnerabilitySelectionBlocked: false,
+    vulnerabilityReviews: [],
+    vulnerabilityReviewsLoading: false,
+    vulnerabilityReviewsError: '',
+    vulnerabilityReviewSubmitting: false,
+    _vulnerabilityReviewRequestId: 0,
     polling: true,
     pollTimer: null,
     intentActivityPollTimer: null,
@@ -210,6 +215,8 @@ window.AxiomModules.state = {
       bootstrap_conclude_seconds: 120,
       reason_execute_seconds: 300,
       reason_conclude_seconds: 120,
+      review_execute_seconds: 300,
+      review_conclude_seconds: 120,
       reason_batch_size: 2,
       reason_low_watermark: 1,
       reason_max_wait_seconds: 180,
@@ -341,7 +348,7 @@ window.AxiomModules.state = {
     axiomWorkers: [],
     axiomWorkersLoading: false,
     selectedAxiomWorker: '',
-    // The three logical Workers own phase policy.  Entries in axiomWorkers
+    // The four logical Workers own phase policy.  Entries in axiomWorkers
     // are concrete model execution backends and may participate in more than
     // one phase pool.
     workerPhases: [],

@@ -47,7 +47,7 @@ def _write_extension_tool(
                 "description": "phase capability test tool",
                 "entrypoint": "index.ts",
                 "supported_phases": phases
-                or ["bootstrap", "reason", "explore"],
+                or ["bootstrap", "reason", "explore", "review"],
                 "risk_tags": ["test"],
                 "parameters": {
                     "type": "object",
@@ -77,21 +77,28 @@ def _scan_extension_tool(
     assert response.status_code == 200, response.text
 
 
-def test_three_logical_worker_phases_share_model_backends(client) -> None:
+def test_four_logical_worker_phases_share_model_backends(client) -> None:
     _put_worker(client, "shared-backend", ["bootstrap", "reason"])
 
     phases = client.get("/api/v1/worker-phases")
     assert phases.status_code == 200, phases.text
     body = phases.json()
-    assert [item["phase"] for item in body] == ["bootstrap", "reason", "explore"]
+    assert [item["phase"] for item in body] == [
+        "bootstrap",
+        "reason",
+        "explore",
+        "review",
+    ]
     assert [item["title"] for item in body] == [
         "Bootstrap Worker",
         "Reason Worker",
         "Explore Worker",
+        "Reviewer Worker",
     ]
     assert [item["name"] for item in body[0]["backends"]] == ["shared-backend"]
     assert [item["name"] for item in body[1]["backends"]] == ["shared-backend"]
     assert body[2]["backends"] == []
+    assert body[3]["backends"] == []
 
     saved = client.put(
         "/api/v1/worker-phases/explore/backends",
@@ -162,6 +169,9 @@ def test_common_and_phase_specific_capabilities_do_not_leak(client, data_dir) ->
     assert "common_probe" in service.effective_keys(
         phase="explore", kind="axiom_tool"
     )
+    assert "common_probe" in service.effective_keys(
+        phase="review", kind="axiom_tool"
+    )
     assert "explore_probe" not in service.effective_keys(
         phase="bootstrap", kind="axiom_tool"
     )
@@ -171,16 +181,19 @@ def test_common_and_phase_specific_capabilities_do_not_leak(client, data_dir) ->
     assert "explore_probe" in service.effective_keys(
         phase="explore", kind="axiom_tool"
     )
+    assert "explore_probe" not in service.effective_keys(
+        phase="review", kind="axiom_tool"
+    )
 
 
-def test_common_axiom_tool_must_support_all_three_phases(client, data_dir) -> None:
+def test_common_axiom_tool_must_support_all_four_phases(client, data_dir) -> None:
     _scan_extension_tool(client, data_dir, "bootstrap_probe", phases=["bootstrap"])
     response = client.put(
         "/api/v1/phase-capabilities/axiom_tool/bootstrap_probe",
         json={"scopes": ["common"]},
     )
     assert response.status_code == 409, response.text
-    assert "三个阶段" in response.text or "bootstrap" in response.text
+    assert "四个阶段" in response.text or "bootstrap" in response.text
 
 
 def test_common_scope_canonicalizes_redundant_phase_assignments(
@@ -224,9 +237,12 @@ def test_builtin_tool_catalog_matches_fixed_stage_contracts_and_is_read_only(
         "bootstrap": ["execute"],
         "reason": ["execute", "conclude"],
         "explore": ["execute", "conclude"],
+        "review": ["execute", "conclude"],
     }
     assert tools["axiom.reason.status"]["phases"] == ["reason"]
     assert tools["axiom.explore.vulnerability.report"]["phases"] == ["explore"]
+    assert tools["axiom.review.status"]["phases"] == ["review"]
+    assert tools["axiom.review.decision.submit"]["phases"] == ["review"]
     assert all(item["locked"] is True for item in tools.values())
     assert not (RETIRED_PLACEHOLDER_TOOLS & set(tools))
     assert not (
@@ -256,6 +272,17 @@ def test_locked_whatisvul_is_common_and_cannot_be_removed(client) -> None:
 
     disabled = client.patch("/api/v1/skills/whatisvul/enabled", json={"enabled": False})
     assert disabled.status_code == 409, disabled.text
+
+
+def test_vulnerability_review_skill_defaults_only_to_reviewer(client) -> None:
+    body = client.get("/api/v1/phase-capabilities").json()
+    item = _item(body, "skill", "vuln-review")
+
+    assert item["scopes"] == ["review"]
+    service = client.app.state.container.phase_capabilities
+    assert "vuln-review" in service.effective_keys(phase="review", kind="skill")
+    for phase in ("bootstrap", "reason", "explore"):
+        assert "vuln-review" not in service.effective_keys(phase=phase, kind="skill")
 
 
 def test_skill_snapshot_is_filtered_by_phase(client, tmp_path: Path) -> None:

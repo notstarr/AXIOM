@@ -20,6 +20,16 @@ def _env() -> dict[str, str]:
     }
 
 
+def _review_env() -> dict[str, str]:
+    environment = _env()
+    environment.pop("AXIOM_INTENT_ID")
+    environment.pop("AXIOM_REASON_RUN_ID")
+    environment.pop("AXIOM_REASON_WORKSPACE_ID")
+    environment["AXIOM_REVIEW_RUN_ID"] = "vr000001"
+    environment["AXIOM_VULNERABILITY_ID"] = "v001"
+    return environment
+
+
 def test_reason_cli_sends_one_small_todo_operation_with_repeatable_sources(monkeypatch) -> None:
     calls: list[tuple[str, str, dict]] = []
 
@@ -441,3 +451,106 @@ def test_credential_cli_rejects_symlink_destination(monkeypatch, tmp_path: Path)
 
     assert result.exit_code != 0
     assert outside.read_text(encoding="utf-8") == "keep"
+
+
+def test_review_cli_status_and_decision_use_the_active_review_lease(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return {"ready": True, "errors": []}
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+    status = CliRunner().invoke(main, ["review", "status"], env=_review_env())
+    decision = CliRunner().invoke(
+        main,
+        [
+            "review",
+            "decision",
+            "submit",
+            "duplicate",
+            "--duplicate-of",
+            "v000",
+            "--reason",
+            "与更早漏洞属于同一根因和影响对象",
+        ],
+        env=_review_env(),
+    )
+
+    assert status.exit_code == 0, status.output
+    assert decision.exit_code == 0, decision.output
+    assert calls == [
+        (
+            "POST",
+            "/dispatch/tasks/t_001/vulnerability-review-runs/vr000001/status",
+            {"lease_id": "lease-1"},
+        ),
+        (
+            "POST",
+            "/dispatch/tasks/t_001/vulnerability-review-runs/vr000001/decision",
+            {
+                "lease_id": "lease-1",
+                "decision": "duplicate",
+                "reason": "与更早漏洞属于同一根因和影响对象",
+                "duplicate_of": "v000",
+            },
+        ),
+    ]
+
+
+def test_review_cli_rejects_invalid_duplicate_options_before_request(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        "axiom.worker_cli._request",
+        lambda method, path, payload: calls.append((method, path, payload)),
+    )
+
+    missing_target = CliRunner().invoke(
+        main,
+        [
+            "review",
+            "decision",
+            "submit",
+            "duplicate",
+            "--reason",
+            "属于重复漏洞但缺少目标",
+        ],
+        env=_review_env(),
+    )
+    unexpected_target = CliRunner().invoke(
+        main,
+        [
+            "review",
+            "decision",
+            "submit",
+            "verified",
+            "--duplicate-of",
+            "v001",
+            "--reason",
+            "证据已经充分证明漏洞成立",
+        ],
+        env=_review_env(),
+    )
+
+    assert missing_target.exit_code == 2
+    assert "duplicate requires --duplicate-of" in missing_target.output
+    assert unexpected_target.exit_code == 2
+    assert "--duplicate-of is only valid for duplicate" in unexpected_target.output
+    assert calls == []
+
+
+def test_credential_cli_supports_review_run_identity(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return []
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+    result = CliRunner().invoke(main, ["credential", "list"], env=_review_env())
+
+    assert result.exit_code == 0, result.output
+    assert calls[0][2] == {
+        "lease_id": "lease-1",
+        "review_run_id": "vr000001",
+    }

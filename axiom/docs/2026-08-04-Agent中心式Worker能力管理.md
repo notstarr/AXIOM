@@ -6,6 +6,9 @@ updated: 2026-08-04
 
 # AXIOM Agent 中心式 Worker 能力管理
 
+> **版本说明（2026-08-04）**：本文保留 Reviewer 引入前的三阶段设计与实现事实。当前代码已扩展为 Bootstrap、Reason、Explore、Reviewer 四个逻辑 Worker，增量规则见《Reviewer 第四阶段与漏洞审核状态机》。
+
+
 ## 结论
 
 能力分配现在只有一个编辑入口：Worker 页面中的 Bootstrap、Reason、Explore 三个逻辑 Worker。

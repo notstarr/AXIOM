@@ -14,15 +14,36 @@ from axiom.shared.errors import ConflictError, NotFoundError
 
 if TYPE_CHECKING:
     from axiom.modules.archives.service import ArchiveService
+    from axiom.modules.vulnerability_reviews.service import VulnerabilityReviewService
 
 
 class VulnerabilityService:
-    def __init__(self, engine: Engine, *, archives: ArchiveService | None = None):
+    REVIEW_RELEVANT_FIELDS = {
+        "title",
+        "type",
+        "severity",
+        "description",
+        "prerequisites",
+        "impact",
+        "remediation",
+        "affected_target",
+        "finding_artifact_id",
+        "evidence_artifact_ids",
+    }
+
+    def __init__(
+        self,
+        engine: Engine,
+        *,
+        archives: ArchiveService | None = None,
+        reviews: VulnerabilityReviewService | None = None,
+    ):
         self.engine = engine
         self.repository = VulnerabilityRepository()
         self.artifacts = ArtifactRepository()
         self.tasks = TaskRepository()
         self.archives = archives
+        self.reviews = reviews
 
     def report(self, task_id: str, body: VulnerabilityReport) -> Vulnerability:
         self._validate_status_reason(body.status, body.status_reason)
@@ -45,7 +66,18 @@ class VulnerabilityService:
                 finding_artifact_id=body.finding_artifact_id,
                 evidence_artifact_ids=body.evidence_artifact_ids,
             )
-            return self.repository.create(conn, task_id=task_id, body=body, now=utcnow())
+            now = utcnow()
+            vulnerability = self.repository.create(conn, task_id=task_id, body=body, now=now)
+            if body.status == "待验证" and self.reviews is not None:
+                self.reviews.enqueue_in(
+                    conn,
+                    task_id=task_id,
+                    vulnerability_id=vulnerability.id,
+                    trigger="reported",
+                    trigger_payload={"source": body.source, "reported_by": body.reported_by},
+                    now=now,
+                )
+            return vulnerability
 
     def get(self, task_id: str, vulnerability_id: str) -> Vulnerability:
         with self.engine.connect() as conn:
@@ -76,6 +108,8 @@ class VulnerabilityService:
             task = self.tasks.get(conn, task_id)
             if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
+            if task.legacy_readonly:
+                raise ConflictError("Legacy Task is read-only")
             current = self.repository.get(conn, task_id, vulnerability_id)
             if current is None:
                 raise NotFoundError(f"Vulnerability not found: {vulnerability_id}")
@@ -83,11 +117,19 @@ class VulnerabilityService:
                 raise ConflictError(
                     f"Archived Vulnerability cannot be updated: {vulnerability_id}"
                 )
+            fields = body.model_fields_set
+            explicit_terminal = body.status in {"已验证", "忽略", "重复"}
+            explicit_pending = "status" in fields and body.status == "待验证"
+            review_relevant_changed = bool(fields & self.REVIEW_RELEVANT_FIELDS)
+            if review_relevant_changed and not explicit_terminal:
+                body = body.model_copy(
+                    update={"status": "待验证", "status_reason": ""}
+                )
+                fields = body.model_fields_set | {"status", "status_reason"}
             self._validate_status_reason(
                 body.status or current.status,
                 body.status_reason if body.status_reason is not None else current.status_reason,
             )
-            fields = body.model_fields_set
             finding_artifact_id = (
                 body.finding_artifact_id
                 if "finding_artifact_id" in fields
@@ -112,6 +154,25 @@ class VulnerabilityService:
                 now=utcnow(),
             )
             assert updated is not None
+            if self.reviews is not None:
+                if explicit_terminal:
+                    self.reviews.cancel_in(
+                        conn,
+                        task_id=task_id,
+                        vulnerability_id=vulnerability_id,
+                        reason="human_status_override",
+                        now=utcnow(),
+                    )
+                elif review_relevant_changed or explicit_pending:
+                    self.reviews.enqueue_in(
+                        conn,
+                        task_id=task_id,
+                        vulnerability_id=vulnerability_id,
+                        trigger="updated",
+                        trigger_payload={"changed_fields": sorted(fields)},
+                        now=utcnow(),
+                        cancel_existing=True,
+                    )
             return updated
 
     def archive(self, task_id: str, vulnerability_id: str) -> None:
@@ -156,5 +217,9 @@ class VulnerabilityService:
             evidence = self.artifacts.get(conn, task_id, artifact_id)
             if evidence is None:
                 raise NotFoundError(f"Artifact not found: {artifact_id}")
-            if evidence.artifact_type not in {"explore.evidence", "upload"}:
+            if evidence.artifact_type not in {
+                "explore.evidence",
+                "review.evidence",
+                "upload",
+            }:
                 raise ConflictError("Evidence Artifact must be an evidence or upload Artifact")

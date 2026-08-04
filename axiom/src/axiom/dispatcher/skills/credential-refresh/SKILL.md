@@ -32,4 +32,4 @@ requirements:
 6. 凭证或刷新说明不得复制到 Fact、Artifact、Todo、漏洞、命令参数或会话可见输出。用完后清理局部变量和不再需要的私有文件。
 7. 登录需要验证码或 MFA 时不要绕过。记录阻塞原因，继续测试不依赖该凭证的方向。
 
-Bootstrap、Reason、Explore 都可以在自己的活动 Lease 中使用上述流程。刷新凭证只是当前阶段的辅助动作，不要因此额外创建 Intent 或 Todo。
+Bootstrap、Reason、Explore、Reviewer 都可以在自己的活动 Lease 中使用上述流程。刷新凭证只是当前阶段的辅助动作，不要因此额外创建 Intent 或 Todo；Reviewer 也不得借此扩展为新的攻击面探索。

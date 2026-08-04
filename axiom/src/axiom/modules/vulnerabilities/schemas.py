@@ -11,6 +11,7 @@ from axiom.modules.artifacts.schemas import Artifact
 
 Severity = Literal["critical", "high", "medium", "low", "info"]
 VulnerabilityStatus = Literal["待验证", "已验证", "忽略", "重复"]
+MAX_VULNERABILITY_EVIDENCE_ARTIFACTS = 20
 _SAFE_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
@@ -46,7 +47,10 @@ class ExploreVulnerabilityReport(VulnerabilityDetails):
     prerequisites: str
     remediation: str
 
-    evidence_paths: list[str] = Field(default_factory=list, max_length=20)
+    evidence_paths: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_VULNERABILITY_EVIDENCE_ARTIFACTS,
+    )
 
     @field_validator("prerequisites", "remediation")
     @classmethod
@@ -101,7 +105,10 @@ class VulnerabilityReport(VulnerabilityDetails):
     status: VulnerabilityStatus = "待验证"
     status_reason: str = ""
     finding_artifact_id: str | None = None
-    evidence_artifact_ids: list[str] = Field(default_factory=list, max_length=20)
+    evidence_artifact_ids: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_VULNERABILITY_EVIDENCE_ARTIFACTS,
+    )
 
     @field_validator("source", "reported_by")
     @classmethod
@@ -160,7 +167,10 @@ class UpdateVulnerability(BaseModel):
     status: VulnerabilityStatus | None = None
     status_reason: str | None = None
     finding_artifact_id: str | None = None
-    evidence_artifact_ids: list[str] | None = Field(default=None, max_length=20)
+    evidence_artifact_ids: list[str] | None = Field(
+        default=None,
+        max_length=MAX_VULNERABILITY_EVIDENCE_ARTIFACTS,
+    )
 
     @field_validator("title", "type", "description", "impact")
     @classmethod

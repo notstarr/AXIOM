@@ -195,12 +195,16 @@ class FileStore:
         lease_id: str,
         intent_id: str | None = None,
         reason_run_id: str | None = None,
+        review_run_id: str | None = None,
     ) -> Path:
         _validate_segment(task_id, "task_id")
         _validate_segment(lease_id, "lease_id")
-        if bool(intent_id) == bool(reason_run_id):
-            raise ConflictError("Run directory requires exactly one Intent or ReasonRun owner")
-        owner_id = intent_id or reason_run_id
+        owners = [item for item in (intent_id, reason_run_id, review_run_id) if item]
+        if len(owners) != 1:
+            raise ConflictError(
+                "Run directory requires exactly one Intent, ReasonRun or ReviewRun owner"
+            )
+        owner_id = owners[0]
         assert owner_id is not None
         _validate_segment(owner_id, "execution owner")
         path = self.resolve(f"runs/{task_id}/{owner_id}/{lease_id}")

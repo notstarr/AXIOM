@@ -32,6 +32,7 @@ from axiom.modules.todos.service import TodoService
 from axiom.modules.token_usage.service import TokenUsageService
 from axiom.modules.interventions.service import InterventionService
 from axiom.modules.vulnerabilities.service import VulnerabilityService
+from axiom.modules.vulnerability_reviews.service import VulnerabilityReviewService
 from axiom.modules.workers.service import WorkerService
 from axiom.shared.storage import FileStore
 
@@ -56,6 +57,7 @@ class Container:
     settings: RuntimeSettingsService
     credentials: CredentialService
     vulnerabilities: VulnerabilityService
+    vulnerability_reviews: VulnerabilityReviewService
     mcp: MCPService
     phase_capabilities: PhaseCapabilityService
     external_reports: ExternalReportService
@@ -72,7 +74,8 @@ class Container:
     @classmethod
     def build(cls, engine: Engine, *, data_dir: Path) -> "Container":
         store = FileStore(data_dir)
-        archives = ArchiveService(engine, store)
+        vulnerability_reviews = VulnerabilityReviewService(engine, store)
+        archives = ArchiveService(engine, store, reviews=vulnerability_reviews)
         context = ContextService(engine, store)
         reason = ReasonService(engine, store=store)
         skills = SkillService(data_dir, engine=engine)
@@ -95,7 +98,7 @@ class Container:
             graph=GraphService(engine, archives=archives),
             axiom_tools=axiom_tools,
             workers=WorkerService(engine),
-            dispatch=DispatchService(engine),
+            dispatch=DispatchService(engine, reviews=vulnerability_reviews),
             artifacts=ArtifactService(engine, store, archives=archives),
             archives=archives,
             audit=AuditService(engine),
@@ -107,13 +110,19 @@ class Container:
                 reason,
                 skills,
                 axiom_tools,
+                vulnerability_reviews,
             ),
             todos=TodoService(engine),
             reason=reason,
             context=context,
             settings=settings,
             credentials=CredentialService(engine),
-            vulnerabilities=VulnerabilityService(engine, archives=archives),
+            vulnerabilities=VulnerabilityService(
+                engine,
+                archives=archives,
+                reviews=vulnerability_reviews,
+            ),
+            vulnerability_reviews=vulnerability_reviews,
             mcp=mcp,
             phase_capabilities=phase_capabilities,
             external_reports=ExternalReportService(engine, settings, store),

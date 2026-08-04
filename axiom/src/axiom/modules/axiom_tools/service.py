@@ -30,6 +30,7 @@ from axiom.modules.graph.tables import intents
 from axiom.modules.phase_capabilities.service import PhaseCapabilityService
 from axiom.modules.reason.tables import reason_runs
 from axiom.modules.tasks.tables import tasks
+from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.workers.pi_config import (
     PiWorkerConfig,
     canonicalize_pi_worker_config,
@@ -40,7 +41,7 @@ from axiom.shared.database import immediate_transaction
 from axiom.shared.errors import ConflictError, LeaseInactiveError, NotFoundError
 
 
-PHASES = ("bootstrap", "reason", "explore")
+PHASES = ("bootstrap", "reason", "explore", "review")
 _KEY = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _RESERVED_TOOL_NAMES = frozenset({"read", "write", "edit", "bash", "grep", "find", "ls"})
 
@@ -458,8 +459,22 @@ class AxiomToolService:
                         reason_runs.c.status.in_(["claimed", "running", "concluding"]),
                     )
                 ).scalar_one_or_none()
+            elif command.review_run_id:
+                active = conn.execute(
+                    select(vulnerability_review_runs.c.id).where(
+                        vulnerability_review_runs.c.task_id == command.task_id,
+                        vulnerability_review_runs.c.id == command.review_run_id,
+                        vulnerability_review_runs.c.lease_id == command.lease_id,
+                        vulnerability_review_runs.c.worker == command.worker,
+                        vulnerability_review_runs.c.status.in_(
+                            ["claimed", "running", "concluding"]
+                        ),
+                    )
+                ).scalar_one_or_none()
             else:
-                raise LeaseInactiveError("AXIOM Tool audit requires an Intent or ReasonRun")
+                raise LeaseInactiveError(
+                    "AXIOM Tool audit requires an Intent, ReasonRun or ReviewRun"
+                )
             if active is None:
                 raise LeaseInactiveError("AXIOM Tool audit lease is no longer active")
             level = "error" if command.outcome in {"error", "load_error"} else "info"
@@ -470,6 +485,7 @@ class AxiomToolService:
                     task_id=command.task_id,
                     intent_id=command.intent_id or None,
                     reason_run_id=command.reason_run_id or None,
+                    review_run_id=command.review_run_id or None,
                     worker=command.worker,
                     event_type=(
                         "axiom_tool.load_failed"
@@ -539,7 +555,9 @@ class AxiomToolService:
                 raise ValueError("supported_phases 至少包含一个阶段")
             phases = list(dict.fromkeys(str(item).strip() for item in phases))
             if any(phase not in PHASES for phase in phases):
-                raise ValueError("supported_phases 只能包含 bootstrap、reason、explore")
+                raise ValueError(
+                    "supported_phases 只能包含 bootstrap、reason、explore、review"
+                )
             risk_tags = manifest.get("risk_tags", [])
             guidelines = manifest.get("prompt_guidelines", [])
             if not isinstance(risk_tags, list) or not all(isinstance(item, str) for item in risk_tags):
@@ -714,7 +732,7 @@ class AxiomToolService:
     def _active_counts(conn) -> dict[str, int]:
         result: dict[str, int] = defaultdict(int)
         statuses = ["claimed", "running", "concluding"]
-        for table in (intents, reason_runs):
+        for table in (intents, reason_runs, vulnerability_review_runs):
             for row in conn.execute(
                 select(table.c.worker, func.count().label("count"))
                 .where(table.c.worker.is_not(None), table.c.status.in_(statuses))

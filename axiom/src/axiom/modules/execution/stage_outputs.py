@@ -36,6 +36,8 @@ _SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 EXPLORE_FINDINGS_FILE = "findings.md"
 EXPLORE_LEADS_FILE = "leads.md"
 EXPLORE_MAX_EVIDENCE_FILES = 48
+REVIEW_REPORT_FILE = "review.md"
+REVIEW_MAX_EVIDENCE_FILES = 48
 
 
 class StageOutputError(ConflictError):
@@ -159,10 +161,63 @@ def explore_files(
     return results
 
 
+def review_files(run_dir: str | Path, *, emit_warnings: bool = True) -> list[StageFile]:
+    run_root = Path(run_dir).resolve()
+    root = run_root / "artifacts"
+    if not root.is_dir() or root.is_symlink():
+        raise StageOutputError("Reviewer 必须在 artifacts/ 中写入 review.md")
+
+    report_path = root / REVIEW_REPORT_FILE
+    _require_regular_output(report_path, root)
+    _require_non_empty(report_path)
+    results = [
+        StageFile(
+            relative_name=REVIEW_REPORT_FILE,
+            path=report_path,
+            artifact_type="review.report",
+            summary="Reviewer 漏洞审核记录",
+        )
+    ]
+    evidence, skipped = _collect_optional_evidence(
+        root,
+        required={REVIEW_REPORT_FILE},
+        artifact_type="review.evidence",
+        summary_prefix="Reviewer 复测证据",
+    )
+    if len(evidence) > REVIEW_MAX_EVIDENCE_FILES:
+        overflow = evidence[REVIEW_MAX_EVIDENCE_FILES:]
+        evidence = evidence[:REVIEW_MAX_EVIDENCE_FILES]
+        skipped["artifact_limit"].extend(item.relative_name for item in overflow)
+    results.extend(evidence)
+    if emit_warnings and skipped:
+        _log_skipped_optional_outputs(
+            "review",
+            run_root,
+            skipped,
+            registered=len(evidence),
+        )
+    return results
+
+
 def _collect_optional_explore_evidence(
     root: Path,
     *,
     required: set[str],
+) -> tuple[list[StageFile], dict[str, list[str]]]:
+    return _collect_optional_evidence(
+        root,
+        required=required,
+        artifact_type="explore.evidence",
+        summary_prefix="Explore 证据",
+    )
+
+
+def _collect_optional_evidence(
+    root: Path,
+    *,
+    required: set[str],
+    artifact_type: str,
+    summary_prefix: str,
 ) -> tuple[list[StageFile], dict[str, list[str]]]:
     skipped: dict[str, list[str]] = defaultdict(list)
     try:
@@ -233,8 +288,8 @@ def _collect_optional_explore_evidence(
                 StageFile(
                     relative_name=relative_name,
                     path=path,
-                    artifact_type="explore.evidence",
-                    summary=f"Explore 证据：{relative_name}",
+                    artifact_type=artifact_type,
+                    summary=f"{summary_prefix}：{relative_name}",
                 )
             )
 
@@ -255,20 +310,32 @@ def _log_skipped_explore_outputs(
     *,
     registered: int,
 ) -> None:
+    _log_skipped_optional_outputs("explore", run_root, skipped, registered=registered)
+
+
+def _log_skipped_optional_outputs(
+    stage: str,
+    run_root: Path,
+    skipped: dict[str, list[str]],
+    *,
+    registered: int,
+) -> None:
     total = 0
     for reason, relative_names in sorted(skipped.items()):
         if not relative_names:
             continue
         total += len(relative_names)
         logger.warning(
-            "explore_optional_artifacts_skipped run_dir=%s reason=%s count=%s samples=%r",
+            "%s_optional_artifacts_skipped run_dir=%s reason=%s count=%s samples=%r",
+            stage,
             run_root,
             reason,
             len(relative_names),
             relative_names[:5],
         )
     logger.warning(
-        "explore_optional_artifact_summary run_dir=%s evidence_registered=%s skipped=%s",
+        "%s_optional_artifact_summary run_dir=%s evidence_registered=%s skipped=%s",
+        stage,
         run_root,
         registered,
         total,

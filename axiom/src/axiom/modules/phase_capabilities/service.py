@@ -27,11 +27,12 @@ from axiom.shared.database import immediate_transaction
 from axiom.shared.errors import ConflictError, NotFoundError
 
 
-PHASES = ("bootstrap", "reason", "explore")
+PHASES = ("bootstrap", "reason", "explore", "review")
 SCOPES = ("common", *PHASES)
 KINDS = ("skill", "mcp_tool", "axiom_tool")
 _DEFAULTS_MARKER = ".phase-capabilities-v1-initialized"
 _MCP_NAME_PART = re.compile(r"[^a-z0-9_]+")
+_DEFAULT_SKILL_SCOPES = {"vuln-review": "review"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +47,7 @@ class LeaseCapabilitySnapshot:
 
 
 class PhaseCapabilityService:
-    """One capability matrix shared by the three logical stage Workers."""
+    """One capability matrix shared by the four logical stage Workers."""
 
     def __init__(self, engine: Engine, data_dir: Path, *, skills: SkillService):
         self.engine = engine
@@ -529,7 +530,7 @@ class PhaseCapabilityService:
                         continue
                     self.repository.ensure(
                         conn,
-                        scope="common",
+                        scope=_DEFAULT_SKILL_SCOPES.get(skill.name, "common"),
                         capability_kind="skill",
                         capability_key=skill.name,
                         now=now,
@@ -599,7 +600,7 @@ class PhaseCapabilityService:
             missing = [phase for phase in PHASES if phase not in supported]
             if missing:
                 raise ConflictError(
-                    f"AXIOM Tool {key} 不能设为通用能力；通用能力必须支持三个阶段，"
+                    f"AXIOM Tool {key} 不能设为通用能力；通用能力必须支持四个阶段，"
                     f"当前缺少：{', '.join(missing)}"
                 )
         for phase in phases:

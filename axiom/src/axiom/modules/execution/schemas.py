@@ -23,8 +23,9 @@ class LeaseCommand(BaseModel):
 class CredentialAccessCommand(LeaseCommand):
     intent_id: str | None = None
     reason_run_id: str | None = None
+    review_run_id: str | None = None
 
-    @field_validator("intent_id", "reason_run_id")
+    @field_validator("intent_id", "reason_run_id", "review_run_id")
     @classmethod
     def normalize_owner_id(cls, value: str | None) -> str | None:
         normalized = (value or "").strip()
@@ -32,8 +33,10 @@ class CredentialAccessCommand(LeaseCommand):
 
     @model_validator(mode="after")
     def require_one_execution_owner(self) -> "CredentialAccessCommand":
-        if bool(self.intent_id) == bool(self.reason_run_id):
-            raise ValueError("exactly one of intent_id or reason_run_id is required")
+        if sum(bool(item) for item in (self.intent_id, self.reason_run_id, self.review_run_id)) != 1:
+            raise ValueError(
+                "exactly one of intent_id, reason_run_id or review_run_id is required"
+            )
         return self
 
 
@@ -67,9 +70,11 @@ class ExecutionInput(BaseModel):
     project_id: str = ""
     intent_id: str | None = None
     reason_run_id: str | None = None
+    review_run_id: str | None = None
+    vulnerability_id: str | None = None
     lease_id: str
     worker_name: str
-    intent_kind: Literal["bootstrap", "reason", "explore"] = "bootstrap"
+    intent_kind: Literal["bootstrap", "reason", "explore", "review"] = "bootstrap"
     intent_description: str = ""
     intent_targets: list[str] = Field(default_factory=list)
     intent_source_facts: list[str] = Field(default_factory=list)
@@ -94,11 +99,15 @@ class ExecutionInput(BaseModel):
 
     @model_validator(mode="after")
     def require_one_execution_owner(self) -> "ExecutionInput":
-        if bool(self.intent_id) == bool(self.reason_run_id):
-            raise ValueError("exactly one of intent_id or reason_run_id is required")
+        if sum(bool(item) for item in (self.intent_id, self.reason_run_id, self.review_run_id)) != 1:
+            raise ValueError(
+                "exactly one of intent_id, reason_run_id or review_run_id is required"
+            )
         if self.intent_kind == "reason" and not self.reason_run_id:
             raise ValueError("Reason execution requires reason_run_id")
-        if self.intent_kind != "reason" and not self.intent_id:
+        if self.intent_kind == "review" and not self.review_run_id:
+            raise ValueError("Review execution requires review_run_id")
+        if self.intent_kind not in {"reason", "review"} and not self.intent_id:
             raise ValueError("Intent execution requires intent_id")
         return self
 

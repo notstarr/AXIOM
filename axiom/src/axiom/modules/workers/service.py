@@ -6,6 +6,7 @@ from sqlalchemy import Engine, func, select
 
 from axiom.modules.graph.tables import intents
 from axiom.modules.reason.tables import reason_runs
+from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.phase_capabilities.schemas import PhaseBackend, WorkerPhase
 from axiom.modules.workers.pi_config import PiWorkerConfig, canonicalize_pi_worker_config
 from axiom.modules.workers.repository import WorkerRepository
@@ -51,7 +52,7 @@ class WorkerService:
             return [self._normalize_worker(worker) for worker in self.repository.list(conn)]
 
     def phase_overview(self, phase: str | None = None) -> list[WorkerPhase]:
-        phases = [self._phase(phase)] if phase else ["bootstrap", "reason", "explore"]
+        phases = [self._phase(phase)] if phase else ["bootstrap", "reason", "explore", "review"]
         with self.engine.connect() as conn:
             workers = [self._normalize_worker(item) for item in self.repository.list(conn)]
             running_by_worker: dict[str, int] = defaultdict(int)
@@ -80,12 +81,25 @@ class WorkerService:
                 count = int(row["count"])
                 running_by_worker[worker_name] += count
                 running_by_worker_phase[(worker_name, "reason")] += count
+            for row in conn.execute(
+                select(vulnerability_review_runs.c.worker, func.count().label("count"))
+                .where(
+                    vulnerability_review_runs.c.worker.is_not(None),
+                    vulnerability_review_runs.c.status.in_(["claimed", "running", "concluding"]),
+                )
+                .group_by(vulnerability_review_runs.c.worker)
+            ).mappings():
+                worker_name = str(row["worker"])
+                count = int(row["count"])
+                running_by_worker[worker_name] += count
+                running_by_worker_phase[(worker_name, "review")] += count
         now = parse_utc(utcnow())
         result: list[WorkerPhase] = []
         titles = {
             "bootstrap": "Bootstrap Worker",
             "reason": "Reason Worker",
             "explore": "Explore Worker",
+            "review": "Reviewer Worker",
         }
         for item_phase in phases:
             backends: list[PhaseBackend] = []
@@ -210,6 +224,18 @@ class WorkerService:
             ).scalar_one()
             if active_reason_runs:
                 raise ConflictError("Worker with active ReasonRuns cannot be deleted")
+            active_review_runs = conn.execute(
+                select(func.count())
+                .select_from(vulnerability_review_runs)
+                .where(
+                    vulnerability_review_runs.c.worker == name,
+                    vulnerability_review_runs.c.status.in_(
+                        ["claimed", "running", "concluding"]
+                    ),
+                )
+            ).scalar_one()
+            if active_review_runs:
+                raise ConflictError("Worker with active Vulnerability ReviewRuns cannot be deleted")
             self.repository.delete(conn, name)
 
     def list_models(
@@ -343,7 +369,7 @@ class WorkerService:
     @staticmethod
     def _phase(value: str | None) -> str:
         phase = str(value or "").strip().lower()
-        if phase not in {"bootstrap", "reason", "explore"}:
+        if phase not in {"bootstrap", "reason", "explore", "review"}:
             raise ConflictError(f"Invalid Worker phase: {phase}")
         return phase
 

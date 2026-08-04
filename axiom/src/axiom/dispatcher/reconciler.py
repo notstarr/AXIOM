@@ -10,6 +10,7 @@ from axiom.dispatcher.schemas import (
     DispatcherSnapshot,
     IntentSnapshot,
     ReasonRunSnapshot,
+    ReviewRunSnapshot,
     TaskSnapshot,
     WorkerSnapshot,
 )
@@ -60,11 +61,23 @@ class Reconciler:
             )
             for task in snapshot.tasks
         }
+        active_review_by_task = {
+            task.id: sum(
+                1 for item in task.review_runs if item.status in ACTIVE_WORK_STATUSES
+            )
+            for task in snapshot.tasks
+        }
         global_active = sum(active_by_task.values())
         active_task_ids = {task_id for task_id, count in active_by_task.items() if count > 0}
         ordered_tasks = sorted(
-            (task for task in snapshot.tasks if task.status == "running"),
+            (
+                task
+                for task in snapshot.tasks
+                if task.status == "running"
+                or any(item.status == "pending" for item in task.review_runs)
+            ),
             key=lambda item: (
+                not self._has_ready_main_work(item, now),
                 item.last_claimed_at is not None,
                 item.last_claimed_at or item.created_at,
                 item.created_at,
@@ -92,6 +105,7 @@ class Reconciler:
                     reserved_workers=reserved_workers,
                     active_bootstrap=active_bootstrap_by_task[task.id],
                     active_reason=active_reason_by_task[task.id],
+                    active_review=active_review_by_task[task.id],
                     active_explore=active_explore_by_task[task.id],
                     explore_limit=limits.per_task_explore_concurrency,
                 )
@@ -106,6 +120,8 @@ class Reconciler:
                     active_bootstrap_by_task[task.id] += 1
                 elif work.kind == "reason":
                     active_reason_by_task[task.id] += 1
+                elif work.kind == "review":
+                    active_review_by_task[task.id] += 1
                 else:
                     active_explore_by_task[task.id] += 1
                 actions.append(
@@ -119,6 +135,9 @@ class Reconciler:
                             reason_run_id=(
                                 work.id if isinstance(work, ReasonRunSnapshot) else None
                             ),
+                            review_run_id=(
+                                work.id if isinstance(work, ReviewRunSnapshot) else None
+                            ),
                         ),
                     )
                 )
@@ -129,10 +148,25 @@ class Reconciler:
         return actions
 
     @staticmethod
+    def _has_ready_main_work(task: TaskSnapshot, now: datetime) -> bool:
+        if task.status != "running":
+            return False
+        return any(
+            item.status == "pending"
+            and item.kind in {"bootstrap", "explore"}
+            and (item.next_retry_at is None or item.next_retry_at <= now)
+            for item in task.intents
+        ) or any(
+            item.status == "pending"
+            and (item.next_retry_at is None or item.next_retry_at <= now)
+            for item in task.reason_runs
+        )
+
+    @staticmethod
     def _active_count(task: TaskSnapshot) -> int:
         return sum(item.status in ACTIVE_WORK_STATUSES for item in task.intents) + sum(
             item.status in ACTIVE_WORK_STATUSES for item in task.reason_runs
-        )
+        ) + sum(item.status in ACTIVE_WORK_STATUSES for item in task.review_runs)
 
     def _select_candidate(
         self,
@@ -143,20 +177,31 @@ class Reconciler:
         reserved_workers: dict[str, int],
         active_bootstrap: int,
         active_reason: int,
+        active_review: int,
         active_explore: int,
         explore_limit: int,
-    ) -> tuple[IntentSnapshot | ReasonRunSnapshot, WorkerSnapshot] | None:
-        candidates: list[IntentSnapshot | ReasonRunSnapshot] = [
+    ) -> tuple[IntentSnapshot | ReasonRunSnapshot | ReviewRunSnapshot, WorkerSnapshot] | None:
+        candidates: list[IntentSnapshot | ReasonRunSnapshot | ReviewRunSnapshot] = [
             *(
                 item
                 for item in task.intents
-                if item.status == "pending" and item.kind in {"bootstrap", "explore"}
+                if task.status == "running"
+                and item.status == "pending"
+                and item.kind in {"bootstrap", "explore"}
             ),
-            *(item for item in task.reason_runs if item.status == "pending"),
+            *(
+                item
+                for item in task.reason_runs
+                if task.status == "running" and item.status == "pending"
+            ),
+            *(item for item in task.review_runs if item.status == "pending"),
         ]
         candidates.sort(
             key=lambda item: (
-                {"bootstrap": 0, "reason": 1, "explore": 2}[item.kind],
+                # Reviewer is independent post-processing.  Keep all main-chain
+                # work ahead of it so a newly reported vulnerability cannot
+                # consume the Task's last slot before its Explore work.
+                {"bootstrap": 0, "reason": 1, "explore": 2, "review": 3}[item.kind],
                 item.created_at,
                 item.id,
             )
@@ -168,6 +213,8 @@ class Reconciler:
                 continue
             if work.kind == "reason" and active_reason >= 1:
                 continue
+            if work.kind == "review" and active_review >= 1:
+                continue
             if work.kind == "explore" and active_explore >= explore_limit:
                 continue
             worker = self._select_worker(work, workers, reserved_workers)
@@ -178,9 +225,14 @@ class Reconciler:
     @staticmethod
     def _remove_pending(
         task: TaskSnapshot,
-        work: IntentSnapshot | ReasonRunSnapshot,
+        work: IntentSnapshot | ReasonRunSnapshot | ReviewRunSnapshot,
     ) -> None:
-        collection = task.intents if isinstance(work, IntentSnapshot) else task.reason_runs
+        if isinstance(work, IntentSnapshot):
+            collection = task.intents
+        elif isinstance(work, ReasonRunSnapshot):
+            collection = task.reason_runs
+        else:
+            collection = task.review_runs
         collection.remove(work)
 
     @staticmethod
@@ -193,7 +245,7 @@ class Reconciler:
 
     @staticmethod
     def _select_worker(
-        work: IntentSnapshot | ReasonRunSnapshot,
+        work: IntentSnapshot | ReasonRunSnapshot | ReviewRunSnapshot,
         workers: dict[str, WorkerSnapshot],
         reserved: dict[str, int],
     ) -> WorkerSnapshot | None:

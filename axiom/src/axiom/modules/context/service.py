@@ -15,6 +15,7 @@ from axiom.modules.graph.tables import facts, intents
 from axiom.modules.goals.tables import goal_evaluations
 from axiom.modules.knowledge.tables import project_knowledge
 from axiom.modules.reason.tables import reason_runs
+from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.tasks.tables import task_hints
 from axiom.modules.todos.repository import TodoRepository
 from axiom.modules.todos.tables import todos
@@ -47,11 +48,13 @@ class ContextService:
         phase: str,
         intent_id: str | None,
         reason_run_id: str | None = None,
+        review_run_id: str | None = None,
         lease_id: str | None = None,
     ) -> ContextRevision:
-        if intent_id is not None and reason_run_id is not None:
-            raise ConflictError("Context cannot belong to both an Intent and a ReasonRun")
-        if lease_id is not None and bool(intent_id) == bool(reason_run_id):
+        owners = [item for item in (intent_id, reason_run_id, review_run_id) if item]
+        if len(owners) > 1:
+            raise ConflictError("Context cannot belong to multiple execution owners")
+        if lease_id is not None and len(owners) != 1:
             raise ConflictError("A leased Context requires exactly one execution owner")
         prepared = None
         try:
@@ -79,6 +82,17 @@ class ContextService:
                         raise NotFoundError(
                             f"ReasonRun not found: {task_id}/{reason_run_id}"
                         )
+                if review_run_id is not None:
+                    exists = conn.execute(
+                        select(vulnerability_review_runs.c.id).where(
+                            vulnerability_review_runs.c.task_id == task_id,
+                            vulnerability_review_runs.c.id == review_run_id,
+                        )
+                    ).scalar_one_or_none()
+                    if exists is None:
+                        raise NotFoundError(
+                            f"Vulnerability ReviewRun not found: {task_id}/{review_run_id}"
+                        )
 
                 if lease_id is not None:
                     existing = self.repository.for_lease(
@@ -86,6 +100,7 @@ class ContextService:
                         task_id=task_id,
                         intent_id=intent_id,
                         reason_run_id=reason_run_id,
+                        review_run_id=review_run_id,
                         lease_id=lease_id,
                     )
                     if existing is not None:
@@ -93,7 +108,7 @@ class ContextService:
 
                 revision = allocate_sequence(conn, scope=task_id, kind="context_revision")
                 base_key = f"contexts/{task_id}/r{revision:06d}"
-                include_goal_history = phase != "reason"
+                include_goal_history = phase not in {"reason", "review"}
                 files = self._index_files(
                     conn,
                     task,
@@ -108,6 +123,31 @@ class ContextService:
                     "vulnerabilities": f"{base_key}/vulnerabilities.json",
                     "knowledge": f"{base_key}/knowledge.json",
                 }
+                if review_run_id is not None:
+                    review_row = conn.execute(
+                        select(vulnerability_review_runs.c.vulnerability_id).where(
+                            vulnerability_review_runs.c.task_id == task_id,
+                            vulnerability_review_runs.c.id == review_run_id,
+                        )
+                    ).mappings().one()
+                    target = self.vulnerabilities.get(
+                        conn,
+                        task_id,
+                        review_row["vulnerability_id"],
+                    )
+                    if target is None or target.archived:
+                        raise ConflictError("Review target is no longer visible")
+                    target_payload = target.model_dump(mode="json")
+                    if target.finding_artifact is not None:
+                        target_payload["finding_artifact"]["content_path"] = str(
+                            self.store.resolve(target.finding_artifact.storage_key)
+                        )
+                    for artifact in target_payload.get("evidence_artifacts", []):
+                        artifact["content_path"] = str(
+                            self.store.resolve(artifact["storage_key"])
+                        )
+                    files["review_target.json"] = _json(target_payload)
+                    indexes["review_target"] = f"{base_key}/review_target.json"
                 if include_goal_history:
                     indexes.update(
                         {
@@ -121,6 +161,7 @@ class ContextService:
                     "phase": phase,
                     "intent_id": intent_id,
                     "reason_run_id": reason_run_id,
+                    "review_run_id": review_run_id,
                     "lease_id": lease_id,
                     "goal": task["goal"],
                     "origin": task["origin_input"],
@@ -141,6 +182,7 @@ class ContextService:
                         "phase": phase,
                         "intent_id": intent_id,
                         "reason_run_id": reason_run_id,
+                        "review_run_id": review_run_id,
                         "lease_id": lease_id,
                         "manifest_key": manifest_key,
                         "content_hash": content_hash,
@@ -154,6 +196,7 @@ class ContextService:
                 phase=phase,
                 intent_id=intent_id,
                 reason_run_id=reason_run_id,
+                review_run_id=review_run_id,
                 lease_id=lease_id,
                 manifest_key=manifest_key,
                 manifest_path=str(self.store.resolve(manifest_key)),
@@ -311,7 +354,6 @@ class ContextService:
                 "category": row["category"],
                 "theme": row["theme"],
                 "priority": row["priority"],
-                "preview": _preview(row["title"], 60),
                 "ref": f"todo:{row['id']}",
                 "detail": _detail_path(f"todo:{row['id']}"),
             }
@@ -333,7 +375,6 @@ class ContextService:
                 "id": row["id"],
                 "content": row["content"],
                 "creator": row["creator"],
-                "preview": _preview(row["content"], 80),
                 "ref": f"hint:{row['id']}",
                 "detail": _detail_path(f"hint:{row['id']}"),
             }
@@ -352,7 +393,6 @@ class ContextService:
                     row["intent_id"] if row["intent_id"] in visible_intent_ids else None
                 ),
                 "status_reason": row["status_reason"],
-                "preview": _preview(row["title"], 80),
                 "ref": f"vulnerability:{row['id']}",
                 "detail": _detail_path(f"vulnerability:{row['id']}"),
             }
@@ -365,7 +405,6 @@ class ContextService:
                 "category": row["category"],
                 "content": row["content"],
                 "created_by": row["created_by"],
-                "preview": _preview(row["content"], 80),
                 "ref": f"knowledge:{row['id']}",
                 "detail": _detail_path(f"knowledge:{row['id']}"),
             }
@@ -411,6 +450,8 @@ class ContextService:
             revision=row["revision"],
             phase=row["phase"],
             intent_id=row["intent_id"],
+            reason_run_id=row.get("reason_run_id"),
+            review_run_id=row.get("review_run_id"),
             lease_id=row["lease_id"],
             manifest_key=row["manifest_key"],
             manifest_path=str(self.store.resolve(row["manifest_key"])),

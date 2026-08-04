@@ -332,6 +332,49 @@ def register_worker_commands(main: click.Group) -> None:
         path = f"/dispatch/tasks/{task_id}/intents/{intent_id}/explore-vulnerabilities"
         _echo(_request("POST", path, {"lease_id": _lease_id(), "report": report}))
 
+    @main.group("review")
+    def review_group() -> None:
+        """Review-stage operations for the active Vulnerability ReviewRun."""
+
+    @review_group.command("status")
+    def review_status() -> None:
+        _echo(_review_request("status", {"lease_id": _lease_id()}))
+
+    @review_group.group("decision")
+    def review_decision_group() -> None:
+        """Submit the Reviewer decision without changing vulnerability content."""
+
+    @review_decision_group.command("submit")
+    @click.argument(
+        "decision",
+        type=click.Choice(("verified", "duplicate", "ignored", "needs-human")),
+    )
+    @click.option("--reason")
+    @click.option("--reason-file", type=click.Path(path_type=Path, dir_okay=False))
+    @click.option("--duplicate-of")
+    def review_decision_submit(
+        decision: str,
+        reason: str | None,
+        reason_file: Path | None,
+        duplicate_of: str | None,
+    ) -> None:
+        duplicate_of = (duplicate_of or "").strip() or None
+        if decision == "duplicate" and not duplicate_of:
+            raise click.UsageError("duplicate requires --duplicate-of vXXX")
+        if decision != "duplicate" and duplicate_of:
+            raise click.UsageError("--duplicate-of is only valid for duplicate")
+        _echo(
+            _review_request(
+                "decision",
+                {
+                    "lease_id": _lease_id(),
+                    "decision": decision,
+                    "reason": _text_value(reason, reason_file, "reason", required=True),
+                    "duplicate_of": duplicate_of,
+                },
+            )
+        )
+
 
 def _workspace_request(method: str, action: str, payload: dict[str, Any]) -> Any:
     _environment("AXIOM_REASON_RUN_ID")
@@ -340,6 +383,16 @@ def _workspace_request(method: str, action: str, payload: dict[str, Any]) -> Any
         method,
         f"/reason-workspaces/{workspace_id}/{action}",
         {"lease_id": _lease_id(), **payload},
+    )
+
+
+def _review_request(action: str, payload: dict[str, Any]) -> Any:
+    task_id = _environment("AXIOM_TASK_ID")
+    review_run_id = _environment("AXIOM_REVIEW_RUN_ID")
+    return _request(
+        "POST",
+        f"/dispatch/tasks/{task_id}/vulnerability-review-runs/{review_run_id}/{action}",
+        payload,
     )
 
 
@@ -382,12 +435,20 @@ def _lease_id() -> str:
 def _credential_access_payload() -> dict[str, str]:
     intent_id = os.environ.get("AXIOM_INTENT_ID", "").strip()
     reason_run_id = os.environ.get("AXIOM_REASON_RUN_ID", "").strip()
-    if bool(intent_id) == bool(reason_run_id):
+    review_run_id = os.environ.get("AXIOM_REVIEW_RUN_ID", "").strip()
+    owners = [
+        ("intent_id", intent_id),
+        ("reason_run_id", reason_run_id),
+        ("review_run_id", review_run_id),
+    ]
+    selected = [(key, value) for key, value in owners if value]
+    if len(selected) != 1:
         raise click.ClickException(
-            "credential access requires exactly one of AXIOM_INTENT_ID or AXIOM_REASON_RUN_ID"
+            "credential access requires exactly one active Intent, ReasonRun or ReviewRun"
         )
     payload = {"lease_id": _lease_id()}
-    payload["intent_id" if intent_id else "reason_run_id"] = intent_id or reason_run_id
+    owner_key, owner_value = selected[0]
+    payload[owner_key] = owner_value
     return payload
 
 

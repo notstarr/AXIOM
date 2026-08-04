@@ -10,6 +10,7 @@ from axiom.dispatcher.schemas import (
     DispatcherSnapshot,
     IntentSnapshot,
     ReasonRunSnapshot,
+    ReviewRunSnapshot,
     TaskSnapshot,
     WorkerSnapshot,
 )
@@ -71,6 +72,18 @@ def reason_run(task_id: str, number: int, *, status="pending", pool=None):
     return ReasonRunSnapshot(
         task_id=task_id,
         id=f"rr{number:06d}",
+        status=status,
+        worker_pool=pool or [],
+        created_at=NOW + timedelta(seconds=number),
+        claimed_at=NOW if status in {"claimed", "running", "concluding"} else None,
+    )
+
+
+def review_run(task_id: str, number: int, *, status="pending", pool=None):
+    return ReviewRunSnapshot(
+        task_id=task_id,
+        id=f"vr{number:06d}",
+        vulnerability_id=f"v{number:03d}",
         status=status,
         worker_pool=pool or [],
         created_at=NOW + timedelta(seconds=number),
@@ -314,3 +327,147 @@ def test_reconciler_does_not_exceed_per_task_explore_concurrency():
     )
 
     assert Reconciler(now=lambda: NOW).calculate(snapshot) == []
+
+
+def test_pending_review_is_schedulable_for_a_completed_task() -> None:
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="completed",
+                review_runs=[review_run("t_001", 1)],
+            )
+        ],
+        workers=[worker("reviewer-a", capabilities=("review",))],
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert len(actions) == 1
+    assert actions[0].claim.kind == "review"
+    assert actions[0].claim.review_run_id == "vr000001"
+    assert actions[0].claim.intent_id is None
+
+
+def test_reconciler_keeps_main_chain_explore_ahead_of_reviewer() -> None:
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                intents=[intent("t_001", 3)],
+                review_runs=[review_run("t_001", 1)],
+            )
+        ],
+        workers=[
+            worker("explore-a", capabilities=("explore",)),
+            worker("reviewer-a", capabilities=("review",)),
+        ],
+        limits=DispatchLimits(
+            global_max_active_runs=1,
+            global_max_active_tasks=1,
+            per_task_max_active_runs=1,
+            per_task_explore_concurrency=1,
+        ),
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert len(actions) == 1
+    assert actions[0].claim.kind == "explore"
+    assert actions[0].claim.intent_id == "i003"
+
+
+def test_reconciler_keeps_running_task_main_chain_ahead_of_other_task_review() -> None:
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_review",
+                status="completed",
+                review_runs=[review_run("t_review", 1)],
+                created_at=NOW - timedelta(days=1),
+            ),
+            TaskSnapshot(
+                id="t_main",
+                status="running",
+                intents=[intent("t_main", 3)],
+                created_at=NOW,
+            ),
+        ],
+        workers=[
+            worker("explore-a", capabilities=("explore",)),
+            worker("reviewer-a", capabilities=("review",)),
+        ],
+        limits=DispatchLimits(
+            global_max_active_runs=1,
+            global_max_active_tasks=1,
+            per_task_max_active_runs=1,
+            per_task_explore_concurrency=1,
+        ),
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert len(actions) == 1
+    assert actions[0].claim.task_id == "t_main"
+    assert actions[0].claim.kind == "explore"
+
+
+def test_per_task_review_limit_does_not_block_unrelated_explore_work() -> None:
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                intents=[intent("t_001", 3)],
+                review_runs=[
+                    review_run("t_001", 1, status="running"),
+                    review_run("t_001", 2),
+                ],
+            )
+        ],
+        workers=[
+            worker("reviewer-a", capabilities=("review",), running=1, max_running=2),
+            worker("explore-a", capabilities=("explore",)),
+        ],
+        limits=DispatchLimits(
+            global_max_active_runs=2,
+            global_max_active_tasks=1,
+            per_task_max_active_runs=2,
+            per_task_explore_concurrency=1,
+        ),
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert len(actions) == 1
+    assert actions[0].claim.kind == "explore"
+    assert actions[0].claim.intent_id == "i003"
+
+
+def test_review_uses_only_review_capable_backends_and_shared_capacity() -> None:
+    task = TaskSnapshot(
+        id="t_001",
+        status="stopped",
+        review_runs=[review_run("t_001", 1)],
+    )
+    no_capacity = DispatcherSnapshot(
+        tasks=[task],
+        workers=[
+            worker(
+                "shared-backend",
+                capabilities=("reason", "review"),
+                running=1,
+                max_running=1,
+            ),
+            worker("reason-only", capabilities=("reason",)),
+        ],
+    )
+    assert Reconciler(now=lambda: NOW).calculate(no_capacity) == []
+
+    available = no_capacity.model_copy(deep=True)
+    available.workers[0].running = 0
+    actions = Reconciler(now=lambda: NOW).calculate(available)
+    assert len(actions) == 1
+    assert actions[0].claim.worker_name == "shared-backend"
+    assert actions[0].claim.kind == "review"

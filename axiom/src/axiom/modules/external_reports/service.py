@@ -100,6 +100,8 @@ class ExternalReportService:
         retry_only: bool = False,
     ) -> ExternalReportResult:
         vulnerability = self._vulnerability(task_id, vulnerability_id)
+        if vulnerability.status != "已验证":
+            raise ConflictError("Only verified vulnerabilities can be externally reported")
         config = self.settings.get().config
         with immediate_transaction(self.engine) as conn:
             task = self.tasks.get(conn, task_id)

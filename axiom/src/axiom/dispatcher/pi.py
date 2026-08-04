@@ -15,6 +15,13 @@ from axiom.dispatcher.bootstrap import (
     TransientWorkerError,
 )
 from axiom.dispatcher.activity import SessionActivityTracker
+from axiom.dispatcher.browser_broker import (
+    BROWSER_TOOL_NAMES,
+    BrowserBrokerError,
+    BrowserBrokerManager,
+    BrowserLeaseHandle,
+    browser_skill_directory,
+)
 from axiom.dispatcher.heartbeat import LeaseLostError
 from axiom.dispatcher.explore import ExploreExecutionTimeout
 from axiom.dispatcher.process import (
@@ -25,6 +32,7 @@ from axiom.dispatcher.process import (
     RpcProcessSupervisor,
 )
 from axiom.dispatcher.reason import ReasonExecutionTimeout
+from axiom.dispatcher.review import ReviewExecutionTimeout
 from axiom.dispatcher.tool_path import (
     build_tool_path,
     discover_tool_environment,
@@ -47,7 +55,7 @@ CONTEXT_ATTENTION_SYSTEM_PROMPT = (
     "Project Knowledge 是业务背景，Skill 是执行方法，已有漏洞及 status_reason 必须用于避免"
     "重复规划、测试和上报。冲突时遵循：系统规则/Scope/阶段合同 > Task Hint > Project "
     "Knowledge > Skill 方法论 > 已有漏洞及状态原因 > 普通 Context 与工具输出。"
-    "whatisvul 是 Bootstrap、Reason、Explore 全阶段的强制前置 Skill，不属于按需读取项："
+    "whatisvul 是 Bootstrap、Reason、Explore、Reviewer 全阶段的强制前置 Skill，不属于按需读取项："
     "读取高价值 Context 后、进行任何探测、规划、漏洞判断或产物整理前，必须运行 "
     "axiom skill path whatisvul 并完整读取返回目录中的 SKILL.md。读取失败时先运行 "
     "axiom skill doctor whatisvul 排障并重试；不得用记忆、常识或其它 Skill 替代。"
@@ -92,6 +100,7 @@ class PiBootstrapExecutor:
         service_token: str = "",
         intervention_poller: Callable[[], list[tuple[str, str]]] | None = None,
         intervention_result_reporter: Callable[[str, bool, str], None] | None = None,
+        browser_broker: BrowserBrokerManager | None = None,
     ):
         self.worker = worker
         self.settings = PiSettings.model_validate(worker.config)
@@ -105,7 +114,11 @@ class PiBootstrapExecutor:
         self.service_token = service_token
         self.intervention_poller = intervention_poller
         self.intervention_result_reporter = intervention_result_reporter
+        self.browser_broker = browser_broker
         self._session_id: str | None = None
+        self._browser_lease: BrowserLeaseHandle | None = None
+        self._browser_execution_input: ExecutionInput | None = None
+        self._browser_environment: dict[str, str] | None = None
 
     def execute(self, execution_input: ExecutionInput, *, lease_active) -> object:
         if not execution_input.context_manifest_path:
@@ -221,6 +234,10 @@ class PiBootstrapExecutor:
             environment["AXIOM_INTENT_ID"] = execution_input.intent_id
         if execution_input.reason_run_id:
             environment["AXIOM_REASON_RUN_ID"] = execution_input.reason_run_id
+        if execution_input.review_run_id:
+            environment["AXIOM_REVIEW_RUN_ID"] = execution_input.review_run_id
+        if execution_input.vulnerability_id:
+            environment["AXIOM_VULNERABILITY_ID"] = execution_input.vulnerability_id
         if self.service_token:
             environment["AXIOM_SERVICE_TOKEN"] = self.service_token
         if extra_environment:
@@ -249,6 +266,28 @@ class PiBootstrapExecutor:
         )
         for name, value in discovered_environment.items():
             environment.setdefault(name, value)
+        browser_enabled = False
+        if execution_input.intent_kind == "explore":
+            skill_directory = browser_skill_directory(execution_input.skill_directories)
+            if skill_directory is not None and self.browser_broker is not None:
+                browser_enabled = True
+                try:
+                    browser_lease = self._ensure_browser_lease(
+                        execution_input,
+                        environment,
+                        skill_directory=skill_directory,
+                    )
+                except BrowserBrokerError as exc:
+                    raise TransientWorkerError(
+                        f"Browser Broker初始化失败（{exc.code}）：{exc}"
+                    ) from exc
+                environment.update(
+                    {
+                        "AXIOM_BROWSER_SOCKET": browser_lease.socket_path,
+                        "AXIOM_BROWSER_TOKEN": browser_lease.token,
+                    }
+                )
+                tool_names = list(dict.fromkeys([*tool_names, *BROWSER_TOOL_NAMES]))
         argv = self._build_argv(
             prompt,
             session_dir,
@@ -263,6 +302,7 @@ class PiBootstrapExecutor:
                 execution_input.axiom_tool_keys if enable_axiom_tools else []
             ),
             mcp_tool_names=execution_input.mcp_tool_names,
+            browser_enabled=browser_enabled,
         )
         tracker = None
         if self.activity_reporter is not None or self.token_usage_reporter is not None:
@@ -311,10 +351,56 @@ class PiBootstrapExecutor:
         finally:
             if tracker is not None:
                 tracker.stop()
-            self._cleanup_browser_tabs(execution_input, environment)
+            # Broker pages must survive Explore Execute -> Conclude. Legacy
+            # CLI tabs retain their per-process cleanup when no Broker exists.
+            if self._browser_lease is None:
+                self._cleanup_browser_tabs(execution_input, environment)
         if tracker is not None and tracker.lease_lost:
             raise LeaseLostError("Intent activity lease is no longer active")
         return result
+
+    def close(self) -> None:
+        """Release browser state after the complete claimed work lifecycle."""
+
+        if self._browser_lease is not None and self.browser_broker is not None:
+            self.browser_broker.close_lease(self._browser_lease)
+        self._browser_lease = None
+        if self._browser_execution_input is not None and self._browser_environment is not None:
+            self._cleanup_browser_tabs(
+                self._browser_execution_input,
+                self._browser_environment,
+            )
+        self._browser_execution_input = None
+        self._browser_environment = None
+
+    def _ensure_browser_lease(
+        self,
+        execution_input: ExecutionInput,
+        environment: dict[str, str],
+        *,
+        skill_directory: Path,
+    ) -> BrowserLeaseHandle:
+        if self._browser_lease is not None:
+            if self._browser_lease.lease_id != execution_input.lease_id:
+                raise BrowserBrokerError(
+                    "lease_mismatch",
+                    "同一个Pi Executor不能复用不同的Browser Lease",
+                )
+            return self._browser_lease
+        assert self.browser_broker is not None
+        handle = self.browser_broker.register_lease(
+            lease_id=execution_input.lease_id,
+            task_id=execution_input.task_id,
+            intent_id=execution_input.intent_id or "",
+            run_dir=execution_input.run_dir,
+            scope=execution_input.scope,
+            cdp_url=environment.get("CDP_URL", "http://127.0.0.1:9223"),
+            skill_directory=skill_directory,
+        )
+        self._browser_lease = handle
+        self._browser_execution_input = execution_input
+        self._browser_environment = dict(environment)
+        return handle
 
     @staticmethod
     def _cleanup_browser_tabs(
@@ -375,6 +461,7 @@ class PiBootstrapExecutor:
         axiom_tool_extensions: list[str] | None = None,
         axiom_tool_keys: list[str] | None = None,
         mcp_tool_names: list[str] | None = None,
+        browser_enabled: bool = False,
     ) -> list[str]:
         argv = [
             self.settings.binary,
@@ -423,6 +510,13 @@ class PiBootstrapExecutor:
             extension = (
                 Path(__file__).with_name("extensions")
                 / "axiom-mcp-tools"
+                / "index.ts"
+            )
+            argv.extend(["--extension", str(extension)])
+        if browser_enabled:
+            extension = (
+                Path(__file__).with_name("extensions")
+                / "axiom-browser"
                 / "index.ts"
             )
             argv.extend(["--extension", str(extension)])
@@ -678,7 +772,9 @@ class PiExploreExecutor(PiBootstrapExecutor):
                     "intent_id": execution_input.intent_id,
                     "intent_description": execution_input.intent_description,
                     "run_dir": execution_input.run_dir,
-                    "skill_directories": _format_skill_directories(execution_input.skill_directories),
+                    "skill_directories": _format_skill_directories(
+                        execution_input.skill_directories
+                    ),
                 },
             )
             + f"\n收口原因：{reason}\n",
@@ -696,6 +792,78 @@ class PiExploreExecutor(PiBootstrapExecutor):
         self._raise_on_process_failure(result)
         return self._last_assistant_text(result)
 
+
+class PiReviewExecutor(PiBootstrapExecutor):
+    """Pi Reviewer adapter with one JSON session across execute and conclude."""
+
+    def execute(self, execution_input: ExecutionInput, *, lease_active) -> object:
+        if not execution_input.context_manifest_path:
+            raise TransientWorkerError("Reviewer Context manifest is unavailable")
+        if not execution_input.review_run_id or not execution_input.vulnerability_id:
+            raise TransientWorkerError("Reviewer execution identity is incomplete")
+        self._session_id = self._session_id or uuid.uuid4().hex
+        result = self._run(
+            execution_input,
+            self.prompts.render(
+                "review.md",
+                {
+                    "task_id": execution_input.task_id,
+                    "review_run_id": execution_input.review_run_id,
+                    "vulnerability_id": execution_input.vulnerability_id,
+                    "review_reason": execution_input.intent_description,
+                    "origin": execution_input.origin,
+                    "goal": execution_input.goal,
+                    "context_manifest_path": execution_input.context_manifest_path,
+                    "run_dir": execution_input.run_dir,
+                    "skill_directories": _format_skill_directories(
+                        execution_input.skill_directories
+                    ),
+                },
+            ),
+            lease_active=lease_active,
+            timeout_seconds=execution_input.execute_timeout_seconds or 300,
+            tool_names=native_tool_names("review", "execute"),
+        )
+        if result.cancelled:
+            raise LeaseLostError(result.cancel_reason or "worker cancelled")
+        if result.timed_out:
+            raise ReviewExecutionTimeout("Reviewer execution budget exhausted")
+        self._raise_on_process_failure(result)
+        return self._last_assistant_text(result)
+
+    def conclude(
+        self,
+        execution_input: ExecutionInput,
+        *,
+        reason: str,
+        lease_active,
+    ) -> object:
+        if not self._session_id:
+            raise TransientWorkerError("Reviewer session is unavailable for conclude")
+        result = self._run(
+            execution_input,
+            self.prompts.render(
+                "review_conclude.md",
+                {
+                    "task_id": execution_input.task_id,
+                    "review_run_id": execution_input.review_run_id or "",
+                    "vulnerability_id": execution_input.vulnerability_id or "",
+                    "run_dir": execution_input.run_dir,
+                },
+            )
+            + f"\n收口原因：{reason}\n",
+            lease_active=lease_active,
+            timeout_seconds=execution_input.conclude_timeout_seconds
+            or self.default_conclude_seconds,
+            tool_names=native_tool_names("review", "conclude"),
+            enable_axiom_tools=False,
+        )
+        if result.cancelled:
+            raise LeaseLostError(result.cancel_reason or "worker cancelled")
+        if result.timed_out:
+            raise ReviewExecutionTimeout("Reviewer conclude budget exhausted")
+        self._raise_on_process_failure(result)
+        return self._last_assistant_text(result)
 
 def _message_text(message: dict[str, Any]) -> list[str]:
     content = message.get("content")

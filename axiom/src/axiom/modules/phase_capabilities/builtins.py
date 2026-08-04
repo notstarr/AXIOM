@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-PHASES = ("bootstrap", "reason", "explore")
+PHASES = ("bootstrap", "reason", "explore", "review")
 RUN_MODES = ("execute", "conclude")
 
 
@@ -54,6 +54,7 @@ def _bootstrap_execute_else_all() -> tuple[tuple[str, tuple[str, ...]], ...]:
         ("bootstrap", ("execute",)),
         ("reason", RUN_MODES),
         ("explore", RUN_MODES),
+        ("review", RUN_MODES),
     )
 
 
@@ -177,6 +178,22 @@ BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = (
         source="axiom_internal",
         invocation="axiom explore vulnerability report ...",
         availability=_all_modes("explore"),
+    ),
+    BuiltinToolDefinition(
+        key="axiom.review.status",
+        title="读取漏洞审核状态",
+        description="读取当前 ReviewRun、目标漏洞和结构化裁决状态。",
+        source="axiom_internal",
+        invocation="axiom review status",
+        availability=_all_modes("review"),
+    ),
+    BuiltinToolDefinition(
+        key="axiom.review.decision.submit",
+        title="提交漏洞审核裁决",
+        description="提交已验证、重复、忽略或继续待验证的结构化裁决。",
+        source="axiom_internal",
+        invocation="axiom review decision submit ...",
+        availability=_all_modes("review"),
     ),
 )
 

@@ -4,6 +4,7 @@ import hashlib
 import json
 from collections import Counter, deque
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Engine, select, update
 
@@ -26,11 +27,15 @@ from axiom.modules.reason.tables import reason_run_sources, reason_runs, reason_
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.tables import vulnerability_artifacts, vulnerabilities
+from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.shared.clock import utcnow
 from axiom.shared.database import immediate_transaction
 from axiom.shared.errors import ConflictError, NotFoundError
 from axiom.shared.ids import allocate_id
 from axiom.shared.storage import FileStore
+
+if TYPE_CHECKING:
+    from axiom.modules.vulnerability_reviews.service import VulnerabilityReviewService
 
 
 ACTIVE_INTENT_STATUSES = {"claimed", "running", "concluding"}
@@ -45,9 +50,16 @@ RELATION_PRIORITY = {
 
 
 class ArchiveService:
-    def __init__(self, engine: Engine, store: FileStore):
+    def __init__(
+        self,
+        engine: Engine,
+        store: FileStore,
+        *,
+        reviews: VulnerabilityReviewService | None = None,
+    ):
         self.engine = engine
         self.store = store
+        self.reviews = reviews
         self.repository = ArchiveRepository()
         self.tasks = TaskRepository()
         self.audit = AuditService(engine)
@@ -116,6 +128,12 @@ class ArchiveService:
                     for member in preview.members
                 ],
             )
+            cancelled_reviews = self._cancel_affected_review_runs(
+                conn,
+                task_id,
+                preview.members,
+                now=now,
+            )
             self._set_archived(conn, task_id, preview.members, archived=True, now=now)
             cancelled_runs = self._cancel_affected_reason_runs(
                 conn,
@@ -138,6 +156,7 @@ class ArchiveService:
                         "counts": preview.counts,
                         "reason": reason.strip(),
                         "cancelled_reason_run_ids": cancelled_runs,
+                        "cancelled_review_run_ids": cancelled_reviews,
                     },
                 ),
             )
@@ -199,6 +218,13 @@ class ArchiveService:
                 if (item["entity_type"], item["entity_id"]) not in other_covered
             ]
             self._set_archived(conn, task_id, restored_members, archived=False, now=now)
+            requeued_reviews = self._requeue_restored_reviews(
+                conn,
+                task_id,
+                archive_id,
+                restored_members,
+                now=now,
+            )
             conn.execute(
                 update(archive_batches)
                 .where(archive_batches.c.id == archive_id)
@@ -216,6 +242,7 @@ class ArchiveService:
                         "archive_id": archive_id,
                         "restored_count": len(restored_members),
                         "retained_archived_count": len(member_rows) - len(restored_members),
+                        "requeued_review_run_ids": requeued_reviews,
                     },
                 ),
             )
@@ -417,14 +444,6 @@ class ArchiveService:
             )
             for vulnerability_id in vulnerability_ids:
                 add("vulnerability", vulnerability_id, "related")
-            if vulnerability_ids:
-                for artifact_id in conn.execute(
-                    select(vulnerability_artifacts.c.artifact_id).where(
-                        vulnerability_artifacts.c.task_id == task_id,
-                        vulnerability_artifacts.c.vulnerability_id.in_(vulnerability_ids),
-                    )
-                ).scalars():
-                    add("artifact", artifact_id, "related")
 
             todo_ids = set(
                 conn.execute(
@@ -448,6 +467,36 @@ class ArchiveService:
                 ).scalar_one_or_none()
                 if visible_outside is None:
                     add("todo", todo_id, "related")
+
+        vulnerability_ids = sorted(
+            entity_id
+            for (entity_type, entity_id) in members
+            if entity_type == "vulnerability"
+        )
+        if vulnerability_ids:
+            for artifact_id in conn.execute(
+                select(vulnerability_artifacts.c.artifact_id).where(
+                    vulnerability_artifacts.c.task_id == task_id,
+                    vulnerability_artifacts.c.vulnerability_id.in_(vulnerability_ids),
+                )
+            ).scalars():
+                add("artifact", artifact_id, "related")
+            review_run_ids = list(
+                conn.execute(
+                    select(vulnerability_review_runs.c.id).where(
+                        vulnerability_review_runs.c.task_id == task_id,
+                        vulnerability_review_runs.c.vulnerability_id.in_(vulnerability_ids),
+                    )
+                ).scalars()
+            )
+            if review_run_ids:
+                for artifact_id in conn.execute(
+                    select(artifacts.c.id).where(
+                        artifacts.c.task_id == task_id,
+                        artifacts.c.review_run_id.in_(review_run_ids),
+                    )
+                ).scalars():
+                    add("artifact", artifact_id, "related")
 
         member_models = [
             self._member(conn, task_id, entity_type, entity_id, relation)
@@ -669,6 +718,129 @@ class ArchiveService:
                 )
             )
         return affected
+
+    def _cancel_affected_review_runs(
+        self,
+        conn,
+        task_id: str,
+        members: list[ArchiveMember],
+        *,
+        now: str,
+    ) -> list[str]:
+        vulnerability_ids = self._review_vulnerability_ids(
+            conn,
+            task_id,
+            members,
+        )
+        if not vulnerability_ids:
+            return []
+        rows = conn.execute(
+            select(vulnerability_review_runs.c.id).where(
+                vulnerability_review_runs.c.task_id == task_id,
+                vulnerability_review_runs.c.vulnerability_id.in_(vulnerability_ids),
+                vulnerability_review_runs.c.status.in_(
+                    ["pending", "claimed", "running", "concluding"]
+                ),
+            )
+        ).scalars().all()
+        if rows and self.reviews is not None:
+            for vulnerability_id in vulnerability_ids:
+                self.reviews.cancel_in(
+                    conn,
+                    task_id=task_id,
+                    vulnerability_id=vulnerability_id,
+                    reason="vulnerability_archived",
+                    now=now,
+                )
+        elif rows:
+            conn.execute(
+                update(vulnerability_review_runs)
+                .where(
+                    vulnerability_review_runs.c.task_id == task_id,
+                    vulnerability_review_runs.c.id.in_(rows),
+                )
+                .values(
+                    status="cancelled",
+                    worker=None,
+                    lease_id=None,
+                    claimed_at=None,
+                    last_heartbeat_at=None,
+                    next_retry_at=None,
+                    last_failure_kind="vulnerability_archived",
+                    failure_class="",
+                    decision=None,
+                    decision_reason="",
+                    duplicate_of_vulnerability_id=None,
+                    activity_kind="cancelled",
+                    activity_summary="漏洞审核已取消：vulnerability_archived",
+                    activity_tool="",
+                    activity_updated_at=now,
+                    updated_at=now,
+                    concluded_at=now,
+                )
+            )
+        return [str(item) for item in rows]
+
+    def _requeue_restored_reviews(
+        self,
+        conn,
+        task_id: str,
+        archive_id: str,
+        members: list[ArchiveMember],
+        *,
+        now: str,
+    ) -> list[str]:
+        if self.reviews is None:
+            return []
+        run_ids: list[str] = []
+        for vulnerability_id in self._review_vulnerability_ids(
+            conn,
+            task_id,
+            members,
+        ):
+            run = self.reviews.enqueue_in(
+                conn,
+                task_id=task_id,
+                vulnerability_id=vulnerability_id,
+                trigger="restored",
+                trigger_payload={"archive_id": archive_id},
+                now=now,
+            )
+            if run is not None:
+                run_ids.append(run.id)
+        return run_ids
+
+    @staticmethod
+    def _review_vulnerability_ids(
+        conn,
+        task_id: str,
+        members: list[ArchiveMember],
+    ) -> list[str]:
+        """Return review targets whose visible inputs change with this batch.
+
+        A Vulnerability member obviously invalidates its ReviewRun.  A directly
+        archived Finding/Evidence Artifact does too, even though the archive
+        closure intentionally does not pull the parent Vulnerability into an
+        Artifact-rooted batch.
+        """
+
+        vulnerability_ids = {
+            item.entity_id for item in members if item.entity_type == "vulnerability"
+        }
+        artifact_ids = [
+            item.entity_id for item in members if item.entity_type == "artifact"
+        ]
+        if artifact_ids:
+            vulnerability_ids.update(
+                str(item)
+                for item in conn.execute(
+                    select(vulnerability_artifacts.c.vulnerability_id).where(
+                        vulnerability_artifacts.c.task_id == task_id,
+                        vulnerability_artifacts.c.artifact_id.in_(artifact_ids),
+                    )
+                ).scalars()
+            )
+        return sorted(vulnerability_ids)
 
     @staticmethod
     def _draft_refs(draft: WorkspaceDraft) -> set[tuple[str, str]]:

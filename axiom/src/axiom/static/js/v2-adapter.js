@@ -29,6 +29,8 @@
     'bootstrap_conclude_seconds',
     'reason_execute_seconds',
     'reason_conclude_seconds',
+    'review_execute_seconds',
+    'review_conclude_seconds',
     'reason_batch_size',
     'reason_low_watermark',
     'reason_max_wait_seconds',
@@ -174,6 +176,13 @@
       affected_scope: item.affected_target || '',
       finding_artifact: item.finding_artifact ? mapArtifact(item.finding_artifact) : null,
       evidence_artifacts: (item.evidence_artifacts || []).map(mapArtifact),
+    };
+  }
+
+  function mapVulnerabilityReviewRun(item) {
+    return {
+      ...item,
+      artifacts: (item.artifacts || []).map(mapArtifact),
     };
   }
 
@@ -411,7 +420,7 @@
     const targetName = String(body.name || '').trim();
     if (!targetName) throw new Error('Worker 名称不能为空');
     const capabilities = (body.task_types || [])
-      .filter(item => ['bootstrap', 'reason', 'explore'].includes(item));
+      .filter(item => ['bootstrap', 'reason', 'explore', 'review'].includes(item));
     if (!capabilities.length) throw new Error(`Worker ${targetName} 至少要勾选一个参与阶段`);
 
     const existing = persistedName
@@ -916,6 +925,8 @@
       this.vulnerabilityRouteTaskId = taskId;
       this.vulnerabilityRouteId = vulnerabilityId;
       this.vulnerabilitySelectionBlocked = false;
+      this.vulnerabilityReviews = [];
+      this.vulnerabilityReviewsError = '';
       if (!taskId) return;
       this.showVulnBoard = false;
       this.vulnFilter = { ...(this.vulnFilter || {}), projectId: taskId, keyword: '' };
@@ -951,6 +962,118 @@
       if (!vulnerability) return;
       this.vulnerabilitySelectionBlocked = false;
       this.selectedVulnerabilityKey = this.vulnerabilityKey(vulnerability);
+      void this.loadVulnerabilityReviews(vulnerability);
+    },
+    async loadVulnerabilityReviews(vulnerability = null) {
+      const selected = vulnerability || this.selectedVulnerability();
+      const requestId = ++this._vulnerabilityReviewRequestId;
+      if (!selected?.project_id || !selected?.id) {
+        this.vulnerabilityReviews = [];
+        this.vulnerabilityReviewsError = '';
+        return [];
+      }
+      this.vulnerabilityReviewsLoading = true;
+      this.vulnerabilityReviewsError = '';
+      try {
+        const rows = await request(
+          'GET',
+          `/tasks/${selected.project_id}/vulnerabilities/${selected.id}/reviews`,
+          null,
+          { signal: this._pageAbortController?.signal },
+        );
+        if (requestId !== this._vulnerabilityReviewRequestId) return this.vulnerabilityReviews;
+        this.vulnerabilityReviews = (rows || []).map(mapVulnerabilityReviewRun);
+        return this.vulnerabilityReviews;
+      } catch (error) {
+        if (error?.name === 'AbortError') return this.vulnerabilityReviews;
+        if (requestId === this._vulnerabilityReviewRequestId) {
+          this.vulnerabilityReviews = [];
+          this.vulnerabilityReviewsError = error?.message || '加载审核记录失败';
+        }
+        return [];
+      } finally {
+        if (requestId === this._vulnerabilityReviewRequestId) {
+          this.vulnerabilityReviewsLoading = false;
+        }
+      }
+    },
+    latestVulnerabilityReview() {
+      return (this.vulnerabilityReviews || [])[0] || null;
+    },
+    vulnerabilityReviewStateLabel(run) {
+      return ({
+        pending: '等待审核',
+        claimed: '正在启动',
+        running: '审核中',
+        concluding: '正在收口',
+        completed: '已完成',
+        failed: '审核失败',
+        cancelled: '已取消',
+      }[run?.status] || run?.status || '未排队');
+    },
+    vulnerabilityReviewStateClass(run) {
+      return ({
+        pending: 'border-amber-200 bg-amber-50 text-amber-700',
+        claimed: 'border-blue-200 bg-blue-50 text-blue-700',
+        running: 'border-blue-200 bg-blue-50 text-blue-700',
+        concluding: 'border-violet-200 bg-violet-50 text-violet-700',
+        completed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+        failed: 'border-rose-200 bg-rose-50 text-rose-700',
+        cancelled: 'border-slate-200 bg-slate-50 text-slate-500',
+      }[run?.status] || 'border-slate-200 bg-slate-50 text-slate-500');
+    },
+    vulnerabilityReviewDecisionLabel(decision) {
+      return ({
+        verified: '已验证',
+        duplicate: '重复',
+        ignored: '忽略',
+        'needs-human': '继续待验证',
+      }[decision] || decision || '未裁决');
+    },
+    vulnerabilityReviewTriggerLabel(trigger) {
+      return ({
+        reported: '漏洞上报',
+        updated: '关键内容更新',
+        manual: '人工重审',
+        restored: '归档恢复',
+        migration: '历史补队列',
+      }[trigger] || trigger || '未知触发');
+    },
+    vulnerabilityReviewCanRetry() {
+      const selected = this.selectedVulnerability();
+      const latest = this.latestVulnerabilityReview();
+      if (!selected || selected.archived || this.vulnerabilityReviewSubmitting) return false;
+      return !latest || !['pending', 'claimed', 'running', 'concluding'].includes(latest.status);
+    },
+    async triggerVulnerabilityReview(vulnerability = null) {
+      const selected = vulnerability || this.selectedVulnerability();
+      if (!selected || !this.vulnerabilityReviewCanRetry()) return;
+      if (!window.confirm(`确认重新审核 ${selected.id}？漏洞将恢复为待验证。`)) return;
+      this.vulnerabilityReviewSubmitting = true;
+      try {
+        await request(
+          'POST',
+          `/tasks/${selected.project_id}/vulnerabilities/${selected.id}/reviews`,
+          { actor: this.actorName(), reason: '人工要求重新审核' },
+        );
+        await this.loadVulnerabilityPage({ selectFirst: false });
+        const refreshed = (this.vulnerabilityItems || []).find(
+          item => item.project_id === selected.project_id && item.id === selected.id,
+        ) || selected;
+        this.selectedVulnerabilityKey = this.vulnerabilityKey(refreshed);
+        await this.loadVulnerabilityReviews(refreshed);
+        this.showToast('已创建 Reviewer 审核任务');
+      } catch (error) {
+        if (error?.status === 409) await this.loadVulnerabilityReviews(selected);
+        this.showToast(error?.message || '重新审核失败', 'error');
+      } finally {
+        this.vulnerabilityReviewSubmitting = false;
+      }
+    },
+    openReviewDuplicate(run) {
+      const selected = this.selectedVulnerability();
+      if (!selected?.project_id || !run?.duplicate_of_vulnerability_id) return;
+      this.openVulnerabilityLocation(selected.project_id, run.duplicate_of_vulnerability_id);
     },
     async loadVulnerabilityPage(options = {}) {
       const requestId = ++this._vulnerabilityListRequestId;
@@ -1005,9 +1128,15 @@
         if (routeTarget) {
           this.vulnerabilitySelectionBlocked = false;
           this.selectedVulnerabilityKey = this.vulnerabilityKey(routeTarget);
+          await this.loadVulnerabilityReviews(routeTarget);
         } else if (!routeLookupFailed && options.selectFirst !== false && this.vulnerabilityItems.length) {
           this.vulnerabilitySelectionBlocked = false;
           this.selectedVulnerabilityKey = this.vulnerabilityKey(this.vulnerabilityItems[0]);
+          await this.loadVulnerabilityReviews(this.vulnerabilityItems[0]);
+        } else if (!this.vulnerabilityItems.some(
+          item => this.vulnerabilityKey(item) === this.selectedVulnerabilityKey
+        )) {
+          this.vulnerabilityReviews = [];
         }
       } catch (error) {
         if (error?.name !== 'AbortError') this.showToast(error.message || String(error), 'error');
@@ -1378,7 +1507,12 @@
       } catch (error) { this.showToast(error.message, 'error'); }
     },
     async reportExternalVulnerability(vulnerability) {
-      if (!vulnerability || !confirm(`确认外部上报 ${vulnerability.id}？`)) return;
+      if (!vulnerability) return;
+      if (vulnerability.status !== '已验证') {
+        this.showToast('只有 Reviewer 或人工裁决为已验证的漏洞才能外部上报', 'error');
+        return;
+      }
+      if (!confirm(`确认外部上报 ${vulnerability.id}？`)) return;
       try {
         const result = await request('POST', `/tasks/${vulnerability.project_id}/vulnerabilities/${vulnerability.id}/external-report`, {});
         const status = result.attempt?.status || 'failed';
@@ -1551,7 +1685,7 @@
           );
           if (requestId !== this._artifactCenterRequestId) return;
           target = mapArtifact(raw);
-          const realFolder = target.intent_id || 'task';
+          const realFolder = target.intent_id || target.review_run_id || 'task';
           if (realFolder !== this.artifactCenterFolderKey) {
             this.navigateArtifactCenter(this.artifactCenterSelectedTask, realFolder, target.id);
             return;
@@ -1606,9 +1740,9 @@
     artifactCenterPhases() { return [...new Set((this.artifactCenterItems || []).map(item => item.phase).filter(Boolean))].sort(); },
     artifactSourcePhase(item) {
       const type = String(item?.artifact_type || '').toLowerCase();
-      const typedPhase = ['bootstrap', 'reason', 'explore', 'asm'].find(phase => type.startsWith(`${phase}.`));
+      const typedPhase = ['bootstrap', 'reason', 'explore', 'review', 'asm'].find(phase => type.startsWith(`${phase}.`));
       if (typedPhase) return typedPhase;
-      const match = String(item?.path || '').match(/(?:^|\/)(bootstrap|reason|explore|asm)(?:[-_\/]|$)/i);
+      const match = String(item?.path || '').match(/(?:^|\/)(bootstrap|reason|explore|review|asm)(?:[-_\/]|$)/i);
       return match ? match[1].toLowerCase() : (type === 'upload' ? 'upload' : 'unknown');
     },
     artifactCenterFiltered() {
@@ -1642,9 +1776,14 @@
     artifactFolderLabel(folder) { return folder?.folder_key === 'task' ? '任务文件' : (folder?.folder_key || '未知目录'); },
     artifactFolderDescription(folder) {
       if (folder?.folder_key === 'task') return '人工上传及未关联 Intent 的任务级产物';
+      if (folder?.review_run_id) return '漏洞 Reviewer 审核记录与最小复测证据';
       return folder?.intent_description || '该 Intent 的正式产物';
     },
-    artifactFolderPhase(folder) { return folder?.folder_key === 'task' ? 'upload' : (folder?.intent_kind || 'intent'); },
+    artifactFolderPhase(folder) {
+      if (folder?.folder_key === 'task') return 'upload';
+      if (folder?.review_run_id) return 'review';
+      return folder?.intent_kind || 'intent';
+    },
     artifactFileName(item) { return String(item?.path || '').split('/').pop() || item?.id || 'artifact'; },
     artifactDisplayPath(item) {
       const path = String(item?.path || '');
@@ -1659,7 +1798,7 @@
     selectArtifactCenterItem(item) {
       if (!item?.id) return;
       const taskId = item.task_id || this.artifactCenterSelectedTask;
-      const folderKey = item.intent_id || (this.artifactCenterFolderKey || 'task');
+      const folderKey = item.intent_id || item.review_run_id || (this.artifactCenterFolderKey || 'task');
       this.navigateArtifactCenter(taskId, folderKey, item.id);
     },
     async openArtifactLocation(taskId, artifactOrId) {
@@ -1670,7 +1809,7 @@
           : artifactOrId;
         if (!item?.id) throw new Error('Artifact metadata is unavailable');
         if (item.archived) throw new Error('产物已归档，无法在当前文件中心打开');
-        this.navigateArtifactCenter(taskId, item.intent_id || 'task', item.id);
+        this.navigateArtifactCenter(taskId, item.intent_id || item.review_run_id || 'task', item.id);
       } catch (error) {
         this.showToast(error.message || '无法打开产物', 'error');
       }
@@ -1681,6 +1820,8 @@
       if (type === 'explore.findings') return 'Findings';
       if (type === 'explore.leads') return 'Leads';
       if (type === 'explore.evidence') return 'Evidence';
+      if (type === 'review.report') return 'Review';
+      if (type === 'review.evidence') return 'Review Evidence';
       return item?.artifact_type || 'Artifact';
     },
     artifactKindClass(item) {
@@ -1688,6 +1829,8 @@
       if (type === 'explore.findings') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
       if (type === 'explore.leads') return 'border-amber-200 bg-amber-50 text-amber-700';
       if (type === 'explore.evidence') return 'border-blue-200 bg-blue-50 text-blue-700';
+      if (type === 'review.report') return 'border-violet-200 bg-violet-50 text-violet-700';
+      if (type === 'review.evidence') return 'border-cyan-200 bg-cyan-50 text-cyan-700';
       return 'border-slate-200 bg-slate-100 text-slate-500';
     },
     formatBytes(size) { const n = Number(size || 0); if (n < 1024) return `${n} B`; if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`; return `${(n / 1024 / 1024).toFixed(1)} MB`; },
@@ -1763,7 +1906,7 @@
       try {
         await request('DELETE', `/tasks/${item.task_id}/artifacts/${item.id}`);
         this.showToast('产物已归档');
-        this.navigateArtifactCenter(item.task_id, item.intent_id || 'task');
+        this.navigateArtifactCenter(item.task_id, item.intent_id || item.review_run_id || 'task');
       }
       catch (error) { this.showToast(error.message, 'error'); }
     },

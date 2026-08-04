@@ -31,7 +31,7 @@
   }
   .worker-capability-row-grid {
     display: grid;
-    grid-template-columns: minmax(240px, 1fr) repeat(4, minmax(82px, 104px));
+    grid-template-columns: minmax(220px, 1fr) repeat(5, minmax(78px, 100px));
     gap: 8px;
     align-items: center;
   }

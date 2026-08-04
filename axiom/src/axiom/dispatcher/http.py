@@ -36,6 +36,14 @@ from axiom.modules.settings.schemas import RuntimeSettings
 from axiom.modules.tasks.schemas import RunDeadlineReconcileReport
 from axiom.modules.token_usage.schemas import TokenUsageBatchCommand, TokenUsageBatchResult
 from axiom.modules.interventions.schemas import Intervention, ResolveIntervention
+from axiom.modules.vulnerability_reviews.schemas import (
+    ClaimedVulnerabilityReviewRun,
+    CompleteReviewCommand,
+    ReleasedVulnerabilityReviewRun,
+    ReviewStatus,
+    StartedVulnerabilityReviewRun,
+    VulnerabilityReviewCompleted,
+)
 from axiom.modules.workers.schemas import Worker
 
 
@@ -106,13 +114,19 @@ class HttpControlPlane:
         if action.intent_id:
             path = f"/dispatch/tasks/{action.task_id}/intents/{action.intent_id}/claim"
             model = ClaimedIntent
-        else:
-            assert action.reason_run_id is not None
+        elif action.reason_run_id:
             path = (
                 f"/dispatch/tasks/{action.task_id}/reason-runs/"
                 f"{action.reason_run_id}/claim"
             )
             model = ClaimedReasonRun
+        else:
+            assert action.review_run_id is not None
+            path = (
+                f"/dispatch/tasks/{action.task_id}/vulnerability-review-runs/"
+                f"{action.review_run_id}/claim"
+            )
+            model = ClaimedVulnerabilityReviewRun
         try:
             payload = self._request("POST", path, {"worker_name": action.worker_name})
         except ControlPlaneError as exc:
@@ -147,10 +161,14 @@ class HttpControlPlane:
             )
         )
 
-    def start(self, work: ClaimedWork) -> StartedIntent | StartedReasonRun:
+    def start(
+        self, work: ClaimedWork
+    ) -> StartedIntent | StartedReasonRun | StartedVulnerabilityReviewRun:
         payload = self._request("POST", self._work_path("start", work), self._lease(work))
         if isinstance(work, ClaimedReasonRun):
             return StartedReasonRun.model_validate(payload)
+        if isinstance(work, ClaimedVulnerabilityReviewRun):
+            return StartedVulnerabilityReviewRun.model_validate(payload)
         return StartedIntent.model_validate(payload)
 
     def heartbeat(self, work: ClaimedWork) -> None:
@@ -265,11 +283,40 @@ class HttpControlPlane:
             )
         )
 
+    def complete_review(
+        self,
+        work: ClaimedVulnerabilityReviewRun,
+        command: CompleteReviewCommand,
+    ) -> VulnerabilityReviewCompleted:
+        return VulnerabilityReviewCompleted.model_validate(
+            self._request(
+                "POST",
+                self._work_path("complete", work),
+                command.model_dump(mode="json"),
+            )
+        )
+
+    def review_status(
+        self,
+        work: ClaimedVulnerabilityReviewRun,
+    ) -> ReviewStatus:
+        try:
+            payload = self._request(
+                "POST",
+                self._work_path("status", work),
+                self._lease(work),
+            )
+        except ControlPlaneError as exc:
+            if exc.code == "lease_inactive":
+                raise LeaseLostError(str(exc)) from exc
+            raise
+        return ReviewStatus.model_validate(payload)
+
     def release(
         self,
         work: ClaimedWork,
         command: ReleaseIntentCommand,
-    ) -> ReleasedReasonRun | None:
+    ) -> ReleasedReasonRun | ReleasedVulnerabilityReviewRun | None:
         try:
             payload = self._request(
                 "POST",
@@ -282,6 +329,8 @@ class HttpControlPlane:
             return None
         if isinstance(work, ClaimedReasonRun):
             return ReleasedReasonRun.model_validate(payload)
+        if isinstance(work, ClaimedVulnerabilityReviewRun):
+            return ReleasedVulnerabilityReviewRun.model_validate(payload)
         return None
 
     def open_reason_workspace(
@@ -384,6 +433,11 @@ class HttpControlPlane:
             return (
                 f"/dispatch/tasks/{work.task_id}/reason-runs/"
                 f"{work.reason_run_id}/{action}"
+            )
+        if isinstance(work, ClaimedVulnerabilityReviewRun):
+            return (
+                f"/dispatch/tasks/{work.task_id}/vulnerability-review-runs/"
+                f"{work.review_run_id}/{action}"
             )
         return f"/dispatch/tasks/{work.task_id}/intents/{work.intent_id}/{action}"
 

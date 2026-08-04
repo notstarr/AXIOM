@@ -40,7 +40,7 @@ class Dispatcher:
                     intent_id=action.claim.intent_id,
                     worker_name=action.claim.worker_name,
                 )
-            else:
+            elif action.claim.reason_run_id:
                 claim_reason_run = getattr(self.control_plane, "claim_reason_run", None)
                 if claim_reason_run is None:
                     claim = None
@@ -48,6 +48,16 @@ class Dispatcher:
                     claim = claim_reason_run(
                         task_id=action.claim.task_id,
                         reason_run_id=action.claim.reason_run_id,
+                        worker_name=action.claim.worker_name,
+                    )
+            else:
+                claim_review_run = getattr(self.control_plane, "claim_review_run", None)
+                if claim_review_run is None:
+                    claim = None
+                else:
+                    claim = claim_review_run(
+                        task_id=action.claim.task_id,
+                        review_run_id=action.claim.review_run_id,
                         worker_name=action.claim.worker_name,
                     )
             if claim is not None:
@@ -62,7 +72,6 @@ class Dispatcher:
         return sum(
             1
             for task in snapshot.tasks
-            if task.status == "running"
-            for item in [*task.intents, *task.reason_runs]
+            for item in [*task.intents, *task.reason_runs, *task.review_runs]
             if item.status == "pending"
         )

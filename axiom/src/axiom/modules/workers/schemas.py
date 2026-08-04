@@ -5,13 +5,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 
-WorkerCapability = Literal["bootstrap", "reason", "explore"]
+WorkerCapability = Literal["bootstrap", "reason", "explore", "review"]
 
 
 class UpsertWorker(BaseModel):
     worker_type: str = "pi"
     capabilities: list[WorkerCapability] = Field(
-        default_factory=lambda: ["bootstrap", "reason", "explore"]
+        default_factory=lambda: ["bootstrap", "reason", "explore", "review"]
     )
     max_running: int = Field(default=1, ge=1, le=128)
     priority: int = Field(default=0, ge=-10_000, le=10_000)

@@ -55,6 +55,8 @@ class RuntimeConfig(BaseModel):
     bootstrap_conclude_seconds: int = Field(default=120, ge=30, le=7_200)
     reason_execute_seconds: int = Field(default=300, ge=60, le=7_200)
     reason_conclude_seconds: int = Field(default=120, ge=30, le=7_200)
+    review_execute_seconds: int = Field(default=300, ge=60, le=7_200)
+    review_conclude_seconds: int = Field(default=120, ge=30, le=7_200)
     reason_batch_size: int = Field(default=2, ge=1, le=20)
     reason_low_watermark: int = Field(default=1, ge=0, le=20)
     reason_max_wait_seconds: int = Field(default=180, ge=10, le=3_600)

@@ -11,11 +11,13 @@ from axiom.dispatcher.schemas import (
     DispatcherSnapshot,
     IntentSnapshot,
     ReasonRunSnapshot,
+    ReviewRunSnapshot,
     TaskSnapshot,
     WorkerSnapshot,
 )
 from axiom.modules.graph.tables import intents
 from axiom.modules.reason.tables import reason_runs
+from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.settings.schemas import RuntimeConfig
 from axiom.modules.tasks.tables import tasks
 from axiom.modules.workers.repository import WorkerRepository
@@ -49,6 +51,7 @@ class DispatchRepository:
                 created_at=parse_utc(row["created_at"]),
                 intents=[],
                 reason_runs=[],
+                review_runs=[],
             )
             for row in task_rows
         }
@@ -120,8 +123,41 @@ class DispatchRepository:
                 )
             )
 
+        review_rows = conn.execute(
+            select(
+                vulnerability_review_runs.c.task_id,
+                vulnerability_review_runs.c.id,
+                vulnerability_review_runs.c.vulnerability_id,
+                vulnerability_review_runs.c.status,
+                vulnerability_review_runs.c.worker_pool_json,
+                vulnerability_review_runs.c.next_retry_at,
+                vulnerability_review_runs.c.created_at,
+                vulnerability_review_runs.c.claimed_at,
+            )
+            .where(vulnerability_review_runs.c.status.in_(OPEN_STATUSES))
+            .order_by(vulnerability_review_runs.c.created_at, vulnerability_review_runs.c.id)
+        ).mappings()
+        for row in review_rows:
+            task = tasks_by_id.get(row["task_id"])
+            if task is None:
+                continue
+            task.review_runs.append(
+                ReviewRunSnapshot(
+                    task_id=row["task_id"],
+                    id=row["id"],
+                    vulnerability_id=row["vulnerability_id"],
+                    status=row["status"],
+                    worker_pool=json.loads(row["worker_pool_json"] or "[]"),
+                    next_retry_at=(
+                        parse_utc(row["next_retry_at"]) if row["next_retry_at"] else None
+                    ),
+                    created_at=parse_utc(row["created_at"]),
+                    claimed_at=parse_utc(row["claimed_at"]) if row["claimed_at"] else None,
+                )
+            )
+
         last_claimed_by_task: dict[str, datetime] = {}
-        for table in (intents, reason_runs):
+        for table in (intents, reason_runs, vulnerability_review_runs):
             for row in conn.execute(
                 select(table.c.task_id, func.max(table.c.claimed_at).label("claimed_at"))
                 .where(table.c.claimed_at.is_not(None))
@@ -142,6 +178,15 @@ class DispatchRepository:
                 intents.c.status.in_(ACTIVE_STATUSES),
             )
             .group_by(intents.c.worker)
+        ).mappings():
+            running[row["worker"]] += row["count"]
+        for row in conn.execute(
+            select(vulnerability_review_runs.c.worker, func.count().label("count"))
+            .where(
+                vulnerability_review_runs.c.worker.is_not(None),
+                vulnerability_review_runs.c.status.in_(ACTIVE_STATUSES),
+            )
+            .group_by(vulnerability_review_runs.c.worker)
         ).mappings():
             running[row["worker"]] += row["count"]
         for row in conn.execute(
@@ -183,7 +228,9 @@ class DispatchRepository:
     @staticmethod
     def task_run_state(conn: Connection, task_id: str):
         return conn.execute(
-            select(tasks.c.status, tasks.c.run_deadline_at).where(tasks.c.id == task_id)
+            select(tasks.c.status, tasks.c.run_deadline_at, tasks.c.legacy_readonly).where(
+                tasks.c.id == task_id
+            )
         ).mappings().one_or_none()
 
     @staticmethod
@@ -200,6 +247,17 @@ class DispatchRepository:
             select(reason_runs, tasks.c.project_id.label("project_id"))
             .join(tasks, tasks.c.id == reason_runs.c.task_id)
             .where(reason_runs.c.task_id == task_id, reason_runs.c.id == reason_run_id)
+        ).mappings().one_or_none()
+
+    @staticmethod
+    def review_run_row(conn: Connection, task_id: str, review_run_id: str):
+        return conn.execute(
+            select(vulnerability_review_runs, tasks.c.project_id.label("project_id"))
+            .join(tasks, tasks.c.id == vulnerability_review_runs.c.task_id)
+            .where(
+                vulnerability_review_runs.c.task_id == task_id,
+                vulnerability_review_runs.c.id == review_run_id,
+            )
         ).mappings().one_or_none()
 
     @staticmethod
@@ -223,7 +281,15 @@ class DispatchRepository:
                 reason_runs.c.status.in_(ACTIVE_STATUSES),
             )
         ).scalar_one()
-        return int(intent_count + reason_count)
+        review_count = conn.execute(
+            select(func.count())
+            .select_from(vulnerability_review_runs)
+            .where(
+                vulnerability_review_runs.c.worker == worker_name,
+                vulnerability_review_runs.c.status.in_(ACTIVE_STATUSES),
+            )
+        ).scalar_one()
+        return int(intent_count + reason_count + review_count)
 
     @staticmethod
     def global_active_count(conn: Connection) -> int:
@@ -235,7 +301,12 @@ class DispatchRepository:
             .select_from(reason_runs)
             .where(reason_runs.c.status.in_(ACTIVE_STATUSES))
         ).scalar_one()
-        return int(intent_count + reason_count)
+        review_count = conn.execute(
+            select(func.count())
+            .select_from(vulnerability_review_runs)
+            .where(vulnerability_review_runs.c.status.in_(ACTIVE_STATUSES))
+        ).scalar_one()
+        return int(intent_count + reason_count + review_count)
 
     @staticmethod
     def active_task_ids(conn: Connection) -> set[str]:
@@ -247,7 +318,12 @@ class DispatchRepository:
             .where(reason_runs.c.status.in_(ACTIVE_STATUSES))
             .distinct()
         ).scalars()
-        return set(intent_task_ids) | set(reason_task_ids)
+        review_task_ids = conn.execute(
+            select(vulnerability_review_runs.c.task_id)
+            .where(vulnerability_review_runs.c.status.in_(ACTIVE_STATUSES))
+            .distinct()
+        ).scalars()
+        return set(intent_task_ids) | set(reason_task_ids) | set(review_task_ids)
 
     @staticmethod
     def task_active_count(conn: Connection, task_id: str) -> int:
@@ -261,7 +337,15 @@ class DispatchRepository:
             .select_from(reason_runs)
             .where(reason_runs.c.task_id == task_id, reason_runs.c.status.in_(ACTIVE_STATUSES))
         ).scalar_one()
-        return int(intent_count + reason_count)
+        review_count = conn.execute(
+            select(func.count())
+            .select_from(vulnerability_review_runs)
+            .where(
+                vulnerability_review_runs.c.task_id == task_id,
+                vulnerability_review_runs.c.status.in_(ACTIVE_STATUSES),
+            )
+        ).scalar_one()
+        return int(intent_count + reason_count + review_count)
 
     @staticmethod
     def task_kind_active_count(conn: Connection, task_id: str, kind: str) -> int:
@@ -273,6 +357,17 @@ class DispatchRepository:
                     .where(
                         reason_runs.c.task_id == task_id,
                         reason_runs.c.status.in_(ACTIVE_STATUSES),
+                    )
+                ).scalar_one()
+            )
+        if kind == "review":
+            return int(
+                conn.execute(
+                    select(func.count())
+                    .select_from(vulnerability_review_runs)
+                    .where(
+                        vulnerability_review_runs.c.task_id == task_id,
+                        vulnerability_review_runs.c.status.in_(ACTIVE_STATUSES),
                     )
                 ).scalar_one()
             )
@@ -370,6 +465,24 @@ class DispatchRepository:
                 reason_runs.c.last_heartbeat_at,
                 reason_runs.c.task_id,
                 reason_runs.c.id,
+            )
+        ).mappings().all()
+
+    @staticmethod
+    def stale_active_review_runs(conn: Connection, *, cutoff: str):
+        return conn.execute(
+            select(vulnerability_review_runs, tasks.c.project_id.label("project_id"))
+            .join(tasks, tasks.c.id == vulnerability_review_runs.c.task_id)
+            .where(
+                vulnerability_review_runs.c.status.in_(ACTIVE_STATUSES),
+                vulnerability_review_runs.c.lease_id.is_not(None),
+                vulnerability_review_runs.c.last_heartbeat_at.is_not(None),
+                vulnerability_review_runs.c.last_heartbeat_at <= cutoff,
+            )
+            .order_by(
+                vulnerability_review_runs.c.last_heartbeat_at,
+                vulnerability_review_runs.c.task_id,
+                vulnerability_review_runs.c.id,
             )
         ).mappings().all()
 

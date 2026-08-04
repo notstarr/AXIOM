@@ -96,7 +96,7 @@
                 <div class="mt-0.5 text-[9px] text-slate-400">此处只读；阶段分配统一在 Worker 页面修改。</div>
               </div>
               <div class="ml-auto flex flex-wrap justify-end gap-1.5">
-                <template x-for="phase in ['bootstrap','reason','explore']" :key="`skill-readonly-${phase}`"><span class="rounded-lg border px-2 py-1 text-[10px]" :class="phaseCapabilityAssigned(selectedSkillCapabilityRecord(), phase) ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-400'" x-text="`${phaseCapabilityAssigned(selectedSkillCapabilityRecord(), phase) ? '✓ ' : ''}${axiomPhaseLabel(phase)}`"></span></template>
+                <template x-for="phase in axiomPhases()" :key="`skill-readonly-${phase}`"><span class="rounded-lg border px-2 py-1 text-[10px]" :class="phaseCapabilityAssigned(selectedSkillCapabilityRecord(), phase) ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-400'" x-text="`${phaseCapabilityAssigned(selectedSkillCapabilityRecord(), phase) ? '✓ ' : ''}${axiomPhaseLabel(phase)}`"></span></template>
                 <button type="button" @click="navigateToWorkerCapability('skill', skillEditor.name)" class="rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-[10px] text-brand-700">前往 Worker 能力管理</button>
               </div>
             </div>

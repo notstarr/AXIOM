@@ -118,6 +118,7 @@ class FakeBootstrapExecutor:
         self.conclude_result = conclude_result
         self.execute_calls = 0
         self.conclude_calls = 0
+        self.close_calls = 0
 
     def execute(self, execution_input, *, lease_active):
         self.events.append("execute")
@@ -139,11 +140,15 @@ class FakeBootstrapExecutor:
             write_bootstrap_files(execution_input.run_dir)
         return self.conclude_result
 
+    def close(self):
+        self.close_calls += 1
+
 
 class BlockingBootstrapExecutor:
     def __init__(self) -> None:
         self.started = threading.Event()
         self.cancelled = threading.Event()
+        self.closed = threading.Event()
 
     def execute(self, _execution_input, *, lease_active):
         self.started.set()
@@ -154,6 +159,9 @@ class BlockingBootstrapExecutor:
 
     def conclude(self, _execution_input, *, reason, lease_active):
         raise AssertionError(f"cancelled execution must not conclude: {reason}/{lease_active()}")
+
+    def close(self):
+        self.closed.set()
 
 
 def claimed_work(client, events: list[str]) -> tuple[dict, ApiControlPlane, ClaimedIntent]:
@@ -302,6 +310,44 @@ def test_axiom_runner_reconciles_and_executes_claims_without_blocking_the_tick(c
     assert client.get(f"/api/v1/tasks/{task['id']}/graph").json()["intents"][0][
         "status"
     ] == "completed"
+    assert executor.close_calls == 1
+
+
+def test_axiom_runner_closes_executor_after_execution_failure(client) -> None:
+    events: list[str] = []
+    project = client.post("/api/v1/projects", json={"title": "系统"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "执行异常清理",
+            "origin": "a.example.com",
+            "goal": "完成渗透测试",
+            "worker_pool": ["worker-a"],
+        },
+    ).json()
+    client.put(
+        "/api/v1/workers/worker-a",
+        json={"capabilities": ["bootstrap"], "max_running": 1},
+    )
+    executor = FakeBootstrapExecutor(
+        events,
+        execute_result=RuntimeError("worker exploded"),
+    )
+    runner = AxiomRunner(
+        ApiControlPlane(client, events),
+        executor_factory=lambda _worker, _work: executor,
+        heartbeat_interval_seconds=60,
+    )
+    try:
+        assert runner.run_once().claimed == 1
+        runner.wait_for_idle()
+    finally:
+        runner.close()
+
+    assert executor.close_calls == 1
+    intent = client.get(f"/api/v1/tasks/{task['id']}/graph").json()["intents"][0]
+    assert intent["last_failure_kind"] == "bootstrap_execution_failed"
 
 
 def test_axiom_runner_cancels_local_execution_when_task_stops(client) -> None:
@@ -337,6 +383,7 @@ def test_axiom_runner_cancels_local_execution_when_task_stops(client) -> None:
 
         assert executor.cancelled.wait(2)
         runner.wait_for_idle(timeout_seconds=2)
+        assert executor.closed.wait(2)
     finally:
         runner.close()
 

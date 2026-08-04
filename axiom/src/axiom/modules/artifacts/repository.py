@@ -41,6 +41,7 @@ class ArtifactRepository:
             "id": allocate_id(conn, scope=task_id, kind="artifact", prefix="a"),
             "task_id": task_id,
             "intent_id": None,
+            "review_run_id": None,
             "artifact_type": "upload",
             "storage_key": prepared.storage_key,
             "summary": summary,
@@ -75,6 +76,7 @@ class ArtifactRepository:
                 ),
                 "task_id": task_id,
                 "intent_id": intent_id,
+                "review_run_id": None,
                 "artifact_type": BOOTSTRAP_ARTIFACT_TYPES[filename],
                 "storage_key": item.storage_key,
                 "summary": BOOTSTRAP_ARTIFACT_SUMMARIES[filename],
@@ -107,6 +109,39 @@ class ArtifactRepository:
                 "id": allocate_id(conn, scope=task_id, kind="artifact", prefix="a"),
                 "task_id": task_id,
                 "intent_id": intent_id,
+                "review_run_id": None,
+                "artifact_type": artifact_type,
+                "storage_key": item.storage_key,
+                "summary": summary,
+                "content_hash": item.content_hash,
+                "size": item.size,
+                "created_by": created_by,
+                "created_at": now,
+                "archived": False,
+            }
+            conn.execute(artifacts.insert().values(**values))
+            records.append(Artifact.model_validate(values))
+        return records
+
+    def create_review_bundle(
+        self,
+        conn: Connection,
+        *,
+        task_id: str,
+        review_run_id: str,
+        prepared: Iterable[PreparedFile],
+        specs: dict[str, tuple[str, str]],
+        created_by: str,
+        now: str,
+    ) -> list[Artifact]:
+        records: list[Artifact] = []
+        for item in prepared:
+            artifact_type, summary = specs[item.relative_name]
+            values = {
+                "id": allocate_id(conn, scope=task_id, kind="artifact", prefix="a"),
+                "task_id": task_id,
+                "intent_id": None,
+                "review_run_id": review_run_id,
                 "artifact_type": artifact_type,
                 "storage_key": item.storage_key,
                 "summary": summary,
@@ -150,9 +185,17 @@ class ArtifactRepository:
         if project_id:
             query = query.where(tasks.c.project_id == project_id)
         if intent_id is not None:
-            query = query.where(artifacts.c.intent_id == intent_id)
+            query = query.where(
+                or_(
+                    artifacts.c.intent_id == intent_id,
+                    artifacts.c.review_run_id == intent_id,
+                )
+            )
         elif unscoped_only:
-            query = query.where(artifacts.c.intent_id.is_(None))
+            query = query.where(
+                artifacts.c.intent_id.is_(None),
+                artifacts.c.review_run_id.is_(None),
+            )
         if artifact_type:
             query = query.where(artifacts.c.artifact_type == artifact_type)
         if phase:
@@ -167,6 +210,7 @@ class ArtifactRepository:
                 or_(
                     artifacts.c.id.ilike(pattern),
                     artifacts.c.intent_id.ilike(pattern),
+                    artifacts.c.review_run_id.ilike(pattern),
                     artifacts.c.storage_key.ilike(pattern),
                     artifacts.c.summary.ilike(pattern),
                     artifacts.c.artifact_type.ilike(pattern),
@@ -197,13 +241,18 @@ class ArtifactRepository:
         limit: int,
         offset: int,
     ) -> tuple[list[ArtifactFolder], int]:
-        folder_key = func.coalesce(artifacts.c.intent_id, literal("task")).label(
+        folder_key = func.coalesce(
+            artifacts.c.intent_id,
+            artifacts.c.review_run_id,
+            literal("task"),
+        ).label(
             "folder_key"
         )
         grouped = (
             select(
                 folder_key,
                 artifacts.c.intent_id.label("intent_id"),
+                artifacts.c.review_run_id.label("review_run_id"),
                 intents.c.kind.label("intent_kind"),
                 intents.c.status.label("intent_status"),
                 func.coalesce(intents.c.description, "").label("intent_description"),
@@ -224,6 +273,7 @@ class ArtifactRepository:
             )
             .group_by(
                 artifacts.c.intent_id,
+                artifacts.c.review_run_id,
                 intents.c.kind,
                 intents.c.status,
                 intents.c.description,
@@ -239,7 +289,11 @@ class ArtifactRepository:
                     grouped.c.folder_key.ilike(pattern),
                     grouped.c.intent_description.ilike(pattern),
                     case(
-                        (grouped.c.intent_id.is_(None), "任务文件"),
+                        (
+                            grouped.c.intent_id.is_(None)
+                            & grouped.c.review_run_id.is_(None),
+                            "任务文件",
+                        ),
                         else_="",
                     ).ilike(pattern),
                 )
@@ -249,7 +303,14 @@ class ArtifactRepository:
         ).scalar_one()
         rows = conn.execute(
             query.order_by(
-                case((grouped.c.intent_id.is_(None), 0), else_=1),
+                case(
+                    (
+                        grouped.c.intent_id.is_(None)
+                        & grouped.c.review_run_id.is_(None),
+                        0,
+                    ),
+                    else_=1,
+                ),
                 grouped.c.latest_created_at.desc(),
                 grouped.c.folder_key.desc(),
             )
@@ -303,6 +364,23 @@ class ArtifactRepository:
             .where(
                 artifacts.c.task_id == task_id,
                 artifacts.c.intent_id == intent_id,
+                artifacts.c.archived.is_(False),
+            )
+            .order_by(artifacts.c.id)
+        ).mappings()
+        return [Artifact.model_validate(row) for row in rows]
+
+    def for_review_run(
+        self,
+        conn: Connection,
+        task_id: str,
+        review_run_id: str,
+    ) -> list[Artifact]:
+        rows = conn.execute(
+            select(artifacts)
+            .where(
+                artifacts.c.task_id == task_id,
+                artifacts.c.review_run_id == review_run_id,
                 artifacts.c.archived.is_(False),
             )
             .order_by(artifacts.c.id)

@@ -72,7 +72,11 @@ def _hard_block(normalized: dict[str, str], config) -> str:
 
 def _external_operation(normalized: dict[str, str]) -> bool:
     name = normalized["tool_name"]
-    if name.startswith("mcp") or name in {"browser", "browser-control"}:
+    if (
+        name.startswith("mcp")
+        or name.startswith("browser_")
+        or name in {"browser", "browser-control"}
+    ):
         return True
     return name == "bash" and bool(
         re.search(

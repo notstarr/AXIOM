@@ -14,7 +14,7 @@ phase_capability_bindings = Table(
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
     CheckConstraint(
-        "scope IN ('common','bootstrap','reason','explore')",
+        "scope IN ('common','bootstrap','reason','explore','review')",
         name="scope",
     ),
     CheckConstraint(

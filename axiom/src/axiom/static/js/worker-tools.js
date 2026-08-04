@@ -1,24 +1,28 @@
 /* AXIOM logical Worker and phase capability management.
  *
- * Three logical Workers (Bootstrap / Reason / Explore) own capability policy.
+ * Four logical Workers (Bootstrap / Reason / Explore / Reviewer) own capability policy.
  * Concrete `workers` rows are model execution backends and may participate in
  * one or more phase pools.  Skill, MCP Tool and extension Tool all share the same
- * common/bootstrap/reason/explore binding service.  Built-in Tools are a
+ * common/bootstrap/reason/explore/review binding service.  Built-in Tools are a
  * read-only projection of the real Pi and AXIOM control-plane contracts.
  */
 window.AxiomModules = window.AxiomModules || {};
 window.AxiomModules.workerTools = {
   methods: {
+    axiomPhases() {
+      return ['bootstrap', 'reason', 'explore', 'review'];
+    },
+
     axiomPhaseLabel(phase) {
-      return ({ bootstrap: 'Bootstrap', reason: 'Reason', explore: 'Explore' }[phase] || phase || '未知阶段');
+      return ({ bootstrap: 'Bootstrap', reason: 'Reason', explore: 'Explore', review: 'Reviewer' }[phase] || phase || '未知阶段');
     },
 
     axiomPhaseShortLabel(phase) {
-      return ({ bootstrap: 'B', reason: 'R', explore: 'E' }[phase] || '?');
+      return ({ bootstrap: 'B', reason: 'R', explore: 'E', review: 'V' }[phase] || '?');
     },
 
     capabilityScopeLabel(scope) {
-      return ({ common: '全部阶段', bootstrap: 'Bootstrap', reason: 'Reason', explore: 'Explore' }[scope] || scope || '未知');
+      return ({ common: '全部阶段', bootstrap: 'Bootstrap', reason: 'Reason', explore: 'Explore', review: 'Reviewer' }[scope] || scope || '未知');
     },
 
     capabilityKindLabel(kind) {
@@ -222,7 +226,7 @@ window.AxiomModules.workerTools = {
       if (!item) return false;
       if (item.capability_kind !== 'axiom_tool') return true;
       const supported = new Set(item.supported_phases || []);
-      if (scope === 'common') return ['bootstrap', 'reason', 'explore'].every(phase => supported.has(phase));
+      if (scope === 'common') return this.axiomPhases().every(phase => supported.has(phase));
       return supported.has(scope);
     },
 
@@ -241,7 +245,7 @@ window.AxiomModules.workerTools = {
         return '该能力已由通用范围生效；如需改为阶段专属，请先取消通用';
       }
       if (!this.phaseCapabilitySupportsScope(item, scope)) return scope === 'common'
-        ? '通用能力必须支持三个阶段'
+        ? '通用能力必须支持四个阶段'
         : `该能力不支持 ${this.capabilityScopeLabel(scope)}`;
       if (!item.enabled) return '能力已全局停用；可保留旧绑定，但不能新增';
       if (!item.ready) return `能力状态为 ${item.status || 'not ready'}`;
@@ -259,7 +263,7 @@ window.AxiomModules.workerTools = {
       } else {
         current.push(scope);
       }
-      const order = ['common', 'bootstrap', 'reason', 'explore'];
+      const order = ['common', ...this.axiomPhases()];
       current.sort((left, right) => order.indexOf(left) - order.indexOf(right));
       this.phaseCapabilityDraft = {
         ...this.phaseCapabilityDraft,
@@ -338,13 +342,13 @@ window.AxiomModules.workerTools = {
 
     capabilityAssignedPhases(item) {
       const scopes = Array.isArray(item?.scopes) ? item.scopes : [];
-      if (scopes.includes('common')) return ['bootstrap', 'reason', 'explore'];
-      return ['bootstrap', 'reason', 'explore'].filter(phase => scopes.includes(phase));
+      if (scopes.includes('common')) return this.axiomPhases();
+      return this.axiomPhases().filter(phase => scopes.includes(phase));
     },
 
     capabilityPhaseSummary(item) {
       const phases = this.capabilityAssignedPhases(item);
-      if (phases.length === 3) return '全部阶段';
+      if (phases.length === this.axiomPhases().length) return '全部阶段';
       if (phases.length === 0) return '未分配';
       return phases.map(phase => this.axiomPhaseLabel(phase)).join(' · ');
     },
@@ -384,7 +388,7 @@ window.AxiomModules.workerTools = {
     },
 
     workerCapabilityPhaseDisabled(item, phase) {
-      if (!item || !['bootstrap', 'reason', 'explore'].includes(phase)) return true;
+      if (!item || !this.axiomPhases().includes(phase)) return true;
       if (this.workerCapabilityPhaseLocked(item, phase)) return true;
       if (this.workerCapabilityPhaseSelected(item, phase)) return false;
       if (!this.workerCapabilitySupportsPhase(item, phase)) return true;
@@ -407,13 +411,13 @@ window.AxiomModules.workerTools = {
       const index = current.indexOf(phase);
       if (index >= 0) current.splice(index, 1);
       else current.push(phase);
-      const order = ['bootstrap', 'reason', 'explore'];
+      const order = this.axiomPhases();
       current.sort((left, right) => order.indexOf(left) - order.indexOf(right));
       this.workerCapabilityDraft = { ...this.workerCapabilityDraft, [id]: current };
     },
 
     workerCapabilityAllSelected(item) {
-      return ['bootstrap', 'reason', 'explore'].every(phase => this.workerCapabilityPhaseSelected(item, phase));
+      return this.axiomPhases().every(phase => this.workerCapabilityPhaseSelected(item, phase));
     },
 
     workerCapabilityAllDisabled(item) {
@@ -421,15 +425,15 @@ window.AxiomModules.workerTools = {
       if (Array.isArray(item.locked_scopes) && item.locked_scopes.length > 0) return true;
       if (this.workerCapabilityAllSelected(item)) return false;
       if (!item.enabled || !item.ready) return true;
-      return !['bootstrap', 'reason', 'explore'].every(phase => this.workerCapabilitySupportsPhase(item, phase));
+      return !this.axiomPhases().every(phase => this.workerCapabilitySupportsPhase(item, phase));
     },
 
     workerCapabilityAllHint(item) {
       if (!item) return '';
       if (Array.isArray(item.locked_scopes) && item.locked_scopes.length > 0) return '系统锁定为全部阶段';
-      if (!['bootstrap', 'reason', 'explore'].every(phase => this.workerCapabilitySupportsPhase(item, phase))) return '该能力不支持全部三个阶段';
+      if (!this.axiomPhases().every(phase => this.workerCapabilitySupportsPhase(item, phase))) return '该能力不支持全部四个阶段';
       if (!item.enabled || !item.ready) return '能力当前不可新增分配';
-      return this.workerCapabilityAllSelected(item) ? '清空三个阶段的分配' : '分配给全部三个阶段';
+      return this.workerCapabilityAllSelected(item) ? '清空四个阶段的分配' : '分配给全部四个阶段';
     },
 
     toggleWorkerCapabilityAll(item) {
@@ -437,7 +441,7 @@ window.AxiomModules.workerTools = {
       const id = this.phaseCapabilityId(item.capability_kind, item.capability_key);
       this.workerCapabilityDraft = {
         ...this.workerCapabilityDraft,
-        [id]: this.workerCapabilityAllSelected(item) ? [] : ['bootstrap', 'reason', 'explore'],
+        [id]: this.workerCapabilityAllSelected(item) ? [] : this.axiomPhases(),
       };
     },
 
@@ -561,7 +565,7 @@ window.AxiomModules.workerTools = {
         const has = current.includes(phase);
         if (selected && !has && !this.workerCapabilityPhaseDisabled(item, phase)) current.push(phase);
         if (!selected && has && !this.workerCapabilityPhaseLocked(item, phase)) current.splice(current.indexOf(phase), 1);
-        next[id] = ['bootstrap', 'reason', 'explore'].filter(value => current.includes(value));
+        next[id] = this.axiomPhases().filter(value => current.includes(value));
       });
       this.workerCapabilityDraft = next;
     },
@@ -589,15 +593,15 @@ window.AxiomModules.workerTools = {
     workerCapabilityMatrixPayload() {
       const kinds = ['skill', 'mcp_tool', 'axiom_tool'];
       const payload = {};
-      ['common', 'bootstrap', 'reason', 'explore'].forEach(scope => {
+      ['common', ...this.axiomPhases()].forEach(scope => {
         payload[scope] = Object.fromEntries(kinds.map(kind => [kind, []]));
       });
       (this.phaseCapabilities?.items || []).forEach(item => {
         const phases = this.workerCapabilityDraftPhases(item)
           .filter(phase => this.workerCapabilitySupportsPhase(item, phase));
-        const supportsAll = ['bootstrap', 'reason', 'explore']
+        const supportsAll = this.axiomPhases()
           .every(phase => this.workerCapabilitySupportsPhase(item, phase));
-        if (supportsAll && phases.length === 3) {
+        if (supportsAll && phases.length === this.axiomPhases().length) {
           payload.common[item.capability_kind].push(item.capability_key);
           return;
         }
@@ -613,7 +617,7 @@ window.AxiomModules.workerTools = {
         const saved = await this.api('PUT', '/phase-capabilities', this.workerCapabilityMatrixPayload());
         this.applyPhaseCapabilities(saved);
         this.resetWorkerCapabilityDraft();
-        this.showToast('三阶段 Worker 能力已保存，将从新 Lease 开始生效');
+        this.showToast('四阶段 Worker 能力已保存，将从新 Lease 开始生效');
       } catch (error) {
         this.showToast(error?.message || '保存 Worker 能力失败', 'error');
       } finally {
@@ -630,7 +634,7 @@ window.AxiomModules.workerTools = {
     },
 
     openWorkerCapabilityDrawer(phase, tab = 'overview', capabilityKey = '') {
-      if (!['bootstrap', 'reason', 'explore'].includes(phase)) return;
+      if (!this.axiomPhases().includes(phase)) return;
       const validTabs = ['overview', 'builtin', 'skill', 'mcp', 'extension'];
       this.selectedWorkerPhase = phase;
       this.workerCapabilityDrawerPhase = phase;
@@ -686,8 +690,8 @@ window.AxiomModules.workerTools = {
       const tab = params?.get('tab');
       const capability = params?.get('capability') || '';
       if (mode === 'config' || mode === 'manage') this.workerPageMode = mode;
-      if (['bootstrap', 'reason', 'explore'].includes(phase)) this.selectedWorkerPhase = phase;
-      if (this.workerPageMode === 'manage' && ['bootstrap', 'reason', 'explore'].includes(phase)) {
+      if (this.axiomPhases().includes(phase)) this.selectedWorkerPhase = phase;
+      if (this.workerPageMode === 'manage' && this.axiomPhases().includes(phase)) {
         this.workerCapabilityRouteTarget = { phase, tab: tab || 'overview', capability };
       } else {
         this.workerCapabilityRouteTarget = null;
@@ -711,7 +715,7 @@ window.AxiomModules.workerTools = {
 
     navigateToWorkerCapability(kind, key, phase = '') {
       const item = this.phaseCapabilityRecord(kind, key);
-      const selectedPhase = ['bootstrap', 'reason', 'explore'].includes(phase)
+      const selectedPhase = this.axiomPhases().includes(phase)
         ? phase
         : this.capabilityPreferredPhase(item);
       const tab = ({ skill: 'skill', mcp_tool: 'mcp', axiom_tool: 'extension' })[kind] || 'overview';
@@ -739,7 +743,7 @@ window.AxiomModules.workerTools = {
         }
         return this.workerPhases;
       } catch (error) {
-        if (error?.name !== 'AbortError') this.showToast(error?.message || '加载三阶段 Worker 失败', 'error');
+        if (error?.name !== 'AbortError') this.showToast(error?.message || '加载四阶段 Worker 失败', 'error');
         return this.workerPhases;
       } finally {
         this.workerPhasesLoading = false;
@@ -751,7 +755,7 @@ window.AxiomModules.workerTools = {
     },
 
     selectWorkerPhase(phase) {
-      if (!['bootstrap', 'reason', 'explore'].includes(phase)) return;
+      if (!this.axiomPhases().includes(phase)) return;
       this.selectedWorkerPhase = phase;
     },
 
@@ -903,6 +907,7 @@ window.AxiomModules.workerTools = {
         phase_bootstrap: phase === 'bootstrap',
         phase_reason: phase === 'reason',
         phase_explore: phase === 'explore',
+        phase_review: phase === 'review',
         max_running: 1,
         priority: 1,
         pi_model: '',

@@ -13,6 +13,7 @@ llm_token_usage = Table(
     Column("task_id", String, ForeignKey(tasks.c.id, ondelete="CASCADE"), nullable=False),
     Column("intent_id", String),
     Column("reason_run_id", String),
+    Column("review_run_id", String),
     Column("lease_id", String, nullable=False),
     Column("phase", String, nullable=False),
     Column("worker", String, nullable=False, default=""),
@@ -33,7 +34,7 @@ llm_token_usage = Table(
     Column("source", String, nullable=False),
     Column("created_at", String, nullable=False),
     CheckConstraint(
-        "phase IN ('bootstrap','explore','reason','unknown')",
+        "phase IN ('bootstrap','explore','reason','review','unknown')",
         name="phase",
     ),
     CheckConstraint(
@@ -70,6 +71,7 @@ llm_token_usage_sources = Table(
     Column("task_id", String, ForeignKey(tasks.c.id, ondelete="CASCADE"), nullable=False),
     Column("intent_id", String),
     Column("reason_run_id", String),
+    Column("review_run_id", String),
     Column("lease_id", String, nullable=False),
     Column("session_file", Text, nullable=False),
     Column("session_id", String, nullable=False, default=""),

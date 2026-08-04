@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from axiom.modules.guard.policy import _external_operation
+
 
 def _task(client, *, enabled: bool) -> dict:
     project = client.post("/api/v1/projects", json={"title": "Guard"}).json()
@@ -85,6 +87,30 @@ def test_guard_audit_mode_records_block_but_does_not_interrupt_worker(client) ->
     assert decision["observed_reason"]
 
 
+def test_guard_audit_preserves_review_run_owner(client) -> None:
+    task = _task(client, enabled=False)
+    response = client.post(
+        "/api/v1/internal/guard/pre",
+        json={
+            "project_id": task["project_id"],
+            "task_id": task["id"],
+            "review_run_id": "vr000001",
+            "phase": "review",
+            "worker": "reviewer-a",
+            "tool_name": "read",
+            "input": {"path": "review_target.json"},
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    events = client.get(
+        "/api/v1/audit-events",
+        params={"task_id": task["id"], "event_type": "guard.decision"},
+    ).json()
+    assert events[0]["review_run_id"] == "vr000001"
+    assert events[0]["payload"]["phase"] == "review"
+
+
 def test_guard_fails_open_for_normal_external_operation_without_model_config(client) -> None:
     task = _task(client, enabled=True)
     decision = _decide(client, task, "curl https://a.example.com/health")
@@ -132,3 +158,8 @@ def test_guard_rejects_an_invalid_configured_regex(client) -> None:
 
     assert response.status_code == 422
     assert "invalid guard regex" in response.text
+
+
+def test_guard_treats_native_browser_tools_as_external_operations() -> None:
+    assert _external_operation({"tool_name": "browser_click", "command": "{}"})
+    assert _external_operation({"tool_name": "browser_read_network", "command": "{}"})

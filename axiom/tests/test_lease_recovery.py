@@ -98,4 +98,8 @@ def test_fresh_lease_is_not_recovered(client) -> None:
     )
 
     assert recovered.status_code == 200
-    assert recovered.json() == {"recovered": [], "recovered_reason_runs": []}
+    assert recovered.json() == {
+        "recovered": [],
+        "recovered_reason_runs": [],
+        "recovered_review_runs": [],
+    }

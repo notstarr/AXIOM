@@ -48,6 +48,14 @@ def _configure(client, *, max_attempts: int = 3) -> None:
     assert response.status_code == 200, response.text
 
 
+def _verify(client, task_id: str, vulnerability_id: str) -> None:
+    response = client.patch(
+        f"/api/v1/tasks/{task_id}/vulnerabilities/{vulnerability_id}",
+        json={"status": "已验证", "status_reason": "人工测试确认漏洞有效"},
+    )
+    assert response.status_code == 200, response.text
+
+
 def test_preview_uses_the_shared_vulnerability_report_shape_without_exposing_token(client) -> None:
     task = _task(client)
     vulnerability = _vulnerability(client, task["id"])
@@ -113,6 +121,7 @@ def test_external_adapter_includes_text_artifact_content_and_binary_metadata(cli
 def test_external_report_persists_success_and_reuses_common_payload(client) -> None:
     task = _task(client)
     vulnerability = _vulnerability(client, task["id"])
+    _verify(client, task["id"], vulnerability["id"])
     _configure(client)
     container = client.app.state.container
     calls: list[tuple[str, dict, dict]] = []
@@ -145,6 +154,7 @@ def test_external_report_persists_success_and_reuses_common_payload(client) -> N
 def test_failed_report_can_retry_until_configured_limit(client) -> None:
     task = _task(client)
     vulnerability = _vulnerability(client, task["id"])
+    _verify(client, task["id"], vulnerability["id"])
     _configure(client, max_attempts=2)
     container = client.app.state.container
     calls = 0

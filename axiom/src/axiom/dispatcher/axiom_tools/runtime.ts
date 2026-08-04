@@ -91,6 +91,7 @@ export async function reportToolEvent(payload: Record<string, unknown>): Promise
         task_id: process.env.AXIOM_TASK_ID || "",
         intent_id: process.env.AXIOM_INTENT_ID || "",
         reason_run_id: process.env.AXIOM_REASON_RUN_ID || "",
+        review_run_id: process.env.AXIOM_REVIEW_RUN_ID || "",
         lease_id: process.env.AXIOM_LEASE_ID || "",
         worker: process.env.AXIOM_WORKER || "",
         phase: process.env.AXIOM_PHASE || "explore",

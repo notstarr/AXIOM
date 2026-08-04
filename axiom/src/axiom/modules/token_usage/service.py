@@ -11,6 +11,7 @@ from sqlalchemy.engine import Engine
 from axiom.modules.graph.tables import intents
 from axiom.modules.reason.tables import reason_runs
 from axiom.modules.tasks.tables import tasks
+from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.token_usage.schemas import (
     TaskTokenUsage,
     TokenUsageBatchCommand,
@@ -72,6 +73,7 @@ class TokenUsageService:
                 task_id=task_id,
                 intent_id=intent_id,
                 reason_run_id=None,
+                review_run_id=None,
                 lease_id=command.lease_id,
                 phase=str(row["kind"] or "unknown"),
                 worker=str(row["worker"] or ""),
@@ -107,8 +109,50 @@ class TokenUsageService:
                 task_id=task_id,
                 intent_id=None,
                 reason_run_id=reason_run_id,
+                review_run_id=None,
                 lease_id=command.lease_id,
                 phase="reason",
+                worker=str(row["worker"] or ""),
+                command=command,
+                source="live",
+            )
+
+    def record_review_batch(
+        self,
+        *,
+        task_id: str,
+        review_run_id: str,
+        command: TokenUsageBatchCommand,
+    ) -> TokenUsageBatchResult:
+        with self.engine.begin() as conn:
+            row = conn.execute(
+                select(
+                    vulnerability_review_runs.c.lease_id,
+                    vulnerability_review_runs.c.status,
+                    vulnerability_review_runs.c.worker,
+                ).where(
+                    vulnerability_review_runs.c.task_id == task_id,
+                    vulnerability_review_runs.c.id == review_run_id,
+                )
+            ).mappings().one_or_none()
+            if row is None:
+                raise NotFoundError(
+                    f"Vulnerability ReviewRun not found: {task_id}/{review_run_id}"
+                )
+            if row["lease_id"] != command.lease_id or row["status"] not in {
+                "claimed",
+                "running",
+                "concluding",
+            }:
+                raise LeaseInactiveError("Vulnerability ReviewRun lease is not active")
+            return self._record_batch(
+                conn,
+                task_id=task_id,
+                intent_id=None,
+                reason_run_id=None,
+                review_run_id=review_run_id,
+                lease_id=command.lease_id,
+                phase="review",
                 worker=str(row["worker"] or ""),
                 command=command,
                 source="live",
@@ -120,6 +164,7 @@ class TokenUsageService:
         task_id: str,
         intent_id: str | None,
         reason_run_id: str | None,
+        review_run_id: str | None = None,
         lease_id: str,
         phase: str,
         worker: str,
@@ -143,8 +188,13 @@ class TokenUsageService:
                 task_id=task_id,
                 intent_id=intent_id,
                 reason_run_id=reason_run_id,
+                review_run_id=review_run_id,
                 lease_id=lease_id,
-                phase=phase if phase in {"bootstrap", "explore", "reason"} else "unknown",
+                phase=(
+                    phase
+                    if phase in {"bootstrap", "explore", "reason", "review"}
+                    else "unknown"
+                ),
                 worker=worker,
                 command=command,
                 source=source,
@@ -157,6 +207,7 @@ class TokenUsageService:
         task_id: str,
         intent_id: str | None,
         reason_run_id: str | None,
+        review_run_id: str | None,
         lease_id: str,
         phase: str,
         worker: str,
@@ -170,6 +221,7 @@ class TokenUsageService:
                 task_id=task_id,
                 intent_id=intent_id,
                 reason_run_id=reason_run_id,
+                review_run_id=review_run_id,
                 lease_id=lease_id,
                 record=record,
             )
@@ -179,6 +231,7 @@ class TokenUsageService:
                     task_id=task_id,
                     intent_id=intent_id,
                     reason_run_id=reason_run_id,
+                    review_run_id=review_run_id,
                     lease_id=lease_id,
                     phase=phase,
                     worker=worker,
@@ -221,6 +274,9 @@ class TokenUsageService:
                         llm_token_usage_sources.c.reason_run_id == reason_run_id
                         if reason_run_id is not None
                         else llm_token_usage_sources.c.reason_run_id.is_(None),
+                        llm_token_usage_sources.c.review_run_id == review_run_id
+                        if review_run_id is not None
+                        else llm_token_usage_sources.c.review_run_id.is_(None),
                         llm_token_usage_sources.c.lease_id == lease_id,
                         llm_token_usage_sources.c.session_file == "sessions/missing.jsonl",
                     )
@@ -229,6 +285,7 @@ class TokenUsageService:
                 task_id=task_id,
                 intent_id=intent_id,
                 reason_run_id=reason_run_id,
+                review_run_id=review_run_id,
                 lease_id=lease_id,
                 session_file=source_record.session_file,
             )
@@ -237,6 +294,7 @@ class TokenUsageService:
                 task_id=task_id,
                 intent_id=intent_id,
                 reason_run_id=reason_run_id,
+                review_run_id=review_run_id,
                 lease_id=lease_id,
                 session_file=source_record.session_file,
                 session_id=source_record.session_id,
@@ -504,6 +562,7 @@ def usage_source_key(
     reason_run_id: str | None,
     lease_id: str,
     record: TokenUsageRecordInput,
+    review_run_id: str | None = None,
 ) -> str:
     """Return the stable identity of one usage entry in a Pi Session.
 
@@ -518,7 +577,7 @@ def usage_source_key(
     pre-persistence helper and for readability at call sites, but are not
     included in the deduplication identity.
     """
-    del task_id, intent_id, reason_run_id, lease_id
+    del task_id, intent_id, reason_run_id, review_run_id, lease_id
     raw = "|".join(
         (
             record.session_file,
@@ -537,8 +596,9 @@ def source_status_key(
     reason_run_id: str | None,
     lease_id: str,
     session_file: str,
+    review_run_id: str | None = None,
 ) -> str:
-    owner = intent_id or reason_run_id or "unknown"
+    owner = intent_id or reason_run_id or review_run_id or "unknown"
     raw = "|".join((task_id, owner, lease_id, session_file))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

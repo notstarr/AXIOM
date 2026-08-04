@@ -162,7 +162,6 @@ def test_high_attention_indexes_include_full_active_context_and_status_reason(cl
             "id": "h001",
             "content": "只验证业务域，不扩大资产范围",
             "creator": "human",
-            "preview": "只验证业务域，不扩大资产范围",
             "ref": "hint:h001",
             "detail": hints[0]["detail"],
         }
@@ -174,7 +173,6 @@ def test_high_attention_indexes_include_full_active_context_and_status_reason(cl
             "category": "authentication",
             "content": "登录态由认证域签发，业务域只负责消费令牌。",
             "created_by": "human",
-            "preview": "登录态由认证域签发，业务域只负责消费令牌。",
             "ref": f"knowledge:{active_knowledge['id']}",
             "detail": knowledge[0]["detail"],
         }
@@ -191,7 +189,6 @@ def test_high_attention_indexes_include_full_active_context_and_status_reason(cl
             "source": "explore",
             "intent_id": None,
             "status_reason": "当前账号本就属于目标组织",
-            "preview": "跨组织订单读取",
             "ref": f"vulnerability:{vulnerability['id']}",
             "detail": vulnerabilities[0]["detail"],
         }

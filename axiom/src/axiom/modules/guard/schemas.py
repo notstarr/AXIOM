@@ -9,6 +9,8 @@ class GuardRequest(BaseModel):
     project_id: str | None = None
     task_id: str | None = None
     intent_id: str | None = None
+    reason_run_id: str | None = None
+    review_run_id: str | None = None
     phase: str = ""
     worker: str = ""
     tool_name: str

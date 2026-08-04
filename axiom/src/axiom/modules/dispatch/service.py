@@ -12,10 +12,13 @@ from axiom.modules.dispatch.repository import DispatchRepository
 from axiom.modules.dispatch.schemas import (
     RecoveredIntent,
     RecoveredReasonRun,
+    RecoveredReviewRun,
     RecoveryReport,
 )
 from axiom.modules.reason.repository import ReasonRepository
 from axiom.modules.reason.schemas import ClaimedReasonRun
+from axiom.modules.vulnerability_reviews.schemas import ClaimedVulnerabilityReviewRun
+from axiom.modules.vulnerability_reviews.service import VulnerabilityReviewService
 from axiom.modules.settings.service import load_runtime_config
 from axiom.modules.settings.tables import runtime_settings
 from axiom.shared.clock import format_utc, parse_utc, utcnow
@@ -25,10 +28,11 @@ from axiom.shared.ids import new_lease_id
 
 
 class DispatchService:
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, *, reviews: VulnerabilityReviewService):
         self.engine = engine
         self.repository = DispatchRepository()
         self.reason = ReasonRepository()
+        self.reviews = reviews
         self.audit = AuditService(engine)
 
     def snapshot(self) -> DispatcherSnapshot:
@@ -46,10 +50,16 @@ class DispatchService:
                 intent_id=action.intent_id,
                 worker_name=action.worker_name,
             )
-        assert action.reason_run_id is not None
-        return self.claim_reason_run(
+        if action.reason_run_id:
+            return self.claim_reason_run(
+                task_id=action.task_id,
+                reason_run_id=action.reason_run_id,
+                worker_name=action.worker_name,
+            )
+        assert action.review_run_id is not None
+        return self.claim_review_run(
             task_id=action.task_id,
-            reason_run_id=action.reason_run_id,
+            review_run_id=action.review_run_id,
             worker_name=action.worker_name,
         )
 
@@ -192,6 +202,73 @@ class DispatchService:
             lease_id=lease_id,
         )
 
+    def claim_review_run(
+        self,
+        *,
+        task_id: str,
+        review_run_id: str,
+        worker_name: str,
+    ) -> ClaimedVulnerabilityReviewRun:
+        now = utcnow()
+        lease_id = new_lease_id()
+        with immediate_transaction(self.engine) as conn:
+            run = self.repository.review_run_row(conn, task_id, review_run_id)
+            if run is None:
+                raise NotFoundError(
+                    f"Vulnerability ReviewRun not found: {task_id}/{review_run_id}"
+                )
+            config = self._validate_claim(
+                conn,
+                task_id=task_id,
+                worker_name=worker_name,
+                kind="review",
+                status=run["status"],
+                archived=False,
+                next_retry_at=run["next_retry_at"],
+                worker_pool=json.loads(run["worker_pool_json"] or "[]"),
+                now=now,
+                owner_label="Vulnerability ReviewRun",
+            )
+            settings_version = conn.execute(
+                select(runtime_settings.c.version).where(runtime_settings.c.id == "runtime")
+            ).scalar_one_or_none() or 1
+            if not self.reviews.repository.claim(
+                conn,
+                task_id=task_id,
+                run_id=review_run_id,
+                worker_name=worker_name,
+                lease_id=lease_id,
+                settings_version=settings_version,
+                execute_timeout_seconds=config.review_execute_seconds,
+                conclude_timeout_seconds=config.review_conclude_seconds,
+                now=now,
+            ):
+                raise ConflictError("Vulnerability ReviewRun claim lost a concurrent race")
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=run["project_id"],
+                    task_id=task_id,
+                    review_run_id=review_run_id,
+                    worker=worker_name,
+                    event_type="vulnerability_review.claimed",
+                    message=f"漏洞审核已由 Reviewer {worker_name} 领取",
+                    payload={
+                        "phase": "review",
+                        "lease_id": lease_id,
+                        "vulnerability_id": run["vulnerability_id"],
+                    },
+                ),
+            )
+        return ClaimedVulnerabilityReviewRun(
+            task_id=task_id,
+            review_run_id=review_run_id,
+            vulnerability_id=run["vulnerability_id"],
+            worker_name=worker_name,
+            claimed_at=now,
+            lease_id=lease_id,
+        )
+
     def _validate_claim(
         self,
         conn,
@@ -209,9 +286,15 @@ class DispatchService:
         task_state = self.repository.task_run_state(conn, task_id)
         if task_state is None:
             raise NotFoundError(f"Task not found: {task_id}")
-        if task_state["status"] != "running":
+        if task_state["legacy_readonly"]:
+            raise ConflictError("Legacy Task is read-only")
+        if kind != "review" and task_state["status"] != "running":
             raise ConflictError("Only a running Task can dispatch work")
-        if task_state["run_deadline_at"] and parse_utc(task_state["run_deadline_at"]) <= parse_utc(now):
+        if (
+            kind != "review"
+            and task_state["run_deadline_at"]
+            and parse_utc(task_state["run_deadline_at"]) <= parse_utc(now)
+        ):
             raise ConflictError("Task run deadline has elapsed")
         if status != "pending" or archived:
             raise ConflictError(f"{owner_label} is no longer pending")
@@ -252,6 +335,7 @@ class DispatchService:
         cutoff = format_utc(now_dt - timedelta(seconds=stale_after_seconds))
         recovered: list[RecoveredIntent] = []
         recovered_reason_runs: list[RecoveredReasonRun] = []
+        recovered_review_runs: list[RecoveredReviewRun] = []
         with immediate_transaction(self.engine) as conn:
             config = load_runtime_config(conn)
             for row in self.repository.stale_active_intents(conn, cutoff=cutoff):
@@ -342,9 +426,50 @@ class DispatchService:
                             expired_lease_id=row["lease_id"],
                         )
                     )
+            for row in self.repository.stale_active_review_runs(conn, cutoff=cutoff):
+                attempt = row["infrastructure_retry_count"] + 1
+                terminal, next_retry_at = self._retry_outcome(config, attempt, now_dt)
+                if self.reviews.repository.release(
+                    conn,
+                    task_id=row["task_id"],
+                    run_id=row["id"],
+                    lease_id=row["lease_id"],
+                    failure_kind="lease_expired",
+                    failure_class="transient",
+                    next_retry_at=next_retry_at,
+                    terminal=terminal,
+                    now=now,
+                ):
+                    self.audit.record_in(
+                        conn,
+                        RecordAuditEvent(
+                            project_id=row["project_id"],
+                            task_id=row["task_id"],
+                            review_run_id=row["id"],
+                            worker=row["worker"] or "",
+                            event_type="vulnerability_review.lease_expired",
+                            level="warning",
+                            message="Reviewer 租约已过期，已释放并进入重试队列",
+                            payload={
+                                "phase": "review",
+                                "expired_lease_id": row["lease_id"],
+                                "next_retry_at": next_retry_at,
+                                "terminal": terminal,
+                            },
+                        ),
+                    )
+                    recovered_review_runs.append(
+                        RecoveredReviewRun(
+                            task_id=row["task_id"],
+                            review_run_id=row["id"],
+                            worker_name=row["worker"] or "",
+                            expired_lease_id=row["lease_id"],
+                        )
+                    )
         return RecoveryReport(
             recovered=recovered,
             recovered_reason_runs=recovered_reason_runs,
+            recovered_review_runs=recovered_review_runs,
         )
 
     @staticmethod

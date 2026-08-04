@@ -280,6 +280,17 @@ def test_explore_reports_vulnerability_incrementally_and_fact_keeps_its_referenc
     assert completed["vulnerabilities"][0]["status"] == "待验证"
     assert completed["vulnerabilities"][0]["finding_artifact"]["artifact_type"] == "explore.findings"
     assert [item["artifact_type"] for item in completed["vulnerabilities"][0]["evidence_artifacts"]] == ["explore.evidence"]
+    review_runs = client.get(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities/v001/reviews"
+    )
+    assert review_runs.status_code == 200, review_runs.text
+    assert [(item["status"], item["trigger"]) for item in review_runs.json()] == [
+        ("pending", "reported")
+    ]
+    assert review_runs.json()[0]["trigger_payload"] == {
+        "source": "explore",
+        "intent_id": intents[0],
+    }
     fact = next(
         item
         for item in client.get(f"/api/v1/tasks/{task['id']}/graph").json()["facts"]

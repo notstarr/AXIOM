@@ -7,6 +7,7 @@ class Artifact(BaseModel):
     id: str
     task_id: str
     intent_id: str | None = None
+    review_run_id: str | None = None
     artifact_type: str
     storage_key: str
     summary: str
@@ -25,6 +26,7 @@ class ArtifactContent(BaseModel):
 class ArtifactFolder(BaseModel):
     folder_key: str
     intent_id: str | None = None
+    review_run_id: str | None = None
     intent_kind: str | None = None
     intent_status: str | None = None
     intent_description: str = ""

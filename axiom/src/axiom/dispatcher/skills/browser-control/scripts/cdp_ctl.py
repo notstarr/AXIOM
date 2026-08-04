@@ -217,6 +217,11 @@ def _resolve_tab_info(cdp: str, tab_id: str | None) -> dict:
     pages = _list_pages(cdp)
     if not pages:
         raise CTLError("no pages available")
+    lease_id = os.environ.get("AXIOM_LEASE_ID", "").strip()
+    if lease_id and not tab_id:
+        raise CTLError(
+            "--tab-id is required inside an AXIOM Lease; refusing to select another worker's page"
+        )
     if tab_id:
         registered = _registered_target(
             cdp,
@@ -227,9 +232,6 @@ def _resolve_tab_info(cdp: str, tab_id: str | None) -> dict:
         for page in pages:
             if page.get("id") in target_ids:
                 _touch_tab(cdp, str(page.get("id") or ""))
-                return page
-        for page in pages:
-            if tab_id in str(page.get("url") or ""):
                 return page
         raise CTLError(f"tab {tab_id} not found in CDP target list")
 
@@ -677,15 +679,40 @@ def cmd_select(page: Page, args) -> int:
     if el.get("tag") != "select":
         print(f"SELECT_FAILED: element at [{idx}] is not a <select> (got {el.get('tag')})")
         return 2
+    handle = None
     try:
-        page.locator("select").nth(idx).select_option(value=value, timeout=5000)
+        handle = page.evaluate_handle(
+            """index => {
+              const all = Array.from(document.querySelectorAll(
+                'a, button, input:not([type=hidden]), select, textarea, [role="button"], [onclick]'
+              )).filter(el => {
+                const r = el.getBoundingClientRect();
+                if (r.width === 0 && r.height === 0) return false;
+                const s = getComputedStyle(el);
+                return s.visibility !== 'hidden' && s.display !== 'none' && Number(s.opacity) !== 0;
+              });
+              return all[index] || null;
+            }""",
+            idx,
+        ).as_element()
+        if handle is None:
+            raise RuntimeError("visible select element not found")
+        handle.select_option(value=value, timeout=5000)
         _post_action(page, args.sleep)
         print(f"SELECTED [{idx}] value={value}")
         return 0
     except Exception as e:
         js = f"""
         (() => {{
-          const sel = document.querySelectorAll('select')[{idx}];
+          const all = Array.from(document.querySelectorAll(
+            'a, button, input:not([type=hidden]), select, textarea, [role="button"], [onclick]'
+          )).filter(el => {{
+            const r = el.getBoundingClientRect();
+            if (r.width === 0 && r.height === 0) return false;
+            const s = getComputedStyle(el);
+            return s.visibility !== 'hidden' && s.display !== 'none' && Number(s.opacity) !== 0;
+          }});
+          const sel = all[{idx}];
           if (!sel) return {{ok: false}};
           sel.value = {json.dumps(value, ensure_ascii=False)};
           sel.dispatchEvent(new Event('change', {{bubbles: true}}));
@@ -698,6 +725,9 @@ def cmd_select(page: Page, args) -> int:
             return 0
         print(f"SELECT_FAILED: {e}")
         return 2
+    finally:
+        if handle is not None:
+            handle.dispose()
 
 
 def cmd_keys(page: Page, args) -> int:
@@ -841,11 +871,16 @@ def cmd_new_tab(args) -> int:
 
 
 def cmd_close_tab(args) -> int:
-    target_id = _registered_target(
+    lease_scoped = bool(os.environ.get("AXIOM_LEASE_ID", "").strip())
+    registered = _registered_target(
         args.cdp,
         args.target_id,
-        current_lease_only=bool(os.environ.get("AXIOM_LEASE_ID", "").strip()),
-    ) or args.target_id
+        current_lease_only=lease_scoped,
+    )
+    if lease_scoped and not registered:
+        print("CLOSE_TAB_FAILED: tab is not registered to the current AXIOM Lease")
+        return 3
+    target_id = registered or args.target_id
     _close_tab(args.cdp, target_id)
     _unregister_tab(args.cdp, target_id)
     print(f"CLOSED: {target_id}")

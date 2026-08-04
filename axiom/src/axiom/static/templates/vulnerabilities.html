@@ -105,7 +105,7 @@
                   <span class="text-[11px] text-slate-400" x-text="`${selectedVulnerability().project_group_title || '未归属项目'} / ${selectedVulnerability().task_title || selectedVulnerability().project_id}`"></span>
                 </div>
                 <template x-if="selectedVulnerability().status_reason">
-                  <p class="mt-2 text-[11px] text-slate-500"><span class="font-semibold text-slate-600">忽略原因：</span><span x-text="selectedVulnerability().status_reason"></span></p>
+                  <p class="mt-2 text-[11px] text-slate-500"><span class="font-semibold text-slate-600">状态原因 / 审核结论：</span><span x-text="selectedVulnerability().status_reason"></span></p>
                 </template>
                 <h3 class="mt-3 text-lg font-semibold text-slate-800 break-words" x-text="selectedVulnerability().title"></h3>
                 <div class="mt-2 flex flex-wrap gap-2 text-[10px]">
@@ -120,7 +120,8 @@
                     导出 MD
                   </button>
                   <button @click="previewExternalVulnerability(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-violet-200 text-violet-600 hover:bg-violet-50">外部预览</button>
-                  <button @click="reportExternalVulnerability(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-brand-200 text-brand-600 hover:bg-brand-50">外部上报</button>
+                  <button @click="reportExternalVulnerability(selectedVulnerability())" :disabled="selectedVulnerability().status !== '已验证'" :title="selectedVulnerability().status === '已验证' ? '将已验证漏洞上报到外部系统' : '只有已验证漏洞可以外部上报'" class="text-[10px] px-2 py-0.5 rounded border border-brand-200 text-brand-600 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40">外部上报</button>
+                  <button @click="triggerVulnerabilityReview(selectedVulnerability())" :disabled="!vulnerabilityReviewCanRetry()" :title="vulnerabilityReviewCanRetry() ? '创建一次新的 Reviewer 审核' : '已有审核正在排队或运行'" class="text-[10px] px-2 py-0.5 rounded border border-cyan-200 text-cyan-700 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-40" x-text="vulnerabilityReviewSubmitting ? '正在排队…' : '重新审核'"></button>
                   <button x-show="selectedVulnerability().finding_artifact" @click="openVulnerabilityArtifact(selectedVulnerability(), selectedVulnerability().finding_artifact)" class="text-[10px] px-2 py-0.5 rounded border border-blue-200 text-blue-600 hover:bg-blue-50 flex items-center gap-1">
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
                     Findings
@@ -128,6 +129,41 @@
                 </div>
               </div>
               <div class="p-5 space-y-4">
+                <section class="rounded-2xl border border-cyan-100 bg-cyan-50/40 p-4">
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <p class="text-[10px] font-semibold uppercase tracking-widest text-cyan-700">Reviewer 审核</p>
+                      <p class="mt-1 text-xs text-slate-500">证据优先审核；必要时在 Scope 内做最小复测。</p>
+                    </div>
+                    <span x-show="latestVulnerabilityReview()" class="rounded-lg border px-2 py-1 text-[10px] font-semibold" :class="vulnerabilityReviewStateClass(latestVulnerabilityReview())" x-text="vulnerabilityReviewStateLabel(latestVulnerabilityReview())"></span>
+                  </div>
+                  <p x-show="vulnerabilityReviewsLoading" class="mt-3 text-xs text-slate-400">正在加载审核记录…</p>
+                  <p x-show="vulnerabilityReviewsError" class="mt-3 text-xs text-rose-600" x-text="vulnerabilityReviewsError"></p>
+                  <div x-show="!vulnerabilityReviewsLoading && !vulnerabilityReviewsError && (vulnerabilityReviews || []).length === 0" class="mt-3 rounded-xl border border-dashed border-cyan-200 bg-white/60 px-3 py-4 text-center text-xs text-slate-400">暂无 Reviewer 审核记录。待验证漏洞会自动排队。</div>
+                  <div x-show="(vulnerabilityReviews || []).length > 0" class="mt-3 space-y-2">
+                    <template x-for="run in (vulnerabilityReviews || [])" :key="run.id">
+                      <article class="rounded-xl border border-slate-200 bg-white/80 p-3">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <code class="text-[10px] font-semibold text-slate-600" x-text="run.id"></code>
+                          <span class="rounded-md border px-1.5 py-0.5 text-[9px] font-semibold" :class="vulnerabilityReviewStateClass(run)" x-text="vulnerabilityReviewStateLabel(run)"></span>
+                          <span class="rounded-md bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500" x-text="vulnerabilityReviewTriggerLabel(run.trigger)"></span>
+                          <span x-show="run.decision" class="rounded-md bg-violet-50 px-1.5 py-0.5 text-[9px] font-semibold text-violet-700" x-text="vulnerabilityReviewDecisionLabel(run.decision)"></span>
+                          <span class="ml-auto text-[9px] text-slate-400" x-text="formatDate(run.concluded_at || run.updated_at || run.created_at)"></span>
+                        </div>
+                        <p x-show="run.worker" class="mt-2 text-[10px] text-slate-500"><span class="font-semibold">审查者：</span><span x-text="run.worker"></span></p>
+                        <p x-show="run.activity_summary && ['pending','claimed','running','concluding'].includes(run.status)" class="mt-1 text-[10px] text-blue-600" x-text="run.activity_summary"></p>
+                        <p x-show="run.decision_reason" class="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-slate-600"><span class="font-semibold text-slate-700">审核原因：</span><span x-text="run.decision_reason"></span></p>
+                        <button x-show="run.duplicate_of_vulnerability_id" @click="openReviewDuplicate(run)" class="mt-2 text-xs font-medium text-blue-600 hover:underline">重复于 <span x-text="run.duplicate_of_vulnerability_id"></span> →</button>
+                        <p x-show="run.status === 'failed' && run.last_failure_kind" class="mt-2 text-xs text-rose-600"><span class="font-semibold">失败原因：</span><span x-text="run.last_failure_kind"></span></p>
+                        <div x-show="(run.artifacts || []).length > 0" class="mt-3 flex flex-wrap gap-2">
+                          <template x-for="artifact in (run.artifacts || [])" :key="`${run.id}-${artifact.id}`">
+                            <button @click="openVulnerabilityArtifact(selectedVulnerability(), artifact)" class="rounded-lg border border-blue-200 bg-blue-50/60 px-2 py-1 text-[10px] text-blue-700 hover:border-blue-300" x-text="artifact.artifact_type === 'review.report' ? '审核报告' : (artifact.path || artifact.id)"></button>
+                          </template>
+                        </div>
+                      </article>
+                    </template>
+                  </div>
+                </section>
                 <div>
                   <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">描述</p>
                   <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="selectedVulnerability().description"></p>
@@ -271,13 +307,13 @@
       <div>
         <label class="text-[11px] text-slate-400 mb-1 block font-medium">证据文件（可多选）</label>
         <select multiple size="5" x-model="vulnEditor.evidence_artifact_ids" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white">
-          <template x-for="artifact in (vulnEditor.available_artifacts || []).filter(item => item.artifact_type === 'explore.evidence' || item.artifact_type === 'upload')" :key="`evidence-${artifact.id}`"><option :value="artifact.id" x-text="`${artifact.path} · ${formatBytes(artifact.size)}`"></option></template>
+          <template x-for="artifact in (vulnEditor.available_artifacts || []).filter(item => item.artifact_type === 'explore.evidence' || item.artifact_type === 'review.evidence' || item.artifact_type === 'upload')" :key="`evidence-${artifact.id}`"><option :value="artifact.id" x-text="`${artifact.path} · ${formatBytes(artifact.size)}`"></option></template>
         </select>
         <p class="mt-1 text-[10px] text-slate-400">按住 Command / Ctrl 可选择多个已有 Artifact。</p>
       </div>
       <div>
-        <label class="text-[11px] text-slate-400 mb-1 block font-medium">忽略原因（状态为「忽略」时必填，不少于 4 字）</label>
-        <textarea x-model="vulnEditor.status_reason" rows="2" placeholder="选「忽略」时填写，其余状态可留空" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea>
+        <label class="text-[11px] text-slate-400 mb-1 block font-medium">状态原因（状态为「忽略」时必填，不少于 4 字）</label>
+        <textarea x-model="vulnEditor.status_reason" rows="2" placeholder="可记录人工裁决或忽略原因" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea>
       </div>
     </div>
     <div class="sticky bottom-0 bg-white px-5 py-3 border-t border-slate-200 flex justify-end gap-2 rounded-b-2xl">

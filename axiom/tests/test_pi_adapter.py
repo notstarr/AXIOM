@@ -6,11 +6,13 @@ from pathlib import Path
 import pytest
 
 from axiom.dispatcher.bootstrap import BootstrapExecutionTimeout, TransientWorkerError
+from axiom.dispatcher.browser_broker import BROWSER_TOOL_NAMES, BrowserLeaseHandle
 from axiom.dispatcher.pi import (
     CONTEXT_ATTENTION_SYSTEM_PROMPT,
     NO_BASH_CONTEXT_ATTENTION_SYSTEM_PROMPT,
     PiBootstrapExecutor,
     PiExploreExecutor,
+    PiReviewExecutor,
     PromptRenderer,
     _explore_soft_reminder_timing,
 )
@@ -422,6 +424,8 @@ def test_native_tool_contracts_are_fixed_by_phase_and_run_mode() -> None:
     assert native_tool_names("reason", "conclude") == ["read", "write", "edit", "bash"]
     assert native_tool_names("explore", "execute") == ["read", "write", "edit", "bash"]
     assert native_tool_names("explore", "conclude") == ["read", "write", "edit", "bash"]
+    assert native_tool_names("review", "execute") == ["read", "write", "edit", "bash"]
+    assert native_tool_names("review", "conclude") == ["read", "write", "edit", "bash"]
 
 
 def test_reason_prompt_requires_small_todos_and_intents_without_fixed_budget_example() -> None:
@@ -452,8 +456,8 @@ def test_reason_prompt_requires_small_todos_and_intents_without_fixed_budget_exa
     assert "完整读取上下文清单中的 `todos.json` 索引" in prompt
     assert "完成新事实（若有）和 `todo_review_ids` 处理前，禁止新增待办或派发执行意图" in prompt
     assert "已有同义开放执行意图时禁止重复派发" in prompt
-    assert "`0` 个执行意图不是默认结果" in prompt
-    assert "必须通过以下收口门槛的例外结果" in prompt
+    assert "`0` 个执行意图是极少数例外" in prompt
+    assert "不可放宽的收口门槛" in prompt
     assert "若无法证明已穷尽" in prompt
     assert "至少派发一个具体的非重复 Intent" in prompt
     assert "--execute-seconds 600 --conclude-seconds 120" not in prompt
@@ -472,7 +476,7 @@ def test_reason_conclude_prompt_allows_only_a_strictly_justified_no_op_plan() ->
 
     assert "`0` 个执行意图不是默认结果" in prompt
     assert "必须通过严格门槛" in prompt
-    assert "提交 0 Intent 时必须记录逐项检查结果和阻塞证据" in prompt
+    assert "提交 0 Intent 时必须记录每个接口/接口组的终态" in prompt
     assert "没有新 Fact" in prompt
     assert "至少保留一个可执行" not in prompt
 
@@ -742,6 +746,156 @@ def test_explore_execute_and_conclude_reuse_the_same_pi_session(tmp_path) -> Non
         index = spec.command.index("--session-id")
         session_ids.append(spec.command[index + 1])
     assert session_ids[0] == session_ids[1]
+
+
+def test_explore_browser_skill_loads_native_tools_and_reuses_one_browser_lease(
+    tmp_path: Path,
+) -> None:
+    rpc = _RecordingRpcSupervisor(tmp_path, invoke_steer=False)
+    browser_skill = tmp_path / "browser-control"
+    launch = browser_skill / "scripts" / "launch-chrome.sh"
+    launch.parent.mkdir(parents=True)
+    launch.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    broker = _FakeBrowserBroker()
+    input_value = execution_input(tmp_path / "run").model_copy(
+        update={
+            "intent_kind": "explore",
+            "intent_description": "验证已登录页面",
+            "skill_directories": [str(browser_skill)],
+            "execute_timeout_seconds": 600,
+            "conclude_timeout_seconds": 180,
+        }
+    )
+    executor = PiExploreExecutor(
+        pi_worker(tmp_path / "unused-pi"),
+        rpc_supervisor=rpc,
+        browser_broker=broker,
+    )
+
+    executor.execute(input_value, lease_active=lambda: True)
+    executor.conclude(input_value, reason="missing_finish", lease_active=lambda: True)
+
+    assert len(broker.registrations) == 1
+    assert len(rpc.specs) == 2
+    for spec in rpc.specs:
+        allowed = spec.command[spec.command.index("--tools") + 1].split(",")
+        assert set(BROWSER_TOOL_NAMES).issubset(allowed)
+        assert "axiom-browser/index.ts" in " ".join(spec.command)
+        assert spec.environment["AXIOM_BROWSER_SOCKET"] == "/tmp/browser-test.sock"
+        assert spec.environment["AXIOM_BROWSER_TOKEN"] == "browser-token"
+
+    executor.close()
+    assert broker.closed == ["lease_test"]
+
+
+def test_review_prompt_enforces_single_target_decision_and_review_artifact() -> None:
+    values = {
+        "task_id": "t_001",
+        "review_run_id": "vr000001",
+        "vulnerability_id": "v001",
+        "review_reason": "审核新上报漏洞",
+        "origin": "review.example.com",
+        "goal": "验证漏洞",
+        "context_manifest_path": "/tmp/context/manifest.json",
+        "run_dir": "/tmp/run",
+        "skill_directories": "- /tmp/skills/vuln-review",
+    }
+
+    prompt = PromptRenderer().render("review.md", values)
+    conclude = PromptRenderer().render("review_conclude.md", values)
+
+    assert "只审核当前一个漏洞" in prompt
+    assert "不创建 Fact、Todo 或 Intent" in prompt
+    assert "review_target.json" in prompt
+    assert "axiom skill path vuln-review" in prompt
+    assert "未分配该 Skill 时不要把它当作缺失依赖" in prompt
+    assert "artifacts/review.md" in prompt
+    assert "axiom review decision submit verified" in prompt
+    assert "needs-human" in prompt
+    assert "最后一条 assistant 消息必须只包含 6 个 ASCII 字符" in prompt
+    assert "不修改漏洞原始正文" in conclude
+    assert "axiom review status" in conclude
+
+
+def test_review_execute_and_conclude_use_json_mode_and_reuse_session(tmp_path) -> None:
+    argument_log = tmp_path / "review-argv.txt"
+    script = make_script(
+        tmp_path,
+        "printf '%s\\n' \"$@\" >> \"$ARG_LOG\"\n"
+        "printf '%s\\n' --CALL-END-- >> \"$ARG_LOG\"\n"
+        "printf 'FINISH'",
+    )
+    worker = pi_worker(script).model_copy(
+        update={
+            "capabilities": ["review"],
+            "config": {
+                "binary": str(script),
+                "model": "test-model",
+                "environment": {"ARG_LOG": str(argument_log)},
+            },
+        }
+    )
+    run_dir = tmp_path / "review-run"
+    run_dir.mkdir()
+    context = run_dir / "manifest.json"
+    context.write_text("{}", encoding="utf-8")
+    input_value = ExecutionInput(
+        task_id="t_001",
+        project_id="p_001",
+        review_run_id="vr000001",
+        vulnerability_id="v001",
+        lease_id="lease-review",
+        worker_name="worker-a",
+        intent_kind="review",
+        intent_description="审核待验证漏洞",
+        origin="review.example.com",
+        goal="验证漏洞",
+        scope={"enabled": True, "targets": ["review.example.com"]},
+        run_dir=str(run_dir),
+        execute_timeout_seconds=10,
+        conclude_timeout_seconds=10,
+        context_manifest_path=str(context),
+    )
+    executor = PiReviewExecutor(worker)
+
+    assert executor.execute(input_value, lease_active=lambda: True) == "FINISH"
+    assert (
+        executor.conclude(
+            input_value,
+            reason="missing_review_decision",
+            lease_active=lambda: True,
+        )
+        == "FINISH"
+    )
+
+    calls = argument_log.read_text(encoding="utf-8").split("--CALL-END--\n")
+    calls = [item.splitlines() for item in calls if item.strip()]
+    assert len(calls) == 2
+    session_ids = [call[call.index("--session-id") + 1] for call in calls]
+    assert session_ids[0] == session_ids[1]
+    assert all("-p" in call for call in calls)
+    assert all(call[call.index("--mode") + 1] == "json" for call in calls)
+    assert all(
+        call[call.index("--tools") + 1] == "read,write,edit,bash"
+        for call in calls
+    )
+
+
+class _FakeBrowserBroker:
+    def __init__(self):
+        self.registrations = []
+        self.closed = []
+
+    def register_lease(self, **kwargs):
+        self.registrations.append(kwargs)
+        return BrowserLeaseHandle(
+            socket_path="/tmp/browser-test.sock",
+            token="browser-token",
+            lease_id=kwargs["lease_id"],
+        )
+
+    def close_lease(self, handle):
+        self.closed.append(handle.lease_id)
 
 
 class _RecordingRpcSupervisor:

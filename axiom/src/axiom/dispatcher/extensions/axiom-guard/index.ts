@@ -66,6 +66,8 @@ export function createAxiomGuard() {
         project_id: process.env.AXIOM_PROJECT_ID || process.env.PROJECT_ID || "",
         task_id: process.env.AXIOM_TASK_ID || "",
         intent_id: process.env.AXIOM_INTENT_ID || "",
+        reason_run_id: process.env.AXIOM_REASON_RUN_ID || "",
+        review_run_id: process.env.AXIOM_REVIEW_RUN_ID || "",
         phase: process.env.AXIOM_GUARD_PHASE || process.env.AXIOM_PHASE || "",
         worker: process.env.AXIOM_WORKER || "",
         tool_name: event.toolName,

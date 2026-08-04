@@ -7,14 +7,17 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 
 from axiom.dispatcher.bootstrap import BootstrapRunner
+from axiom.dispatcher.browser_broker import BrowserBrokerManager
 from axiom.dispatcher.explore import ExploreRunner
 from axiom.dispatcher.heartbeat import LeaseLostError
 from axiom.dispatcher.http import ControlPlaneError
 from axiom.dispatcher.loop import Dispatcher
 from axiom.dispatcher.reason import ReasonRunner
+from axiom.dispatcher.review import ReviewRunner
 from axiom.dispatcher.schemas import ClaimedWork, DispatchReport
 from axiom.modules.execution.schemas import ActivityCommand, ReleaseIntentCommand
 from axiom.modules.reason.schemas import ClaimedReasonRun
+from axiom.modules.vulnerability_reviews.schemas import ClaimedVulnerabilityReviewRun
 from axiom.modules.workers.schemas import Worker
 from axiom.modules.token_usage.schemas import TokenUsageBatchCommand
 
@@ -54,6 +57,7 @@ class AxiomRunner:
         self.runner_interval_seconds = 3.0
         self._applied_settings_version = 0
         self._pool = ThreadPoolExecutor(max_workers=128, thread_name_prefix="axiom-runner")
+        self.browser_broker = BrowserBrokerManager()
         self._futures: dict[Future, tuple[ClaimedWork, threading.Event]] = {}
         self._lock = threading.Lock()
         self._closed = False
@@ -126,6 +130,7 @@ class AxiomRunner:
             for _work, cancellation in self._futures.values():
                 cancellation.set()
         self._pool.shutdown(wait=wait, cancel_futures=not wait)
+        self.browser_broker.close()
 
     def _execute_claim(self, work: ClaimedWork, cancellation: threading.Event) -> None:
         try:
@@ -156,12 +161,30 @@ class AxiomRunner:
                     heartbeat_interval_seconds=self.heartbeat_interval_seconds,
                     cancellation=cancellation,
                 ).run(work, executor)
+            elif work.kind == "review":
+                assert isinstance(work, ClaimedVulnerabilityReviewRun)
+                ReviewRunner(
+                    self.control_plane,
+                    heartbeat_interval_seconds=self.heartbeat_interval_seconds,
+                    cancellation=cancellation,
+                ).run(work, executor)
             else:
                 raise RuntimeError(f"unsupported work kind: {work.kind}")
         except LeaseLostError:
             logger.info("work ended after its lease was closed: %s", self._work_label(work))
         except BaseException:
             logger.exception("work execution failed: %s", self._work_label(work))
+        finally:
+            close = getattr(executor, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except BaseException:
+                    logger.warning(
+                        "failed to close work executor: %s",
+                        self._work_label(work),
+                        exc_info=True,
+                    )
 
     def _release_unstarted(self, work: ClaimedWork) -> None:
         try:
@@ -177,7 +200,12 @@ class AxiomRunner:
             logger.exception("failed to release runner claim: %s", self._work_label(work))
 
     def _default_executor(self, worker: Worker, work: ClaimedWork) -> object:
-        from axiom.dispatcher.pi import PiBootstrapExecutor, PiExploreExecutor, PiReasonExecutor
+        from axiom.dispatcher.pi import (
+            PiBootstrapExecutor,
+            PiExploreExecutor,
+            PiReasonExecutor,
+            PiReviewExecutor,
+        )
         from axiom.modules.workers.pi_config import validate_pi_worker_runtime
 
         settings = validate_pi_worker_runtime(worker.config)
@@ -196,6 +224,7 @@ class AxiomRunner:
             "token_usage_reporter": token_usage_reporter,
             "api_url": getattr(self.control_plane, "api_url", "http://127.0.0.1:8899"),
             "service_token": getattr(self.control_plane, "service_token", ""),
+            "browser_broker": self.browser_broker,
         }
         if work.kind == "bootstrap":
             return PiBootstrapExecutor(worker, **common)
@@ -220,6 +249,8 @@ class AxiomRunner:
                     }
                 )
             return PiExploreExecutor(worker, **common)
+        if work.kind == "review":
+            return PiReviewExecutor(worker, **common)
         raise RuntimeError(f"unsupported work kind: {work.kind}")
 
     def _reap_finished(self) -> None:
@@ -232,7 +263,7 @@ class AxiomRunner:
         active_task_ids = {task.id for task in snapshot.tasks if task.status == "running"}
         with self._lock:
             for work, cancellation in self._futures.values():
-                if work.task_id not in active_task_ids:
+                if work.kind != "review" and work.task_id not in active_task_ids:
                     cancellation.set()
 
     def _refresh_runtime_settings(self) -> int:
@@ -260,4 +291,6 @@ class AxiomRunner:
     def _work_label(work: ClaimedWork) -> str:
         if isinstance(work, ClaimedReasonRun):
             return f"{work.task_id}/{work.reason_run_id}"
+        if isinstance(work, ClaimedVulnerabilityReviewRun):
+            return f"{work.task_id}/{work.review_run_id}"
         return f"{work.task_id}/{work.intent_id}"

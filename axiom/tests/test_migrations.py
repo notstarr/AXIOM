@@ -179,6 +179,7 @@ def test_phase_capability_migration_converts_nonempty_legacy_bindings_and_downgr
                 ("common", "skill", "whatisvul"),
                 ("explore", "mcp_tool", "mcp_tool_selected"),
                 ("reason", "axiom_tool", "legacy_tool"),
+                ("review", "skill", "vuln-review"),
             ]
             assert conn.exec_driver_sql(
                 "SELECT COUNT(*) FROM worker_axiom_tool_bindings"
@@ -339,6 +340,290 @@ def test_placeholder_tool_retirement_removes_only_catalog_and_binding_rows(
                 "SELECT COUNT(*) FROM audit_events "
                 "WHERE id = 'evt_placeholder_history'"
             ).scalar_one() == 1
+            assert conn.exec_driver_sql("PRAGMA integrity_check").scalar_one() == "ok"
+            assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+    finally:
+        downgraded.dispose()
+
+
+def test_vulnerability_reviewer_migration_backfills_pending_reviews_and_roundtrips(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "vulnerability-reviewer-roundtrip.db"
+    config = alembic_config(database_path)
+    command.upgrade(config, "20260804_0033")
+    now = "2026-08-04T00:00:00Z"
+    engine = create_sqlite_engine(database_path)
+    try:
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "INSERT INTO projects "
+                "(id, title, description, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("prj_review", "review", "", "active", now, now),
+            )
+            for task_id, legacy_readonly in (
+                ("t_review", False),
+                ("t_review_legacy", True),
+            ):
+                conn.exec_driver_sql(
+                    "INSERT INTO tasks "
+                    "(id, project_id, title, origin_host, origin_scheme, origin_port, "
+                    "origin_input, goal, status, phase, scope_json, worker_pool_json, "
+                    "guard_enabled, external_report_enabled, legacy_readonly, created_at, "
+                    "updated_at, completed_at, run_duration_seconds, run_started_at, "
+                    "run_deadline_at, last_pause_reason) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        task_id,
+                        "prj_review",
+                        task_id,
+                        "review.example.com",
+                        "https",
+                        "443",
+                        "https://review.example.com",
+                        "review goal",
+                        "completed",
+                        "none",
+                        json.dumps(
+                            {
+                                "enabled": True,
+                                "targets": ["review.example.com"],
+                                "exclude": [],
+                                "notes": "",
+                            }
+                        ),
+                        json.dumps(["reason-backend"]),
+                        False,
+                        False,
+                        legacy_readonly,
+                        now,
+                        now,
+                        now,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ),
+                )
+            for artifact_id, artifact_type, storage_key in (
+                ("a_find", "explore.findings", "tasks/t_review/a_find/findings.md"),
+                ("a_evidence", "explore.evidence", "tasks/t_review/a_evidence/request.txt"),
+            ):
+                conn.exec_driver_sql(
+                    "INSERT INTO artifacts "
+                    "(id, task_id, intent_id, artifact_type, storage_key, summary, "
+                    "content_hash, size, created_by, created_at, archived) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        artifact_id,
+                        "t_review",
+                        None,
+                        artifact_type,
+                        storage_key,
+                        artifact_id,
+                        artifact_id.ljust(64, "0")[:64],
+                        10,
+                        "test",
+                        now,
+                        False,
+                    ),
+                )
+
+            vulnerabilities = (
+                ("t_review", "v001", "待验证", False),
+                ("t_review", "v002", "已验证", False),
+                ("t_review", "v003", "待验证", True),
+                ("t_review_legacy", "v004", "待验证", False),
+            )
+            for task_id, vulnerability_id, status, archived in vulnerabilities:
+                conn.exec_driver_sql(
+                    "INSERT INTO vulnerabilities "
+                    "(id, task_id, intent_id, title, type, severity, description, "
+                    "prerequisites, impact, reproduction_steps_json, remediation, "
+                    "curl_command, evidence_json, affected_target, status, status_reason, "
+                    "source, reported_by, created_at, updated_at, archived, format_version) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        vulnerability_id,
+                        task_id,
+                        None,
+                        f"review {vulnerability_id}",
+                        "authorization",
+                        "high",
+                        "review description",
+                        "authenticated user",
+                        "cross-tenant access",
+                        "[]",
+                        "enforce ownership",
+                        "",
+                        "[]",
+                        "https://review.example.com/api/object",
+                        status,
+                        "historical status",
+                        "test",
+                        "test",
+                        now,
+                        now,
+                        archived,
+                        2,
+                    ),
+                )
+            conn.exec_driver_sql(
+                "INSERT INTO vulnerability_artifacts "
+                "(task_id, vulnerability_id, artifact_id, role, display_order) "
+                "VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)",
+                (
+                    "t_review",
+                    "v001",
+                    "a_find",
+                    "finding",
+                    0,
+                    "t_review",
+                    "v001",
+                    "a_evidence",
+                    "evidence",
+                    0,
+                ),
+            )
+            for name, capabilities in (
+                ("reason-backend", ["reason"]),
+                ("explore-backend", ["explore"]),
+            ):
+                conn.exec_driver_sql(
+                    "INSERT INTO workers "
+                    "(name, worker_type, capabilities_json, max_running, priority, "
+                    "config_json, disabled, cooldown_until, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        name,
+                        "pi",
+                        json.dumps(capabilities),
+                        2,
+                        0,
+                        "{}",
+                        False,
+                        None,
+                        now,
+                        now,
+                    ),
+                )
+            conn.exec_driver_sql(
+                "INSERT INTO runtime_settings "
+                "(id, config_json, version, updated_by, updated_at, applied_version, applied_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "runtime",
+                    json.dumps(
+                        {
+                            "review_execute_seconds": 777,
+                            "review_conclude_seconds": 88,
+                        }
+                    ),
+                    9,
+                    "test",
+                    now,
+                    9,
+                    now,
+                ),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO phase_capability_bindings "
+                "(scope, capability_kind, capability_key, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("common", "skill", "vuln-review", now, now),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO id_counters (scope, kind, next_value) VALUES (?, ?, ?)",
+                ("global", "vulnerability_review_run", 7),
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, "20260804_0034")
+    upgraded = create_sqlite_engine(database_path)
+    try:
+        with upgraded.connect() as conn:
+            run = conn.exec_driver_sql(
+                "SELECT id, task_id, vulnerability_id, status, trigger, input_fingerprint, "
+                "worker_pool_json, settings_version, execute_timeout_seconds, "
+                "conclude_timeout_seconds, activity_kind "
+                "FROM vulnerability_review_runs"
+            ).mappings().one()
+            assert run["id"] == "vr000007"
+            assert run["task_id"] == "t_review"
+            assert run["vulnerability_id"] == "v001"
+            assert run["status"] == "pending"
+            assert run["trigger"] == "migration"
+            assert len(run["input_fingerprint"]) == 64
+            assert json.loads(run["worker_pool_json"]) == ["reason-backend"]
+            assert run["settings_version"] == 9
+            assert run["execute_timeout_seconds"] == 777
+            assert run["conclude_timeout_seconds"] == 88
+            assert run["activity_kind"] == "pending"
+            assert conn.exec_driver_sql(
+                "SELECT next_value FROM id_counters "
+                "WHERE scope = 'global' AND kind = 'vulnerability_review_run'"
+            ).scalar_one() == 8
+            assert json.loads(
+                conn.exec_driver_sql(
+                    "SELECT capabilities_json FROM workers WHERE name = 'reason-backend'"
+                ).scalar_one()
+            ) == ["reason", "review"]
+            assert json.loads(
+                conn.exec_driver_sql(
+                    "SELECT capabilities_json FROM workers WHERE name = 'explore-backend'"
+                ).scalar_one()
+            ) == ["explore"]
+            assert conn.exec_driver_sql(
+                "SELECT scope FROM phase_capability_bindings "
+                "WHERE capability_kind = 'skill' AND capability_key = 'vuln-review'"
+            ).scalars().all() == ["review"]
+            assert "review_run_id" in {
+                item["name"] for item in inspect(conn).get_columns("artifacts")
+            }
+            assert "review_run_id" in {
+                item["name"] for item in inspect(conn).get_columns("context_revisions")
+            }
+            assert "review_run_id" in {
+                item["name"] for item in inspect(conn).get_columns("audit_events")
+            }
+            assert "review_run_id" in {
+                item["name"] for item in inspect(conn).get_columns("llm_token_usage")
+            }
+            assert conn.exec_driver_sql("PRAGMA integrity_check").scalar_one() == "ok"
+            assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+    finally:
+        upgraded.dispose()
+
+    command.downgrade(config, "20260804_0033")
+    downgraded = create_sqlite_engine(database_path)
+    try:
+        with downgraded.connect() as conn:
+            assert "vulnerability_review_runs" not in inspect(conn).get_table_names()
+            for table_name in (
+                "artifacts",
+                "context_revisions",
+                "audit_events",
+                "llm_token_usage",
+                "llm_token_usage_sources",
+            ):
+                assert "review_run_id" not in {
+                    item["name"] for item in inspect(conn).get_columns(table_name)
+                }
+            assert json.loads(
+                conn.exec_driver_sql(
+                    "SELECT capabilities_json FROM workers WHERE name = 'reason-backend'"
+                ).scalar_one()
+            ) == ["reason"]
+            assert conn.exec_driver_sql(
+                "SELECT scope FROM phase_capability_bindings "
+                "WHERE capability_kind = 'skill' AND capability_key = 'vuln-review'"
+            ).scalars().all() == ["common"]
+            assert conn.exec_driver_sql(
+                "SELECT COUNT(*) FROM id_counters "
+                "WHERE scope = 'global' AND kind = 'vulnerability_review_run'"
+            ).scalar_one() == 0
             assert conn.exec_driver_sql("PRAGMA integrity_check").scalar_one() == "ok"
             assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
     finally:

@@ -51,6 +51,7 @@ from axiom.modules.workers.tables import workers
 from axiom.modules.skills.service import SkillService
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
 from axiom.modules.vulnerabilities.schemas import StoredExploreVulnerability, VulnerabilityReport
+from axiom.modules.vulnerability_reviews.service import VulnerabilityReviewService
 from axiom.shared.clock import format_utc, parse_utc, utcnow
 from axiom.shared.database import immediate_transaction
 from axiom.shared.errors import ConflictError, LeaseInactiveError, NotFoundError
@@ -70,6 +71,7 @@ class ExecutionService:
         reason: ReasonService,
         skills: SkillService,
         axiom_tools: AxiomToolService,
+        reviews: VulnerabilityReviewService,
     ):
         self.engine = engine
         self.store = store
@@ -82,6 +84,7 @@ class ExecutionService:
         self.phase_capabilities = axiom_tools.phase_capabilities
         self.credentials = CredentialRepository()
         self.vulnerabilities = VulnerabilityRepository()
+        self.reviews = reviews
         self.audit = AuditService(engine)
 
     def credential_summaries(
@@ -330,6 +333,95 @@ class ExecutionService:
             intent_targets=list(task.scope.targets) or [task.origin.host],
             intent_source_facts=run.source_fact_ids,
             todo_id=None,
+            origin=task.origin.original_input,
+            goal=task.goal,
+            hints=hints,
+            skill_directories=capabilities.skill_directories,
+            mcp_tool_names=capabilities.mcp_tool_names,
+            capability_environment=capabilities.mcp_environment,
+            capability_snapshot_path=capabilities.capability_snapshot_path,
+            guard_enabled=task.guard_enabled,
+            scope=task.scope.model_dump(mode="json"),
+            run_dir=run_dir,
+            execute_timeout_seconds=run.execute_timeout_seconds,
+            conclude_timeout_seconds=run.conclude_timeout_seconds,
+            context_revision=context.revision,
+            context_manifest_path=context.manifest_path,
+            axiom_tool_keys=capabilities.axiom_tool_keys,
+            axiom_tool_extensions=capabilities.axiom_tool_extensions,
+            axiom_tool_snapshot_path=capabilities.axiom_tool_snapshot_path,
+        )
+
+    def review_input(
+        self,
+        *,
+        task_id: str,
+        review_run_id: str,
+        command: LeaseCommand,
+    ) -> ExecutionInput:
+        with self.engine.connect() as conn:
+            run = self.reviews.repository.get(conn, task_id, review_run_id)
+            if run is None:
+                raise NotFoundError(
+                    f"Vulnerability ReviewRun not found: {task_id}/{review_run_id}"
+                )
+            if run.lease_id != command.lease_id:
+                raise LeaseInactiveError("Vulnerability ReviewRun lease does not match")
+            if run.status not in {"claimed", "running", "concluding"}:
+                raise LeaseInactiveError("Vulnerability ReviewRun lease is not active")
+            task = self.reason.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.legacy_readonly:
+                raise LeaseInactiveError("Legacy Task is read-only")
+            vulnerability = self.vulnerabilities.get(conn, task_id, run.vulnerability_id)
+            if vulnerability is None or vulnerability.archived:
+                raise LeaseInactiveError("Vulnerability is no longer reviewable")
+            hints = self.repository.hints(conn, task_id)
+
+        context = self.context.build(
+            task_id=task_id,
+            phase="review",
+            intent_id=None,
+            review_run_id=review_run_id,
+            lease_id=command.lease_id,
+        )
+        trigger_summary = {
+            "reported": "审核新上报的待验证漏洞",
+            "updated": "关键 Finding、Evidence 或漏洞字段已更新，重新审核",
+            "manual": "人工要求重新审核该漏洞",
+            "restored": "归档恢复后重新审核该待验证漏洞",
+            "migration": "审核部署前已有的待验证漏洞",
+        }.get(run.trigger, f"根据触发原因 {run.trigger} 审核该漏洞")
+        manual_reason = str(run.trigger_payload.get("reason") or "").strip()
+        if manual_reason:
+            trigger_summary += f"。人工说明：{manual_reason}"
+        run_dir = str(
+            self.store.run_directory(
+                task_id=task_id,
+                review_run_id=review_run_id,
+                lease_id=command.lease_id,
+            )
+        )
+        capabilities = self.phase_capabilities.snapshot_for_lease(
+            worker_name=run.worker or "",
+            phase="review",
+            run_dir=run_dir,
+        )
+        targets = [vulnerability.affected_target] if vulnerability.affected_target else []
+        if not targets:
+            targets = list(task.scope.targets) or [task.origin.host]
+        return ExecutionInput(
+            task_id=task_id,
+            project_id=task.project_id,
+            review_run_id=review_run_id,
+            vulnerability_id=vulnerability.id,
+            lease_id=command.lease_id,
+            worker_name=run.worker or "",
+            intent_kind="review",
+            intent_description=trigger_summary,
+            intent_targets=targets,
+            intent_source_facts=[],
             origin=task.origin.original_input,
             goal=task.goal,
             hints=hints,
@@ -745,22 +837,32 @@ class ExecutionService:
                             and artifact_by_relative[path].artifact_type
                             == "explore.evidence"
                         ]
-                        vulnerability_records.append(
-                            self.vulnerabilities.create(
-                                conn,
-                                task_id=task_id,
-                                body=VulnerabilityReport(
-                                    **report.model_dump(
-                                        mode="python",
-                                        exclude={"evidence_paths"},
-                                    ),
-                                    status="待验证",
-                                    status_reason="",
-                                    finding_artifact_id=finding_artifact.id,
-                                    evidence_artifact_ids=evidence_artifact_ids,
+                        vulnerability = self.vulnerabilities.create(
+                            conn,
+                            task_id=task_id,
+                            body=VulnerabilityReport(
+                                **report.model_dump(
+                                    mode="python",
+                                    exclude={"evidence_paths"},
                                 ),
-                                now=now,
-                            )
+                                status="待验证",
+                                status_reason="",
+                                finding_artifact_id=finding_artifact.id,
+                                evidence_artifact_ids=evidence_artifact_ids,
+                            ),
+                            now=now,
+                        )
+                        vulnerability_records.append(vulnerability)
+                        self.reviews.enqueue_in(
+                            conn,
+                            task_id=task_id,
+                            vulnerability_id=vulnerability.id,
+                            trigger="reported",
+                            trigger_payload={
+                                "source": "explore",
+                                "intent_id": intent_id,
+                            },
+                            now=now,
                         )
                     fact_id = allocate_id(conn, scope=task_id, kind="fact", prefix="f")
                     conn.execute(
@@ -976,6 +1078,23 @@ class ExecutionService:
             if row["intent_status"] not in {"claimed", "running", "concluding"}:
                 raise LeaseInactiveError("Intent lease is not active")
             return str(row["project_id"])
+
+        if command.review_run_id:
+            run = self.reviews.repository.get(conn, task_id, command.review_run_id)
+            if run is None:
+                raise NotFoundError(
+                    f"Vulnerability ReviewRun not found: {task_id}/{command.review_run_id}"
+                )
+            if run.lease_id != command.lease_id:
+                raise LeaseInactiveError("Vulnerability ReviewRun lease does not match")
+            if run.status not in {"claimed", "running", "concluding"}:
+                raise LeaseInactiveError("Vulnerability ReviewRun lease is not active")
+            task = self.reason.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.legacy_readonly:
+                raise LeaseInactiveError("Legacy Task is read-only")
+            return task.project_id
 
         reason_run_id = command.reason_run_id or ""
         run = self.reason.repository.get_run(conn, task_id, reason_run_id)

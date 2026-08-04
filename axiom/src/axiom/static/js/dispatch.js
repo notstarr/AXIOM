@@ -225,6 +225,8 @@ window.AxiomModules.dispatch = {
         bootstrap_conclude_seconds: data.bootstrap_conclude_seconds ?? 120,
         reason_execute_seconds: data.reason_execute_seconds ?? 300,
         reason_conclude_seconds: data.reason_conclude_seconds ?? 120,
+        review_execute_seconds: data.review_execute_seconds ?? 300,
+        review_conclude_seconds: data.review_conclude_seconds ?? 120,
         reason_batch_size: data.reason_batch_size ?? 2,
         reason_low_watermark: data.reason_low_watermark ?? 1,
         reason_max_wait_seconds: data.reason_max_wait_seconds ?? 180,
@@ -270,6 +272,7 @@ window.AxiomModules.dispatch = {
         phase_bootstrap: taskTypes.includes('bootstrap'),
         phase_reason: taskTypes.includes('reason'),
         phase_explore: taskTypes.includes('explore'),
+        phase_review: taskTypes.includes('review'),
         phase_plan: taskTypes.includes('plan'),
         phase_maintainer: taskTypes.includes('maintainer'),
         pi_api_key: '',
@@ -527,6 +530,7 @@ window.AxiomModules.dispatch = {
       if (worker.phase_bootstrap) taskTypes.push('bootstrap');
       if (worker.phase_reason) taskTypes.push('reason');
       if (worker.phase_explore) taskTypes.push('explore');
+      if (worker.phase_review) taskTypes.push('review');
       if (worker.phase_plan) taskTypes.push('plan');
       if (worker.phase_maintainer) taskTypes.push('maintainer');
       if (taskTypes.length === 0) {
@@ -575,6 +579,8 @@ window.AxiomModules.dispatch = {
         bootstrap_conclude_seconds: Number(this.dispatchSettings.bootstrap_conclude_seconds ?? 120),
         reason_execute_seconds: Number(this.dispatchSettings.reason_execute_seconds ?? 300),
         reason_conclude_seconds: Number(this.dispatchSettings.reason_conclude_seconds ?? 120),
+        review_execute_seconds: Number(this.dispatchSettings.review_execute_seconds ?? 300),
+        review_conclude_seconds: Number(this.dispatchSettings.review_conclude_seconds ?? 120),
         reason_batch_size: Number(this.dispatchSettings.reason_batch_size ?? 2),
         reason_low_watermark: Number(this.dispatchSettings.reason_low_watermark ?? 1),
         reason_max_wait_seconds: Number(this.dispatchSettings.reason_max_wait_seconds ?? 180),
@@ -595,10 +601,11 @@ window.AxiomModules.dispatch = {
       this.dispatchSettings.workers.push({
         _draftId: this.nextWorkerDraftId(),
         name: `pi-worker-${index}`,
-        task_types: ['bootstrap', 'reason', 'explore'],
+        task_types: ['bootstrap', 'reason', 'explore', 'review'],
         phase_bootstrap: true,
         phase_reason: true,
         phase_explore: true,
+        phase_review: true,
         phase_plan: false,
         max_running: 1,
         priority: 1,

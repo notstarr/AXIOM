@@ -20,6 +20,7 @@ from axiom.modules.token_usage.tables import llm_token_usage, llm_token_usage_so
 from axiom.modules.interventions.tables import intent_interventions
 from axiom.modules.todos.tables import todo_sources, todos
 from axiom.modules.vulnerabilities.tables import vulnerability_artifacts, vulnerabilities
+from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.workers.tables import workers
 from axiom.shared.ids import id_counters
 
@@ -50,6 +51,7 @@ ALL_TABLES = (
     credentials,
     credential_refreshes,
     vulnerabilities,
+    vulnerability_review_runs,
     vulnerability_artifacts,
     mcp_servers,
     mcp_tools,

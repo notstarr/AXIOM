@@ -393,6 +393,70 @@ def test_cdp_alias_never_replaces_another_active_lease(
     ) is None
 
 
+def test_cdp_refuses_implicit_page_selection_inside_lease(monkeypatch) -> None:
+    module = _load_script(
+        "browser_cdp_requires_explicit_tab",
+        SKILLS / "browser-control" / "scripts" / "cdp_ctl.py",
+    )
+    monkeypatch.setenv("AXIOM_LEASE_ID", "lease-current")
+    monkeypatch.setattr(
+        module,
+        "_list_pages",
+        lambda _cdp: [{"id": "other", "type": "page", "url": "https://other.example"}],
+    )
+
+    with pytest.raises(module.CTLError, match="--tab-id is required"):
+        module._resolve_tab_info("http://127.0.0.1:9223", None)
+
+
+def test_cdp_select_uses_the_global_snapshot_index(monkeypatch) -> None:
+    module = _load_script(
+        "browser_cdp_select_index",
+        SKILLS / "browser-control" / "scripts" / "cdp_ctl.py",
+    )
+    observed: dict[str, object] = {}
+
+    class Choice:
+        def as_element(self):
+            return self
+
+        def select_option(self, *, value, timeout):
+            observed["value"] = value
+            observed["timeout"] = timeout
+            return [value]
+
+        def dispose(self):
+            observed["disposed"] = True
+
+    class Page:
+        def evaluate_handle(self, expression, index):
+            observed["expression"] = expression
+            observed["index"] = index
+            return Choice()
+
+    monkeypatch.setattr(
+        module,
+        "_get_visible_elements",
+        lambda _page: [
+            {"tag": "button"},
+            {"tag": "input"},
+            {"tag": "select"},
+        ],
+    )
+    monkeypatch.setattr(module, "_post_action", lambda _page, _sleep: None)
+
+    result = module.cmd_select(
+        Page(),
+        SimpleNamespace(target="2", value="chosen", sleep=0),
+    )
+
+    assert result == 0
+    assert observed["index"] == 2
+    assert "button" in str(observed["expression"])
+    assert observed["value"] == "chosen"
+    assert observed["disposed"] is True
+
+
 def test_cdp_url_command_uses_http_metadata_without_playwright(monkeypatch) -> None:
     module = _load_script(
         "browser_cdp_fast_url",
