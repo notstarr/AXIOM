@@ -65,10 +65,11 @@ window.AxiomModules.human = {
       this.exploreConversationIntentId = intentId;
       this.exploreConversationEvents = [];
       this.exploreConversationCursor = '0';
+      this.exploreConversationHasMore = false;
       await this.loadExploreConversation(true);
     },
 
-    async loadExploreConversation(reset = false) {
+    async loadExploreConversation(reset = false, latest = false) {
       const taskId = this.selectedProjectId || this.project?.project?.id || '';
       const intentId = this.exploreConversationIntentId;
       if (!taskId || !intentId || this.humanTab !== 'conversation') return;
@@ -76,7 +77,8 @@ window.AxiomModules.human = {
       this.exploreConversationLoading = true;
       try {
         const params = new URLSearchParams({ intent_id: intentId, limit: '300' });
-        if (!reset && this.exploreConversationCursor && this.exploreConversationCursor !== '0') params.set('after_cursor', this.exploreConversationCursor);
+        if (latest) params.set('latest', 'true');
+        else if (!reset && this.exploreConversationCursor && this.exploreConversationCursor !== '0') params.set('after_cursor', this.exploreConversationCursor);
         const payload = await this.api('GET', `/projects/${taskId}/explore-conversation?${params.toString()}`);
         if (Array.isArray(payload?.intents) && this.project) {
           const fresh = new Map(payload.intents.map(item => [item.id, item]));
@@ -91,7 +93,9 @@ window.AxiomModules.human = {
           if (!seen.has(key)) { this.exploreConversationEvents.push(item); seen.add(key); }
         }
         this.exploreConversationCursor = payload?.cursor || this.exploreConversationCursor || '0';
+        this.exploreConversationHasMore = !!payload?.has_more;
         this.exploreConversationIntent = payload?.intent || this.exploreConversationIntent;
+        if (latest) this.$nextTick(() => this.scrollExploreConversationToBottom());
       } catch (error) {
         if (!reset) this.showToast?.(error?.message || '读取 Explore 对话失败', 'error');
       } finally {
@@ -99,6 +103,28 @@ window.AxiomModules.human = {
         if (this.humanTab === 'conversation' && this.exploreConversationIntentId === intentId) {
           this.exploreConversationTimer = setTimeout(() => this.loadExploreConversation(false), 1_000);
         }
+      }
+    },
+
+    scrollExploreConversationToBottom(smooth = true) {
+      const container = this.$refs?.exploreConversationScroll;
+      if (!container) return;
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: smooth ? 'smooth' : 'auto',
+      });
+    },
+
+    async jumpExploreConversationToLatest() {
+      if (this.exploreConversationJumping || this.exploreConversationLoading) return;
+      if (this.exploreConversationTimer) clearTimeout(this.exploreConversationTimer);
+      this.exploreConversationTimer = null;
+      this.exploreConversationJumping = true;
+      try {
+        await this.loadExploreConversation(false, true);
+        this.$nextTick(() => this.scrollExploreConversationToBottom());
+      } finally {
+        this.exploreConversationJumping = false;
       }
     },
 
@@ -120,7 +146,7 @@ window.AxiomModules.human = {
           actor: this.actorName?.() || 'human.frontend',
         });
         this.exploreConversationDraft = '';
-        await this.loadExploreConversation(true);
+        await this.loadExploreConversation(false, true);
         this.showToast?.('指导消息已排队，将在下一轮模型调用前发送');
       } catch (error) {
         this.showToast?.(error?.message || '发送指导消息失败', 'error');

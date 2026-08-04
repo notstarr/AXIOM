@@ -17,9 +17,16 @@ def get_explore_conversation(
     intent_id: str,
     after_cursor: str = "",
     limit: int = Query(default=200, ge=1, le=500),
+    latest: bool = False,
     container: Container = Depends(get_container),
 ):
-    return container.interventions.conversation(task_id, intent_id, after_cursor, limit)
+    return container.interventions.conversation(
+        task_id,
+        intent_id,
+        after_cursor,
+        limit,
+        latest=latest,
+    )
 
 
 @router.post("/tasks/{task_id}/intents/{intent_id}/interventions", response_model=Intervention)

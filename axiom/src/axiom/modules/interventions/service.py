@@ -19,9 +19,17 @@ from axiom.shared.storage import FileStore
 
 
 _SENSITIVE = re.compile(
-    r"(?i)(authorization\s*[:=]\s*bearer\s+|authorization\s*[:=]\s*|cookie\s*[:=]\s*|api[-_ ]?key\s*[:=]\s*|password\s*[:=]\s*|jwt\s*[:=]\s*)[^\s,;]+"
+    r"(?i)([\"']?(?:authorization|cookie|api[-_ ]?key|access[-_ ]?token|token|password|passwd|secret|jwt)"
+    r"[\"']?\s*[:=]\s*(?:bearer\s+)?)(?:\"[^\"]*\"|'[^']*'|[^\s,;}\]\"']+)"
 )
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9._-]{10,}")
+_CLI_SENSITIVE = re.compile(
+    r"(?i)(--?(?:api[-_]?key|access[-_]?token|token|password|passwd|secret|authorization|cookie|jwt)"
+    r"(?:=|\s+))(?:(?:\"[^\"]*\")|(?:'[^']*')|\S+)"
+)
+_SENSITIVE_KEY = re.compile(
+    r"(?i)(?:authorization|cookie|api[-_ ]?key|access[-_ ]?token|token|password|passwd|secret|jwt)"
+)
 
 
 class InterventionService:
@@ -84,7 +92,15 @@ class InterventionService:
                 conn, task_id=task_id, intent_id=intent_id, lease_id=lease_id
             )
 
-    def conversation(self, task_id: str, intent_id: str, after_cursor: str = "", limit: int = 200) -> dict[str, Any]:
+    def conversation(
+        self,
+        task_id: str,
+        intent_id: str,
+        after_cursor: str = "",
+        limit: int = 200,
+        *,
+        latest: bool = False,
+    ) -> dict[str, Any]:
         with self.engine.connect() as conn:
             task = conn.execute(select(tasks).where(tasks.c.id == task_id)).mappings().one_or_none()
             if task is None:
@@ -108,7 +124,10 @@ class InterventionService:
         events.extend(self._intervention_events(interventions))
         events.extend(self._audit_events(audit_rows))
         events.sort(key=lambda item: (item.get("created_at") or "", item.get("cursor") or ""))
-        offset = max(0, int(after_cursor or 0)) if str(after_cursor or "").isdigit() else 0
+        if latest:
+            offset = max(0, len(events) - max(1, min(limit, 500)))
+        else:
+            offset = max(0, int(after_cursor or 0)) if str(after_cursor or "").isdigit() else 0
         page = events[offset : offset + max(1, min(limit, 500))]
         return {
             "task_id": task_id,
@@ -118,6 +137,7 @@ class InterventionService:
             "events": [dict(item, cursor=str(offset + index + 1)) for index, item in enumerate(page)],
             "cursor": str(min(len(events), offset + len(page))),
             "has_more": offset + len(page) < len(events),
+            "has_previous": offset > 0,
         }
 
     def _require_active_lease(self, conn, task_id: str, intent_id: str, lease_id: str):
@@ -166,7 +186,10 @@ class InterventionService:
                                     continue
                                 if block.get("type") == "toolCall":
                                     tool = str(block.get("name") or block.get("toolName") or "tool")
-                                    result.append({"cursor": str(sequence), "kind": "tool_call", "summary": f"调用工具：{tool}", "detail": "已隐藏参数，仅显示行动摘要。", "created_at": created_at, "source": "session", "status": "", "tool": tool})
+                                    arguments = block.get("arguments")
+                                    if arguments is None:
+                                        arguments = block.get("input")
+                                    result.append({"cursor": str(sequence), "kind": "tool_call", "summary": f"调用工具：{tool}", "detail": _tool_call_detail(tool, arguments), "created_at": created_at, "source": "session", "status": "", "tool": tool})
                                 elif block.get("type") == "text" and str(block.get("text") or "").strip():
                                     text = _safe_text(str(block["text"]), 1_000)
                                     result.append({"cursor": str(sequence), "kind": "action_summary", "summary": "行动摘要", "detail": text, "created_at": created_at, "source": "session", "status": "", "tool": ""})
@@ -217,7 +240,56 @@ def _message_text(message: dict[str, Any]) -> str:
 def _safe_text(value: str, limit: int) -> str:
     value = _JWT.sub("[已脱敏令牌]", value)
     value = _SENSITIVE.sub(lambda match: match.group(1) + "[已脱敏]", value)
+    value = _CLI_SENSITIVE.sub(lambda match: match.group(1) + "[已脱敏]", value)
     return value.strip()[:limit]
+
+
+def _tool_call_detail(tool_name: str, arguments: Any) -> str:
+    tool = tool_name.strip() or "tool"
+    normalized = tool.lower()
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            arguments = {"input": arguments}
+    if not isinstance(arguments, dict):
+        arguments = {}
+
+    if normalized in {"bash", "shell", "terminal", "exec", "execute"}:
+        command = arguments.get("command") or arguments.get("cmd") or arguments.get("script")
+        if command:
+            return f"命令：\n$ {_safe_text(str(command), 2_000)}"
+
+    if normalized in {"read", "write", "edit"}:
+        path = arguments.get("path") or arguments.get("file_path")
+        if path:
+            action = {"read": "读取文件", "write": "写入文件", "edit": "编辑文件"}[normalized]
+            return f"{action}：{_safe_text(str(path), 1_000)}"
+
+    sanitized = _sanitize_tool_arguments(arguments)
+    if not sanitized:
+        return f"工具：{tool}（无参数）"
+    rendered = json.dumps(sanitized, ensure_ascii=False, indent=2)
+    return f"工具：{tool}\n参数：\n{_safe_text(rendered, 2_000)}"
+
+
+def _sanitize_tool_arguments(value: Any, *, key: str = "", depth: int = 0) -> Any:
+    if key and _SENSITIVE_KEY.search(key.strip()):
+        return "[已脱敏]"
+    if depth >= 6:
+        return "[层级过深，已省略]"
+    if isinstance(value, dict):
+        return {
+            str(item_key): _sanitize_tool_arguments(item_value, key=str(item_key), depth=depth + 1)
+            for item_key, item_value in list(value.items())[:40]
+        }
+    if isinstance(value, list):
+        return [_sanitize_tool_arguments(item, depth=depth + 1) for item in value[:40]]
+    if isinstance(value, str):
+        return _safe_text(value, 1_000)
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return _safe_text(str(value), 1_000)
 
 
 def _event_summary(kind: str, event: dict[str, Any]) -> str:

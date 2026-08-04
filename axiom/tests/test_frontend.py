@@ -1373,7 +1373,7 @@ def test_frontend_and_static_assets_are_served(client):
         )
         assert match is not None
         worker_asset_versions.add(match.group(1))
-    assert worker_asset_versions == {"20260804-worker-center-v1"}
+    assert worker_asset_versions == {"20260804-explore-conversation-v2"}
 
     asset = client.get("/static/js/v2-adapter.js")
     assert asset.status_code == 200
@@ -1514,6 +1514,9 @@ def test_frontend_and_static_assets_are_served(client):
     assert 'x-if="humanTab === \'conversation\'"' in human.text
     assert "sendExploreIntervention()" in human.text
     assert "exploreConversationIntents()" in human.text
+    assert "jumpExploreConversationToLatest()" in human.text
+    assert 'x-ref="exploreConversationScroll"' in human.text
+    assert "event.tool" in human.text
     assert "humanArtifactPageCount" in human.text
     assert "triggerManualReason()" in human.text
     assert "manual-reason-trigger" in human.text
