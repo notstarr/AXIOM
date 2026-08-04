@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Response, status
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
 from axiom.modules.axiom_tools.schemas import WorkerOverview
+from axiom.modules.phase_capabilities.schemas import PhaseBackendsUpdate, WorkerPhase
 from axiom.modules.workers.schemas import (
     UpsertWorker,
     Worker,
@@ -16,6 +17,31 @@ from axiom.modules.workers.schemas import (
 
 
 router = APIRouter(prefix="/workers", tags=["workers"])
+phase_router = APIRouter(prefix="/worker-phases", tags=["worker-phases"])
+
+
+@phase_router.get("", response_model=list[WorkerPhase])
+def list_worker_phases(
+    container: Container = Depends(get_container),
+) -> list[WorkerPhase]:
+    return container.workers.phase_overview()
+
+
+@phase_router.get("/{phase}", response_model=WorkerPhase)
+def get_worker_phase(
+    phase: str,
+    container: Container = Depends(get_container),
+) -> WorkerPhase:
+    return container.workers.phase_overview(phase)[0]
+
+
+@phase_router.put("/{phase}/backends", response_model=WorkerPhase)
+def save_worker_phase_backends(
+    phase: str,
+    body: PhaseBackendsUpdate,
+    container: Container = Depends(get_container),
+) -> WorkerPhase:
+    return container.workers.set_phase_backends(phase, body.backends)
 
 
 @router.get("/overview", response_model=list[WorkerOverview])

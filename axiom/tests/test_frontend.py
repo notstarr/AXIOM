@@ -1186,6 +1186,166 @@ const ctx = Object.assign({{}}, window.AxiomModules.core.methods, window.AxiomMo
     return json.loads(result.stdout)
 
 
+def _run_worker_capability_drawer_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    worker_tools = ROOT / "src/axiom/static/js/worker-tools.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+eval(fs.readFileSync({json.dumps(str(worker_tools))}, 'utf8'));
+const methods = window.AxiomModules.workerTools.methods;
+const items = [
+  {{ capability_kind:'skill', capability_key:'all-skill', title:'All Skill', enabled:true, ready:true, status:'ready', supported_phases:['bootstrap','reason','explore'], scopes:['common'], locked_scopes:[], inactive_reasons:{{}}, metadata:{{}} }},
+  {{ capability_kind:'skill', capability_key:'locked-skill', title:'Locked Skill', enabled:true, ready:true, status:'ready', supported_phases:['bootstrap','reason','explore'], scopes:['common'], locked_scopes:['common'], inactive_reasons:{{}}, metadata:{{}} }},
+  {{ capability_kind:'skill', capability_key:'disabled-new', title:'Disabled', enabled:false, ready:true, status:'ready', supported_phases:['bootstrap','reason','explore'], scopes:[], locked_scopes:[], inactive_reasons:{{}}, metadata:{{}} }},
+  {{ capability_kind:'skill', capability_key:'disabled-old', title:'Disabled Existing', enabled:false, ready:true, status:'ready', supported_phases:['bootstrap','reason','explore'], scopes:['reason'], locked_scopes:[], inactive_reasons:{{reason:'Skill 已全局停用'}}, metadata:{{}} }},
+  {{ capability_kind:'mcp_tool', capability_key:'mcp-1', title:'One', description:'first', enabled:true, ready:true, status:'ready', server_id:'server-1', server_name:'Browser', supported_phases:['bootstrap','reason','explore'], scopes:['reason'], locked_scopes:[], inactive_reasons:{{}}, metadata:{{tool_name:'one'}} }},
+  {{ capability_kind:'mcp_tool', capability_key:'mcp-2', title:'Two', description:'second', enabled:true, ready:true, status:'ready', server_id:'server-1', server_name:'Browser', supported_phases:['bootstrap','reason','explore'], scopes:[], locked_scopes:[], inactive_reasons:{{}}, metadata:{{tool_name:'two'}} }},
+  {{ capability_kind:'axiom_tool', capability_key:'partial-tool', title:'Partial', enabled:true, ready:true, status:'ready', supported_phases:['bootstrap','explore'], scopes:['bootstrap'], locked_scopes:[], inactive_reasons:{{}}, metadata:{{}} }},
+];
+const calls = [];
+const matrix = {{ scopes:{{}}, items, builtin_tools:[] }};
+const ctx = Object.assign({{}}, methods, {{
+  phaseCapabilities:matrix,
+  phaseCapabilityDraft:{{}},
+  phaseCapabilitySaving:{{}},
+  workerCapabilityDraft:{{}},
+  workerCapabilityBaseline:{{}},
+  workerCapabilityDrawerPhase:'reason',
+  workerCapabilityDrawerTab:'mcp',
+  workerCapabilitySearch:'',
+  workerCapabilityFilter:'all',
+  workerCapabilitySaving:false,
+  workerCapabilityMcpExpanded:{{}},
+  axiomToolsCatalog:[],
+  selectedBuiltinTool:'',
+  showToast:(message, type) => calls.push({{kind:'toast', message, type}}),
+  api:async (method, path, body) => {{ calls.push({{kind:'api', method, path, body}}); return matrix; }},
+}});
+ctx.resetWorkerCapabilityDraft();
+const allSkill = ctx.phaseCapabilityRecord('skill', 'all-skill');
+ctx.toggleWorkerCapabilityPhase(allSkill, 'explore');
+const subsetPayload = ctx.workerCapabilityMatrixPayload();
+ctx.toggleWorkerCapabilityPhase(allSkill, 'explore');
+const commonPayload = ctx.workerCapabilityMatrixPayload();
+const disabledNew = ctx.phaseCapabilityRecord('skill', 'disabled-new');
+ctx.toggleWorkerCapabilityPhase(disabledNew, 'reason');
+const disabledNewPhases = [...ctx.workerCapabilityDraftPhases(disabledNew)];
+const disabledOld = ctx.phaseCapabilityRecord('skill', 'disabled-old');
+ctx.toggleWorkerCapabilityPhase(disabledOld, 'reason');
+const disabledOldPhases = [...ctx.workerCapabilityDraftPhases(disabledOld)];
+const partial = ctx.phaseCapabilityRecord('axiom_tool', 'partial-tool');
+const partialReasonDisabled = ctx.workerCapabilityPhaseDisabled(partial, 'reason');
+const group = ctx.workerCapabilityMcpGroups()[0];
+const groupBefore = ctx.workerCapabilityMcpGroupPhaseState(group, 'reason');
+ctx.toggleWorkerCapabilityMcpGroupPhase(group, 'reason');
+const groupAfter = ctx.workerCapabilityMcpGroupPhaseState(group, 'reason');
+(async () => {{
+  const changesBeforeSave = ctx.workerCapabilityChangeCount();
+  await ctx.saveWorkerCapabilityDraft();
+  process.stdout.write(JSON.stringify({{
+    subsetPayload,
+    commonPayload,
+    disabledNewPhases,
+    disabledOldPhases,
+    partialReasonDisabled,
+    groupBefore,
+    groupAfter,
+    groups:ctx.workerCapabilityMcpGroups().map(item => [item.id, item.tools.length]),
+    changesBeforeSave,
+    apiCalls:calls.filter(item => item.kind === 'api'),
+  }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def _run_worker_capability_deep_link_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    core = ROOT / "src/axiom/static/js/core.js"
+    worker_tools = ROOT / "src/axiom/static/js/worker-tools.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+global.location = {{ hash:'#/workers?mode=manage&phase=reason&tab=skill&capability=agent-mail' }};
+for (const script of [{json.dumps(str(core))}, {json.dumps(str(worker_tools))}]) {{
+  eval(fs.readFileSync(script, 'utf8'));
+}}
+const methods = Object.assign(
+  {{}},
+  window.AxiomModules.core.methods,
+  window.AxiomModules.workerTools.methods,
+);
+const calls = [];
+const ctx = Object.assign({{}}, methods, {{
+  activePage:'dashboard', view:'list', mountedPageTemplate:'', pageHistory:[],
+  mobileSidebarOpen:false, _navigatingBack:false,
+  workerPageMode:'manage', selectedWorkerPhase:'bootstrap', workerCapabilityRouteTarget:null,
+  workerCapabilityDrawerOpen:false, workerCapabilityDrawerPhase:'bootstrap',
+  workerCapabilityDrawerTab:'overview', workerCapabilityFocusKey:'',
+  workerCapabilitySearch:'', workerCapabilityFilter:'all', workerCapabilityMcpExpanded:{{}},
+  workerCapabilityDraft:{{}}, workerCapabilityBaseline:{{}},
+  phaseCapabilities:{{ scopes:{{}}, items:[{{
+    capability_kind:'skill', capability_key:'agent-mail', title:'Agent-Mail',
+    enabled:true, ready:true, status:'ready', supported_phases:['bootstrap','reason','explore'],
+    scopes:['reason'], locked_scopes:[], inactive_reasons:{{}}, metadata:{{}},
+  }}], builtin_tools:[] }},
+  phaseCapabilityDraft:{{}}, axiomToolsCatalog:[], selectedBuiltinTool:'',
+  workerPhases:[
+    {{phase:'bootstrap', title:'Bootstrap Worker', backends:[]}},
+    {{phase:'reason', title:'Reason Worker', backends:[]}},
+    {{phase:'explore', title:'Explore Worker', backends:[]}},
+  ],
+  selectedAxiomWorker:'',
+  loadDispatchSettings:async () => calls.push('dispatch'),
+  loadAxiomWorkersOverview:async () => calls.push('overview'),
+  loadWorkerPhases:async () => calls.push('phases'),
+  loadPhaseCapabilities:async () => calls.push('capabilities'),
+  backToList:() => {{}},
+  $nextTick:fn => fn(),
+}});
+ctx.mountCurrentPage = () => {{
+  ctx._mountPromise = ctx.loadAxiomWorkersPage();
+  return ctx._mountPromise;
+}};
+(async () => {{
+  ctx.handleRoute();
+  await ctx._mountPromise;
+  const deepLink = {{
+    activePage:ctx.activePage,
+    mode:ctx.workerPageMode,
+    selectedPhase:ctx.selectedWorkerPhase,
+    drawerOpen:ctx.workerCapabilityDrawerOpen,
+    drawerPhase:ctx.workerCapabilityDrawerPhase,
+    drawerTab:ctx.workerCapabilityDrawerTab,
+    focusKey:ctx.workerCapabilityFocusKey,
+    routeTarget:ctx.workerCapabilityRouteTarget,
+  }};
+  global.location.hash = '#/workers';
+  ctx.handleRoute();
+  await ctx._mountPromise;
+  process.stdout.write(JSON.stringify({{
+    deepLink,
+    plainRoute:{{
+      drawerOpen:ctx.workerCapabilityDrawerOpen,
+      focusKey:ctx.workerCapabilityFocusKey,
+      routeTarget:ctx.workerCapabilityRouteTarget,
+    }},
+    calls,
+  }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
 def test_frontend_and_static_assets_are_served(client):
     response = client.get("/")
     assert response.status_code == 200
@@ -1204,6 +1364,16 @@ def test_frontend_and_static_assets_are_served(client):
     assert 'class="nav-label">仪表盘' in response.text
     assert 'class="nav-label">设置' in response.text
     assert "localStorage" not in response.text
+
+    worker_asset_versions = set()
+    for script in ("state", "core", "skills", "mcp", "worker-tools"):
+        match = re.search(
+            rf'/static/js/{re.escape(script)}\.js\?v=([a-zA-Z0-9._-]+)',
+            response.text,
+        )
+        assert match is not None
+        worker_asset_versions.add(match.group(1))
+    assert worker_asset_versions == {"20260804-worker-center-v1"}
 
     asset = client.get("/static/js/v2-adapter.js")
     assert asset.status_code == 200
@@ -1253,11 +1423,75 @@ def test_frontend_and_static_assets_are_served(client):
 
     workers = client.get("/static/templates/workers.html")
     assert workers.status_code == 200
+    assert "三阶段 Worker" in workers.text
+    assert "系统只有三个逻辑 Worker" in workers.text
+    assert "模型执行后端" in workers.text
+    assert "workerPhases" in workers.text
+    assert "能力管理" in workers.text
+    assert "后端配置" in workers.text
+    assert "内置 Tool" in workers.text
+    assert "Skill" in workers.text
+    assert "MCP Tool" in workers.text
+    assert "扩展 Tool" in workers.text
+    assert "worker-capability-drawer" in workers.text
+    assert "全部阶段" in workers.text
+    assert "saveWorkerCapabilityDraft()" in workers.text
+    assert "toggleWorkerCapabilityAll(item)" in workers.text
+    assert "workerCapabilityMcpGroups()" in workers.text
+    assert "当前结果分配给本阶段" in workers.text
+    assert "由通用生效" not in workers.text
+    assert "toggleAndSavePhaseCapabilityScope" not in workers.text
+    assert "border-brand-300 bg-brand-50/60" not in workers.text
+    assert "workerPhaseBackendRunning(selectedWorkerPhase, backend.name)" in workers.text
+    assert "backend.shared_running" not in workers.text
+    assert "axiomWorkerEditor?.test_result?.ok" in workers.text
+    assert "axiomWorkerEditor.test_result.ok" not in workers.text
+    assert "saveWorkerPhaseBackends" in workers.text
+    assert "saveWorkerAxiomToolBindings" not in workers.text
+    assert "saveMcpWorkerBinding" not in workers.text
     assert "思考模式" in workers.text
     assert "pi_thinking_enabled" in workers.text
     assert "pi_thinking_level" in workers.text
     assert '<option value="max">max</option>' in workers.text
     assert "thinkingBadgeClass" not in settings.text
+
+    skills = client.get("/static/templates/skills.html")
+    assert skills.status_code == 200
+    assert "阶段分配由 Worker 统一管理" in skills.text
+    assert "Worker 可见性" in skills.text
+    assert "navigateToWorkerCapability('skill'" in skills.text
+    assert "saveSelectedSkillScopes" not in skills.text
+    assert "togglePhaseCapabilityScope" not in skills.text
+
+    mcp = client.get("/static/templates/mcp.html")
+    assert mcp.status_code == 200
+    assert "三阶段 MCP 可见性" in mcp.text
+    assert "阶段分配由 Worker 统一管理" in mcp.text
+    assert "Worker 可见性" in mcp.text
+    assert "navigateToWorkerCapability('mcp_tool'" in mcp.text
+    assert "saveMcpToolScopes" not in mcp.text
+    assert "togglePhaseCapabilityScope" not in mcp.text
+    assert "saveMcpWorkerBinding" not in mcp.text
+
+    tools = client.get("/static/templates/tools.html")
+    assert tools.status_code == 200
+    assert "内置 Tool" in tools.text
+    assert "扩展 Tool" in tools.text
+    assert "系统锁定" in tools.text
+    assert "Worker 可见性" in tools.text
+    assert "navigateToWorkerCapability('axiom_tool'" in tools.text
+    assert "Explore Conclude 不加载扩展 Tool" in tools.text
+    assert "saveAxiomToolScopes" not in tools.text
+    assert "togglePhaseCapabilityScope" not in tools.text
+    assert "border-brand-300 bg-brand-50/60" not in tools.text
+    for retired in (
+        "search_text",
+        "find_files",
+        "list_directory",
+        "http_request",
+        "run_python",
+    ):
+        assert retired not in tools.text
 
     graph = client.get("/static/templates/graph-view.html")
     assert graph.status_code == 200
@@ -1277,6 +1511,9 @@ def test_frontend_and_static_assets_are_served(client):
     assert human.status_code == 200
     assert 'x-if="humanTab === \'workspace\'"' in human.text
     assert 'x-if="humanTab === \'artifacts\'"' in human.text
+    assert 'x-if="humanTab === \'conversation\'"' in human.text
+    assert "sendExploreIntervention()" in human.text
+    assert "exploreConversationIntents()" in human.text
     assert "humanArtifactPageCount" in human.text
     assert "triggerManualReason()" in human.text
     assert "manual-reason-trigger" in human.text
@@ -1314,6 +1551,10 @@ def test_frontend_and_static_assets_are_served(client):
     assert "goal_history: graph.goal_history || []" in adapter
     assert "applyVulnerabilityRouteParams" in adapter
     assert "openVulnerabilityLocation" in adapter
+    assert "applyWorkerRouteParams" in core
+    assert "new URLSearchParams(routeQuery)" in core
+    assert "explore-conversation" in adapter
+    assert "interventions" in adapter
     assert "thinking_enabled" in adapter
     assert "thinking_level" in adapter
     assert "token_range: this.dashboardTokenRange" in adapter
@@ -1329,6 +1570,9 @@ def test_frontend_and_static_assets_are_served(client):
     assert "#cy {\n  background: #f8fafc" not in css
     assert "background-color: var(--surface-graph)" in css
     assert "button.manual-reason-trigger" in css
+    custom_css = client.get("/static/custom.css").text
+    assert ".worker-capability-drawer" in custom_css
+    assert ".worker-capability-scope-button.is-selected" in custom_css
     assert "applyGraphTheme()" in graph_js
     assert "edgeLabelBackground" in graph_js
     assert "goal_evidence_history" in graph_js
@@ -1779,3 +2023,57 @@ def test_human_overview_initial_audit_load_uses_recent_window_then_cursor_increm
     assert result["after"] == ["e001", "e002", "e003"]
     assert "limit=2000" in result["calls"][0]
     assert "after_id=e002" in result["calls"][1]
+
+
+def test_worker_capability_drawer_normalizes_scopes_and_saves_one_matrix() -> None:
+    result = _run_worker_capability_drawer_fixture()
+
+    subset = result["subsetPayload"]
+    assert "all-skill" not in subset["common"]["skill"]
+    assert "all-skill" in subset["bootstrap"]["skill"]
+    assert "all-skill" in subset["reason"]["skill"]
+    assert "all-skill" not in subset["explore"]["skill"]
+
+    common = result["commonPayload"]
+    assert "all-skill" in common["common"]["skill"]
+    assert "all-skill" not in common["bootstrap"]["skill"]
+    assert result["disabledNewPhases"] == []
+    assert result["disabledOldPhases"] == []
+    assert result["partialReasonDisabled"] is True
+    assert result["groupBefore"] == "some"
+    assert result["groupAfter"] == "all"
+    assert result["groups"] == [["server-1", 2]]
+    assert result["changesBeforeSave"] >= 2
+    assert len(result["apiCalls"]) == 1
+    assert result["apiCalls"][0]["method"] == "PUT"
+    assert result["apiCalls"][0]["path"] == "/phase-capabilities"
+
+
+def test_worker_capability_deep_link_opens_after_cold_page_load() -> None:
+    result = _run_worker_capability_deep_link_fixture()
+
+    assert result["deepLink"] == {
+        "activePage": "workers",
+        "mode": "manage",
+        "selectedPhase": "reason",
+        "drawerOpen": True,
+        "drawerPhase": "reason",
+        "drawerTab": "skill",
+        "focusKey": "agent-mail",
+        "routeTarget": None,
+    }
+    assert result["plainRoute"] == {
+        "drawerOpen": False,
+        "focusKey": "",
+        "routeTarget": None,
+    }
+    assert result["calls"] == [
+        "dispatch",
+        "overview",
+        "phases",
+        "capabilities",
+        "dispatch",
+        "overview",
+        "phases",
+        "capabilities",
+    ]

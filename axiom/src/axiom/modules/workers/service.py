@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import httpx
+from collections import defaultdict
 from sqlalchemy import Engine, func, select
 
 from axiom.modules.graph.tables import intents
 from axiom.modules.reason.tables import reason_runs
+from axiom.modules.phase_capabilities.schemas import PhaseBackend, WorkerPhase
 from axiom.modules.workers.pi_config import PiWorkerConfig, canonicalize_pi_worker_config
 from axiom.modules.workers.repository import WorkerRepository
 from axiom.modules.workers.schemas import (
@@ -16,6 +18,8 @@ from axiom.modules.workers.schemas import (
     WorkerModelsResult,
 )
 from axiom.shared.clock import utcnow
+from axiom.shared.clock import parse_utc
+from axiom.shared.database import immediate_transaction
 from axiom.shared.errors import ConflictError, NotFoundError
 
 
@@ -45,6 +49,129 @@ class WorkerService:
     def list(self) -> list[Worker]:
         with self.engine.connect() as conn:
             return [self._normalize_worker(worker) for worker in self.repository.list(conn)]
+
+    def phase_overview(self, phase: str | None = None) -> list[WorkerPhase]:
+        phases = [self._phase(phase)] if phase else ["bootstrap", "reason", "explore"]
+        with self.engine.connect() as conn:
+            workers = [self._normalize_worker(item) for item in self.repository.list(conn)]
+            running_by_worker: dict[str, int] = defaultdict(int)
+            running_by_worker_phase: dict[tuple[str, str], int] = defaultdict(int)
+            for row in conn.execute(
+                select(intents.c.worker, intents.c.kind, func.count().label("count"))
+                .where(
+                    intents.c.worker.is_not(None),
+                    intents.c.status.in_(["claimed", "running", "concluding"]),
+                )
+                .group_by(intents.c.worker, intents.c.kind)
+            ).mappings():
+                worker_name = str(row["worker"])
+                count = int(row["count"])
+                running_by_worker[worker_name] += count
+                running_by_worker_phase[(worker_name, str(row["kind"]))] += count
+            for row in conn.execute(
+                select(reason_runs.c.worker, func.count().label("count"))
+                .where(
+                    reason_runs.c.worker.is_not(None),
+                    reason_runs.c.status.in_(["claimed", "running", "concluding"]),
+                )
+                .group_by(reason_runs.c.worker)
+            ).mappings():
+                worker_name = str(row["worker"])
+                count = int(row["count"])
+                running_by_worker[worker_name] += count
+                running_by_worker_phase[(worker_name, "reason")] += count
+        now = parse_utc(utcnow())
+        result: list[WorkerPhase] = []
+        titles = {
+            "bootstrap": "Bootstrap Worker",
+            "reason": "Reason Worker",
+            "explore": "Explore Worker",
+        }
+        for item_phase in phases:
+            backends: list[PhaseBackend] = []
+            for worker in workers:
+                if item_phase not in worker.capabilities:
+                    continue
+                config = (
+                    PiWorkerConfig.model_validate(
+                        canonicalize_pi_worker_config(worker.config)
+                    )
+                    if worker.worker_type == "pi"
+                    else None
+                )
+                shared_running = running_by_worker.get(worker.name, 0)
+                running = running_by_worker_phase.get((worker.name, item_phase), 0)
+                if worker.disabled:
+                    state = "disabled"
+                elif worker.cooldown_until and parse_utc(worker.cooldown_until) > now:
+                    state = "cooldown"
+                else:
+                    state = "ready"
+                backends.append(
+                    PhaseBackend(
+                        name=worker.name,
+                        worker_type=worker.worker_type,
+                        model=config.model if config else "",
+                        context_window=config.context_window if config else 0,
+                        thinking_enabled=config.thinking_enabled if config else False,
+                        thinking_level=config.effective_thinking_level if config else "off",
+                        max_running=worker.max_running,
+                        running=running,
+                        shared_running=shared_running,
+                        available=(
+                            max(0, worker.max_running - shared_running)
+                            if state == "ready"
+                            else 0
+                        ),
+                        priority=worker.priority,
+                        disabled=worker.disabled,
+                        connection_state=state,
+                        capabilities=worker.capabilities,
+                    )
+                )
+            backends.sort(key=lambda item: (item.priority, item.name))
+            result.append(
+                WorkerPhase(
+                    phase=item_phase,
+                    title=titles[item_phase],
+                    backends=backends,
+                    running=sum(item.running for item in backends),
+                    capacity=sum(item.max_running for item in backends if not item.disabled),
+                    available=sum(item.available for item in backends),
+                )
+            )
+        return result
+
+    def set_phase_backends(self, phase: str, backend_names: list[str]) -> WorkerPhase:
+        phase = self._phase(phase)
+        selected = set(backend_names)
+        with immediate_transaction(self.engine) as conn:
+            workers = self.repository.list(conn)
+            known = {worker.name for worker in workers}
+            missing = selected - known
+            if missing:
+                raise NotFoundError(
+                    "Worker backends not found: " + ", ".join(sorted(missing))
+                )
+            now = utcnow()
+            for worker in workers:
+                capabilities = [item for item in worker.capabilities if item != phase]
+                if worker.name in selected:
+                    capabilities.append(phase)
+                self.repository.upsert(
+                    conn,
+                    name=worker.name,
+                    command=UpsertWorker(
+                        worker_type=worker.worker_type,
+                        capabilities=capabilities,
+                        max_running=worker.max_running,
+                        priority=worker.priority,
+                        config=worker.config,
+                        disabled=worker.disabled,
+                    ),
+                    now=now,
+                )
+        return self.phase_overview(phase)[0]
 
     def set_cooldown(self, name: str, cooldown_until: str | None) -> Worker:
         with self.engine.begin() as conn:
@@ -212,6 +339,13 @@ class WorkerService:
         if len(value) > 128:
             raise ConflictError("Worker name is too long")
         return value
+
+    @staticmethod
+    def _phase(value: str | None) -> str:
+        phase = str(value or "").strip().lower()
+        if phase not in {"bootstrap", "reason", "explore"}:
+            raise ConflictError(f"Invalid Worker phase: {phase}")
+        return phase
 
     @staticmethod
     def _normalize_worker(worker: Worker) -> Worker:

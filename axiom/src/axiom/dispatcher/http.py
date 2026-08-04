@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
@@ -34,7 +35,11 @@ from axiom.modules.reason.schemas import (
 from axiom.modules.settings.schemas import RuntimeSettings
 from axiom.modules.tasks.schemas import RunDeadlineReconcileReport
 from axiom.modules.token_usage.schemas import TokenUsageBatchCommand, TokenUsageBatchResult
+from axiom.modules.interventions.schemas import Intervention, ResolveIntervention
 from axiom.modules.workers.schemas import Worker
+
+
+logger = logging.getLogger(__name__)
 
 
 class ControlPlaneError(RuntimeError):
@@ -180,6 +185,51 @@ class HttpControlPlane:
                 command.model_dump(mode="json"),
             )
         )
+
+    def claim_interventions(self, work: ClaimedWork) -> list[Intervention]:
+        if not isinstance(work, ClaimedIntent) or work.kind != "explore":
+            return []
+        try:
+            payload = self._request(
+                "POST",
+                f"/dispatch/tasks/{work.task_id}/intents/{work.intent_id}/interventions/claim",
+                self._lease(work),
+            )
+        except ControlPlaneError as exc:
+            if exc.code == "lease_inactive":
+                raise LeaseLostError(str(exc)) from exc
+            raise
+        return [Intervention.model_validate(item) for item in payload or []]
+
+    def resolve_intervention(
+        self,
+        work: ClaimedWork,
+        intervention_id: str,
+        *,
+        success: bool,
+        error: str = "",
+    ) -> Intervention:
+        assert isinstance(work, ClaimedIntent) and work.intent_id
+        return Intervention.model_validate(
+            self._request(
+                "POST",
+                f"/dispatch/tasks/{work.task_id}/intents/{work.intent_id}/interventions/{intervention_id}/resolve"
+                f"?lease_id={work.lease_id}",
+                ResolveIntervention(success=success, error=error).model_dump(mode="json"),
+            )
+        )
+
+    def expire_interventions(self, work: ClaimedWork) -> None:
+        if not isinstance(work, ClaimedIntent) or work.kind != "explore":
+            return
+        try:
+            self._request(
+                "POST",
+                f"/dispatch/tasks/{work.task_id}/intents/{work.intent_id}/interventions/expire",
+                self._lease(work),
+            )
+        except ControlPlaneError:
+            logger.warning("failed to expire Explore interventions for %s/%s", work.task_id, work.intent_id, exc_info=True)
 
     def input(self, work: ClaimedWork) -> ExecutionInput:
         return ExecutionInput.model_validate(

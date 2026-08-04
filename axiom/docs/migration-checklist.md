@@ -44,6 +44,8 @@
 | Reason 同批 Todo 临时引用 | 已验证 | `todo:<draft-ref>` 在事务内解析为真实 Todo ID；未知引用整批回滚 |
 | 多 Task 公平领取 | 已验证 | 按历史最近领取时间轮询；Task 内 Bootstrap → Reason → Explore |
 | 全局/Task/Explore 并发双重校验 | 已验证 | Reconciler 纯计算 + 数据库 claim 事务 |
+| 三个逻辑 Worker 与模型后端池 | 已验证 | `/api/v1/worker-phases`；同一后端可加入多个阶段池 |
+| 通用/阶段专属能力矩阵 | 已验证 | `phase_capability_bindings`；Lease `phase-capabilities.json` 快照 |
 
 ## C. Bootstrap / Reason / Explore
 
@@ -93,7 +95,13 @@
 | Skill 按需查阅提示 | 已验证 | 三阶段 prompt 明确先查目录再按需读取 |
 | MCP 多格式导入 | 已验证 | JSON/YAML/TOML、Server 和工具发现 |
 | MCP 工具启停 | 已验证 | Server/单工具状态和前端展示 |
-| Worker 自定义 MCP | 已验证 | Worker 配置独立于左侧 MCP 管理 |
+| MCP 按具体 Tool 的阶段分配 | 已验证 | `common/bootstrap/reason/explore`；只注册选中的 Tool |
+| 旧 Worker MCP 绑定 | 保留兼容 | 只读投影；新写入统一走阶段能力矩阵 |
+| 内置 Tool 固定目录 | 已验证 | Pi 原生 + AXIOM 阶段 CLI；API/UI/Lease 共用代码注册表且只读 |
+| 扩展 Tool 按阶段 Extension 加载 | 已验证 | `--extension` + `axiom-tool-activation`；JSON/RPC 共用快照 |
+| 五个临时样例退休 | 已验证 | 0032 清理目录与绑定，保留 Audit；新 Lease 不再出现 |
+| Skill 按阶段过滤 | 已验证 | Lease 只注入通用能力与当前阶段专属目录 |
+| Bootstrap Conclude 无 Bash | 已验证 | 原生工具目录、阶段 Prompt 与追加 System Prompt 一致 |
 | Guard 审计和决策 | 已验证 | Guard 模块、扩展和审计事件 |
 | Guard 配置真实持久化 | 已验证 | off/audit/enforce、白名单、硬规则、提示词均进入 RuntimeConfig 并实际决策 |
 | 旧 URL 守门页面 | 保留兼容 | 新前端不展示，新路由不作为能力入口 |
@@ -111,6 +119,10 @@
 | 独立归档视图 | 已验证 | 批次列表/详情、影响预览、Artifact 查看、重叠恢复计数和恢复历史 |
 | 图谱 Todo 侧栏 | 已验证 | 任务图谱页面 |
 | Files / MCP / Worker / Settings | 已验证 | 生产页面验收 |
+| Worker 集中能力抽屉 | 已验证 | 三张逻辑 Worker 卡片；内置/Skill/MCP/扩展五个 Tab；草稿一次矩阵保存 |
+| 资源页面绑定只读化 | 已验证 | Skill/MCP/工具页只读阶段徽章并深链回 Worker 唯一编辑入口 |
+| MCP Server 分组不扩大授权 | 已验证 | Server 级批量操作最终仍保存具体 MCP Tool ID |
+| Worker 能力冷启动深链 | 已验证 | 路由先快照目标、数据加载后消费；静态资源版本同步刷新 |
 | RuntimeConfig 四组设置 | 已验证 | 调度并发、阶段预算、Reason 触发与派发、高级可靠性 |
 | Token 用量持久化 | 已验证 | Pi Session JSONL 明细、四类 Token、完整性状态和幂等回填 |
 | Dashboard / Task Token 统计 | 已验证 | 时间范围、实际模型、缓存命中率、任务占比及 Worker/阶段/模型排行 |
@@ -140,7 +152,13 @@
 | 旧 API 回滚 `/health` | `api: v2` |
 | 新 API/Runner LaunchAgent | 均运行 |
 | 回滚后恢复新运行时 | 已完成 |
-| Alembic Revision | `20260729_0025`；0020 ReasonRun、0023 Explore 收口下限、0024 Task 运行窗口和 0025 归档批次均已进入生产 |
+| Alembic Revision | `20260804_0033` |
+| Explore intervention queue | 待验证 | `intent_interventions` 绑定当前 Explore Lease；升级后验证 API/Runner 读取正常，未发送消息在 Lease 结束时变为 `expired` |
+| 三阶段迁移备份 | `/Users/hexin/.local/share/axiom-v3/backups/axiom-20260803-before-0031-103939.db`；`integrity_check=ok` |
+| 真实工具目录迁移备份 | `/Users/hexin/.local/share/axiom-v3/backups/axiom-20260804-before-0032-20260804-112743.db`；升级后 `integrity_check=ok`、FK 0 |
+| 三阶段 API smoke | `/worker-phases`、`/phase-capabilities`、`/workers/overview` 均 200；7 个后端、14 个 common Skill |
+| 真实工具目录 smoke | 15 个内置 Tool、3 个逻辑 Worker、0 个扩展 Tool；五个样例 key 为 0；Worker/工具页明暗主题浏览器验收通过 |
+| 新 Lease 能力快照 | `t_154/rr000192`、`t_155/rr000193`、`t_155/i013/i014` 均生成 `phase-capabilities.json` |
 | ReasonRun 生产备份 | `/Users/hexin/.local/share/axiom-v3/backups/20260727-131804-reasonrun-final/` |
 | 归档批次生产备份 | `/Users/hexin/.local/share/axiom-v3/backups/archive-batches-20260729T034510Z/axiom.db.pre-0025.bak` |
 | Reason CLI PATH | 已验证：Pi 子进程注入当前虚拟环境 `bin`，生产 `t_138` 直接调用 `axiom reason ...` |
@@ -150,6 +168,6 @@
 | 最终生产 smoke | 临时 `t_141` 验证 Bootstrap → ReasonRun → stop；图谱无 Reason Intent，活动工作和 open Workspace 均为 0 |
 | 归档生产 smoke | 临时 `t_152` 验证下游闭包、Context/Graph/Artifact 隔离、归档 Artifact 读取和 6 项恢复；临时数据已清理 |
 | 归档前端验收 | `t_150/f100` 只读预览显示 2 Fact、2 Intent、2 Todo、54 Artifact；空 blockers 时确认按钮可用 |
-| 全套测试 | 314 passed，1 个弃用警告 |
+| 全套测试 | `426 passed, 1 warning`；Ruff、compileall、前端 JavaScript、Tailwind、diff check 均通过 |
 
 最终生产数据目录：`/Users/hexin/.local/share/axiom-v3`。旧目录仍保留，回滚脚本不会删除旧数据。

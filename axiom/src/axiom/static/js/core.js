@@ -306,6 +306,9 @@ window.AxiomModules.core = {
       if (newPage === 'vulnerabilities') {
         this.applyVulnerabilityRouteParams?.(new URLSearchParams(routeQuery));
       }
+      if (newPage === 'workers') {
+        this.applyWorkerRouteParams?.(new URLSearchParams(routeQuery));
+      }
       this.mountCurrentPage();
     },
 
@@ -416,6 +419,12 @@ window.AxiomModules.core = {
         } else if (this.activePage === 'skills') {
           await this.loadSkills();
           if (this.skillEditor?.name && !this.skillEditor.fileDirty) await this.loadSkillFiles();
+        } else if (this.activePage === 'mcp') {
+          await this.loadMcpPage();
+        } else if (this.activePage === 'workers') {
+          await this.loadAxiomWorkersPage();
+        } else if (this.activePage === 'tools') {
+          await this.loadAxiomToolsPage();
         } else if (this.activePage === 'files') {
           await this.loadArtifactCenter();
         } else if (this.activePage === 'settings') {

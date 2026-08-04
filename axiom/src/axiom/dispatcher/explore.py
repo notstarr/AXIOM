@@ -72,6 +72,9 @@ class ExploreControlPlane(Protocol):
     def release(self, work: ClaimedIntent, command: ReleaseIntentCommand) -> None:
         ...
 
+    def expire_interventions(self, work: ClaimedIntent) -> None:
+        ...
+
 
 class ExploreRunner:
     """Execute once, then perform bounded closeout and atomically persist evidence."""
@@ -155,6 +158,12 @@ class ExploreRunner:
             )
             raise
         finally:
+            expire = getattr(self.control_plane, "expire_interventions", None)
+            if expire is not None:
+                try:
+                    expire(work)
+                except Exception:
+                    logger.warning("failed to expire human Explore interventions", exc_info=True)
             heartbeat.stop()
 
     def _conclude(

@@ -8,13 +8,124 @@ window.AxiomModules.human = {
     },
 
     switchHumanTab(tab) {
-      const allowed = ['workspace', 'todos', 'intents', 'facts', 'artifacts'];
+      const allowed = ['workspace', 'conversation', 'todos', 'intents', 'facts', 'artifacts'];
       this.humanTab = allowed.includes(tab) ? tab : 'workspace';
       if (this.humanTab === 'intents') this.humanIntentLimit = 50;
       if (this.humanTab === 'facts') this.humanFactLimit = 50;
       if (this.humanTab === 'artifacts') {
         this.humanArtifactPage = 0;
         this.loadHumanArtifactPage?.();
+      }
+      if (this.humanTab === 'conversation') {
+        this.selectExploreConversationIntent(this.exploreConversationIntentId || this.exploreConversationIntents()[0]?.id || '');
+      } else if (this.exploreConversationTimer) {
+        clearTimeout(this.exploreConversationTimer);
+        this.exploreConversationTimer = null;
+      }
+    },
+
+    exploreConversationIntents() {
+      return this.humanSortedIntents((this.project?.intents || []).filter(intent => (
+        !intent.archived && intent.kind === 'explore'
+      )));
+    },
+
+    exploreConversationIntentStatus(intent) {
+      const status = String(intent?.status || '').toLowerCase();
+      if (['running', 'concluding'].includes(status)) return '运行中';
+      if (status === 'claimed') return '已领取';
+      if (status === 'pending') return '等待执行';
+      if (status === 'completed') return '已完成';
+      if (status === 'failed') return '执行失败';
+      if (status === 'cancelled') return '已取消';
+      return status || '未知';
+    },
+
+    exploreConversationIntentClass(intent) {
+      const status = String(intent?.status || '').toLowerCase();
+      if (['running', 'concluding'].includes(status)) return 'border-blue-300 bg-blue-50 text-blue-800 shadow-sm';
+      if (status === 'claimed') return 'border-blue-100 bg-blue-50/50 text-blue-700';
+      if (status === 'pending') return 'border-amber-100 bg-amber-50/50 text-amber-700';
+      if (status === 'failed') return 'border-rose-100 bg-rose-50/50 text-rose-700';
+      return 'border-slate-200 bg-slate-50/60 text-slate-500';
+    },
+
+    exploreConversationEventClass(event) {
+      if (event?.source === 'intervention') return 'border-violet-200 bg-violet-50/70';
+      if (event?.kind === 'tool_call') return 'border-blue-100 bg-blue-50/50';
+      if (event?.kind === 'tool_result') return 'border-slate-200 bg-slate-50';
+      if (event?.kind === 'action_summary') return 'border-emerald-100 bg-emerald-50/50';
+      return 'border-amber-100 bg-amber-50/50';
+    },
+
+    async selectExploreConversationIntent(intentId) {
+      if (!intentId) return;
+      if (this.exploreConversationTimer) clearTimeout(this.exploreConversationTimer);
+      this.exploreConversationTimer = null;
+      this.exploreConversationIntentId = intentId;
+      this.exploreConversationEvents = [];
+      this.exploreConversationCursor = '0';
+      await this.loadExploreConversation(true);
+    },
+
+    async loadExploreConversation(reset = false) {
+      const taskId = this.selectedProjectId || this.project?.project?.id || '';
+      const intentId = this.exploreConversationIntentId;
+      if (!taskId || !intentId || this.humanTab !== 'conversation') return;
+      if (this.exploreConversationLoading) return;
+      this.exploreConversationLoading = true;
+      try {
+        const params = new URLSearchParams({ intent_id: intentId, limit: '300' });
+        if (!reset && this.exploreConversationCursor && this.exploreConversationCursor !== '0') params.set('after_cursor', this.exploreConversationCursor);
+        const payload = await this.api('GET', `/projects/${taskId}/explore-conversation?${params.toString()}`);
+        if (Array.isArray(payload?.intents) && this.project) {
+          const fresh = new Map(payload.intents.map(item => [item.id, item]));
+          this.project.intents = (this.project.intents || []).map(item => (
+            fresh.has(item.id) ? { ...item, ...fresh.get(item.id) } : item
+          ));
+        }
+        if (reset) this.exploreConversationEvents = [];
+        const seen = new Set((this.exploreConversationEvents || []).map(item => `${item.kind}:${item.created_at}:${item.detail}`));
+        for (const item of (payload?.events || [])) {
+          const key = `${item.kind}:${item.created_at}:${item.detail}`;
+          if (!seen.has(key)) { this.exploreConversationEvents.push(item); seen.add(key); }
+        }
+        this.exploreConversationCursor = payload?.cursor || this.exploreConversationCursor || '0';
+        this.exploreConversationIntent = payload?.intent || this.exploreConversationIntent;
+      } catch (error) {
+        if (!reset) this.showToast?.(error?.message || '读取 Explore 对话失败', 'error');
+      } finally {
+        this.exploreConversationLoading = false;
+        if (this.humanTab === 'conversation' && this.exploreConversationIntentId === intentId) {
+          this.exploreConversationTimer = setTimeout(() => this.loadExploreConversation(false), 1_000);
+        }
+      }
+    },
+
+    async sendExploreIntervention() {
+      const taskId = this.selectedProjectId || this.project?.project?.id || '';
+      const intentId = this.exploreConversationIntentId;
+      const message = String(this.exploreConversationDraft || '').trim();
+      const intent = this.exploreConversationIntents().find(item => item.id === intentId);
+      if (!taskId || !intentId || !message || this.exploreConversationSending) return;
+      if (!['claimed', 'running', 'concluding'].includes(String(intent?.status || '').toLowerCase())) {
+        this.showToast?.('只有存在活动 Lease 的 Explore 才能插话', 'error');
+        return;
+      }
+      this.exploreConversationSending = true;
+      try {
+        await this.api('POST', `/projects/${taskId}/intents/${intentId}/interventions`, {
+          message,
+          client_message_id: `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+          actor: this.actorName?.() || 'human.frontend',
+        });
+        this.exploreConversationDraft = '';
+        await this.loadExploreConversation(true);
+        this.showToast?.('指导消息已排队，将在下一轮模型调用前发送');
+      } catch (error) {
+        this.showToast?.(error?.message || '发送指导消息失败', 'error');
+      } finally {
+        this.exploreConversationSending = false;
       }
     },
 

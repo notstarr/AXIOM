@@ -221,6 +221,53 @@ settle("FINISH")
     assert "STALE" in result.stdout
 
 
+def test_rpc_process_supervisor_sends_multiple_human_interventions(tmp_path) -> None:
+    command_log = tmp_path / "commands.jsonl"
+    script = _rpc_script(
+        tmp_path,
+        """
+prompt = read_command()
+record(prompt)
+emit({"id": prompt["id"], "type": "response", "command": "prompt", "success": True})
+first = read_command()
+record(first)
+emit({"id": first["id"], "type": "response", "command": "steer", "success": True})
+second = read_command()
+record(second)
+emit({"id": second["id"], "type": "response", "command": "steer", "success": True})
+emit({"type": "agent_end", "messages": [{"role": "assistant", "content": [{"type": "text", "text": "FINISH"}]}]})
+settle("FINISH")
+""",
+    )
+    polled = {"done": False}
+    accepted: list[tuple[str, bool, str]] = []
+
+    def poll() -> list[tuple[str, str]]:
+        if polled["done"]:
+            return []
+        polled["done"] = True
+        return [("intv-1", "先确认接口"), ("intv-2", "再整理证据")]
+
+    result = RpcProcessSupervisor().run(
+        RpcProcessSpec(
+            command=[sys.executable, str(script)],
+            log_dir=tmp_path / "logs",
+            timeout_seconds=1,
+            poll_interval_seconds=0.01,
+            intervention_poller=poll,
+            intervention_result_reporter=lambda item_id, success, error: accepted.append((item_id, success, error)),
+            environment={"COMMAND_LOG": str(command_log)},
+            prompt="执行测试",
+        )
+    )
+
+    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
+    assert [command["type"] for command in commands] == ["prompt", "steer", "steer", "get_last_assistant_text"]
+    assert [command["message"] for command in commands[1:3]] == ["先确认接口", "再整理证据"]
+    assert [(item_id, success) for item_id, success, _error in accepted] == [("intv-1", True), ("intv-2", True)]
+    assert result.last_assistant_text == "FINISH"
+
+
 def test_rpc_process_supervisor_returns_terminal_provider_failure_after_settle(
     tmp_path,
 ) -> None:

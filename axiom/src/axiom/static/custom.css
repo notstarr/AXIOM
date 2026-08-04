@@ -23,6 +23,61 @@
   .app-modal-surface { background: var(--surface-modal, #fff); border-color: var(--border-default, #e2e8f0); color: var(--text-primary, #1e293b); }
   .app-input { background: var(--surface-inset, #fff); border: 1px solid var(--border-default, #e2e8f0); color: var(--text-primary, #1e293b); outline: none; }
   .app-input:focus { border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96,165,250,0.15); }
+  .worker-capability-drawer {
+    width: min(94vw, 1060px);
+    background: var(--surface-panel, #fff);
+    border-color: var(--border-default, #e2e8f0);
+    color: var(--text-primary, #1e293b);
+  }
+  .worker-capability-row-grid {
+    display: grid;
+    grid-template-columns: minmax(240px, 1fr) repeat(4, minmax(82px, 104px));
+    gap: 8px;
+    align-items: center;
+  }
+  .worker-capability-scope-button {
+    min-height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 7px 9px;
+    border: 1px solid var(--border-default, #e2e8f0);
+    border-radius: 10px;
+    color: var(--text-secondary, #475569);
+    background: var(--surface-inset, #f8fafc);
+    font-size: 10px;
+    transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+  }
+  .worker-capability-scope-button:hover:not(:disabled) {
+    border-color: #93c5fd;
+    background: color-mix(in srgb, var(--surface-hover, #f1f5f9) 75%, #dbeafe);
+  }
+  .worker-capability-scope-button.is-selected {
+    border-color: #86efac;
+    color: #047857;
+    background: #ecfdf5;
+  }
+  .worker-capability-scope-button.is-current {
+    box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.2);
+  }
+  .worker-capability-scope-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+  .worker-capability-focus {
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  }
+  .dark .worker-capability-scope-button.is-selected {
+    border-color: var(--status-success-border);
+    color: var(--status-success-fg);
+    background: var(--status-success-bg);
+  }
+  @media (max-width: 760px) {
+    .worker-capability-drawer { width: 100vw; }
+    .worker-capability-row-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .worker-capability-row-grid > :first-child { grid-column: 1 / -1; }
+  }
   .token-usage-panel { background: var(--surface-card); border-color: var(--border); }
   .token-usage-icon { color: #7c3aed; background: rgba(124, 58, 237, 0.10); }
   .token-filter-select select,

@@ -97,7 +97,7 @@
       <div class="flex items-start justify-between gap-5">
         <div>
           <h3 class="text-sm font-semibold text-slate-700">Worker 管理已迁移</h3>
-          <p class="text-xs text-slate-400 mt-1 leading-5">模型、Base URL、Key、并发、参与阶段以及 AXIOM Tool 分阶段绑定现在统一在独立 Worker 页面维护，避免两套表单产生配置漂移。</p>
+          <p class="text-xs text-slate-400 mt-1 leading-5">模型、Base URL、Key、上下文窗口、思考模式和并发在 Worker 页面维护；阶段后端池及 Skill、MCP Tool、扩展 Tool 能力分配由三个逻辑 Worker 和对应能力页面统一维护。</p>
           <p class="text-[11px] text-slate-400 mt-2">系统运行预算和 Dispatcher 参数仍保留在本设置页。</p>
         </div>
         <button @click="navigateTo('workers')" class="shrink-0 h-8 px-3 rounded-lg bg-brand-500 text-white text-xs hover:bg-brand-600">打开 Worker 管理</button>

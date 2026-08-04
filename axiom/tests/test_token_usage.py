@@ -107,13 +107,18 @@ def test_session_parser_marks_corrupt_or_missing_session_sources_incomplete(tmp_
     assert "missing_session_id" in parsed.source.error
 
 
-def _record(entry_id: str, *, model: str = "model-a", occurred_at: str = "2026-08-03T01:00:00Z") -> TokenUsageRecordInput:
+def _record(
+    entry_id: str,
+    *,
+    model: str = "model-a",
+    occurred_at: str | None = None,
+) -> TokenUsageRecordInput:
     return TokenUsageRecordInput(
         session_file="sessions/session.jsonl",
         session_id="session-1",
         session_entry_id=entry_id,
         usage_kind="assistant",
-        occurred_at=occurred_at,
+        occurred_at=occurred_at or utcnow(),
         provider="provider-a",
         model=model,
         requested_model=model,

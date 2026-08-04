@@ -27,7 +27,7 @@ from axiom.modules.axiom_tools.schemas import (
     WorkerOverview,
 )
 from axiom.modules.graph.tables import intents
-from axiom.modules.mcp.tables import mcp_tools
+from axiom.modules.phase_capabilities.service import PhaseCapabilityService
 from axiom.modules.reason.tables import reason_runs
 from axiom.modules.tasks.tables import tasks
 from axiom.modules.workers.pi_config import (
@@ -64,12 +64,20 @@ class _Candidate:
 
 
 class AxiomToolService:
-    def __init__(self, engine: Engine, data_dir: Path, *, skills=None):
+    def __init__(
+        self,
+        engine: Engine,
+        data_dir: Path,
+        *,
+        skills,
+        phase_capabilities: PhaseCapabilityService,
+    ):
         self.engine = engine
         self.repository = AxiomToolRepository()
         self.workers = WorkerRepository()
         self.audit = AuditService(engine)
         self.skills = skills
+        self.phase_capabilities = phase_capabilities
         self.managed_root = (data_dir / "axiom-tools").resolve()
         self.bundled_root = (
             Path(__file__).parents[2] / "dispatcher" / "axiom_tools" / "bundled"
@@ -143,32 +151,68 @@ class AxiomToolService:
     def list(self) -> list[AxiomTool]:
         with self.engine.connect() as conn:
             rows = self.repository.list_rows(conn)
-            bindings = self.repository.bindings(conn)
             workers_by_name = {
                 worker.name: worker for worker in self.workers.list(conn)
             }
             usage = self._usage(conn)
-        by_tool: dict[str, list[AxiomToolBinding]] = defaultdict(list)
-        tools_by_key = {row["key"]: row for row in rows}
-        for row in bindings:
-            worker = workers_by_name.get(row["worker_name"])
-            tool = tools_by_key.get(row["tool_key"])
-            effective, reason = self._binding_effective(worker, tool, row["phase"])
-            by_tool[row["tool_key"]].append(
-                AxiomToolBinding(
-                    worker_name=row["worker_name"],
-                    phase=row["phase"],
-                    effective=effective,
-                    inactive_reason=reason,
-                )
-            )
+        matrix = self.phase_capabilities.matrix()
+        records = {
+            (item.capability_kind, item.capability_key): item for item in matrix.items
+        }
         result: list[AxiomTool] = []
         for row in rows:
-            item = self.repository.model(row, bindings=by_tool[row["key"]])
+            record = records.get(("axiom_tool", row["key"]))
+            scopes = list(record.scopes) if record else []
+            # The old response shape is still useful to existing clients.  It
+            # is now only a projection of stage-level bindings, never a source
+            # of runtime truth.
+            compatibility_bindings: list[AxiomToolBinding] = []
+            for scope in scopes:
+                phases = PHASES if scope == "common" else (scope,)
+                projected = [
+                    worker
+                    for worker in workers_by_name.values()
+                    if any(phase in worker.capabilities for phase in phases)
+                ]
+                if not projected:
+                    compatibility_bindings.append(
+                        AxiomToolBinding(scope=scope, phase="" if scope == "common" else scope)
+                    )
+                for worker in projected:
+                    phase = scope if scope != "common" else "common"
+                    effective = all(
+                        self._binding_effective(
+                            worker,
+                            row,
+                            item_phase,
+                        )[0]
+                        for item_phase in phases
+                        if item_phase in worker.capabilities
+                    )
+                    reason = next(
+                        (
+                            self._binding_effective(worker, row, item_phase)[1]
+                            for item_phase in phases
+                            if item_phase in worker.capabilities
+                            and self._binding_effective(worker, row, item_phase)[1]
+                        ),
+                        "",
+                    )
+                    compatibility_bindings.append(
+                        AxiomToolBinding(
+                            scope=scope,
+                            worker_name=worker.name,
+                            phase=phase,
+                            effective=effective,
+                            inactive_reason=reason,
+                        )
+                    )
+            item = self.repository.model(row, bindings=compatibility_bindings)
             stats = usage.get(item.key, {})
             result.append(
                 item.model_copy(
                     update={
+                        "scopes": scopes,
                         "call_count": stats.get("call_count", 0),
                         "last_used_at": stats.get("last_used_at", ""),
                         "last_load_error": stats.get("last_load_error", ""),
@@ -196,22 +240,32 @@ class AxiomToolService:
             worker = self.workers.get(conn, worker_name)
             if worker is None:
                 raise NotFoundError(f"Worker not found: {worker_name}")
-            rows = self.repository.bindings(conn, worker_name=worker_name)
             tool_rows = {row["key"]: row for row in self.repository.list_rows(conn)}
+        matrix = self.phase_capabilities.matrix()
+        by_key = {
+            item.capability_key: item
+            for item in matrix.items
+            if item.capability_kind == "axiom_tool"
+        }
         configured = {phase: [] for phase in PHASES}
         effective = {phase: [] for phase in PHASES}
         reasons: dict[str, str] = {}
-        for row in rows:
-            configured[row["phase"]].append(row["tool_key"])
-            active, reason = self._binding_effective(
-                worker,
-                tool_rows.get(row["tool_key"]),
-                row["phase"],
-            )
-            if active:
-                effective[row["phase"]].append(row["tool_key"])
-            elif reason:
-                reasons[f"{row['phase']}:{row['tool_key']}"] = reason
+        for key, item in by_key.items():
+            for phase in PHASES:
+                if phase in item.scopes or "common" in item.scopes:
+                    configured[phase].append(key)
+                    active, reason = self._binding_effective(
+                        worker,
+                        tool_rows.get(key),
+                        phase,
+                    )
+                    if active:
+                        effective[phase].append(key)
+                    elif reason:
+                        reasons[f"{phase}:{key}"] = reason
+        for phase in PHASES:
+            configured[phase].sort()
+            effective[phase].sort()
         return WorkerAxiomToolBindingsView(
             worker_name=worker_name,
             **configured,
@@ -224,22 +278,13 @@ class AxiomToolService:
         worker_name: str,
         command: WorkerAxiomToolBindings,
     ) -> WorkerAxiomToolBindingsView:
-        values = command.model_dump(mode="json")
-        with immediate_transaction(self.engine) as conn:
-            worker = self.workers.get(conn, worker_name)
-            if worker is None:
+        del command
+        with self.engine.connect() as conn:
+            if self.workers.get(conn, worker_name) is None:
                 raise NotFoundError(f"Worker not found: {worker_name}")
-            rows = {row["key"]: row for row in self.repository.list_rows(conn)}
-            for phase, keys in values.items():
-                for key in keys:
-                    self._require_bindable(rows.get(key), key=key, phase=phase)
-            self.repository.replace_worker_bindings(
-                conn,
-                worker_name=worker_name,
-                bindings=values,
-                now=utcnow(),
-            )
-        return self.worker_bindings(worker_name)
+        raise ConflictError(
+            "具体模型后端不再持有 AXIOM Tool 绑定；请使用阶段能力接口"
+        )
 
     def save_tool_bindings(
         self,
@@ -247,22 +292,31 @@ class AxiomToolService:
         command: AxiomToolBindingSelection,
     ) -> AxiomTool:
         key = self._key(key)
-        unique: dict[tuple[str, str], AxiomToolBinding] = {}
+        unique: dict[str, AxiomToolBinding] = {}
         for binding in command.bindings:
-            unique[(binding.worker_name, binding.phase)] = binding
+            scope = binding.scope or binding.phase
+            if not scope:
+                continue
+            unique[scope] = binding.model_copy(update={"scope": scope})
         bindings = list(unique.values())
         with immediate_transaction(self.engine) as conn:
             row = self.repository.get_row(conn, key)
             if row is None:
                 raise NotFoundError(f"AXIOM Tool not found: {key}")
             for binding in bindings:
-                if self.workers.get(conn, binding.worker_name) is None:
-                    raise NotFoundError(f"Worker not found: {binding.worker_name}")
-                self._require_bindable(row, key=key, phase=binding.phase)
-            self.repository.replace_tool_bindings(
+                scope = binding.scope or binding.phase
+                if scope == "common":
+                    phases = PHASES
+                else:
+                    phases = (scope,)
+                for phase in phases:
+                    self._require_bindable(row, key=key, phase=phase)
+            scopes = list(dict.fromkeys(binding.scope for binding in bindings if binding.scope))
+            self.phase_capabilities.repository.replace_capability(
                 conn,
-                tool_key=key,
-                bindings=bindings,
+                capability_kind="axiom_tool",
+                capability_key=key,
+                scopes=scopes,
                 now=utcnow(),
             )
         return self.get(key)
@@ -274,13 +328,10 @@ class AxiomToolService:
             worker = self.workers.get(conn, worker_name)
             if worker is None:
                 raise NotFoundError(f"Worker not found: {worker_name}")
-            binding_rows = self.repository.bindings(conn, worker_name=worker_name)
             tool_rows = {row["key"]: row for row in self.repository.list_rows(conn)}
         result: list[AxiomTool] = []
-        for binding in binding_rows:
-            if binding["phase"] != phase:
-                continue
-            row = tool_rows.get(binding["tool_key"])
+        for key in self.phase_capabilities.effective_keys(phase=phase, kind="axiom_tool"):
+            row = tool_rows.get(key)
             active, _reason = self._binding_effective(worker, row, phase)
             if active and row is not None:
                 result.append(self.repository.model(row))
@@ -293,46 +344,43 @@ class AxiomToolService:
         phase: str,
         run_dir: str | Path,
     ) -> tuple[list[str], list[str], str | None]:
-        tools = self.effective_tools(worker_name, phase)
-        if not tools:
-            return [], [], None
-        directory = Path(run_dir).resolve()
-        directory.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "schema_version": 1,
-            "worker": worker_name,
-            "phase": phase,
-            "tools": [
-                {
-                    "key": item.key,
-                    "version": item.version,
-                    "package_hash": item.package_hash,
-                    "package_path": item.package_path,
-                    "entrypoint": item.entrypoint,
-                    "input_schema": item.input_schema,
-                }
-                for item in tools
-            ],
-        }
-        path = directory / "axiom-tools.json"
-        temporary = directory / ".axiom-tools.json.tmp"
-        temporary.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
+        snapshot = self.phase_capabilities.snapshot_for_lease(
+            worker_name=worker_name,
+            phase=phase,
+            run_dir=run_dir,
         )
-        temporary.replace(path)
-        extensions = [str(Path(item.package_path) / item.entrypoint) for item in tools]
-        return [item.key for item in tools], extensions, str(path)
+        return (
+            snapshot.axiom_tool_keys,
+            snapshot.axiom_tool_extensions,
+            snapshot.axiom_tool_snapshot_path,
+        )
 
     def worker_overview(self) -> list[WorkerOverview]:
         with self.engine.connect() as conn:
             workers_list = self.workers.list(conn)
             active_counts = self._active_counts(conn)
-            mcp_counts = self._mcp_counts(conn, workers_list)
+        matrix = self.phase_capabilities.matrix()
+        axiom_by_phase = {
+            phase: {
+                item.capability_key
+                for item in matrix.items
+                if item.capability_kind == "axiom_tool"
+                and ("common" in item.scopes or phase in item.scopes)
+            }
+            for phase in PHASES
+        }
+        mcp_by_phase = {
+            phase: {
+                item.capability_key
+                for item in matrix.items
+                if item.capability_kind == "mcp_tool"
+                and ("common" in item.scopes or phase in item.scopes)
+            }
+            for phase in PHASES
+        }
         result: list[WorkerOverview] = []
         now = parse_utc(utcnow())
         for worker in workers_list:
-            bindings = self.worker_bindings(worker.name)
             config = (
                 PiWorkerConfig.model_validate(
                     canonicalize_pi_worker_config(worker.config)
@@ -363,11 +411,22 @@ class AxiomToolService:
                     thinking_enabled=config.thinking_enabled if config else False,
                     thinking_level=config.effective_thinking_level if config else "off",
                     axiom_tool_counts={
-                        "bootstrap": len(bindings.bootstrap),
-                        "reason": len(bindings.reason),
-                        "explore": len(bindings.explore),
+                        phase: (
+                            len(axiom_by_phase[phase])
+                            if phase in worker.capabilities
+                            else 0
+                        )
+                        for phase in PHASES
                     },
-                    mcp_tool_count=mcp_counts.get(worker.name, 0),
+                    mcp_tool_count=len(
+                        set().union(
+                            *(
+                                mcp_by_phase[phase]
+                                for phase in worker.capabilities
+                                if phase in mcp_by_phase
+                            )
+                        )
+                    ),
                 )
             )
         return result
@@ -663,36 +722,6 @@ class AxiomToolService:
             ).mappings():
                 result[row["worker"]] += int(row["count"])
         return dict(result)
-
-    @staticmethod
-    def _mcp_counts(conn, workers_list) -> dict[str, int]:
-        result: dict[str, int] = {}
-        for worker in workers_list:
-            binding = worker.config.get("mcp") if isinstance(worker.config.get("mcp"), dict) else {}
-            if not binding.get("enabled") or not binding.get("server_ids"):
-                result[worker.name] = 0
-                continue
-            allowed = [str(item) for item in binding.get("allowed_tools") or []]
-            selected_tools = int(
-                conn.execute(
-                    select(func.count())
-                    .select_from(mcp_tools)
-                    .where(
-                        mcp_tools.c.server_id.in_(
-                            [str(item) for item in binding.get("server_ids") or []]
-                        ),
-                        mcp_tools.c.enabled.is_(True),
-                    )
-                ).scalar_one()
-            )
-            if not allowed:
-                result[worker.name] = selected_tools
-                continue
-            # MCP allowed_tools uses server:tool names.  Keep the card count
-            # aligned with what the Worker can actually expose, rather than
-            # counting stale names left in a historical binding.
-            result[worker.name] = min(len(dict.fromkeys(allowed)), selected_tools)
-        return result
 
     @staticmethod
     def _public_worker_config(worker, config: PiWorkerConfig | None) -> dict[str, Any]:

@@ -42,6 +42,7 @@ API Router
  ├─ todos          单层共享 Todo
  ├─ reason         ReasonRun、触发策略、Workspace 和规划提交
  ├─ context        Manifest、索引、按 ref 展开
+ ├─ phase_capabilities 三阶段逻辑 Worker、能力矩阵和 Lease 快照
  ├─ execution      claim 后的 start/input/heartbeat/complete/release
  ├─ dispatch       Snapshot、恢复、领取
  ├─ artifacts      文件产物元数据与内容
@@ -108,6 +109,68 @@ Task 完成的唯一业务指标是 Goal Evaluation。没有 Intent、没有 Wor
 Claim 事务和 Reason Trigger 还会校验 Task 的绝对 UTC 截止时间，防止 Deadline Reconciler 与领取之间的竞争窗口产生新工作。多个 Runner 同时发现到期 Task 时，只有命中 `status=running AND run_deadline_at<=now` 条件更新的实例能写入暂停状态和 Audit Event。
 
 Reason 提交后只创建 `pending` Explore Intent，不指定具体 Worker。空闲且兼容的 Worker 会自动领取；容量不足保持 pending，不记失败，也不要求 Reason 重新规划。
+
+### 三阶段逻辑 Worker 与执行后端
+
+AXIOM 的 Worker 语义固定为三个阶段，而不是“一个模型后端就是一种 Worker”：
+
+```text
+Bootstrap Worker  ─┐
+Reason Worker     ──┼─ 从各自阶段后端池选择具体模型执行后端
+Explore Worker    ─┘
+```
+
+数据库中的 `workers` 行表示**模型执行后端**。同一后端可以加入多个阶段池；它的
+`capabilities_json` 只表示参与阶段，模型、Base URL、Key、上下文窗口、思考模式、并发和优先级
+仍属于该后端。调度选择为：
+
+```text
+当前阶段后端池 ∩ Task worker_pool ∩ 已启用 ∩ 非冷却 ∩ 有并发容量
+```
+
+Worker 概览区分阶段运行量和后端共享占用：阶段卡片的 `running` 只统计当前阶段，后端条目的
+`shared_running` 统计该模型后端跨三个阶段的总活动 Lease，`available` 按共享 `max_running` 计算。
+
+可分配能力的唯一运行时来源是 `phase_capability_bindings`，四个 scope 为
+`common/bootstrap/reason/explore`。Skill、MCP Tool、扩展 Tool（API/数据库类型仍为
+`axiom_tool`）的有效集合为：
+
+```text
+common 能力 ∪ 当前阶段专属能力
+```
+
+通用能力不能在单个阶段排除；若只想给部分阶段使用，应取消通用并显式绑定所需阶段。
+`whatisvul` 是锁定且强制启用的通用 Skill。首次升级会把当时启用的 Skill 迁移为通用能力，
+之后新建 Skill 和新发现扩展 Tool 均默认零绑定。旧 Worker 级扩展 Tool/MCP 写接口保留兼容路由，
+但拒绝继续写入，不再形成第二套运行时真源。
+
+内置 Tool 不写入绑定表，由代码注册表作为 API、前端和运行时共同来源。目录包括 Pi 原生
+`read/write/edit/bash`、通用 Skill/Credential CLI、Reason Workspace CLI 和 Explore 漏洞上报 CLI；
+阶段及 Execute/Conclude 可用范围固定且不可修改。Bootstrap Conclude 没有 `bash`，其阶段 Prompt
+和追加 System Prompt 都只允许复用 Execute 已读取的 `whatisvul/SKILL.md`。
+
+每个新 Lease 在运行目录写入 schema 2 的 `phase-capabilities.json`，固化内置 Tool 目录、本阶段
+有效 Skill、具体 MCP Tool、MCP Server 配置，以及扩展 Tool 的版本、包哈希和 Schema；存在扩展
+Tool 时另写 `axiom-tools.json`。schema 1 历史快照继续可读，旧 Lease 不热修改，下一次领取才读取
+最新矩阵。
+
+MCP 以具体 Tool 为绑定单位：选择一个 Tool 时，Lease 只注册该 Tool 的稳定运行名，所属 Server
+随调用按需启动，同 Server 的其它 Tool 不会披露给模型。扩展 Tool 通过 Pi Extension 加载，
+JSON 模式和 Explore RPC 模式共用同一能力快照。Explore Conclude 继承本 Lease 的 Skill/MCP，
+但不加载扩展 Tool，也不构成第四种 Worker。Pi 的 `--tools` 只包含固定 Pi 原生 Tool、本 Lease
+选中的 MCP Tool 和扩展 Tool；AXIOM 内部 CLI 仍通过 `bash` 和活动 Lease API 校验提供。
+
+Worker 页面右上角分为“能力管理 / 后端配置”。能力管理固定展示三个逻辑 Worker 卡片，点击卡片后
+在同一个右侧抽屉集中查看概览、内置 Tool、Skill、MCP Tool 和扩展 Tool；后端配置只管理阶段后端池
+和模型 API 配置。前端不暴露 `common` 的操作负担，而是直接显示 Bootstrap/Reason/Explore 三列：
+三阶段全选自动序列化为 `common`，取消其中一个阶段会自动转换为剩余阶段的显式绑定。所有修改先进入
+草稿，确认后仅用一次矩阵请求原子保存。
+
+MCP Tool 在抽屉中按 Server 折叠并支持 Server 级三态批量操作，但底层仍保存具体 Tool ID，不扩大
+Server 授权。Skill、MCP、工具独立页面只管理资源内容、连接、启停、发现、版本和状态，只读展示阶段
+徽章，并通过 `#/workers?mode=manage&phase=<phase>&tab=<tab>&capability=<id>` 深链返回唯一的能力编辑
+入口。能力深链在 Worker 数据加载后消费，冷启动也会打开并定位对应能力；普通 `#/workers` 清除旧
+抽屉状态。
 
 Intent 和 ReasonRun 都使用独立 `lease_id`。领取后先启动心跳，再初始化 Context、运行目录和 Pi；执行中持续 heartbeat。执行重试和基础设施重试分开计数，超出预算才进入终态并成为下一轮 Reason 的输入信号。
 
@@ -321,6 +384,8 @@ Artifact、Vulnerability 和 Todo 列表支持可选服务端分页、搜索和 
 
 任务概览的循环卡片以唯一 `ReasonRun` 作为一轮模型，合并该轮的 Workspace 重试和 Lease，不把重试重复计数。首次加载 Audit 时读取最近 2000 条并按时间正序还原，之后用 `after_id` 游标增量轮询；同时兼容 `reason.*`、`reason_run.*` 和历史 `reason_workspace.*` 事件。当前/历史循环显示 Worker、状态、开始/结束时间、Workspace 尝试次数、创建的 Intent 和失败原因；Bootstrap、Reason、Explore 的运行/等待/完成/失败状态使用统一动画类，并遵守 `prefers-reduced-motion`。
 
+Explore 额外提供实时对话视图。人类指导消息进入 `intent_interventions` 持久化队列，绑定当前 Explore Lease，Runner 的 RPC Supervisor 在每轮模型调用之间轮询并发送多条 `steer`。人工消息不会改变 Scope、权限、Todo/Intent 关系或阶段完成协议；Lease 结束后未发送消息过期，不会在重试中重放。对话读取 Session JSONL 的工具调用、工具结果、行动摘要和生命周期事件，并在服务端脱敏凭证、JWT、Cookie、Authorization 和 API Key，不展示隐藏思维链。
+
 概览当前执行区按 `running/concluding > claimed > pending > completed > failed/cancelled` 选择 Intent；没有活动 Intent 时展示最近一个非空 ReasonRun 批次，不会回退到最早历史 Intent。Fact、Leads、最近 Artifact 显示来源 Intent；Fact、Leads 和产物统一复用文件中心深链，缺失或归档对象会提示而不误定位。Fact 计数排除 `goal/origin`，产物和漏洞总数使用 Task 聚合计数，Leads 单独增量读取并在没有 Explore Leads 时回退 Bootstrap 初始线索。静态资源缓存版本为 `20260803-overview-loop-v2`。
 
 图谱右侧 Fact 详情把代码生成描述中的 `artifact:aXXX` 与 `vulnerability:vXXX` 安全拆分为普通文本和内联蓝链。普通文本始终使用 `x-text`，不执行 Fact 内容中的 HTML。Artifact 引用复用文件中心深链；漏洞引用进入 `#/vulnerabilities?task=...&vulnerability=...`，自动切换列表模式、锁定 Task，并在目标不在当前页时复用单漏洞 GET 接口补入并选中。目标不存在或已归档时会提示并清除精确目标参数，不会误选同 Task 的其它漏洞。漏洞列表每页 50 条，状态看板每列先取 25 条并独立加载更多；Human Artifact 每页 50 条，Workspace 只取最近 6 条。Intent/Fact 复用已加载 Graph 数据并限制首屏渲染。
@@ -368,7 +433,18 @@ ReasonRun/RuntimeConfig 迁移版本为 `20260727_0020`。迁移保留历史 Rea
 
 `20260803_0029_llm_token_usage` 新增 Session Token 明细和来源完整性表，以及任务/模型/时间索引。迁移不改写历史 Session 或 Audit Event；生产切换时先升级数据库，再使用 `axiom token-usage-backfill --dry-run` 检查可识别 Lease、合法 usage 记录和不完整来源，确认报告后再正式回填。回填和实时上报共用稳定键，不会因 Runner 重启或重复扫描重复计数。
 
-2026-07-29 生产升级前备份位于 `/Users/hexin/.local/share/axiom-v3/backups/archive-batches-20260729T034510Z/axiom.db.pre-0025.bak`。截至本文状态，生产库 revision 为 `20260729_0028`；`20260803_0029_llm_token_usage` 尚未迁移。API 与 Runner LaunchAgent 均正常运行，SQLite integrity 为 `ok` 且 foreign key violation 为 0。
+`20260803_0031_phase_capabilities` 新增 `phase_capability_bindings`，把 Skill、MCP Tool 和
+扩展 Tool 的分配从具体模型后端提升为 `common/bootstrap/reason/explore` 四个 scope。迁移按阶段
+合并旧 `worker_axiom_tool_bindings`，并把旧 Worker MCP 配置中的具体 Tool 按该后端参与阶段转换；
+旧表和旧配置保留只读兼容。Skill 是文件目录而不是数据库实体，因此“当前启用 Skill → common”
+由升级后的 API 首次启动幂等完成，并写入数据目录初始化标记；`whatisvul` 无论历史状态如何都会
+修复为启用且 common。降级只移除新矩阵，不改写旧 Worker 配置或旧扩展 Tool 绑定。
+
+`20260804_0032_retire_placeholder_tools` 删除五个临时样例 `search_text/find_files/list_directory/`
+`http_request/run_python` 的阶段绑定、旧 Worker 绑定和目录记录，并删除对应 bundled 源码。历史
+Audit Event 和其它真实扩展 Tool 保留；降级不伪造已退休的样例和绑定。
+
+2026-07-29 生产升级前备份位于 `/Users/hexin/.local/share/axiom-v3/backups/archive-batches-20260729T034510Z/axiom.db.pre-0025.bak`。三阶段能力迁移的生产一致性备份为 `/Users/hexin/.local/share/axiom-v3/backups/axiom-20260803-before-0031-103939.db`。退休样例目录前的生产备份为 `/Users/hexin/.local/share/axiom-v3/backups/axiom-20260804-before-0032-20260804-112743.db`，生产 revision 已为 `20260804_0032`。API 与 Runner LaunchAgent 均使用 `/Users/hexin/.local/share/axiom-v3`，SQLite integrity 为 `ok` 且 foreign key violation 为 0。
 
 ## 10. 当前明确不属于主流程的内容
 
@@ -380,7 +456,7 @@ ReasonRun/RuntimeConfig 迁移版本为 `20260727_0020`。迁移保留历史 Rea
 ## 11. 验证基线
 
 ```text
-uv run pytest                            406 passed, 1 warning
+uv run pytest                            426 passed, 1 warning
 uv run ruff check .                      passed
 python -m compileall -q src tests migrations  passed
 node --check <18 non-vendor static js>   passed
@@ -388,6 +464,10 @@ git diff --check                         passed
 ```
 
 以上测试已覆盖 FINISH 精确识别与 Explore 有限归一化、同会话有界收口、Explore Conclude 核心文件兜底、可选 Evidence、Artifact/Fact 自动生成、ReasonRun/Workspace 生命周期、Goal Cycle 续跑、Reason 历史 Goal Context 隔离、无新 Fact 的材料性 Todo 恢复、Reason 触发和调度并发、RuntimeConfig 热应用、Guard、Task 运行窗口、归档下游闭包，以及前端分页、Dashboard 聚合、Task 固定查询数、搜索竞态、历史 Goal 详情、任务概览循环还原与状态动画、Fact/Leads/Artifact 来源和深链、图谱 Fact 安全引用/漏洞跨分页深链、图谱纯视觉更新不触发布局和 Tailwind 可重复构建；仅有 Starlette/httpx 弃用警告。
+
+2026-08-03 三阶段能力生产 smoke：API/Runner 重启后 `/api/v1/worker-phases`、`/api/v1/phase-capabilities` 和 `/api/v1/workers/overview` 均返回 200；7 个模型执行后端可被三个逻辑阶段池读取，14 个启用 Skill 进入 common。新 Lease `t_154/rr000192`、`t_155/rr000193`（Reason）和 `t_155/i013/i014`（Explore）实际写入 `phase-capabilities.json`，每份包含 14 个 Skill，未带入未绑定的 MCP/AXIOM Tool；Runner 与 API LaunchAgent 均正常运行。
+
+2026-08-04 真实工具目录生产 smoke：等待活动 Lease 自然结束后备份并升级到 `20260804_0032`，五个临时样例在目录和两类绑定表中均清零，SQLite integrity/FK 检查正常。重启后 `/health`、`/api/v1/phase-capabilities`、`/api/v1/worker-phases`、`/api/v1/axiom-tools` 均成功；API 返回 15 个系统锁定内置 Tool、3 个逻辑 Worker、0 个扩展 Tool。真实浏览器确认 Worker 能力/后端模式和工具内置/扩展模式可切换，Skill/MCP 分配按钮可用，浅色与暗色选中态正常，后端池不再显示 `undefined` 运行量。
 
 2026-07-29 前端生产数据浏览器验收：Dashboard/Task/Files/Vulnerability 非图谱页面分别为 592/1217/1258/839 个 DOM 节点；文件中心首屏 60 条、漏洞列表 50/565；非图谱冷启动没有图谱 Runtime，进入图谱后才加载 6 个依赖，离开后 Canvas 和图谱 DOM 清零；桌面侧栏 176→56px 且刷新持久化，390×844 移动端抽屉导航后自动关闭，控制台无 warning/error。生产数据库副本上的 `/api/v1/tasks` 60 次请求为 median 19.14ms、P95 28.71ms、max 36.16ms。
 

@@ -78,6 +78,9 @@ class ExecutionInput(BaseModel):
     goal: str
     hints: list[str] = Field(default_factory=list)
     skill_directories: list[str] = Field(default_factory=list)
+    mcp_tool_names: list[str] = Field(default_factory=list)
+    capability_environment: dict[str, str] = Field(default_factory=dict)
+    capability_snapshot_path: str | None = None
     guard_enabled: bool = False
     scope: dict[str, object]
     run_dir: str

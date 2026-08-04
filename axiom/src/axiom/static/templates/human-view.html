@@ -34,6 +34,7 @@
     <nav class="px-5 flex items-center gap-1 border-t border-slate-100 overflow-x-auto" aria-label="任务工作台导航">
       <template x-for="tab in [
         {id: 'workspace', label: '工作台'},
+        {id: 'conversation', label: '实时对话'},
         {id: 'todos', label: 'Todo'},
         {id: 'intents', label: 'Intents'},
         {id: 'facts', label: '事实与线索'},
@@ -268,6 +269,37 @@
           </div>
         </section>
       </div>
+    </div>
+  </main>
+  </template>
+
+  <!-- Explore 实时对话：只展示脱敏后的行动摘要和工具活动，不展示隐藏思维链。 -->
+  <template x-if="humanTab === 'conversation'">
+  <main class="flex-1 min-h-0 overflow-y-auto p-5">
+    <div class="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4 h-full min-h-[520px]">
+      <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col min-h-0">
+        <div class="px-4 py-3 border-b border-slate-100"><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Explore monitor</p><h3 class="mt-1 text-sm font-semibold text-slate-800">所有 Explore Intent</h3><p class="mt-1 text-[10px] text-slate-400">运行中的 Intent 高亮；消息只绑定当前 Lease。</p></div>
+        <div class="p-2 space-y-1 overflow-y-auto min-h-0">
+          <template x-for="intent in exploreConversationIntents()" :key="`conversation-intent-${intent.id}`">
+            <button type="button" @click="selectExploreConversationIntent(intent.id)" class="w-full text-left rounded-xl border px-3 py-2.5 transition" :class="`${exploreConversationIntentClass(intent)} ${exploreConversationIntentId === intent.id ? 'ring-2 ring-brand-200' : ''}`">
+              <div class="flex items-center gap-2"><span class="h-2 w-2 rounded-full shrink-0" :class="['running','concluding'].includes(String(intent.status || '').toLowerCase()) ? 'bg-blue-500 animate-pulse' : intent.status === 'pending' ? 'bg-amber-400' : 'bg-slate-300'"></span><span class="font-mono text-[10px]" x-text="intent.id"></span><span class="ml-auto text-[10px]" x-text="exploreConversationIntentStatus(intent)"></span></div>
+              <p class="mt-1 text-xs leading-5 line-clamp-2" x-text="intent.description || '未命名 Intent'"></p><p class="mt-1 text-[10px] opacity-70 truncate" x-text="intent.worker || '未领取 Worker'"></p>
+            </button>
+          </template>
+          <p x-show="exploreConversationIntents().length === 0" class="py-12 text-center text-xs text-slate-400">当前没有 Explore Intent。</p>
+        </div>
+      </aside>
+      <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col min-h-0">
+        <template x-if="exploreConversationIntentId">
+          <div class="flex flex-col min-h-0 h-full">
+            <div class="px-5 py-4 border-b border-slate-100 flex items-start gap-3"><div class="min-w-0 flex-1"><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Intent conversation</p><h3 class="mt-1 text-sm font-semibold text-slate-800" x-text="exploreConversationIntentId"></h3><p class="mt-1 text-xs text-slate-500" x-text="exploreConversationIntents().find(item => item.id === exploreConversationIntentId)?.description || '未命名 Intent'"></p></div><span class="shrink-0 px-2 py-1 rounded-lg border text-[10px]" :class="exploreConversationIntentClass(exploreConversationIntents().find(item => item.id === exploreConversationIntentId))" x-text="exploreConversationIntentStatus(exploreConversationIntents().find(item => item.id === exploreConversationIntentId))"></span></div>
+            <div class="px-5 py-2.5 bg-slate-50/70 border-b border-slate-100 text-[10px] text-slate-500 flex flex-wrap gap-x-4 gap-y-1"><span x-text="`Worker：${exploreConversationIntents().find(item => item.id === exploreConversationIntentId)?.worker || '未领取'}`"></span><span x-text="`活动：${exploreConversationIntents().find(item => item.id === exploreConversationIntentId)?.activity_summary || '暂无活动摘要'}`"></span><span>完整 Session 保留在审计与运行目录，页面只显示脱敏摘要。</span></div>
+            <div class="flex-1 min-h-0 overflow-y-auto p-5 space-y-2.5"><div x-show="exploreConversationLoading && !exploreConversationEvents.length" class="py-12 text-center text-xs text-slate-400">正在读取 Explore 活动…</div><template x-for="event in exploreConversationEvents" :key="`conversation-event-${event.cursor}-${event.kind}-${event.intervention_id || ''}`"><article class="rounded-xl border px-3.5 py-3" :class="exploreConversationEventClass(event)"><div class="flex items-center gap-2"><span class="text-[10px] font-semibold" x-text="event.source === 'intervention' ? '人工指导' : event.kind === 'tool_call' ? '工具调用' : event.kind === 'tool_result' ? '工具结果' : event.kind === 'action_summary' ? '行动摘要' : '生命周期'"></span><span class="text-[10px] text-slate-400" x-text="formatTime(event.created_at)"></span><span x-show="event.status" class="ml-auto text-[10px] text-violet-600" x-text="event.status === 'accepted' ? '已发送' : event.status === 'failed' ? '发送失败' : event.status"></span></div><p class="mt-1.5 text-xs leading-5 text-slate-700 whitespace-pre-wrap break-words" x-text="event.detail || event.summary"></p></article></template><p x-show="!exploreConversationLoading && !exploreConversationEvents.length" class="py-12 text-center text-xs text-slate-400">当前还没有可展示的操作摘要。</p></div>
+            <form class="border-t border-slate-100 p-4" @submit.prevent="sendExploreIntervention()"><div class="flex items-end gap-2"><textarea x-model="exploreConversationDraft" rows="2" maxlength="4000" class="flex-1 resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none" placeholder="给当前 Explore 一条指导，例如：先确认当前越权是否真实，再补充 leads.md。" :disabled="!['claimed','running','concluding'].includes(String(exploreConversationIntents().find(item => item.id === exploreConversationIntentId)?.status || '').toLowerCase())"></textarea><button type="submit" class="rounded-xl bg-brand-600 px-3.5 py-2.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40" :disabled="exploreConversationSending || !exploreConversationDraft.trim() || !['claimed','running','concluding'].includes(String(exploreConversationIntents().find(item => item.id === exploreConversationIntentId)?.status || '').toLowerCase())" x-text="exploreConversationSending ? '发送中…' : '发送指导'"></button></div><p class="mt-2 text-[10px] text-slate-400">消息会在当前工具调用结束、下一轮模型调用前排队生效；不会改变 Scope、权限、成功判据或 Todo/Intent 关系。</p></form>
+          </div>
+        </template>
+        <div x-show="!exploreConversationIntentId" class="flex-1 grid place-items-center text-xs text-slate-400">请从左侧选择一个 Explore Intent。</div>
+      </section>
     </div>
   </main>
   </template>

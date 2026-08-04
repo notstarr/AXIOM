@@ -21,6 +21,7 @@ _RPC_PROMPT_ID = "axiom-initial-prompt"
 _RPC_STEER_ID = "axiom-soft-reminder"
 _RPC_FINAL_TEXT_ID = "axiom-final-text"
 _RPC_ABORT_ID = "axiom-abort"
+_RPC_INTERVENTION_PREFIX = "axiom-human-intervention:"
 _RPC_CONTROL_EVENT_TYPES = frozenset(
     {
         "response",
@@ -69,6 +70,9 @@ class RpcProcessSpec(ProcessSpec):
     steer_after_seconds: float | None = None
     steer_message: str | None = None
     provider_failure_grace_seconds: float = 5.0
+    intervention_poller: Callable[[], list[tuple[str, str]]] | None = None
+    intervention_result_reporter: Callable[[str, bool, str], None] | None = None
+    intervention_poll_interval_seconds: float = 1.0
 
 
 class ProcessSupervisor:
@@ -251,6 +255,8 @@ class RpcProcessSupervisor(ProcessSupervisor):
                     else None
                 )
                 steer_attempted = False
+                next_intervention_poll = started
+                intervention_commands: dict[str, str] = {}
 
                 while not protocol_error and not completed:
                     if should_cancel is not None:
@@ -291,6 +297,27 @@ class RpcProcessSupervisor(ProcessSupervisor):
                             )
                         except OSError as exc:
                             logger.warning("failed to send Pi RPC soft reminder: %s", exc)
+
+                    if (
+                        spec.intervention_poller is not None
+                        and now >= next_intervention_poll
+                        and process.poll() is None
+                    ):
+                        next_intervention_poll = now + max(0.2, spec.intervention_poll_interval_seconds)
+                        try:
+                            interventions = spec.intervention_poller() or []
+                        except Exception:
+                            logger.warning("failed to poll human Explore interventions", exc_info=True)
+                            interventions = []
+                        for intervention_id, message in interventions:
+                            rpc_id = f"{_RPC_INTERVENTION_PREFIX}{intervention_id}"
+                            try:
+                                _send_rpc(process, {"id": rpc_id, "type": "steer", "message": message})
+                                intervention_commands[rpc_id] = intervention_id
+                            except OSError as exc:
+                                logger.warning("failed to send human Explore intervention: %s", exc)
+                                if spec.intervention_result_reporter is not None:
+                                    spec.intervention_result_reporter(intervention_id, False, str(exc))
 
                     wait_until = deadline
                     if not steer_attempted and steer_deadline is not None:
@@ -335,6 +362,17 @@ class RpcProcessSupervisor(ProcessSupervisor):
                                         "failed to report Pi RPC soft reminder activity",
                                         exc_info=True,
                                     )
+                        if event_id in intervention_commands:
+                            intervention_id = intervention_commands.pop(event_id)
+                            if spec.intervention_result_reporter is not None:
+                                try:
+                                    spec.intervention_result_reporter(
+                                        intervention_id,
+                                        success,
+                                        "" if success else str(event.get("error") or "Pi RPC steer rejected"),
+                                    )
+                                except Exception:
+                                    logger.warning("failed to persist human intervention result", exc_info=True)
                         if event_id == _RPC_FINAL_TEXT_ID:
                             if not final_text_requested:
                                 protocol_error = (

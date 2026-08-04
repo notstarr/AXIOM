@@ -50,8 +50,10 @@ REQUIRED_TABLES = frozenset(
         "todo_sources",
         "workers",
         "worker_axiom_tool_bindings",
+        "phase_capability_bindings",
         "llm_token_usage",
         "llm_token_usage_sources",
+        "intent_interventions",
     }
 )
 

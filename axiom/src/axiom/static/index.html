@@ -6,9 +6,9 @@
 <title>axiom</title>
 <link rel="icon" href="/static/logo.jpg?v=20260803-overview-loop-v2" type="image/jpeg">
 <link rel="stylesheet" href="/static/apple.css?v=20260803-overview-loop-v2">
-<link rel="stylesheet" href="/static/tailwind.generated.css?v=20260803-overview-loop-v2">
+<link rel="stylesheet" href="/static/tailwind.generated.css?v=20260804-worker-center-v1">
 <script defer src="/static/vendor/alpine.min.js?v=20260803-overview-loop-v2"></script>
-<link rel="stylesheet" href="/static/custom.css?v=20260803-overview-loop-v2">
+<link rel="stylesheet" href="/static/custom.css?v=20260804-worker-center-v1">
 </head>
 <body class="h-screen overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="cairnApp()" style="background:var(--bg-secondary);color:var(--text-primary)">
 
@@ -28,7 +28,7 @@
     <button type="button" class="nav-item" data-tooltip="守门审计" :class="{ 'is-active': activePage === 'guard-audit' }" @click="navigateTo('guard-audit')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.2 2.8 7.9 7 9.5 4.2-1.6 7-5.3 7-9.5V6l-7-3Z"/><path d="M9 12h6M9 15h4M9 9h6"/></svg><span class="nav-label">守门审计</span></button>
     <div class="sidebar-divider"></div>
     <button type="button" class="nav-item" data-tooltip="Worker" :class="{ 'is-active': activePage === 'workers' }" @click="navigateTo('workers')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/></svg><span class="nav-label">Worker</span></button>
-    <button type="button" class="nav-item" data-tooltip="AXIOM Tool" :class="{ 'is-active': activePage === 'tools' }" @click="navigateTo('tools')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.1 2.1-3-3 2.1-2.1Z"/></svg><span class="nav-label">工具</span></button>
+    <button type="button" class="nav-item" data-tooltip="工具管理" :class="{ 'is-active': activePage === 'tools' }" @click="navigateTo('tools')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.1 2.1-3-3 2.1-2.1Z"/></svg><span class="nav-label">工具</span></button>
     <button type="button" class="nav-item" data-tooltip="Skill" :class="{ 'is-active': activePage === 'skills' }" @click="navigateTo('skills')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M9 12h6m-3-3v6m-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v14l-4-2-4 2-4-2-4 2Z"/></svg><span class="nav-label">Skill</span></button>
     <button type="button" class="nav-item" data-tooltip="文件" :class="{ 'is-active': activePage === 'files' }" @click="navigateTo('files')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v11Z"/></svg><span class="nav-label">文件</span></button>
     <button type="button" class="nav-item" data-tooltip="MCP" :class="{ 'is-active': activePage === 'mcp' }" @click="navigateTo('mcp')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.5 6h7M7.5 8l3 7.5M16.5 8l-3 7.5"/></svg><span class="nav-label">MCP</span></button>
@@ -471,23 +471,23 @@
   <span x-text="toast ? toast.message : ''"></span>
 </div>
 
-<script src="/static/js/state.js?v=20260803-overview-loop-v2"></script>
+<script src="/static/js/state.js?v=20260804-worker-center-v1"></script>
 <script src="/static/js/helpers.js?v=20260803-overview-loop-v2"></script>
-<script src="/static/js/core.js?v=20260803-overview-loop-v2"></script>
+<script src="/static/js/core.js?v=20260804-worker-center-v1"></script>
 <script src="/static/js/projects.js?v=20260803-overview-loop-v2"></script>
 <script src="/static/js/dashboard.js?v=20260803-overview-loop-v2"></script>
-<script src="/static/js/skills.js?v=20260803-overview-loop-v2"></script>
+<script src="/static/js/skills.js?v=20260804-worker-center-v1"></script>
 <script src="/static/js/files.js?v=20260803-overview-loop-v2"></script>
-<script src="/static/js/mcp.js?v=20260803-overview-loop-v2"></script>
+<script src="/static/js/mcp.js?v=20260804-worker-center-v1"></script>
 <script src="/static/js/graph.js?v=20260803-overview-loop-v2"></script>
-<script src="/static/js/human.js?v=20260803-overview-loop-v2"></script>
+<script src="/static/js/human.js?v=20260804-explore-conversation-v1"></script>
 <script src="/static/js/archives.js?v=20260803-overview-loop-v2"></script>
 <script src="/static/js/timeline.js?v=20260803-overview-loop-v2"></script>
 <script src="/static/js/actions.js?v=20260803-overview-loop-v2"></script>
 <script src="/static/js/dispatch.js?v=20260803-overview-loop-v2"></script>
-<script src="/static/js/worker-tools.js?v=20260803-axiom-tools-v1"></script>
+<script src="/static/js/worker-tools.js?v=20260804-worker-center-v1"></script>
 <script src="/static/js/prompts.js?v=20260803-overview-loop-v2"></script>
-<script src="/static/js/v2-adapter.js?v=20260803-overview-loop-v2"></script>
+<script src="/static/js/v2-adapter.js?v=20260804-explore-conversation-v1"></script>
 <script src="/static/js/app.js?v=20260803-overview-loop-v2"></script>
 </body>
 </html>

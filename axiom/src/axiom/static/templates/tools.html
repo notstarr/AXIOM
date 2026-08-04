@@ -1,120 +1,96 @@
 <div x-show="activePage === 'tools'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
   <header class="app-page-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
     <div>
-      <h2 class="text-base font-semibold text-slate-800">AXIOM Tool 管理</h2>
-      <p class="text-xs text-slate-400 mt-0.5">版本化工具目录、状态、风险和 Worker × 阶段绑定。</p>
+      <h2 class="text-base font-semibold text-slate-800">工具管理</h2>
+      <p class="text-xs text-slate-400 mt-0.5">查看真实内置 Tool，并管理扩展 Tool 包；阶段分配由 Worker 统一管理。</p>
     </div>
     <div class="flex-1"></div>
-    <button @click="loadAxiomToolsPage()" :disabled="axiomToolsLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40">刷新</button>
-    <button @click="scanAxiomTools()" :disabled="axiomToolsScanLoading" class="h-8 px-3 rounded-lg bg-slate-800 text-white text-xs hover:bg-slate-900 disabled:opacity-40" x-text="axiomToolsScanLoading ? '扫描中…' : '重新扫描目录'"></button>
+    <div class="app-inset flex rounded-xl p-1">
+      <button type="button" @click="toolPageMode='builtin'" class="rounded-lg px-3 py-1.5 text-xs transition" :class="toolPageMode === 'builtin' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'">内置 Tool</button>
+      <button type="button" @click="toolPageMode='extension'" class="rounded-lg px-3 py-1.5 text-xs transition" :class="toolPageMode === 'extension' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'">扩展 Tool</button>
+    </div>
+    <button @click="loadAxiomToolsPage()" :disabled="axiomToolsLoading || phaseCapabilitiesLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40">刷新</button>
+    <button x-show="toolPageMode === 'extension'" @click="scanAxiomTools()" :disabled="axiomToolsScanLoading" class="h-8 px-3 rounded-lg bg-slate-800 text-white text-xs hover:bg-slate-900 disabled:opacity-40" x-text="axiomToolsScanLoading ? '扫描中…' : '重新扫描目录'"></button>
   </header>
 
-  <main class="flex-1 overflow-hidden grid grid-cols-1 xl:grid-cols-[360px_minmax(0,1fr)]">
+  <main x-show="toolPageMode === 'builtin'" class="flex-1 overflow-hidden grid grid-cols-1 xl:grid-cols-[360px_minmax(0,1fr)]">
     <aside class="border-r border-slate-200 bg-white overflow-y-auto p-4">
       <div class="rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2.5 text-[11px] leading-5 text-blue-700">
-        这里只管理 <strong>AXIOM Tool</strong>，不包含 Pi 原生 Tool、Skill 或 MCP。工具代码不能在页面创建或上传；目录扫描不会执行入口文件。
+        内置 Tool 来自当前 Pi 与 AXIOM 执行合同，阶段固定且不可修改。外部安全命令和 Skill 脚本不作为独立 Tool 重复登记。
+      </div>
+      <div class="mt-4 space-y-2">
+        <template x-for="tool in (phaseCapabilities?.builtin_tools || [])" :key="`builtin-list-${tool.key}`">
+          <button type="button" @click="selectBuiltinTool(tool)" class="w-full rounded-xl border p-3 text-left transition" :class="selectedBuiltinTool === tool.key ? 'border-brand-200 bg-brand-50/60 shadow-sm' : 'border-slate-200 bg-white hover:bg-slate-50'">
+            <div class="flex items-start gap-2"><div class="min-w-0 flex-1"><div class="flex items-center gap-2"><strong class="text-xs text-slate-800" x-text="tool.title"></strong><span class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[8px] text-slate-500" x-text="builtinToolSourceLabel(tool.source)"></span></div><code class="mt-1 block truncate text-[9px] text-blue-600" x-text="tool.invocation"></code></div><span class="text-[10px] text-slate-400">🔒</span></div>
+            <div class="mt-2 flex flex-wrap gap-1"><template x-for="phase in (tool.phases || [])" :key="`${tool.key}-${phase}`"><span class="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500" x-text="axiomPhaseLabel(phase)"></span></template></div>
+          </button>
+        </template>
+      </div>
+    </aside>
+
+    <section class="overflow-y-auto p-5" x-show="selectedBuiltinToolRecord()" x-cloak>
+      <div class="mx-auto max-w-5xl space-y-5">
+        <div class="rounded-2xl border border-slate-200 bg-white p-5">
+          <div class="flex items-start gap-3"><div class="min-w-0 flex-1"><div class="flex items-center gap-2 flex-wrap"><h3 class="text-base font-semibold text-slate-800" x-text="selectedBuiltinToolRecord()?.title"></h3><code class="rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600" x-text="selectedBuiltinToolRecord()?.key"></code><span class="rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-500">系统锁定</span></div><p class="mt-2 text-sm leading-6 text-slate-600" x-text="selectedBuiltinToolRecord()?.description"></p></div></div>
+          <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50/60 p-3"><div class="text-[10px] text-slate-400">实际调用方式</div><code class="mt-1 block break-all text-xs text-blue-600" x-text="selectedBuiltinToolRecord()?.invocation"></code></div>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-5">
+          <h3 class="text-sm font-semibold text-slate-800">固定阶段合同</h3>
+          <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+            <template x-for="phase in ['bootstrap','reason','explore']" :key="`builtin-detail-${phase}`">
+              <div class="rounded-xl border p-3" :class="(selectedBuiltinToolRecord()?.phases || []).includes(phase) ? 'border-emerald-200 bg-emerald-50/50' : 'border-slate-200 bg-slate-50/50'">
+                <div class="flex items-center justify-between"><strong class="text-xs text-slate-700" x-text="`${axiomPhaseLabel(phase)} Worker`"></strong><span class="text-[9px]" :class="(selectedBuiltinToolRecord()?.phases || []).includes(phase) ? 'text-emerald-600' : 'text-slate-400'" x-text="(selectedBuiltinToolRecord()?.phases || []).includes(phase) ? '已固定' : '不可用'"></span></div>
+                <p class="mt-2 text-[10px] text-slate-500" x-text="builtinToolAvailabilityLabel(selectedBuiltinToolRecord(), phase)"></p>
+              </div>
+            </template>
+          </div>
+          <p class="mt-3 text-[11px] text-slate-400">内置 Tool 不写入阶段绑定表，也没有启停按钮；UI 与 Lease 快照均读取同一个代码注册表。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <main x-show="toolPageMode === 'extension'" class="flex-1 overflow-hidden grid grid-cols-1 xl:grid-cols-[360px_minmax(0,1fr)]">
+    <aside class="border-r border-slate-200 bg-white overflow-y-auto p-4">
+      <div class="rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2.5 text-[11px] leading-5 text-blue-700">
+        扩展 Tool 是受版本控制的 Pi Extension 工具包。当前不再内置临时样例；新工具包扫描后默认零绑定。
       </div>
       <div class="mt-3 space-y-2">
         <input x-model="axiomToolSearch" class="app-input w-full rounded-xl px-3 py-2 text-xs" placeholder="搜索 key、标题或描述…">
         <div class="grid grid-cols-2 gap-2">
           <select x-model="axiomToolStatusFilter" class="app-input rounded-lg px-2 py-1.5 text-[11px]"><option value="all">全部状态</option><option value="ready">就绪</option><option value="invalid">清单无效</option><option value="missing">包缺失</option></select>
-          <select x-model="axiomToolSourceFilter" class="app-input rounded-lg px-2 py-1.5 text-[11px]"><option value="all">全部来源</option><option value="bundled">内置</option><option value="managed">托管目录</option></select>
+          <select x-model="axiomToolSourceFilter" class="app-input rounded-lg px-2 py-1.5 text-[11px]"><option value="all">全部来源</option><option value="bundled">随系统发布</option><option value="managed">托管目录</option></select>
           <select x-model="axiomToolPhaseFilter" class="app-input rounded-lg px-2 py-1.5 text-[11px]"><option value="all">全部阶段</option><option value="bootstrap">Bootstrap</option><option value="reason">Reason</option><option value="explore">Explore</option></select>
           <select x-model="axiomToolRiskFilter" class="app-input rounded-lg px-2 py-1.5 text-[11px]"><option value="all">全部风险</option><template x-for="tag in axiomToolRiskOptions()" :key="`risk-${tag}`"><option :value="tag" x-text="axiomToolRiskLabel(tag)"></option></template></select>
         </div>
       </div>
-
       <div class="mt-4 space-y-2">
         <template x-for="tool in axiomToolFiltered()" :key="tool.key">
-          <button type="button" @click="selectAxiomTool(tool)" class="w-full text-left rounded-xl border p-3 transition"
-            :class="selectedAxiomTool === tool.key ? 'border-brand-300 bg-brand-50/60 shadow-sm' : 'border-slate-200 bg-white hover:bg-slate-50'">
-            <div class="flex items-start gap-2">
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2 flex-wrap"><code class="text-xs font-semibold text-slate-800" x-text="tool.key"></code><span class="px-1.5 py-0.5 rounded border text-[9px]" :class="axiomToolStatusClass(tool.status)" x-text="axiomToolStatusLabel(tool.status)"></span><span x-show="!tool.enabled" class="px-1.5 py-0.5 rounded border border-slate-200 bg-slate-100 text-[9px] text-slate-500">已停用</span></div>
-                <p class="mt-1 text-[11px] font-medium text-slate-600" x-text="tool.title"></p>
-                <p class="mt-0.5 text-[10px] leading-4 text-slate-400 line-clamp-2" x-text="tool.description"></p>
-              </div>
-              <span class="shrink-0 text-[9px] text-slate-400" x-text="`v${tool.version || '?'}`"></span>
-            </div>
-            <div class="mt-2 flex flex-wrap gap-1"><template x-for="phase in (tool.supported_phases || [])" :key="`${tool.key}-${phase}`"><span class="px-1.5 py-0.5 rounded bg-slate-100 text-[9px] text-slate-500" x-text="axiomPhaseLabel(phase)"></span></template></div>
+          <button type="button" @click="selectAxiomTool(tool)" class="w-full text-left rounded-xl border p-3 transition" :class="selectedAxiomTool === tool.key ? 'border-brand-200 bg-brand-50/60 shadow-sm' : 'border-slate-200 bg-white hover:bg-slate-50'">
+            <div class="flex items-start gap-2"><div class="min-w-0 flex-1"><div class="flex items-center gap-2 flex-wrap"><code class="text-xs font-semibold text-slate-800" x-text="tool.key"></code><span class="px-1.5 py-0.5 rounded border text-[9px]" :class="axiomToolStatusClass(tool.status)" x-text="axiomToolStatusLabel(tool.status)"></span><span x-show="!tool.enabled" class="px-1.5 py-0.5 rounded border border-slate-200 bg-slate-100 text-[9px] text-slate-500">已停用</span></div><p class="mt-1 text-[11px] font-medium text-slate-600" x-text="tool.title"></p><p class="mt-0.5 text-[10px] leading-4 text-slate-400 line-clamp-2" x-text="tool.description"></p></div><span class="shrink-0 text-[9px] text-slate-400" x-text="`v${tool.version || '?'}`"></span></div>
           </button>
         </template>
-        <div x-show="!axiomToolsLoading && axiomToolFiltered().length === 0" class="rounded-xl border border-dashed border-slate-200 py-10 text-center text-xs text-slate-400">没有匹配的 AXIOM Tool。</div>
+        <div x-show="!axiomToolsLoading && axiomToolFiltered().length === 0" class="rounded-xl border border-dashed border-slate-200 py-10 text-center text-xs text-slate-400">当前没有扩展 Tool。可将正式工具包发布到 data/axiom-tools/ 后重新扫描。</div>
       </div>
     </aside>
 
     <section class="overflow-y-auto p-5" x-show="selectedAxiomToolRecord()" x-cloak>
-      <div class="max-w-6xl mx-auto space-y-5" x-data="{}">
+      <div class="max-w-6xl mx-auto space-y-5">
         <div class="rounded-2xl border border-slate-200 bg-white p-5">
-          <div class="flex items-start justify-between gap-4">
-            <div class="min-w-0">
-              <div class="flex items-center gap-2 flex-wrap">
-                <h3 class="text-base font-semibold text-slate-800" x-text="selectedAxiomToolRecord()?.title"></h3>
-                <code class="px-2 py-0.5 rounded-lg bg-slate-100 text-xs text-slate-600" x-text="selectedAxiomToolRecord()?.key"></code>
-                <span class="px-1.5 py-0.5 rounded border text-[10px]" :class="axiomToolStatusClass(selectedAxiomToolRecord()?.status)" x-text="axiomToolStatusLabel(selectedAxiomToolRecord()?.status)"></span>
-              </div>
-              <p class="mt-2 text-sm leading-6 text-slate-600" x-text="selectedAxiomToolRecord()?.description"></p>
-            </div>
-            <button @click="toggleAxiomToolEnabled(selectedAxiomToolRecord())" class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full" :class="selectedAxiomToolRecord()?.enabled ? 'bg-brand-500' : 'bg-slate-200'" :title="selectedAxiomToolRecord()?.enabled ? '全局停用' : '全局启用'"><span class="inline-block h-5 w-5 rounded-full bg-white shadow transition" :class="selectedAxiomToolRecord()?.enabled ? 'translate-x-5' : 'translate-x-0.5'"></span></button>
-          </div>
-          <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div class="rounded-xl bg-slate-50/70 p-3"><div class="text-[10px] text-slate-400">版本</div><div class="mt-1 text-xs font-mono text-slate-700" x-text="selectedAxiomToolRecord()?.version || '—'"></div></div>
-            <div class="rounded-xl bg-slate-50/70 p-3"><div class="text-[10px] text-slate-400">来源</div><div class="mt-1 text-xs text-slate-700" x-text="selectedAxiomToolRecord()?.source === 'bundled' ? '内置目录' : 'data/axiom-tools' "></div></div>
-            <div class="rounded-xl bg-slate-50/70 p-3"><div class="text-[10px] text-slate-400">调用次数</div><div class="mt-1 text-xs font-semibold text-slate-700" x-text="selectedAxiomToolRecord()?.call_count || 0"></div></div>
-            <div class="rounded-xl bg-slate-50/70 p-3"><div class="text-[10px] text-slate-400">最近使用</div><div class="mt-1 text-xs text-slate-700" x-text="selectedAxiomToolRecord()?.last_used_at ? formatTime(selectedAxiomToolRecord().last_used_at) : '尚未调用'"></div></div>
-          </div>
-          <div x-show="selectedAxiomToolRecord()?.status_error" class="mt-3 rounded-xl border border-rose-100 bg-rose-50/60 px-3 py-2 text-xs text-rose-600 break-words" x-text="selectedAxiomToolRecord()?.status_error"></div>
-          <div x-show="selectedAxiomToolRecord()?.last_load_error" class="mt-3 rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-2 text-xs text-amber-700 break-words" x-text="`最近加载错误：${selectedAxiomToolRecord()?.last_load_error}`"></div>
+          <div class="flex items-start justify-between gap-4"><div class="min-w-0"><div class="flex items-center gap-2 flex-wrap"><h3 class="text-base font-semibold text-slate-800" x-text="selectedAxiomToolRecord()?.title"></h3><code class="px-2 py-0.5 rounded-lg bg-slate-100 text-xs text-slate-600" x-text="selectedAxiomToolRecord()?.key"></code><span class="px-1.5 py-0.5 rounded border text-[10px]" :class="axiomToolStatusClass(selectedAxiomToolRecord()?.status)" x-text="axiomToolStatusLabel(selectedAxiomToolRecord()?.status)"></span></div><p class="mt-2 text-sm leading-6 text-slate-600" x-text="selectedAxiomToolRecord()?.description"></p></div><button @click="toggleAxiomToolEnabled(selectedAxiomToolRecord())" class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full" :class="selectedAxiomToolRecord()?.enabled ? 'bg-brand-500' : 'bg-slate-200'" :title="selectedAxiomToolRecord()?.enabled ? '全局停用' : '全局启用'"><span class="inline-block h-5 w-5 rounded-full bg-white shadow transition" :class="selectedAxiomToolRecord()?.enabled ? 'translate-x-5' : 'translate-x-0.5'"></span></button></div>
+          <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3"><div class="rounded-xl bg-slate-50/70 p-3"><div class="text-[10px] text-slate-400">版本</div><div class="mt-1 text-xs font-mono text-slate-700" x-text="selectedAxiomToolRecord()?.version || '—'"></div></div><div class="rounded-xl bg-slate-50/70 p-3"><div class="text-[10px] text-slate-400">来源</div><div class="mt-1 text-xs text-slate-700" x-text="selectedAxiomToolRecord()?.source === 'bundled' ? '随系统发布' : 'data/axiom-tools'"></div></div><div class="rounded-xl bg-slate-50/70 p-3"><div class="text-[10px] text-slate-400">调用次数</div><div class="mt-1 text-xs font-semibold text-slate-700" x-text="selectedAxiomToolRecord()?.call_count || 0"></div></div><div class="rounded-xl bg-slate-50/70 p-3"><div class="text-[10px] text-slate-400">最近使用</div><div class="mt-1 text-xs text-slate-700" x-text="selectedAxiomToolRecord()?.last_used_at ? formatTime(selectedAxiomToolRecord().last_used_at) : '尚未调用'"></div></div></div>
         </div>
-
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <div class="rounded-2xl border border-slate-200 bg-white p-5">
-            <h3 class="text-sm font-semibold text-slate-800">工具契约</h3>
-            <dl class="mt-3 space-y-2 text-xs">
-              <div><dt class="text-[10px] text-slate-400">支持阶段</dt><dd class="mt-0.5 text-slate-700" x-text="axiomToolPhases(selectedAxiomToolRecord()) || '—'"></dd></div>
-              <div><dt class="text-[10px] text-slate-400">入口</dt><dd class="mt-0.5 font-mono text-slate-700 break-all" x-text="selectedAxiomToolRecord()?.entrypoint"></dd></div>
-              <div><dt class="text-[10px] text-slate-400">工具包路径</dt><dd class="mt-0.5 font-mono text-[11px] text-slate-600 break-all" x-text="selectedAxiomToolRecord()?.package_path"></dd></div>
-              <div><dt class="text-[10px] text-slate-400">Package Hash</dt><dd class="mt-0.5 font-mono text-[10px] text-slate-500 break-all" x-text="selectedAxiomToolRecord()?.package_hash"></dd></div>
-            </dl>
-            <div class="mt-3 flex flex-wrap gap-1.5"><template x-for="tag in (selectedAxiomToolRecord()?.risk_tags || [])" :key="`detail-risk-${tag}`"><span class="px-2 py-1 rounded-lg border border-amber-100 bg-amber-50 text-[10px] text-amber-700" x-text="axiomToolRiskLabel(tag)"></span></template><span x-show="(selectedAxiomToolRecord()?.risk_tags || []).length === 0" class="text-[11px] text-slate-400">未声明风险标签</span></div>
-          </div>
-
-          <div class="rounded-2xl border border-slate-200 bg-white p-5">
-            <h3 class="text-sm font-semibold text-slate-800">模型使用提示</h3>
-            <p class="mt-1 text-xs text-slate-400">Pi 自动注入 Tool 描述、参数 Schema 与 promptGuidelines；阶段 Prompt 不重复复制工具正文。</p>
-            <ul class="mt-3 space-y-2"><template x-for="(line, index) in axiomToolPromptGuidelines(selectedAxiomToolRecord())" :key="`guide-${index}`"><li class="rounded-lg bg-slate-50/70 px-3 py-2 text-xs leading-5 text-slate-600" x-text="line"></li></template><li x-show="axiomToolPromptGuidelines(selectedAxiomToolRecord()).length === 0" class="text-xs text-slate-400">该工具包没有额外提示。</li></ul>
-          </div>
+          <div class="rounded-2xl border border-slate-200 bg-white p-5"><h3 class="text-sm font-semibold text-slate-800">工具契约</h3><dl class="mt-3 space-y-2 text-xs"><div><dt class="text-[10px] text-slate-400">支持阶段</dt><dd class="mt-0.5 text-slate-700" x-text="axiomToolPhases(selectedAxiomToolRecord()) || '—'"></dd></div><div><dt class="text-[10px] text-slate-400">入口</dt><dd class="mt-0.5 font-mono text-slate-700 break-all" x-text="selectedAxiomToolRecord()?.entrypoint"></dd></div><div><dt class="text-[10px] text-slate-400">工具包路径</dt><dd class="mt-0.5 font-mono text-[11px] text-slate-600 break-all" x-text="selectedAxiomToolRecord()?.package_path"></dd></div><div><dt class="text-[10px] text-slate-400">Package Hash</dt><dd class="mt-0.5 font-mono text-[10px] text-slate-500 break-all" x-text="selectedAxiomToolRecord()?.package_hash"></dd></div></dl></div>
+          <div class="rounded-2xl border border-slate-200 bg-white p-5"><h3 class="text-sm font-semibold text-slate-800">模型使用提示</h3><p class="mt-1 text-xs text-slate-400">Pi 自动注入描述、Schema 和 promptGuidelines。</p><ul class="mt-3 space-y-2"><template x-for="(line, index) in axiomToolPromptGuidelines(selectedAxiomToolRecord())" :key="`guide-${index}`"><li class="rounded-lg bg-slate-50/70 px-3 py-2 text-xs leading-5 text-slate-600" x-text="line"></li></template><li x-show="axiomToolPromptGuidelines(selectedAxiomToolRecord()).length === 0" class="text-xs text-slate-400">该工具包没有额外提示。</li></ul></div>
         </div>
-
         <div class="rounded-2xl border border-slate-200 bg-white p-5">
-          <h3 class="text-sm font-semibold text-slate-800">参数 Schema</h3>
-          <div class="mt-3 overflow-x-auto rounded-xl border border-slate-200">
-            <table class="w-full text-left text-xs">
-              <thead class="bg-slate-50 text-[10px] text-slate-400"><tr><th class="px-3 py-2">参数</th><th class="px-3 py-2">类型</th><th class="px-3 py-2">要求</th><th class="px-3 py-2">说明</th></tr></thead>
-              <tbody class="divide-y divide-slate-100"><template x-for="param in axiomToolSchemaProperties(selectedAxiomToolRecord())" :key="param.name"><tr><td class="px-3 py-2 font-mono font-semibold text-slate-700" x-text="param.name"></td><td class="px-3 py-2 font-mono text-blue-600" x-text="param.type"></td><td class="px-3 py-2" :class="param.required ? 'text-rose-600' : 'text-slate-400'" x-text="param.required ? '必填' : '可选'"></td><td class="px-3 py-2 text-slate-500"><span x-text="param.description || '—'"></span><span x-show="param.default !== undefined" class="ml-2 text-[10px] text-slate-400" x-text="`默认 ${JSON.stringify(param.default)}`"></span></td></tr></template><tr x-show="axiomToolSchemaProperties(selectedAxiomToolRecord()).length === 0"><td colspan="4" class="px-3 py-8 text-center text-slate-400">此工具没有参数。</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="rounded-2xl border border-slate-200 bg-white p-5">
-          <div class="flex items-start justify-between gap-4">
-            <div><h3 class="text-sm font-semibold text-slate-800">Worker × 阶段绑定矩阵</h3><p class="mt-1 text-xs text-slate-400">从 Tool 侧修改，与 Worker 页面使用同一组绑定行。停用或缺失工具时保留原绑定，但不可新增。</p></div>
-            <button @click="saveAxiomToolBindings(selectedAxiomToolRecord())" :disabled="selectedAxiomToolRecord()?.status !== 'ready' || !selectedAxiomToolRecord()?.enabled || axiomToolBindingsSaving[selectedAxiomToolRecord()?.key]" class="px-3 py-1.5 rounded-lg bg-brand-500 text-xs text-white hover:bg-brand-600 disabled:opacity-40" x-text="axiomToolBindingsSaving[selectedAxiomToolRecord()?.key] ? '保存中…' : '保存矩阵'"></button>
-          </div>
-          <div class="mt-4 overflow-x-auto rounded-xl border border-slate-200">
-            <table class="w-full text-left text-xs min-w-[620px]">
-              <thead class="bg-slate-50"><tr><th class="px-3 py-2 text-[10px] text-slate-400">Worker</th><template x-for="phase in ['bootstrap','reason','explore']" :key="`matrix-head-${phase}`"><th class="px-3 py-2 text-center text-[10px] text-slate-400" x-text="axiomPhaseLabel(phase)"></th></template></tr></thead>
-              <tbody class="divide-y divide-slate-100">
-                <template x-for="worker in (axiomWorkers || [])" :key="`matrix-${worker.name}`">
-                  <tr><td class="px-3 py-3"><div class="font-medium text-slate-700" x-text="worker.name"></div><div class="text-[10px] text-slate-400" x-text="axiomWorkerConnectionLabel(worker)"></div></td><template x-for="phase in ['bootstrap','reason','explore']" :key="`${worker.name}-${phase}`"><td class="px-3 py-3 text-center"><button type="button" @click="toggleAxiomToolDraft(selectedAxiomToolRecord(), worker.name, phase)" :disabled="!axiomToolSupports(selectedAxiomToolRecord(), phase) || selectedAxiomToolRecord()?.status !== 'ready' || !selectedAxiomToolRecord()?.enabled" class="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] disabled:opacity-35" :class="axiomToolDraftSelected(selectedAxiomToolRecord(), worker.name, phase) ? 'border-brand-200 bg-brand-50 text-brand-700' : 'border-slate-200 bg-slate-50 text-slate-500'"><span x-text="axiomToolDraftSelected(selectedAxiomToolRecord(), worker.name, phase) ? '✓ 已绑定' : '未绑定'"></span><span x-show="axiomToolBindingSelected(selectedAxiomToolRecord(), worker.name, phase) && !axiomToolBindingEffective(selectedAxiomToolRecord(), worker.name, phase)" class="text-amber-600" :title="axiomToolBindingReason(selectedAxiomToolRecord(), worker.name, phase)">休眠</span></button></td></template></tr>
-                </template>
-                <tr x-show="(axiomWorkers || []).length === 0"><td colspan="4" class="px-3 py-10 text-center text-slate-400">暂无 Worker。</td></tr>
-              </tbody>
-            </table>
-          </div>
+          <div class="flex items-start justify-between gap-4"><div><h3 class="text-sm font-semibold text-slate-800">Worker 可见性</h3><p class="mt-1 text-xs text-slate-400">此处只读；扩展 Tool 的阶段分配统一在 Worker 能力抽屉修改。</p></div><button @click="navigateToWorkerCapability('axiom_tool', selectedAxiomToolRecord()?.key)" class="px-3 py-1.5 rounded-lg border border-brand-200 bg-brand-50 text-xs text-brand-700">前往 Worker 能力管理</button></div>
+          <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3"><template x-for="phase in ['bootstrap','reason','explore']" :key="`extension-tool-readonly-${phase}`"><div class="rounded-xl border p-3" :class="phaseCapabilityAssigned(axiomToolCapabilityRecord(selectedAxiomToolRecord()), phase) ? 'border-emerald-200 bg-emerald-50/60' : 'border-slate-200 bg-slate-50/60'"><div class="flex items-center justify-between"><strong class="text-xs text-slate-700" x-text="`${axiomPhaseLabel(phase)} Worker`"></strong><span class="text-[10px]" :class="phaseCapabilityAssigned(axiomToolCapabilityRecord(selectedAxiomToolRecord()), phase) ? 'text-emerald-600' : 'text-slate-400'" x-text="phaseCapabilityAssigned(axiomToolCapabilityRecord(selectedAxiomToolRecord()), phase) ? '✓ 已分配' : '未分配'"></span></div><p x-show="axiomToolCapabilityRecord(selectedAxiomToolRecord())?.inactive_reasons?.[phase]" class="mt-2 text-[10px] text-amber-600" x-text="axiomToolCapabilityRecord(selectedAxiomToolRecord())?.inactive_reasons?.[phase]"></p></div></template></div>
+          <div class="mt-3 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2 text-[11px] text-slate-500">新 Lease 只加载本阶段有效的扩展 Tool；Explore Conclude 不加载扩展 Tool。</div>
         </div>
       </div>
     </section>
-    <section x-show="!selectedAxiomToolRecord()" class="flex items-center justify-center bg-slate-50 text-sm text-slate-400">选择一个 AXIOM Tool 查看详情和绑定。</section>
+    <section x-show="!selectedAxiomToolRecord()" class="flex items-center justify-center bg-slate-50 text-sm text-slate-400">当前没有扩展 Tool。</section>
   </main>
 </div>

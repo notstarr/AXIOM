@@ -31,6 +31,7 @@ from axiom.dispatcher.tool_path import (
     prepare_runtime_bin,
 )
 from axiom.modules.execution.schemas import ActivityCommand, ExecutionInput
+from axiom.modules.phase_capabilities.builtins import native_tool_names
 from axiom.modules.reason.schemas import ReasonWorkspace
 from axiom.modules.token_usage.schemas import TokenUsageBatchCommand
 from axiom.modules.workers.pi_config import PiWorkerConfig
@@ -50,6 +51,16 @@ CONTEXT_ATTENTION_SYSTEM_PROMPT = (
     "读取高价值 Context 后、进行任何探测、规划、漏洞判断或产物整理前，必须运行 "
     "axiom skill path whatisvul 并完整读取返回目录中的 SKILL.md。读取失败时先运行 "
     "axiom skill doctor whatisvul 排障并重试；不得用记忆、常识或其它 Skill 替代。"
+)
+NO_BASH_CONTEXT_ATTENTION_SYSTEM_PROMPT = (
+    "在开始整理任何产物前，必须先读取 Context Manifest，并完整读取其中的 hints.json、"
+    "knowledge.json、vulnerabilities.json；再按需展开 Fact、Intent、Todo、Artifact、Evidence "
+    "和 Goal Evaluation。Task Hint 是任务级约束，Project Knowledge 是业务背景，Skill 是执行"
+    "方法，已有漏洞及 status_reason 必须用于避免重复判断。冲突时遵循：系统规则/Scope/阶段"
+    "合同 > Task Hint > Project Knowledge > Skill 方法论 > 已有漏洞及状态原因 > 普通 Context "
+    "与工具输出。本收口没有 Bash，不得调用 axiom skill path/doctor；必须复用当前会话执行阶段"
+    "已经读取的 whatisvul/SKILL.md。若执行阶段未能读取，只能如实整理已有材料，不能凭记忆补造"
+    "漏洞标准或重新探测。"
 )
 
 
@@ -79,6 +90,8 @@ class PiBootstrapExecutor:
         token_usage_reporter: Callable[[TokenUsageBatchCommand], None] | None = None,
         api_url: str = "http://127.0.0.1:8899",
         service_token: str = "",
+        intervention_poller: Callable[[], list[tuple[str, str]]] | None = None,
+        intervention_result_reporter: Callable[[str, bool, str], None] | None = None,
     ):
         self.worker = worker
         self.settings = PiSettings.model_validate(worker.config)
@@ -90,6 +103,8 @@ class PiBootstrapExecutor:
         self.token_usage_reporter = token_usage_reporter
         self.api_url = api_url.rstrip("/")
         self.service_token = service_token
+        self.intervention_poller = intervention_poller
+        self.intervention_result_reporter = intervention_result_reporter
         self._session_id: str | None = None
 
     def execute(self, execution_input: ExecutionInput, *, lease_active) -> object:
@@ -112,7 +127,7 @@ class PiBootstrapExecutor:
             ),
             lease_active=lease_active,
             timeout_seconds=execution_input.execute_timeout_seconds or 900,
-            tool_names=self.settings.tools,
+            tool_names=native_tool_names("bootstrap", "execute"),
         )
         if result.cancelled:
             raise LeaseLostError(result.cancel_reason or "worker cancelled")
@@ -137,7 +152,7 @@ class PiBootstrapExecutor:
             + f"\n收口原因：{reason}\n",
             lease_active=lease_active,
             timeout_seconds=execution_input.conclude_timeout_seconds or self.default_conclude_seconds,
-            tool_names=["read", "write", "edit"],
+            tool_names=native_tool_names("bootstrap", "conclude"),
             enable_axiom_tools=False,
         )
         if result.cancelled:
@@ -189,9 +204,19 @@ class PiBootstrapExecutor:
                     separators=(",", ":"),
                 ),
                 "AXIOM_TOOL_SNAPSHOT_PATH": execution_input.axiom_tool_snapshot_path or "",
+                "AXIOM_CAPABILITY_SNAPSHOT_PATH": execution_input.capability_snapshot_path or "",
+                "AXIOM_MCP_TOOL_NAMES": json.dumps(
+                    execution_input.mcp_tool_names,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
                 "AXIOM_PYTHON": sys.executable,
             }
         )
+        # Stage capability bindings are the runtime authority.  Apply their
+        # environment after the persisted model-backend config so stale legacy
+        # Worker MCP settings cannot leak tools into a new Lease.
+        environment.update(execution_input.capability_environment)
         if execution_input.intent_id:
             environment["AXIOM_INTENT_ID"] = execution_input.intent_id
         if execution_input.reason_run_id:
@@ -237,6 +262,7 @@ class PiBootstrapExecutor:
             axiom_tool_keys=(
                 execution_input.axiom_tool_keys if enable_axiom_tools else []
             ),
+            mcp_tool_names=execution_input.mcp_tool_names,
         )
         tracker = None
         if self.activity_reporter is not None or self.token_usage_reporter is not None:
@@ -266,6 +292,8 @@ class PiBootstrapExecutor:
                         prompt=prompt,
                         steer_after_seconds=steer_after_seconds,
                         steer_message=steer_message,
+                        intervention_poller=self.intervention_poller if execution_input.intent_kind == "explore" else None,
+                        intervention_result_reporter=self.intervention_result_reporter if execution_input.intent_kind == "explore" else None,
                     ),
                     should_cancel=should_cancel,
                     on_steer=lambda: self._report_soft_reminder(execution_input),
@@ -346,6 +374,7 @@ class PiBootstrapExecutor:
         mode: str = "json",
         axiom_tool_extensions: list[str] | None = None,
         axiom_tool_keys: list[str] | None = None,
+        mcp_tool_names: list[str] | None = None,
     ) -> list[str]:
         argv = [
             self.settings.binary,
@@ -358,7 +387,11 @@ class PiBootstrapExecutor:
             "--mode",
             mode,
             "--append-system-prompt",
-            CONTEXT_ATTENTION_SYSTEM_PROMPT,
+            (
+                CONTEXT_ATTENTION_SYSTEM_PROMPT
+                if "bash" in tool_names
+                else NO_BASH_CONTEXT_ATTENTION_SYSTEM_PROMPT
+            ),
         ]
         if self._session_id:
             argv.extend([self.settings.session_flag, self._session_id])
@@ -373,13 +406,25 @@ class PiBootstrapExecutor:
         # Keep the stage's native allowlist and add only this Lease's AXIOM
         # keys; unrelated AXIOM Tools remain neither loaded nor exposed.
         selected_keys = list(dict.fromkeys(axiom_tool_keys or []))
-        allowed_tools = list(dict.fromkeys([*tool_names, *selected_keys]))
+        selected_mcp_tools = list(dict.fromkeys(mcp_tool_names or []))
+        allowed_tools = list(
+            dict.fromkeys([*tool_names, *selected_mcp_tools, *selected_keys])
+        )
         if allowed_tools:
             argv.extend(["--tools", ",".join(allowed_tools)])
-        for path in dict.fromkeys([*self.settings.skill_paths, *(skill_paths or [])]):
+        # Skill exposure is stage-scoped.  ``settings.skill_paths`` is a
+        # legacy backend field and is intentionally not used for new Leases.
+        for path in dict.fromkeys(skill_paths or []):
             argv.extend(["--skill", path])
         if guard_enabled:
             extension = Path(__file__).with_name("extensions") / "axiom-guard" / "index.ts"
+            argv.extend(["--extension", str(extension)])
+        if selected_mcp_tools:
+            extension = (
+                Path(__file__).with_name("extensions")
+                / "axiom-mcp-tools"
+                / "index.ts"
+            )
             argv.extend(["--extension", str(extension)])
         selected_extensions = list(dict.fromkeys(axiom_tool_extensions or []))
         for extension in selected_extensions:
@@ -531,7 +576,7 @@ class PiReasonExecutor(PiBootstrapExecutor):
             ),
             lease_active=lease_active,
             timeout_seconds=execution_input.execute_timeout_seconds or 600,
-            tool_names=_reason_tool_names(self.settings.tools),
+            tool_names=native_tool_names("reason", "execute"),
             extra_environment={"AXIOM_REASON_WORKSPACE_ID": workspace.id},
         )
         if result.cancelled:
@@ -566,7 +611,7 @@ class PiReasonExecutor(PiBootstrapExecutor):
             lease_active=lease_active,
             timeout_seconds=execution_input.conclude_timeout_seconds
             or self.default_conclude_seconds,
-            tool_names=_reason_tool_names(self.settings.tools),
+            tool_names=native_tool_names("reason", "conclude"),
             extra_environment={"AXIOM_REASON_WORKSPACE_ID": workspace.id},
             enable_axiom_tools=False,
         )
@@ -609,7 +654,7 @@ class PiExploreExecutor(PiBootstrapExecutor):
             ),
             lease_active=lease_active,
             timeout_seconds=timeout_seconds,
-            tool_names=self.settings.tools,
+            tool_names=native_tool_names("explore", "execute"),
             rpc=True,
             steer_after_seconds=steer_after_seconds,
             steer_message=_explore_soft_reminder(remaining_seconds),
@@ -640,7 +685,7 @@ class PiExploreExecutor(PiBootstrapExecutor):
             lease_active=lease_active,
             timeout_seconds=execution_input.conclude_timeout_seconds
             or self.default_conclude_seconds,
-            tool_names=["read", "write", "edit", "bash"],
+            tool_names=native_tool_names("explore", "conclude"),
             rpc=True,
             enable_axiom_tools=False,
         )
@@ -667,11 +712,6 @@ def _message_text(message: dict[str, Any]) -> list[str]:
 
 def _format_skill_directories(paths: list[str]) -> str:
     return "\n".join(f"- `{path}`" for path in paths) or "- （当前没有可用 Skill 目录）"
-
-
-def _reason_tool_names(configured: list[str]) -> list[str]:
-    """Keep the control-plane shell available even in a restricted Pi config."""
-    return list(dict.fromkeys([*configured, "bash"]))
 
 
 def _explore_soft_reminder(remaining_seconds: int) -> str:

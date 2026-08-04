@@ -21,12 +21,15 @@ from axiom.modules.goals.api import router as goals_router
 from axiom.modules.graph.api import router as graph_router
 from axiom.modules.projects.api import router as projects_router
 from axiom.modules.mcp.api import router as mcp_router
+from axiom.modules.phase_capabilities.api import router as phase_capabilities_router
 from axiom.modules.reason.api import router as reason_router
 from axiom.modules.settings.api import router as settings_router
 from axiom.modules.tasks.api import router as tasks_router
 from axiom.modules.todos.api import router as todos_router
 from axiom.modules.token_usage.api import router as token_usage_router
+from axiom.modules.interventions.api import router as interventions_router
 from axiom.modules.vulnerabilities.api import router as vulnerabilities_router
+from axiom.modules.workers.api import phase_router as worker_phases_router
 from axiom.modules.workers.api import router as workers_router
 
 
@@ -37,6 +40,8 @@ router.include_router(reason_router)
 router.include_router(tasks_router)
 router.include_router(graph_router)
 router.include_router(axiom_tools_router)
+router.include_router(phase_capabilities_router)
+router.include_router(worker_phases_router)
 router.include_router(workers_router)
 router.include_router(dispatch_router)
 router.include_router(diagnostics_router)
@@ -57,3 +62,4 @@ router.include_router(skills_router)
 router.include_router(guard_router)
 router.include_router(goals_router)
 router.include_router(token_usage_router)
+router.include_router(interventions_router)

@@ -20,6 +20,7 @@ from axiom.shared.errors import ConflictError, NotFoundError
 
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _STATE_FILENAME = ".skill-state.json"
+MANDATORY_COMMON_SKILLS = frozenset({"whatisvul"})
 
 
 class SkillService:
@@ -30,6 +31,7 @@ class SkillService:
         self.managed_root = (data_dir / "skills").resolve()
         self.bundled_root = (Path(__file__).parents[2] / "dispatcher" / "skills").resolve()
         self.managed_root.mkdir(parents=True, exist_ok=True)
+        self._ensure_mandatory_enabled()
 
     def directories(self) -> list[str]:
         return [str(path) for path in (self.managed_root, self.bundled_root) if path.is_dir()]
@@ -70,6 +72,14 @@ class SkillService:
 
     def save(self, name: str, command: SaveSkill) -> SkillContent:
         name = self._name(name)
+        if (
+            command.enabled is not None
+            and not command.enabled
+            and name in MANDATORY_COMMON_SKILLS
+        ):
+            raise ConflictError(
+                f"Skill {name} 是三阶段锁定的通用 Skill，不能停用"
+            )
         directory = self.managed_root / name
         existing_content = self._existing_content(name)
         directory.mkdir(parents=True, exist_ok=True)
@@ -93,6 +103,8 @@ class SkillService:
 
     def set_enabled(self, name: str, command: SetSkillEnabled) -> SkillContent:
         skill = self.get(name)
+        if skill.name in MANDATORY_COMMON_SKILLS and not command.enabled:
+            raise ConflictError(f"Skill {skill.name} 是三阶段锁定的通用 Skill，不能停用")
         self._set_enabled(skill.name, command.enabled)
         return self.get(skill.name)
 
@@ -183,6 +195,8 @@ class SkillService:
 
     def delete(self, name: str) -> None:
         name = self._name(name)
+        if name in MANDATORY_COMMON_SKILLS:
+            raise ConflictError(f"Skill {name} 是三阶段锁定的通用 Skill，不能删除")
         directory = self.managed_root / name
         path = directory / "SKILL.md"
         if not path.is_file():
@@ -207,6 +221,30 @@ class SkillService:
     def _set_enabled(self, name: str, enabled: bool) -> None:
         state = self._load_state()
         state[name] = bool(enabled)
+        self._write_state(state)
+
+    def _ensure_mandatory_enabled(self) -> None:
+        """Repair legacy state that disabled a now-mandatory shared Skill."""
+
+        available = {
+            path.parent.name
+            for root in (self.managed_root, self.bundled_root)
+            if root.is_dir()
+            for path in root.glob("*/SKILL.md")
+        }
+        mandatory = MANDATORY_COMMON_SKILLS & available
+        if not mandatory:
+            return
+        state = self._load_state()
+        changed = False
+        for name in mandatory:
+            if state.get(name) is False:
+                state[name] = True
+                changed = True
+        if changed:
+            self._write_state(state)
+
+    def _write_state(self, state: dict[str, bool]) -> None:
         temporary = self.managed_root / f".{_STATE_FILENAME}.tmp"
         temporary.write_text(
             json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n",

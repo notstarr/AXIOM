@@ -19,7 +19,7 @@ from axiom.modules.mcp.schemas import (
     MCPWorkerBindingView,
 )
 from axiom.modules.mcp.tables import mcp_servers, mcp_tools
-from axiom.modules.workers.schemas import UpsertWorker
+from axiom.modules.phase_capabilities.service import PhaseCapabilityService
 from axiom.modules.workers.service import WorkerService
 from axiom.shared.clock import utcnow
 from axiom.shared.errors import ConflictError, NotFoundError
@@ -102,8 +102,14 @@ def parse_mcp_config(content: str, format: str = "auto") -> tuple[str, list[MCPS
 
 
 class MCPService:
-    def __init__(self, engine: Engine):
+    def __init__(
+        self,
+        engine: Engine,
+        *,
+        phase_capabilities: PhaseCapabilityService | None = None,
+    ):
         self.engine = engine
+        self.phase_capabilities = phase_capabilities
 
     def list(self) -> list[MCPServer]:
         with self.engine.connect() as conn:
@@ -167,6 +173,22 @@ class MCPService:
             }
             conn.execute(delete(mcp_tools).where(mcp_tools.c.server_id == server_id))
             self._insert_tools(conn, server_id, result.tools, now, previous=previous)
+            current_ids = set(
+                conn.execute(
+                    select(mcp_tools.c.id).where(mcp_tools.c.server_id == server_id)
+                ).scalars()
+            )
+            if self.phase_capabilities is not None:
+                for item in previous.values():
+                    if item["id"] in current_ids:
+                        continue
+                    self.phase_capabilities.repository.replace_capability(
+                        conn,
+                        capability_kind="mcp_tool",
+                        capability_key=item["id"],
+                        scopes=[],
+                        now=now,
+                    )
             conn.execute(
                 mcp_servers.update()
                 .where(mcp_servers.c.id == server_id)
@@ -214,8 +236,22 @@ class MCPService:
 
     def delete(self, server_id: str) -> None:
         with self.engine.begin() as conn:
+            tool_ids = list(
+                conn.execute(
+                    select(mcp_tools.c.id).where(mcp_tools.c.server_id == server_id)
+                ).scalars()
+            )
             if not conn.execute(delete(mcp_servers).where(mcp_servers.c.id == server_id)).rowcount:
                 raise NotFoundError(f"MCP server not found: {server_id}")
+            if self.phase_capabilities is not None:
+                for tool_id in tool_ids:
+                    self.phase_capabilities.repository.replace_capability(
+                        conn,
+                        capability_kind="mcp_tool",
+                        capability_key=tool_id,
+                        scopes=[],
+                        now=utcnow(),
+                    )
 
     def replace_tools(self, server_id: str, tools: Iterable[dict[str, Any]]) -> list[MCPTool]:
         now = utcnow()
@@ -224,8 +260,37 @@ class MCPService:
                 select(mcp_servers.c.id).where(mcp_servers.c.id == server_id)
             ).scalar_one_or_none() is None:
                 raise NotFoundError(f"MCP server not found: {server_id}")
+            previous_ids = set(
+                conn.execute(
+                    select(mcp_tools.c.id).where(mcp_tools.c.server_id == server_id)
+                ).scalars()
+            )
             conn.execute(delete(mcp_tools).where(mcp_tools.c.server_id == server_id))
             self._insert_tools(conn, server_id, tools, now)
+            current_ids = set(
+                conn.execute(
+                    select(mcp_tools.c.id).where(mcp_tools.c.server_id == server_id)
+                ).scalars()
+            )
+            if self.phase_capabilities is not None:
+                for tool_id in previous_ids - current_ids:
+                    self.phase_capabilities.repository.replace_capability(
+                        conn,
+                        capability_kind="mcp_tool",
+                        capability_key=tool_id,
+                        scopes=[],
+                        now=now,
+                    )
+            conn.execute(
+                mcp_servers.update()
+                .where(mcp_servers.c.id == server_id)
+                .values(
+                    discovery_status="ready",
+                    discovery_error="",
+                    discovered_at=now,
+                    updated_at=now,
+                )
+            )
             return self._tools(conn, [server_id]).get(server_id, [])
 
     def set_tool_enabled(self, server_id: str, tool_id: str, enabled: bool) -> MCPTool:
@@ -269,47 +334,14 @@ class MCPService:
         worker_name: str,
         body: MCPWorkerBinding,
     ) -> MCPWorkerBindingView:
-        worker = WorkerService(self.engine).get(worker_name)
-        with self.engine.connect() as conn:
-            rows = conn.execute(
-                select(mcp_servers).where(
-                    mcp_servers.c.id.in_(body.server_ids),
-                    mcp_servers.c.disabled.is_(False),
-                )
-            ).mappings().all() if body.server_ids else []
-        found_ids = {row["id"] for row in rows}
-        missing = set(body.server_ids) - found_ids
-        if missing:
-            raise NotFoundError(f"MCP servers not found or disabled: {', '.join(sorted(missing))}")
-        selected = {row["name"]: self._runtime_config(row) for row in rows}
-        config = dict(worker.config)
-        config["mcp"] = body.model_dump(mode="json")
-        environment = dict(config.get("environment") or {})
-        environment.update(
-            {
-                "PI_MCP_ENABLED": "true" if body.enabled else "false",
-                "PI_MCP_CONFIG_JSON": json.dumps(
-                    {"mcpServers": selected},
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ),
-                "PI_MCP_ALLOWED_SERVERS": ",".join(selected),
-                "PI_MCP_ALLOWED_TOOLS": ",".join(dict.fromkeys(body.allowed_tools)),
-            }
+        del body
+        # The old Worker-level endpoint remains readable for existing pages,
+        # but writes are intentionally rejected.  Otherwise it would create a
+        # second source of truth next to phase_capability_bindings.
+        WorkerService(self.engine).get(worker_name)
+        raise ConflictError(
+            "具体模型后端不再持有 MCP Tool 绑定；请使用通用/Bootstrap/Reason/Explore 能力接口"
         )
-        config["environment"] = environment
-        WorkerService(self.engine).upsert(
-            worker_name,
-            UpsertWorker(
-                worker_type=worker.worker_type,
-                capabilities=worker.capabilities,
-                max_running=worker.max_running,
-                priority=worker.priority,
-                config=config,
-                disabled=worker.disabled,
-            ),
-        )
-        return self.worker_binding(worker_name)
 
     @staticmethod
     def _values(

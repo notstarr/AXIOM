@@ -44,6 +44,307 @@ def test_migrations_reach_head_without_metadata_drift(tmp_path) -> None:
         engine.dispose()
 
 
+def test_phase_capability_migration_converts_nonempty_legacy_bindings_and_downgrades(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "phase-capabilities-roundtrip.db"
+    config = alembic_config(database_path)
+    command.upgrade(config, "20260803_0030")
+    now = "2026-08-03T00:00:00Z"
+    engine = create_sqlite_engine(database_path)
+    try:
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "INSERT INTO workers "
+                "(name, worker_type, capabilities_json, max_running, priority, "
+                "config_json, disabled, cooldown_until, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "legacy-backend",
+                    "pi",
+                    json.dumps(["bootstrap", "explore"]),
+                    2,
+                    0,
+                    json.dumps(
+                        {
+                            "mcp": {
+                                "enabled": True,
+                                "server_ids": ["mcp_legacy"],
+                                "allowed_tools": ["mcp_tool_selected"],
+                            }
+                        }
+                    ),
+                    False,
+                    None,
+                    now,
+                    now,
+                ),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO axiom_tools "
+                "(key, title, version, description, source, package_path, entrypoint, "
+                "manifest_json, input_schema_json, supported_phases_json, risk_tags_json, "
+                "package_hash, status, status_error, enabled, discovered_at, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "legacy_tool",
+                    "Legacy Tool",
+                    "1.0.0",
+                    "legacy",
+                    "managed",
+                    "/tmp/legacy_tool",
+                    "index.ts",
+                    "{}",
+                    json.dumps({"type": "object"}),
+                    json.dumps(["bootstrap", "reason", "explore"]),
+                    "[]",
+                    "hash",
+                    "ready",
+                    "",
+                    1,
+                    now,
+                    now,
+                    now,
+                ),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO worker_axiom_tool_bindings "
+                "(worker_name, phase, tool_key, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("legacy-backend", "reason", "legacy_tool", now, now),
+            )
+            conn.exec_driver_sql(
+                "INSERT INTO mcp_servers "
+                "(id, name, transport, command, args_json, env_json, url, source_format, "
+                "raw_config_json, disabled, discovery_status, discovery_error, discovered_at, "
+                "server_info_json, instructions, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "mcp_legacy",
+                    "legacy-server",
+                    "stdio",
+                    "echo",
+                    "[]",
+                    "{}",
+                    "",
+                    "json",
+                    "{}",
+                    False,
+                    "ready",
+                    "",
+                    now,
+                    "{}",
+                    "",
+                    now,
+                    now,
+                ),
+            )
+            for tool_id, name in (
+                ("mcp_tool_selected", "selected"),
+                ("mcp_tool_sibling", "sibling"),
+            ):
+                conn.exec_driver_sql(
+                    "INSERT INTO mcp_tools "
+                    "(id, server_id, name, title, description, input_schema_json, "
+                    "output_schema_json, annotations_json, enabled, source, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        tool_id,
+                        "mcp_legacy",
+                        name,
+                        name,
+                        "legacy",
+                        json.dumps({"type": "object"}),
+                        "{}",
+                        "{}",
+                        True,
+                        "manual",
+                        now,
+                        now,
+                    ),
+                )
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, "head")
+    upgraded = create_sqlite_engine(database_path)
+    try:
+        with upgraded.connect() as conn:
+            rows = conn.exec_driver_sql(
+                "SELECT scope, capability_kind, capability_key "
+                "FROM phase_capability_bindings ORDER BY scope, capability_kind, capability_key"
+            ).all()
+            assert rows == [
+                ("bootstrap", "mcp_tool", "mcp_tool_selected"),
+                ("common", "skill", "whatisvul"),
+                ("explore", "mcp_tool", "mcp_tool_selected"),
+                ("reason", "axiom_tool", "legacy_tool"),
+            ]
+            assert conn.exec_driver_sql(
+                "SELECT COUNT(*) FROM worker_axiom_tool_bindings"
+            ).scalar_one() == 1
+            assert conn.exec_driver_sql("PRAGMA integrity_check").scalar_one() == "ok"
+            assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+    finally:
+        upgraded.dispose()
+
+    command.downgrade(config, "20260803_0030")
+    downgraded = create_sqlite_engine(database_path)
+    try:
+        with downgraded.connect() as conn:
+            assert "phase_capability_bindings" not in inspect(conn).get_table_names()
+            assert conn.exec_driver_sql(
+                "SELECT worker_name, phase, tool_key FROM worker_axiom_tool_bindings"
+            ).all() == [("legacy-backend", "reason", "legacy_tool")]
+            assert conn.exec_driver_sql("PRAGMA integrity_check").scalar_one() == "ok"
+            assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+    finally:
+        downgraded.dispose()
+
+
+def test_placeholder_tool_retirement_removes_only_catalog_and_binding_rows(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "placeholder-tool-retirement.db"
+    config = alembic_config(database_path)
+    command.upgrade(config, "20260803_0031")
+    now = "2026-08-04T00:00:00Z"
+    retired = [
+        "search_text",
+        "find_files",
+        "list_directory",
+        "http_request",
+        "run_python",
+    ]
+    engine = create_sqlite_engine(database_path)
+    try:
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "INSERT INTO workers "
+                "(name, worker_type, capabilities_json, max_running, priority, "
+                "config_json, disabled, cooldown_until, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "legacy-placeholder-backend",
+                    "pi",
+                    json.dumps(["bootstrap", "reason", "explore"]),
+                    1,
+                    0,
+                    "{}",
+                    False,
+                    None,
+                    now,
+                    now,
+                ),
+            )
+            for key in [*retired, "real_extension"]:
+                conn.exec_driver_sql(
+                    "INSERT INTO axiom_tools "
+                    "(key, title, version, description, source, package_path, "
+                    "entrypoint, manifest_json, input_schema_json, "
+                    "supported_phases_json, risk_tags_json, package_hash, status, "
+                    "status_error, enabled, discovered_at, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        key,
+                        key,
+                        "1.0.0",
+                        "migration fixture",
+                        "bundled" if key in retired else "managed",
+                        f"/tmp/{key}",
+                        "index.ts",
+                        "{}",
+                        json.dumps({"type": "object", "properties": {}}),
+                        json.dumps(["bootstrap", "reason", "explore"]),
+                        "[]",
+                        f"hash-{key}",
+                        "ready",
+                        "",
+                        True,
+                        now,
+                        now,
+                        now,
+                    ),
+                )
+                conn.exec_driver_sql(
+                    "INSERT INTO worker_axiom_tool_bindings "
+                    "(worker_name, phase, tool_key, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    ("legacy-placeholder-backend", "explore", key, now, now),
+                )
+                conn.exec_driver_sql(
+                    "INSERT INTO phase_capability_bindings "
+                    "(scope, capability_kind, capability_key, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    ("explore", "axiom_tool", key, now, now),
+                )
+            conn.exec_driver_sql(
+                "INSERT INTO audit_events "
+                "(id, project_id, task_id, intent_id, reason_run_id, workspace_id, "
+                "worker, event_type, level, message, payload_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "evt_placeholder_history",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "legacy-placeholder-backend",
+                    "axiom_tool.executed",
+                    "info",
+                    "historical search_text call",
+                    json.dumps(
+                        {"category": "axiom_tool", "tool_key": "search_text"}
+                    ),
+                    now,
+                ),
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, "head")
+    upgraded = create_sqlite_engine(database_path)
+    try:
+        with upgraded.connect() as conn:
+            assert conn.exec_driver_sql(
+                "SELECT key FROM axiom_tools ORDER BY key"
+            ).scalars().all() == ["real_extension"]
+            assert conn.exec_driver_sql(
+                "SELECT tool_key FROM worker_axiom_tool_bindings ORDER BY tool_key"
+            ).scalars().all() == ["real_extension"]
+            assert conn.exec_driver_sql(
+                "SELECT capability_key FROM phase_capability_bindings "
+                "WHERE capability_kind = 'axiom_tool' ORDER BY capability_key"
+            ).scalars().all() == ["real_extension"]
+            audit = conn.exec_driver_sql(
+                "SELECT message, payload_json FROM audit_events "
+                "WHERE id = 'evt_placeholder_history'"
+            ).one()
+            assert audit[0] == "historical search_text call"
+            assert json.loads(audit[1])["tool_key"] == "search_text"
+            assert conn.exec_driver_sql("PRAGMA integrity_check").scalar_one() == "ok"
+            assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+    finally:
+        upgraded.dispose()
+
+    command.downgrade(config, "20260803_0031")
+    downgraded = create_sqlite_engine(database_path)
+    try:
+        with downgraded.connect() as conn:
+            assert conn.exec_driver_sql(
+                "SELECT key FROM axiom_tools ORDER BY key"
+            ).scalars().all() == ["real_extension"]
+            assert conn.exec_driver_sql(
+                "SELECT COUNT(*) FROM audit_events "
+                "WHERE id = 'evt_placeholder_history'"
+            ).scalar_one() == 1
+            assert conn.exec_driver_sql("PRAGMA integrity_check").scalar_one() == "ok"
+            assert conn.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+    finally:
+        downgraded.dispose()
+
+
 def test_archive_batch_migration_wraps_all_historical_archived_entity_types(
     tmp_path,
 ) -> None:

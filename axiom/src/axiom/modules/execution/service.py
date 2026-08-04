@@ -79,6 +79,7 @@ class ExecutionService:
         self.reason = reason
         self.skills = skills
         self.axiom_tools = axiom_tools
+        self.phase_capabilities = axiom_tools.phase_capabilities
         self.credentials = CredentialRepository()
         self.vulnerabilities = VulnerabilityRepository()
         self.audit = AuditService(engine)
@@ -188,12 +189,10 @@ class ExecutionService:
                 lease_id=command.lease_id,
             )
         )
-        axiom_tool_keys, axiom_tool_extensions, axiom_tool_snapshot_path = (
-            self.axiom_tools.snapshot_for_lease(
-                worker_name=values["worker_name"],
-                phase=values["phase"],
-                run_dir=run_dir,
-            )
+        capabilities = self.phase_capabilities.snapshot_for_lease(
+            worker_name=values["worker_name"],
+            phase=values["phase"],
+            run_dir=run_dir,
         )
         return ExecutionInput(
             task_id=task_id,
@@ -209,7 +208,10 @@ class ExecutionService:
             origin=values["origin"],
             goal=values["goal"],
             hints=values["hints"],
-            skill_directories=self.skills.active_paths(),
+            skill_directories=capabilities.skill_directories,
+            mcp_tool_names=capabilities.mcp_tool_names,
+            capability_environment=capabilities.mcp_environment,
+            capability_snapshot_path=capabilities.capability_snapshot_path,
             guard_enabled=bool(row["guard_enabled"]),
             scope=values["scope"],
             run_dir=run_dir,
@@ -217,9 +219,9 @@ class ExecutionService:
             conclude_timeout_seconds=values["conclude_timeout_seconds"],
             context_revision=context.revision,
             context_manifest_path=context.manifest_path,
-            axiom_tool_keys=axiom_tool_keys,
-            axiom_tool_extensions=axiom_tool_extensions,
-            axiom_tool_snapshot_path=axiom_tool_snapshot_path,
+            axiom_tool_keys=capabilities.axiom_tool_keys,
+            axiom_tool_extensions=capabilities.axiom_tool_extensions,
+            axiom_tool_snapshot_path=capabilities.axiom_tool_snapshot_path,
         )
 
     def reason_input(
@@ -311,12 +313,10 @@ class ExecutionService:
                 lease_id=command.lease_id,
             )
         )
-        axiom_tool_keys, axiom_tool_extensions, axiom_tool_snapshot_path = (
-            self.axiom_tools.snapshot_for_lease(
-                worker_name=run.worker or "",
-                phase="reason",
-                run_dir=run_dir,
-            )
+        capabilities = self.phase_capabilities.snapshot_for_lease(
+            worker_name=run.worker or "",
+            phase="reason",
+            run_dir=run_dir,
         )
         return ExecutionInput(
             task_id=task_id,
@@ -333,7 +333,10 @@ class ExecutionService:
             origin=task.origin.original_input,
             goal=task.goal,
             hints=hints,
-            skill_directories=self.skills.active_paths(),
+            skill_directories=capabilities.skill_directories,
+            mcp_tool_names=capabilities.mcp_tool_names,
+            capability_environment=capabilities.mcp_environment,
+            capability_snapshot_path=capabilities.capability_snapshot_path,
             guard_enabled=task.guard_enabled,
             scope=task.scope.model_dump(mode="json"),
             run_dir=run_dir,
@@ -341,9 +344,9 @@ class ExecutionService:
             conclude_timeout_seconds=run.conclude_timeout_seconds,
             context_revision=context.revision,
             context_manifest_path=context.manifest_path,
-            axiom_tool_keys=axiom_tool_keys,
-            axiom_tool_extensions=axiom_tool_extensions,
-            axiom_tool_snapshot_path=axiom_tool_snapshot_path,
+            axiom_tool_keys=capabilities.axiom_tool_keys,
+            axiom_tool_extensions=capabilities.axiom_tool_extensions,
+            axiom_tool_snapshot_path=capabilities.axiom_tool_snapshot_path,
         )
 
     def start(self, *, task_id: str, intent_id: str, command: LeaseCommand) -> StartedIntent:

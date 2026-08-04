@@ -9,9 +9,9 @@
 - 工作区（Workspace）：`{workspace_id}`
 - 运行目录：`{run_dir}`
 
-使用 Axiom CLI 修正工作区。本轮新增 0 个执行意图是合法结果，但不得为了凑数重复派发，也不能把“没有新 Fact”“Todo 已是终态”或“当前没有开放 Explore”直接当成没有工作的证明。收口前必须依据当前 Goal、人工续跑说明/重点以及已读取的 findings/leads 判断：若存在材料性、当前可执行且尚无同义开放 Intent 的遗留方向，复用/恢复原 Todo（不得新建同义 Todo），必要时更新为 `active` 并派发非重复 Intent；只有确实没有材料性方向，或方向仅被预算、工具、凭证等外部条件阻塞且没有可执行替代时，才允许 0 Intent 并进入 `waiting`，并明确原因。目标达成时不得有新执行意图，且证据至少包含真实事实。不要写整体 JSON 文件。
+使用 Axiom CLI 修正工作区。收口时 `0` 个执行意图不是默认结果，必须通过严格门槛：若目标已达成，必须有真实 Fact 证据且没有未验证材料性方向；若目标未达成，必须完整检查所有 Todo、findings/leads、清单 Artifact、失败/取消 Intent 和历史执行意图。只要存在 `pending/active` Todo、未验证端点/资产、部分覆盖线索、失败后未复核方向或具体后续验证步骤，就必须复用/恢复 Todo 并派发非重复 Intent。只有具体、可复现且没有任何 Host、HTTP 方法、身份、参数、工具或攻击链替代路径的外部阻塞，才允许 0 Intent 进入 `waiting`；预算不足、没有新 Fact、当前没有开放 Explore、已经验证一小批高价值接口、单次工具失败或“看起来覆盖”均不满足条件。提交 0 Intent 时必须记录逐项检查结果和阻塞证据，不能用概括性结论替代。目标达成时不得有新执行意图，且证据至少包含真实事实。不要写整体 JSON 文件。
 
-先运行 `axiom reason status`，如果存在 `source_fact_id`，确认每个新 Fact 已通过待办来源、执行意图的 `from_fact` 或目标证据被消费；如果为空，仍要检查当前 Goal、人工续跑说明/重点和历史 findings/leads 是否要求恢复终态 Todo。先修正受新事实或上述规划依据影响的已有待办，再处理 `todo_review_ids`；完成这两步前不要补建待办或重复派发执行意图。人工说明可以指导恢复 Todo，但不是 Fact，不能写成伪造的 Fact source 或 Goal evidence。
+先运行 `axiom reason status`，如果存在 `source_fact_ids`，确认每个新 Fact 已通过待办来源、执行意图的 `from_fact` 或目标证据被消费；如果为空，仍要检查当前 Goal、人工续跑说明/重点和历史 findings/leads 是否要求恢复终态 Todo。Fact、Finding、Lead 或 Artifact 中只要留下 API、资产或路由清单，并明确有未验证项，就必须在收口前确保对应 Todo 仍为 `active`，并派发尚未验证的后续批次；不得把枚举完成当作安全验证完成，也不得以没有新 Fact 为由提交 0 个 Intent。先修正受新事实或上述规划依据影响的已有待办，再处理 `todo_review_ids`；完成这两步前不要补建待办或重复派发执行意图。人工说明可以指导恢复 Todo，但不是 Fact，不能写成伪造的 Fact source 或 Goal evidence。提交 0 Intent 前还必须逐项记录已检查的 Todo、清单、线索、失败方向和可执行替代路径；任一项无法证明已收口，就继续派发具体的非重复 Intent。
 
 最后一条助手消息必须严格等于：
 

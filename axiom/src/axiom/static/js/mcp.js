@@ -3,18 +3,18 @@ window.AxiomModules.mcp = {
   methods: {
     async loadMcpPage() {
       try {
-        const [servers, workers] = await Promise.all([
+        const [servers] = await Promise.all([
           this.api('GET', '/mcp/servers'),
-          this.api('GET', '/mcp/workers'),
+          this.loadPhaseCapabilities?.(),
         ]);
         this.mcpServers = (servers || []).map(item => ({ ...item, _toolQuery: '', _discovering: false }));
-        this.mcpWorkers = (workers || []).map(item => ({
-          ...item,
-          worker: item.worker || item.worker_name,
-          _toolsText: (item.allowed_tools || []).join(', '),
-        }));
       } catch (error) { this.showToast(error.message, 'error'); }
     },
+
+    mcpCapabilityRecord(tool) {
+      return tool?.id ? this.phaseCapabilityRecord?.('mcp_tool', tool.id) || null : null;
+    },
+
     mcpTransportLabel(server) {
       if (server.url) return server.transport === 'sse' ? 'SSE' : 'HTTP';
       return 'stdio';
@@ -60,6 +60,7 @@ window.AxiomModules.mcp = {
       try {
         const updated = await this.api('POST', `/mcp/servers/${server.id}/discover`);
         Object.assign(server, updated);
+        await this.loadPhaseCapabilities?.();
         if (!quiet) this.showToast(updated.discovery_status === 'ready' ? `已发现 ${updated.tools.length} 个工具` : `工具发现失败：${updated.discovery_error}`, updated.discovery_status === 'ready' ? 'success' : 'error');
         return updated;
       } catch (error) {
@@ -72,6 +73,7 @@ window.AxiomModules.mcp = {
       try {
         const updated = await this.api('PATCH', `/mcp/servers/${server.id}/tools/${tool.id}`, { enabled: next });
         Object.assign(tool, updated);
+        await this.loadPhaseCapabilities?.();
       } catch (error) { this.showToast(error.message, 'error'); }
     },
     openMcpEditor(server = null) {
@@ -121,27 +123,6 @@ window.AxiomModules.mcp = {
     async deleteMcpPageServer(server) {
       if (!confirm(`删除 MCP Server「${server.name}」？`)) return;
       try { await this.api('DELETE', `/mcp/servers/${server.id}`); await this.loadMcpPage(); this.showToast('已删除'); }
-      catch (error) { this.showToast(error.message, 'error'); }
-    },
-    mcpWorkerHasServer(worker, server) {
-      return (worker.server_names || []).includes(server.name);
-    },
-    async toggleMcpWorkerServer(worker, server) {
-      const selected = new Set(worker.server_names || []);
-      selected.has(server.name) ? selected.delete(server.name) : selected.add(server.name);
-      const ids = this.mcpServers.filter(item => selected.has(item.name)).map(item => item.id);
-      try {
-        const updated = await this.api('PUT', `/mcp/workers/${encodeURIComponent(worker.worker)}`, { enabled: worker.enabled, server_ids: ids, allowed_tools: worker.allowed_tools || [] });
-        Object.assign(worker, updated); this.showToast('Worker 的 MCP 绑定已更新');
-      } catch (error) { this.showToast(error.message, 'error'); }
-    },
-    async toggleMcpWorker(worker) {
-      const ids = this.mcpServers.filter(item => (worker.server_names || []).includes(item.name)).map(item => item.id);
-      try { Object.assign(worker, await this.api('PUT', `/mcp/workers/${encodeURIComponent(worker.worker)}`, { enabled: !worker.enabled, server_ids: ids, allowed_tools: worker.allowed_tools || [] })); }
-      catch (error) { this.showToast(error.message, 'error'); }
-    },
-    async saveMcpWorkerTools(worker) {
-      try { Object.assign(worker, await this.api('PUT', `/mcp/workers/${encodeURIComponent(worker.worker)}`, { enabled: worker.enabled, server_ids: this.mcpServers.filter(item => (worker.server_names || []).includes(item.name)).map(item => item.id), allowed_tools: String(worker._toolsText || '').split(/[\n,]+/).map(item => item.trim()).filter(Boolean) })); this.showToast('工具权限已保存'); }
       catch (error) { this.showToast(error.message, 'error'); }
     },
   },

@@ -202,6 +202,23 @@ class AxiomRunner:
         if work.kind == "reason":
             return PiReasonExecutor(worker, **common)
         if work.kind == "explore":
+            claim_interventions = getattr(self.control_plane, "claim_interventions", None)
+            resolve_intervention = getattr(self.control_plane, "resolve_intervention", None)
+            if claim_interventions is not None and resolve_intervention is not None:
+                common.update(
+                    {
+                        "intervention_poller": lambda: [
+                            (item.id, item.message)
+                            for item in claim_interventions(work)
+                        ],
+                        "intervention_result_reporter": lambda intervention_id, success, error: resolve_intervention(
+                            work,
+                            intervention_id,
+                            success=success,
+                            error=error,
+                        ),
+                    }
+                )
             return PiExploreExecutor(worker, **common)
         raise RuntimeError(f"unsupported work kind: {work.kind}")
 

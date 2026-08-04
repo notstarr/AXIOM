@@ -1,156 +1,225 @@
 <div x-show="activePage === 'workers'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
   <header class="app-page-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
     <div>
-      <h2 class="text-base font-semibold text-slate-800">Worker 管理</h2>
-      <p class="text-xs text-slate-400 mt-0.5">管理 Worker 的运行配置、参与阶段和 AXIOM Tool 分配。</p>
+      <h2 class="text-base font-semibold text-slate-800">三阶段 Worker</h2>
+      <p class="text-xs text-slate-400 mt-0.5">以逻辑 Worker 为中心集中管理能力；模型后端配置保持独立。</p>
     </div>
     <div class="flex-1"></div>
-    <button @click="loadAxiomWorkersPage()" :disabled="axiomWorkersLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40">刷新</button>
-    <button @click="newAxiomWorker()" class="h-8 px-3 rounded-lg bg-brand-500 text-white text-xs hover:bg-brand-600">新增 Worker</button>
+    <div class="app-inset flex rounded-xl p-1">
+      <button type="button" @click="workerPageMode='manage'" class="rounded-lg px-3 py-1.5 text-xs transition" :class="workerPageMode === 'manage' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'">能力管理</button>
+      <button type="button" @click="workerPageMode='config'" class="rounded-lg px-3 py-1.5 text-xs transition" :class="workerPageMode === 'config' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'">后端配置</button>
+    </div>
+    <button @click="refreshAxiomWorkersPage()" :disabled="axiomWorkersLoading || workerPhasesLoading || phaseCapabilitiesLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40">刷新</button>
+    <button x-show="workerPageMode === 'config'" @click="newAxiomWorker()" class="h-8 px-3 rounded-lg bg-brand-500 text-white text-xs hover:bg-brand-600">新增模型后端</button>
   </header>
 
   <main class="flex-1 overflow-y-auto p-5 space-y-5">
-    <div class="rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-xs text-blue-700">
-      <strong>能力边界：</strong>这里的 AXIOM Tool 是 Pi Extension 注册的结构化工具；Pi 原生 read/write/edit/bash、Skill 和 MCP 分开管理，不会被混入此列表。
+    <div class="rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-xs leading-5 text-blue-700">
+      <strong>能力关系：</strong>系统只有三个逻辑 Worker。点击 Bootstrap、Reason 或 Explore Worker，在同一个抽屉中查看和调整全部能力。界面直接展示三个阶段；三阶段全选时底层自动保存为 common，新 Lease 开始生效。
     </div>
 
-    <section class="grid grid-cols-1 xl:grid-cols-[minmax(260px,0.8fr)_minmax(0,1.8fr)] gap-5 items-start">
-      <aside class="space-y-3">
-        <div class="flex items-center justify-between">
-          <h3 class="text-sm font-semibold text-slate-800">Workers <span class="text-xs font-normal text-slate-400" x-text="`(${(axiomWorkers || []).length})`"></span></h3>
-          <span class="text-[11px] text-slate-400" x-show="axiomWorkersLoading">加载中…</span>
+    <section>
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <h3 class="text-sm font-semibold text-slate-800">逻辑 Worker</h3>
+          <p class="mt-1 text-xs text-slate-400" x-text="workerPageMode === 'manage' ? '点击卡片打开集中能力抽屉。' : '选择阶段后配置它的模型后端池。'"></p>
         </div>
-        <template x-for="worker in (axiomWorkers || [])" :key="worker.name">
-          <button type="button" @click="selectAxiomWorker(worker)" class="w-full text-left rounded-2xl border p-4 transition card-hover"
-            :class="selectedAxiomWorker === worker.name ? 'border-brand-300 bg-brand-50/60 shadow-sm' : 'border-slate-200 bg-white hover:border-brand-200'">
+        <span x-show="workerPhasesLoading" class="text-xs text-slate-400">加载中…</span>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <template x-for="phase in (workerPhases || [])" :key="`logical-worker-${phase.phase}`">
+          <button type="button" @click="workerPageMode === 'manage' ? openWorkerCapabilityDrawer(phase.phase) : selectWorkerPhase(phase.phase)" class="rounded-2xl border p-4 text-left transition"
+            :class="((workerPageMode === 'manage' && workerCapabilityDrawerOpen && workerCapabilityDrawerPhase === phase.phase) || (workerPageMode === 'config' && selectedWorkerPhase === phase.phase)) ? 'border-brand-200 bg-brand-50/60 shadow-sm' : 'border-slate-200 bg-white hover:border-brand-200'">
             <div class="flex items-start gap-3">
-              <div class="w-9 h-9 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center text-xs font-bold shrink-0">PI</div>
+              <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-sm font-bold text-white" x-text="axiomPhaseShortLabel(phase.phase)"></span>
               <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2 flex-wrap">
-                  <h4 class="text-sm font-semibold text-slate-800 truncate" x-text="worker.name"></h4>
-                  <span class="px-1.5 py-0.5 rounded-md border text-[10px]" :class="axiomWorkerConnectionClass(worker)" x-text="axiomWorkerConnectionLabel(worker)"></span>
+                <div class="flex items-center justify-between gap-2">
+                  <h4 class="text-sm font-semibold text-slate-800" x-text="phase.title"></h4>
+                  <span class="rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-500" x-text="`${(phase.backends || []).length} 个后端`"></span>
                 </div>
-                <p class="mt-1 text-[11px] text-slate-500 truncate" x-text="worker.model || '未配置模型'"></p>
-                <div class="mt-2 flex items-center gap-2 text-[10px] text-slate-400">
-                  <span x-text="`${worker.running}/${worker.max_running} 运行中`"></span>
-                  <span>·</span><span x-text="`优先级 ${worker.priority}`"></span>
-                </div>
+                <p class="mt-1 text-[11px] text-slate-500" x-text="`${phase.running}/${phase.capacity} 运行中 · ${phase.available} 可用槽位`"></p>
+                <p class="mt-1 truncate text-[10px] text-slate-400" x-text="(phase.backends || []).map(item => item.model || item.name).slice(0, 2).join(' · ') || '未配置模型后端'"></p>
               </div>
             </div>
-            <div class="mt-3 grid grid-cols-3 gap-1.5">
-              <template x-for="phase in ['bootstrap','reason','explore']" :key="`${worker.name}-${phase}`">
-                <div class="rounded-lg border px-2 py-1.5 text-center" :class="axiomWorkerCapability(worker, phase) ? 'border-emerald-100 bg-emerald-50/60' : 'border-slate-100 bg-slate-50/60 opacity-60'">
-                  <div class="text-[9px] text-slate-400" x-text="axiomPhaseLabel(phase)"></div>
-                  <div class="mt-0.5 text-xs font-semibold" :class="axiomWorkerCapability(worker, phase) ? 'text-emerald-700' : 'text-slate-400'" x-text="worker.axiom_tool_counts?.[phase] || 0"></div>
-                  <div class="text-[9px] text-slate-400">Tool</div>
-                </div>
-              </template>
+            <div class="mt-4 grid grid-cols-4 gap-2">
+              <div class="rounded-xl border border-slate-100 bg-slate-50/70 p-2 text-center"><div class="text-[9px] text-slate-400">内置</div><div class="mt-0.5 text-sm font-semibold text-slate-700" x-text="builtinToolCount(phase.phase)"></div></div>
+              <div class="rounded-xl border border-slate-100 bg-slate-50/70 p-2 text-center"><div class="text-[9px] text-slate-400">Skill</div><div class="mt-0.5 text-sm font-semibold text-slate-700" x-text="phaseCapabilityCount(phase.phase, 'skill')"></div></div>
+              <div class="rounded-xl border border-slate-100 bg-slate-50/70 p-2 text-center"><div class="text-[9px] text-slate-400">MCP</div><div class="mt-0.5 text-sm font-semibold text-slate-700" x-text="phaseCapabilityCount(phase.phase, 'mcp_tool')"></div></div>
+              <div class="rounded-xl border border-slate-100 bg-slate-50/70 p-2 text-center"><div class="text-[9px] text-slate-400">扩展</div><div class="mt-0.5 text-sm font-semibold text-slate-700" x-text="phaseCapabilityCount(phase.phase, 'axiom_tool')"></div></div>
             </div>
-            <div class="mt-2 flex items-center justify-between text-[10px] text-slate-400">
-              <span x-text="`MCP ${worker.mcp_tool_count || 0} 个`"></span>
-              <span x-text="worker.thinking_enabled ? `思考 ${worker.thinking_level}` : '思考关闭'"></span>
+            <div class="mt-3 space-y-1 text-[10px] text-slate-500" x-show="workerPageMode === 'manage'">
+              <p class="truncate"><span class="text-slate-400">Skill：</span><span x-text="workerCapabilitySummaryNames(phase.phase, 'skill')"></span></p>
+              <p class="truncate"><span class="text-slate-400">MCP：</span><span x-text="`${workerCapabilityMcpServerCount(phase.phase)} 个 Server · ${workerCapabilitySummaryNames(phase.phase, 'mcp_tool', 2)}`"></span></p>
+              <p class="truncate"><span class="text-slate-400">扩展：</span><span x-text="workerCapabilitySummaryNames(phase.phase, 'axiom_tool', 2)"></span></p>
+              <p x-show="workerCapabilityIssueCount(phase.phase) > 0" class="text-amber-600" x-text="`${workerCapabilityIssueCount(phase.phase)} 个已分配能力当前不可用`"></p>
             </div>
           </button>
         </template>
-        <div x-show="!axiomWorkersLoading && (axiomWorkers || []).length === 0" class="rounded-2xl border border-dashed border-slate-200 bg-white py-12 text-center text-sm text-slate-400">还没有 Worker，点击右上角新增。</div>
-      </aside>
+        <div x-show="!workerPhasesLoading && (workerPhases || []).length === 0" class="lg:col-span-3 rounded-2xl border border-dashed border-slate-200 bg-white py-12 text-center text-sm text-slate-400">三阶段 Worker 尚未加载。</div>
+      </div>
+    </section>
 
-      <section class="space-y-5" x-show="selectedAxiomWorkerRecord() || axiomWorkerEditor" x-cloak>
-        <div class="rounded-2xl border border-slate-200 bg-white p-5">
+    <section x-show="workerPageMode === 'manage'" class="rounded-2xl border border-slate-200 bg-white p-5">
+      <div class="flex items-start gap-3">
+        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-sm text-brand-600">↗</span>
+        <div>
+          <h3 class="text-sm font-semibold text-slate-800">一个入口管理全部能力</h3>
+          <p class="mt-1 text-xs leading-5 text-slate-500">Worker 页面负责“谁能使用什么”。Skill、MCP、工具页面只维护资源内容、连接和启停状态，并提供返回这里的精确链接，不再各自保存另一套阶段分配。</p>
+        </div>
+      </div>
+    </section>
+
+    <template x-if="workerPageMode === 'config' && selectedWorkerPhaseRecord()">
+      <div class="space-y-5">
+        <section class="rounded-2xl border border-slate-200 bg-white p-5">
           <div class="flex items-start justify-between gap-4">
             <div>
-              <h3 class="text-sm font-semibold text-slate-800">运行配置</h3>
-              <p class="mt-1 text-xs text-slate-400">连接信息沿用现有 Worker 配置接口；API Key 只在编辑时提交，不在概览接口返回。</p>
+              <h3 class="text-sm font-semibold text-slate-800"><span x-text="selectedWorkerPhaseRecord()?.title"></span> · 模型后端池</h3>
+              <p class="mt-1 text-xs text-slate-400">勾选可承担该阶段的模型执行后端；最大并发在多个阶段之间共享。</p>
             </div>
-            <div class="flex items-center gap-2">
-              <button x-show="axiomWorkerEditor?.persisted_name" @click="deleteAxiomWorkerEditor()" class="px-2.5 py-1.5 rounded-lg border border-rose-100 text-xs text-rose-500 hover:bg-rose-50">删除</button>
-              <button @click="saveAxiomWorkerEditor()" :disabled="axiomWorkerEditorSaving || !axiomWorkerEditor" class="px-3 py-1.5 rounded-lg bg-brand-500 text-xs text-white hover:bg-brand-600 disabled:opacity-40" x-text="axiomWorkerEditorSaving ? '保存中…' : '保存配置'"></button>
-            </div>
+            <button @click="saveWorkerPhaseBackends(selectedWorkerPhase)" :disabled="workerPhaseBackendsSaving[selectedWorkerPhase]" class="px-3 py-1.5 rounded-lg bg-brand-500 text-xs text-white hover:bg-brand-600 disabled:opacity-40" x-text="workerPhaseBackendsSaving[selectedWorkerPhase] ? '保存中…' : '保存后端池'"></button>
           </div>
-          <div x-show="axiomWorkerEditor" class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <label class="text-[11px] text-slate-500">Worker 名称
-              <input x-model="axiomWorkerEditor.name" :disabled="!!axiomWorkerEditor.persisted_name" class="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm" placeholder="pi-worker-main">
-            </label>
-            <label class="text-[11px] text-slate-500">模型
-              <div class="mt-1 flex gap-2">
-                <input x-model="axiomWorkerEditor.pi_model" class="app-input min-w-0 flex-1 rounded-xl px-3 py-2 text-sm" placeholder="模型 ID">
-                <button @click="fetchPiModels(axiomWorkerEditor)" :disabled="axiomWorkerEditor.models_loading || !axiomWorkerEditor.pi_base_url" class="px-2.5 rounded-xl border border-slate-200 text-[11px] text-slate-500 disabled:opacity-40" x-text="axiomWorkerEditor.models_loading ? '获取中…' : '获取模型'"></button>
-              </div>
-            </label>
-            <label class="text-[11px] text-slate-500">Base URL
-              <input x-model="axiomWorkerEditor.pi_base_url" class="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm font-mono" placeholder="https://api.example.com/v1">
-            </label>
-            <label class="text-[11px] text-slate-500">API Key
-              <input type="password" x-model="axiomWorkerEditor.pi_api_key" class="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm" :placeholder="axiomWorkerEditor.pi_api_key_masked ? `已保存：${axiomWorkerEditor.pi_api_key_masked}（留空不改）` : '输入密钥'">
-            </label>
-            <label class="text-[11px] text-slate-500">上下文窗口
-              <input x-model="axiomWorkerEditor.pi_model_context_window" class="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm" placeholder="200000 / 500k / 1m">
-            </label>
-            <div class="text-[11px] text-slate-500">思考模式
-              <button type="button" @click="axiomWorkerEditor.pi_thinking_enabled = !axiomWorkerEditor.pi_thinking_enabled" class="mt-1 flex items-center gap-2 rounded-xl border px-3 py-2 text-xs" :class="axiomWorkerEditor.pi_thinking_enabled ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-500'">
-                <span class="inline-block h-2 w-2 rounded-full" :class="axiomWorkerEditor.pi_thinking_enabled ? 'bg-emerald-500' : 'bg-slate-300'"></span>
-                <span x-text="axiomWorkerEditor.pi_thinking_enabled ? '已开启' : '已关闭'"></span>
+          <div class="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+            <template x-for="backend in (axiomWorkers || [])" :key="`phase-backend-${selectedWorkerPhase}-${backend.name}`">
+              <button type="button" @click="toggleWorkerPhaseBackend(selectedWorkerPhase, backend.name)" class="flex items-start gap-3 rounded-xl border px-3 py-3 text-left transition" :class="workerPhaseBackendSelected(selectedWorkerPhase, backend.name) ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'">
+                <span class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px]" :class="workerPhaseBackendSelected(selectedWorkerPhase, backend.name) ? 'border-brand-500 bg-brand-500 text-white' : 'border-slate-300 text-transparent'">✓</span>
+                <span class="min-w-0 flex-1"><span class="flex items-center gap-2"><strong class="truncate text-xs text-slate-700" x-text="backend.name"></strong><span class="rounded-md border px-1.5 py-0.5 text-[9px]" :class="axiomWorkerConnectionClass(backend)" x-text="axiomWorkerConnectionLabel(backend)"></span></span><span class="mt-1 block truncate text-[11px] text-slate-500" x-text="backend.model || '未配置模型'"></span><span class="mt-1 block text-[10px] text-slate-400" x-text="`${backend.running}/${backend.max_running} 总运行中 · 本阶段 ${workerPhaseBackendRunning(selectedWorkerPhase, backend.name)} · 优先级 ${backend.priority}`"></span></span>
               </button>
-            </div>
-            <label class="text-[11px] text-slate-500">思考强度
-              <select x-model="axiomWorkerEditor.pi_thinking_level" :disabled="!axiomWorkerEditor.pi_thinking_enabled" class="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm">
-                <option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option>
-              </select>
-            </label>
-            <label class="text-[11px] text-slate-500">最大并发
-              <input type="number" min="1" x-model.number="axiomWorkerEditor.max_running" class="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm">
-            </label>
-            <label class="text-[11px] text-slate-500">优先级
-              <input type="number" x-model.number="axiomWorkerEditor.priority" class="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm">
-            </label>
-            <div class="md:col-span-2">
-              <div class="text-[11px] text-slate-500 mb-1">参与阶段</div>
-              <div class="flex flex-wrap gap-2">
-                <template x-for="phase in ['bootstrap','reason','explore']" :key="`editor-phase-${phase}`">
-                  <button type="button" @click="toggleWorkerPhase(axiomWorkerEditor, `phase_${phase}`)" class="px-3 py-1.5 rounded-lg border text-xs" :class="phaseToggleClass(axiomWorkerEditor[`phase_${phase}`])" :style="phaseToggleStyle(axiomWorkerEditor[`phase_${phase}`])" x-text="axiomWorkerEditor[`phase_${phase}`] ? `✓ ${axiomPhaseLabel(phase)}` : axiomPhaseLabel(phase)"></button>
-                </template>
-              </div>
-            </div>
-            <div class="md:col-span-2 flex items-center gap-3">
-              <button @click="testAxiomWorkerEditor()" :disabled="axiomWorkerEditorTesting || !axiomWorkerEditor?.pi_base_url || !axiomWorkerEditor?.pi_model" class="px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-600 disabled:opacity-40" x-text="axiomWorkerEditorTesting ? '测试中…' : '测试连接'"></button>
-              <span x-show="axiomWorkerEditor?.test_result?.message" class="text-xs" :class="axiomWorkerEditor.test_result.ok ? 'text-emerald-600' : 'text-rose-600'" x-text="axiomWorkerEditor.test_result.message"></span>
-            </div>
-          </div>
-        </div>
-
-        <div class="rounded-2xl border border-slate-200 bg-white p-5" x-show="selectedAxiomWorkerRecord()" x-cloak>
-          <div class="flex items-start justify-between gap-4">
-            <div><h3 class="text-sm font-semibold text-slate-800">AXIOM Tool 分阶段绑定</h3><p class="mt-1 text-xs text-slate-400">绑定是 Worker × 阶段的唯一配置来源。新工具默认零绑定；保存后只影响下一次领取的 Lease。</p></div>
-            <button @click="saveAxiomWorkerTools()" :disabled="axiomWorkerBindingsSaving[selectedAxiomWorker]" class="px-3 py-1.5 rounded-lg bg-brand-500 text-xs text-white hover:bg-brand-600 disabled:opacity-40" x-text="axiomWorkerBindingsSaving[selectedAxiomWorker] ? '保存中…' : '保存绑定'"></button>
-          </div>
-          <div class="mt-4 space-y-4">
-            <template x-for="phase in ['bootstrap','reason','explore']" :key="`worker-tool-phase-${phase}`">
-              <div>
-                <div class="flex items-center gap-2 mb-2"><span class="inline-flex w-6 h-6 rounded-lg bg-slate-100 text-slate-600 items-center justify-center text-[10px] font-bold" x-text="axiomPhaseShortLabel(phase)"></span><h4 class="text-xs font-semibold text-slate-700" x-text="axiomPhaseLabel(phase)"></h4><span class="text-[10px] text-slate-400" x-text="`${(selectedAxiomWorkerBindingRecord()?.[phase] || []).length} 个已绑定`"></span></div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <template x-for="tool in (axiomToolsCatalog || []).filter(item => axiomToolSupports(item, phase))" :key="`${phase}-${tool.key}`">
-                    <button type="button" @click="toggleAxiomWorkerTool(phase, tool.key)" class="flex items-start gap-3 text-left rounded-xl border px-3 py-2.5 transition" :disabled="tool.status !== 'ready' || !tool.enabled" :class="axiomWorkerConfigured(selectedAxiomWorker, phase, tool.key) ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'">
-                      <span class="mt-0.5 flex h-4 w-4 items-center justify-center rounded border text-[10px]" :class="axiomWorkerConfigured(selectedAxiomWorker, phase, tool.key) ? 'border-brand-500 bg-brand-500 text-white' : 'border-slate-300 text-transparent'">✓</span>
-                      <span class="min-w-0 flex-1"><span class="flex items-center gap-2"><code class="text-xs font-semibold text-slate-700" x-text="tool.key"></code><span class="px-1 py-0.5 rounded text-[9px] border" :class="axiomToolStatusClass(tool.status)" x-text="tool.enabled ? axiomToolStatusLabel(tool.status) : '全局停用'"></span></span><span class="mt-0.5 block text-[11px] text-slate-500 line-clamp-2" x-text="tool.title + ' · ' + tool.description"></span><span x-show="axiomWorkerBindingReason(selectedAxiomWorker, phase, tool.key)" class="mt-1 block text-[10px] text-amber-600" x-text="axiomWorkerBindingReason(selectedAxiomWorker, phase, tool.key)"></span></span>
-                    </button>
-                  </template>
-                  <div x-show="(axiomToolsCatalog || []).filter(item => axiomToolSupports(item, phase)).length === 0" class="text-xs text-slate-400 py-3">当前没有支持此阶段的 AXIOM Tool。</div>
-                </div>
-              </div>
             </template>
           </div>
-        </div>
+          <div x-show="(workerPhaseBackendDraft[selectedWorkerPhase] || []).length === 0" class="mt-3 rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-2 text-xs text-amber-700">该阶段没有模型后端，新的工作将无法被领取。</div>
+        </section>
 
-        <div class="rounded-2xl border border-slate-200 bg-white p-5" x-show="selectedAxiomWorkerRecord()" x-cloak>
-          <h3 class="text-sm font-semibold text-slate-800">其他能力（只读）</h3>
-          <div class="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-3"><div class="text-[10px] text-slate-400">Pi 原生 Tool</div><div class="mt-1 text-xs font-mono text-slate-700">read · write · edit · bash</div><p class="mt-1 text-[10px] text-slate-400">由阶段 Runner 的 --tools 控制</p></div>
-            <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-3"><div class="text-[10px] text-slate-400">MCP</div><div class="mt-1 text-xs font-semibold text-slate-700" x-text="`${selectedAxiomWorkerRecord()?.mcp_tool_count || 0} 个工具`"></div><p class="mt-1 text-[10px] text-slate-400">复用 MCP 管理页的 Worker Binding</p></div>
-            <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-3"><div class="text-[10px] text-slate-400">Skill</div><div class="mt-1 text-xs font-semibold text-slate-700">全局启用</div><button @click="navigateTo('skills')" class="mt-1 text-[10px] text-brand-600 hover:underline">打开 Skill 管理</button></div>
+        <section class="border-t border-slate-200 pt-5">
+          <div class="flex items-center justify-between mb-3"><div><h3 class="text-sm font-semibold text-slate-800">模型执行后端</h3><p class="mt-1 text-xs text-slate-400">API、模型、上下文、思考模式、并发和优先级在这里独立维护，不会修改能力绑定。</p></div><span x-show="axiomWorkersLoading" class="text-xs text-slate-400">加载中…</span></div>
+          <div class="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-5 items-start">
+            <aside class="space-y-2">
+              <template x-for="worker in (axiomWorkers || [])" :key="`backend-card-${worker.name}`">
+                <button type="button" @click="selectAxiomWorker(worker)" class="w-full rounded-2xl border p-4 text-left transition" :class="selectedAxiomWorker === worker.name && axiomWorkerEditor ? 'border-brand-200 bg-brand-50/60 shadow-sm' : 'border-slate-200 bg-white hover:border-brand-200'">
+                  <div class="flex items-start gap-3"><span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-xs font-bold text-slate-600">PI</span><span class="min-w-0 flex-1"><span class="flex items-center gap-2"><strong class="truncate text-sm text-slate-800" x-text="worker.name"></strong><span class="rounded-md border px-1.5 py-0.5 text-[9px]" :class="axiomWorkerConnectionClass(worker)" x-text="axiomWorkerConnectionLabel(worker)"></span></span><span class="mt-1 block truncate text-[11px] text-slate-500" x-text="worker.model || '未配置模型'"></span></span></div>
+                  <div class="mt-3 flex flex-wrap gap-1"><template x-for="phase in (worker.capabilities || [])" :key="`${worker.name}-pool-${phase}`"><span class="rounded-md bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500" x-text="axiomPhaseLabel(phase)"></span></template><span x-show="(worker.capabilities || []).length === 0" class="text-[9px] text-amber-600">未加入任何阶段池</span></div>
+                  <div class="mt-2 flex items-center justify-between text-[10px] text-slate-400"><span x-text="`${worker.running}/${worker.max_running} 运行中`"></span><span x-text="worker.thinking_enabled ? `思考 ${worker.thinking_level}` : '思考关闭'"></span></div>
+                </button>
+              </template>
+            </aside>
+
+            <div class="rounded-2xl border border-slate-200 bg-white p-5" x-show="axiomWorkerEditor" x-cloak>
+              <div class="flex items-start justify-between gap-4"><div><h3 class="text-sm font-semibold text-slate-800" x-text="axiomWorkerEditor?.persisted_name ? '编辑模型后端' : '新增模型后端'"></h3><p class="mt-1 text-xs text-slate-400">这里只保存模型执行配置。</p></div><div class="flex items-center gap-2"><button x-show="axiomWorkerEditor?.persisted_name" @click="deleteAxiomWorkerEditor()" class="px-2.5 py-1.5 rounded-lg border border-rose-100 text-xs text-rose-500 hover:bg-rose-50">删除</button><button @click="saveAxiomWorkerEditor()" :disabled="axiomWorkerEditorSaving" class="px-3 py-1.5 rounded-lg bg-brand-500 text-xs text-white hover:bg-brand-600 disabled:opacity-40" x-text="axiomWorkerEditorSaving ? '保存中…' : '保存配置'"></button></div></div>
+              <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label class="text-[11px] text-slate-500">后端名称<input x-model="axiomWorkerEditor.name" :disabled="!!axiomWorkerEditor.persisted_name" class="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm" placeholder="pi-backend-main"></label>
+                <label class="text-[11px] text-slate-500">模型<div class="mt-1 flex gap-2"><input x-model="axiomWorkerEditor.pi_model" class="app-input min-w-0 flex-1 rounded-xl px-3 py-2 text-sm" placeholder="模型 ID"><button @click="fetchPiModels(axiomWorkerEditor)" :disabled="axiomWorkerEditor.models_loading || !axiomWorkerEditor.pi_base_url" class="px-2.5 rounded-xl border border-slate-200 text-[11px] text-slate-500 disabled:opacity-40" x-text="axiomWorkerEditor.models_loading ? '获取中…' : '获取模型'"></button></div></label>
+                <label class="text-[11px] text-slate-500">Base URL<input x-model="axiomWorkerEditor.pi_base_url" class="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm font-mono" placeholder="https://api.example.com/v1"></label>
+                <label class="text-[11px] text-slate-500">API Key<input type="password" x-model="axiomWorkerEditor.pi_api_key" class="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm" :placeholder="axiomWorkerEditor.pi_api_key_masked ? `已保存：${axiomWorkerEditor.pi_api_key_masked}（留空不改）` : '输入密钥'"></label>
+                <label class="text-[11px] text-slate-500">上下文窗口<input x-model="axiomWorkerEditor.pi_model_context_window" class="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm" placeholder="200000 / 500k / 1m"></label>
+                <label class="text-[11px] text-slate-500">思考强度<select x-model="axiomWorkerEditor.pi_thinking_level" :disabled="!axiomWorkerEditor.pi_thinking_enabled" class="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm"><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select></label>
+                <div class="text-[11px] text-slate-500">思考模式<button type="button" @click="axiomWorkerEditor.pi_thinking_enabled = !axiomWorkerEditor.pi_thinking_enabled" class="mt-1 flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-xs" :class="axiomWorkerEditor.pi_thinking_enabled ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-500'"><span class="inline-block h-2 w-2 rounded-full" :class="axiomWorkerEditor.pi_thinking_enabled ? 'bg-emerald-500' : 'bg-slate-300'"></span><span x-text="axiomWorkerEditor.pi_thinking_enabled ? '已开启' : '已关闭'"></span></button></div>
+                <label class="text-[11px] text-slate-500">最大并发<input type="number" min="1" x-model.number="axiomWorkerEditor.max_running" class="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm"></label>
+                <label class="text-[11px] text-slate-500">优先级<input type="number" x-model.number="axiomWorkerEditor.priority" class="app-input mt-1 w-full rounded-xl px-3 py-2 text-sm"></label>
+                <label class="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-600"><input type="checkbox" x-model="axiomWorkerEditor.disabled">停用此模型后端</label>
+                <div class="md:col-span-2 flex items-center gap-3"><button @click="testAxiomWorkerEditor()" :disabled="axiomWorkerEditorTesting || !axiomWorkerEditor?.pi_base_url || !axiomWorkerEditor?.pi_model" class="px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-600 disabled:opacity-40" x-text="axiomWorkerEditorTesting ? '测试中…' : '测试连接'"></button><span x-show="axiomWorkerEditor?.test_result?.message" class="text-xs" :class="axiomWorkerEditor?.test_result?.ok ? 'text-emerald-600' : 'text-rose-600'" x-text="axiomWorkerEditor?.test_result?.message || ''"></span></div>
+              </div>
+            </div>
+            <div x-show="!axiomWorkerEditor" class="rounded-2xl border border-dashed border-slate-200 bg-white py-20 text-center text-sm text-slate-400">选择一个模型后端进行编辑，或点击“新增模型后端”。</div>
           </div>
-        </div>
-      </section>
-      <div x-show="!selectedAxiomWorkerRecord() && !axiomWorkerEditor" class="xl:col-span-1 rounded-2xl border border-dashed border-slate-200 bg-white py-20 text-center text-sm text-slate-400">选择一个 Worker 查看运行配置和阶段工具。</div>
-    </section>
+        </section>
+      </div>
+    </template>
+
   </main>
+
+  <div x-show="workerCapabilityDrawerOpen" x-cloak class="fixed inset-0 z-50 flex justify-end overlay" @click.self="closeWorkerCapabilityDrawer()" @keydown.escape.window="workerCapabilityDrawerOpen && closeWorkerCapabilityDrawer()">
+    <aside class="worker-capability-drawer app-modal-surface flex h-full flex-col border-l shadow-2xl" @click.stop>
+      <header class="shrink-0 border-b border-slate-200 px-5 py-4">
+        <div class="flex items-start gap-3">
+          <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-sm font-bold text-white" x-text="axiomPhaseShortLabel(workerCapabilityDrawerPhase)"></span>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 flex-wrap"><h3 class="text-base font-semibold text-slate-800" x-text="`${axiomPhaseLabel(workerCapabilityDrawerPhase)} Worker`"></h3><span class="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-500" x-text="`${(workerCapabilityDrawerRecord()?.backends || []).length} 个模型后端`"></span></div>
+            <p class="mt-1 text-xs text-slate-400">当前 Worker 列会重点高亮；仍可在同一抽屉中直接调整其他两个阶段。</p>
+          </div>
+          <button type="button" @click="closeWorkerCapabilityDrawer()" :disabled="workerCapabilitySaving" class="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-lg text-slate-400 hover:bg-slate-50 disabled:opacity-40">×</button>
+        </div>
+        <nav class="mt-4 flex gap-1 overflow-x-auto rounded-xl bg-slate-50 p-1">
+          <template x-for="tab in [{id:'overview',label:'概览'},{id:'builtin',label:'内置 Tool'},{id:'skill',label:'Skill'},{id:'mcp',label:'MCP Tool'},{id:'extension',label:'扩展 Tool'}]" :key="`worker-drawer-tab-${tab.id}`">
+            <button type="button" @click="workerCapabilityDrawerTab=tab.id; workerCapabilitySearch=''; workerCapabilityFilter='all'; $nextTick(() => focusWorkerCapability())" class="whitespace-nowrap rounded-lg px-3 py-1.5 text-xs transition" :class="workerCapabilityDrawerTab === tab.id ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'" x-text="tab.label"></button>
+          </template>
+        </nav>
+      </header>
+
+      <div class="flex-1 overflow-y-auto bg-slate-50/40 p-5">
+        <section x-show="workerCapabilityDrawerTab === 'overview'" class="space-y-5">
+          <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div class="rounded-2xl border border-slate-200 bg-white p-4"><div class="text-[10px] text-slate-400">内置 Tool</div><div class="mt-1 text-2xl font-semibold text-slate-800" x-text="builtinToolCount(workerCapabilityDrawerPhase)"></div><p class="mt-1 text-[10px] text-slate-400">阶段合同固定</p></div>
+            <div class="rounded-2xl border border-slate-200 bg-white p-4"><div class="text-[10px] text-slate-400">Skill</div><div class="mt-1 text-2xl font-semibold text-slate-800" x-text="workerCapabilityDraftCount(workerCapabilityDrawerPhase, 'skill')"></div><p class="mt-1 truncate text-[10px] text-slate-400" x-text="workerCapabilitySummaryNames(workerCapabilityDrawerPhase, 'skill')"></p></div>
+            <div class="rounded-2xl border border-slate-200 bg-white p-4"><div class="text-[10px] text-slate-400">MCP Tool</div><div class="mt-1 text-2xl font-semibold text-slate-800" x-text="workerCapabilityDraftCount(workerCapabilityDrawerPhase, 'mcp_tool')"></div><p class="mt-1 text-[10px] text-slate-400" x-text="`${workerCapabilityMcpServerCount(workerCapabilityDrawerPhase)} 个 Server`"></p></div>
+            <div class="rounded-2xl border border-slate-200 bg-white p-4"><div class="text-[10px] text-slate-400">扩展 Tool</div><div class="mt-1 text-2xl font-semibold text-slate-800" x-text="workerCapabilityDraftCount(workerCapabilityDrawerPhase, 'axiom_tool')"></div><p class="mt-1 text-[10px] text-slate-400">按 Lease 加载</p></div>
+          </div>
+          <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div class="rounded-2xl border border-slate-200 bg-white p-4">
+              <h4 class="text-sm font-semibold text-slate-800">模型后端池</h4>
+              <div class="mt-3 space-y-2"><template x-for="backend in (workerCapabilityDrawerRecord()?.backends || [])" :key="`drawer-backend-${backend.name}`"><div class="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2"><span class="h-2 w-2 rounded-full" :class="backend.connection_state === 'ready' ? 'bg-emerald-500' : backend.connection_state === 'cooldown' ? 'bg-amber-500' : 'bg-slate-300'"></span><div class="min-w-0 flex-1"><p class="truncate text-xs font-medium text-slate-700" x-text="backend.name"></p><p class="truncate text-[10px] text-slate-400" x-text="backend.model || '未配置模型'"></p></div><span class="text-[10px] text-slate-400" x-text="`${backend.running}/${backend.max_running}`"></span></div></template><p x-show="(workerCapabilityDrawerRecord()?.backends || []).length === 0" class="py-8 text-center text-xs text-amber-600">该阶段没有模型后端。</p></div>
+            </div>
+            <div class="rounded-2xl border border-slate-200 bg-white p-4">
+              <h4 class="text-sm font-semibold text-slate-800">能力健康状态</h4>
+              <div class="mt-3 rounded-xl border p-3" :class="workerCapabilityIssueCount(workerCapabilityDrawerPhase) ? 'border-amber-200 bg-amber-50/60' : 'border-emerald-200 bg-emerald-50/60'"><div class="text-sm font-semibold" :class="workerCapabilityIssueCount(workerCapabilityDrawerPhase) ? 'text-amber-700' : 'text-emerald-700'" x-text="workerCapabilityIssueCount(workerCapabilityDrawerPhase) ? `${workerCapabilityIssueCount(workerCapabilityDrawerPhase)} 个能力不可用` : '当前分配均可用'"></div><p class="mt-1 text-[11px] text-slate-500">停用、缺失或 Server 异常的能力不会进入新 Lease。</p></div>
+              <div class="mt-3 grid grid-cols-3 gap-2"><template x-for="kind in ['skill','mcp_tool','axiom_tool']" :key="`overview-kind-${kind}`"><button type="button" @click="workerCapabilityDrawerTab = kind === 'mcp_tool' ? 'mcp' : kind === 'axiom_tool' ? 'extension' : 'skill'" class="rounded-xl border border-slate-200 bg-slate-50/60 px-2 py-3 text-center"><div class="text-[10px] text-slate-400" x-text="capabilityKindLabel(kind)"></div><div class="mt-1 text-sm font-semibold text-slate-700" x-text="workerCapabilityDraftCount(workerCapabilityDrawerPhase, kind)"></div></button></template></div>
+            </div>
+          </div>
+        </section>
+
+        <section x-show="workerCapabilityDrawerTab === 'builtin'" class="space-y-5">
+          <div class="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-xs leading-5 text-blue-700">内置 Tool 来自真实 Pi 与 AXIOM 阶段合同，系统锁定且不进入能力绑定表。</div>
+          <template x-for="source in ['pi_native','axiom_internal']" :key="`builtin-source-${source}`">
+            <div>
+              <div class="mb-2 flex items-center justify-between"><h4 class="text-sm font-semibold text-slate-800" x-text="builtinToolSourceLabel(source)"></h4><span class="text-[10px] text-slate-400" x-text="`${builtinToolsForPhase(workerCapabilityDrawerPhase).filter(tool => tool.source === source).length} 个`"></span></div>
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-2"><template x-for="tool in builtinToolsForPhase(workerCapabilityDrawerPhase).filter(item => item.source === source)" :key="`drawer-builtin-${tool.key}`"><article class="rounded-xl border border-slate-200 bg-white p-3"><div class="flex items-start gap-2"><div class="min-w-0 flex-1"><strong class="text-xs text-slate-700" x-text="tool.title"></strong><code class="mt-1 block truncate text-[10px] text-blue-600" x-text="tool.invocation"></code></div><span class="rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[9px] text-slate-500">🔒 固定</span></div><p class="mt-2 text-[11px] leading-5 text-slate-500" x-text="tool.description"></p><p class="mt-2 text-[10px] text-slate-400" x-text="builtinToolAvailabilityLabel(tool, workerCapabilityDrawerPhase)"></p></article></template></div>
+            </div>
+          </template>
+        </section>
+
+        <section x-show="['skill','mcp','extension'].includes(workerCapabilityDrawerTab)" class="space-y-4">
+          <div class="rounded-2xl border border-slate-200 bg-white p-4">
+            <div class="flex flex-col gap-3 lg:flex-row lg:items-center">
+              <div class="min-w-0 flex-1"><input x-model="workerCapabilitySearch" class="app-input w-full rounded-xl px-3 py-2 text-xs" placeholder="搜索名称、描述、Server…"></div>
+              <select x-model="workerCapabilityFilter" class="app-input rounded-xl px-3 py-2 text-xs"><option value="all">全部能力</option><option value="assigned">已分配给当前 Worker</option><option value="unassigned">未分配给当前 Worker</option><option value="abnormal">仅看异常</option></select>
+              <div class="flex items-center gap-2"><button type="button" @click="workerCapabilityBulkSet(workerCapabilityTabKind(), true)" class="rounded-lg border border-emerald-200 px-3 py-2 text-xs text-emerald-700 hover:bg-emerald-50">当前结果分配给本阶段</button><button type="button" @click="workerCapabilityBulkSet(workerCapabilityTabKind(), false)" class="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50">清空本阶段</button></div>
+            </div>
+            <div class="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-slate-400"><span>每行直接显示 Bootstrap / Reason / Explore。</span><span class="rounded bg-brand-50 px-2 py-0.5 text-brand-600" x-text="`${axiomPhaseLabel(workerCapabilityDrawerPhase)} 为当前 Worker`"></span><span>三阶段全选会自动保存为全部阶段。</span></div>
+          </div>
+
+          <div x-show="workerCapabilityDrawerTab !== 'mcp'" class="space-y-2">
+            <template x-for="item in workerCapabilityFilteredItems(workerCapabilityTabKind())" :key="`drawer-capability-${item.capability_kind}-${item.capability_key}`">
+              <article class="worker-capability-row rounded-2xl border bg-white p-4" :data-worker-capability-key="item.capability_key" :class="[workerCapabilityItemChanged(item) ? 'border-amber-300' : 'border-slate-200', workerCapabilityFocusKey === item.capability_key ? 'worker-capability-focus' : '']">
+                <div class="worker-capability-row-grid">
+                  <div class="min-w-0"><div class="flex items-center gap-2 flex-wrap"><h4 class="text-sm font-semibold text-slate-800" x-text="item.title || item.capability_key"></h4><code class="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500" x-text="item.capability_key"></code><span x-show="workerCapabilityItemChanged(item)" class="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] text-amber-600">已修改</span><span x-show="!item.enabled || !item.ready" class="rounded bg-rose-50 px-1.5 py-0.5 text-[9px] text-rose-600" x-text="!item.enabled ? '已停用' : item.status"></span></div><p class="mt-1 text-[11px] leading-5 text-slate-500" x-text="item.description || '暂无描述'"></p></div>
+                  <button type="button" @click="toggleWorkerCapabilityAll(item)" :disabled="workerCapabilityAllDisabled(item)" :title="workerCapabilityAllHint(item)" class="worker-capability-scope-button" :class="workerCapabilityAllSelected(item) ? 'is-selected' : ''"><span>全部阶段</span><span x-text="workerCapabilityAllSelected(item) ? '✓' : ''"></span></button>
+                  <template x-for="phase in ['bootstrap','reason','explore']" :key="`${item.capability_key}-${phase}`"><button type="button" @click="toggleWorkerCapabilityPhase(item, phase)" :disabled="workerCapabilityPhaseDisabled(item, phase)" :title="workerCapabilityPhaseHint(item, phase)" class="worker-capability-scope-button" :class="[workerCapabilityPhaseSelected(item, phase) ? 'is-selected' : '', workerCapabilityDrawerPhase === phase ? 'is-current' : '']"><span x-text="axiomPhaseLabel(phase)"></span><span x-text="workerCapabilityPhaseSelected(item, phase) ? '✓' : ''"></span></button></template>
+                </div>
+                <p x-show="item.inactive_reasons?.[workerCapabilityDrawerPhase]" class="mt-2 text-[10px] text-amber-600" x-text="item.inactive_reasons?.[workerCapabilityDrawerPhase]"></p>
+              </article>
+            </template>
+            <div x-show="workerCapabilityFilteredItems(workerCapabilityTabKind()).length === 0" class="rounded-2xl border border-dashed border-slate-200 bg-white py-14 text-center text-sm text-slate-400" x-text="workerCapabilityDrawerTab === 'extension' ? '当前没有匹配的扩展 Tool。' : '没有匹配的 Skill。'"></div>
+          </div>
+
+          <div x-show="workerCapabilityDrawerTab === 'mcp'" class="space-y-3">
+            <template x-for="group in workerCapabilityMcpGroups()" :key="`drawer-mcp-server-${group.id}`">
+              <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <div class="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center">
+                  <button type="button" @click="toggleWorkerCapabilityMcpExpanded(group)" class="flex min-w-0 flex-1 items-center gap-3 text-left"><span class="text-xs text-slate-400 transition" :class="workerCapabilityMcpExpandedState(group) ? 'rotate-90' : ''">▶</span><span class="min-w-0"><strong class="block truncate text-sm text-slate-800" x-text="group.name"></strong><span class="mt-0.5 block text-[10px] text-slate-400" x-text="`${group.tools.length} 个 Tool · ${group.status}`"></span></span></button>
+                  <div class="flex flex-wrap items-center gap-1.5"><template x-for="phase in ['bootstrap','reason','explore']" :key="`${group.id}-group-${phase}`"><button type="button" @click="toggleWorkerCapabilityMcpGroupPhase(group, phase)" class="rounded-lg border px-2 py-1 text-[10px]" :class="[workerCapabilityMcpGroupPhaseState(group, phase) === 'all' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : workerCapabilityMcpGroupPhaseState(group, phase) === 'some' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-slate-50 text-slate-500', workerCapabilityDrawerPhase === phase ? 'ring-2 ring-brand-100' : '']"><span x-text="axiomPhaseLabel(phase)"></span><span class="ml-1" x-text="`${workerCapabilityMcpGroupPhaseCount(group, phase)}/${group.tools.length}`"></span></button></template></div>
+                </div>
+                <div x-show="workerCapabilityMcpExpandedState(group)" class="divide-y divide-slate-100">
+                  <template x-for="item in group.tools" :key="`drawer-mcp-tool-${item.capability_key}`"><div class="worker-capability-row px-4 py-3" :data-worker-capability-key="item.capability_key" :class="workerCapabilityFocusKey === item.capability_key ? 'worker-capability-focus' : ''"><div class="worker-capability-row-grid"><div class="min-w-0"><div class="flex items-center gap-2 flex-wrap"><code class="text-xs font-semibold text-slate-700" x-text="item.metadata?.tool_name || item.title || item.capability_key"></code><span x-show="item.title && item.title !== item.metadata?.tool_name" class="truncate text-[10px] text-slate-400" x-text="item.title"></span><span x-show="workerCapabilityItemChanged(item)" class="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] text-amber-600">已修改</span><span x-show="!item.enabled || !item.ready" class="rounded bg-rose-50 px-1.5 py-0.5 text-[9px] text-rose-600" x-text="!item.enabled ? '已停用' : item.status"></span></div><p class="mt-1 text-[11px] leading-5 text-slate-500" x-text="item.description || 'Server 未提供说明'"></p></div><button type="button" @click="toggleWorkerCapabilityAll(item)" :disabled="workerCapabilityAllDisabled(item)" :title="workerCapabilityAllHint(item)" class="worker-capability-scope-button" :class="workerCapabilityAllSelected(item) ? 'is-selected' : ''"><span>全部阶段</span><span x-text="workerCapabilityAllSelected(item) ? '✓' : ''"></span></button><template x-for="phase in ['bootstrap','reason','explore']" :key="`${item.capability_key}-mcp-${phase}`"><button type="button" @click="toggleWorkerCapabilityPhase(item, phase)" :disabled="workerCapabilityPhaseDisabled(item, phase)" :title="workerCapabilityPhaseHint(item, phase)" class="worker-capability-scope-button" :class="[workerCapabilityPhaseSelected(item, phase) ? 'is-selected' : '', workerCapabilityDrawerPhase === phase ? 'is-current' : '']"><span x-text="axiomPhaseLabel(phase)"></span><span x-text="workerCapabilityPhaseSelected(item, phase) ? '✓' : ''"></span></button></template></div><p x-show="item.inactive_reasons?.[workerCapabilityDrawerPhase]" class="mt-2 text-[10px] text-amber-600" x-text="item.inactive_reasons?.[workerCapabilityDrawerPhase]"></p></div></template>
+                </div>
+              </article>
+            </template>
+            <div x-show="workerCapabilityMcpGroups().length === 0" class="rounded-2xl border border-dashed border-slate-200 bg-white py-14 text-center text-sm text-slate-400">没有匹配的 MCP Tool。</div>
+          </div>
+        </section>
+      </div>
+
+      <footer class="shrink-0 border-t border-slate-200 bg-white px-5 py-3">
+        <div class="flex items-center gap-3"><div class="min-w-0 flex-1"><p class="text-xs font-medium" :class="workerCapabilityDirty() ? 'text-amber-600' : 'text-slate-500'" x-text="workerCapabilityDirty() ? `${workerCapabilityChangeCount()} 项能力分配待保存` : '当前没有未保存修改'"></p><p class="mt-0.5 text-[10px] text-slate-400">保存后只影响新 Lease，正在运行的 Worker 不热更新。</p></div><button type="button" @click="cancelWorkerCapabilityDraft()" :disabled="!workerCapabilityDirty() || workerCapabilitySaving" class="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-600 disabled:opacity-40">取消修改</button><button type="button" @click="saveWorkerCapabilityDraft()" :disabled="!workerCapabilityDirty() || workerCapabilitySaving" class="rounded-lg bg-brand-500 px-4 py-2 text-xs font-medium text-white hover:bg-brand-600 disabled:opacity-40" x-text="workerCapabilitySaving ? '保存中…' : '保存能力'"></button></div>
+      </footer>
+    </aside>
+  </div>
 </div>

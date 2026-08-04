@@ -510,11 +510,17 @@
     const query = url.searchParams;
     let match;
 
-    // AXIOM Tool and Worker overview are native V2 resources.  Keep them in
+    // Extension Tool and Worker overview are native V2 resources.  Keep them in
     // the shared adapter so both management pages use the same API boundary
     // as the rest of the application instead of inventing a second fetch
     // helper or duplicating Worker state in the browser.
     if (path === '/axiom-tools' || path.startsWith('/axiom-tools/')) {
+      return request(method, `${path}${url.search}`, body, options);
+    }
+    if (path === '/phase-capabilities' || path.startsWith('/phase-capabilities/')) {
+      return request(method, `${path}${url.search}`, body, options);
+    }
+    if (path === '/worker-phases' || path.startsWith('/worker-phases/')) {
       return request(method, `${path}${url.search}`, body, options);
     }
     if (path === '/workers/overview') {
@@ -652,6 +658,12 @@
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/conversation(?:\/index)?$/)) && method === 'GET') {
       return { project_id: match[1], threads: [], items: [], stats: { workers: [], intents: [], thread_types: {}, timeout_count: 0, thread_count: 0, item_count: 0 }, filters: {} };
+    }
+    if ((match = path.match(/^\/projects\/([^/]+)\/explore-conversation$/)) && method === 'GET') {
+      return request('GET', `/tasks/${match[1]}/explore-conversation${url.search}`, null, options);
+    }
+    if ((match = path.match(/^\/projects\/([^/]+)\/intents\/([^/]+)\/interventions$/)) && method === 'POST') {
+      return request('POST', `/tasks/${match[1]}/intents/${match[2]}/interventions`, body, options);
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/vulns$/))) {
       if (method === 'GET') {

@@ -20,6 +20,7 @@ from axiom.modules.graph.service import GraphService
 from axiom.modules.projects.service import ProjectService
 from axiom.modules.reason.service import ReasonService
 from axiom.modules.mcp.service import MCPService
+from axiom.modules.phase_capabilities.service import PhaseCapabilityService
 from axiom.modules.external_reports.service import ExternalReportService
 from axiom.modules.knowledge.service import KnowledgeService
 from axiom.modules.skills.service import SkillService
@@ -29,6 +30,7 @@ from axiom.modules.settings.service import RuntimeSettingsService
 from axiom.modules.tasks.service import TaskService
 from axiom.modules.todos.service import TodoService
 from axiom.modules.token_usage.service import TokenUsageService
+from axiom.modules.interventions.service import InterventionService
 from axiom.modules.vulnerabilities.service import VulnerabilityService
 from axiom.modules.workers.service import WorkerService
 from axiom.shared.storage import FileStore
@@ -55,6 +57,7 @@ class Container:
     credentials: CredentialService
     vulnerabilities: VulnerabilityService
     mcp: MCPService
+    phase_capabilities: PhaseCapabilityService
     external_reports: ExternalReportService
     knowledge: KnowledgeService
     skills: SkillService
@@ -64,6 +67,7 @@ class Container:
     diagnostics: DiagnosticsService
     dashboard: DashboardService
     token_usage: TokenUsageService
+    interventions: InterventionService
 
     @classmethod
     def build(cls, engine: Engine, *, data_dir: Path) -> "Container":
@@ -72,10 +76,18 @@ class Container:
         context = ContextService(engine, store)
         reason = ReasonService(engine, store=store)
         skills = SkillService(data_dir, engine=engine)
-        axiom_tools = AxiomToolService(engine, data_dir, skills=skills)
+        phase_capabilities = PhaseCapabilityService(engine, data_dir, skills=skills)
+        axiom_tools = AxiomToolService(
+            engine,
+            data_dir,
+            skills=skills,
+            phase_capabilities=phase_capabilities,
+        )
         axiom_tools.scan()
         settings = RuntimeSettingsService(engine)
         token_usage = TokenUsageService(engine)
+        interventions = InterventionService(engine, store)
+        mcp = MCPService(engine, phase_capabilities=phase_capabilities)
         return cls(
             engine=engine,
             projects=ProjectService(engine),
@@ -102,7 +114,8 @@ class Container:
             settings=settings,
             credentials=CredentialService(engine),
             vulnerabilities=VulnerabilityService(engine, archives=archives),
-            mcp=MCPService(engine),
+            mcp=mcp,
+            phase_capabilities=phase_capabilities,
             external_reports=ExternalReportService(engine, settings, store),
             knowledge=KnowledgeService(engine),
             skills=skills,
@@ -112,4 +125,5 @@ class Container:
             diagnostics=DiagnosticsService(engine, token_usage=token_usage),
             dashboard=DashboardService(engine, token_usage=token_usage),
             token_usage=token_usage,
+            interventions=interventions,
         )

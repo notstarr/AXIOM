@@ -83,7 +83,7 @@ def test_mcp_import_exposes_tool_schema_usage_and_toggle(client) -> None:
     assert disabled.json()["enabled"] is False
 
 
-def test_mcp_worker_binding_is_kept_out_of_worker_management_shape(client) -> None:
+def test_mcp_worker_binding_is_read_only_compatibility_shape(client) -> None:
     client.put(
         "/api/v1/workers/worker-a",
         json={"capabilities": ["bootstrap", "reason", "explore"], "max_running": 2},
@@ -104,23 +104,15 @@ def test_mcp_worker_binding_is_kept_out_of_worker_management_shape(client) -> No
             "allowed_tools": ["search"],
         },
     )
-    assert saved.status_code == 200, saved.text
-    assert saved.json() == {
-        "worker_name": "worker-a",
-        "worker_type": "pi",
-        "enabled": True,
-        "server_ids": [server["id"]],
-        "server_names": ["demo"],
-        "allowed_tools": ["search"],
-    }
+    assert saved.status_code == 409, saved.text
 
     worker = client.get("/api/v1/workers/worker-a").json()
-    assert worker["config"]["environment"]["PI_MCP_ENABLED"] == "true"
-    assert "demo" in worker["config"]["environment"]["PI_MCP_CONFIG_JSON"]
+    assert worker["config"].get("environment", {}).get("PI_MCP_ENABLED") != "true"
 
     bindings = client.get("/api/v1/mcp/workers")
     assert bindings.status_code == 200, bindings.text
-    assert bindings.json() == [saved.json()]
+    assert bindings.json()[0]["worker_name"] == "worker-a"
+    assert bindings.json()[0]["enabled"] is False
 
 
 def test_failed_discovery_preserves_tools_and_redacts_secrets(client, monkeypatch) -> None:

@@ -13,8 +13,21 @@ window.AxiomModules.skills = {
   methods: {
     async loadSkills() {
       try {
-        this.skills = await this.api('GET', '/skills');
+        const [skills] = await Promise.all([
+          this.api('GET', '/skills'),
+          this.loadPhaseCapabilities?.(),
+        ]);
+        this.skills = skills || [];
       } catch (e) { /* ignore */ }
+    },
+
+    selectedSkillCapabilityRecord() {
+      if (!this.skillEditor?.name || this.skillEditor?.isNew) return null;
+      return this.phaseCapabilityRecord?.('skill', this.skillEditor.name) || null;
+    },
+
+    skillCapabilityRecord(skill) {
+      return skill?.name ? this.phaseCapabilityRecord?.('skill', skill.name) || null : null;
     },
 
     async uploadHarFile(event) {
@@ -130,6 +143,7 @@ window.AxiomModules.skills = {
         if (this.skillEditor.name === sk.name) {
           this.skillEditor.enabled = updated.enabled;
         }
+        await this.loadPhaseCapabilities?.();
         this.showToast(`${sk.name} 已${updated.enabled ? '启用' : '禁用'}`);
         return updated;
       } catch(e) { this.showToast(e.message, 'error'); }

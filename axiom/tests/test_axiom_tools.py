@@ -46,21 +46,26 @@ def _write_tool(root: Path, key: str, *, phases=None, schema=None) -> Path:
     return package
 
 
-def test_bundled_axiom_tools_are_discovered_enabled_and_unbound(client) -> None:
+def _scan_managed_tool(client, data_dir: Path, key: str, *, phases=None) -> None:
+    _write_tool(data_dir / "axiom-tools", key, phases=phases)
+    response = client.post("/api/v1/axiom-tools/scan")
+    assert response.status_code == 200, response.text
+
+
+def test_placeholder_bundled_tools_are_no_longer_discovered(client) -> None:
     response = client.get("/api/v1/axiom-tools")
 
     assert response.status_code == 200, response.text
     items = response.json()
-    assert {item["key"] for item in items} == {
+    retired = {
         "search_text",
         "find_files",
         "list_directory",
         "http_request",
         "run_python",
     }
-    assert all(item["status"] == "ready" for item in items)
-    assert all(item["enabled"] is True for item in items)
-    assert all(item["bindings"] == [] for item in items)
+    assert not ({item["key"] for item in items} & retired)
+    assert items == []
 
 
 def test_scan_is_idempotent_and_preserves_missing_bindings(client, data_dir) -> None:
@@ -74,13 +79,9 @@ def test_scan_is_idempotent_and_preserves_missing_bindings(client, data_dir) -> 
     item = next(item for item in second.json()["items"] if item["key"] == "managed_demo")
     assert item["status"] == "ready"
 
-    client.put(
-        "/api/v1/workers/worker-a",
-        json={"capabilities": ["explore"], "config": {"model": "m"}},
-    )
     bound = client.put(
-        "/api/v1/workers/worker-a/axiom-tools",
-        json={"bootstrap": [], "reason": [], "explore": ["managed_demo"]},
+        "/api/v1/phase-capabilities/axiom_tool/managed_demo",
+        json={"scopes": ["explore"]},
     )
     assert bound.status_code == 200, bound.text
     shutil.rmtree(package)
@@ -88,7 +89,7 @@ def test_scan_is_idempotent_and_preserves_missing_bindings(client, data_dir) -> 
     assert missing.status_code == 200, missing.text
     item = client.get("/api/v1/axiom-tools/managed_demo").json()
     assert item["status"] == "missing"
-    assert item["bindings"][0]["worker_name"] == "worker-a"
+    assert item["scopes"] == ["explore"]
 
 
 @pytest.mark.parametrize(
@@ -111,10 +112,19 @@ def test_invalid_manifest_schema_is_not_ready(client, data_dir, schema) -> None:
     assert item["status_error"]
 
 
-def test_reserved_duplicate_and_symlink_packages_are_rejected(client, data_dir) -> None:
+def test_reserved_duplicate_and_symlink_packages_are_rejected(
+    client, data_dir, monkeypatch
+) -> None:
     root = data_dir / "axiom-tools"
+    bundled_root = data_dir / "bundled-tools"
+    monkeypatch.setattr(
+        client.app.state.container.axiom_tools,
+        "bundled_root",
+        bundled_root,
+    )
     _write_tool(root, "read")
-    _write_tool(root, "search_text")
+    _write_tool(root, "duplicate_probe")
+    _write_tool(bundled_root, "duplicate_probe")
     symlink_target = root / "real_target"
     _write_tool(root, "real_target")
     symlink = root / "linked_tool"
@@ -127,12 +137,18 @@ def test_reserved_duplicate_and_symlink_packages_are_rejected(client, data_dir) 
 
     assert response.status_code == 200, response.text
     assert client.get("/api/v1/axiom-tools/read").json()["status"] == "invalid"
-    assert client.get("/api/v1/axiom-tools/search_text").json()["status"] == "invalid"
+    duplicate = client.get("/api/v1/axiom-tools/duplicate_probe").json()
+    assert duplicate["status"] == "invalid"
+    assert "重复" in duplicate["status_error"]
     linked = next(item for item in response.json()["items"] if item["key"] == "linked_tool")
     assert linked["status"] == "invalid"
 
 
-def test_binding_is_validated_and_global_disable_keeps_effective_state(client) -> None:
+def test_binding_is_validated_and_global_disable_keeps_effective_state(
+    client, data_dir
+) -> None:
+    _scan_managed_tool(client, data_dir, "shared_probe")
+    _scan_managed_tool(client, data_dir, "explore_probe", phases=["explore"])
     client.put(
         "/api/v1/workers/worker-a",
         json={"capabilities": ["explore"], "config": {"model": "m"}},
@@ -142,28 +158,41 @@ def test_binding_is_validated_and_global_disable_keeps_effective_state(client) -
         json={"capabilities": ["bootstrap", "reason", "explore"], "config": {"model": "m"}, "disabled": True},
     )
     invalid_phase = client.put(
-        "/api/v1/workers/worker-a/axiom-tools",
-        json={"bootstrap": [], "reason": ["http_request"], "explore": []},
+        "/api/v1/phase-capabilities/axiom_tool/explore_probe",
+        json={"scopes": ["reason"]},
     )
     assert invalid_phase.status_code == 409, invalid_phase.text
 
     saved = client.put(
-        "/api/v1/workers/worker-a/axiom-tools",
-        json={"bootstrap": ["search_text"], "reason": [], "explore": ["search_text"]},
+        "/api/v1/phase-capabilities/axiom_tool/shared_probe",
+        json={"scopes": ["bootstrap", "explore"]},
     )
     assert saved.status_code == 200, saved.text
-    assert saved.json()["bootstrap"] == ["search_text"]
-    assert saved.json()["effective"]["bootstrap"] == []
-    assert saved.json()["effective"]["explore"] == ["search_text"]
+    item = next(
+        item
+        for item in saved.json()["items"]
+        if item["capability_key"] == "shared_probe"
+    )
+    assert item["scopes"] == ["bootstrap", "explore"]
 
-    disabled = client.patch("/api/v1/axiom-tools/search_text", json={"enabled": False})
+    disabled = client.patch("/api/v1/axiom-tools/shared_probe", json={"enabled": False})
     assert disabled.status_code == 200, disabled.text
-    assert disabled.json()["bindings"]
+    assert disabled.json()["scopes"] == ["bootstrap", "explore"]
+    matrix = client.get("/api/v1/phase-capabilities").json()
+    disabled_item = next(
+        item
+        for item in matrix["items"]
+        if item["capability_key"] == "shared_probe"
+    )
+    assert disabled_item["inactive_reasons"] == {
+        "bootstrap": "工具已全局停用",
+        "explore": "工具已全局停用",
+    }
     overview = client.get("/api/v1/workers/overview")
     assert overview.status_code == 200, overview.text
     worker = next(item for item in overview.json() if item["name"] == "worker-a")
-    assert worker["axiom_tool_counts"] == {"bootstrap": 1, "reason": 0, "explore": 1}
-    enabled = client.patch("/api/v1/axiom-tools/search_text", json={"enabled": True})
+    assert worker["axiom_tool_counts"] == {"bootstrap": 0, "reason": 0, "explore": 1}
+    enabled = client.patch("/api/v1/axiom-tools/shared_probe", json={"enabled": True})
     assert enabled.status_code == 200
 
 
@@ -190,20 +219,26 @@ def test_worker_overview_redacts_pi_secrets(client) -> None:
     assert "PRIVATE_TOKEN" not in json.dumps(worker["config"])
 
 
-def test_effective_tools_are_snapshotted_per_worker_and_phase(client, tmp_path) -> None:
+def test_effective_tools_are_snapshotted_per_worker_and_phase(
+    client, data_dir, tmp_path
+) -> None:
+    _scan_managed_tool(client, data_dir, "bootstrap_probe", phases=["bootstrap"])
+    _scan_managed_tool(client, data_dir, "shared_probe")
+    _scan_managed_tool(client, data_dir, "explore_probe", phases=["explore"])
     client.put(
         "/api/v1/workers/snapshot-worker",
         json={"capabilities": ["bootstrap", "explore"], "config": {"model": "m"}},
     )
-    response = client.put(
-        "/api/v1/workers/snapshot-worker/axiom-tools",
-        json={
-            "bootstrap": ["search_text", "http_request"],
-            "reason": [],
-            "explore": ["run_python"],
-        },
-    )
-    assert response.status_code == 200, response.text
+    for key, scopes in (
+        ("bootstrap_probe", ["bootstrap"]),
+        ("shared_probe", ["bootstrap"]),
+        ("explore_probe", ["explore"]),
+    ):
+        response = client.put(
+            f"/api/v1/phase-capabilities/axiom_tool/{key}",
+            json={"scopes": scopes},
+        )
+        assert response.status_code == 200, response.text
 
     service = client.app.state.container.axiom_tools
     keys, extensions, snapshot_path = service.snapshot_for_lease(
@@ -212,13 +247,28 @@ def test_effective_tools_are_snapshotted_per_worker_and_phase(client, tmp_path) 
         run_dir=tmp_path / "run",
     )
 
-    assert keys == ["http_request", "search_text"]
-    assert [Path(item).parent.name for item in extensions] == ["http_request", "search_text"]
+    assert keys == ["bootstrap_probe", "shared_probe"]
+    assert [Path(item).parent.name for item in extensions] == [
+        "bootstrap_probe",
+        "shared_probe",
+    ]
     payload = json.loads(Path(snapshot_path).read_text(encoding="utf-8"))
     assert payload["worker"] == "snapshot-worker"
     assert payload["phase"] == "bootstrap"
     assert [item["key"] for item in payload["tools"]] == keys
     assert all(item["input_schema"]["type"] == "object" for item in payload["tools"])
+
+    capability_payload = json.loads(
+        (tmp_path / "run" / "phase-capabilities.json").read_text(encoding="utf-8")
+    )
+    assert capability_payload["schema_version"] == 2
+    assert not {
+        "search_text",
+        "find_files",
+        "list_directory",
+        "http_request",
+        "run_python",
+    } & {item["key"] for item in capability_payload["axiom_tools"]}
 
 
 def test_worker_delete_is_blocked_by_active_reason_run(client, engine) -> None:

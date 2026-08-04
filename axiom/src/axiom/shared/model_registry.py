@@ -13,9 +13,11 @@ from axiom.modules.external_reports.tables import external_report_attempts
 from axiom.modules.projects.tables import projects
 from axiom.modules.reason.tables import reason_run_sources, reason_runs, reason_workspaces
 from axiom.modules.mcp.tables import mcp_servers, mcp_tools
+from axiom.modules.phase_capabilities.tables import phase_capability_bindings
 from axiom.modules.settings.tables import runtime_settings
 from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.modules.token_usage.tables import llm_token_usage, llm_token_usage_sources
+from axiom.modules.interventions.tables import intent_interventions
 from axiom.modules.todos.tables import todo_sources, todos
 from axiom.modules.vulnerabilities.tables import vulnerability_artifacts, vulnerabilities
 from axiom.modules.workers.tables import workers
@@ -33,6 +35,7 @@ ALL_TABLES = (
     workers,
     axiom_tools,
     worker_axiom_tool_bindings,
+    phase_capability_bindings,
     artifacts,
     archive_batches,
     archive_batch_members,
@@ -56,4 +59,5 @@ ALL_TABLES = (
     goal_evaluations,
     llm_token_usage,
     llm_token_usage_sources,
+    intent_interventions,
 )

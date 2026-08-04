@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from axiom.modules.phase_capabilities.schemas import CapabilityScope
 
 
 AxiomToolPhase = Literal["bootstrap", "reason", "explore"]
@@ -11,10 +13,24 @@ AxiomToolSource = Literal["bundled", "managed"]
 
 
 class AxiomToolBinding(BaseModel):
-    worker_name: str
-    phase: AxiomToolPhase
+    # ``scope`` is the new source-of-truth field.  worker_name/phase remain
+    # optional compatibility projections for the retired Worker-specific API.
+    scope: CapabilityScope | None = None
+    worker_name: str = ""
+    phase: str = ""
     effective: bool = False
     inactive_reason: str = ""
+
+    @model_validator(mode="after")
+    def migrate_legacy_phase(self) -> "AxiomToolBinding":
+        if self.scope is None and self.phase in {
+            "common",
+            "bootstrap",
+            "reason",
+            "explore",
+        }:
+            self.scope = self.phase
+        return self
 
 
 class AxiomTool(BaseModel):
@@ -36,6 +52,7 @@ class AxiomTool(BaseModel):
     discovered_at: str
     created_at: str
     updated_at: str
+    scopes: list[CapabilityScope] = Field(default_factory=list)
     bindings: list[AxiomToolBinding] = Field(default_factory=list)
     call_count: int = 0
     last_used_at: str = ""

@@ -2,7 +2,7 @@
 <div x-show="activePage === 'skills'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
   <header class="app-page-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
     <h2 class="text-base font-semibold text-slate-800">Skill 管理</h2>
-    <span class="text-xs text-slate-400">多文件结构 · 渐进式注入 · Markdown 格式</span>
+    <span class="text-xs text-slate-400">多文件结构 · 渐进式注入 · 阶段分配由 Worker 统一管理</span>
     <div class="flex-1"></div>
     <button @click="openSkillEditor()" class="px-3 py-1.5 text-xs rounded-lg bg-brand-500 text-white hover:bg-brand-600">新建 Skill</button>
     <label class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 cursor-pointer transition">
@@ -29,6 +29,7 @@
             <span class="px-1 py-0.5 rounded text-[8px] font-semibold"
               :class="sk.enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'"
               x-text="sk.enabled ? '启用' : '禁用'"></span>
+            <span class="text-[8px] text-slate-400" x-text="capabilityPhaseSummary(skillCapabilityRecord(sk))"></span>
           </div>
         </button>
       </template>
@@ -77,16 +78,30 @@
               <span class="text-sm font-semibold text-slate-700" x-text="skillEditor.name || '新 Skill'"></span>
               <span x-show="skillEditor.builtin" class="px-1 py-0.5 rounded text-[8px] font-semibold bg-brand-50 text-brand-600">内置</span>
             </div>
-            <button @click="toggleSkillFromEditor()" :disabled="skillToggleLoading === skillEditor.name"
-              :title="skillEditor.enabled ? '点击禁用该 Skill' : '点击启用该 Skill'"
+            <button @click="toggleSkillFromEditor()" :disabled="skillToggleLoading === skillEditor.name || phaseCapabilityScopeLocked(selectedSkillCapabilityRecord(), 'common')"
+              :title="phaseCapabilityScopeLocked(selectedSkillCapabilityRecord(), 'common') ? '锁定的全部阶段 Skill 不能停用' : (skillEditor.enabled ? '点击禁用该 Skill' : '点击启用该 Skill')"
               class="ml-auto px-3 py-1 text-xs rounded-lg transition disabled:opacity-50 disabled:cursor-wait"
               :class="skillEditor.enabled ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-slate-100 text-slate-400 border border-slate-200 hover:bg-slate-200'">
               <span x-show="skillToggleLoading === skillEditor.name">保存中...</span>
               <span x-show="skillToggleLoading !== skillEditor.name && skillEditor.enabled">✓ 已启用 · 点击禁用</span>
               <span x-show="skillToggleLoading !== skillEditor.name && !skillEditor.enabled">已禁用 · 点击启用</span>
             </button>
-            <button @click="deleteSkill({name: skillEditor.name})" class="px-2 py-1 text-xs rounded border border-rose-200 text-rose-500 hover:bg-rose-50">删除</button>
+            <button @click="deleteSkill({name: skillEditor.name})" :disabled="phaseCapabilityScopeLocked(selectedSkillCapabilityRecord(), 'common')" class="px-2 py-1 text-xs rounded border border-rose-200 text-rose-500 hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed">删除</button>
           </div>
+          <!-- Read-only stage assignment summary -->
+          <div class="shrink-0 px-4 py-2.5 border-b border-slate-100 bg-white" x-show="!skillEditor.isNew && selectedSkillCapabilityRecord()" x-cloak>
+            <div class="flex items-center gap-3">
+              <div class="min-w-0">
+                <div class="text-[10px] font-semibold text-slate-500">Worker 可见性</div>
+                <div class="mt-0.5 text-[9px] text-slate-400">此处只读；阶段分配统一在 Worker 页面修改。</div>
+              </div>
+              <div class="ml-auto flex flex-wrap justify-end gap-1.5">
+                <template x-for="phase in ['bootstrap','reason','explore']" :key="`skill-readonly-${phase}`"><span class="rounded-lg border px-2 py-1 text-[10px]" :class="phaseCapabilityAssigned(selectedSkillCapabilityRecord(), phase) ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-400'" x-text="`${phaseCapabilityAssigned(selectedSkillCapabilityRecord(), phase) ? '✓ ' : ''}${axiomPhaseLabel(phase)}`"></span></template>
+                <button type="button" @click="navigateToWorkerCapability('skill', skillEditor.name)" class="rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-[10px] text-brand-700">前往 Worker 能力管理</button>
+              </div>
+            </div>
+          </div>
+          <div class="shrink-0 px-4 py-2 border-b border-amber-100 bg-amber-50/60 text-[10px] text-amber-700" x-show="skillEditor.isNew">新 Skill 保存后默认不分配给任何阶段；需要使用时请前往 Worker 能力管理。</div>
           <!-- SKILL.md frontmatter (name + description) -->
           <div class="shrink-0 px-4 py-2 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3" x-show="skillEditor.activeFile === 'SKILL.md'">
             <div class="flex-1 grid grid-cols-2 gap-3">
