@@ -15,7 +15,7 @@ from sqlalchemy import (
 
 from axiom.modules.graph.tables import facts, intents
 from axiom.modules.tasks.tables import tasks
-from axiom.shared.database import metadata
+from axiom.shared.database import JSONText, UTCDateTimeText, metadata
 
 
 reason_runs = Table(
@@ -26,9 +26,9 @@ reason_runs = Table(
     Column("goal_cycle_id", String),
     Column("status", String, nullable=False, default="pending"),
     Column("trigger", String, nullable=False),
-    Column("trigger_payload_json", Text, nullable=False, default="{}"),
+    Column("trigger_payload_json", JSONText, nullable=False, default="{}"),
     Column("input_fingerprint", String, nullable=False),
-    Column("worker_pool_json", Text, nullable=False, default="[]"),
+    Column("worker_pool_json", JSONText, nullable=False, default="[]"),
     Column("worker", String),
     Column("settings_version", Integer, nullable=False),
     Column("execute_timeout_seconds", Integer, nullable=False),
@@ -40,21 +40,21 @@ reason_runs = Table(
     Column("explore_conclude_min_seconds", Integer, nullable=False),
     Column("explore_conclude_max_seconds", Integer, nullable=False),
     Column("lease_id", String),
-    Column("claimed_at", String),
-    Column("last_heartbeat_at", String),
+    Column("claimed_at", UTCDateTimeText),
+    Column("last_heartbeat_at", UTCDateTimeText),
     Column("retry_count", Integer, nullable=False, default=0),
     Column("infrastructure_retry_count", Integer, nullable=False, default=0),
-    Column("next_retry_at", String),
+    Column("next_retry_at", UTCDateTimeText),
     Column("last_failure_kind", String, nullable=False, default=""),
     Column("failure_class", String, nullable=False, default=""),
     Column("activity_kind", String, nullable=False, default=""),
     Column("activity_summary", Text, nullable=False, default=""),
     Column("activity_tool", String, nullable=False, default=""),
-    Column("activity_started_at", String),
-    Column("activity_updated_at", String),
-    Column("created_at", String, nullable=False),
-    Column("updated_at", String, nullable=False),
-    Column("concluded_at", String),
+    Column("activity_started_at", UTCDateTimeText),
+    Column("activity_updated_at", UTCDateTimeText),
+    Column("created_at", UTCDateTimeText, nullable=False),
+    Column("updated_at", UTCDateTimeText, nullable=False),
+    Column("concluded_at", UTCDateTimeText),
     CheckConstraint(
         "status IN ('pending','claimed','running','concluding','completed','failed','cancelled')",
         name="status",
@@ -67,7 +67,7 @@ Index(
     "uq_reason_runs_one_open_per_task",
     reason_runs.c.task_id,
     unique=True,
-    sqlite_where=reason_runs.c.status.in_(["pending", "claimed", "running", "concluding"]),
+    postgresql_where=reason_runs.c.status.in_(["pending", "claimed", "running", "concluding"]),
 )
 
 
@@ -102,13 +102,13 @@ reason_workspaces = Table(
     Column("lease_id", String, nullable=False),
     Column("status", String, nullable=False, default="open"),
     Column("context_revision", Integer, nullable=False),
-    Column("draft_json", Text, nullable=False, default="{}"),
+    Column("draft_json", JSONText, nullable=False, default="{}"),
     Column("worker", String, nullable=False),
     Column("failure_reason", Text, nullable=False, default=""),
-    Column("result_json", Text, nullable=False, default="{}"),
-    Column("created_at", String, nullable=False),
-    Column("updated_at", String, nullable=False),
-    Column("committed_at", String),
+    Column("result_json", JSONText, nullable=False, default="{}"),
+    Column("created_at", UTCDateTimeText, nullable=False),
+    Column("updated_at", UTCDateTimeText, nullable=False),
+    Column("committed_at", UTCDateTimeText),
     ForeignKeyConstraint(
         ["task_id", "intent_id"],
         [intents.c.task_id, intents.c.id],

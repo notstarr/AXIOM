@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import Text, cast, func, select
 from sqlalchemy.engine import Engine
 
 from axiom.modules.audit.tables import audit_events
@@ -306,7 +306,9 @@ class TokenUsageBackfiller:
         dry_run: bool,
         session_usage_leases: set[tuple[str, str, str, str, str]],
     ) -> None:
-        query = select(audit_events).where(audit_events.c.payload_json.like('%"token_usage"%'))
+        query = select(audit_events).where(
+            cast(audit_events.c.payload_json, Text).like('%"token_usage"%')
+        )
         if selected:
             query = query.where(audit_events.c.task_id.in_(selected))
         with self.engine.connect() as conn:
@@ -589,7 +591,7 @@ class TokenUsageBackfiller:
                 audit_events.c.payload_json,
             ).where(
                 audit_events.c.task_id == task_id,
-                audit_events.c.payload_json.like(f"%{lease_id}%"),
+                cast(audit_events.c.payload_json, Text).like(f"%{lease_id}%"),
             )
         ).mappings()
         for row in rows:

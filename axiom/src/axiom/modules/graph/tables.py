@@ -13,7 +13,7 @@ from sqlalchemy import (
 )
 
 from axiom.modules.tasks.tables import tasks
-from axiom.shared.database import metadata
+from axiom.shared.database import JSONText, UTCDateTimeText, metadata
 
 
 facts = Table(
@@ -22,7 +22,7 @@ facts = Table(
     Column("id", String, nullable=False),
     Column("task_id", String, nullable=False),
     Column("description", Text, nullable=False),
-    Column("created_at", String, nullable=False),
+    Column("created_at", UTCDateTimeText, nullable=False),
     Column("archived", Boolean, nullable=False, default=False),
     PrimaryKeyConstraint("task_id", "id"),
     ForeignKeyConstraint(["task_id"], [tasks.c.id], ondelete="CASCADE"),
@@ -41,26 +41,26 @@ intents = Table(
     Column("status", String, nullable=False),
     Column("creator", String, nullable=False),
     Column("worker", String),
-    Column("worker_pool_json", Text, nullable=False, default="[]"),
-    Column("targets_json", Text, nullable=False, default="[]"),
+    Column("worker_pool_json", JSONText, nullable=False, default="[]"),
+    Column("targets_json", JSONText, nullable=False, default="[]"),
     Column("execute_timeout_seconds", Integer),
     Column("conclude_timeout_seconds", Integer),
     Column("lease_id", String),
-    Column("claimed_at", String),
-    Column("last_heartbeat_at", String),
+    Column("claimed_at", UTCDateTimeText),
+    Column("last_heartbeat_at", UTCDateTimeText),
     Column("retry_count", Integer, nullable=False, default=0),
     Column("infrastructure_retry_count", Integer, nullable=False, default=0),
-    Column("next_retry_at", String),
+    Column("next_retry_at", UTCDateTimeText),
     Column("last_failure_kind", String, nullable=False, default=""),
     Column("failure_class", String, nullable=False, default=""),
     Column("activity_kind", String, nullable=False, default=""),
     Column("activity_summary", Text, nullable=False, default=""),
     Column("activity_tool", String, nullable=False, default=""),
-    Column("activity_started_at", String),
-    Column("activity_updated_at", String),
+    Column("activity_started_at", UTCDateTimeText),
+    Column("activity_updated_at", UTCDateTimeText),
     Column("to_fact_id", String),
-    Column("created_at", String, nullable=False),
-    Column("concluded_at", String),
+    Column("created_at", UTCDateTimeText, nullable=False),
+    Column("concluded_at", UTCDateTimeText),
     Column("archived", Boolean, nullable=False, default=False),
     PrimaryKeyConstraint("task_id", "id"),
     ForeignKeyConstraint(["task_id"], [tasks.c.id], ondelete="CASCADE"),

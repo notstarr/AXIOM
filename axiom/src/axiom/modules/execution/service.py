@@ -53,7 +53,7 @@ from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
 from axiom.modules.vulnerabilities.schemas import StoredExploreVulnerability, VulnerabilityReport
 from axiom.modules.vulnerability_reviews.service import VulnerabilityReviewService
 from axiom.shared.clock import format_utc, parse_utc, utcnow
-from axiom.shared.database import immediate_transaction
+from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, LeaseInactiveError, NotFoundError
 from axiom.shared.ids import allocate_id
 from axiom.shared.storage import FileStore
@@ -443,7 +443,7 @@ class ExecutionService:
 
     def start(self, *, task_id: str, intent_id: str, command: LeaseCommand) -> StartedIntent:
         now = utcnow()
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             row = self.repository.input_row(conn, task_id, intent_id)
             self._require_row(row, task_id, intent_id)
             self._require_lease(row, command.lease_id)
@@ -486,7 +486,7 @@ class ExecutionService:
             )
 
     def heartbeat(self, *, task_id: str, intent_id: str, command: LeaseCommand) -> None:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             if not self.repository.heartbeat(
                 conn,
                 task_id=task_id,
@@ -497,7 +497,7 @@ class ExecutionService:
                 raise LeaseInactiveError("Intent lease is no longer active")
 
     def activity(self, *, task_id: str, intent_id: str, command: ActivityCommand) -> None:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             row = self.repository.input_row(conn, task_id, intent_id)
             self._require_row(row, task_id, intent_id)
             self._require_lease(row, command.lease_id)
@@ -518,7 +518,7 @@ class ExecutionService:
                 raise LeaseInactiveError("Intent lease is no longer active")
 
     def begin_conclude(self, *, task_id: str, intent_id: str, command: LeaseCommand) -> None:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             row = self.repository.input_row(conn, task_id, intent_id)
             self._require_row(row, task_id, intent_id)
             self._require_lease(row, command.lease_id)
@@ -551,7 +551,7 @@ class ExecutionService:
         command: ReleaseIntentCommand,
     ) -> ReleasedIntent:
         now = utcnow()
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             row = self.repository.input_row(conn, task_id, intent_id)
             self._require_row(row, task_id, intent_id)
             self._require_lease(row, command.lease_id)
@@ -651,7 +651,7 @@ class ExecutionService:
         now = utcnow()
         transaction_committed = False
         try:
-            with immediate_transaction(self.engine) as conn:
+            with transaction(self.engine) as conn:
                 row = self.repository.input_row(conn, task_id, intent_id)
                 self._require_row(row, task_id, intent_id)
                 self._require_lease(row, command.lease_id)
@@ -777,7 +777,7 @@ class ExecutionService:
             with explore_state_guard(run_dir):
                 state = load_explore_state(run_dir)
                 available_outputs = {item.relative_name for item in outputs}
-                with immediate_transaction(self.engine) as conn:
+                with transaction(self.engine) as conn:
                     row = self.repository.input_row(conn, task_id, intent_id)
                     self._require_row(row, task_id, intent_id)
                     self._require_lease(row, command.lease_id)

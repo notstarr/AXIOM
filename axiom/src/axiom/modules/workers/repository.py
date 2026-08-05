@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from sqlalchemy import Connection, delete, select
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from axiom.modules.workers.schemas import UpsertWorker, Worker
 from axiom.modules.workers.tables import workers
@@ -29,7 +29,7 @@ class WorkerRepository:
             "created_at": now,
             "updated_at": now,
         }
-        statement = sqlite_insert(workers).values(**values).on_conflict_do_update(
+        statement = pg_insert(workers).values(**values).on_conflict_do_update(
             index_elements=["name"],
             set_={
                 key: value
@@ -48,7 +48,7 @@ class WorkerRepository:
 
     def list(self, conn: Connection) -> list[Worker]:
         rows = conn.execute(
-            select(workers).order_by(workers.c.priority, workers.c.name)
+            select(workers).order_by(workers.c.priority, workers.c.name.collate("C"))
         ).mappings()
         return [self._worker(row) for row in rows]
 

@@ -16,7 +16,7 @@ from sqlalchemy import (
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.graph.tables import intents
 from axiom.modules.tasks.tables import tasks
-from axiom.shared.database import metadata
+from axiom.shared.database import JSONText, UTCDateTimeText, metadata
 
 
 vulnerabilities = Table(
@@ -31,17 +31,17 @@ vulnerabilities = Table(
     Column("description", Text, nullable=False),
     Column("prerequisites", Text, nullable=False, default=""),
     Column("impact", Text, nullable=False),
-    Column("reproduction_steps_json", Text, nullable=False, default="[]"),
+    Column("reproduction_steps_json", JSONText, nullable=False, default="[]"),
     Column("remediation", Text, nullable=False, default=""),
     Column("curl_command", Text, nullable=False, default=""),
-    Column("evidence_json", Text, nullable=False, default="[]"),
+    Column("evidence_json", JSONText, nullable=False, default="[]"),
     Column("affected_target", String, nullable=False, default=""),
     Column("status", String, nullable=False, default="待验证"),
     Column("status_reason", Text, nullable=False, default=""),
     Column("source", String, nullable=False),
     Column("reported_by", String, nullable=False),
-    Column("created_at", String, nullable=False),
-    Column("updated_at", String, nullable=False),
+    Column("created_at", UTCDateTimeText, nullable=False),
+    Column("updated_at", UTCDateTimeText, nullable=False),
     Column("archived", Boolean, nullable=False, default=False),
     Column("format_version", Integer, nullable=False, default=1, server_default="1"),
     PrimaryKeyConstraint("task_id", "id"),

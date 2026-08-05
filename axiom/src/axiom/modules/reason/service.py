@@ -40,7 +40,7 @@ from axiom.modules.todos.schemas import CreateTodo, TodoSource
 from axiom.modules.todos.tables import todos
 from axiom.modules.workers.tables import workers
 from axiom.shared.clock import format_utc, parse_utc, utcnow
-from axiom.shared.database import immediate_transaction
+from axiom.shared.database import run_transaction, transaction
 from axiom.shared.errors import ConflictError, LeaseInactiveError, NotFoundError
 from axiom.shared.ids import allocate_id
 from axiom.shared.storage import FileStore
@@ -105,10 +105,15 @@ class ReasonService:
     def trigger_manual(self, task_id: str, *, actor: str) -> ReasonRun:
         now = utcnow()
         actor = actor.strip() or "人工"
-        with immediate_transaction(self.engine) as conn:
-            task = self.tasks.get(conn, task_id)
-            if task is None:
+
+        def trigger(conn):
+            task_lock = conn.execute(
+                select(tasks.c.id).where(tasks.c.id == task_id).with_for_update()
+            ).scalar_one_or_none()
+            if task_lock is None:
                 raise NotFoundError(f"Task not found: {task_id}")
+            task = self.tasks.get(conn, task_id)
+            assert task is not None
             if task.legacy_readonly:
                 raise ConflictError("历史只读任务不能触发 Reason")
             if not task.is_runnable_at(now):
@@ -164,6 +169,8 @@ class ReasonService:
             )
             self._set_phase(conn, task_id, "reason", now)
             return run
+
+        return run_transaction(self.engine, trigger)
 
     def create_continuation_in(
         self,
@@ -229,13 +236,13 @@ class ReasonService:
 
     def reconcile_task(self, task_id: str) -> str | None:
         now = utcnow()
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             return self._reconcile_task_in(conn, task_id=task_id, now=now)
 
     def reconcile_all(self) -> ReasonReconcileReport:
         now = utcnow()
         created: list[str] = []
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             task_ids = list(
                 conn.execute(
                     select(tasks.c.id)
@@ -260,6 +267,10 @@ class ReasonService:
         return ReasonReconcileReport(created_reason_run_ids=created)
 
     def _reconcile_task_in(self, conn, *, task_id: str, now: str) -> str | None:
+        if conn.execute(
+            select(tasks.c.id).where(tasks.c.id == task_id).with_for_update()
+        ).scalar_one_or_none() is None:
+            return None
         task = self.tasks.get(conn, task_id)
         if task is None or not task.is_runnable_at(now) or task.legacy_readonly or task.archived:
             return None
@@ -534,7 +545,7 @@ class ReasonService:
 
     def start_run(self, task_id: str, reason_run_id: str, *, lease_id: str) -> StartedReasonRun:
         now = utcnow()
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             run = self._require_run_lease(conn, task_id, reason_run_id, lease_id)
             task = self.tasks.get(conn, task_id)
             if task is None or task.status != "running" or task.archived:
@@ -576,7 +587,7 @@ class ReasonService:
             )
 
     def heartbeat_run(self, task_id: str, reason_run_id: str, *, lease_id: str) -> None:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             if not self.repository.heartbeat(
                 conn,
                 task_id=task_id,
@@ -596,7 +607,7 @@ class ReasonService:
         activity_summary: str,
         activity_tool: str,
     ) -> None:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             run = self._require_run_lease(conn, task_id, reason_run_id, lease_id)
             task = self.tasks.get(conn, task_id)
             if task is None or task.status != "running":
@@ -616,7 +627,7 @@ class ReasonService:
                 raise LeaseInactiveError("ReasonRun lease is no longer active")
 
     def begin_conclude_run(self, task_id: str, reason_run_id: str, *, lease_id: str) -> None:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             self._require_run_lease(conn, task_id, reason_run_id, lease_id)
             if not self.repository.begin_conclude(
                 conn,
@@ -637,7 +648,7 @@ class ReasonService:
         failure_class: str,
     ) -> ReleasedReasonRun:
         now = utcnow()
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             run = self._require_run_lease(conn, task_id, reason_run_id, lease_id)
             config = load_runtime_config(conn)
             next_count = (
@@ -737,7 +748,7 @@ class ReasonService:
         lease_id: str,
         context_revision: int,
     ) -> ReasonWorkspace:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             run = self._require_run_lease(conn, task_id, reason_run_id, lease_id)
             if run.status not in {"running", "concluding"}:
                 raise ConflictError("ReasonRun is not active")
@@ -788,7 +799,7 @@ class ReasonService:
         return workspace
 
     def abandon(self, workspace_id: str, *, lease_id: str, failure_reason: str) -> ReasonWorkspace:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             workspace = self._require_active_open(conn, workspace_id, lease_id)
             abandoned = self.repository.abandon(
                 conn,
@@ -816,7 +827,7 @@ class ReasonService:
             return abandoned
 
     def add_todo(self, workspace_id: str, todo: DraftTodo, *, lease_id: str) -> ReasonWorkspace:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             workspace = self._require_active_open(conn, workspace_id, lease_id)
             self._validate_sources(conn, workspace.task_id, todo.sources)
             existing = next(
@@ -839,7 +850,7 @@ class ReasonService:
         *,
         lease_id: str,
     ) -> ReasonWorkspace:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             workspace = self._require_active_open(conn, workspace_id, lease_id)
             self._validate_sources(conn, workspace.task_id, update_command.source_adds)
             is_draft_ref = any(
@@ -884,7 +895,7 @@ class ReasonService:
         *,
         lease_id: str,
     ) -> ReasonWorkspace:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             workspace = self._require_active_open(conn, workspace_id, lease_id)
             run = self._workspace_run(conn, workspace)
             self._validate_intent(conn, workspace.task_id, workspace.draft, proposal, run)
@@ -920,7 +931,7 @@ class ReasonService:
         *,
         lease_id: str,
     ) -> ReasonWorkspace:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             workspace = self._require_active_open(conn, workspace_id, lease_id)
             self._validate_goal_assessment(conn, workspace, assessment)
             if workspace.draft.goal_assessment == assessment:
@@ -964,7 +975,7 @@ class ReasonService:
             )
 
     def commit(self, workspace_id: str, *, lease_id: str) -> CommitResult:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             workspace = self.repository.get(conn, workspace_id)
             if workspace is None:
                 raise NotFoundError(f"Reason Workspace not found: {workspace_id}")

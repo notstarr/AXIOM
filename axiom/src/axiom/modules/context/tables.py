@@ -13,7 +13,7 @@ from sqlalchemy import (
 )
 
 from axiom.modules.tasks.tables import tasks
-from axiom.shared.database import metadata
+from axiom.shared.database import UTCDateTimeText, metadata
 
 
 context_revisions = Table(
@@ -28,7 +28,7 @@ context_revisions = Table(
     Column("lease_id", String),
     Column("manifest_key", Text, nullable=False),
     Column("content_hash", String, nullable=False),
-    Column("created_at", String, nullable=False),
+    Column("created_at", UTCDateTimeText, nullable=False),
     PrimaryKeyConstraint("task_id", "revision"),
     UniqueConstraint("task_id", "intent_id", "lease_id"),
     UniqueConstraint("task_id", "reason_run_id", "lease_id"),

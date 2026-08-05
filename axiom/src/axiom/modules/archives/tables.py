@@ -12,7 +12,7 @@ from sqlalchemy import (
 )
 
 from axiom.modules.tasks.tables import tasks
-from axiom.shared.database import metadata
+from axiom.shared.database import UTCDateTimeText, metadata
 
 
 archive_batches = Table(
@@ -26,8 +26,8 @@ archive_batches = Table(
     Column("reason", Text, nullable=False, default=""),
     Column("actor", String, nullable=False),
     Column("closure_hash", String, nullable=False),
-    Column("created_at", String, nullable=False),
-    Column("restored_at", String),
+    Column("created_at", UTCDateTimeText, nullable=False),
+    Column("restored_at", UTCDateTimeText),
     Column("restored_by", String),
     CheckConstraint(
         "root_type IN ('fact','intent','artifact','vulnerability','todo')",

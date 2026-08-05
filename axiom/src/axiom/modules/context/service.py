@@ -22,7 +22,7 @@ from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
 from axiom.modules.vulnerabilities.tables import vulnerabilities
 from axiom.shared.clock import utcnow
-from axiom.shared.database import immediate_transaction
+from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, NotFoundError
 from axiom.shared.ids import allocate_sequence
 from axiom.shared.storage import FileStore
@@ -58,7 +58,7 @@ class ContextService:
             raise ConflictError("A leased Context requires exactly one execution owner")
         prepared = None
         try:
-            with immediate_transaction(self.engine) as conn:
+            with transaction(self.engine) as conn:
                 task = self.repository.task(conn, task_id)
                 if task is None:
                     raise NotFoundError(f"Task not found: {task_id}")

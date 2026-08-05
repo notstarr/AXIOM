@@ -11,6 +11,11 @@ import yaml
 from sqlalchemy import Engine, delete, select
 
 from axiom.modules.mcp.discovery import discover_mcp_server
+from axiom.modules.mcp.schema_order import (
+    annotate_input_schema,
+    ordered_property_names,
+    public_input_schema,
+)
 from axiom.modules.mcp.schemas import (
     MCPServer,
     MCPServerInput,
@@ -219,14 +224,8 @@ class MCPService:
             if duplicate:
                 raise ConflictError(f"MCP server already exists: {body.name}")
             values = self._values(body, server_id, utcnow(), include_id=False)
-            previous_connection = tuple(
-                current[key]
-                for key in ("transport", "command", "args_json", "env_json", "url", "raw_config_json")
-            )
-            next_connection = tuple(
-                values[key]
-                for key in ("transport", "command", "args_json", "env_json", "url", "raw_config_json")
-            )
+            previous_connection = self._connection_signature(current)
+            next_connection = self._connection_signature(values)
             if previous_connection != next_connection:
                 values.update(discovery_status="pending", discovery_error="")
             conn.execute(
@@ -368,7 +367,7 @@ class MCPService:
                 id=server_id,
                 discovery_status="pending",
                 discovery_error="",
-                discovered_at="",
+                discovered_at=None,
                 server_info_json="{}",
                 instructions="",
                 created_at=now,
@@ -389,7 +388,7 @@ class MCPService:
             disabled=bool(row["disabled"]),
             discovery_status=row["discovery_status"],
             discovery_error=row["discovery_error"],
-            discovered_at=row["discovered_at"],
+            discovered_at=row["discovered_at"] or "",
             server_info=json.loads(row["server_info_json"] or "{}"),
             instructions=row["instructions"],
             created_at=row["created_at"],
@@ -413,7 +412,8 @@ class MCPService:
 
     @staticmethod
     def _tool(row) -> MCPTool:
-        input_schema = json.loads(row["input_schema_json"] or "{}")
+        stored_input_schema = json.loads(row["input_schema_json"] or "{}")
+        input_schema = public_input_schema(stored_input_schema)
         return MCPTool(
             id=row["id"],
             server_id=row["server_id"],
@@ -423,7 +423,7 @@ class MCPService:
             input_schema=input_schema,
             output_schema=json.loads(row["output_schema_json"] or "{}"),
             annotations=json.loads(row["annotations_json"] or "{}"),
-            usage=_tool_usage(row["name"], input_schema),
+            usage=_tool_usage(row["name"], stored_input_schema),
             enabled=bool(row["enabled"]),
             source=row["source"],
             created_at=row["created_at"],
@@ -453,7 +453,9 @@ class MCPService:
                     title=str(item.get("title", "") or ""),
                     description=str(item.get("description", "") or ""),
                     input_schema_json=json.dumps(
-                        item.get("input_schema") or item.get("inputSchema") or {},
+                        annotate_input_schema(
+                            item.get("input_schema") or item.get("inputSchema") or {}
+                        ),
                         ensure_ascii=False,
                     ),
                     output_schema_json=json.dumps(
@@ -494,6 +496,25 @@ class MCPService:
         return config
 
     @staticmethod
+    def _connection_signature(row) -> tuple[Any, ...]:
+        """Compare JSONB-backed connection fields by value, not key order."""
+
+        def decoded(key: str, fallback: str) -> Any:
+            value = row[key]
+            if isinstance(value, str):
+                return json.loads(value or fallback)
+            return value
+
+        return (
+            row["transport"],
+            row["command"],
+            decoded("args_json", "[]"),
+            decoded("env_json", "{}"),
+            row["url"],
+            decoded("raw_config_json", "{}"),
+        )
+
+    @staticmethod
     def _safe_discovery_error(exc: Exception, config: dict[str, Any]) -> str:
         message = str(exc).strip() or exc.__class__.__name__
         secrets = [str(value) for value in (config.get("env") or {}).values() if len(str(value)) >= 6]
@@ -520,9 +541,10 @@ class MCPService:
 
 def _tool_usage(name: str, schema: dict[str, Any]) -> str:
     properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
-    required = set(schema.get("required") or [])
+    required = {str(item) for item in schema.get("required") or []}
     params: list[str] = []
-    for key, value in properties.items():
+    for key in ordered_property_names(schema):
+        value = properties[key]
         item = value if isinstance(value, dict) else {}
         kind = item.get("type") or "any"
         if isinstance(kind, list):

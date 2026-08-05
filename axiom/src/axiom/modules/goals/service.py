@@ -13,7 +13,7 @@ from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.tables import vulnerabilities
 from axiom.shared.clock import utcnow
-from axiom.shared.database import immediate_transaction
+from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, NotFoundError
 
 
@@ -42,7 +42,7 @@ class GoalService:
             return self.repository.list_cycles(conn, task_id)
 
     def assess(self, task_id: str, command: AssessGoal) -> GoalEvaluation:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             task = self.tasks.get(conn, task_id)
             if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")

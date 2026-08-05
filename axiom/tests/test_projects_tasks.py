@@ -113,8 +113,11 @@ def test_project_with_tasks_must_be_archived(client) -> None:
     assert response.json()["error"]["code"] == "conflict"
 
     assert client.post(f"/api/v1/tasks/{task['id']}/stop").status_code == 200
-    assert client.delete(f"/api/v1/tasks/{task['id']}").status_code == 204
-    assert client.delete(f"/api/v1/projects/{project['id']}").status_code == 204
+    delete_task = client.delete(f"/api/v1/tasks/{task['id']}")
+    assert delete_task.status_code == 409
+    assert "归档任务" in delete_task.json()["error"]["message"]
+    assert client.post(f"/api/v1/tasks/{task['id']}/archive").status_code == 200
+    assert client.delete(f"/api/v1/projects/{project['id']}").status_code == 409
 
 
 def test_scope_normalizes_exact_and_wildcard_targets(client) -> None:

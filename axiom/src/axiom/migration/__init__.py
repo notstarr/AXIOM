@@ -1,5 +1,8 @@
-"""Explicit data migrations from the frozen Cairn database."""
+"""One-way importers for frozen historical databases."""
 
-from axiom.migration.legacy import MigrationReport, migrate_legacy_database
+from axiom.migration.sqlite_to_postgresql import (
+    SQLiteMigrationReport,
+    migrate_sqlite_to_postgresql,
+)
 
-__all__ = ["MigrationReport", "migrate_legacy_database"]
+__all__ = ["SQLiteMigrationReport", "migrate_sqlite_to_postgresql"]

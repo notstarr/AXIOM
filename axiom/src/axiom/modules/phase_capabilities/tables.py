@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import CheckConstraint, Column, Index, String, Table, Text, UniqueConstraint
 
-from axiom.shared.database import metadata
+from axiom.shared.database import UTCDateTimeText, metadata
 
 
 phase_capability_bindings = Table(
@@ -11,8 +11,8 @@ phase_capability_bindings = Table(
     Column("scope", String, nullable=False),
     Column("capability_kind", String, nullable=False),
     Column("capability_key", Text, nullable=False),
-    Column("created_at", String, nullable=False),
-    Column("updated_at", String, nullable=False),
+    Column("created_at", UTCDateTimeText, nullable=False),
+    Column("updated_at", UTCDateTimeText, nullable=False),
     CheckConstraint(
         "scope IN ('common','bootstrap','reason','explore','review')",
         name="scope",

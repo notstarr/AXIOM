@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 
-from sqlalchemy import Engine, and_, or_, select
+from sqlalchemy import Engine, Text, and_, cast, or_, select
 
 from axiom.modules.audit.schemas import AuditEvent, RecordAuditEvent
 from axiom.modules.audit.tables import audit_events
@@ -66,7 +66,7 @@ class AuditService:
                 or_(
                     audit_events.c.message.ilike(pattern),
                     audit_events.c.worker.ilike(pattern),
-                    audit_events.c.payload_json.ilike(pattern),
+                    cast(audit_events.c.payload_json, Text).ilike(pattern),
                 )
             )
         with self.engine.connect() as conn:

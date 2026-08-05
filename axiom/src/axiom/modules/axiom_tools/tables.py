@@ -13,7 +13,7 @@ from sqlalchemy import (
 )
 
 from axiom.modules.workers.tables import workers
-from axiom.shared.database import metadata
+from axiom.shared.database import JSONText, UTCDateTimeText, metadata
 
 
 axiom_tools = Table(
@@ -26,17 +26,17 @@ axiom_tools = Table(
     Column("source", String, nullable=False),
     Column("package_path", Text, nullable=False),
     Column("entrypoint", Text, nullable=False),
-    Column("manifest_json", Text, nullable=False),
-    Column("input_schema_json", Text, nullable=False),
-    Column("supported_phases_json", Text, nullable=False),
-    Column("risk_tags_json", Text, nullable=False),
+    Column("manifest_json", JSONText, nullable=False),
+    Column("input_schema_json", JSONText, nullable=False),
+    Column("supported_phases_json", JSONText, nullable=False),
+    Column("risk_tags_json", JSONText, nullable=False),
     Column("package_hash", String, nullable=False),
     Column("status", String, nullable=False),
     Column("status_error", Text, nullable=False, default=""),
     Column("enabled", Boolean, nullable=False, default=True),
-    Column("discovered_at", String, nullable=False),
-    Column("created_at", String, nullable=False),
-    Column("updated_at", String, nullable=False),
+    Column("discovered_at", UTCDateTimeText, nullable=False),
+    Column("created_at", UTCDateTimeText, nullable=False),
+    Column("updated_at", UTCDateTimeText, nullable=False),
     CheckConstraint("source IN ('bundled','managed')", name="source"),
     CheckConstraint("status IN ('ready','invalid','missing')", name="status"),
 )
@@ -58,8 +58,8 @@ worker_axiom_tool_bindings = Table(
         ForeignKey(axiom_tools.c.key, ondelete="CASCADE"),
         nullable=False,
     ),
-    Column("created_at", String, nullable=False),
-    Column("updated_at", String, nullable=False),
+    Column("created_at", UTCDateTimeText, nullable=False),
+    Column("updated_at", UTCDateTimeText, nullable=False),
     PrimaryKeyConstraint("worker_name", "phase", "tool_key"),
     CheckConstraint("phase IN ('bootstrap','reason','explore','review')", name="phase"),
 )

@@ -240,11 +240,24 @@ class DispatchRepository:
         ).mappings().one_or_none()
 
     @staticmethod
+    def lock_task(conn: Connection, task_id: str):
+        return conn.execute(
+            select(tasks.c.id).where(tasks.c.id == task_id).with_for_update()
+        ).scalar_one_or_none()
+
+    @staticmethod
+    def lock_worker(conn: Connection, worker_name: str):
+        return conn.execute(
+            select(workers.c.name).where(workers.c.name == worker_name).with_for_update()
+        ).scalar_one_or_none()
+
+    @staticmethod
     def intent_row(conn: Connection, task_id: str, intent_id: str):
         return conn.execute(
             select(intents, tasks.c.project_id.label("project_id"))
             .join(tasks, tasks.c.id == intents.c.task_id)
             .where(intents.c.task_id == task_id, intents.c.id == intent_id)
+            .with_for_update(of=intents, skip_locked=True)
         ).mappings().one_or_none()
 
     @staticmethod
@@ -253,6 +266,7 @@ class DispatchRepository:
             select(reason_runs, tasks.c.project_id.label("project_id"))
             .join(tasks, tasks.c.id == reason_runs.c.task_id)
             .where(reason_runs.c.task_id == task_id, reason_runs.c.id == reason_run_id)
+            .with_for_update(of=reason_runs, skip_locked=True)
         ).mappings().one_or_none()
 
     @staticmethod
@@ -264,6 +278,7 @@ class DispatchRepository:
                 vulnerability_review_runs.c.task_id == task_id,
                 vulnerability_review_runs.c.id == review_run_id,
             )
+            .with_for_update(of=vulnerability_review_runs, skip_locked=True)
         ).mappings().one_or_none()
 
     @staticmethod

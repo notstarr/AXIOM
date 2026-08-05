@@ -12,7 +12,7 @@ from sqlalchemy import (
 )
 
 from axiom.modules.vulnerabilities.tables import vulnerabilities
-from axiom.shared.database import metadata
+from axiom.shared.database import JSONText, UTCDateTimeText, metadata
 
 
 external_report_attempts = Table(
@@ -24,13 +24,13 @@ external_report_attempts = Table(
     Column("attempt_no", Integer, nullable=False),
     Column("status", String, nullable=False),
     Column("endpoint", Text, nullable=False),
-    Column("payload_json", Text, nullable=False),
+    Column("payload_json", JSONText, nullable=False),
     Column("response_status", Integer),
     Column("response_body", Text, nullable=False, default=""),
     Column("error", Text, nullable=False, default=""),
-    Column("created_at", String, nullable=False),
-    Column("updated_at", String, nullable=False),
-    Column("completed_at", String),
+    Column("created_at", UTCDateTimeText, nullable=False),
+    Column("updated_at", UTCDateTimeText, nullable=False),
+    Column("completed_at", UTCDateTimeText),
     ForeignKeyConstraint(
         ["task_id", "vulnerability_id"],
         [vulnerabilities.c.task_id, vulnerabilities.c.id],

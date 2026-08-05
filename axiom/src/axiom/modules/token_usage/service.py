@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from sqlalchemy import and_, delete, func, select
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
 from axiom.modules.graph.tables import intents
@@ -225,8 +225,8 @@ class TokenUsageService:
                 lease_id=lease_id,
                 record=record,
             )
-            result = conn.execute(
-                llm_token_usage.insert().prefix_with("OR IGNORE").values(
+            inserted_key = conn.execute(
+                pg_insert(llm_token_usage).values(
                     source_key=source_key,
                     task_id=task_id,
                     intent_id=intent_id,
@@ -252,8 +252,10 @@ class TokenUsageService:
                     source=source,
                     created_at=utcnow(),
                 )
-            )
-            if result.rowcount:
+                .on_conflict_do_nothing(index_elements=["source_key"])
+                .returning(llm_token_usage.c.source_key)
+            ).scalar_one_or_none()
+            if inserted_key is not None:
                 inserted += 1
             else:
                 duplicate += 1
@@ -289,7 +291,7 @@ class TokenUsageService:
                 lease_id=lease_id,
                 session_file=source_record.session_file,
             )
-            statement = sqlite_insert(llm_token_usage_sources).values(
+            statement = pg_insert(llm_token_usage_sources).values(
                 source_key=source_key,
                 task_id=task_id,
                 intent_id=intent_id,
@@ -474,8 +476,8 @@ class TokenUsageService:
         if task_id:
             query = query.where(llm_token_usage.c.task_id == task_id)
         query = query.group_by(llm_token_usage.c.provider, llm_token_usage.c.model).order_by(
-            llm_token_usage.c.provider,
-            llm_token_usage.c.model,
+            llm_token_usage.c.provider.collate("C"),
+            llm_token_usage.c.model.collate("C"),
         )
         return [
             TokenUsageModel(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import Boolean, Column, ForeignKey, Index, PrimaryKeyConstraint, String, Table, Text
 
 from axiom.modules.projects.tables import projects
-from axiom.shared.database import metadata
+from axiom.shared.database import UTCDateTimeText, metadata
 
 
 project_knowledge = Table(
@@ -15,8 +15,8 @@ project_knowledge = Table(
     Column("content", Text, nullable=False),
     Column("category", String, nullable=False, default="note"),
     Column("created_by", String, nullable=False),
-    Column("created_at", String, nullable=False),
-    Column("updated_at", String, nullable=False),
+    Column("created_at", UTCDateTimeText, nullable=False),
+    Column("updated_at", UTCDateTimeText, nullable=False),
     Column("enabled", Boolean, nullable=False, default=True),
     Column("archived", Boolean, nullable=False, default=False),
     PrimaryKeyConstraint("project_id", "id"),

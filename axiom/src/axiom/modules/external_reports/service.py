@@ -18,7 +18,7 @@ from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
 from axiom.modules.vulnerabilities.schemas import Vulnerability
 from axiom.shared.clock import utcnow
-from axiom.shared.database import immediate_transaction
+from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, NotFoundError
 from axiom.shared.storage import FileStore
 
@@ -103,7 +103,7 @@ class ExternalReportService:
         if vulnerability.status != "已验证":
             raise ConflictError("Only verified vulnerabilities can be externally reported")
         config = self.settings.get().config
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             task = self.tasks.get(conn, task_id)
             assert task is not None
             if not task.external_report_enabled:

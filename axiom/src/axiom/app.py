@@ -5,22 +5,60 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 
 from axiom import __version__
 from axiom.api.router import router
 from axiom.composition import Container
+from axiom.shared.database import AXIOM_SCHEMA
 from axiom.shared.errors import DomainError
+from axiom.shared.maintenance import read_maintenance
 
 
 def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
+    data_dir = data_dir.expanduser().resolve()
     app = FastAPI(
         title="AXIOM API",
         version=__version__,
         description="Modular Task/Fact/Intent orchestration backend",
     )
-    app.state.container = Container.build(engine, data_dir=data_dir)
+    initial_maintenance = read_maintenance(data_dir)
+    app.state.container = Container.build(
+        engine,
+        data_dir=data_dir,
+        allow_startup_writes=initial_maintenance.state != "frozen",
+    )
     app.include_router(router)
+
+    @app.middleware("http")
+    async def enforce_maintenance(request: Request, call_next):
+        maintenance = read_maintenance(data_dir)
+        blocked = maintenance.state == "frozen" and request.method not in {
+            "GET",
+            "HEAD",
+            "OPTIONS",
+        }
+        if maintenance.state == "drain" and _starts_new_work(request.method, request.url.path):
+            blocked = True
+        if blocked:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": {
+                        "code": "maintenance_mode",
+                        "message": f"AXIOM is in {maintenance.state} maintenance mode",
+                    },
+                    "maintenance": {
+                        "state": maintenance.state,
+                        "reason": maintenance.reason,
+                        "updated_at": maintenance.updated_at,
+                    },
+                },
+                headers={"Retry-After": "5"},
+            )
+        response = await call_next(request)
+        response.headers["X-AXIOM-Maintenance"] = maintenance.state
+        return response
 
     static_dir = Path(__file__).with_name("static")
     index_file = static_dir / "index.html"
@@ -35,8 +73,34 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
         )
 
     @app.get("/health", tags=["system"])
-    def health() -> dict[str, str]:
-        return {"status": "ok", "api": "v1", "version": __version__}
+    def health() -> dict:
+        maintenance = read_maintenance(data_dir)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1")).scalar_one()
+            migration = conn.execute(
+                text(f'SELECT version_num FROM "{AXIOM_SCHEMA}".alembic_version')
+            ).scalar_one()
+        pool = engine.pool
+        pool_status = {
+            "size": getattr(pool, "size", lambda: 0)(),
+            "checked_out": getattr(pool, "checkedout", lambda: 0)(),
+            "overflow": max(0, getattr(pool, "overflow", lambda: 0)()),
+        }
+        return {
+            "status": "ok",
+            "api": "v1",
+            "version": __version__,
+            "database": {
+                "backend": engine.dialect.name,
+                "migration": migration,
+                "pool": pool_status,
+            },
+            "maintenance": {
+                "state": maintenance.state,
+                "reason": maintenance.reason,
+                "updated_at": maintenance.updated_at,
+            },
+        }
 
     if index_file.is_file():
 
@@ -53,3 +117,21 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
             return FileResponse(index_file)
 
     return app
+
+
+def _starts_new_work(method: str, path: str) -> bool:
+    if method != "POST":
+        return False
+    if path.endswith("/claim"):
+        return True
+    if path in {
+        "/api/v1/tasks",
+        "/api/v1/dispatch/reason-runs/reconcile",
+        "/api/v1/dispatch/task-deadlines/reconcile",
+    }:
+        return True
+    if path.endswith(("/reason-runs/trigger", "/continuations", "/resume")):
+        return True
+    if path.endswith("/reviews") and "/vulnerabilities/" in path:
+        return True
+    return path.startswith("/api/v1/tasks/") and path.endswith("/vulnerabilities")

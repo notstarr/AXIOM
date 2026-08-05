@@ -147,7 +147,10 @@ class ReasonRepository:
                 reason_runs.c.task_id == task_id,
                 reason_runs.c.status == "completed",
             )
-            .order_by(reason_runs.c.concluded_at.desc(), reason_runs.c.id.desc())
+            .order_by(
+                reason_runs.c.concluded_at.desc().nulls_last(),
+                reason_runs.c.id.desc(),
+            )
             .limit(1)
         ).mappings().one_or_none()
 
@@ -161,7 +164,10 @@ class ReasonRepository:
                 reason_runs.c.task_id == task_id,
                 reason_runs.c.status.in_(["completed", "failed"]),
             )
-            .order_by(reason_runs.c.concluded_at.desc(), reason_runs.c.id.desc())
+            .order_by(
+                reason_runs.c.concluded_at.desc().nulls_last(),
+                reason_runs.c.id.desc(),
+            )
             .limit(1)
         ).mappings().one_or_none()
 

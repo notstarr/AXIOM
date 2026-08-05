@@ -37,7 +37,7 @@ from axiom.modules.workers.pi_config import (
 )
 from axiom.modules.workers.repository import WorkerRepository
 from axiom.shared.clock import parse_utc, utcnow
-from axiom.shared.database import immediate_transaction
+from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, LeaseInactiveError, NotFoundError
 
 
@@ -113,7 +113,7 @@ class AxiomToolService:
                 candidate.status_error = f"重复 AXIOM Tool key：{key}；候选目录：{paths}"
             selected[key] = candidate
 
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             existing = {row["key"]: row for row in self.repository.list_rows(conn)}
             for key, candidate in selected.items():
                 old = existing.get(key)
@@ -300,7 +300,7 @@ class AxiomToolService:
                 continue
             unique[scope] = binding.model_copy(update={"scope": scope})
         bindings = list(unique.values())
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             row = self.repository.get_row(conn, key)
             if row is None:
                 raise NotFoundError(f"AXIOM Tool not found: {key}")
@@ -433,7 +433,7 @@ class AxiomToolService:
         return result
 
     def record_audit(self, command: AxiomToolAuditCommand) -> None:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             project_id = conn.execute(
                 select(tasks.c.project_id).where(tasks.c.id == command.task_id)
             ).scalar_one_or_none()

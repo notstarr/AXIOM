@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import Connection, func, or_, select, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.graph.tables import facts
@@ -118,7 +118,7 @@ class TodoRepository:
     ) -> None:
         for source in sources:
             conn.execute(
-                sqlite_insert(todo_sources)
+                pg_insert(todo_sources)
                 .values(
                     task_id=task_id,
                     todo_id=todo_id,

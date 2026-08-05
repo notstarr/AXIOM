@@ -20,7 +20,7 @@ from axiom.modules.workers.schemas import (
 )
 from axiom.shared.clock import utcnow
 from axiom.shared.clock import parse_utc
-from axiom.shared.database import immediate_transaction
+from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, NotFoundError
 
 
@@ -159,7 +159,7 @@ class WorkerService:
     def set_phase_backends(self, phase: str, backend_names: list[str]) -> WorkerPhase:
         phase = self._phase(phase)
         selected = set(backend_names)
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             workers = self.repository.list(conn)
             known = {worker.name for worker in workers}
             missing = selected - known

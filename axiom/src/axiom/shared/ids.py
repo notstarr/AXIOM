@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from sqlalchemy import Column, Connection, Integer, PrimaryKeyConstraint, String, Table
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from axiom.shared.database import metadata
 
@@ -26,7 +26,7 @@ def initialize_counter(
     next_value: int = 1,
 ) -> None:
     conn.execute(
-        sqlite_insert(id_counters)
+        pg_insert(id_counters)
         .values(scope=scope, kind=kind, next_value=next_value)
         .on_conflict_do_nothing(index_elements=["scope", "kind"])
     )
@@ -51,7 +51,7 @@ def allocate_sequence(
     kind: str,
 ) -> int:
     statement = (
-        sqlite_insert(id_counters)
+        pg_insert(id_counters)
         .values(scope=scope, kind=kind, next_value=2)
         .on_conflict_do_update(
             index_elements=["scope", "kind"],

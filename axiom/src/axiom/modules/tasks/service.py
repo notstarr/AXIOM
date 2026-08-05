@@ -38,7 +38,7 @@ from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.tables import vulnerabilities
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.shared.clock import format_utc, parse_utc, utcnow
-from axiom.shared.database import immediate_transaction
+from axiom.shared.database import run_transaction, transaction
 from axiom.shared.errors import ConflictError, NotFoundError
 
 
@@ -184,10 +184,14 @@ class TaskService:
     def continue_task(self, task_id: str, command: ContinueTask) -> ContinueTaskResult:
         now = utcnow()
         deadline_at = self._deadline_at(now, command.run_duration_seconds)
-        with immediate_transaction(self.engine) as conn:
-            task = self.tasks.get(conn, task_id)
-            if task is None:
+
+        def continue_in(conn):
+            if conn.execute(
+                select(tasks.c.id).where(tasks.c.id == task_id).with_for_update()
+            ).scalar_one_or_none() is None:
                 raise NotFoundError(f"Task not found: {task_id}")
+            task = self.tasks.get(conn, task_id)
+            assert task is not None
             if task.legacy_readonly:
                 raise ConflictError("历史只读任务不能继续运行")
             if task.archived:
@@ -265,6 +269,9 @@ class TaskService:
                     },
                 ),
             )
+            return continued, cycle, reason_run
+
+        continued, cycle, reason_run = run_transaction(self.engine, continue_in)
         return ContinueTaskResult(
             task=self._decorate(continued),
             goal_cycle=cycle,
@@ -349,7 +356,7 @@ class TaskService:
             candidates = self.tasks.expired_running_ids(conn, now=checked_at)
         paused_task_ids: list[str] = []
         for task_id in candidates:
-            with immediate_transaction(self.engine) as conn:
+            with transaction(self.engine) as conn:
                 task = self.tasks.get(conn, task_id)
                 if task is None:
                     continue
@@ -383,7 +390,7 @@ class TaskService:
     def archive(self, task_id: str, *, actor: str = "human.frontend") -> Task:
         actor = actor.strip() or "human.frontend"
         now = utcnow()
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             task = self.tasks.get(conn, task_id)
             if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
@@ -430,7 +437,7 @@ class TaskService:
     def unarchive(self, task_id: str, *, actor: str = "human.frontend") -> Task:
         actor = actor.strip() or "human.frontend"
         now = utcnow()
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             task = self.tasks.get(conn, task_id)
             if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")

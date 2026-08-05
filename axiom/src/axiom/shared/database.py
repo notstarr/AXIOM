@@ -1,10 +1,19 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+import json
+import os
+import random
+import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from pathlib import Path
+from datetime import datetime, timezone
+from typing import Any, TypeVar
 
-from sqlalchemy import Connection, Engine, MetaData, create_engine, event, inspect
+from sqlalchemy import Connection, DateTime, Engine, MetaData, Text, create_engine, event, inspect
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import URL, make_url
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.types import TypeDecorator
 
 
 NAMING_CONVENTION = {
@@ -15,7 +24,10 @@ NAMING_CONVENTION = {
     "pk": "pk_%(table_name)s",
 }
 
-metadata = MetaData(naming_convention=NAMING_CONVENTION)
+AXIOM_SCHEMA = "axiom"
+POSTGRESQL_ALEMBIC_BRANCH = "postgresql@head"
+
+metadata = MetaData(schema=AXIOM_SCHEMA, naming_convention=NAMING_CONVENTION)
 
 REQUIRED_TABLES = frozenset(
     {
@@ -38,6 +50,7 @@ REQUIRED_TABLES = frozenset(
         "reason_run_sources",
         "runtime_settings",
         "task_hints",
+        "task_goal_cycles",
         "tasks",
         "todos",
         "vulnerabilities",
@@ -59,51 +72,172 @@ REQUIRED_TABLES = frozenset(
 )
 
 
-def create_sqlite_engine(path: str | Path) -> Engine:
-    database_path = Path(path).expanduser().resolve()
-    database_path.parent.mkdir(parents=True, exist_ok=True)
+class JSONText(TypeDecorator[str]):
+    """Expose the historical JSON-string contract over PostgreSQL JSONB.
+
+    AXIOM's service layer deliberately parses JSON at its module boundaries.
+    Keeping that Python contract avoids a risky all-at-once repository rewrite,
+    while PostgreSQL still stores and validates a real JSONB value.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(JSONB())
+        return dialect.type_descriptor(Text())
+
+    def process_bind_param(self, value: Any, dialect) -> Any:
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            if isinstance(value, str):
+                return json.loads(value)
+            return value
+        if isinstance(value, str):
+            json.loads(value)
+            return value
+        return json.dumps(value, ensure_ascii=False)
+
+    def process_result_value(self, value: Any, dialect) -> str | None:
+        if value is None:
+            return None
+        if dialect.name != "postgresql" and isinstance(value, str):
+            return value
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+class UTCDateTimeText(TypeDecorator[str]):
+    """Expose ISO-8601 strings while storing PostgreSQL TIMESTAMPTZ."""
+
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(DateTime(timezone=True))
+        return dialect.type_descriptor(Text())
+
+    def process_bind_param(self, value: Any, dialect) -> Any:
+        if value is None:
+            return None
+        if dialect.name != "postgresql":
+            if isinstance(value, datetime):
+                return _format_utc(value)
+            return str(value)
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            raw = str(value).strip()
+            if not raw:
+                return None
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def process_result_value(self, value: Any, dialect) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return _format_utc(value)
+        return str(value)
+
+
+def _format_utc(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def database_url_from_env() -> str:
+    direct = os.getenv("AXIOM_DATABASE_URL", "").strip()
+    if direct:
+        return direct
+    host = os.getenv("AXIOM_DB_HOST", "127.0.0.1")
+    port = int(os.getenv("AXIOM_DB_PORT", "55432"))
+    name = os.getenv("AXIOM_DB_NAME", "axiom")
+    user = os.getenv("AXIOM_DB_USER", "axiom_app")
+    password = os.getenv("AXIOM_DB_PASSWORD", "axiom-app-local")
+    return URL.create(
+        "postgresql+psycopg",
+        username=user,
+        password=password,
+        host=host,
+        port=port,
+        database=name,
+    ).render_as_string(hide_password=False)
+
+
+def create_database_engine(
+    database_url: str | None = None,
+    *,
+    application_name: str = "axiom",
+    pool_size: int = 10,
+    max_overflow: int = 10,
+) -> Engine:
+    url = make_url(database_url or database_url_from_env())
+    if url.get_backend_name() != "postgresql":
+        raise ValueError("AXIOM runtime requires a PostgreSQL database URL")
+    connect_args = {
+        "connect_timeout": int(os.getenv("AXIOM_DB_CONNECT_TIMEOUT_SECONDS", "5")),
+        "application_name": application_name,
+    }
     engine = create_engine(
-        f"sqlite+pysqlite:///{database_path}",
-        connect_args={"check_same_thread": False, "timeout": 30},
+        url,
         pool_pre_ping=True,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_recycle=int(os.getenv("AXIOM_DB_POOL_RECYCLE_SECONDS", "1800")),
+        connect_args=connect_args,
     )
 
     @event.listens_for(engine, "connect")
-    def configure_sqlite(dbapi_connection, _connection_record) -> None:
-        cursor = dbapi_connection.cursor()
-        try:
-            cursor.execute("PRAGMA foreign_keys = ON")
-            cursor.execute("PRAGMA journal_mode = WAL")
-            cursor.execute("PRAGMA synchronous = NORMAL")
-            cursor.execute("PRAGMA busy_timeout = 30000")
-        finally:
-            cursor.close()
+    def configure_postgresql(dbapi_connection, _connection_record) -> None:
+        with dbapi_connection.cursor() as cursor:
+            cursor.execute("SET TIME ZONE 'UTC'")
+            cursor.execute(
+                "SELECT set_config('lock_timeout', %s, false)",
+                (f"{int(os.getenv('AXIOM_DB_LOCK_TIMEOUT_MS', '5000'))}ms",),
+            )
+            cursor.execute(
+                "SELECT set_config('idle_in_transaction_session_timeout', %s, false)",
+                (f"{int(os.getenv('AXIOM_DB_IDLE_TX_TIMEOUT_MS', '60000'))}ms",),
+            )
 
     return engine
 
 
 def schema_is_ready(engine: Engine) -> bool:
-    tables = set(inspect(engine).get_table_names())
+    tables = set(inspect(engine).get_table_names(schema=AXIOM_SCHEMA))
     return REQUIRED_TABLES.issubset(tables)
 
 
 @contextmanager
-def immediate_transaction(engine: Engine) -> Iterator[Connection]:
-    """Serialize a SQLite read-check-write critical section.
-
-    Intent capacity checks and claims must be one atomic operation.  SQLite's
-    default deferred transaction permits two dispatchers to observe the same
-    free slot before either writes.  ``BEGIN IMMEDIATE`` acquires the reserved
-    write lock before those checks while still allowing concurrent readers.
-    """
-
-    connection = engine.connect()
-    try:
-        connection.exec_driver_sql("BEGIN IMMEDIATE")
+def transaction(engine: Engine) -> Iterator[Connection]:
+    with engine.begin() as connection:
         yield connection
-        connection.commit()
-    except BaseException:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
+
+
+T = TypeVar("T")
+
+
+def run_transaction(
+    engine: Engine,
+    operation: Callable[[Connection], T],
+    *,
+    attempts: int = 3,
+) -> T:
+    """Run an idempotent transactional closure with bounded PG retries."""
+
+    for attempt in range(attempts):
+        try:
+            with engine.begin() as connection:
+                return operation(connection)
+        except DBAPIError as exc:
+            sqlstate = getattr(getattr(exc, "orig", None), "sqlstate", None)
+            if sqlstate not in {"40P01", "40001"} or attempt + 1 >= attempts:
+                raise
+            time.sleep((0.05 * (3**attempt)) + random.uniform(0, 0.025))
+    raise RuntimeError("unreachable transaction retry state")

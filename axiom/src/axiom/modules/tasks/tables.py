@@ -11,11 +11,11 @@ from sqlalchemy import (
     String,
     Table,
     Text,
-    text,
+    false,
 )
 
 from axiom.modules.projects.tables import projects
-from axiom.shared.database import metadata
+from axiom.shared.database import JSONText, UTCDateTimeText, metadata
 
 
 tasks = Table(
@@ -32,18 +32,18 @@ tasks = Table(
     Column("current_goal_cycle_id", String),
     Column("status", String, nullable=False),
     Column("phase", String, nullable=False),
-    Column("scope_json", Text, nullable=False),
-    Column("worker_pool_json", Text, nullable=False),
+    Column("scope_json", JSONText, nullable=False),
+    Column("worker_pool_json", JSONText, nullable=False),
     Column("guard_enabled", Boolean, nullable=False, default=False),
     Column("external_report_enabled", Boolean, nullable=False, default=False),
     Column("legacy_readonly", Boolean, nullable=False, default=False),
-    Column("archived", Boolean, nullable=False, server_default=text("0")),
-    Column("created_at", String, nullable=False),
-    Column("updated_at", String, nullable=False),
-    Column("completed_at", String),
+    Column("archived", Boolean, nullable=False, server_default=false()),
+    Column("created_at", UTCDateTimeText, nullable=False),
+    Column("updated_at", UTCDateTimeText, nullable=False),
+    Column("completed_at", UTCDateTimeText),
     Column("run_duration_seconds", Integer),
-    Column("run_started_at", String),
-    Column("run_deadline_at", String),
+    Column("run_started_at", UTCDateTimeText),
+    Column("run_deadline_at", UTCDateTimeText),
     Column("last_pause_reason", String),
     CheckConstraint("status IN ('running','stopped','completed','failed')", name="status"),
     CheckConstraint("phase IN ('bootstrap','reason','explore','waiting','none')", name="phase"),
@@ -69,7 +69,7 @@ task_hints = Table(
     Column("task_id", String, ForeignKey(tasks.c.id, ondelete="CASCADE"), nullable=False),
     Column("content", Text, nullable=False),
     Column("creator", String, nullable=False),
-    Column("created_at", String, nullable=False),
+    Column("created_at", UTCDateTimeText, nullable=False),
     Column("archived", Boolean, nullable=False, default=False),
     PrimaryKeyConstraint("task_id", "id"),
 )

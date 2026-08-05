@@ -22,7 +22,7 @@ from axiom.modules.vulnerability_reviews.service import VulnerabilityReviewServi
 from axiom.modules.settings.service import load_runtime_config
 from axiom.modules.settings.tables import runtime_settings
 from axiom.shared.clock import format_utc, parse_utc, utcnow
-from axiom.shared.database import immediate_transaction
+from axiom.shared.database import run_transaction, transaction
 from axiom.shared.errors import ConflictError, NotFoundError
 from axiom.shared.ids import new_lease_id
 
@@ -72,7 +72,12 @@ class DispatchService:
     ) -> ClaimedIntent:
         now = utcnow()
         lease_id = new_lease_id()
-        with immediate_transaction(self.engine) as conn:
+
+        def claim(conn):
+            if self.repository.lock_task(conn, task_id) is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if self.repository.lock_worker(conn, worker_name) is None:
+                raise NotFoundError(f"Worker not found: {worker_name}")
             intent = self.repository.intent_row(conn, task_id, intent_id)
             if intent is None:
                 raise NotFoundError(f"Intent not found: {task_id}/{intent_id}")
@@ -123,6 +128,9 @@ class DispatchService:
                     payload={"phase": intent["kind"], "lease_id": lease_id},
                 ),
             )
+            return intent
+
+        intent = run_transaction(self.engine, claim)
         return ClaimedIntent(
             task_id=task_id,
             intent_id=intent_id,
@@ -141,7 +149,12 @@ class DispatchService:
     ) -> ClaimedReasonRun:
         now = utcnow()
         lease_id = new_lease_id()
-        with immediate_transaction(self.engine) as conn:
+
+        def claim(conn):
+            if self.repository.lock_task(conn, task_id) is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if self.repository.lock_worker(conn, worker_name) is None:
+                raise NotFoundError(f"Worker not found: {worker_name}")
             run = self.repository.reason_run_row(conn, task_id, reason_run_id)
             if run is None:
                 raise NotFoundError(f"ReasonRun not found: {task_id}/{reason_run_id}")
@@ -194,6 +207,9 @@ class DispatchService:
                     },
                 ),
             )
+            return run
+
+        run_transaction(self.engine, claim)
         return ClaimedReasonRun(
             task_id=task_id,
             reason_run_id=reason_run_id,
@@ -211,7 +227,12 @@ class DispatchService:
     ) -> ClaimedVulnerabilityReviewRun:
         now = utcnow()
         lease_id = new_lease_id()
-        with immediate_transaction(self.engine) as conn:
+
+        def claim(conn):
+            if self.repository.lock_task(conn, task_id) is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if self.repository.lock_worker(conn, worker_name) is None:
+                raise NotFoundError(f"Worker not found: {worker_name}")
             run = self.repository.review_run_row(conn, task_id, review_run_id)
             if run is None:
                 raise NotFoundError(
@@ -260,6 +281,9 @@ class DispatchService:
                     },
                 ),
             )
+            return run
+
+        run = run_transaction(self.engine, claim)
         return ClaimedVulnerabilityReviewRun(
             task_id=task_id,
             review_run_id=review_run_id,
@@ -318,6 +342,11 @@ class DispatchService:
         if self.repository.worker_active_count(conn, worker_name) >= worker["max_running"]:
             raise ConflictError("Worker has no free capacity")
 
+        conn.execute(
+            select(runtime_settings.c.id)
+            .where(runtime_settings.c.id == "runtime")
+            .with_for_update()
+        ).scalar_one_or_none()
         config = load_runtime_config(conn)
         if self.repository.global_active_count(conn) >= config.global_max_active_runs:
             raise ConflictError("Global active run limit reached")
@@ -338,7 +367,7 @@ class DispatchService:
         recovered: list[RecoveredIntent] = []
         recovered_reason_runs: list[RecoveredReasonRun] = []
         recovered_review_runs: list[RecoveredReviewRun] = []
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             config = load_runtime_config(conn)
             for row in self.repository.stale_active_intents(conn, cutoff=cutoff):
                 attempt = row["infrastructure_retry_count"] + 1

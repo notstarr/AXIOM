@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import CheckConstraint, Column, ForeignKey, Index, Integer, String, Table, Text
 
 from axiom.modules.tasks.tables import tasks
-from axiom.shared.database import metadata
+from axiom.shared.database import UTCDateTimeText, metadata
 
 
 llm_token_usage = Table(
@@ -24,7 +24,7 @@ llm_token_usage = Table(
     Column("session_file", Text, nullable=False),
     Column("session_entry_id", String, nullable=False),
     Column("usage_kind", String, nullable=False),
-    Column("occurred_at", String, nullable=False),
+    Column("occurred_at", UTCDateTimeText, nullable=False),
     Column("input_tokens", Integer, nullable=False, default=0),
     Column("cache_read_tokens", Integer, nullable=False, default=0),
     Column("cache_write_tokens", Integer, nullable=False, default=0),
@@ -32,7 +32,7 @@ llm_token_usage = Table(
     Column("reasoning_tokens", Integer, nullable=False, default=0),
     Column("reported_total_tokens", Integer),
     Column("source", String, nullable=False),
-    Column("created_at", String, nullable=False),
+    Column("created_at", UTCDateTimeText, nullable=False),
     CheckConstraint(
         "phase IN ('bootstrap','explore','reason','review','unknown')",
         name="phase",
@@ -78,7 +78,7 @@ llm_token_usage_sources = Table(
     Column("status", String, nullable=False),
     Column("error", Text, nullable=False, default=""),
     Column("source", String, nullable=False),
-    Column("scanned_at", String, nullable=False),
+    Column("scanned_at", UTCDateTimeText, nullable=False),
     CheckConstraint("status IN ('complete','incomplete')", name="status"),
     CheckConstraint("source IN ('live','backfill','legacy')", name="source"),
 )

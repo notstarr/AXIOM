@@ -4,7 +4,7 @@ from sqlalchemy import CheckConstraint, Column, ForeignKeyConstraint, Index, Pri
 
 from axiom.modules.graph.tables import intents
 from axiom.modules.tasks.tables import tasks
-from axiom.shared.database import metadata
+from axiom.shared.database import UTCDateTimeText, metadata
 
 
 intent_interventions = Table(
@@ -19,9 +19,9 @@ intent_interventions = Table(
     Column("client_message_id", String, nullable=False),
     Column("status", String, nullable=False, default="pending"),
     Column("error", Text, nullable=False, default=""),
-    Column("created_at", String, nullable=False),
-    Column("sent_at", String),
-    Column("updated_at", String, nullable=False),
+    Column("created_at", UTCDateTimeText, nullable=False),
+    Column("sent_at", UTCDateTimeText),
+    Column("updated_at", UTCDateTimeText, nullable=False),
     PrimaryKeyConstraint("task_id", "id"),
     ForeignKeyConstraint(["task_id"], [tasks.c.id], ondelete="CASCADE"),
     ForeignKeyConstraint(

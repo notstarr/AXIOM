@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+from axiom.modules.mcp.schema_order import PROPERTY_ORDER_KEY
 from axiom.modules.mcp.service import parse_mcp_config
+from axiom.modules.mcp.tables import mcp_tools
 
 
 @pytest.mark.parametrize(
@@ -83,6 +85,45 @@ def test_mcp_import_exposes_tool_schema_usage_and_toggle(client) -> None:
     assert disabled.json()["enabled"] is False
 
 
+def test_mcp_jsonb_preserves_optional_parameter_signature_order(client) -> None:
+    server = client.post(
+        "/api/v1/mcp/import",
+        json={
+            "format": "json",
+            "discover": False,
+            "content": '{"mcpServers":{"demo":{"command":"demo"}}}',
+        },
+    ).json()[0]
+    response = client.put(
+        f"/api/v1/mcp/servers/{server['id']}/tools",
+        json=[
+            {
+                "name": "ordered",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "level": {"type": "string"},
+                        "task_id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "page": {"type": "integer"},
+                    },
+                    "required": ["task_id"],
+                },
+            }
+        ],
+    )
+
+    assert response.status_code == 200, response.text
+    tool = response.json()[0]
+    assert tool["usage"] == (
+        "ordered(level?: string, task_id: string, title?: string, page?: integer)"
+    )
+    assert PROPERTY_ORDER_KEY not in tool["input_schema"]
+    with client.app.state.container.engine.connect() as conn:
+        raw = conn.execute(mcp_tools.select()).mappings().one()["input_schema_json"]
+    assert PROPERTY_ORDER_KEY in raw
+
+
 def test_mcp_worker_binding_is_read_only_compatibility_shape(client) -> None:
     client.put(
         "/api/v1/workers/worker-a",
@@ -146,3 +187,34 @@ def test_failed_discovery_preserves_tools_and_redacts_secrets(client, monkeypatc
     assert "super-secret-token" not in body["discovery_error"]
     assert "private-secret" not in body["discovery_error"]
     assert "***" in body["discovery_error"]
+
+
+def test_jsonb_key_order_does_not_force_mcp_rediscovery(client) -> None:
+    created = client.post(
+        "/api/v1/mcp/servers",
+        json={
+            "name": "jsonb-order",
+            "command": "demo",
+            "args": ["--serve"],
+            "env": {"SECOND": "2", "FIRST": "1"},
+            "raw_config": {"headers": {"X-Second": "2", "X-First": "1"}},
+        },
+    ).json()
+    client.put(
+        f"/api/v1/mcp/servers/{created['id']}/tools",
+        json=[{"name": "ready"}],
+    )
+
+    updated = client.put(
+        f"/api/v1/mcp/servers/{created['id']}",
+        json={
+            "name": "jsonb-order",
+            "command": "demo",
+            "args": ["--serve"],
+            "env": {"FIRST": "1", "SECOND": "2"},
+            "raw_config": {"headers": {"X-First": "1", "X-Second": "2"}},
+        },
+    )
+
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["discovery_status"] == "ready"

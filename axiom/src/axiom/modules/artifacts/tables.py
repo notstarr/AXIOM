@@ -15,7 +15,7 @@ from sqlalchemy import (
 
 from axiom.modules.graph.tables import intents
 from axiom.modules.tasks.tables import tasks
-from axiom.shared.database import metadata
+from axiom.shared.database import UTCDateTimeText, metadata
 
 
 artifacts = Table(
@@ -31,7 +31,7 @@ artifacts = Table(
     Column("content_hash", String, nullable=False),
     Column("size", Integer, nullable=False),
     Column("created_by", String, nullable=False),
-    Column("created_at", String, nullable=False),
+    Column("created_at", UTCDateTimeText, nullable=False),
     Column("archived", Boolean, nullable=False, default=False),
     PrimaryKeyConstraint("task_id", "id"),
     ForeignKeyConstraint(["task_id"], [tasks.c.id], ondelete="CASCADE"),

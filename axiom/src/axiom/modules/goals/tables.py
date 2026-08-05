@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import Boolean, CheckConstraint, Column, ForeignKey, Index, Integer, String, Table, Text, UniqueConstraint
 
 from axiom.modules.tasks.tables import tasks
-from axiom.shared.database import metadata
+from axiom.shared.database import JSONText, UTCDateTimeText, metadata
 
 
 task_goal_cycles = Table(
@@ -17,8 +17,8 @@ task_goal_cycles = Table(
     Column("continuation_reason", Text, nullable=False, default=""),
     Column("focus", Text, nullable=False, default=""),
     Column("actor", String, nullable=False),
-    Column("started_at", String, nullable=False),
-    Column("completed_at", String),
+    Column("started_at", UTCDateTimeText, nullable=False),
+    Column("completed_at", UTCDateTimeText),
     CheckConstraint("status IN ('active','completed')", name="status"),
     UniqueConstraint("task_id", "sequence", name="uq_task_goal_cycles_task_sequence"),
 )
@@ -36,8 +36,8 @@ goal_evaluations = Table(
     Column("workspace_id", String),
     Column("achieved", Boolean, nullable=False),
     Column("reason", Text, nullable=False),
-    Column("evidence_refs_json", Text, nullable=False),
+    Column("evidence_refs_json", JSONText, nullable=False),
     Column("evaluator", String, nullable=False),
-    Column("created_at", String, nullable=False),
+    Column("created_at", UTCDateTimeText, nullable=False),
 )
 Index("ix_goal_evaluations_task_created", goal_evaluations.c.task_id, goal_evaluations.c.created_at)

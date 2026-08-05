@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import Connection, delete, select
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from axiom.modules.phase_capabilities.tables import phase_capability_bindings
 
@@ -44,7 +44,7 @@ class PhaseCapabilityRepository:
         now: str,
     ) -> None:
         conn.execute(
-            sqlite_insert(phase_capability_bindings)
+            pg_insert(phase_capability_bindings)
             .values(
                 scope=scope,
                 capability_kind=capability_kind,

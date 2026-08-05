@@ -72,21 +72,33 @@ class Container:
     interventions: InterventionService
 
     @classmethod
-    def build(cls, engine: Engine, *, data_dir: Path) -> "Container":
+    def build(
+        cls,
+        engine: Engine,
+        *,
+        data_dir: Path,
+        allow_startup_writes: bool = True,
+    ) -> "Container":
         store = FileStore(data_dir)
         vulnerability_reviews = VulnerabilityReviewService(engine, store)
         archives = ArchiveService(engine, store, reviews=vulnerability_reviews)
         context = ContextService(engine, store)
         reason = ReasonService(engine, store=store)
         skills = SkillService(data_dir, engine=engine)
-        phase_capabilities = PhaseCapabilityService(engine, data_dir, skills=skills)
+        phase_capabilities = PhaseCapabilityService(
+            engine,
+            data_dir,
+            skills=skills,
+            initialize_defaults=allow_startup_writes,
+        )
         axiom_tools = AxiomToolService(
             engine,
             data_dir,
             skills=skills,
             phase_capabilities=phase_capabilities,
         )
-        axiom_tools.scan()
+        if allow_startup_writes:
+            axiom_tools.scan()
         settings = RuntimeSettingsService(engine)
         token_usage = TokenUsageService(engine)
         interventions = InterventionService(engine, store)

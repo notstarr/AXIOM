@@ -1,0 +1,24 @@
+name: axiom-test
+
+services:
+  postgres:
+    image: ${AXIOM_POSTGRES_IMAGE:-postgres:18.4-bookworm@sha256:882236b897e39051d2368c5ccc6cda944904723506b2dfc97f2a8f5bc9afa382}
+    environment:
+      POSTGRES_USER: axiom_bootstrap
+      POSTGRES_PASSWORD: axiom-bootstrap-test
+      POSTGRES_DB: postgres
+      AXIOM_DB_NAME: axiom_test
+      AXIOM_DB_MIGRATOR_PASSWORD: axiom-migrator-test
+      AXIOM_DB_APP_PASSWORD: axiom-app-test
+      PGDATA: /var/lib/postgresql/18/docker
+    tmpfs:
+      - /var/lib/postgresql
+    volumes:
+      - ./ops/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:${AXIOM_TEST_DB_PORT:-55433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U axiom_bootstrap -d postgres"]
+      interval: 1s
+      timeout: 3s
+      retries: 60

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from sqlalchemy import Connection, delete, select
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from axiom.modules.axiom_tools.schemas import AxiomTool, AxiomToolBinding
 from axiom.modules.axiom_tools.tables import axiom_tools, worker_axiom_tool_bindings
@@ -11,7 +11,7 @@ from axiom.modules.axiom_tools.tables import axiom_tools, worker_axiom_tool_bind
 
 class AxiomToolRepository:
     def upsert(self, conn: Connection, values: dict[str, object]) -> None:
-        statement = sqlite_insert(axiom_tools).values(**values).on_conflict_do_update(
+        statement = pg_insert(axiom_tools).values(**values).on_conflict_do_update(
             index_elements=["key"],
             set_={
                 key: value

@@ -38,7 +38,7 @@
    - **API 覆盖硬规则**：只要清单中仍有任意一条记录处于“未验证、待测试、参数未知、对象未知、方法未知、路径待确认、仅返回 404 但未确认服务是否部署”状态，就仍然存在未收口攻击面。不能因为同一 Host 的其它接口已测、所有接口都需要 JWT、清单已枚举完成、或一批接口返回负面结果，就关闭整个 API Todo。
    - **“没有参数/对象”不是完成结论**：必须优先从前端 JS、浏览器实际请求、OpenAPI/错误响应、已有 Artifact、同链路前置接口和有效凭证中补齐参数或对象；仍无法取得时，保留对应 Todo 为 `active`，记录具体缺少的参数/对象和已经尝试过的替代路径，并派发一个围绕参数发现或对象创建前置链的具体 Intent。只有在所有替代路径均有证据且当前确实无法执行时，才可把该分支标记为外部阻塞，不能把它伪装成“已覆盖”。
    - **逐条闭环要求**：Reason 在 `goal assess` 前必须能为清单中的每个接口/接口组给出“已完成安全验证、确认不存在/未部署、或有证据的外部阻塞”三类之一；没有逐条结果的记录必须继续保留在 Todo 中。父 Todo 不得因一个子分支完成而整体 `completed`。
-6. 只能通过 Axiom CLI 增量修改工作区；CLI 每次只提交一个小操作并立即持久化。不要写 `reason_plan.json`，不要直接访问 SQLite，不要直接修改图谱。
+6. 只能通过 Axiom CLI 增量修改工作区；CLI 每次只提交一个小操作并立即持久化。不要写 `reason_plan.json`，不要直接访问数据库，不要直接修改图谱。
 7. 完整读取上下文清单中的 `todos.json` 索引。先把新事实与所有状态的历史待办对照，再结合当前 Goal、人工续跑说明/重点以及相关 findings/leads，只展开可能相关待办的详情：`pending/active` 复用原待办并补充事实来源；`completed`、`rejected`、`obsolete` 只要现有材料明确留下尚未执行、尚未验证且当前可执行的材料性方向，就可以恢复为 `active`，合法依据包括新 Fact、当前 Goal 变化、当前 Goal Cycle 的人工说明/重点，或 findings/leads 中明确的遗留工作。恢复时必须复用原 Todo ID、填写新的 `status_reason`，并使用已有相关 Fact 作为真实来源（人工说明不能伪造为 Fact source）。只有没有材料性遗留方向，或方向确实无效/不可执行时，才关闭为 `completed`、`rejected` 或 `obsolete`。
 8. 再处理 `todo_review_ids`。它们是已经没有开放执行意图、必须在本轮明确判断的待办；主题已覆盖时更新为 `completed`，方向无效时更新为 `rejected/obsolete`，仍需继续时更新为 `active`、填写 `status_reason`，并为同一个待办派发新执行意图。同一待办同时受新事实、当前 Goal 或人工续跑说明影响时，以最新材料性判断为准。禁止没有后续执行意图的空 `active` 状态；但不得把“没有新 Fact”或“Todo 已是终态”本身当作关闭或不再规划的理由。
 9. 使用 `axiom reason todo add`、`axiom reason todo update`、`axiom reason intent propose` 和 `axiom reason goal assess`。长文本可使用对应的 `--*-file`，列表参数可重复传递。

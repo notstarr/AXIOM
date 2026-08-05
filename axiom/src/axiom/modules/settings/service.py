@@ -5,7 +5,7 @@ from sqlalchemy import Engine, select, update
 from axiom.modules.settings.schemas import RuntimeConfig, RuntimeSettings
 from axiom.modules.settings.tables import runtime_settings
 from axiom.shared.clock import utcnow
-from axiom.shared.database import immediate_transaction
+from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError
 
 
@@ -25,7 +25,7 @@ class RuntimeSettingsService:
         self.engine = engine
 
     def get(self) -> RuntimeSettings:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             row = conn.execute(
                 select(runtime_settings).where(runtime_settings.c.id == self.SETTINGS_ID)
             ).mappings().one_or_none()
@@ -53,7 +53,7 @@ class RuntimeSettingsService:
         if not actor:
             raise ConflictError("actor must not be empty")
         now = utcnow()
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             row = conn.execute(
                 select(runtime_settings).where(runtime_settings.c.id == self.SETTINGS_ID)
             ).mappings().one_or_none()
@@ -102,7 +102,7 @@ class RuntimeSettingsService:
 
     def mark_applied(self, version: int) -> RuntimeSettings:
         now = utcnow()
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             row = conn.execute(
                 select(runtime_settings).where(runtime_settings.c.id == self.SETTINGS_ID)
             ).mappings().one_or_none()

@@ -12,6 +12,7 @@ from sqlalchemy import Engine, select
 
 from axiom.modules.axiom_tools.repository import AxiomToolRepository
 from axiom.modules.mcp.tables import mcp_servers, mcp_tools
+from axiom.modules.mcp.schema_order import public_input_schema
 from axiom.modules.phase_capabilities.builtins import builtin_tool_payloads
 from axiom.modules.phase_capabilities.repository import PhaseCapabilityRepository
 from axiom.modules.phase_capabilities.schemas import (
@@ -23,7 +24,7 @@ from axiom.modules.phase_capabilities.schemas import (
 )
 from axiom.modules.skills.service import MANDATORY_COMMON_SKILLS, SkillService
 from axiom.shared.clock import utcnow
-from axiom.shared.database import immediate_transaction
+from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, NotFoundError
 
 
@@ -49,13 +50,21 @@ class LeaseCapabilitySnapshot:
 class PhaseCapabilityService:
     """One capability matrix shared by the four logical stage Workers."""
 
-    def __init__(self, engine: Engine, data_dir: Path, *, skills: SkillService):
+    def __init__(
+        self,
+        engine: Engine,
+        data_dir: Path,
+        *,
+        skills: SkillService,
+        initialize_defaults: bool = True,
+    ):
         self.engine = engine
         self.skills = skills
         self.repository = PhaseCapabilityRepository()
         self.axiom_tools = AxiomToolRepository()
         self.data_dir = data_dir.resolve()
-        self._initialize_existing_skills_once()
+        if initialize_defaults:
+            self._initialize_existing_skills_once()
 
     def matrix(self) -> PhaseCapabilitiesResponse:
         with self.engine.connect() as conn:
@@ -204,7 +213,7 @@ class PhaseCapabilityService:
                 + ", ".join(sorted(missing_locked))
             )
         current = self._binding_sets()
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             for scope in SCOPES:
                 values = requested[scope]
                 for kind in KINDS:
@@ -235,7 +244,7 @@ class PhaseCapabilityService:
         scopes = list(command.scopes)
         if kind == "skill" and key in MANDATORY_COMMON_SKILLS and "common" not in scopes:
             raise ConflictError(f"Skill {key} 是锁定的通用能力")
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             existing = {
                 row["scope"]
                 for row in self.repository.list_rows(
@@ -260,7 +269,7 @@ class PhaseCapabilityService:
         kind = self._kind(kind)
         scope = self._scope(scope)
         keys = list(dict.fromkeys(key.strip() for key in keys if key.strip()))
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             existing = {
                 row["capability_key"]
                 for row in self.repository.list_rows(
@@ -363,7 +372,7 @@ class PhaseCapabilityService:
                 "config": runtime_config,
                 "config_hash": self._json_hash(runtime_config),
             }
-            input_schema = json.loads(row["input_schema_json"] or "{}")
+            input_schema = public_input_schema(json.loads(row["input_schema_json"] or "{}"))
             output_schema = json.loads(row["output_schema_json"] or "{}")
             mcp_items.append(
                 {
@@ -518,7 +527,7 @@ class PhaseCapabilityService:
 
     def _initialize_existing_skills_once(self) -> None:
         marker = self.data_dir / _DEFAULTS_MARKER
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             if not marker.exists():
                 now = utcnow()
                 for skill in self.skills.list():

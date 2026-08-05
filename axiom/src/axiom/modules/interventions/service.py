@@ -13,7 +13,7 @@ from axiom.modules.interventions.repository import InterventionRepository
 from axiom.modules.interventions.schemas import CreateIntervention, Intervention, ResolveIntervention
 from axiom.modules.tasks.tables import tasks
 from axiom.shared.clock import utcnow
-from axiom.shared.database import immediate_transaction
+from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, NotFoundError
 from axiom.shared.storage import FileStore
 
@@ -39,7 +39,7 @@ class InterventionService:
         self.repository = InterventionRepository()
 
     def create(self, task_id: str, intent_id: str, body: CreateIntervention) -> Intervention:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             task = conn.execute(select(tasks).where(tasks.c.id == task_id)).mappings().one_or_none()
             if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
@@ -64,14 +64,14 @@ class InterventionService:
             )
 
     def claim(self, task_id: str, intent_id: str, lease_id: str, limit: int = 8) -> list[Intervention]:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             self._require_active_lease(conn, task_id, intent_id, lease_id)
             return self.repository.pending(
                 conn, task_id=task_id, intent_id=intent_id, lease_id=lease_id, limit=limit
             )
 
     def resolve(self, task_id: str, intent_id: str, lease_id: str, intervention_id: str, body: ResolveIntervention) -> Intervention:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             self._require_active_lease(conn, task_id, intent_id, lease_id)
             item = conn.execute(
                 select(tasks.c.id).where(tasks.c.id == task_id)
@@ -87,7 +87,7 @@ class InterventionService:
             return result
 
     def expire(self, task_id: str, intent_id: str, lease_id: str) -> int:
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             return self.repository.expire_lease(
                 conn, task_id=task_id, intent_id=intent_id, lease_id=lease_id
             )

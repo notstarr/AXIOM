@@ -29,7 +29,7 @@ from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.tables import vulnerability_artifacts, vulnerabilities
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.shared.clock import utcnow
-from axiom.shared.database import immediate_transaction
+from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, NotFoundError
 from axiom.shared.ids import allocate_id
 from axiom.shared.storage import FileStore
@@ -85,7 +85,7 @@ class ArchiveService:
         actor: str,
     ) -> ArchiveBatch:
         now = utcnow()
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             task = self._mutable_task(conn, task_id)
             preview = self._closure(conn, task_id, root_type, root_id)
             if expected_closure_hash and preview.closure_hash != expected_closure_hash:
@@ -199,7 +199,7 @@ class ArchiveService:
 
     def restore(self, task_id: str, archive_id: str, *, actor: str) -> ArchiveBatch:
         now = utcnow()
-        with immediate_transaction(self.engine) as conn:
+        with transaction(self.engine) as conn:
             task = self._mutable_task(conn, task_id)
             row = self.repository.batch(conn, task_id, archive_id)
             if row is None:

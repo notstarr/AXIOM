@@ -12,7 +12,7 @@ from sqlalchemy import (
 )
 
 from axiom.modules.projects.tables import projects
-from axiom.shared.database import metadata
+from axiom.shared.database import UTCDateTimeText, metadata
 
 
 credentials = Table(
@@ -29,8 +29,8 @@ credentials = Table(
     Column("content", Text, nullable=False),
     Column("notes", Text, nullable=True),
     Column("enabled", Boolean, nullable=False, default=True),
-    Column("created_at", String, nullable=False),
-    Column("updated_at", String, nullable=False),
+    Column("created_at", UTCDateTimeText, nullable=False),
+    Column("updated_at", UTCDateTimeText, nullable=False),
 )
 Index("ix_credentials_project_enabled", credentials.c.project_id, credentials.c.enabled)
 
@@ -46,7 +46,7 @@ credential_refreshes = Table(
         nullable=False,
     ),
     Column("content", Text, nullable=False),
-    Column("created_at", String, nullable=False),
-    Column("updated_at", String, nullable=False),
+    Column("created_at", UTCDateTimeText, nullable=False),
+    Column("updated_at", UTCDateTimeText, nullable=False),
     UniqueConstraint("credential_id", name="uq_credential_refreshes_credential_id"),
 )
