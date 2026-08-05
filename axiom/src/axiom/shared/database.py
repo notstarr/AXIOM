@@ -152,6 +152,7 @@ def _format_utc(value: datetime) -> str:
 
 
 def database_url_from_env() -> str:
+    _load_postgresql_env_file()
     direct = os.getenv("AXIOM_DATABASE_URL", "").strip()
     if direct:
         return direct
@@ -168,6 +169,28 @@ def database_url_from_env() -> str:
         port=port,
         database=name,
     ).render_as_string(hide_password=False)
+
+
+def _load_postgresql_env_file() -> None:
+    path_value = os.getenv("AXIOM_PG_ENV_FILE", "").strip()
+    if not path_value:
+        return
+    path = os.path.expanduser(path_value)
+    try:
+        lines = open(path, encoding="utf-8").read().splitlines()
+    except OSError:
+        return
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        if key.startswith("AXIOM_"):
+            os.environ.setdefault(key, value)
 
 
 def create_database_engine(

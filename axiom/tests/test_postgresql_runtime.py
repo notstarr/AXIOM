@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 from sqlalchemy.exc import DBAPIError
 
-from axiom.shared.database import create_database_engine, run_transaction
+from axiom.shared.database import (
+    create_database_engine,
+    database_url_from_env,
+    run_transaction,
+)
 from axiom.shared.maintenance import read_maintenance, write_maintenance
 
 
@@ -77,6 +81,38 @@ def test_run_transaction_does_not_retry_nontransactional_errors(monkeypatch) -> 
 def test_runtime_engine_rejects_sqlite_urls() -> None:
     with pytest.raises(ValueError, match="requires a PostgreSQL"):
         create_database_engine("sqlite+pysqlite:///:memory:")
+
+
+def test_database_url_can_be_loaded_from_restricted_environment_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    env_file = tmp_path / "postgresql.env"
+    env_file.write_text(
+        "AXIOM_DATABASE_URL='postgresql+psycopg://app:plain@db.example/axiom'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("AXIOM_DATABASE_URL", raising=False)
+    monkeypatch.setenv("AXIOM_PG_ENV_FILE", str(env_file))
+
+    assert database_url_from_env() == "postgresql+psycopg://app:plain@db.example/axiom"
+
+
+def test_explicit_database_url_overrides_environment_file(tmp_path: Path, monkeypatch) -> None:
+    env_file = tmp_path / "postgresql.env"
+    env_file.write_text(
+        "AXIOM_DATABASE_URL=postgresql+psycopg://file:plain@db.example/file\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AXIOM_PG_ENV_FILE", str(env_file))
+    monkeypatch.setenv(
+        "AXIOM_DATABASE_URL",
+        "postgresql+psycopg://explicit:plain@db.example/explicit",
+    )
+
+    assert database_url_from_env() == (
+        "postgresql+psycopg://explicit:plain@db.example/explicit"
+    )
 
 
 def test_maintenance_state_is_atomic_and_invalid_files_fail_closed(tmp_path: Path) -> None:

@@ -68,9 +68,9 @@ write_launch_agent() {
   local plist="$1" label="$2" log_path="$3"
   shift 3
   python3 - "$plist" "$label" "$AXIOM_DIR" "$log_path" "$AXIOM_DATA_DIR" \
-    "$AXIOM_DATABASE_URL" "$AXIOM_PG_ENV_FILE" "$@" <<'PY'
-import plistlib, sys
-plist,label,workdir,log_path,data_dir,database_url,env_file,*argv=sys.argv[1:]
+    "$AXIOM_PG_ENV_FILE" "$@" <<'PY'
+import os, plistlib, sys
+plist,label,workdir,log_path,data_dir,env_file,*argv=sys.argv[1:]
 payload={
     'Label': label,
     'ProgramArguments': argv,
@@ -81,12 +81,12 @@ payload={
     'KeepAlive': True,
     'EnvironmentVariables': {
         'AXIOM_DATA_DIR': data_dir,
-        'AXIOM_DATABASE_URL': database_url,
         'AXIOM_PG_ENV_FILE': env_file,
         'PATH': '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
     },
 }
 with open(plist,'wb') as handle: plistlib.dump(payload,handle)
+os.chmod(plist, 0o600)
 PY
 }
 

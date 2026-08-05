@@ -12,7 +12,7 @@ LOG_DIR="$AXIOM_DATA_DIR/logs"
 mkdir -p "$(dirname "$PLIST")" "$LOG_DIR"
 
 python3 - "$PLIST" "$LABEL" "$SCRIPT_DIR/backup.sh" "$AXIOM_DIR" "$AXIOM_DATA_DIR" "$AXIOM_PG_ENV_FILE" "$LOG_DIR/postgresql-backup.log" <<'PY'
-import plistlib, sys
+import os, plistlib, sys
 plist,label,program,workdir,data_dir,env_file,log_path=sys.argv[1:]
 payload={
     'Label': label,
@@ -30,6 +30,7 @@ payload={
     },
 }
 with open(plist,'wb') as handle: plistlib.dump(payload,handle)
+os.chmod(plist, 0o600)
 PY
 launchctl bootout "gui/$(id -u)" "$PLIST" >/dev/null 2>&1 || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
