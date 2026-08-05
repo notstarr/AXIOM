@@ -2,7 +2,7 @@ window.AxiomModules = window.AxiomModules || {};
 window.AxiomModules.projects = {
   methods: {
     projectIsActive() {
-      return !this.replay.active && this.project?.project?.status === 'active';
+      return !this.replay.active && !this.project?.project?.archived && this.project?.project?.status === 'active';
     },
 
     countProjectsByStatus(status) {
@@ -14,7 +14,7 @@ window.AxiomModules.projects = {
     },
 
     projectCanWriteHints() {
-      return !this.replay.active && ['active', 'stopped', 'completed'].includes(this.project?.project?.status);
+      return !this.replay.active && !this.project?.project?.archived && ['active', 'stopped', 'completed'].includes(this.project?.project?.status);
     },
 
     canActOnSelectedFacts() {
@@ -892,6 +892,35 @@ window.AxiomModules.projects = {
       this.requestDeleteProject(projectId, projectTitle);
     },
 
+    async archiveProjectById(projectId, projectTitle = '') {
+      if (!projectId) return;
+      const task = this.projects.find(item => item.id === projectId);
+      if (task?.status === 'active') {
+        this.showToast('请先暂停运行中的任务，再归档', 'error');
+        return;
+      }
+      if (!confirm(`确认归档任务「${this.projectLabel(projectId, projectTitle)}」？\n历史数据会保留，任务将不再进入 Worker 调度。`)) return;
+      try {
+        await this.api('POST', `/projects/${projectId}/archive`, { actor: this.actorName() });
+        await this.loadProjects();
+        this.showToast(`已归档 ${projectId}`, 'success');
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async unarchiveProjectById(projectId, projectTitle = '') {
+      if (!projectId) return;
+      if (!confirm(`确认恢复任务「${this.projectLabel(projectId, projectTitle)}」？\n任务会恢复可见，但不会自动继续运行。`)) return;
+      try {
+        await this.api('POST', `/projects/${projectId}/unarchive`, { actor: this.actorName() });
+        await this.loadProjects();
+        this.showToast(`已恢复 ${projectId}`, 'success');
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
     async confirmDeleteProject() {
       const projectId = this.deleteConfirm.id;
       if (!projectId || this.isDeletingProject) return;
@@ -929,7 +958,7 @@ window.AxiomModules.projects = {
     },
 
     async toggleProjectStop() {
-      if (!this.selectedProjectId || !this.project || this.project.project.status === 'completed') return;
+      if (!this.selectedProjectId || !this.project || this.project.project.archived || this.project.project.status === 'completed') return;
       const nextStatus = this.project.project.status === 'active' ? 'stopped' : 'active';
       if (nextStatus === 'active') {
         this.openResumeTaskDialog(this.selectedProjectId, this.project.project.title);

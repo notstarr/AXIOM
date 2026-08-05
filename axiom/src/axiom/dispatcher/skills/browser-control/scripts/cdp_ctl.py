@@ -226,9 +226,13 @@ def _resolve_tab_info(cdp: str, tab_id: str | None) -> dict:
         registered = _registered_target(
             cdp,
             tab_id,
-            current_lease_only=bool(os.environ.get("AXIOM_LEASE_ID", "").strip()),
+            current_lease_only=bool(lease_id),
         )
-        target_ids = {tab_id, registered} - {None, ""}
+        if lease_id and not registered:
+            raise CTLError(
+                f"tab {tab_id} is not registered to the current AXIOM Lease"
+            )
+        target_ids = {registered or tab_id}
         for page in pages:
             if page.get("id") in target_ids:
                 _touch_tab(cdp, str(page.get("id") or ""))

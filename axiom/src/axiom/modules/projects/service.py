@@ -59,7 +59,9 @@ class ProjectService:
             ).scalar_one()
             active_task_count = conn.execute(
                 select(func.count()).select_from(tasks).where(
-                    tasks.c.project_id == project.id, tasks.c.status == "running"
+                    tasks.c.project_id == project.id,
+                    tasks.c.status == "running",
+                    tasks.c.archived.is_(False),
                 )
             ).scalar_one()
             vulnerability_count = conn.execute(

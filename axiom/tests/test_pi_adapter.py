@@ -81,6 +81,110 @@ def test_pi_adapter_returns_the_final_assistant_text(tmp_path) -> None:
     assert output == "FINISH"
 
 
+def test_pi_json_terminal_provider_error_is_transient_even_with_zero_exit(tmp_path) -> None:
+    stdout_path = tmp_path / "stdout.log"
+    stderr_path = tmp_path / "stderr.log"
+    stdout = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "content": [],
+                        "stopReason": "error",
+                        "errorMessage": "HTTP 429: quota exhausted",
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "auto_retry_end",
+                    "success": False,
+                    "attempt": 3,
+                    "finalError": "HTTP 429: quota exhausted",
+                }
+            ),
+            json.dumps({"type": "agent_settled"}),
+        ]
+    )
+    stdout_path.write_text(stdout, encoding="utf-8")
+    stderr_path.write_text("", encoding="utf-8")
+    result = ProcessResult(
+        returncode=0,
+        stdout=stdout,
+        stderr="",
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+    )
+
+    with pytest.raises(TransientWorkerError, match="HTTP 429: quota exhausted"):
+        PiBootstrapExecutor._raise_on_process_failure(result)
+
+
+def test_pi_json_recovered_provider_error_does_not_mask_final_success(tmp_path) -> None:
+    stdout_path = tmp_path / "stdout.log"
+    stderr_path = tmp_path / "stderr.log"
+    stdout = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "content": [],
+                        "stopReason": "error",
+                        "errorMessage": "HTTP 503: unavailable",
+                    },
+                }
+            ),
+            json.dumps({"type": "auto_retry_start", "attempt": 1}),
+            json.dumps(
+                {
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "FINISH"}],
+                        "stopReason": "stop",
+                    },
+                }
+            ),
+            json.dumps({"type": "auto_retry_end", "success": True, "attempt": 1}),
+        ]
+    )
+    stdout_path.write_text(stdout, encoding="utf-8")
+    stderr_path.write_text("", encoding="utf-8")
+    result = ProcessResult(
+        returncode=0,
+        stdout=stdout,
+        stderr="",
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+    )
+
+    PiBootstrapExecutor._raise_on_process_failure(result)
+
+    assert PiBootstrapExecutor._last_assistant_text(result) == "FINISH"
+
+
+def test_pi_json_empty_output_without_provider_error_is_not_process_failure(tmp_path) -> None:
+    stdout_path = tmp_path / "stdout.log"
+    stderr_path = tmp_path / "stderr.log"
+    stdout_path.write_text("", encoding="utf-8")
+    stderr_path.write_text("", encoding="utf-8")
+    result = ProcessResult(
+        returncode=0,
+        stdout="",
+        stderr="",
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+    )
+
+    PiBootstrapExecutor._raise_on_process_failure(result)
+
+    assert PiBootstrapExecutor._last_assistant_text(result) == ""
+
+
 def test_bootstrap_rejects_missing_context_manifest(tmp_path) -> None:
     input_value = execution_input(tmp_path / "run").model_copy(
         update={"context_manifest_path": None}
@@ -808,12 +912,21 @@ def test_review_prompt_enforces_single_target_decision_and_review_artifact() -> 
     assert "不创建 Fact、Todo 或 Intent" in prompt
     assert "review_target.json" in prompt
     assert "axiom skill path vuln-review" in prompt
+    assert "按该 Skill 的“必读附件”规则读取对应状态示例" in prompt
     assert "未分配该 Skill 时不要把它当作缺失依赖" in prompt
     assert "artifacts/review.md" in prompt
     assert "axiom review decision submit verified" in prompt
     assert "needs-human" in prompt
+    assert "默认必须进行至少一次新的独立验证" in prompt
+    assert "不得只复述文件内容后直接裁决" in prompt
+    assert "至少一个关键对照结果" in prompt
+    assert "VC/VI/VA" in prompt
+    assert "不得猜测分数" in prompt
     assert "最后一条 assistant 消息必须只包含 6 个 ASCII 字符" in prompt
     assert "不修改漏洞原始正文" in conclude
+    assert "不得仅根据旧 Finding/Evidence 强行提交" in conclude
+    assert "references/*-example.md" in conclude
+    assert "AV/AC/AT/PR/UI" in conclude
     assert "axiom review status" in conclude
 
 

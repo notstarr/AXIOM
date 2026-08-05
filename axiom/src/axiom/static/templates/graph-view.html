@@ -1,6 +1,6 @@
 <!-- ═══════════ GRAPH VIEW ═══════════ -->
 <template x-if="activePage === 'task-detail' && view === 'graph'">
-<div class="flex-1 flex flex-col overflow-hidden min-w-0">
+<div class="flex-1 flex flex-col overflow-hidden min-w-0 relative">
   <header class="app-page-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0 z-20">
     <button @click="backToList()" class="p-1.5 rounded-lg hover:bg-slate-100 transition text-slate-400 hover:text-slate-600">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
@@ -9,7 +9,7 @@
       <span class="text-base font-semibold text-slate-800 tracking-tight shrink-0">任务图谱</span>
       <span class="text-[11px] font-mono text-slate-400" x-text="project.project.id"></span>
       <h2 class="text-[15px] font-semibold text-slate-700 truncate" x-text="project.project.title"></h2>
-      <button x-show="!replay.active && !project.project.legacy_readonly" @click="openRenameProject(project.project.id, project.project.title)"
+      <button x-show="!replay.active && !project.project.archived && !project.project.legacy_readonly" @click="openRenameProject(project.project.id, project.project.title)"
         class="title-action-button inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-400 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"
         title="重命名项目"
         :aria-label="`重命名 ${project.project.title}`">
@@ -18,6 +18,7 @@
       <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-[0.12em] shrink-0"
         :class="projectStatusBadgeClass(project.project.status)"
         x-text="projectStatusLabel(project.project.status)"></span>
+      <span x-show="project.project.archived" class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-slate-200 text-slate-600 shrink-0">已归档</span>
       <span x-show="taskRunWindowLabel(project.project)" class="inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[10px] font-semibold tabular-nums shrink-0"
         :class="taskRunWindowClass(project.project)" :title="taskRunDeadlineLabel(project.project)">
         <span x-text="taskRunWindowLabel(project.project)"></span>
@@ -63,7 +64,9 @@
       <button x-show="!replay.active" @click="triggerManualReason()" :disabled="!canTriggerManualReason()" :title="manualReasonDisabledReason() || '立即触发一次人工 Reason 复盘'" class="manual-reason-trigger px-2.5 py-1 rounded-lg border text-xs transition flex items-center gap-1.5 disabled:cursor-not-allowed">
         <span x-text="manualReasonTriggering ? '正在触发…' : '立刻 Reason'"></span>
       </button>
-      <button x-show="!replay.active && project.project.status === 'completed' && !project.project.legacy_readonly" @click="openTaskContinuation(project.project)" class="px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-xs font-medium text-amber-800 hover:bg-amber-100 transition">继续任务</button>
+      <button x-show="!replay.active && project.project.status === 'completed' && !project.project.archived && !project.project.legacy_readonly" @click="openTaskContinuation(project.project)" class="px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-xs font-medium text-amber-800 hover:bg-amber-100 transition">继续任务</button>
+      <button x-show="!replay.active && !project.project.archived && !project.project.legacy_readonly" @click="archiveProjectById(project.project.id, project.project.title)" :disabled="project.project.status === 'active'" :title="project.project.status === 'active' ? '请先暂停任务' : '保留历史并停止后续 Worker 调度'" class="px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600 hover:bg-slate-50 transition disabled:cursor-not-allowed disabled:opacity-40">归档任务</button>
+      <button x-show="!replay.active && project.project.archived && !project.project.legacy_readonly" @click="unarchiveProjectById(project.project.id, project.project.title)" class="px-2.5 py-1 rounded-lg border border-emerald-200 text-xs text-emerald-700 hover:bg-emerald-50 transition">恢复任务</button>
       <button x-show="!replay.active && (project.goal_history || []).length" @click="showGoalHistory = !showGoalHistory; updateGraph()" class="px-2.5 py-1 rounded-lg border text-xs transition" :class="showGoalHistory ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-slate-200 text-slate-500 hover:bg-slate-50'" x-text="showGoalHistory ? '隐藏历史 Goal' : '历史 Goal'"></button>
       <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition flex items-center gap-1.5 disabled:opacity-40">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
@@ -73,7 +76,7 @@
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M14.25 3H7.5A2.25 2.25 0 0 0 5.25 5.25v13.5A2.25 2.25 0 0 0 7.5 21h9a2.25 2.25 0 0 0 2.25-2.25V8.25L14.25 3Z"/><path d="M14.25 3v5.25h4.5"/><path d="M8.25 12h7.5M8.25 15h5.25"/></svg>
         漏洞报告
       </button>
-      <template x-if="!replay.active && !project.project.legacy_readonly && ['active', 'stopped'].includes(project.project.status)">
+      <template x-if="!replay.active && !project.project.archived && !project.project.legacy_readonly && ['active', 'stopped'].includes(project.project.status)">
         <button @click="toggleProjectStop()"
           class="px-2.5 py-1 rounded-lg border text-xs transition flex items-center gap-1.5"
           :class="project.project.status === 'active'
@@ -84,7 +87,7 @@
           <span x-text="project.project.status === 'active' ? '暂停' : '继续'"></span>
         </button>
       </template>
-      <button x-show="!replay.active && !project.project.legacy_readonly" @click="deleteProject()" class="px-2.5 py-1 rounded-lg border border-rose-200 text-xs text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition flex items-center gap-1.5">
+      <button x-show="!replay.active && !project.project.archived && !project.project.legacy_readonly" @click="deleteProject()" class="px-2.5 py-1 rounded-lg border border-rose-200 text-xs text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4.75A1.75 1.75 0 0 1 9.75 3h4.5A1.75 1.75 0 0 1 16 4.75V6"/><path d="M19 6l-.63 11.338A2 2 0 0 1 16.37 19.5H7.63a2 2 0 0 1-1.997-2.162L5 6"/><path d="M10 10.5v5"/><path d="M14 10.5v5"/></svg>
         删除
       </button>
@@ -95,6 +98,15 @@
       </button>
     </div>
   </header>
+
+  <div x-show="project.project.archived" class="absolute inset-0 z-50 flex items-center justify-center bg-slate-50/95 p-6">
+    <section class="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+      <div class="mx-auto h-12 w-12 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center text-xl">▣</div>
+      <h3 class="mt-4 text-base font-semibold text-slate-800">任务已归档</h3>
+      <p class="mt-2 text-sm leading-6 text-slate-500">图谱及其关联产物不会在归档状态下披露。恢复任务后才能查看历史内容。</p>
+      <button @click="unarchiveProjectById(project.project.id, project.project.title)" class="mt-5 px-4 py-2 rounded-xl bg-brand-500 text-sm font-medium text-white hover:bg-brand-600 transition">恢复任务并查看图谱</button>
+    </section>
+  </div>
 
   <div class="flex-1 flex overflow-hidden" id="graphLayout">
     <!-- Graph column -->

@@ -409,6 +409,25 @@ def test_cdp_refuses_implicit_page_selection_inside_lease(monkeypatch) -> None:
         module._resolve_tab_info("http://127.0.0.1:9223", None)
 
 
+def test_cdp_refuses_an_explicit_foreign_page_inside_lease(monkeypatch) -> None:
+    module = _load_script(
+        "browser_cdp_rejects_foreign_tab",
+        SKILLS / "browser-control" / "scripts" / "cdp_ctl.py",
+    )
+    monkeypatch.setenv("AXIOM_LEASE_ID", "lease-current")
+    monkeypatch.setattr(
+        module,
+        "_list_pages",
+        lambda _cdp: [
+            {"id": "target-other", "type": "page", "url": "https://other.example"}
+        ],
+    )
+    monkeypatch.setattr(module, "_registered_target", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(module.CTLError, match="not registered to the current AXIOM Lease"):
+        module._resolve_tab_info("http://127.0.0.1:9223", "target-other")
+
+
 def test_cdp_select_uses_the_global_snapshot_index(monkeypatch) -> None:
     module = _load_script(
         "browser_cdp_select_index",

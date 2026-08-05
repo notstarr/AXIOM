@@ -20,6 +20,7 @@
 | 旧任务只读迁移 | 已验证 | `legacy_readonly`，禁止修改执行图谱 |
 | Fact/Intent 链路级联归档 | 已验证 | `archive_batches/archive_batch_members`、下游闭包、重叠批次恢复 |
 | 历史归档兼容迁移 | 已验证 | 0025 为 Fact/Intent/Artifact/Vulnerability/Todo 生成可读批次 |
+| Task 级可逆归档 | 已验证 | `tasks.archived`；停止调度、隐藏正常产物、保留全部历史，恢复不自动 Resume |
 
 ## B. 调度和生命周期
 
@@ -40,7 +41,10 @@
 | API 暂时不可用自动恢复 | 已验证 | 断开/恢复演练，Runner PID 保持不变 |
 | stale lease 恢复 | 已验证 | `recover-stale` 和回归测试 |
 | execution / infrastructure 重试分离 | 已验证 | 两套计数和退避状态 |
+| Pi JSON Provider 终态分类 | 已验证 | 退出码 0 仍识别最终 `stopReason=error/auto_retry_end=false`；恢复成功不误报 |
+| Reason transient Worker 冷却 | 已验证 | Provider 错误跳过 Conclude，只增加基础设施重试并写入 `cooldown_until` |
 | 停止任务取消本地 Worker | 已验证 | Runner 在阶段边界检查 Task 状态 |
+| 归档 Task 调度隔离 | 已验证 | Snapshot、Reason Trigger、stale recovery、阶段 start 均拒绝归档 Task |
 | Goal 是唯一完成指标 | 已验证 | Goal Evaluation 服务和任务收口 |
 | Goal 证据直连 | 已验证 | 新任务 `Fact(s) → Goal`；ReasonRun 不生成图谱节点 |
 | Reason 同批 Todo 临时引用 | 已验证 | `todo:<draft-ref>` 在事务内解析为真实 Todo ID；未知引用整批回滚 |
@@ -60,7 +64,7 @@
 | Reason 动态触发 | 已验证 | 初始、batch、low watermark、max wait、失败终态、可执行 Todo、指纹去重 |
 | Reason 动态时间预算 | 已验证 | Intent 结构化 execute/conclude seconds |
 | Reason 派发 Intent 限额 | 已验证 | 目标开放数 + 单轮新增上限；Todo 不受影响；commit 二次校验 |
-| 阶段统一 FINISH | 已验证 | 只接受最后一条 assistant 纯文本 `FINISH`；随后再校验产物/Workspace |
+| 阶段 FINISH 合同 | 已验证 | Bootstrap/Reason/Reviewer 严格；Explore Execute 有限归一化，Conclude 有核心文件兜底 |
 | Bootstrap 固定文件产物 | 已验证 | 三个非空 Markdown；Artifact 与 Fact 由代码生成 |
 | Reason 增量控制面 | 已验证 | Axiom CLI 经 HTTP 逐条写 Workspace，已移除 `/submit` 和模型大型 JSON |
 | Reason 无漏洞上报 | 已验证 | Workspace 无 vulnerability 字段；只有 Explore 可自动上报 |
@@ -92,6 +96,7 @@
 | Project Knowledge | 已验证 | 项目共享知识索引 |
 | 归档 Context 隔离 | 已验证 | 新 revision/expand 排除归档实体、关系和 Goal evidence；旧 revision 不改写 |
 | 归档 Artifact 保留 | 已验证 | 文件不删除，独立归档接口支持预览和下载 |
+| Task 归档产物隔离 | 已验证 | Hint/Graph/Todo/Goal/Artifact/Vulnerability/Context 均在恢复前拒绝披露 |
 
 ## E. 漏洞、上报和外围能力
 
@@ -131,6 +136,7 @@
 | 任务 Scope/Hints/Worker 配置 | 已验证 | 任务详情和新建任务 |
 | 概览/图谱切换 | 已验证 | 生产浏览器验收 |
 | 独立归档视图 | 已验证 | 批次列表/详情、影响预览、Artifact 查看、重叠恢复计数和恢复历史 |
+| Task 归档与恢复入口 | 已验证 | 列表、概览、图谱、归档视图统一入口；归档后只显示锁定说明和恢复操作 |
 | 图谱 Todo 侧栏 | 已验证 | 任务图谱页面 |
 | Files / MCP / Worker / Settings | 已验证 | 生产页面验收 |
 | Worker 集中能力抽屉 | 已验证 | 四张逻辑 Worker 卡片；内置/Skill/MCP/扩展五个 Tab；草稿一次矩阵保存 |
@@ -167,11 +173,13 @@
 | 旧 API 回滚 `/health` | `api: v2` |
 | 新 API/Runner LaunchAgent | 均运行 |
 | 回滚后恢复新运行时 | 已完成 |
-| Alembic Revision | 生产已升级为 `20260804_0034`；Reviewer 已投入运行 |
+| Alembic Revision | 生产已升级为 `20260805_0035`；Task 级归档和 Reviewer 均已投入运行 |
 | Explore intervention queue | 待验证 | `intent_interventions` 绑定当前 Explore Lease；升级后验证 API/Runner 读取正常，未发送消息在 Lease 结束时变为 `expired` |
 | Reviewer 0034 迁移演练 | 已完成 | 0033 非空库升级/降级；历史待验证补队列、Reason 后端复制、Skill scope、counter、integrity/FK 均通过 |
 | Reviewer 0034 生产备份 | `/Users/hexin/.local/share/axiom-v3/backups/reviewer-0034-20260804-183102/axiom.db.pre-0034.bak`；`integrity_check=ok`、FK 0 |
 | Reviewer 0034 生产 smoke | `/health` 正常；4 个逻辑 Worker、Reviewer 7 个后端；迁移补建 60 个历史 ReviewRun。`t_148/vr000001` 完成 `ignored` 裁决，生成 `review.report a408` 与 review Token 记录；Reviewer 与主链并行领取 |
+| Task 归档/Provider 修复备份 | `/Users/hexin/.local/share/axiom-v3/backups/provider-failure-20260805-220016/axiom.db.pre-restart.bak` |
+| 0035 生产应用 | API PID 90132、Runner PID 90159；`/health` 正常，SQLite integrity `ok`、FK 0 |
 | 三阶段迁移备份 | `/Users/hexin/.local/share/axiom-v3/backups/axiom-20260803-before-0031-103939.db`；`integrity_check=ok` |
 | 真实工具目录迁移备份 | `/Users/hexin/.local/share/axiom-v3/backups/axiom-20260804-before-0032-20260804-112743.db`；升级后 `integrity_check=ok`、FK 0 |
 | 三阶段 API smoke | `/worker-phases`、`/phase-capabilities`、`/workers/overview` 均 200；7 个后端、14 个 common Skill |
@@ -187,6 +195,6 @@
 | 最终生产 smoke | 临时 `t_141` 验证 Bootstrap → ReasonRun → stop；图谱无 Reason Intent，活动工作和 open Workspace 均为 0 |
 | 归档生产 smoke | 临时 `t_152` 验证下游闭包、Context/Graph/Artifact 隔离、归档 Artifact 读取和 6 项恢复；临时数据已清理 |
 | 归档前端验收 | `t_150/f100` 只读预览显示 2 Fact、2 Intent、2 Todo、54 Artifact；空 blockers 时确认按钮可用 |
-| 全套测试 | `470 passed, 1 warning`；Ruff、compileall、全部前端 JavaScript、Pi Extension 加载、Shell 语法和 diff check 均通过 |
+| 全套测试 | `480 passed, 1 warning`；本次修改文件 Ruff、compileall 和 diff check 均通过；全仓 Ruff 仍有与本次无关的历史/临时脚本问题 |
 
 最终生产数据目录：`/Users/hexin/.local/share/axiom-v3`。旧目录仍保留，回滚脚本不会删除旧数据。

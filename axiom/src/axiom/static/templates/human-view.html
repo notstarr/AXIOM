@@ -8,6 +8,7 @@
           <h2 class="text-base font-semibold text-slate-800 truncate" x-text="project?.project?.title"></h2>
           <span class="text-[11px] font-mono text-slate-400" x-text="project?.project?.id"></span>
           <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="projectStatusBadgeClass(project.project.status)" x-text="projectStatusLabel(project.project.status)"></span>
+          <span x-show="project?.project?.archived" class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-slate-200 text-slate-600">已归档</span>
         </div>
         <p class="text-xs text-slate-400 mt-0.5 truncate" x-text="project?.project?.origin"></p>
       </div>
@@ -25,7 +26,9 @@
         <button @click="triggerManualReason()" :disabled="!canTriggerManualReason()" :title="manualReasonDisabledReason() || '立即触发一次人工 Reason 复盘'" class="manual-reason-trigger px-2.5 py-1 rounded-lg border text-xs transition disabled:cursor-not-allowed">
           <span x-text="manualReasonTriggering ? '正在触发…' : '立刻 Reason'"></span>
         </button>
-        <button x-show="project?.project?.status === 'completed' && !project?.project?.legacy_readonly" @click="openTaskContinuation(project.project)" class="px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-xs font-medium text-amber-800 hover:bg-amber-100 transition">继续任务</button>
+        <button x-show="project?.project?.status === 'completed' && !project?.project?.archived && !project?.project?.legacy_readonly" @click="openTaskContinuation(project.project)" class="px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-xs font-medium text-amber-800 hover:bg-amber-100 transition">继续任务</button>
+        <button x-show="!project?.project?.archived && !project?.project?.legacy_readonly" @click="archiveProjectById(project.project.id, project.project.title)" :disabled="project.project.status === 'active'" :title="project.project.status === 'active' ? '请先暂停任务' : '保留历史并停止后续 Worker 调度'" class="px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600 hover:bg-slate-50 transition disabled:cursor-not-allowed disabled:opacity-40">归档任务</button>
+        <button x-show="project?.project?.archived && !project?.project?.legacy_readonly" @click="unarchiveProjectById(project.project.id, project.project.title)" class="px-2.5 py-1 rounded-lg border border-emerald-200 text-xs text-emerald-700 hover:bg-emerald-50 transition">恢复任务</button>
         <button @click="refreshCurrentPage()" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition">刷新</button>
         <button @click="switchTaskView('graph')" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition">图谱</button>
         <button @click="switchTaskView('archive')" class="px-2.5 py-1 rounded-lg border border-amber-200 text-xs text-amber-700 hover:bg-amber-50 transition">归档</button>
@@ -40,7 +43,7 @@
         {id: 'facts', label: '事实与线索'},
         {id: 'artifacts', label: '产物'}
       ]" :key="tab.id">
-        <button @click="switchHumanTab(tab.id)" class="relative px-3 py-2.5 text-xs whitespace-nowrap transition"
+        <button x-show="!project?.project?.archived" @click="switchHumanTab(tab.id)" class="relative px-3 py-2.5 text-xs whitespace-nowrap transition"
           :class="humanTab === tab.id ? 'text-brand-700 font-semibold' : 'text-slate-400 hover:text-slate-600'">
           <span x-text="tab.label"></span>
           <span x-show="tab.id === 'todos' && project.todos?.length" class="ml-1 text-[10px] text-slate-400" x-text="project.todos.filter(item => !item.archived).length"></span>
@@ -51,9 +54,20 @@
     </nav>
   </header>
 
+  <template x-if="project?.project?.archived">
+    <main class="flex-1 min-h-0 flex items-center justify-center p-6 bg-slate-50/40">
+      <section class="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+        <div class="mx-auto h-12 w-12 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center text-xl">▣</div>
+        <h3 class="mt-4 text-base font-semibold text-slate-800">任务已归档</h3>
+        <p class="mt-2 text-sm leading-6 text-slate-500">该任务的 Fact、Intent、Todo、漏洞和产物已从正常页面隐藏。恢复任务后，历史内容才会重新显示。</p>
+        <button @click="unarchiveProjectById(project.project.id, project.project.title)" class="mt-5 px-4 py-2 rounded-xl bg-brand-500 text-sm font-medium text-white hover:bg-brand-600 transition">恢复任务并查看产物</button>
+      </section>
+    </main>
+  </template>
+
   <!-- 工作台：用运行循环表达 Reason 重入和 Explore 并发，不把任务伪装成线性流程。 -->
   <template x-if="humanTab === 'workspace'">
-  <main class="flex-1 min-h-0 overflow-y-auto p-5">
+  <main x-show="!project?.project?.archived" class="flex-1 min-h-0 overflow-y-auto p-5">
     <div class="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-4 max-w-[1600px] mx-auto">
       <aside class="space-y-3 self-start xl:sticky xl:top-0">
         <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -275,7 +289,7 @@
 
   <!-- Explore 实时对话：只展示脱敏后的行动摘要和工具活动，不展示隐藏思维链。 -->
   <template x-if="humanTab === 'conversation'">
-  <main class="flex-1 min-h-0 overflow-y-auto p-5">
+  <main x-show="!project?.project?.archived" class="flex-1 min-h-0 overflow-y-auto p-5">
     <div class="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4 h-full min-h-[520px]">
       <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col min-h-0">
         <div class="px-4 py-3 border-b border-slate-100"><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Explore monitor</p><h3 class="mt-1 text-sm font-semibold text-slate-800">所有 Explore Intent</h3><p class="mt-1 text-[10px] text-slate-400">运行中的 Intent 高亮；消息只绑定当前 Lease。</p></div>
@@ -309,7 +323,7 @@
 
   <!-- Todo 全量视图 -->
   <template x-if="humanTab === 'todos'">
-  <main class="flex-1 min-h-0 overflow-y-auto p-5">
+  <main x-show="!project?.project?.archived" class="flex-1 min-h-0 overflow-y-auto p-5">
     <div class="max-w-[1200px] mx-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div class="flex items-start justify-between gap-3"><div><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Reason workspace</p><h3 class="mt-1 text-base font-semibold text-slate-800">Todo 覆盖清单</h3><p class="mt-1 text-xs text-slate-400">Todo 是跨 Reason 轮次共享的任务清单，不按 Host / Path 聚类。</p></div><span class="px-2.5 py-1 rounded-lg bg-brand-50 text-brand-700 text-xs font-semibold" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total} 已完成`"></span></div>
       <div class="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -322,7 +336,7 @@
 
   <!-- Intent 全量视图 -->
   <template x-if="humanTab === 'intents'">
-  <main class="flex-1 min-h-0 overflow-y-auto p-5">
+  <main x-show="!project?.project?.archived" class="flex-1 min-h-0 overflow-y-auto p-5">
     <div class="max-w-[1300px] mx-auto rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
       <div class="px-5 py-4 border-b border-slate-100"><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Concurrent execution</p><h3 class="mt-1 text-base font-semibold text-slate-800">Intent 执行队列</h3></div>
       <div class="divide-y divide-slate-100">
@@ -341,7 +355,7 @@
 
   <!-- Facts / Leads 视图 -->
   <template x-if="humanTab === 'facts'">
-  <main class="flex-1 min-h-0 overflow-y-auto p-5">
+  <main x-show="!project?.project?.archived" class="flex-1 min-h-0 overflow-y-auto p-5">
     <div class="max-w-[1300px] mx-auto grid grid-cols-1 lg:grid-cols-2 gap-4">
       <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div class="flex items-center justify-between"><div><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Evidence</p><h3 class="mt-1 text-base font-semibold text-slate-800">事实</h3></div><span class="text-xs text-slate-400" x-text="`${humanFactCount()} 条`"></span></div>
@@ -355,7 +369,7 @@
 
   <!-- Artifact 视图 -->
   <template x-if="humanTab === 'artifacts'">
-  <main class="flex-1 min-h-0 overflow-y-auto p-5">
+  <main x-show="!project?.project?.archived" class="flex-1 min-h-0 overflow-y-auto p-5">
     <div class="max-w-[1300px] mx-auto rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
       <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3"><div><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Task files</p><h3 class="mt-1 text-base font-semibold text-slate-800">任务产物</h3><p class="mt-1 text-xs text-slate-400">原始文件统一由文件管理中心维护。</p></div><span class="text-xs text-slate-400" x-text="`${humanArtifactTotal} 个`"></span></div>
       <div class="divide-y divide-slate-100"><template x-for="artifact in (humanArtifactItems || []).filter(item => !item.archived)" :key="`artifact-tab-${artifact.id}`"><button type="button" @click="openHumanArtifact(artifact)" class="w-full text-left px-5 py-3.5 flex items-center gap-3 hover:bg-brand-50/50"><span class="text-lg text-slate-400">▤</span><div class="min-w-0 flex-1"><div class="flex items-center gap-2"><span class="text-sm text-slate-700 truncate" x-text="humanArtifactLabel(artifact)"></span><span class="px-1.5 py-0.5 rounded border border-slate-200 text-[9px] text-slate-500" x-text="humanArtifactTypeLabel(artifact)"></span><span class="px-1.5 py-0.5 rounded border border-brand-100 bg-brand-50 text-[9px] text-brand-600" x-text="humanArtifactPhase(artifact)"></span></div><p class="mt-1 text-xs text-slate-400 truncate" x-text="`${humanSourceLabel(artifact)} · ${artifact.summary || artifact.path}`"></p></div><span class="text-[10px] text-slate-400" x-text="formatTime(artifact.created_at)"></span></button></template></div>

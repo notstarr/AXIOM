@@ -11,6 +11,21 @@ type BrokerResponse = {
 };
 
 const MAX_BROKER_RESPONSE_BYTES = 2 * 1024 * 1024;
+const LEGACY_BROWSER_COMMANDS = [
+  "cdp_ctl.py",
+  "launch-chrome.sh",
+  "stop-chrome.sh",
+  "launch-proxy.sh",
+  "stop-proxy.sh",
+  "proxy_get_traffic.py",
+  "mitm_addon.py",
+];
+
+function bashCommand(input: unknown): string {
+  if (!input || typeof input !== "object") return "";
+  const value = input as Record<string, unknown>;
+  return String(value.command ?? value.cmd ?? "");
+}
 
 const PAGE_ID = Type.String({ minLength: 1, description: "browser_open_page 返回的当前 Lease 页面 ID" });
 const REF = Type.String({ minLength: 1, description: "browser_snapshot 返回的准确元素 Ref" });
@@ -96,6 +111,17 @@ function register(
 }
 
 export default function axiomBrowser(pi: ExtensionAPI) {
+  pi.on("tool_call", (event) => {
+    if (event.toolName !== "bash") return;
+    const command = bashCommand(event.input);
+    const legacy = LEGACY_BROWSER_COMMANDS.find((name) => command.includes(name));
+    if (!legacy) return;
+    return {
+      block: true,
+      reason: `Explore 已启用原生 browser_* Tool，禁止通过 Bash 调用旧浏览器脚本 ${legacy}`,
+    };
+  });
+
   register(pi, {
     name: "browser_open_page",
     label: "打开浏览器页面",

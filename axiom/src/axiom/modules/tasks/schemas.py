@@ -148,6 +148,7 @@ class Task(BaseModel):
     guard_enabled: bool
     external_report_enabled: bool
     legacy_readonly: bool
+    archived: bool = False
     created_at: str
     updated_at: str
     completed_at: str | None = None
@@ -172,7 +173,7 @@ class Task(BaseModel):
     active_reason_run: ActiveReasonRun | None = None
 
     def is_runnable_at(self, now: str) -> bool:
-        return self.status == "running" and (
+        return not self.archived and self.status == "running" and (
             self.run_deadline_at is None or parse_utc(self.run_deadline_at) > parse_utc(now)
         )
 

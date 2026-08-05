@@ -38,6 +38,7 @@ from axiom.modules.tasks.tables import tasks
 from axiom.modules.todos.repository import TodoRepository
 from axiom.modules.todos.schemas import CreateTodo, TodoSource
 from axiom.modules.todos.tables import todos
+from axiom.modules.workers.tables import workers
 from axiom.shared.clock import format_utc, parse_utc, utcnow
 from axiom.shared.database import immediate_transaction
 from axiom.shared.errors import ConflictError, LeaseInactiveError, NotFoundError
@@ -241,6 +242,7 @@ class ReasonService:
                     .where(
                         tasks.c.status == "running",
                         tasks.c.legacy_readonly.is_(False),
+                        tasks.c.archived.is_(False),
                         or_(
                             tasks.c.run_deadline_at.is_(None),
                             tasks.c.run_deadline_at > now,
@@ -259,7 +261,7 @@ class ReasonService:
 
     def _reconcile_task_in(self, conn, *, task_id: str, now: str) -> str | None:
         task = self.tasks.get(conn, task_id)
-        if task is None or not task.is_runnable_at(now) or task.legacy_readonly:
+        if task is None or not task.is_runnable_at(now) or task.legacy_readonly or task.archived:
             return None
 
         active = self.repository.active_for_task(conn, task_id)
@@ -535,7 +537,7 @@ class ReasonService:
         with immediate_transaction(self.engine) as conn:
             run = self._require_run_lease(conn, task_id, reason_run_id, lease_id)
             task = self.tasks.get(conn, task_id)
-            if task is None or task.status != "running":
+            if task is None or task.status != "running" or task.archived:
                 raise LeaseInactiveError("Task is not running")
             if run.status == "running":
                 return StartedReasonRun(
@@ -696,6 +698,16 @@ class ReasonService:
                     },
                 ),
             )
+            if failure_class == "transient" and run.worker:
+                cooldown = format_utc(
+                    parse_utc(now)
+                    + timedelta(seconds=config.worker_failure_cooldown_seconds)
+                )
+                conn.execute(
+                    update(workers)
+                    .where(workers.c.name == run.worker)
+                    .values(cooldown_until=cooldown, updated_at=now)
+                )
             return ReleasedReasonRun(
                 task_id=task_id,
                 reason_run_id=reason_run_id,

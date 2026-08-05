@@ -42,6 +42,7 @@ class DispatchRepository:
     ) -> DispatcherSnapshot:
         task_rows = conn.execute(
             select(tasks.c.id, tasks.c.status, tasks.c.created_at)
+            .where(tasks.c.archived.is_(False))
             .order_by(tasks.c.created_at, tasks.c.id)
         ).mappings()
         tasks_by_id = {
@@ -228,7 +229,12 @@ class DispatchRepository:
     @staticmethod
     def task_run_state(conn: Connection, task_id: str):
         return conn.execute(
-            select(tasks.c.status, tasks.c.run_deadline_at, tasks.c.legacy_readonly).where(
+            select(
+                tasks.c.status,
+                tasks.c.run_deadline_at,
+                tasks.c.legacy_readonly,
+                tasks.c.archived,
+            ).where(
                 tasks.c.id == task_id
             )
         ).mappings().one_or_none()
@@ -440,6 +446,7 @@ class DispatchRepository:
             .join(tasks, tasks.c.id == intents.c.task_id)
             .where(
                 tasks.c.status == "running",
+                tasks.c.archived.is_(False),
                 intents.c.status.in_(ACTIVE_STATUSES),
                 intents.c.archived.is_(False),
                 intents.c.lease_id.is_not(None),
@@ -456,6 +463,7 @@ class DispatchRepository:
             .join(tasks, tasks.c.id == reason_runs.c.task_id)
             .where(
                 tasks.c.status == "running",
+                tasks.c.archived.is_(False),
                 reason_runs.c.status.in_(ACTIVE_STATUSES),
                 reason_runs.c.lease_id.is_not(None),
                 reason_runs.c.last_heartbeat_at.is_not(None),
@@ -474,6 +482,7 @@ class DispatchRepository:
             select(vulnerability_review_runs, tasks.c.project_id.label("project_id"))
             .join(tasks, tasks.c.id == vulnerability_review_runs.c.task_id)
             .where(
+                tasks.c.archived.is_(False),
                 vulnerability_review_runs.c.status.in_(ACTIVE_STATUSES),
                 vulnerability_review_runs.c.lease_id.is_not(None),
                 vulnerability_review_runs.c.last_heartbeat_at.is_not(None),

@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    text,
 )
 
 from axiom.modules.projects.tables import projects
@@ -36,6 +37,7 @@ tasks = Table(
     Column("guard_enabled", Boolean, nullable=False, default=False),
     Column("external_report_enabled", Boolean, nullable=False, default=False),
     Column("legacy_readonly", Boolean, nullable=False, default=False),
+    Column("archived", Boolean, nullable=False, server_default=text("0")),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
     Column("completed_at", String),
@@ -57,6 +59,7 @@ tasks = Table(
 )
 
 Index("ix_tasks_status_run_deadline", tasks.c.status, tasks.c.run_deadline_at)
+Index("ix_tasks_archived_status", tasks.c.archived, tasks.c.status)
 
 
 task_hints = Table(

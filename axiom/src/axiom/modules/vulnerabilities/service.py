@@ -53,6 +53,8 @@ class VulnerabilityService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.legacy_readonly:
                 raise ConflictError("Legacy Task is read-only")
+            if task.archived:
+                raise ConflictError("已归档任务不能新增漏洞，请先恢复任务")
             if body.intent_id and conn.execute(
                 select(intents.c.id).where(
                     intents.c.task_id == task_id,
@@ -81,6 +83,11 @@ class VulnerabilityService:
 
     def get(self, task_id: str, vulnerability_id: str) -> Vulnerability:
         with self.engine.connect() as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的漏洞不可见，请先恢复任务")
             result = self.repository.get(conn, task_id, vulnerability_id)
         if result is None:
             raise NotFoundError(f"Vulnerability not found: {vulnerability_id}")
@@ -88,8 +95,11 @@ class VulnerabilityService:
 
     def list(self, task_id: str) -> list[Vulnerability]:
         with self.engine.connect() as conn:
-            if self.tasks.get(conn, task_id) is None:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的漏洞不可见，请先恢复任务")
             return self.repository.list(conn, task_id)
 
     def list_all(self, **filters) -> list[Vulnerability]:
@@ -99,8 +109,12 @@ class VulnerabilityService:
     def list_page(self, **filters) -> tuple[list[Vulnerability], int]:
         with self.engine.connect() as conn:
             task_id = filters.get("task_id")
-            if task_id is not None and self.tasks.get(conn, task_id) is None:
-                raise NotFoundError(f"Task not found: {task_id}")
+            if task_id is not None:
+                task = self.tasks.get(conn, task_id)
+                if task is None:
+                    raise NotFoundError(f"Task not found: {task_id}")
+                if task.archived:
+                    raise ConflictError("已归档任务的漏洞不可见，请先恢复任务")
             return self.repository.list_page(conn, **filters)
 
     def update(self, task_id: str, vulnerability_id: str, body: UpdateVulnerability) -> Vulnerability:
@@ -110,6 +124,8 @@ class VulnerabilityService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.legacy_readonly:
                 raise ConflictError("Legacy Task is read-only")
+            if task.archived:
+                raise ConflictError("已归档任务不能修改漏洞，请先恢复任务")
             current = self.repository.get(conn, task_id, vulnerability_id)
             if current is None:
                 raise NotFoundError(f"Vulnerability not found: {vulnerability_id}")

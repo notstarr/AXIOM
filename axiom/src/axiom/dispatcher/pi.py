@@ -603,6 +603,9 @@ class PiBootstrapExecutor:
         )
         if "axiom_tool_load_failed" in combined_detail:
             raise AxiomToolLoadError(combined_detail[-2_000:])
+        provider_error = _terminal_provider_error(result.stdout)
+        if provider_error:
+            raise TransientWorkerError(provider_error[-2_000:])
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or "Pi exited unsuccessfully"
             raise TransientWorkerError(detail[-2_000:])
@@ -876,6 +879,52 @@ def _message_text(message: dict[str, Any]) -> list[str]:
         for item in content
         if isinstance(item, dict) and item.get("type") == "text" and item.get("text")
     ]
+
+
+def _terminal_provider_error(stdout: str) -> str:
+    """Return Pi JSON mode's final provider error, ignoring recovered retries."""
+
+    terminal_error = ""
+    for line in stdout.splitlines():
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+
+        messages: list[dict[str, Any]] = []
+        message = payload.get("message")
+        if isinstance(message, dict):
+            messages.append(message)
+        if payload.get("type") == "agent_end" and isinstance(payload.get("messages"), list):
+            messages.extend(
+                item for item in payload["messages"] if isinstance(item, dict)
+            )
+        for assistant in messages:
+            if assistant.get("role") != "assistant":
+                continue
+            if assistant.get("stopReason") == "error":
+                error = assistant.get("errorMessage")
+                if isinstance(error, str) and error.strip():
+                    terminal_error = error.strip()
+                else:
+                    text = "\n".join(_message_text(assistant)).strip()
+                    terminal_error = text or "Pi provider returned an error response"
+            else:
+                terminal_error = ""
+
+        if payload.get("type") == "auto_retry_end":
+            if payload.get("success") is True:
+                terminal_error = ""
+            else:
+                error = payload.get("finalError")
+                terminal_error = (
+                    error.strip()
+                    if isinstance(error, str) and error.strip()
+                    else terminal_error or "Pi provider retries were exhausted"
+                )
+    return terminal_error
 
 
 def _format_skill_directories(paths: list[str]) -> str:

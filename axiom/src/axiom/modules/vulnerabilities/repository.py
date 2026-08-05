@@ -105,7 +105,10 @@ class VulnerabilityRepository:
         if severity:
             query = query.where(vulnerabilities.c.severity == severity)
         if not include_archived:
-            query = query.where(vulnerabilities.c.archived.is_(False))
+            query = query.where(
+                tasks.c.archived.is_(False),
+                vulnerabilities.c.archived.is_(False),
+            )
         if search.strip():
             pattern = f"%{search.strip()}%"
             query = query.join(projects, projects.c.id == tasks.c.project_id).where(
@@ -149,7 +152,10 @@ class VulnerabilityRepository:
         if severity:
             query = query.where(vulnerabilities.c.severity == severity)
         if not include_archived:
-            query = query.where(vulnerabilities.c.archived.is_(False))
+            query = query.where(
+                tasks.c.archived.is_(False),
+                vulnerabilities.c.archived.is_(False),
+            )
         if search.strip():
             pattern = f"%{search.strip()}%"
             query = query.join(projects, projects.c.id == tasks.c.project_id).where(

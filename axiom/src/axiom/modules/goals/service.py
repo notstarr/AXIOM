@@ -25,14 +25,20 @@ class GoalService:
 
     def list(self, task_id: str) -> list[GoalEvaluation]:
         with self.engine.connect() as conn:
-            if self.tasks.get(conn, task_id) is None:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的目标记录不可见，请先恢复任务")
             return self.repository.list(conn, task_id)
 
     def list_cycles(self, task_id: str) -> list[GoalCycle]:
         with self.engine.connect() as conn:
-            if self.tasks.get(conn, task_id) is None:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的目标记录不可见，请先恢复任务")
             return self.repository.list_cycles(conn, task_id)
 
     def assess(self, task_id: str, command: AssessGoal) -> GoalEvaluation:
@@ -42,6 +48,8 @@ class GoalService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.legacy_readonly:
                 raise ConflictError("Legacy Task is read-only")
+            if task.archived:
+                raise ConflictError("已归档任务不能提交目标评估，请先恢复任务")
             self.validate_evidence(
                 conn,
                 task_id,

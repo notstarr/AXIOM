@@ -62,6 +62,8 @@ class ContextService:
                 task = self.repository.task(conn, task_id)
                 if task is None:
                     raise NotFoundError(f"Task not found: {task_id}")
+                if task.get("archived", False):
+                    raise ConflictError("已归档任务不能生成 Worker Context")
                 if intent_id is not None:
                     exists = conn.execute(
                         select(intents.c.id).where(
@@ -211,8 +213,11 @@ class ContextService:
     def expand(self, task_id: str, refs: list[str]) -> ExpandedContext:
         entries: dict[str, Any] = {}
         with self.engine.connect() as conn:
-            if self.repository.task(conn, task_id) is None:
+            task = self.repository.task(conn, task_id)
+            if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
+            if task.get("archived", False):
+                raise ConflictError("已归档任务的 Context 不可见，请先恢复任务")
             for ref in refs:
                 kind, separator, item_id = ref.partition(":")
                 if not separator or not item_id:

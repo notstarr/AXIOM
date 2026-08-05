@@ -179,7 +179,10 @@ class ArtifactRepository:
         offset: int,
     ) -> tuple[list[Artifact], int]:
         query = select(artifacts).join(tasks, tasks.c.id == artifacts.c.task_id)
-        query = query.where(artifacts.c.archived.is_(False))
+        query = query.where(
+            tasks.c.archived.is_(False),
+            artifacts.c.archived.is_(False),
+        )
         if task_id:
             query = query.where(artifacts.c.task_id == task_id)
         if project_id:
@@ -261,7 +264,10 @@ class ArtifactRepository:
                 func.max(artifacts.c.created_at).label("latest_created_at"),
             )
             .select_from(
-                artifacts.outerjoin(
+                artifacts.join(
+                    tasks,
+                    tasks.c.id == artifacts.c.task_id,
+                ).outerjoin(
                     intents,
                     (intents.c.task_id == artifacts.c.task_id)
                     & (intents.c.id == artifacts.c.intent_id),
@@ -270,6 +276,7 @@ class ArtifactRepository:
             .where(
                 artifacts.c.task_id == task_id,
                 artifacts.c.archived.is_(False),
+                tasks.c.archived.is_(False),
             )
             .group_by(
                 artifacts.c.intent_id,

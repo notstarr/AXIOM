@@ -33,8 +33,11 @@ class ArtifactService:
 
     def list(self, task_id: str) -> list[Artifact]:
         with self.engine.connect() as conn:
-            if self.tasks.get(conn, task_id) is None:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的产物不可见，请先恢复任务")
             return self.repository.list(conn, task_id)
 
     def list_page(
@@ -54,8 +57,12 @@ class ArtifactService:
         if intent_id is not None and unscoped_only:
             raise ConflictError("intent_id and unscoped_only are mutually exclusive")
         with self.engine.connect() as conn:
-            if task_id is not None and self.tasks.get(conn, task_id) is None:
-                raise NotFoundError(f"Task not found: {task_id}")
+            if task_id is not None:
+                task = self.tasks.get(conn, task_id)
+                if task is None:
+                    raise NotFoundError(f"Task not found: {task_id}")
+                if task.archived:
+                    raise ConflictError("已归档任务的产物不可见，请先恢复任务")
             return self.repository.list_page(
                 conn,
                 task_id=task_id,
@@ -79,8 +86,11 @@ class ArtifactService:
         offset: int = 0,
     ) -> tuple[list[ArtifactFolder], int]:
         with self.engine.connect() as conn:
-            if self.tasks.get(conn, task_id) is None:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的产物不可见，请先恢复任务")
             return self.repository.list_folders(
                 conn,
                 task_id=task_id,
@@ -91,6 +101,11 @@ class ArtifactService:
 
     def get(self, task_id: str, artifact_id: str) -> Artifact:
         with self.engine.connect() as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的产物不可见，请先恢复任务")
             artifact = self.repository.get(conn, task_id, artifact_id)
         if artifact is None:
             raise NotFoundError(f"Artifact not found: {task_id}/{artifact_id}")
@@ -98,6 +113,11 @@ class ArtifactService:
 
     def content(self, task_id: str, artifact_id: str) -> ArtifactContent:
         with self.engine.connect() as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的产物不可见，请先恢复任务")
             artifact = self.repository.get(conn, task_id, artifact_id)
         if artifact is None:
             raise NotFoundError(f"Artifact not found: {task_id}/{artifact_id}")
@@ -108,6 +128,11 @@ class ArtifactService:
 
     def path(self, task_id: str, artifact_id: str) -> tuple[Artifact, Path]:
         with self.engine.connect() as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的产物不可见，请先恢复任务")
             artifact = self.repository.get(conn, task_id, artifact_id)
         if artifact is None:
             raise NotFoundError(f"Artifact not found: {task_id}/{artifact_id}")
@@ -142,6 +167,8 @@ class ArtifactService:
                     raise NotFoundError(f"Task not found: {task_id}")
                 if task.legacy_readonly:
                     raise ConflictError("Legacy Task is read-only")
+                if task.archived:
+                    raise ConflictError("已归档任务不能上传产物，请先恢复任务")
                 prepared.commit()
                 artifact = self.repository.create_upload(
                     conn,

@@ -19,7 +19,7 @@
       <input x-model="vulnFilter.keyword" @input="scheduleVulnerabilitySearch()" placeholder="搜索标题、类型、描述" class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
       <select x-model="vulnFilter.projectId" @change="applyVulnerabilityFilters()" class="px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
         <option value="">全部任务</option>
-        <template x-for="p in projects" :key="`vuln-filter-${p.id}`">
+        <template x-for="p in projects.filter(item => !item.archived)" :key="`vuln-filter-${p.id}`">
           <option :value="p.id" x-text="`${p.id} ${p.title}`"></option>
         </template>
       </select>

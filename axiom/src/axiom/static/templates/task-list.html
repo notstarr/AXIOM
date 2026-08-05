@@ -225,6 +225,7 @@
                 <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="p.kk_report_enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'" x-text="p.kk_report_enabled ? 'KK开' : 'KK关'"></span>
                 <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="p.guard_enabled ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-500'" x-text="p.guard_enabled ? '监管开' : '监管关'"></span>
                 <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="projectStatusBadgeClass(p.status)" x-text="projectStatusLabel(p.status)"></span>
+                <span x-show="p.archived" class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-slate-200 text-slate-600">已归档</span>
               </div>
             </div>
             <p class="mt-2 text-sm font-semibold text-slate-700 break-words" x-text="p.title"></p>
@@ -250,6 +251,7 @@
                   <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="selectedTaskSummary().kk_report_enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'" x-text="selectedTaskSummary().kk_report_enabled ? 'KK上报开启' : 'KK上报关闭'"></span>
                   <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="selectedTaskSummary().guard_enabled ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-500'" x-text="selectedTaskSummary().guard_enabled ? '监管开启' : '监管关闭'"></span>
                   <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="projectStatusBadgeClass(selectedTaskSummary().status)" x-text="projectStatusLabel(selectedTaskSummary().status)"></span>
+                  <span x-show="selectedTaskSummary().archived" class="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-200 text-slate-600">已归档</span>
                   <span x-show="selectedTaskSummary().legacy_readonly" class="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 text-slate-500">旧任务只读</span>
                 </div>
                 <h3 class="mt-2 text-xl font-semibold text-slate-800 break-words" x-text="selectedTaskSummary().title"></h3>
@@ -261,9 +263,9 @@
                 </div>
               </div>
               <div class="flex flex-wrap gap-2">
-                <button @click="openTaskOverview(selectedTaskSummary().id)" class="px-4 py-2 text-sm rounded-xl border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 transition">打开概览</button>
-                <button @click="openTaskGraph(selectedTaskSummary().id)" class="px-4 py-2 text-sm rounded-xl bg-brand-500 text-white hover:bg-brand-600 transition">打开图谱</button>
-                <button x-show="!selectedTaskSummary().legacy_readonly" @click="openRenameProject(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">重命名</button>
+                <button x-show="!selectedTaskSummary().archived" @click="openTaskOverview(selectedTaskSummary().id)" class="px-4 py-2 text-sm rounded-xl border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 transition">打开概览</button>
+                <button x-show="!selectedTaskSummary().archived" @click="openTaskGraph(selectedTaskSummary().id)" class="px-4 py-2 text-sm rounded-xl bg-brand-500 text-white hover:bg-brand-600 transition">打开图谱</button>
+                <button x-show="!selectedTaskSummary().legacy_readonly && !selectedTaskSummary().archived" @click="openRenameProject(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">重命名</button>
               </div>
             </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -471,7 +473,7 @@
               <div class="space-y-1.5 max-h-48 overflow-y-auto border border-slate-100 rounded-xl p-2 bg-white">
                 <template x-for="worker in (dispatchSettings && dispatchSettings.workers) || []" :key="`task-worker-pool-${selectedTaskSummary().id}-${worker.name}`">
                   <label class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer" :class="worker.disabled ? 'opacity-40' : ''">
-                    <input type="checkbox" :value="worker.name" x-model="taskWorkerPoolEditor.worker_pool" :disabled="worker.disabled || selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed'" class="rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+                    <input type="checkbox" :value="worker.name" x-model="taskWorkerPoolEditor.worker_pool" :disabled="worker.disabled || selectedTaskSummary().legacy_readonly || selectedTaskSummary().archived || selectedTaskSummary().status === 'completed'" class="rounded border-slate-300 text-brand-500 focus:ring-brand-200">
                     <span class="text-xs font-medium text-slate-700" x-text="worker.name"></span>
                     <span x-show="worker.disabled" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-200 text-slate-500">已停用</span>
                     <span x-show="!worker.disabled && worker.mcp_enabled" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-50 text-emerald-600">MCP 开</span>
@@ -483,7 +485,7 @@
                 <p class="text-[10px] text-slate-400">当前选择为空 = 不限制 worker；选择后只有这些 worker 可领取后续意图。</p>
                 <div class="flex items-center gap-2">
                   <button type="button" @click="syncTaskWorkerPoolEditor(selectedTaskSummary())" :disabled="!taskWorkerPoolChanged(selectedTaskSummary()) || taskWorkerPoolEditor.saving" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-white transition disabled:opacity-40">撤销</button>
-                  <button type="button" @click="saveTaskWorkerPool()" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed' || !taskWorkerPoolChanged(selectedTaskSummary()) || taskWorkerPoolEditor.saving" class="px-3 py-1.5 text-xs rounded-lg bg-brand-500 text-white hover:bg-brand-600 transition disabled:opacity-40" x-text="taskWorkerPoolEditor.saving ? '保存中...' : '保存并应用'"></button>
+                  <button type="button" @click="saveTaskWorkerPool()" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().archived || selectedTaskSummary().status === 'completed' || !taskWorkerPoolChanged(selectedTaskSummary()) || taskWorkerPoolEditor.saving" class="px-3 py-1.5 text-xs rounded-lg bg-brand-500 text-white hover:bg-brand-600 transition disabled:opacity-40" x-text="taskWorkerPoolEditor.saving ? '保存中...' : '保存并应用'"></button>
                 </div>
               </div>
             </div>
@@ -495,34 +497,36 @@
                   <p class="mt-0.5 text-[11px] text-slate-400">只约束 Reason 派发 Intent 的目标；黑名单优先。</p>
                 </div>
                 <label class="inline-flex items-center gap-2 text-xs text-slate-600">
-                  <input type="checkbox" x-model="taskScopeEditor.enabled" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed'" class="rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+                  <input type="checkbox" x-model="taskScopeEditor.enabled" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().archived || selectedTaskSummary().status === 'completed'" class="rounded border-slate-300 text-brand-500 focus:ring-brand-200">
                   开启 Scope
                 </label>
               </div>
               <div class="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-3">
                 <label class="text-[11px] text-slate-400">白名单（每行一个）
                   <textarea x-model="taskScopeEditor.targetsText" rows="4" placeholder="api.example.com
-*.example.com" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed'" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono disabled:bg-slate-50"></textarea>
+*.example.com" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().archived || selectedTaskSummary().status === 'completed'" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono disabled:bg-slate-50"></textarea>
                 </label>
                 <label class="text-[11px] text-slate-400">黑名单（每行一个）
-                  <textarea x-model="taskScopeEditor.excludeText" rows="4" placeholder="admin.example.com" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed'" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono disabled:bg-slate-50"></textarea>
+                  <textarea x-model="taskScopeEditor.excludeText" rows="4" placeholder="admin.example.com" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().archived || selectedTaskSummary().status === 'completed'" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono disabled:bg-slate-50"></textarea>
                 </label>
               </div>
               <label class="mt-3 block text-[11px] text-slate-400">备注
-                <input x-model="taskScopeEditor.notes" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed'" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs disabled:bg-slate-50">
+                <input x-model="taskScopeEditor.notes" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().archived || selectedTaskSummary().status === 'completed'" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl text-xs disabled:bg-slate-50">
               </label>
               <div class="mt-3 flex justify-end gap-2">
                 <button type="button" @click="syncTaskScopeEditor(selectedTaskSummary())" :disabled="!taskScopeChanged(selectedTaskSummary()) || taskScopeEditor.saving" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 disabled:opacity-40">撤销</button>
-                <button type="button" @click="saveTaskScope()" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().status === 'completed' || !taskScopeChanged(selectedTaskSummary()) || taskScopeEditor.saving" class="px-3 py-1.5 text-xs rounded-lg bg-brand-500 text-white disabled:opacity-40" x-text="taskScopeEditor.saving ? '保存中...' : '保存 Scope'"></button>
+                <button type="button" @click="saveTaskScope()" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().archived || selectedTaskSummary().status === 'completed' || !taskScopeChanged(selectedTaskSummary()) || taskScopeEditor.saving" class="px-3 py-1.5 text-xs rounded-lg bg-brand-500 text-white disabled:opacity-40" x-text="taskScopeEditor.saving ? '保存中...' : '保存 Scope'"></button>
               </div>
             </div>
             <div class="rounded-xl border border-slate-200 p-4">
               <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">操作</p>
               <div class="flex flex-wrap gap-2">
                 <button @click="viewProjectYaml(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">查看漏洞报告</button>
-                <template x-if="!selectedTaskSummary().legacy_readonly && ['active', 'stopped'].includes(selectedTaskSummary().status)">
+                <template x-if="!selectedTaskSummary().legacy_readonly && !selectedTaskSummary().archived && ['active', 'stopped'].includes(selectedTaskSummary().status)">
                   <button @click="toggleProjectStopById(selectedTaskSummary().id, selectedTaskSummary().status)" class="px-3 py-2 text-sm rounded-xl border border-amber-200 text-amber-700 hover:bg-amber-50 transition" x-text="selectedTaskSummary().status === 'active' ? '暂停任务' : '继续任务'"></button>
                 </template>
+                <button x-show="!selectedTaskSummary().legacy_readonly && !selectedTaskSummary().archived" @click="archiveProjectById(selectedTaskSummary().id, selectedTaskSummary().title)" :disabled="selectedTaskSummary().status === 'active'" :title="selectedTaskSummary().status === 'active' ? '请先暂停任务' : '归档后保留全部历史，但不再进入 Worker 调度'" class="px-3 py-2 text-sm rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-50 transition disabled:cursor-not-allowed disabled:opacity-40">归档任务</button>
+                <button x-show="!selectedTaskSummary().legacy_readonly && selectedTaskSummary().archived" @click="unarchiveProjectById(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-emerald-200 text-emerald-700 hover:bg-emerald-50 transition">恢复任务</button>
                 <button x-show="!selectedTaskSummary().legacy_readonly" @click="deleteProjectById(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-rose-200 text-rose-500 hover:bg-rose-50 transition">删除任务</button>
               </div>
             </div>

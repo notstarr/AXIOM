@@ -125,6 +125,7 @@
       worker_pool: task.worker_pool || [],
       task_scope: task.scope || { enabled: false, targets: [], exclude: [], notes: '' },
       legacy_readonly: !!task.legacy_readonly,
+      archived: !!task.archived,
       // ReasonRun is an execution activity, not an Intent/graph node.  Keep a
       // narrow legacy fallback for historical payloads only.
       reason: activeReasonRun ? {
@@ -281,8 +282,28 @@
   }
 
   async function taskDetail(taskId, options = {}) {
-    const [task, graph, hints, todos, vulnerabilities, artifacts, leadArtifacts, bootstrapLeadArtifacts, goalCycles, goalEvaluations] = await Promise.all([
-      request('GET', `/tasks/${taskId}`, null, options),
+    const task = await request('GET', `/tasks/${taskId}`, null, options);
+    const project = await request('GET', `/projects/${task.project_id}`, null, options).catch(() => null);
+    const mappedTask = mapTask(task);
+    if (task.archived) {
+      return {
+        project: mappedTask,
+        facts: [],
+        intents: [],
+        goal_from_fact_ids: [],
+        goal_history: [],
+        goal_cycles: [],
+        goal_evaluations: [],
+        hints: [],
+        todos: [],
+        vulns: [],
+        artifacts: [],
+        lead_artifacts: [],
+        archived_locked: true,
+        events: [],
+      };
+    }
+    const [graph, hints, todos, vulnerabilities, artifacts, leadArtifacts, bootstrapLeadArtifacts, goalCycles, goalEvaluations] = await Promise.all([
       request('GET', `/tasks/${taskId}/graph`, null, options),
       request('GET', `/tasks/${taskId}/hints`, null, options),
       request('GET', `/tasks/${taskId}/todos?limit=200`, null, options),
@@ -293,8 +314,6 @@
       request('GET', `/tasks/${taskId}/goal-cycles`, null, options),
       request('GET', `/tasks/${taskId}/goal-evaluations`, null, options),
     ]);
-    const project = await request('GET', `/projects/${task.project_id}`, null, options).catch(() => null);
-    const mappedTask = mapTask(task);
     mappedTask.fact_count = graph.facts.length;
     mappedTask.intent_count = graph.intents.length;
     return {
@@ -310,6 +329,7 @@
       vulns: vulnerabilities.map(item => mapVulnerability(item, task, project)),
       artifacts: artifacts.map(mapArtifact),
       lead_artifacts: [...leadArtifacts, ...bootstrapLeadArtifacts].map(mapArtifact),
+      archived_locked: false,
       events: [],
     };
   }
@@ -609,6 +629,11 @@
       if (method === 'GET') return taskDetail(match[1], options);
       if (method === 'DELETE') return request('DELETE', `/tasks/${match[1]}`);
     }
+    if ((match = path.match(/^\/projects\/([^/]+)\/(archive|unarchive)$/)) && method === 'POST') {
+      const actor = encodeURIComponent(body?.actor || 'human.frontend');
+      const endpoint = match[2] === 'archive' ? 'archive' : 'unarchive';
+      return mapTask(await request('POST', `/tasks/${match[1]}/${endpoint}?actor=${actor}`));
+    }
     if ((match = path.match(/^\/projects\/([^/]+)\/title$/)) && method === 'PUT') {
       return mapTask(await request('PATCH', `/tasks/${match[1]}`, { title: body.title }));
     }
@@ -818,6 +843,7 @@
       if (!task) return '任务信息尚未加载';
       if (this.manualReasonTriggering) return '正在提交人工 Reason 请求';
       if (task.legacy_readonly) return '历史只读任务不能触发 Reason';
+      if (task.archived) return '已归档任务不能触发 Reason';
       if (task.status !== 'active') return '只有运行中的任务可以触发 Reason';
       if (task.run_deadline_at && Date.parse(task.run_deadline_at) <= Date.now()) return '任务运行时间已经结束';
       if (task.reason) return `${task.reason.id || 'ReasonRun'} 已在进行中`;
@@ -1240,16 +1266,29 @@
       const taskId = this.selectedProjectId;
       if (!taskId || !this.project) return;
       const signal = this._pageAbortController?.signal;
+      const task = await request('GET', `/tasks/${taskId}`, null, { signal });
+      this.project.project = mapTask(task);
+      if (task.archived) {
+        this.project.facts = [];
+        this.project.intents = [];
+        this.project.goal_from_fact_ids = [];
+        this.project.goal_history = [];
+        this.project.goal_cycles = [];
+        this.project.goal_evaluations = [];
+        this.project.todos = [];
+        this.project.vulns = [];
+        this.project.artifacts = [];
+        this.project.lead_artifacts = [];
+        this.project.archived_locked = true;
+        return;
+      }
+      this.project.archived_locked = false;
       const eventTypes = new Set((events || []).map(event => event.event_type || event.event || ''));
       const hasPrefix = (...prefixes) => [...eventTypes].some(type => prefixes.some(prefix => type.startsWith(prefix)));
       const intentChanged = hasPrefix('intent.', 'reason.', 'reason_workspace.', 'reason_run.', 'archive.', 'task.continued');
       const resultChanged = hasPrefix('intent.completed', 'reason.committed', 'reason_workspace.committed', 'archive.');
 
-      const updates = [
-        request('GET', `/tasks/${taskId}`, null, { signal }).then(task => {
-          this.project.project = mapTask(task);
-        }),
-      ];
+      const updates = [];
       if (force || intentChanged) {
         updates.push(request('GET', `/tasks/${taskId}/graph`, null, { signal }).then(graph => {
           this.project.facts = graph.facts || [];
@@ -1603,7 +1642,9 @@
       this.artifactCenterLoading = true;
       try {
         const signal = this._pageAbortController?.signal;
-        const tasks = (await request('GET', '/tasks', null, { signal })).map(mapTask);
+        const tasks = (await request('GET', '/tasks', null, { signal }))
+          .map(mapTask)
+          .filter(task => !task.archived);
         const taskMap = new Map(tasks.map(task => [task.id, task]));
         if (requestId !== this._artifactCenterRequestId) return;
         this.artifactCenterTasks = tasks;
@@ -1930,7 +1971,7 @@
         id: group.id,
         title: group.title,
         hasCrawler: false,
-        tasks: this.projects.filter(task => task.parent_project_id === group.id).map(task => ({
+        tasks: this.projects.filter(task => !task.archived && task.parent_project_id === group.id).map(task => ({
           id: task.id, title: task.title, folders: ['human', 'ai'],
         })),
       }));

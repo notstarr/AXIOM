@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import update
 
+from axiom.dispatcher.bootstrap import TransientWorkerError
 from axiom.dispatcher.runner import AxiomRunner
 from axiom.dispatcher.schemas import (
     ClaimAction,
@@ -16,7 +17,7 @@ from axiom.modules.reason.schemas import (
     ReasonWorkspace,
     WorkspaceStatus,
 )
-from axiom.modules.reason.tables import reason_runs
+from axiom.modules.reason.tables import reason_runs, reason_workspaces
 from axiom.modules.workers.schemas import Worker
 from protocol_helpers import bootstrap_files_from_legacy, complete_bootstrap
 
@@ -203,6 +204,20 @@ class FakeReasonExecutor:
         assert response.status_code == 200, response.text
 
 
+class TransientReasonExecutor:
+    def __init__(self):
+        self.conclude_calls = 0
+
+    def execute(self, _execution_input, *, workspace, lease_active):
+        assert workspace.id
+        assert lease_active()
+        raise TransientWorkerError("HTTP 429: quota exhausted")
+
+    def conclude(self, _execution_input, *, workspace, reason, lease_active):
+        self.conclude_calls += 1
+        raise AssertionError("transient provider failures must not enter Reason conclude")
+
+
 def _pending_reason(client) -> tuple[dict, str, ApiControlPlane]:
     project = client.post("/api/v1/projects", json={"title": "系统"}).json()
     task = client.post(
@@ -326,3 +341,42 @@ def test_invalid_reason_plan_abandons_workspace_and_can_retry_with_a_new_lease(c
     assert reason_run["last_failure_kind"] == ""
     assert reason_run["failure_class"] == ""
     assert reason_run["activity_kind"] == "completed"
+
+
+def test_transient_reason_failure_skips_conclude_and_cools_worker(client) -> None:
+    task, reason_run_id, control = _pending_reason(client)
+    executor = TransientReasonExecutor()
+    runner = AxiomRunner(
+        control,
+        executor_factory=lambda _worker, _work: executor,
+        heartbeat_interval_seconds=60,
+    )
+    try:
+        report = runner.run_once()
+        runner.wait_for_idle()
+    finally:
+        runner.close()
+
+    assert report.claimed == 1
+    assert executor.conclude_calls == 0
+    reason_run = client.get(
+        f"/api/v1/tasks/{task['id']}/reason-runs/{reason_run_id}"
+    ).json()
+    assert reason_run["status"] == "pending"
+    assert reason_run["retry_count"] == 0
+    assert reason_run["infrastructure_retry_count"] == 1
+    assert reason_run["last_failure_kind"] == "worker_infrastructure"
+    assert reason_run["failure_class"] == "transient"
+
+    worker = client.get("/api/v1/workers/worker-a").json()
+    assert worker["cooldown_until"] is not None
+
+    with client.app.state.container.engine.connect() as conn:
+        workspace = conn.execute(
+            reason_workspaces.select().where(
+                reason_workspaces.c.task_id == task["id"],
+                reason_workspaces.c.reason_run_id == reason_run_id,
+            )
+        ).mappings().one()
+    assert workspace["status"] == "abandoned"
+    assert workspace["failure_reason"] == "worker_infrastructure"

@@ -7,6 +7,7 @@
         <h2 class="text-base font-semibold text-slate-800">归档</h2>
         <span class="text-[11px] font-mono text-slate-400" x-text="project?.project?.id"></span>
         <span class="text-xs text-slate-500 truncate" x-text="project?.project?.title"></span>
+        <span x-show="project?.project?.archived" class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-slate-200 text-slate-600">已归档任务</span>
       </div>
       <p class="mt-0.5 text-xs text-slate-400">归档内容仅保留在人类视图中，不进入新的 Worker Context。</p>
     </div>
@@ -19,11 +20,22 @@
       <button @click="triggerManualReason()" :disabled="!canTriggerManualReason()" :title="manualReasonDisabledReason() || '立即触发一次人工 Reason 复盘'" class="manual-reason-trigger px-2.5 py-1 rounded-lg border text-xs transition disabled:cursor-not-allowed">
         <span x-text="manualReasonTriggering ? '正在触发…' : '立刻 Reason'"></span>
       </button>
-      <button x-show="project?.project?.status === 'completed' && !project?.project?.legacy_readonly" @click="openTaskContinuation(project.project)" class="px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-xs font-medium text-amber-800 hover:bg-amber-100 transition">继续任务</button>
+      <button x-show="project?.project?.status === 'completed' && !project?.project?.archived && !project?.project?.legacy_readonly" @click="openTaskContinuation(project.project)" class="px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-xs font-medium text-amber-800 hover:bg-amber-100 transition">继续任务</button>
+      <button x-show="!project?.project?.archived && !project?.project?.legacy_readonly" @click="archiveProjectById(project.project.id, project.project.title)" :disabled="project.project.status === 'active'" :title="project.project.status === 'active' ? '请先暂停任务' : '保留历史并停止后续 Worker 调度'" class="px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600 hover:bg-slate-50 transition disabled:cursor-not-allowed disabled:opacity-40">归档任务</button>
+      <button x-show="project?.project?.archived && !project?.project?.legacy_readonly" @click="unarchiveProjectById(project.project.id, project.project.title)" class="px-2.5 py-1 rounded-lg border border-emerald-200 text-xs text-emerald-700 hover:bg-slate-50 transition">恢复任务</button>
     <button @click="loadArchives(selectedArchiveId)" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50">刷新</button>
   </header>
 
-  <div class="flex-1 min-h-0 grid grid-cols-[340px_minmax(0,1fr)]">
+  <div x-show="project?.project?.archived" class="flex-1 min-h-0 flex items-center justify-center p-6 bg-slate-50/40">
+    <section class="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+      <div class="mx-auto h-12 w-12 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center text-xl">▣</div>
+      <h3 class="mt-4 text-base font-semibold text-slate-800">任务已归档</h3>
+      <p class="mt-2 text-sm leading-6 text-slate-500">归档任务的历史产物不会在当前页面披露。恢复任务后才能查看对应的归档记录和文件。</p>
+      <button @click="unarchiveProjectById(project.project.id, project.project.title)" class="mt-5 px-4 py-2 rounded-xl bg-brand-500 text-sm font-medium text-white hover:bg-brand-600 transition">恢复任务并查看</button>
+    </section>
+  </div>
+
+  <div x-show="!project?.project?.archived" class="flex-1 min-h-0 grid grid-cols-[340px_minmax(0,1fr)]">
     <aside class="min-h-0 border-r border-slate-200 bg-white flex flex-col">
       <div class="p-3 border-b border-slate-100 flex items-center gap-2">
         <button @click="archiveStatusFilter='active'; changeArchiveStatusFilter()" class="flex-1 px-3 py-1.5 rounded-lg text-xs border" :class="archiveStatusFilter === 'active' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 text-slate-500'">当前归档</button>

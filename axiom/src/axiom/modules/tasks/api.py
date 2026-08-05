@@ -102,6 +102,24 @@ def continue_task(
     return container.tasks.continue_task(task_id, body)
 
 
+@router.post("/{task_id}/archive", response_model=Task)
+def archive_task(
+    task_id: str,
+    actor: str = "human.frontend",
+    container: Container = Depends(get_container),
+) -> Task:
+    return container.tasks.archive(task_id, actor=actor)
+
+
+@router.post("/{task_id}/unarchive", response_model=Task)
+def unarchive_task(
+    task_id: str,
+    actor: str = "human.frontend",
+    container: Container = Depends(get_container),
+) -> Task:
+    return container.tasks.unarchive(task_id, actor=actor)
+
+
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_task(task_id: str, container: Container = Depends(get_container)) -> Response:
     container.tasks.delete(task_id)

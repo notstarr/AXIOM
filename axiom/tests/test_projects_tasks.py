@@ -195,3 +195,66 @@ def test_task_settings_and_hints_can_be_edited_without_stale_graph_state(client)
     )
     assert archived.status_code == 200
     assert client.get(f"/api/v1/tasks/{task['id']}/hints").json() == []
+
+
+def test_task_archive_keeps_history_and_restore_does_not_resume(client) -> None:
+    project = create_project(client, "归档测试")
+    task = client.post(
+        "/api/v1/tasks",
+        json={"project_id": project["id"], "title": "保留历史", "origin": "archive.example.com"},
+    ).json()
+
+    assert client.post(f"/api/v1/tasks/{task['id']}/stop").status_code == 200
+    archived = client.post(
+        f"/api/v1/tasks/{task['id']}/archive",
+        params={"actor": "test"},
+    )
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["archived"] is True
+    assert archived.json()["status"] == "stopped"
+    assert client.post(f"/api/v1/tasks/{task['id']}/resume").status_code == 409
+
+    restored = client.post(
+        f"/api/v1/tasks/{task['id']}/unarchive",
+        params={"actor": "test"},
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["archived"] is False
+    assert restored.json()["status"] == "stopped"
+
+
+def test_running_task_cannot_be_archived(client) -> None:
+    project = create_project(client, "运行中归档测试")
+    task = client.post(
+        "/api/v1/tasks",
+        json={"project_id": project["id"], "title": "运行中", "origin": "running.example.com"},
+    ).json()
+    response = client.post(f"/api/v1/tasks/{task['id']}/archive")
+    assert response.status_code == 409
+    assert "先暂停" in response.json()["error"]["message"]
+
+
+def test_archived_task_hides_normal_product_reads_until_restored(client) -> None:
+    project = create_project(client, "归档披露测试")
+    task = client.post(
+        "/api/v1/tasks",
+        json={"project_id": project["id"], "title": "隐藏产物", "origin": "hidden.example.com"},
+    ).json()
+    task_id = task["id"]
+    assert client.post(f"/api/v1/tasks/{task_id}/stop").status_code == 200
+    assert client.post(f"/api/v1/tasks/{task_id}/archive").status_code == 200
+
+    assert client.get(f"/api/v1/tasks/{task_id}").json()["archived"] is True
+    for path in (
+        f"/api/v1/tasks/{task_id}/hints",
+        f"/api/v1/tasks/{task_id}/graph",
+        f"/api/v1/tasks/{task_id}/todos",
+        f"/api/v1/tasks/{task_id}/vulnerabilities",
+        f"/api/v1/tasks/{task_id}/artifacts",
+        f"/api/v1/tasks/{task_id}/goal-cycles",
+        f"/api/v1/tasks/{task_id}/goal-evaluations",
+    ):
+        assert client.get(path).status_code == 409, path
+
+    assert client.post(f"/api/v1/tasks/{task_id}/unarchive").status_code == 200
+    assert client.get(f"/api/v1/tasks/{task_id}/graph").status_code == 200

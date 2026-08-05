@@ -118,6 +118,9 @@ def test_browser_extension_registers_every_native_tool() -> None:
     assert "AXIOM_BROWSER_SOCKET" in extension
     assert "AXIOM_BROWSER_TOKEN" in extension
     assert "session_id" not in extension
+    assert 'pi.on("tool_call"' in extension
+    assert "cdp_ctl.py" in extension
+    assert "禁止通过 Bash 调用旧浏览器脚本" in extension
 
 
 def test_browser_page_and_ref_identity_are_lease_scoped(tmp_path: Path) -> None:

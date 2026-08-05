@@ -1,6 +1,6 @@
 # AXIOM 当前生产架构
 
-> 状态：已核对至 2026-08-03。本文描述当前实际代码，不描述未落地的 ASM、容器化或爬虫方案。
+> 状态：已核对至 2026-08-05。本文描述当前实际代码，不描述未落地的 ASM、容器化或爬虫方案。
 
 ## 1. 运行边界
 
@@ -80,11 +80,21 @@ running
   → stopped         人工停止或本次运行窗口到期；Runner 取消本地 Pi/RPC 进程
 stopped
   → running         人工继续；选择新的单次运行窗口并按当前阶段重新进入调度
+
+stopped/completed/failed
+  → archived        保留全部历史，隐藏正常产物并停止后续 Worker 调度
+archived
+  → 原状态          人工恢复可见；不会自动 Resume 或创建 ReasonRun
 ```
 
 Task 完成的唯一业务指标是 Goal Evaluation。没有 Intent、没有 Worker 或某一轮 Reason 结束都不能单独表示任务完成。
 
 新建和 Resume 可提供整分钟 `run_duration_seconds`；省略或 `null` 表示不限时。每次 Resume 都覆盖旧窗口，按自然时间计算 `run_deadline_at`，排队、Reason 间隔和重试都计入。到期由 Runner 下一 tick 调用 Deadline Reconciler 原子暂停，默认精度约 3 秒；服务中断期间过期的 Task 会在恢复后的首个 tick 暂停。
+
+Task 级归档由 `tasks.archived` 表示，和 Fact/Intent 的归档批次相互独立。运行中的 Task 必须先暂停；
+仍有 `claimed/running/concluding` Intent、ReasonRun 或 ReviewRun 时拒绝归档。归档和恢复都不改写 Task
+原状态、Goal Cycle 或子实体状态，恢复后也不自动继续主执行链。物理删除若受到执行历史外键保护，会返回
+明确冲突并提示使用“归档任务”，不再暴露底层数据库错误。
 
 ## 4. 调度和领取
 
@@ -108,6 +118,9 @@ Task 完成的唯一业务指标是 Goal Evaluation。没有 Intent、没有 Wor
 有效领取会同时校验 `global_max_active_runs`、`global_max_active_tasks`、`per_task_max_active_runs`、`per_task_explore_concurrency`、Worker `max_running`、能力和 Task Worker Pool。纯调度计算先过滤一次，数据库 claim 事务再校验一次，防止多个 tick/Runner 并发越限。Bootstrap、Reason 和 Reviewer 的单 Task 并发固定为 1。
 
 Bootstrap、Reason 和 Explore 的 Claim 事务以及 Reason Trigger 会校验 Task 的绝对 UTC 截止时间，防止 Deadline Reconciler 与领取之间的竞争窗口产生新主链工作。Reviewer 是漏洞落库后的独立后处理：只要 Task 非历史只读、漏洞未归档，就可在 Task `running/stopped/completed/failed` 时继续领取，不受运行截止时间影响；Task 暂停也不会取消本地 Reviewer 进程。
+
+所有 Dispatcher Snapshot、stale recovery、Reason Trigger 和阶段 start 事务同时排除 `tasks.archived=true`。
+这层数据库/服务端校验不是单纯前端隐藏，可防止归档与领取之间的竞争窗口继续启动 Worker。
 
 Reason 提交后只创建 `pending` Explore Intent，不指定具体 Worker。空闲且兼容的 Worker 会自动领取；容量不足保持 pending，不记失败，也不要求 Reason 重新规划。
 
@@ -226,6 +239,15 @@ axiom reason goal assess
 
 Runner 会把当前 AXIOM 虚拟环境的 `bin` 目录放到 Pi 子进程 `PATH` 首位。这里必须使用 `Path(sys.executable).parent`，不能先 `resolve()`；虚拟环境 Python 是符号链接，提前解析会落到系统 Python 目录并再次造成 `axiom: command not found`。
 
+Pi JSON 模式不能只依据外层退出码判断成功：Provider 自动重试耗尽时，Pi 可能输出 assistant
+`stopReason=error` 或 `auto_retry_end success=false`，但仍以 0 退出。Adapter 会解析最后一个 assistant/
+自动重试终态；只有最终仍失败时才抛出 `TransientWorkerError`，早期错误后成功会清除错误状态。该检查发生在
+assistant 文本提取和 FINISH/Workspace 校验之前，防止 429/5xx 被误记为 `reason_plan_invalid`。
+
+Reason 的 Provider transient 错误直接废弃 Workspace 并释放 Lease，不进入三次 Conclude；失败分类为
+`worker_infrastructure/transient`，只增加 `infrastructure_retry_count`。`ReasonService.release_run()` 同时按
+现有 `worker_failure_cooldown_seconds` 冷却故障 Worker，调度器优先选择其它健康 Reason 后端。
+
 每个命令只提交一个小操作并立即校验、持久化。Reason 执行期间 Todo 更新和 Intent proposal 只存在于 Workspace，正式 Intent 表和图谱不变化。每个 Intent 的 `execute_seconds` / `conclude_seconds` 是结构化字段，不写入 description；Reason 不选择 Worker，也没有漏洞上报入口。
 
 Reason Prompt 对规划粒度有硬性文字约束：一个 Todo 只承载一个攻击主题，一个 Todo/Intent 最多包含 2–3 个紧密相关的独立测试分支；获取对象 ID、准备登录态和调用前置接口等同一攻击链步骤不单独算分支。超过三个方向必须拆开，额度不足的方向保留为 Todo 交给后续 ReasonRun。时间预算仍由 Reason 按每个 Intent 的实际复杂度单独决定，Prompt 不再提供可被机械复制的固定 `600/120` 示例。
@@ -334,8 +356,20 @@ pending → claimed → running → concluding → completed
 Reviewer Context 在普通 Manifest 索引之外增加唯一的 `review_target.json`，包含目标漏洞完整字段、Finding
 和 Evidence 元数据，以及每个正式 Artifact 的本地 `content_path`。Reviewer 还会读取 Task Scope、Hint、
 Knowledge、全部未归档漏洞紧凑列表、来源 Intent/Fact/Artifact，以及本阶段有效的 Skill、MCP Tool 和扩展
-Tool。`whatisvul` 是锁定的全阶段 Skill；`vuln-review` 默认仅绑定 Reviewer，提供证据核查、重复判断和
-Scope 内最小复测方法。
+Tool。`whatisvul` 是锁定的全阶段 Skill；`vuln-review` 默认仅绑定 Reviewer，提供主动复现、关键对照、证据核查和重复判断方法。
+
+Reviewer 将 Finding/Evidence 视为待验证线索，而不是默认可信结论。目标可达、Scope 允许且操作安全时，
+每个 ReviewRun 默认至少执行一次新的独立验证和一个单变量对照；`verified` 原则上需要本轮新鲜复现，
+`ignored` 也必须有复现反证、对照结果或完整直接静态证据。缺少身份、环境或安全复测条件时应选择
+`needs-human`，不得只因旧材料不足而直接忽略。Conclude 会阻止没有独立验证或明确例外理由的
+文件式 `verified/ignored` 裁决。
+
+`vuln-review` 使用 CVSS v4.0 Base Metrics 风格的维度核查利用条件和实际影响：
+`AV/AC/AT/PR/UI`、受影响系统 `VC/VI/VA`、后续系统 `SC/SI/SA`。这些维度用于防止遗漏前置条件、
+身份边界和 C/I/A 影响，不自动生成分数，也不允许 Reviewer 改写漏洞原严重等级。只有所有 Base Metrics
+都有证据时才可附参考 Vector；未知项必须明确记录。Skill 的 `references/` 下分别提供
+`verified/duplicate/ignored/needs-human` 四份完整 `review.md` 示例。模型形成候选裁决后必须读取对应附件；
+在两个状态之间犹豫时读取两份，不能只读取 Skill 正文或复制示例结论。
 
 Reviewer 的固定 AXIOM 操作为：
 
@@ -428,6 +462,17 @@ Fact/Intent 归档使用 `archive_batches + archive_batch_members`，不是直�
 
 预览返回 `closure_hash`，提交在 SQLite `BEGIN IMMEDIATE` 中重算；闭包变化返回 409。恢复按批次执行，仍被其它 active 批次覆盖的成员继续保持归档。归档不删除文件、Session、Audit Event 或历史 Context；恢复也不改写 Intent/Todo/漏洞原业务状态。若归档与活动 ReasonRun 的 source 或 open Workspace 引用相交，ReasonRun 会被取消且 Workspace 被废弃；归档漏洞会取消其活动 ReviewRun，并把历史 Review Artifact 纳入归档闭包。恢复后只有仍为待验证的漏洞会创建新的 ReviewRun。无关 Explore 和 Reviewer 不受影响。
 
+### Task 级归档
+
+Task 级归档是整项任务的可见性与调度开关，不创建 `archive_batches`，也不递归翻转子实体的 `archived`。
+归档期间 Task 基础壳信息和 Audit 历史保留，但 Hint、Graph、Todo、Goal、Artifact、Vulnerability 和 Context
+读取统一返回冲突；跨 Task 的文件中心、漏洞列表和项目活动统计也排除该 Task。历史文件、数据库记录、
+Session 和不可变 Context Revision 不删除，恢复 Task 后原内容原样重新可见。
+
+新增接口为 `/tasks/{task_id}/archive` 和 `/tasks/{task_id}/unarchive`。Task 列表保留“已归档”徽章与恢复
+入口；概览、图谱和原有归档批次视图在 Task 归档期间只显示锁定说明。详细边界见
+`docs/2026-08-05-Task级归档与产物隔离.md`。
+
 ## 8. 前端
 
 前端继续使用 Alpine 和原有图谱视觉，通过 V2 API 适配层对接模块化后端，不引入 React/Vue。Tailwind 固定为 `3.4.17` 并在开发时编译为 `tailwind.generated.css`；生产浏览器不再加载 Tailwind Runtime，也不依赖 Node。动态状态类通过显式 safelist 进入构建产物，连续构建必须产生相同文件。
@@ -436,7 +481,7 @@ Fact/Intent 归档使用 `archive_batches + archive_batch_members`，不是直�
 
 页面使用单一 `#page-host` 按路由挂载。切换页面会 Abort 旧请求、执行 `Alpine.destroyTree()`、销毁 Cytoscape、Minimap、共享图谱动画和旧 DOM；模板文本只做内存缓存，未激活的 13 个页面不再常驻 DOM。任务详情 Human Tab 使用 `x-if`，只渲染当前 Workspace/Todo/Intent/Fact/Artifact 面板。
 
-任务详情提供“概览 / 图谱 / 归档”三种视图；归档视图按批次展示根节点、原因、操作者、成员类型、关系、Artifact 预览/下载和恢复历史。Fact/Intent 归档先展示闭包、阻塞项和影响数量，再原子提交；停止或完成 Task 仍可整理历史链路。
+任务详情提供“概览 / 图谱 / 归档”三种视图；归档视图按批次展示根节点、原因、操作者、成员类型、关系、Artifact 预览/下载和恢复历史。Fact/Intent 归档先展示闭包、阻塞项和影响数量，再原子提交；停止或完成 Task 仍可整理历史链路。Task 列表和三个详情视图均提供 Task 级归档/恢复入口；归档 Task 只显示基础信息和恢复操作，其正常内容、文件和漏洞在恢复前不披露。
 
 任务详情的“概览”和“图谱”是两种人类视图：图谱不是执行事实源；右侧 Todo、事实、产物和漏洞分别从 V2 API 读取。ReasonRun 只显示为图谱上方的运行活动卡片，可查看 Worker、状态、当前活动、工具、心跳、触发器、预算和配置快照，不创建图谱节点。
 
@@ -521,7 +566,10 @@ Audit Event、Token Usage 增加 `review_run_id` 所有者；能力 scope、Work
 Reason 后端恢复、Skill scope 回滚、ID counter、SQLite integrity 和 foreign key check。降级会删除 ReviewRun
 与 Reviewer Context，保留 Reviewer 产生的 Artifact/Token 历史为旧 schema 可表达的兼容记录。
 
-2026-07-29 生产升级前备份位于 `/Users/hexin/.local/share/axiom-v3/backups/archive-batches-20260729T034510Z/axiom.db.pre-0025.bak`。三阶段能力迁移的生产一致性备份为 `/Users/hexin/.local/share/axiom-v3/backups/axiom-20260803-before-0031-103939.db`。退休样例目录前的生产备份为 `/Users/hexin/.local/share/axiom-v3/backups/axiom-20260804-before-0032-20260804-112743.db`。Reviewer 生产升级前备份为 `/Users/hexin/.local/share/axiom-v3/backups/reviewer-0034-20260804-183102/axiom.db.pre-0034.bak`。2026-08-04 已将生产升级到 `20260804_0034` 并重启 API/Runner；迁移补建 60 个历史 ReviewRun，Reviewer 7 个后端可正常领取，主链 Task `t_154/t_156` 在切换前暂停并于服务恢复后继续运行。API 与 Runner LaunchAgent 均使用 `/Users/hexin/.local/share/axiom-v3`。
+`20260805_0035_task_archiving` 为 `tasks` 增加非空 `archived` 标志和 `(archived, status)` 索引。历史 Task
+默认保持未归档，不批量猜测归档状态。降级只删除索引和列，不删除 Task 或执行历史。
+
+2026-07-29 生产升级前备份位于 `/Users/hexin/.local/share/axiom-v3/backups/archive-batches-20260729T034510Z/axiom.db.pre-0025.bak`。三阶段能力迁移的生产一致性备份为 `/Users/hexin/.local/share/axiom-v3/backups/axiom-20260803-before-0031-103939.db`。退休样例目录前的生产备份为 `/Users/hexin/.local/share/axiom-v3/backups/axiom-20260804-before-0032-20260804-112743.db`。Reviewer 生产升级前备份为 `/Users/hexin/.local/share/axiom-v3/backups/reviewer-0034-20260804-183102/axiom.db.pre-0034.bak`。Task 级归档与 Provider 修复应用前备份为 `/Users/hexin/.local/share/axiom-v3/backups/provider-failure-20260805-220016/axiom.db.pre-restart.bak`。2026-08-05 生产已升级到 `20260805_0035` 并重启 API/Runner，`/health` 正常，SQLite `integrity_check=ok`、foreign key violation 为 0。API 与 Runner LaunchAgent 均使用 `/Users/hexin/.local/share/axiom-v3`。
 
 ## 10. 当前明确不属于主流程的内容
 
@@ -533,14 +581,14 @@ Reason 后端恢复、Skill scope 回滚、ID counter、SQLite integrity 和 for
 ## 11. 验证基线
 
 ```text
-.venv/bin/pytest -q                           470 passed, 1 warning
+.venv/bin/pytest -q                           480 passed, 1 warning
 .venv/bin/ruff check src tests migrations     passed
 .venv/bin/python -m compileall -q src/axiom   passed
 node --check <all static js>                   passed
 git diff --check                              passed
 ```
 
-以上测试已覆盖 FINISH 精确识别与 Explore 有限归一化、同会话有界收口、Explore Conclude 核心文件兜底、可选 Evidence、Artifact/Fact 自动生成、ReasonRun/Workspace 生命周期、Goal Cycle 续跑、Reason 历史 Goal Context 隔离、无新 Fact 的材料性 Todo 恢复、Reason 触发和调度并发、RuntimeConfig 热应用、Guard、Task 运行窗口、归档下游闭包，以及 Reviewer 的原子排队、四阶段调度、后处理 Task 状态、输入指纹失效、人工覆盖、结构化裁决、Review Artifact、Token/Audit、归档恢复、外部上报门禁、0034 升降级和前端审核历史/重试/深链；仅有既有 Starlette/httpx 弃用警告。
+以上测试已覆盖 FINISH 精确识别与 Explore 有限归一化、同会话有界收口、Explore Conclude 核心文件兜底、可选 Evidence、Artifact/Fact 自动生成、ReasonRun/Workspace 生命周期、Goal Cycle 续跑、Reason 历史 Goal Context 隔离、无新 Fact 的材料性 Todo 恢复、Reason 触发和调度并发、RuntimeConfig 热应用、Guard、Task 运行窗口、Fact/Intent 下游闭包归档、Task 级归档与正常产物隔离、Pi JSON Provider 终态分类和 Reason Worker 冷却，以及 Reviewer 的原子排队、四阶段调度、后处理 Task 状态、输入指纹失效、人工覆盖、结构化裁决、Review Artifact、Token/Audit、归档恢复、外部上报门禁、0034/0035 升降级和前端审核历史/重试/深链；仅有既有 Starlette/httpx 弃用警告。
 
 2026-08-03 三阶段能力生产 smoke：API/Runner 重启后 `/api/v1/worker-phases`、`/api/v1/phase-capabilities` 和 `/api/v1/workers/overview` 均返回 200；7 个模型执行后端可被三个逻辑阶段池读取，14 个启用 Skill 进入 common。新 Lease `t_154/rr000192`、`t_155/rr000193`（Reason）和 `t_155/i013/i014`（Explore）实际写入 `phase-capabilities.json`，每份包含 14 个 Skill，未带入未绑定的 MCP/AXIOM Tool；Runner 与 API LaunchAgent 均正常运行。
 

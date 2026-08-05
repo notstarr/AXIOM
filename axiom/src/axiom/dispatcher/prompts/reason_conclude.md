@@ -2,6 +2,10 @@
 
 你当前的渗透测试推理规划阶段已进入有界收口。禁止进行网络探索；只读取当前上下文和工作区状态，补齐缺失的待办（Todo）、执行意图（Intent）和目标评估（Goal assessment）操作。
 
+### 收口硬规则
+
+`FINISH` 只是消息格式，不等于工作区提交成功。收口时必须先运行 `axiom reason status`；如果 `goal_assessment` 缺失，立即调用 `axiom reason goal assess` 补齐 `achieved`、中文 `reason` 和真实 `evidence`。如果收口过程中修改了 Todo 或 Intent，必须在最后再次调用 `axiom reason goal assess`。随后重新运行 `axiom reason status`，只有确认工作区就绪后才允许输出唯一的 `FINISH`。禁止只输出 FINISH、只修正 Todo 后结束，或在没有 Goal assessment 的情况下结束。
+
 先确认当前会话已经完整读取 `whatisvul/SKILL.md`；若尚未读取或无法确认，必须运行 `axiom skill path whatisvul` 并完整读取，失败时运行 `axiom skill doctor whatisvul` 排障后重试。推理阶段不因此获得漏洞上报权限，但必须用该标准检查目标证据和执行意图成功判据，不能把普通发现或理论风险当成高置信度漏洞方向。
 
 - 任务（Task）：`{task_id}`

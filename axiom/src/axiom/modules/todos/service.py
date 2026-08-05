@@ -22,6 +22,8 @@ class TodoService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.legacy_readonly:
                 raise ConflictError("Legacy Task is read-only")
+            if task.archived:
+                raise ConflictError("已归档任务不能新增 Todo，请先恢复任务")
             for source in command.sources:
                 if not self.repository.source_exists(conn, task_id=task_id, source=source):
                     raise ConflictError(f"Todo source not found: {source.type}:{source.id}")
@@ -29,8 +31,11 @@ class TodoService:
 
     def list(self, task_id: str) -> list[Todo]:
         with self.engine.connect() as conn:
-            if self.tasks.get(conn, task_id) is None:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的 Todo 不可见，请先恢复任务")
             return self.repository.list(conn, task_id)
 
     def list_page(
@@ -43,8 +48,11 @@ class TodoService:
         offset: int = 0,
     ) -> tuple[list[Todo], int]:
         with self.engine.connect() as conn:
-            if self.tasks.get(conn, task_id) is None:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的 Todo 不可见，请先恢复任务")
             return self.repository.list_page(
                 conn,
                 task_id,
@@ -68,6 +76,8 @@ class TodoService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.legacy_readonly:
                 raise ConflictError("Legacy Task is read-only")
+            if task.archived:
+                raise ConflictError("已归档任务不能修改 Todo，请先恢复任务")
             current = self.repository.get(conn, task_id, todo_id)
             if current is None:
                 raise NotFoundError(f"Todo not found: {todo_id}")

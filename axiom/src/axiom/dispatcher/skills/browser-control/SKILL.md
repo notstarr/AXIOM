@@ -2,16 +2,7 @@
 name: browser-control
 description: 使用 AXIOM 原生浏览器工具读取和操作已登录的 Chrome-SecTest 页面
 requirements:
-  commands: [bash]
   python_modules: [playwright]
-  files:
-    - scripts/cdp_ctl.py
-    - scripts/launch-chrome.sh
-    - scripts/stop-chrome.sh
-    - scripts/launch-proxy.sh
-    - scripts/stop-proxy.sh
-    - scripts/proxy_get_traffic.py
-    - scripts/mitm_addon.py
 ---
 
 # Browser Control

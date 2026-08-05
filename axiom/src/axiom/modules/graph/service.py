@@ -24,12 +24,20 @@ class GraphService:
 
     def get(self, task_id: str) -> TaskGraph:
         with self.engine.connect() as conn:
-            if self.tasks.get(conn, task_id) is None:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的图谱不可见，请先恢复任务")
             return self.repository.graph(conn, task_id)
 
     def fact(self, task_id: str, fact_id: str) -> Fact:
         with self.engine.connect() as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的图谱不可见，请先恢复任务")
             fact = self.repository.get_fact(conn, task_id, fact_id)
         if fact is None:
             raise NotFoundError(f"Fact not found: {task_id}/{fact_id}")
@@ -37,6 +45,11 @@ class GraphService:
 
     def intent(self, task_id: str, intent_id: str) -> Intent:
         with self.engine.connect() as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的图谱不可见，请先恢复任务")
             intent = self.repository.get_intent(conn, task_id, intent_id)
         if intent is None:
             raise NotFoundError(f"Intent not found: {task_id}/{intent_id}")

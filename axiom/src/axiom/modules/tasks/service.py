@@ -4,6 +4,7 @@ import json
 from datetime import timedelta
 
 from sqlalchemy import Engine, func, literal, select, union_all, update
+from sqlalchemy.exc import IntegrityError
 
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
@@ -35,6 +36,7 @@ from axiom.modules.tasks.schemas import (
 from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.tables import vulnerabilities
+from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.shared.clock import format_utc, parse_utc, utcnow
 from axiom.shared.database import immediate_transaction
 from axiom.shared.errors import ConflictError, NotFoundError
@@ -119,6 +121,8 @@ class TaskService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.legacy_readonly:
                 raise ConflictError("Legacy Task is read-only")
+            if task.archived:
+                raise ConflictError("已归档任务不能修改")
             if command.goal is not None and task.status == "completed":
                 raise ConflictError("已完成任务必须通过继续任务创建新的 Goal")
             if command.scope is not None and command.scope.enabled and not command.scope.targets:
@@ -186,6 +190,8 @@ class TaskService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.legacy_readonly:
                 raise ConflictError("历史只读任务不能继续运行")
+            if task.archived:
+                raise ConflictError("已归档任务不能继续运行")
             if task.status != "completed":
                 raise ConflictError("只有已完成任务可以继续运行")
             if self.reason.active_for_task(conn, task_id) is not None:
@@ -290,6 +296,8 @@ class TaskService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.status != "running":
                 raise ConflictError("Only a running Task can be stopped")
+            if task.archived:
+                raise ConflictError("已归档任务不能暂停")
             now = utcnow()
             stopped = self._pause_in(
                 conn,
@@ -311,6 +319,8 @@ class TaskService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.status != "stopped":
                 raise ConflictError("Only a stopped Task can be resumed")
+            if task.archived:
+                raise ConflictError("已归档任务不能恢复运行")
             self.graph.restore_paused_intents(conn, task_id)
             bootstrap = self.graph.get_intent(conn, task_id, "i001")
             phase = "waiting" if bootstrap and bootstrap.status == "completed" else "bootstrap"
@@ -359,18 +369,103 @@ class TaskService:
         )
 
     def delete(self, task_id: str) -> None:
-        with self.engine.begin() as conn:
+        try:
+            with self.engine.begin() as conn:
+                task = self.tasks.get(conn, task_id)
+                if task is None:
+                    raise NotFoundError(f"Task not found: {task_id}")
+                if task.status == "running":
+                    raise ConflictError("Stop a running Task before deleting it")
+                self.tasks.delete(conn, task_id)
+        except IntegrityError as exc:
+            raise ConflictError("任务包含执行历史，不能物理删除，请使用“归档任务”") from exc
+
+    def archive(self, task_id: str, *, actor: str = "human.frontend") -> Task:
+        actor = actor.strip() or "human.frontend"
+        now = utcnow()
+        with immediate_transaction(self.engine) as conn:
             task = self.tasks.get(conn, task_id)
             if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
+            if task.legacy_readonly:
+                raise ConflictError("历史只读任务不能归档")
+            if task.archived:
+                raise ConflictError("任务已经归档")
             if task.status == "running":
-                raise ConflictError("Stop a running Task before deleting it")
-            self.tasks.delete(conn, task_id)
+                raise ConflictError("请先暂停任务，再归档")
+            active_count = sum(
+                conn.execute(
+                    select(func.count())
+                    .select_from(table)
+                    .where(
+                        table.c.task_id == task_id,
+                        table.c.status.in_(("claimed", "running", "concluding")),
+                    )
+                ).scalar_one()
+                for table in (intents, reason_runs, vulnerability_review_runs)
+            )
+            if active_count:
+                raise ConflictError("任务仍有活动 Worker Lease，暂时不能归档")
+            updated = conn.execute(
+                update(tasks)
+                .where(tasks.c.id == task_id, tasks.c.archived.is_(False))
+                .values(archived=True, updated_at=now)
+            )
+            if not updated.rowcount:
+                raise ConflictError("任务归档状态已被其他操作改变")
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=task.project_id,
+                    task_id=task_id,
+                    event_type="task.archived",
+                    message="任务已归档，不再进入 Worker 调度",
+                    payload={"actor": actor, "status": task.status},
+                ),
+            )
+            archived = self.tasks.get(conn, task_id)
+            assert archived is not None
+        return self._decorate(archived)
+
+    def unarchive(self, task_id: str, *, actor: str = "human.frontend") -> Task:
+        actor = actor.strip() or "human.frontend"
+        now = utcnow()
+        with immediate_transaction(self.engine) as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.legacy_readonly:
+                raise ConflictError("历史只读任务不能恢复归档")
+            if not task.archived:
+                raise ConflictError("任务当前未归档")
+            updated = conn.execute(
+                update(tasks)
+                .where(tasks.c.id == task_id, tasks.c.archived.is_(True))
+                .values(archived=False, updated_at=now)
+            )
+            if not updated.rowcount:
+                raise ConflictError("任务归档状态已被其他操作改变")
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=task.project_id,
+                    task_id=task_id,
+                    event_type="task.unarchived",
+                    message="任务已恢复可见",
+                    payload={"actor": actor, "status": task.status},
+                ),
+            )
+            restored = self.tasks.get(conn, task_id)
+            assert restored is not None
+        return self._decorate(restored)
 
     def hints(self, task_id: str) -> list[TaskHint]:
         with self.engine.connect() as conn:
-            if self.tasks.get(conn, task_id) is None:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的 Hint 不可见，请先恢复任务")
             return self.tasks.hints(conn, task_id)
 
     def add_hint(self, task_id: str, command: CreateTaskHint) -> TaskHint:
@@ -380,6 +475,8 @@ class TaskService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.legacy_readonly:
                 raise ConflictError("Legacy Task is read-only")
+            if task.archived:
+                raise ConflictError("已归档任务不能修改 Hint")
             return self.tasks.create_hint(conn, task_id=task_id, command=command, now=utcnow())
 
     def update_hint(self, task_id: str, hint_id: str, command: UpdateTaskHint) -> TaskHint:
@@ -389,6 +486,8 @@ class TaskService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.legacy_readonly:
                 raise ConflictError("Legacy Task is read-only")
+            if task.archived:
+                raise ConflictError("已归档任务不能修改 Hint")
             updated = self.tasks.update_hint(
                 conn,
                 task_id=task_id,
