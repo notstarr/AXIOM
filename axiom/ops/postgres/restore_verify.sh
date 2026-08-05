@@ -2,12 +2,20 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 /path/to/axiom-YYYYMMDDTHHMMSSZ.dump" >&2
+  echo "Usage: $0 /path/to/axiom-YYYYMMDDTHHMMSSZ.dump [expected-fingerprint.json]" >&2
   exit 2
 }
-[[ $# -eq 1 ]] || usage
+[[ $# -ge 1 && $# -le 2 ]] || usage
 DUMP_PATH="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 [[ -s "$DUMP_PATH" ]] || { echo "backup not found: $DUMP_PATH" >&2; exit 1; }
+EXPECTED_FINGERPRINT=""
+if [[ $# -eq 2 ]]; then
+  EXPECTED_FINGERPRINT="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
+  [[ -s "$EXPECTED_FINGERPRINT" ]] || {
+    echo "expected fingerprint not found: $EXPECTED_FINGERPRINT" >&2
+    exit 1
+  }
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
@@ -19,7 +27,7 @@ STAMP="$(date -u +%Y%m%d%H%M%S)"
 DATABASE="axiom_restore_$STAMP"
 REPORT_DIR="${AXIOM_PG_RESTORE_REPORT_DIR:-$AXIOM_DATA_DIR/postgresql-migration/restore-$STAMP}"
 APP_URL="$(postgres_database_url "$AXIOM_DATABASE_URL" "$DATABASE")"
-PORT="${AXIOM_RESTORE_VERIFY_PORT:-8898}"
+PORT="${AXIOM_RESTORE_VERIFY_PORT:-18898}"
 PID=""
 mkdir -p "$REPORT_DIR"
 
@@ -38,6 +46,20 @@ cat "$DUMP_PATH" | axiom_compose exec -T postgres \
 
 "$AXIOM_DIR/.venv/bin/python" "$SCRIPT_DIR/database_fingerprint.py" \
   --database-url "$APP_URL" --output "$REPORT_DIR/database-fingerprint.json"
+if [[ -n "$EXPECTED_FINGERPRINT" ]]; then
+  "$AXIOM_DIR/.venv/bin/python" - \
+    "$EXPECTED_FINGERPRINT" "$REPORT_DIR/database-fingerprint.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+expected = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+actual = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+if expected != actual:
+    raise SystemExit("restored database fingerprint does not match the source")
+print("database fingerprint: MATCH")
+PY
+fi
 
 VERIFY_DATA="$REPORT_DIR/data"
 mkdir -p "$VERIFY_DATA"

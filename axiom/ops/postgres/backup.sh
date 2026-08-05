@@ -24,7 +24,7 @@ axiom_compose exec -T postgres \
   pg_dump --format=custom --compress=9 --no-password \
   --username axiom_bootstrap --dbname "$AXIOM_DB_NAME" > "$DAILY_DUMP"
 axiom_compose exec -T postgres \
-  pg_dumpall --globals-only --no-role-passwords --no-password \
+  pg_dumpall --globals-only --no-password \
   --username axiom_bootstrap > "$GLOBALS_DUMP"
 
 "$AXIOM_DIR/.venv/bin/python" - "$DAILY_DUMP" "$GLOBALS_DUMP" "$MANIFEST" "$AXIOM_DB_NAME" <<'PY'

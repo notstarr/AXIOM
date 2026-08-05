@@ -165,13 +165,21 @@ curl -fsS "http://127.0.0.1:$TARGET_API_PORT/health" > "$CUTOVER_DIR/postgresql-
   > "$CUTOVER_DIR/api-comparison.stdout.json"
 stop_pid "$TARGET_PID"; TARGET_PID=""
 
+# Validate a full logical backup and restore while PostgreSQL is still frozen
+# and has had no post-migration writes.  The restored table hashes must match
+# the import fingerprint exactly before crossing the irreversible boundary.
+"$SCRIPT_DIR/backup.sh" > "$CUTOVER_DIR/first-backup-paths.txt"
+FIRST_DUMP="$(head -n 1 "$CUTOVER_DIR/first-backup-paths.txt")"
+"$SCRIPT_DIR/restore_verify.sh" \
+  "$FIRST_DUMP" "$CUTOVER_DIR/postgresql-fingerprint.json" \
+  > "$CUTOVER_DIR/first-restore-verify.txt"
+
 # This is the irreversible boundary: start.sh opens PostgreSQL for writes and starts Runner.
 AXIOM_CODE_DIR="$AXIOM_DIR" AXIOM_DATA_DIR="$SOURCE_DATA_DIR" \
   AXIOM_PG_ENV_FILE="$AXIOM_PG_ENV_FILE" "$AXIOM_REPO_ROOT/start.sh" start \
   > "$CUTOVER_DIR/start-postgresql.log" 2>&1
 WRITES_OPEN=1
 curl -fsS "$API_URL/health" > "$CUTOVER_DIR/production-health.json"
-"$SCRIPT_DIR/backup.sh" > "$CUTOVER_DIR/first-backup-paths.txt"
 "$SCRIPT_DIR/install_backup_launchagent.sh" > "$CUTOVER_DIR/backup-launchagent.txt"
 
 OBSERVATION_DIR="$CUTOVER_DIR/observation-24h"
