@@ -183,13 +183,16 @@ curl -fsS "$API_URL/health" > "$CUTOVER_DIR/production-health.json"
 "$SCRIPT_DIR/install_backup_launchagent.sh" > "$CUTOVER_DIR/backup-launchagent.txt"
 
 OBSERVATION_DIR="$CUTOVER_DIR/observation-24h"
-nohup "$AXIOM_DIR/.venv/bin/python" "$SCRIPT_DIR/observe_postgresql.py" \
-  --database-url "$AXIOM_DATABASE_URL" --api-url "$API_URL" \
-  --duration-seconds 86400 --interval-seconds 60 --output-dir "$OBSERVATION_DIR" \
-  > "$OBSERVATION_DIR.log" 2>&1 &
-printf '%s\n' "$!" > "$OBSERVATION_DIR.pid"
+"$SCRIPT_DIR/install_observer_launchagent.sh" \
+  --output-dir "$OBSERVATION_DIR" --duration-seconds 86400 --interval-seconds 60 \
+  > "$CUTOVER_DIR/observer-launchagent.txt"
+OBSERVATION_PID="$(
+  launchctl print "gui/$(id -u)/com.xrayai.axiom.postgresql-observer" 2>/dev/null \
+    | awk -F'= ' '/pid = / {print $2; exit}'
+)"
+printf '%s\n' "$OBSERVATION_PID" > "$OBSERVATION_DIR.pid"
 cat > "$CUTOVER_DIR/CUTOVER_COMPLETE.json" <<EOF
-{"completed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","postgresql_writes_open":true,"sqlite_rollback_allowed":false,"observation_pid":$!}
+{"completed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","postgresql_writes_open":true,"sqlite_rollback_allowed":false,"observation_pid":${OBSERVATION_PID:-null}}
 EOF
 
 echo "$CUTOVER_DIR"

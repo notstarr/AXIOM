@@ -10,7 +10,7 @@ from pathlib import Path
 
 from sqlalchemy import text
 
-from axiom.shared.database import AXIOM_SCHEMA, create_database_engine
+from axiom.shared.database import AXIOM_SCHEMA, create_database_engine, database_url_from_env
 
 
 def now() -> str:
@@ -24,7 +24,7 @@ def health(api_url: str) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Observe AXIOM PostgreSQL after production cutover")
-    parser.add_argument("--database-url", required=True)
+    parser.add_argument("--database-url")
     parser.add_argument("--api-url", default="http://127.0.0.1:8888")
     parser.add_argument("--duration-seconds", type=int, default=86400)
     parser.add_argument("--interval-seconds", type=int, default=60)
@@ -34,7 +34,7 @@ def main() -> None:
     samples_path = args.output_dir / "samples.jsonl"
     summary_path = args.output_dir / "summary.json"
     engine = create_database_engine(
-        args.database_url,
+        args.database_url or database_url_from_env(),
         application_name="axiom-post-cutover-observer",
         pool_size=1,
         max_overflow=0,
