@@ -3,6 +3,7 @@
 状态含义：
 
 - **已验证**：当前代码、测试和运行证据一致。
+- **观察中**：功能已上线且当前检查正常，但约定的时间窗口尚未结束。
 - **保留兼容**：保留数据或后端能力，但不是新任务主流程。
 - **后续方案**：已有设计方向，但不属于本次生产切换验收。
 
@@ -162,39 +163,45 @@
 | Dashboard 加载态 | 已验证 | 未完成加载不再误显示 0 |
 | Tailwind CDN 警告 | 已知非阻塞 | 后续可替换为构建 CSS |
 
-## G. 生产切换证据
+## G. PostgreSQL 原生化与生产切换
 
-| 项目 | 结果 |
-|---|---|
-| 旧数据库一致性快照 | 已完成 |
-| 迁移警告 | 0 |
-| foreign key check | 空 |
-| 新 API `/health` | `api: v1` |
-| 旧 API 回滚 `/health` | `api: v2` |
-| 新 API/Runner LaunchAgent | 均运行 |
-| 回滚后恢复新运行时 | 已完成 |
-| Alembic Revision | 生产已升级为 `20260805_0035`；Task 级归档和 Reviewer 均已投入运行 |
-| Explore intervention queue | 待验证 | `intent_interventions` 绑定当前 Explore Lease；升级后验证 API/Runner 读取正常，未发送消息在 Lease 结束时变为 `expired` |
-| Reviewer 0034 迁移演练 | 已完成 | 0033 非空库升级/降级；历史待验证补队列、Reason 后端复制、Skill scope、counter、integrity/FK 均通过 |
-| Reviewer 0034 生产备份 | `/Users/hexin/.local/share/axiom-v3/backups/reviewer-0034-20260804-183102/axiom.db.pre-0034.bak`；`integrity_check=ok`、FK 0 |
-| Reviewer 0034 生产 smoke | `/health` 正常；4 个逻辑 Worker、Reviewer 7 个后端；迁移补建 60 个历史 ReviewRun。`t_148/vr000001` 完成 `ignored` 裁决，生成 `review.report a408` 与 review Token 记录；Reviewer 与主链并行领取 |
-| Task 归档/Provider 修复备份 | `/Users/hexin/.local/share/axiom-v3/backups/provider-failure-20260805-220016/axiom.db.pre-restart.bak` |
-| 0035 生产应用 | API PID 90132、Runner PID 90159；`/health` 正常，SQLite integrity `ok`、FK 0 |
-| 三阶段迁移备份 | `/Users/hexin/.local/share/axiom-v3/backups/axiom-20260803-before-0031-103939.db`；`integrity_check=ok` |
-| 真实工具目录迁移备份 | `/Users/hexin/.local/share/axiom-v3/backups/axiom-20260804-before-0032-20260804-112743.db`；升级后 `integrity_check=ok`、FK 0 |
-| 三阶段 API smoke | `/worker-phases`、`/phase-capabilities`、`/workers/overview` 均 200；7 个后端、14 个 common Skill |
-| 真实工具目录 smoke | 15 个内置 Tool、3 个逻辑 Worker、0 个扩展 Tool；五个样例 key 为 0；Worker/工具页明暗主题浏览器验收通过 |
-| 新 Lease 能力快照 | `t_154/rr000192`、`t_155/rr000193`、`t_155/i013/i014` 均生成 `phase-capabilities.json` |
-| 原生 Browser Broker 本机 smoke | 已完成 | 共享 Chrome-SecTest 上完成 open→snapshot→fill→click→changes→read→console/network→navigate→stale-ref→close；两 Lease 隔离，仅一次 CDP Attach |
-| ReasonRun 生产备份 | `/Users/hexin/.local/share/axiom-v3/backups/20260727-131804-reasonrun-final/` |
-| 归档批次生产备份 | `/Users/hexin/.local/share/axiom-v3/backups/archive-batches-20260729T034510Z/axiom.db.pre-0025.bak` |
-| Reason CLI PATH | 已验证：Pi 子进程注入当前虚拟环境 `bin`，生产 `t_138` 直接调用 `axiom reason ...` |
-| ReasonRun/FINISH E2E | `t_138` 完成；2 Intent、2 ReasonRun、4 Artifact、1/1 Todo、零重试、`Fact f002 → Goal`、无活动工作 |
-| 停止即时取消 | 运行中 ReasonRun 转为 cancelled；Workspace abandoned；旧 heartbeat/commit 409；临时资源已清理 |
-| RuntimeConfig 热应用 | 浏览器保存/刷新/合法 0/Runner ACK 均通过；最终 saved/applied 均为 v210 |
-| 最终生产 smoke | 临时 `t_141` 验证 Bootstrap → ReasonRun → stop；图谱无 Reason Intent，活动工作和 open Workspace 均为 0 |
-| 归档生产 smoke | 临时 `t_152` 验证下游闭包、Context/Graph/Artifact 隔离、归档 Artifact 读取和 6 项恢复；临时数据已清理 |
-| 归档前端验收 | `t_150/f100` 只读预览显示 2 Fact、2 Intent、2 Todo、54 Artifact；空 blockers 时确认按钮可用 |
-| 全套测试 | `480 passed, 1 warning`；本次修改文件 Ruff、compileall 和 diff check 均通过；全仓 Ruff 仍有与本次无关的历史/临时脚本问题 |
+| 项目 | 状态 | 当前证据 |
+|---|---|---|
+| PostgreSQL 18.4 固定镜像 | 已验证 | compose.yaml 使用 Debian 镜像及不可变 digest；生产端口 127.0.0.1:55432 |
+| 三角色与独立 Schema | 已验证 | axiom_owner、axiom_migrator、axiom_app；业务对象位于 axiom Schema；回收 public 公共 CREATE |
+| PostgreSQL 唯一运行时 | 已验证 | Engine 拒绝非 PostgreSQL URL；API/Runner 无 --db-path；/health 返回 backend=postgresql |
+| JSONB / TIMESTAMPTZ / BOOLEAN | 已验证 | PostgreSQL真实类型；JSONText、UTCDateTimeText 仅保持历史服务层字符串合同 |
+| PostgreSQL Alembic 基线 | 已验证 | SQLite 历史 Head 冻结为 20260805_0035；生产使用独立 20260805_pg0001 / postgresql@head |
+| 空库升降级 | 已验证 | PostgreSQL upgrade → downgrade → upgrade 完整通过 |
+| 行锁领取 | 已验证 | Intent、ReasonRun、ReviewRun 使用 FOR UPDATE SKIP LOCKED；领取和 Lease 创建同事务 |
+| 事务重试 | 已验证 | 40P01/40001 最多三次带抖动重试；连接池、锁超时和 idle transaction timeout 生效 |
+| SQLite 运行时语义清理 | 已验证 | 运行时代码无 BEGIN IMMEDIATE、PRAGMA、SQLite UPSERT、sqlite_where 或文件锁；SQLite 只用于导入器 |
+| PostgreSQL pytest | 已验证 | 普通测试使用 127.0.0.1:55433/axiom_test；SQLite 仅用于固定历史导入 fixture |
+| SQLite 只读导入器 | 已验证 | 精确版本、integrity/FK、JSON/时间/ID、空目标、单事务、计数/哈希/Counter/Artifact 校验 |
+| 第一份生产副本演练 | 已验证 | /Users/hexin/.local/share/axiom-v3/postgresql-migration/rehearsal-pg18-1d-20260805T180356Z |
+| 第二份生产副本演练 | 已验证 | /Users/hexin/.local/share/axiom-v3/postgresql-migration/rehearsal-pg18-2b-20260805T181943Z |
+| 正式切换 | 已验证 | /Users/hexin/.local/share/axiom-v3/postgresql-migration/cutover-20260805T183453Z |
+| 数据一致性 | 已验证 | 36 张业务表计数/规范化 SHA-256 全匹配；Counter 调整 0 |
+| Artifact 一致性 | 已验证 | 3,547 / 3,547 实体文件存在；只迁移元数据，不移动文件 |
+| API 快照一致性 | 已验证 | SQLite/PostgreSQL 所有 section hash 一致 |
+| 首次备份恢复 | 已验证 | custom-format dump 恢复后数据库 fingerprint 与源完全一致；frozen API 可启动并导出快照 |
+| 四阶段真实生命周期 | 已验证 | Bootstrap、Reason Workspace、Explore Artifact/Fact/漏洞、Reviewer 裁决共 15 项检查通过；临时数据已清理 |
+| 明文配置迁移 | 已验证 | Credential、API Key、Worker/MCP 配置按原值迁移；不增加加密、主密钥、Secret 引用或接口脱敏 |
+| 环境文件权限 | 已验证 | /Users/hexin/.local/share/axiom-v3/postgresql.env 为 0600；LaunchAgent 只保存文件路径，不内嵌连接 URL/密码 |
+| 每日备份 | 已验证 | pg_dump --format=custom、globals 和 SHA-256 manifest；14 日备份 + 8 周备份 |
+| 24 小时生产观察 | 观察中 | com.xrayai.axiom.postgresql-observer 正在运行并持续写样本；当前 deadlock、等待锁和重复活动 Reason/Review 均为 0；等待 summary.json passed=true |
+| SQLite 回滚 | 已验证 | PostgreSQL 已开放写入；sqlite_rollback_allowed=false，明确禁止回退，后续只允许 PostgreSQL备份恢复或修复前进 |
 
-最终生产数据目录：`/Users/hexin/.local/share/axiom-v3`。旧目录仍保留，回滚脚本不会删除旧数据。
+## H. 最终质量门禁
+
+~~~text
+.venv/bin/pytest -q                         488 passed, 1 warning
+.venv/bin/ruff check src tests migrations   passed
+.venv/bin/python -m compileall -q src/axiom passed
+node --check <all non-vendor static js>     passed
+git diff --check                            passed
+~~~
+
+唯一 warning 是既有 Starlette/httpx 弃用提示。生产健康检查、PostgreSQL容器、API/Runner、备份 LaunchAgent 和观察 LaunchAgent 均正常。
+
+完整实现与切换说明：docs/2026-08-05-SQLite到PostgreSQL原生化与生产切换.md。日常启动、维护状态、备份、恢复和故障处理见 docs/postgresql-operations.md。

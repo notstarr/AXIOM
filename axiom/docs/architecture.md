@@ -7,27 +7,32 @@
 AXIOM 是一个模块化单体，由两个长期进程组成：
 
 ```text
-axiom serve       HTTP API、领域服务、SQLite 持久化、前端静态文件
+axiom serve       HTTP API、领域服务、PostgreSQL 持久化、前端静态文件
 axiom runner      API-only 调度器、Worker 领取、阶段执行、租约心跳
 ```
 
-Runner 不直接打开数据库，只通过 `/api/v1/dispatch/*` 和执行接口访问 API。API/SQLite 是唯一事实源；Worker 是由 Runner 启动的 Pi 子进程，不是数据库客户端。
+Runner 不直接打开数据库，只通过 `/api/v1/dispatch/*` 和执行接口访问 API。API/PostgreSQL 是唯一事实源；Worker 是由 Runner 启动的 Pi 子进程，不是数据库客户端。SQLite 已退出生产、开发和普通测试运行时，只作为冻结历史源供一次性只读导入器读取。
 
 生产运行目录：
 
 ```text
 代码：      /Users/hexin/vscode/xrayAI/axiom
 API：       http://127.0.0.1:8888
-数据库：    /Users/hexin/.local/share/axiom-v3/axiom.db
+PostgreSQL：127.0.0.1:55432/axiom（Schema: axiom）
+数据库配置：/Users/hexin/.local/share/axiom-v3/postgresql.env（0600）
 数据文件：  /Users/hexin/.local/share/axiom-v3
-旧运行时：  /Users/hexin/.local/share/axiom
+SQLite：    只读最终备份和历史迁移输入，不再提供运行时
 ```
+
+PostgreSQL 18.4 运行在本机 Docker，API 与 Runner 继续运行在宿主机。镜像使用固定 digest；业务对象由不可登录的 `axiom_owner` 持有，Alembic 使用 `axiom_migrator`，API/Runner 使用 `axiom_app`。`public` Schema 的公共 `CREATE` 权限已回收，应用账号不能修改 Schema。
 
 macOS LaunchAgent：
 
 ```text
 com.xrayai.axiom
 com.xrayai.axiom.runner
+com.xrayai.axiom.postgresql-backup
+com.xrayai.axiom.postgresql-observer   # 生产切换后 24 小时验收期
 ```
 
 ## 2. 模块边界
@@ -511,65 +516,77 @@ Dashboard 使用 `GET /api/v1/dashboard/summary` 获取 Task 状态、漏洞等�
 
 Cytoscape、ELK、Dagre 只在首次进入图谱页时加载，Marked 只在首次预览 Markdown 时加载。图谱更新区分 topology、geometry 和 visual：只有节点/边或尺寸变化才运行布局；状态、Worker、心跳和活动文字只更新样式。活动边共用一个 RAF，Minimap 不监听普通 data 更新，离开图谱页后全部停止和销毁。
 
-## 9. 迁移与回滚
+## 9. PostgreSQL 原生数据库与迁移边界
+
+### 9.1 当前唯一正式数据库
+
+生产、开发和普通测试只允许连接 PostgreSQL。运行时 Engine 工厂拒绝非 PostgreSQL URL；`axiom serve` 会同时检查业务表和 Alembic Head，不会在 Schema 未升级时自动启动。API、Runner 和 Alembic 统一从 `AXIOM_DATABASE_URL`、`AXIOM_MIGRATOR_DATABASE_URL` 或 `AXIOM_DB_*` 读取连接配置。
 
 ```text
-start.sh start
-  停止旧 Cairn Server/Dispatcher
-  SQLite backup 创建一致性源快照
-  migrate-legacy 写入 axiom-v3
-  db-upgrade
-  启动新 API，等待 /health api:v1
-  启动新 Runner
-
-start.sh rollback
-  停止新 API/Runner
-  恢复保留的旧 LaunchAgent
-  等待 /health api:v2
+PostgreSQL 18.4 / Debian / immutable digest
+host:   127.0.0.1:55432
+db:     axiom
+schema: axiom
+owner:  axiom_owner（NOLOGIN）
+migrate:axiom_migrator
+runtime:axiom_app
 ```
 
-生产迁移报告位于：
+结构化 JSON 使用 `JSONB`，时间使用 `TIMESTAMPTZ` 并在连接级固定 UTC。`JSONText` 与 `UTCDateTimeText` 只负责维持历史 Python/HTTP 字符串合同，不把 PostgreSQL 降级成文本存储。状态继续使用 `VARCHAR + CHECK`；字符串业务 ID 和 `id_counters` 保留。
+
+### 9.2 并发和事务
+
+Dispatcher 对 Intent、ReasonRun 和 ReviewRun 的领取使用 `SELECT ... FOR UPDATE SKIP LOCKED`，领取、状态更新和 Lease 创建处于同一事务。服务层对 PostgreSQL `40P01` 和 `40001` 提供最多三次带抖动重试；连接池启用 `pool_pre_ping`，并设置连接、锁和空闲事务超时。
+
+运行时代码不再使用 `BEGIN IMMEDIATE`、PRAGMA、`sqlite_insert`、`INSERT OR IGNORE`、`sqlite_where` 或 SQLite 文件锁。冲突写入使用 PostgreSQL `ON CONFLICT`；搜索、NULL 排序和 JSON 比较使用明确的 PostgreSQL 语义。
+
+### 9.3 Alembic 分支
+
+SQLite 历史迁移冻结在 `20260805_0035`，不修改原有 35 个迁移。PostgreSQL 使用独立根基线：
 
 ```text
-/Users/hexin/.local/share/axiom-v3/backups/<cutover>/migration-report.json
+20260805_pg0001_postgresql_baseline
+branch: postgresql
+deploy target: postgresql@head
 ```
 
-ReasonRun/RuntimeConfig 迁移版本为 `20260727_0020`。迁移保留历史 Reason Intent、Workspace 和 Goal Evaluation，不重写历史图谱；新运行全部使用 `reason_run_id`。最终重启前一致性备份位于 `/Users/hexin/.local/share/axiom-v3/backups/20260727-131804-reasonrun-final/`。空库和包含真实 ReasonRun 数据的生产副本都完成 `upgrade → downgrade 0019 → upgrade 0020` 演练；回滚时 ReasonRun 会物化为旧版只读 Reason Intent，并同步 Workspace、Context、Goal Evaluation、Audit 和来源 Fact。SQLite integrity 为 `ok`，foreign key violation 为 0。
+后续正式迁移只能接在 PostgreSQL 分支。空数据库已经完成 `upgrade → downgrade → upgrade`；API 启动时当前版本必须与 PostgreSQL Head 完全一致。
 
-`20260727_0023_explore_closeout_floor` 是单调数据迁移：把 RuntimeConfig 的 Explore Conclude 下限、未结束 Explore Intent 的收口预算，以及未结束 ReasonRun 的 Explore 收口范围快照提升到至少 180 秒；必要时同步抬高过低的 max。已进入进程的旧 ExecutionInput 不会被热改，下一次重试或重新领取才使用数据库中的新预算。降级保留已提升的安全预算，避免误改用户在升级后主动设置的 180 秒值。
+### 9.4 SQLite 只读导入器
 
-`20260728_0024_task_run_windows` 为 Task 增加本次运行时长、开始时间、UTC 截止时间和最近暂停原因，并建立 `status + run_deadline_at` 索引。历史记录保持 `NULL`，等价于不限时，不猜测旧任务的运行窗口。
+SQLite 仅允许通过以下入口读取：
 
-`20260729_0025_archive_batches` 新增归档批次和成员表。迁移前已归档的 Fact、Intent、Artifact、Vulnerability、Todo 会分别生成兼容批次；Todo 使用真实 `root_type=todo` 仅用于历史读取，新的交互式归档根仍限制为 Fact、Intent、Artifact 或 Vulnerability。降级只删除批次索引，不修改原实体的 `archived` 状态。
+```bash
+axiom db migrate-sqlite \
+  --sqlite-path /path/to/frozen-axiom.db \
+  --database-url postgresql+psycopg://... \
+  --data-dir /path/to/source-data \
+  --report-dir /path/to/report
+```
 
-`20260729_0026_frontend_query_indexes` 为 Artifact 和 Vulnerability 的分页、过滤和稳定倒序读取增加组合索引。迁移不改业务数据；生产副本已完成 `0026 → 0025 → 0026`，SQLite integrity 为 `ok`。
+导入器要求源端 Alembic 精确为 `20260805_0035`，以只读 URI 打开源库并执行 integrity、foreign key、JSON、时间、ID 和结构检查；目标必须已安装 PostgreSQL 基线且业务表为空。36 张业务表在一个 PostgreSQL 事务中按外键拓扑导入，任一计数、规范化 SHA-256、约束或 Counter 校验失败都会整体回滚。Artifact 文件不复制，只核对数据库元数据指向的文件是否存在。
 
-`20260729_0027_artifact_folder_index` 为 Task 内按 Intent 聚合和读取 Artifact 增加 `(task_id, archived, intent_id, created_at)` 索引。迁移不修改业务数据；生产副本完成 `0026 → 0027 → 0026 → 0027`，SQLite integrity 为 `ok`。
+### 9.5 生产切换和不可逆边界
 
-`20260803_0029_llm_token_usage` 新增 Session Token 明细和来源完整性表，以及任务/模型/时间索引。迁移不改写历史 Session 或 Audit Event；生产切换时先升级数据库，再使用 `axiom token-usage-backfill --dry-run` 检查可识别 Lease、合法 usage 记录和不完整来源，确认报告后再正式回填。回填和实时上报共用稳定键，不会因 Runner 重启或重复扫描重复计数。
+生产使用 `normal → drain → frozen` 外部维护状态。`drain` 禁止新 Lease，允许已有 Lease 心跳和收口；`frozen` 只允许读取和健康检查。正式切换先冻结 SQLite、完成 WAL checkpoint 与不可变备份，再导入空 PostgreSQL、比较 API 快照并验证备份恢复。
 
-`20260803_0031_phase_capabilities` 新增 `phase_capability_bindings`，把 Skill、MCP Tool 和
-扩展 Tool 的分配从具体模型后端提升为 `common/bootstrap/reason/explore` 四个 scope。迁移按阶段
-合并旧 `worker_axiom_tool_bindings`，并把旧 Worker MCP 配置中的具体 Tool 按该后端参与阶段转换；
-旧表和旧配置保留只读兼容。Skill 是文件目录而不是数据库实体，因此“当前启用 Skill → common”
-由升级后的 API 首次启动幂等完成，并写入数据目录初始化标记；`whatisvul` 无论历史状态如何都会
-修复为启用且 common。降级只移除新矩阵，不改写旧 Worker 配置或旧扩展 Tool 绑定。
+**不可逆边界是 PostgreSQL 解除 frozen 并产生第一笔新写入。** 当前生产已经跨过该边界，因此禁止回退 SQLite；故障处理只能使用 PostgreSQL 备份恢复或修复前进。最终 SQLite 副本永久保留为只读历史输入。
 
-`20260804_0032_retire_placeholder_tools` 删除五个临时样例 `search_text/find_files/list_directory/`
-`http_request/run_python` 的阶段绑定、旧 Worker 绑定和目录记录，并删除对应 bundled 源码。历史
-Audit Event 和其它真实扩展 Tool 保留；降级不伪造已退休的样例和绑定。
+本次切换报告：
 
-`20260804_0034_vulnerability_reviewer` 新增 `vulnerability_review_runs`，并为 Artifact、Context Revision、
-Audit Event、Token Usage 增加 `review_run_id` 所有者；能力 scope、Worker 后端参与阶段和 Token phase 同步
-扩展为 `review`。迁移把 Reason 后端复制到 Reviewer 池，将 `vuln-review` 从旧 scope 统一绑定为 Reviewer，
-并为历史未归档、非只读 Task 的待验证漏洞创建 pending ReviewRun。升级和降级专项测试覆盖非空数据库、
-Reason 后端恢复、Skill scope 回滚、ID counter、SQLite integrity 和 foreign key check。降级会删除 ReviewRun
-与 Reviewer Context，保留 Reviewer 产生的 Artifact/Token 历史为旧 schema 可表达的兼容记录。
+```text
+/Users/hexin/.local/share/axiom-v3/postgresql-migration/cutover-20260805T183453Z
+```
 
-`20260805_0035_task_archiving` 为 `tasks` 增加非空 `archived` 标志和 `(archived, status)` 索引。历史 Task
-默认保持未归档，不批量猜测归档状态。降级只删除索引和列，不删除 Task 或执行历史。
+两次完整生产副本演练、36 张业务表计数/哈希、3,547 个 Artifact 路径、SQLite/PostgreSQL API section hash、首次 `pg_dump` 恢复和四阶段真实生命周期均已通过。切换后的 24 小时观察由 `com.xrayai.axiom.postgresql-observer` 托管；观察结束前只能称“切换成功、观察中”，不能提前宣告 24 小时验收完成。
 
-2026-07-29 生产升级前备份位于 `/Users/hexin/.local/share/axiom-v3/backups/archive-batches-20260729T034510Z/axiom.db.pre-0025.bak`。三阶段能力迁移的生产一致性备份为 `/Users/hexin/.local/share/axiom-v3/backups/axiom-20260803-before-0031-103939.db`。退休样例目录前的生产备份为 `/Users/hexin/.local/share/axiom-v3/backups/axiom-20260804-before-0032-20260804-112743.db`。Reviewer 生产升级前备份为 `/Users/hexin/.local/share/axiom-v3/backups/reviewer-0034-20260804-183102/axiom.db.pre-0034.bak`。Task 级归档与 Provider 修复应用前备份为 `/Users/hexin/.local/share/axiom-v3/backups/provider-failure-20260805-220016/axiom.db.pre-restart.bak`。2026-08-05 生产已升级到 `20260805_0035` 并重启 API/Runner，`/health` 正常，SQLite `integrity_check=ok`、foreign key violation 为 0。API 与 Runner LaunchAgent 均使用 `/Users/hexin/.local/share/axiom-v3`。
+### 9.6 备份与恢复
+
+`ops/postgres/backup.sh` 每日生成 custom-format `pg_dump`、globals SQL 和 SHA-256 manifest，保留 14 份每日与 8 份每周备份。备份含明文 API Key、Credential 和 Worker/MCP 配置，依赖 PostgreSQL与文件系统访问权限保护，不额外加密或脱敏。
+
+`ops/postgres/restore_verify.sh` 会创建临时数据库、恢复 dump、计算全表 fingerprint、以 frozen 模式启动独立 API 并导出快照，最后删除临时数据库。生产首次备份已经通过全量 fingerprint 恢复验证。
+
+完整操作手册见 `docs/postgresql-operations.md`；迁移记录见 `docs/2026-08-05-SQLite到PostgreSQL原生化与生产切换.md`。
 
 ## 10. 当前明确不属于主流程的内容
 
@@ -580,34 +597,37 @@ Reason 后端恢复、Skill scope 回滚、ID counter、SQLite integrity 和 for
 
 ## 11. 验证基线
 
-```text
-.venv/bin/pytest -q                           480 passed, 1 warning
+~~~text
+.venv/bin/pytest -q                           488 passed, 1 warning
 .venv/bin/ruff check src tests migrations     passed
 .venv/bin/python -m compileall -q src/axiom   passed
-node --check <all static js>                   passed
+node --check <all non-vendor static js>       passed
 git diff --check                              passed
-```
+~~~
 
-以上测试已覆盖 FINISH 精确识别与 Explore 有限归一化、同会话有界收口、Explore Conclude 核心文件兜底、可选 Evidence、Artifact/Fact 自动生成、ReasonRun/Workspace 生命周期、Goal Cycle 续跑、Reason 历史 Goal Context 隔离、无新 Fact 的材料性 Todo 恢复、Reason 触发和调度并发、RuntimeConfig 热应用、Guard、Task 运行窗口、Fact/Intent 下游闭包归档、Task 级归档与正常产物隔离、Pi JSON Provider 终态分类和 Reason Worker 冷却，以及 Reviewer 的原子排队、四阶段调度、后处理 Task 状态、输入指纹失效、人工覆盖、结构化裁决、Review Artifact、Token/Audit、归档恢复、外部上报门禁、0034/0035 升降级和前端审核历史/重试/深链；仅有既有 Starlette/httpx 弃用警告。
+当前全量测试以 PostgreSQL测试容器为唯一普通数据库，覆盖：
 
-2026-08-03 三阶段能力生产 smoke：API/Runner 重启后 `/api/v1/worker-phases`、`/api/v1/phase-capabilities` 和 `/api/v1/workers/overview` 均返回 200；7 个模型执行后端可被三个逻辑阶段池读取，14 个启用 Skill 进入 common。新 Lease `t_154/rr000192`、`t_155/rr000193`（Reason）和 `t_155/i013/i014`（Explore）实际写入 `phase-capabilities.json`，每份包含 14 个 Skill，未带入未绑定的 MCP/AXIOM Tool；Runner 与 API LaunchAgent 均正常运行。
+- PostgreSQL Engine、Schema readiness、JSONB/TIMESTAMPTZ兼容层和事务重试；
+- Intent、ReasonRun、ReviewRun 的行锁领取、唯一性与 Lease 恢复；
+- Bootstrap、Reason、Explore、Reviewer 四阶段完整生命周期；
+- Reason Workspace、Goal Cycle、Todo Review、Context Revision、Archive；
+- Task 运行窗口、Task 级归档、Fact/Intent 链路归档及披露隔离；
+- Token Usage、MCP Tool Schema 顺序、阶段能力快照和原生浏览器 Lease；
+- SQLite历史导入器的正常导入、空目标保护、失败回滚、计数/哈希/Counter/Artifact校验；
+- PostgreSQL Alembic空库升级、降级和再次升级；
+- API健康检查与数据库 revision 门禁。
 
-2026-08-04 真实工具目录生产 smoke：等待活动 Lease 自然结束后备份并升级到 `20260804_0032`，五个临时样例在目录和两类绑定表中均清零，SQLite integrity/FK 检查正常。重启后 `/health`、`/api/v1/phase-capabilities`、`/api/v1/worker-phases`、`/api/v1/axiom-tools` 均成功；API 返回 15 个系统锁定内置 Tool、3 个逻辑 Worker、0 个扩展 Tool。真实浏览器确认 Worker 能力/后端模式和工具内置/扩展模式可切换，Skill/MCP 分配按钮可用，浅色与暗色选中态正常，后端池不再显示 `undefined` 运行量。
+迁移实证：
 
-2026-08-04 Reviewer 验收与生产切换：测试数据库从 `0033` 插入历史待验证漏洞、Reason 后端、Artifact 关系和
-既有 `vuln-review` binding，升级到 `0034` 后只为合法目标创建 `vr000007`，继承 Reviewer 预算与 Task
-Worker Pool，并把 Reason 后端加入 Reviewer、Skill 绑定迁至 review；降级后表、列、阶段和 counter 均恢复，
-两端 `integrity_check=ok`、FK 为空。生产随后备份并升级到 `0034`，补建 60 个历史 ReviewRun；`/health`、
-`/worker-phases` 和 ReviewRun API 正常；`t_148/vr000001` 已完成 `ignored` 裁决，漏洞状态同步为忽略，生成 `review.report a408` 和 review Token 记录。Reviewer 与恢复后的 `t_154/t_156` 主链同时运行。
+~~~text
+生产副本演练 1：PASS
+生产副本演练 2：PASS
+正式 36 表导入：PASS
+Artifact 3547/3547：PASS
+SQLite/PostgreSQL API section hash：PASS
+首次 pg_dump 恢复 fingerprint：PASS
+生产四阶段生命周期 15 项：PASS
+24 小时观察：运行中，等待 summary.json passed=true
+~~~
 
-2026-07-29 前端生产数据浏览器验收：Dashboard/Task/Files/Vulnerability 非图谱页面分别为 592/1217/1258/839 个 DOM 节点；文件中心首屏 60 条、漏洞列表 50/565；非图谱冷启动没有图谱 Runtime，进入图谱后才加载 6 个依赖，离开后 Canvas 和图谱 DOM 清零；桌面侧栏 176→56px 且刷新持久化，390×844 移动端抽屉导航后自动关闭，控制台无 warning/error。生产数据库副本上的 `/api/v1/tasks` 60 次请求为 median 19.14ms、P95 28.71ms、max 36.16ms。
-
-2026-07-27 生产受控 E2E `t_138` 完成 `Bootstrap → ReasonRun(rr000001) → Explore → ReasonRun(rr000002) → Goal`：正式图谱只有 Bootstrap/Explore 两个 Intent，两个 ReasonRun 均零重试完成；生成 4 个 Artifact、1 个 completed Todo 和两个代码生成 Fact，最终 `goal_from_fact_ids=[f002]`。Task completed 后开放 Intent、ReasonRun、Workspace 均为 0。
-
-最终重启后又执行 API-only 临时验收 `t_141`（随后删除）：Bootstrap 完成后创建独立 ReasonRun，图谱仍只有 Bootstrap Intent；打开 Workspace 后停止 Task，ReasonRun 立即 `cancelled`、Workspace 变为 `abandoned(task_stopped)`、旧 heartbeat 和 commit 均返回 409。临时 Task/Project/Worker 已清理，生产 RuntimeConfig 保存/应用版本均为 v210，活动 Intent、ReasonRun、open Workspace 均为 0。浏览器再次确认 `t_138` 图谱只有 2 个正式 Intent，设置页四组配置和 `Runner 已应用 v210` 正常显示；当时控制台仅保留既知 Tailwind CDN 警告。该警告已在 2026-07-29 静态 Tailwind 构建改造后消失。
-
-Explore RPC/动态提醒批次的生产一致性备份为 `/Users/hexin/.local/share/axiom-v3/backups/20260727-182223/`。空库及生产副本完成 `0022 → 0023 → 0022 → 0023`，生产库现为 `20260727_0023`，RuntimeConfig/Runner applied version 均为 v212，Explore Conclude 范围为 180–600 秒，SQLite integrity 为 `ok` 且 foreign key violation 为 0。临时生产验收 `t_146` 的两个 Explore Intent 分别验证“Execute 超时后 RPC Conclude 成功提交”和“工具调用期间 steer 排队后下一轮生效”；共生成 9 个正式 Artifact、2 个代码生成 Fact，执行/基础设施重试均为 0，临时 Task、Project、本机服务和 Pi 进程随后清理。
-
-2026-07-28 部署 Explore 核心产物优先协议时，先停止唯一运行任务 `t_150`，确认 Dispatcher 活动工作为 0，再重启 `com.xrayai.axiom` 与 `com.xrayai.axiom.runner` 并恢复任务。恢复后的 `rr000096` 正常提交 4 个 Explore Intent；新 Lease 的 Pi Session 已确认包含可选 Evidence、未完成写入 Leads 和“不要补跑”的新 Prompt。`i035-i037` 均一次完成且执行/基础设施重试为 0：`i035` 生成 2 个核心 Artifact、3 个 Evidence 和 5 个待验证漏洞，其中一个漏洞只有 Findings 关系、Evidence 为空；`i036` 只生成 findings/leads 两个核心 Artifact，也正常完成；`i037` 在 600 秒 Execute 的动态 70% 时点收到 steer，生成 2 个核心 Artifact、8 个 Evidence 和 `f035`。这些真实路径验证了可选 Evidence、无 Evidence 漏洞和常规 RPC 收口；缺少 FINISH/收口超时的核心文件兜底由自动化模拟测试覆盖。
-
-2026-07-29 归档生产 smoke 使用临时 `t_152` 完成 `Bootstrap → ReasonRun → Explore → Fact 根归档 → Context/Graph/Artifact 隔离 → 归档 Artifact 读取 → 批次恢复`。实际闭包包含 1 Fact、1 Intent、1 Todo 和 3 Artifact，恢复 6 项；`/context/expand` 对归档实体返回 404。临时 Task、Project、Worker 和文件均已清理，生产归档批次表恢复为 0 条。浏览器在 `t_150/f100` 上只执行只读预览，确认显示 2 Fact、2 Intent、2 Todo 和 54 Artifact；同时修复空 `blockers` 长度值 `0` 被 Alpine 作为 HTML boolean attribute 导致确认按钮错误禁用的问题，修复后按钮可用且未提交真实归档。
+唯一 warning 是既有 Starlette/httpx 弃用提示。生产已经开放 PostgreSQL 写入，SQLite 回滚被永久禁止。
