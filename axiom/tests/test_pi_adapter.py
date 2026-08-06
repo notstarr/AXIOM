@@ -561,6 +561,10 @@ def test_reason_prompt_requires_small_todos_and_intents_without_fixed_budget_exa
     assert "goal_evaluations.json" not in prompt
     assert "status_reason" in prompt
     assert "本轮新事实（Fact）：`[\"f002\", \"f003\"]`" in prompt
+    assert "目标类型、当前目标身份和身份判断依据" in prompt
+    assert "不得从无法绑定当前身份或已被排除的候选中重新引入" in prompt
+    assert "小程序和 App 应优先规划真实流量恢复" in prompt
+    assert "静态端点或敏感字符串" in prompt
     assert "完整读取上下文清单中的 `todos.json` 索引" in prompt
     assert "完成新事实（若有）和 `todo_review_ids` 处理前，禁止新增待办或派发执行意图" in prompt
     assert "已有同义开放执行意图时禁止重复派发" in prompt
@@ -608,6 +612,78 @@ def test_bootstrap_prompt_receives_manifest_and_requires_priority_context_readin
     assert "上下文清单（Context Manifest）：`/tmp/context.json`" in prompt
     assert "完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`" in prompt
     assert "避免重复测试和重复上报" in prompt
+
+
+def test_bootstrap_prompt_routes_one_target_profile_and_locks_target_identity() -> None:
+    prompt = PromptRenderer().render(
+        "bootstrap.md",
+        {
+            "task_id": "t_001",
+            "intent_id": "i001",
+            "origin": "agentpark小程序",
+            "goal": "完成测试",
+            "scope_guidance": _scope_guidance({}),
+            "context_manifest_path": "/tmp/context.json",
+            "run_dir": "/tmp/run",
+            "skill_directories": "- /tmp/skills/miniapp",
+        },
+    )
+
+    assert '$AXIOM_PYTHON' in prompt
+    assert "import axiom" in prompt
+    assert "bootstrap_web.md" in prompt
+    assert "bootstrap_miniapp.md" in prompt
+    assert "bootstrap_app.md" in prompt
+    assert "每轮只能读取一份类型子提示词" in prompt
+    assert "小程序内部使用 WebView/H5 时仍然属于小程序" in prompt
+    assert "不要默认按 Web 扫描" in prompt
+    assert "不得因为发现其它应用或小程序而改变当前目标" in prompt
+    assert "目标类型：Web / 小程序 / App / 尚未确认" in prompt
+    assert "当前目标身份" in prompt
+    assert "身份判断依据" in prompt
+
+
+@pytest.mark.parametrize(
+    ("template", "target_type", "required_markers"),
+    [
+        (
+            "bootstrap_web.md",
+            "Web",
+            ("Source Map", "OpenAPI", "相似域名"),
+        ),
+        (
+            "bootstrap_miniapp.md",
+            "小程序",
+            (
+                "status → 必要时 probe → 选择唯一 target_id → prepare",
+                "Reqable",
+                "混元",
+                "CodeBuddy",
+            ),
+        ),
+        (
+            "bootstrap_app.md",
+            "App",
+            ("包名或 Bundle ID", "Deep Link", "设备上的其它 App"),
+        ),
+    ],
+)
+def test_bootstrap_target_profiles_keep_shared_artifacts_and_identity_boundary(
+    template: str,
+    target_type: str,
+    required_markers: tuple[str, ...],
+) -> None:
+    prompt = PromptRenderer().render(template, {})
+
+    assert "asset_inventory.md" in prompt
+    assert "initial_leads.md" in prompt
+    assert "findings.md" in prompt
+    assert "目标类型" in prompt
+    assert "当前目标身份" in prompt
+    assert "身份判断依据" in prompt
+    assert f"目标类型填写 `{target_type}`" in prompt
+    for marker in required_markers:
+        assert marker in prompt
 
 
 def test_scope_and_target_prompt_guidance_follow_effective_lists() -> None:

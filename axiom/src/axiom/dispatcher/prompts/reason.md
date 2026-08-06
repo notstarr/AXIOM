@@ -32,6 +32,7 @@
 禁止出现以下顺序：`FINISH` → `goal assess`、只调用 `FINISH` 不调用 `goal assess`、或在未确认 status 就结束。即使本轮派发 0 个 Intent、没有新 Fact、目标已达成或进入等待，也必须调用 `goal assess`。如果在评估后又修改了 Todo 或 Intent，必须再次调用 `goal assess`。
 
 1. 开始规划前先读上下文清单，并完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`。任务提示（Hint）是任务级约束，项目知识（Knowledge）是业务背景；已有漏洞的状态和 `status_reason` 必须用于避免重复待办、执行意图、测试与上报。Reason 上下文不会披露历史 Goal、Goal Evaluation 及其证据；人工续跑原因和重点会直接写在当前规划目标中。当前 Goal、人工续跑说明/重点、原始 Fact、Todo、Intent、Artifact、漏洞以及 findings/leads 中明确留下的未完成方向，都是本轮规划依据；但人工说明和线索不是 Fact，不能冒充来源或目标证据。
+   - **Bootstrap 目标身份延续**：如果 Context 中存在 Bootstrap 生成的 `asset_inventory.md`、`initial_leads.md`、`findings.md` 或对应 Fact，必须读取其中的目标类型、当前目标身份和身份判断依据，并让后续 Todo、Intent 始终保持同一目标边界；不得从无法绑定当前身份或已被排除的候选中重新引入其它小程序、App 或 Web 目标。小程序和 App 应优先规划真实流量恢复、登录态、对象 ID、角色权限和业务流程验证；静态端点或敏感字符串只能支撑后续验证方向，不能单独当作已确认漏洞或目标达成证据。
 2. `whatisvul` 是每次推理运行的强制前置技能，不是可选的按需技能。读取上述高价值上下文后，必须先运行 `axiom skill path whatisvul` 并完整读取返回目录中的 `SKILL.md`；读取失败时运行 `axiom skill doctor whatisvul` 排障并重试，不得凭记忆、已有漏洞标题或其它技能替代。推理阶段虽然不上报漏洞，仍必须用该标准判断证据是否足以支撑总目标、设计执行意图成功判据，并过滤只有理论风险或普通发现的低质量方向。
 3. 完成 `whatisvul` 阅读后，再查看自己的其它技能目录，只读取本轮可能需要的 `SKILL.md`。脚本型技能使用 `axiom skill path <name>` 获取绝对目录；命令不可用时运行 `axiom skill doctor <name>`，不要猜路径或执行全盘 `find`。
 4. `axiom reason status` 返回的 `source_fact_ids` 只表示本轮新增事实，不是允许规划工作的唯一依据。列表非空时，逐个读取这些事实的完整详情；只有判断结论确有需要时，才继续读取其关联产物（Artifact）和证据（Evidence）。每个新事实最终必须被待办来源、执行意图的 `from_fact` 或目标评估证据引用，不能静默忽略。列表为空时，仍必须依据当前 Goal、人工续跑说明/重点和历史 findings/leads 检查是否存在可执行的材料性方向，不得因为没有新 Fact 就停止规划。
