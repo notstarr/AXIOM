@@ -6,6 +6,7 @@ from sqlalchemy import Connection, select, update
 
 from axiom.modules.graph.tables import facts, intent_sources, intents
 from axiom.modules.reason.tables import reason_run_sources
+from axiom.modules.tasks.schemas import TaskScope
 from axiom.modules.tasks.tables import task_hints, tasks
 
 
@@ -20,7 +21,6 @@ class ExecutionRepository:
                 tasks.c.goal,
                 tasks.c.scope_json,
                 tasks.c.worker_pool_json,
-                tasks.c.origin_host,
                 intents.c.id.label("intent_id"),
                 intents.c.todo_id,
                 intents.c.description.label("intent_description"),
@@ -279,4 +279,5 @@ class ExecutionRepository:
 
     @staticmethod
     def parse_scope(row) -> dict[str, object]:
-        return json.loads(row["scope_json"] or "{}")
+        scope = TaskScope.model_validate(json.loads(row["scope_json"] or "{}"))
+        return scope.model_dump(mode="json") if scope.enabled else {}

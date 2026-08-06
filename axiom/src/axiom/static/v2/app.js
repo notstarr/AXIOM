@@ -123,7 +123,7 @@
 
   function renderTasks() {
     const running = state.tasks.filter(t => t.status === 'running').length;
-    return `${header('task orchestration', 'Task', '每次渗透测试是一条独立 Task；Scope 只约束 Reason 派发的 Intent 目标。', '<button class="button primary" data-action="new-task">新建 Task</button>')}
+    return `${header('task orchestration', 'Task', '每次渗透测试是一条独立 Task；Scope 由显式黑白名单启用，并同时约束 Intent Target 与支持范围校验的网络工具。', '<button class="button primary" data-action="new-task">新建 Task</button>')}
       <section class="panel flush"><div class="panel-header"><h2>全部 Task</h2><span class="muted mono">${running} running / ${state.tasks.length} total</span></div>${taskTable(state.tasks)}</section>`;
   }
 
@@ -150,10 +150,10 @@
   function renderTaskDetail() {
     const task = state.selectedTask;
     if (!task) return empty('未选择 Task', '返回 Task 列表选择一项。');
-    if (!state.taskData) return `${header('task', task.title, `${task.id} · ${task.origin.host}`,'<button class="button" data-nav="tasks">返回</button>')}<div class="skeleton"></div>`;
+    if (!state.taskData) return `${header('task', task.title, `${task.id} · ${task.origin.original_input}`,'<button class="button" data-nav="tasks">返回</button>')}<div class="skeleton"></div>`;
     const d = state.taskData;
     return `${header('task detail', task.title, `${task.goal}`, `<button class="button" data-action="edit-scope">Scope</button>${!task.legacy_readonly && task.status === 'running' ? '<button class="button danger" data-action="stop-task">停止</button>' : ''}${!task.legacy_readonly && task.status === 'stopped' ? '<button class="button primary" data-action="resume-task">恢复</button>' : ''}<button class="button" data-nav="tasks">返回</button>`)}
-      <div class="panel" style="margin-bottom:1rem"><div class="panel-body check-row"><span class="mono">${task.id}</span>${badge(task.status)}${badge(task.phase)}<span class="muted">Origin</span><span class="mono">${escapeHtml(task.origin.original_input)}</span><span class="muted">Scope</span><span>${task.scope.enabled ? escapeHtml(task.scope.targets.join(', ')) : '关闭'}</span>${task.guard_enabled ? badge('guard') : ''}</div></div>
+      <div class="panel" style="margin-bottom:1rem"><div class="panel-body check-row"><span class="mono">${task.id}</span>${badge(task.status)}${badge(task.phase)}<span class="muted">Origin</span><span>${escapeHtml(task.origin.original_input)}</span><span class="muted">Scope</span><span>${task.scope.enabled ? escapeHtml([task.scope.targets.length ? `白名单：${task.scope.targets.join(', ')}` : '', task.scope.exclude.length ? `黑名单：${task.scope.exclude.join(', ')}` : ''].filter(Boolean).join('；')) : '未配置'}</span>${task.guard_enabled ? badge('guard') : ''}</div></div>
       <section class="task-layout">
         <article class="panel graph-panel"><div id="task-graph"></div><div class="graph-legend"><span>● Fact</span><span>◆ Intent</span><span>线表示 from/to</span></div></article>
         <aside class="panel todo-panel"><div class="panel-header"><h2>Todo list</h2>${!task.legacy_readonly ? '<button class="button small" data-action="new-todo">添加</button>' : ''}</div><div class="tabs"><button class="active" data-action="task-tab" data-tab="todo">Todo</button><button data-action="task-tab" data-tab="artifacts">Artifacts</button><button data-action="task-tab" data-tab="vulns">Vulns</button><button data-action="task-tab" data-tab="audit">Audit</button></div><div class="todo-list">${todoList(d.todos, task.legacy_readonly)}</div></aside>
@@ -274,14 +274,14 @@
     showModal('新建 Task', `<form id="task-form"><div class="form-grid">
       <div class="field"><label>Project</label><select name="project_id" required><option value="">请选择</option>${state.projects.map(p=>`<option value="${p.id}" ${p.id===projectId?'selected':''}>${escapeHtml(p.title)} · ${p.id}</option>`).join('')}</select></div>
       <div class="field"><label>Task 名称</label><input name="title" required></div>
-      <div class="field full"><label>Origin（域名/IP，可带 scheme/port）</label><input name="origin" placeholder="api.example.com" required></div>
+      <div class="field full"><label>测试入口 / 初始信息</label><textarea name="origin" placeholder="网站 URL、小程序 AppID 与业务说明、App 安装包或 HAR 文件信息" required></textarea></div>
       <div class="field full"><label>Goal</label><textarea name="goal" required></textarea></div>
       <div class="field full"><label>Hints（每行一条）</label><textarea name="hints" placeholder="补充业务背景、禁止事项或优先方向"></textarea></div>
-      <div class="field full"><label>Task Scope 白名单（每行或逗号分隔；子域写 *.example.com）</label><textarea name="scope_targets" placeholder="留空时自动使用 Origin host"></textarea></div>
-      <div class="field full"><label>Task Scope 排除项</label><textarea name="scope_exclude"></textarea></div>
+      <div class="field full"><label>Task Scope 白名单（可选；填写任一名单即启用）</label><textarea name="scope_targets" placeholder="每行或逗号分隔；子域可写 *.example.com"></textarea></div>
+      <div class="field full"><label>Task Scope 黑名单（可选；黑名单优先）</label><textarea name="scope_exclude"></textarea></div>
       <div class="field full"><label>Scope 备注</label><input name="scope_notes"></div>
       <div class="field full"><label>Worker pool</label><div class="check-row">${workerChecks || '<span class="help">未配置 Worker 时留空</span>'}</div></div>
-      <div class="field full"><div class="check-row"><label class="check"><input type="checkbox" name="scope_enabled" checked>启用 Scope</label><label class="check"><input type="checkbox" name="guard_enabled">启用 Guard</label><label class="check"><input type="checkbox" name="external_report_enabled">自动外部上报</label></div></div>
+      <div class="field full"><div class="check-row"><label class="check"><input type="checkbox" name="guard_enabled">启用 Guard</label><label class="check"><input type="checkbox" name="external_report_enabled">自动外部上报</label></div></div>
     </div><div class="form-actions"><button class="button" type="button" data-action="close-modal">取消</button><button class="button primary">创建并运行</button></div></form>`);
   }
 
@@ -291,7 +291,7 @@
 
   function scopeModal() {
     const s = state.selectedTask.scope;
-    showModal('Task Scope', `<form id="scope-form"><div class="form-grid"><div class="field full"><label class="check"><input type="checkbox" name="enabled" ${s.enabled?'checked':''}>启用 Scope</label></div><div class="field full"><label>白名单</label><textarea name="targets">${escapeHtml(s.targets.join('\n'))}</textarea></div><div class="field full"><label>排除项</label><textarea name="exclude">${escapeHtml(s.exclude.join('\n'))}</textarea></div><div class="field full"><label>备注</label><textarea name="notes">${escapeHtml(s.notes)}</textarea></div></div><div class="form-actions"><button class="button primary">保存</button></div></form>`);
+    showModal('Task Scope', `<form id="scope-form"><div class="form-grid"><div class="field full"><p class="help">填写任一名单即启用；两者都为空时无 Scope。</p></div><div class="field full"><label>白名单</label><textarea name="targets">${escapeHtml(s.targets.join('\n'))}</textarea></div><div class="field full"><label>黑名单</label><textarea name="exclude">${escapeHtml(s.exclude.join('\n'))}</textarea></div><div class="field full"><label>备注</label><textarea name="notes">${escapeHtml(s.notes)}</textarea></div></div><div class="form-actions"><button class="button primary">保存</button></div></form>`);
   }
 
   function knowledgeModal() { showModal('添加 Project Knowledge', `<form id="knowledge-form"><div class="form-grid"><div class="field full"><label>标题</label><input name="title"></div><div class="field full"><label>内容</label><textarea name="content" required></textarea></div><div class="field full"><label>给模型的提示</label><textarea name="hint"></textarea></div></div><div class="form-actions"><button class="button primary">保存</button></div></form>`); }
@@ -309,9 +309,9 @@
   async function submitForm(form) {
     const data = new FormData(form);
     if (form.id === 'project-form') { await api('/projects',{method:'POST',body:{title:data.get('title'),description:data.get('description')}}); closeModal(); await loadCore({quiet:true}); toast('Project 已创建'); }
-    else if (form.id === 'task-form') { const origin = data.get('origin'); await api('/tasks',{method:'POST',body:{project_id:data.get('project_id'),title:data.get('title'),origin,goal:data.get('goal'),hints:lines(data.get('hints')),guard_enabled:data.has('guard_enabled'),external_report_enabled:data.has('external_report_enabled'),worker_pool:data.getAll('worker_pool'),scope:{enabled:data.has('scope_enabled'),targets:lines(data.get('scope_targets')),exclude:lines(data.get('scope_exclude')),notes:data.get('scope_notes')}}}); closeModal(); await loadCore({quiet:true}); toast('Task 已创建并进入 Bootstrap'); }
+    else if (form.id === 'task-form') { const origin = data.get('origin'); const targets=lines(data.get('scope_targets')); const exclude=lines(data.get('scope_exclude')); await api('/tasks',{method:'POST',body:{project_id:data.get('project_id'),title:data.get('title'),origin,goal:data.get('goal'),hints:lines(data.get('hints')),guard_enabled:data.has('guard_enabled'),external_report_enabled:data.has('external_report_enabled'),worker_pool:data.getAll('worker_pool'),scope:{enabled:targets.length>0||exclude.length>0,targets,exclude,notes:data.get('scope_notes')}}}); closeModal(); await loadCore({quiet:true}); toast('Task 已创建并进入 Bootstrap'); }
     else if (form.id === 'todo-form') { await api(`/tasks/${state.selectedTask.id}/todos`,{method:'POST',body:{title:data.get('title'),category:data.get('category'),theme:data.get('theme'),priority:Number(data.get('priority')),sources:[{type:'origin',id:'origin'}],actor:'human'}}); closeModal(); await openTask(state.selectedTask.id); toast('Todo 已添加'); }
-    else if (form.id === 'scope-form') { const updated=await api(`/tasks/${state.selectedTask.id}/scope`,{method:'PATCH',body:{enabled:data.has('enabled'),targets:lines(data.get('targets')),exclude:lines(data.get('exclude')),notes:data.get('notes')}}); state.selectedTask=updated; state.tasks=state.tasks.map(t=>t.id===updated.id?updated:t); closeModal(); render(); toast('Task Scope 已保存'); }
+    else if (form.id === 'scope-form') { const targets=lines(data.get('targets')); const exclude=lines(data.get('exclude')); const updated=await api(`/tasks/${state.selectedTask.id}/scope`,{method:'PATCH',body:{enabled:targets.length>0||exclude.length>0,targets,exclude,notes:data.get('notes')}}); state.selectedTask=updated; state.tasks=state.tasks.map(t=>t.id===updated.id?updated:t); closeModal(); render(); toast('Task Scope 已保存'); }
     else if (form.id === 'knowledge-form') { await api(`/projects/${state.selectedProject.id}/knowledge`,{method:'POST',body:{title:data.get('title'),content:data.get('content'),hint:data.get('hint'),actor:'human'}}); closeModal(); await openProject(state.selectedProject.id); toast('Project Knowledge 已保存'); }
     else if (form.id === 'credential-form') { await api(`/projects/${state.selectedProject.id}/credentials`,{method:'POST',body:{name:data.get('name'),content:data.get('content'),notes:data.get('notes') || null,refresh_content:data.get('refresh_content') || null,enabled:data.has('enabled')}}); closeModal(); await openProject(state.selectedProject.id); toast('Credential 已保存'); }
     else if (form.id === 'worker-form') { let config; try { config=JSON.parse(data.get('config')); } catch (_) { throw new Error('Worker config JSON 格式无效'); } const name=data.get('name'); await api(`/settings/workers/${encodeURIComponent(name)}`,{method:'PUT',body:{name,worker_type:'pi',capabilities:data.getAll('capabilities'),max_running:Number(data.get('max_running')),priority:Number(data.get('priority')),config,disabled:data.has('disabled')}}); closeModal(); await loadCore({quiet:true}); state.settingsTab='workers'; render(); toast('Worker 已保存'); }

@@ -818,7 +818,7 @@
     projectCredentialSearch: '',
     credentialEditor: { open: false, loading: false, id: '', projectId: '', name: '', content: '', notes: '', refreshContent: '', enabled: true },
     credentialSaving: false,
-    taskScopeEditor: { taskId: '', enabled: false, targetsText: '', excludeText: '', notes: '', saving: false },
+    taskScopeEditor: { taskId: '', targetsText: '', excludeText: '', notes: '', saving: false },
   });
 
   Object.assign(M.core.methods, {
@@ -1400,7 +1400,6 @@
       const scope = task?.task_scope || {};
       this.taskScopeEditor = {
         taskId: task?.id || '',
-        enabled: !!scope.enabled,
         targetsText: (scope.targets || []).join('\n'),
         excludeText: (scope.exclude || []).join('\n'),
         notes: scope.notes || '',
@@ -1411,8 +1410,7 @@
       if (!task || this.taskScopeEditor.taskId !== task.id) return false;
       const lines = value => splitLines(value);
       const scope = task.task_scope || {};
-      return this.taskScopeEditor.enabled !== !!scope.enabled
-        || JSON.stringify(lines(this.taskScopeEditor.targetsText)) !== JSON.stringify(scope.targets || [])
+      return JSON.stringify(lines(this.taskScopeEditor.targetsText)) !== JSON.stringify(scope.targets || [])
         || JSON.stringify(lines(this.taskScopeEditor.excludeText)) !== JSON.stringify(scope.exclude || [])
         || String(this.taskScopeEditor.notes || '').trim() !== String(scope.notes || '').trim();
     },
@@ -1421,10 +1419,12 @@
       if (!task || task.legacy_readonly || task.status === 'completed') return;
       try {
         this.taskScopeEditor.saving = true;
+        const targets = splitLines(this.taskScopeEditor.targetsText);
+        const exclude = splitLines(this.taskScopeEditor.excludeText);
         const updated = await request('PATCH', `/tasks/${task.id}`, { scope: {
-          enabled: !!this.taskScopeEditor.enabled,
-          targets: splitLines(this.taskScopeEditor.targetsText),
-          exclude: splitLines(this.taskScopeEditor.excludeText),
+          enabled: targets.length > 0 || exclude.length > 0,
+          targets,
+          exclude,
         }});
         const mapped = mapTask(updated);
         const index = this.projects.findIndex(item => item.id === task.id);

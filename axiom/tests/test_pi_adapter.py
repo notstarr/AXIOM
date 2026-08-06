@@ -15,6 +15,9 @@ from axiom.dispatcher.pi import (
     PiReviewExecutor,
     PromptRenderer,
     _explore_soft_reminder_timing,
+    _intent_targets_text,
+    _reason_target_guidance,
+    _scope_guidance,
 )
 from axiom.dispatcher.process import ProcessResult
 from axiom.modules.execution.schemas import ExecutionInput
@@ -542,6 +545,7 @@ def test_reason_prompt_requires_small_todos_and_intents_without_fixed_budget_exa
             "source_fact_ids": '["f002", "f003"]',
             "origin": "a.example.com",
             "goal": "完成测试",
+            "target_guidance": _reason_target_guidance({}),
             "context_manifest_path": "/tmp/context.json",
             "run_dir": "/tmp/run",
             "skill_directories": "- /tmp/skills",
@@ -575,6 +579,7 @@ def test_reason_conclude_prompt_allows_only_a_strictly_justified_no_op_plan() ->
             "reason_run_id": "rr000001",
             "workspace_id": "rw_000001",
             "run_dir": "/tmp/run",
+            "target_guidance": _reason_target_guidance({}),
         },
     )
 
@@ -593,6 +598,7 @@ def test_bootstrap_prompt_receives_manifest_and_requires_priority_context_readin
             "intent_id": "i001",
             "origin": "a.example.com",
             "goal": "完成测试",
+            "scope_guidance": _scope_guidance({}),
             "context_manifest_path": "/tmp/context.json",
             "run_dir": "/tmp/run",
             "skill_directories": "- /tmp/skills",
@@ -602,6 +608,20 @@ def test_bootstrap_prompt_receives_manifest_and_requires_priority_context_readin
     assert "上下文清单（Context Manifest）：`/tmp/context.json`" in prompt
     assert "完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`" in prompt
     assert "避免重复测试和重复上报" in prompt
+
+
+def test_scope_and_target_prompt_guidance_follow_effective_lists() -> None:
+    assert _scope_guidance({}) == ""
+    assert _scope_guidance({"enabled": False, "targets": ["legacy.example.com"]}) == ""
+    assert "黑名单：blocked.example.com；其余网络目标允许" in _scope_guidance(
+        {"enabled": True, "targets": [], "exclude": ["blocked.example.com"]}
+    )
+    assert "可以省略 --target" in _reason_target_guidance({})
+    assert "不得从 Origin 推导或补造 Target" in _reason_target_guidance({})
+    assert "必须至少提供一个 --target" in _reason_target_guidance(
+        {"enabled": True, "targets": ["a.example.com"], "exclude": []}
+    )
+    assert _intent_targets_text([]) == "未指定独立 Target；按 Intent 描述和 Origin 初始信息执行"
 
 
 def test_explore_prompt_requires_priority_context_before_progressive_details() -> None:
@@ -615,6 +635,9 @@ def test_explore_prompt_requires_priority_context_before_progressive_details() -
             "intent_targets": '["a.example.com"]',
             "origin": "a.example.com",
             "goal": "完成测试",
+            "scope_guidance": _scope_guidance(
+                {"enabled": True, "targets": ["a.example.com"], "exclude": []}
+            ),
             "context_manifest_path": "/tmp/context.json",
             "run_dir": "/tmp/run",
             "skill_directories": "- /tmp/skills",
@@ -652,6 +675,12 @@ def test_bash_capable_stage_prompts_require_whatisvul_before_stage_work(
             "intent_targets": '["a.example.com"]',
             "origin": "a.example.com",
             "goal": "完成测试",
+            "scope_guidance": _scope_guidance(
+                {"enabled": True, "targets": ["a.example.com"], "exclude": []}
+            ),
+            "target_guidance": _reason_target_guidance(
+                {"enabled": True, "targets": ["a.example.com"], "exclude": []}
+            ),
             "context_manifest_path": "/tmp/context.json",
             "run_dir": "/tmp/run",
             "skill_directories": "- /tmp/skills/whatisvul",
@@ -692,6 +721,9 @@ def test_explore_prompts_show_plain_finish_without_markdown_wrapping(template: s
             "intent_targets": '["a.example.com"]',
             "origin": "a.example.com",
             "goal": "完成测试",
+            "scope_guidance": _scope_guidance(
+                {"enabled": True, "targets": ["a.example.com"], "exclude": []}
+            ),
             "context_manifest_path": "/tmp/context.json",
             "run_dir": "/tmp/run",
             "skill_directories": "- /tmp/skills",
@@ -712,6 +744,9 @@ def test_explore_prompts_prioritize_core_outputs_over_optional_evidence() -> Non
         "intent_targets": '["a.example.com"]',
         "origin": "a.example.com",
         "goal": "完成测试",
+        "scope_guidance": _scope_guidance(
+            {"enabled": True, "targets": ["a.example.com"], "exclude": []}
+        ),
         "context_manifest_path": "/tmp/context.json",
         "run_dir": "/tmp/run",
         "skill_directories": "- /tmp/skills",
@@ -900,6 +935,9 @@ def test_review_prompt_enforces_single_target_decision_and_review_artifact() -> 
         "review_reason": "审核新上报漏洞",
         "origin": "review.example.com",
         "goal": "验证漏洞",
+        "scope_guidance": _scope_guidance(
+            {"enabled": True, "targets": ["review.example.com"], "exclude": []}
+        ),
         "context_manifest_path": "/tmp/context/manifest.json",
         "run_dir": "/tmp/run",
         "skill_directories": "- /tmp/skills/vuln-review",

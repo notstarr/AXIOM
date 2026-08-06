@@ -6,18 +6,55 @@ from pathlib import Path
 from protocol_helpers import write_bootstrap_files
 
 
-def _create_task(client, *, goal: str = "验证上下文索引不会直接注入完整证据") -> dict:
+def _create_task(
+    client,
+    *,
+    goal: str = "验证上下文索引不会直接注入完整证据",
+    scope: dict | None = None,
+) -> dict:
     project = client.post("/api/v1/projects", json={"title": "上下文测试"}).json()
+    payload = {
+        "project_id": project["id"],
+        "title": "渐进式披露",
+        "origin": "a.example.com",
+        "goal": goal,
+        "hints": ["优先覆盖攻击面，再深入验证"],
+    }
+    if scope is not None:
+        payload["scope"] = scope
     return client.post(
         "/api/v1/tasks",
-        json={
-            "project_id": project["id"],
-            "title": "渐进式披露",
-            "origin": "a.example.com",
-            "goal": goal,
-            "hints": ["优先覆盖攻击面，再深入验证"],
-        },
+        json=payload,
     ).json()
+
+
+def test_context_manifest_only_discloses_an_effective_scope(client) -> None:
+    unscoped = _create_task(client)
+    unscoped_revision = client.post(
+        f"/api/v1/tasks/{unscoped['id']}/context",
+        json={"phase": "bootstrap", "intent_id": "i001"},
+    ).json()
+    unscoped_manifest = json.loads(
+        Path(unscoped_revision["manifest_path"]).read_text(encoding="utf-8")
+    )
+    assert "scope" not in unscoped_manifest
+
+    scoped = _create_task(
+        client,
+        scope={"targets": [], "exclude": ["blocked.example.com"]},
+    )
+    scoped_revision = client.post(
+        f"/api/v1/tasks/{scoped['id']}/context",
+        json={"phase": "bootstrap", "intent_id": "i001"},
+    ).json()
+    scoped_manifest = json.loads(
+        Path(scoped_revision["manifest_path"]).read_text(encoding="utf-8")
+    )
+    assert scoped_manifest["scope"] == {
+        "enabled": True,
+        "targets": [],
+        "exclude": ["blocked.example.com"],
+    }
 
 
 def test_context_indexes_are_bounded_and_expand_returns_full_content(client, data_dir) -> None:

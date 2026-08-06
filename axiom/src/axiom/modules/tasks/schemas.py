@@ -20,14 +20,14 @@ def _validate_run_duration(value: int | None) -> int | None:
 
 
 class Origin(BaseModel):
-    host: str
+    host: str | None = None
     scheme: Literal["http", "https"] | None = None
     port: int | None = Field(default=None, ge=1, le=65535)
     original_input: str
 
 
 class TaskScope(BaseModel):
-    enabled: bool = True
+    enabled: bool = False
     targets: list[str] = Field(default_factory=list)
     exclude: list[str] = Field(default_factory=list)
 
@@ -41,8 +41,13 @@ class TaskScope(BaseModel):
         )
 
     @model_validator(mode="after")
-    def exclude_wins(self) -> "TaskScope":
+    def normalize_scope(self) -> "TaskScope":
         self.targets = [target for target in self.targets if target not in set(self.exclude)]
+        # Scope existence is derived from the explicit allow/deny lists.  The
+        # legacy ``enabled`` field remains in the wire/storage shape so older
+        # clients can continue reading it, but it is no longer an independent
+        # switch that can create an empty or dormant Scope.
+        self.enabled = bool(self.targets or self.exclude)
         return self
 
 

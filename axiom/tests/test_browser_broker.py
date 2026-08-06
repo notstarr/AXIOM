@@ -87,6 +87,24 @@ def test_browser_scope_reuses_task_target_rules() -> None:
     assert not target_allowed(scope, "file:///etc/passwd")
 
 
+def test_browser_scope_supports_blacklist_only_and_ipv6_entries() -> None:
+    blacklist_only = {
+        "enabled": True,
+        "targets": [],
+        "exclude": ["blocked.example.com"],
+    }
+    assert target_allowed(blacklist_only, "https://api.allowed.example/v1")
+    assert not target_allowed(blacklist_only, "https://api.blocked.example.com/v1")
+
+    ipv6_scope = {
+        "enabled": True,
+        "targets": ["2001:db8::1"],
+        "exclude": [],
+    }
+    assert target_allowed(ipv6_scope, "https://[2001:db8::1]/")
+    assert not target_allowed(ipv6_scope, "https://[2001:db8::2]/")
+
+
 def test_browser_network_headers_are_redacted_by_default() -> None:
     headers = {
         "Authorization": "Bearer secret",

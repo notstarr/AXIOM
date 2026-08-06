@@ -27,6 +27,8 @@ from playwright.async_api import (
     async_playwright,
 )
 
+from axiom.modules.tasks.origin import normalize_scope_target, scope_entry_matches_host
+
 
 BROWSER_TOOL_NAMES = (
     "browser_open_page",
@@ -160,16 +162,23 @@ def target_allowed(scope: dict[str, Any], url_text: str) -> bool:
 
     def host(value: object) -> str:
         raw = str(value or "").strip().lower()
-        parsed_value = urlparse(raw if "://" in raw else f"//{raw}")
-        return (parsed_value.hostname or raw.split("/")[0].split(":")[0]).rstrip(".")
+        if not raw:
+            return ""
+        try:
+            return normalize_scope_target(raw)
+        except Exception:
+            # Compatibility for old in-memory callers that still pass a URL
+            # instead of the normalized host stored by Task Scope.
+            parsed_value = urlparse(raw if "://" in raw else f"//{raw}")
+            return (parsed_value.hostname or "").lower().rstrip(".")
 
     excluded = [host(item) for item in scope.get("exclude", []) if host(item)]
-    if any(hostname == item or hostname.endswith(f".{item}") for item in excluded):
+    if any(scope_entry_matches_host(item, hostname) for item in excluded):
         return False
     targets = [host(item) for item in scope.get("targets", []) if host(item)]
     if not targets:
         return True
-    return any(hostname == item or hostname.endswith(f".{item}") for item in targets)
+    return any(scope_entry_matches_host(item, hostname) for item in targets)
 
 
 def redact_headers(headers: dict[str, Any], *, include_sensitive: bool) -> dict[str, str]:

@@ -198,7 +198,11 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--from-fact", multiple=True, required=True)
     @click.option("--description")
     @click.option("--description-file", type=click.Path(path_type=Path, dir_okay=False))
-    @click.option("--target", multiple=True, required=True)
+    @click.option(
+        "--target",
+        multiple=True,
+        help="Optional without Task Scope; repeat for scoped or multi-target work.",
+    )
     @click.option("--execute-seconds", type=click.IntRange(1), required=True)
     @click.option("--conclude-seconds", type=click.IntRange(1), required=True)
     def reason_intent_propose(

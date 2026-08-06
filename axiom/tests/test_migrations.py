@@ -142,13 +142,14 @@ def test_postgresql_baseline_upgrade_has_no_metadata_drift_and_native_types(
         inspector = inspect(engine)
         assert len(inspector.get_table_names(schema=AXIOM_SCHEMA)) == len(metadata.sorted_tables) + 1
         task_columns = {
-            item["name"]: item["type"]
+            item["name"]: item
             for item in inspector.get_columns("tasks", schema=AXIOM_SCHEMA)
         }
-        assert str(task_columns["scope_json"]).upper() == "JSONB"
-        assert "TIMESTAMP" in str(task_columns["created_at"]).upper()
-        assert task_columns["created_at"].timezone is True
-        assert str(task_columns["guard_enabled"]).upper() == "BOOLEAN"
+        assert str(task_columns["scope_json"]["type"]).upper() == "JSONB"
+        assert task_columns["origin_host"]["nullable"] is True
+        assert "TIMESTAMP" in str(task_columns["created_at"]["type"]).upper()
+        assert task_columns["created_at"]["type"].timezone is True
+        assert str(task_columns["guard_enabled"]["type"]).upper() == "BOOLEAN"
 
         with engine.connect() as conn:
             context = MigrationContext.configure(
@@ -186,6 +187,124 @@ def test_postgresql_baseline_downgrades_and_reupgrades(isolated_postgresql_datab
         assert schema_is_ready(engine)
     finally:
         engine.dispose()
+
+
+def test_origin_scope_decoupling_migration_normalizes_disabled_scope_and_rolls_back(
+    isolated_postgresql_database,
+) -> None:
+    migrator_url, app_url = isolated_postgresql_database
+    config = alembic_config(migrator_url)
+    command.upgrade(config, POSTGRESQL_ALEMBIC_BRANCH)
+    command.downgrade(config, "20260805_pg0001")
+
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    f'INSERT INTO "{AXIOM_SCHEMA}".projects '
+                    "(id, title, description, status, created_at, updated_at) "
+                    "VALUES ('prj_scope', 'scope', '', 'active', now(), now())"
+                )
+            )
+            for task_id, scope_json in [
+                (
+                    "t_disabled",
+                    {"enabled": False, "targets": ["dormant.example.com"], "exclude": []},
+                ),
+                (
+                    "t_enabled",
+                    {
+                        "enabled": True,
+                        "targets": ["allowed.example.com"],
+                        "exclude": ["blocked.example.com"],
+                    },
+                ),
+            ]:
+                conn.execute(
+                    text(
+                        f'INSERT INTO "{AXIOM_SCHEMA}".tasks '
+                        "(id, project_id, title, origin_host, origin_input, goal, status, phase, "
+                        "scope_json, worker_pool_json, guard_enabled, external_report_enabled, "
+                        "legacy_readonly, archived, created_at, updated_at) "
+                        "VALUES (:id, 'prj_scope', 'legacy task', 'legacy.example.com', "
+                        "'legacy.example.com', 'goal', 'stopped', 'none', CAST(:scope AS jsonb), "
+                        "CAST('[]' AS jsonb), false, false, false, false, now(), now())"
+                    ),
+                    {"id": task_id, "scope": json.dumps(scope_json)},
+                )
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, POSTGRESQL_ALEMBIC_BRANCH)
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        inspector = inspect(engine)
+        origin_host = next(
+            item
+            for item in inspector.get_columns("tasks", schema=AXIOM_SCHEMA)
+            if item["name"] == "origin_host"
+        )
+        assert origin_host["nullable"] is True
+        with engine.begin() as conn:
+            scopes = dict(
+                conn.execute(
+                    text(
+                        f'SELECT id, scope_json FROM "{AXIOM_SCHEMA}".tasks '
+                        "WHERE id IN ('t_disabled', 't_enabled') ORDER BY id"
+                    )
+                ).all()
+            )
+            assert scopes["t_disabled"] == {
+                "enabled": False,
+                "targets": [],
+                "exclude": [],
+            }
+            assert scopes["t_enabled"] == {
+                "enabled": True,
+                "targets": ["allowed.example.com"],
+                "exclude": ["blocked.example.com"],
+            }
+            conn.execute(
+                text(
+                    f'INSERT INTO "{AXIOM_SCHEMA}".tasks '
+                    "(id, project_id, title, origin_host, origin_input, goal, status, phase, "
+                    "scope_json, worker_pool_json, guard_enabled, external_report_enabled, "
+                    "legacy_readonly, archived, created_at, updated_at) "
+                    "VALUES ('t_natural', 'prj_scope', 'natural', NULL, '微信小程序测试商城', "
+                    "'goal', 'stopped', 'none', CAST(:natural_scope AS jsonb), "
+                    "CAST('[]' AS jsonb), false, false, false, "
+                    "false, now(), now())"
+                ),
+                {
+                    "natural_scope": json.dumps(
+                        {"enabled": False, "targets": [], "exclude": []}
+                    )
+                },
+            )
+    finally:
+        engine.dispose()
+
+    command.downgrade(config, "20260805_pg0001")
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        origin_host = next(
+            item
+            for item in inspect(engine).get_columns("tasks", schema=AXIOM_SCHEMA)
+            if item["name"] == "origin_host"
+        )
+        assert origin_host["nullable"] is False
+        with engine.connect() as conn:
+            assert conn.execute(
+                text(
+                    f'SELECT origin_host FROM "{AXIOM_SCHEMA}".tasks '
+                    "WHERE id = 't_natural'"
+                )
+            ).scalar_one() == "nonnetwork.invalid"
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, POSTGRESQL_ALEMBIC_BRANCH)
 
 
 def test_application_role_cannot_change_schema(isolated_postgresql_database) -> None:

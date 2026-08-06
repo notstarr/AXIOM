@@ -22,17 +22,25 @@ BOOTSTRAP_PAYLOAD = {
 }
 
 
-def active_reason(client, *, origin: str = "a.example.com") -> tuple[dict, dict, dict]:
+def active_reason(
+    client,
+    *,
+    origin: str = "a.example.com",
+    scope: dict | None = None,
+) -> tuple[dict, dict, dict]:
     project = client.post("/api/v1/projects", json={"title": "系统"}).json()
+    payload = {
+        "project_id": project["id"],
+        "title": "测试",
+        "origin": origin,
+        "goal": "挖掘高置信度漏洞",
+        "worker_pool": ["worker-a"],
+    }
+    if scope is not None:
+        payload["scope"] = scope
     task = client.post(
         "/api/v1/tasks",
-        json={
-            "project_id": project["id"],
-            "title": "测试",
-            "origin": origin,
-            "goal": "挖掘高置信度漏洞",
-            "worker_pool": ["worker-a"],
-        },
+        json=payload,
     ).json()
     client.put(
         "/api/v1/workers/worker-a",
@@ -58,6 +66,50 @@ def active_reason(client, *, origin: str = "a.example.com") -> tuple[dict, dict,
         worker_name="worker-a",
     )
     return task, reason_claim, completed
+
+
+def apply_single_reason_intent(
+    client,
+    *,
+    task: dict,
+    claim: dict,
+    completed: dict,
+    ref: str,
+    targets: list[str] | None,
+):
+    workspace = client.post(
+        f"/api/v1/tasks/{task['id']}/reason/workspaces",
+        json={
+            "reason_run_id": claim["reason_run_id"],
+            "lease_id": claim["lease_id"],
+            "context_revision": claim["context_revision"],
+        },
+    ).json()
+    proposal = {
+        "todo_ref": ref,
+        "from_facts": [completed["fact_id"]],
+        "description": f"验证目标 {ref}",
+        "execute_seconds": 300,
+        "conclude_seconds": 180,
+    }
+    if targets is not None:
+        proposal["targets"] = targets
+    return apply_reason_draft(
+        client,
+        workspace["id"],
+        claim["lease_id"],
+        {
+            "todo_adds": [
+                {
+                    "ref": ref,
+                    "title": f"验证目标 {ref}",
+                    "category": "other",
+                    "sources": [{"type": "fact", "id": completed["fact_id"]}],
+                }
+            ],
+            "intent_proposals": [proposal],
+        },
+    )
 
 
 def todo_review_workspace(client, *, sibling_intent: bool = False) -> tuple[dict, dict, dict]:
@@ -760,7 +812,10 @@ def test_reason_can_complete_a_new_todo_by_its_draft_ref(client) -> None:
 
 
 def test_reason_scope_failure_rolls_back_the_whole_plan(client) -> None:
-    task, reason_claim, completed = active_reason(client)
+    task, reason_claim, completed = active_reason(
+        client,
+        scope={"targets": ["a.example.com"], "exclude": []},
+    )
     workspace = client.post(
         f"/api/v1/tasks/{task['id']}/reason/workspaces",
         json={
@@ -845,10 +900,11 @@ def test_reason_rejects_goal_as_an_explore_intent_source(client) -> None:
     assert client.get(f"/api/v1/tasks/{task['id']}/todos").json() == []
 
 
-def test_reason_scope_accepts_the_explicit_origin_port(client) -> None:
+def test_reason_scope_accepts_a_full_url_on_an_allowed_host(client) -> None:
     task, reason_claim, completed = active_reason(
         client,
-        origin="http://127.0.0.1:18081",
+        origin="内网测试服务，入口信息由 Hint 补充",
+        scope={"targets": ["127.0.0.1"], "exclude": []},
     )
     workspace = client.post(
         f"/api/v1/tasks/{task['id']}/reason/workspaces",
@@ -871,8 +927,8 @@ def test_reason_scope_accepts_the_explicit_origin_port(client) -> None:
             {
                 "todo_ref": "verify-origin",
                 "from_facts": [completed["fact_id"]],
-                "description": "复核起点端口上的服务",
-                "targets": ["http://127.0.0.1:18081"],
+                "description": "复核允许主机上的订单接口",
+                "targets": ["http://127.0.0.1:18081/api/orders?id=1"],
                 "execute_seconds": 300,
                 "conclude_seconds": 180,
             }
@@ -888,13 +944,14 @@ def test_reason_scope_accepts_the_explicit_origin_port(client) -> None:
 
     assert response.status_code == 200, response.text
     explore = client.get(f"/api/v1/tasks/{task['id']}/graph").json()["intents"][-1]
-    assert explore["targets"] == ["http://127.0.0.1:18081"]
+    assert explore["targets"] == ["http://127.0.0.1:18081/api/orders?id=1"]
 
 
-def test_reason_scope_rejects_a_different_port_on_the_origin_host(client) -> None:
+def test_reason_scope_does_not_inherit_an_origin_port_restriction(client) -> None:
     task, reason_claim, completed = active_reason(
         client,
         origin="http://127.0.0.1:18081",
+        scope={"targets": ["127.0.0.1"], "exclude": []},
     )
     workspace = client.post(
         f"/api/v1/tasks/{task['id']}/reason/workspaces",
@@ -907,17 +964,17 @@ def test_reason_scope_rejects_a_different_port_on_the_origin_host(client) -> Non
     draft = {
         "todo_adds": [
             {
-                "ref": "wrong-port",
-                "title": "错误端口",
+                "ref": "other-port",
+                "title": "验证同主机其它端口",
                 "category": "recon",
                 "sources": [{"type": "fact", "id": completed["fact_id"]}],
             }
         ],
         "intent_proposals": [
             {
-                "todo_ref": "wrong-port",
+                "todo_ref": "other-port",
                 "from_facts": [completed["fact_id"]],
-                "description": "访问未授权端口",
+                "description": "访问 Scope 允许主机上的另一个端口",
                 "targets": ["127.0.0.1:18080"],
                 "execute_seconds": 300,
                 "conclude_seconds": 180,
@@ -932,5 +989,103 @@ def test_reason_scope_rejects_a_different_port_on_the_origin_host(client) -> Non
         draft,
     )
 
+    assert response.status_code == 200, response.text
+    explore = client.get(f"/api/v1/tasks/{task['id']}/graph").json()["intents"][-1]
+    assert explore["targets"] == ["127.0.0.1:18080"]
+
+
+def test_reason_without_scope_allows_an_omitted_target(client) -> None:
+    task, claim, completed = active_reason(
+        client,
+        origin="微信小程序测试商城，重点验证退款流程",
+    )
+
+    response = apply_single_reason_intent(
+        client,
+        task=task,
+        claim=claim,
+        completed=completed,
+        ref="miniapp-refund",
+        targets=None,
+    )
+
+    assert response.status_code == 200, response.text
+    intent = client.get(f"/api/v1/tasks/{task['id']}/graph").json()["intents"][-1]
+    assert intent["targets"] == []
+
+
+def test_reason_with_scope_requires_at_least_one_target(client) -> None:
+    task, claim, completed = active_reason(
+        client,
+        scope={"targets": ["a.example.com"], "exclude": []},
+    )
+
+    response = apply_single_reason_intent(
+        client,
+        task=task,
+        claim=claim,
+        completed=completed,
+        ref="missing-target",
+        targets=None,
+    )
+
     assert response.status_code == 409
+    assert "targets are required" in response.json()["error"]["message"]
     assert client.get(f"/api/v1/tasks/{task['id']}/todos").json() == []
+
+
+def test_reason_blacklist_only_scope_allows_other_network_targets(client) -> None:
+    task, claim, completed = active_reason(
+        client,
+        scope={"targets": [], "exclude": ["blocked.example.com"]},
+    )
+
+    response = apply_single_reason_intent(
+        client,
+        task=task,
+        claim=claim,
+        completed=completed,
+        ref="blacklist-allowed",
+        targets=["https://api.allowed.example/v1/orders"],
+    )
+
+    assert response.status_code == 200, response.text
+
+
+def test_reason_blacklist_only_scope_rejects_an_excluded_target(client) -> None:
+    task, claim, completed = active_reason(
+        client,
+        scope={"targets": [], "exclude": ["blocked.example.com"]},
+    )
+
+    response = apply_single_reason_intent(
+        client,
+        task=task,
+        claim=claim,
+        completed=completed,
+        ref="blacklist-denied",
+        targets=["https://api.blocked.example.com/v1/orders"],
+    )
+
+    assert response.status_code == 409
+    assert "outside Task Scope" in response.json()["error"]["message"]
+
+
+def test_reason_scope_accepts_a_logical_target_without_expanding_network_access(client) -> None:
+    task, claim, completed = active_reason(
+        client,
+        scope={"targets": ["api.example.com"], "exclude": []},
+    )
+
+    response = apply_single_reason_intent(
+        client,
+        task=task,
+        claim=claim,
+        completed=completed,
+        ref="miniapp-route",
+        targets=["miniapp:wx1234567890abcdef/page:complaint-detail"],
+    )
+
+    assert response.status_code == 200, response.text
+    intent = client.get(f"/api/v1/tasks/{task['id']}/graph").json()["intents"][-1]
+    assert intent["targets"] == ["miniapp:wx1234567890abcdef/page:complaint-detail"]

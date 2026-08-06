@@ -121,6 +121,38 @@ def test_reason_cli_intent_propose_keeps_time_budget_out_of_description(monkeypa
     assert "timeout" not in proposal["description"]
 
 
+def test_reason_cli_intent_propose_allows_omitting_target(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return {"id": "rw_000001", "status": "open", "draft": {}}
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+    result = CliRunner().invoke(
+        main,
+        [
+            "reason",
+            "intent",
+            "propose",
+            "--todo-ref",
+            "miniapp",
+            "--from-fact",
+            "f001",
+            "--description",
+            "验证小程序投诉流程",
+            "--execute-seconds",
+            "420",
+            "--conclude-seconds",
+            "180",
+        ],
+        env=_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls[0][2]["intent"]["targets"] == []
+
+
 def test_explore_cli_report_does_not_allow_worker_to_choose_identity(monkeypatch) -> None:
     calls: list[tuple[str, str, dict]] = []
 

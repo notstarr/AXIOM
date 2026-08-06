@@ -17,7 +17,6 @@ from axiom.modules.projects.repository import ProjectRepository
 from axiom.modules.reason.repository import ReasonRepository
 from axiom.modules.reason.service import ReasonService
 from axiom.modules.reason.tables import reason_runs
-from axiom.modules.tasks.origin import parse_origin
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.tasks.schemas import (
     ActiveReasonRun,
@@ -25,6 +24,7 @@ from axiom.modules.tasks.schemas import (
     ContinueTaskResult,
     CreateTask,
     CreateTaskHint,
+    Origin,
     ResumeTask,
     RunDeadlineReconcileReport,
     Task,
@@ -54,10 +54,8 @@ class TaskService:
         self.audit = AuditService(engine)
 
     def create(self, command: CreateTask) -> Task:
-        origin = parse_origin(command.origin)
-        scope = command.scope or TaskScope(enabled=True, targets=[origin.host])
-        if scope.enabled and not scope.targets:
-            scope = scope.model_copy(update={"targets": [origin.host]})
+        origin = Origin(original_input=command.origin)
+        scope = command.scope or TaskScope(enabled=False)
         now = utcnow()
         deadline_at = self._deadline_at(now, command.run_duration_seconds)
         with self.engine.begin() as conn:
@@ -125,10 +123,6 @@ class TaskService:
                 raise ConflictError("已归档任务不能修改")
             if command.goal is not None and task.status == "completed":
                 raise ConflictError("已完成任务必须通过继续任务创建新的 Goal")
-            if command.scope is not None and command.scope.enabled and not command.scope.targets:
-                command = command.model_copy(
-                    update={"scope": command.scope.model_copy(update={"targets": [task.origin.host]})}
-                )
             now = utcnow()
             updated = self.tasks.update(conn, task_id, command, now=now)
             if command.goal is not None:

@@ -15,6 +15,7 @@ from axiom.modules.graph.tables import facts, intents
 from axiom.modules.goals.tables import goal_evaluations
 from axiom.modules.knowledge.tables import project_knowledge
 from axiom.modules.reason.tables import reason_runs
+from axiom.modules.tasks.schemas import TaskScope
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.tasks.tables import task_hints
 from axiom.modules.todos.repository import TodoRepository
@@ -171,6 +172,12 @@ class ContextService:
                     "detail_resolution": "将索引条目的 detail 与 manifest 所在目录拼接后读取",
                     "expansion": f"POST /api/v1/tasks/{task_id}/context/expand with refs",
                 }
+                raw_scope = task.get("scope_json") or {}
+                scope = TaskScope.model_validate(
+                    json.loads(raw_scope) if isinstance(raw_scope, str) else raw_scope
+                )
+                if scope.enabled:
+                    manifest["scope"] = scope.model_dump(mode="json")
                 files["manifest.json"] = _json(manifest)
                 prepared = self.store.prepare_named_text_files(base_key=base_key, files=files)
                 prepared.commit()

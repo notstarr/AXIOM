@@ -47,7 +47,7 @@ class GraphRepository:
                 creator="dispatcher.bootstrap",
                 worker=None,
                 worker_pool_json=json.dumps(task.worker_pool, ensure_ascii=False),
-                targets_json=json.dumps([task.origin.host], ensure_ascii=False),
+                targets_json="[]",
                 retry_count=0,
                 infrastructure_retry_count=0,
                 last_failure_kind="",

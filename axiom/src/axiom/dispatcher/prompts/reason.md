@@ -9,8 +9,9 @@
 - 推理工作区（Reason Workspace）：由环境变量 `AXIOM_REASON_WORKSPACE_ID` 提供
 - 当前规划目标：`{intent_description}`
 - 本轮新事实（Fact）：`{source_fact_ids}`
-- 起点：`{origin}`
+- 测试入口 / 初始信息：`{origin}`
 - 总目标：`{goal}`
+- Target 规则：{target_guidance}
 - 上下文清单（Context Manifest）：`{context_manifest_path}`
 - Axiom API：环境变量 `AXIOM_SERVER`
 - 技能目录（Skill，仅提供路径，按需读取）：
@@ -41,7 +42,7 @@
 6. 只能通过 Axiom CLI 增量修改工作区；CLI 每次只提交一个小操作并立即持久化。不要写 `reason_plan.json`，不要直接访问数据库，不要直接修改图谱。
 7. 完整读取上下文清单中的 `todos.json` 索引。先把新事实与所有状态的历史待办对照，再结合当前 Goal、人工续跑说明/重点以及相关 findings/leads，只展开可能相关待办的详情：`pending/active` 复用原待办并补充事实来源；`completed`、`rejected`、`obsolete` 只要现有材料明确留下尚未执行、尚未验证且当前可执行的材料性方向，就可以恢复为 `active`，合法依据包括新 Fact、当前 Goal 变化、当前 Goal Cycle 的人工说明/重点，或 findings/leads 中明确的遗留工作。恢复时必须复用原 Todo ID、填写新的 `status_reason`，并使用已有相关 Fact 作为真实来源（人工说明不能伪造为 Fact source）。只有没有材料性遗留方向，或方向确实无效/不可执行时，才关闭为 `completed`、`rejected` 或 `obsolete`。
 8. 再处理 `todo_review_ids`。它们是已经没有开放执行意图、必须在本轮明确判断的待办；主题已覆盖时更新为 `completed`，方向无效时更新为 `rejected/obsolete`，仍需继续时更新为 `active`、填写 `status_reason`，并为同一个待办派发新执行意图。同一待办同时受新事实、当前 Goal 或人工续跑说明影响时，以最新材料性判断为准。禁止没有后续执行意图的空 `active` 状态；但不得把“没有新 Fact”或“Todo 已是终态”本身当作关闭或不再规划的理由。
-9. 使用 `axiom reason todo add`、`axiom reason todo update`、`axiom reason intent propose` 和 `axiom reason goal assess`。长文本可使用对应的 `--*-file`，列表参数可重复传递。
+9. 使用 `axiom reason todo add`、`axiom reason todo update`、`axiom reason intent propose` 和 `axiom reason goal assess`。长文本可使用对应的 `--*-file`，列表参数可重复传递。严格遵守上方 Target 规则：无 Scope 时不要为了满足旧格式而从 Origin 或描述中补造 Target；有 Scope 时必须填写 Target，网络 Target 需通过黑白名单校验，逻辑 Target 不代表额外网络授权。
 10. 执行意图只描述做什么和成功判据；时间预算放在 CLI 的结构化参数中，禁止写入 description。不要指定工作节点（Worker），待领取的执行意图会由空闲且兼容的工作节点自动领取。时间预算必须覆盖 Explore Worker 读取本轮 Context、读取 Skill、准备身份/对象、执行多步验证、重试以及保存 Artifact 的完整过程，不是只覆盖最后一次请求。
 11. 每次操作失败先读取 `axiom reason status`，修正参数后重试；重复提交同一内容是幂等的。
 12. 推理阶段不上报漏洞；已确认漏洞只允许探索阶段使用 `axiom explore vulnerability report` 上报。推理阶段只引用已有漏洞作为目标证据。

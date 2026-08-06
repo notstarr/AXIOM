@@ -24,7 +24,7 @@ tasks = Table(
     Column("id", String, primary_key=True),
     Column("project_id", String, ForeignKey(projects.c.id, ondelete="RESTRICT"), nullable=False),
     Column("title", Text, nullable=False),
-    Column("origin_host", String, nullable=False),
+    Column("origin_host", String),
     Column("origin_scheme", String),
     Column("origin_port", String),
     Column("origin_input", Text, nullable=False),

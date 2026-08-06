@@ -32,7 +32,7 @@ from axiom.modules.reason.schemas import (
 from axiom.modules.reason.tables import reason_run_sources, reason_runs
 from axiom.modules.settings.service import load_runtime_config
 from axiom.modules.settings.tables import runtime_settings
-from axiom.modules.tasks.origin import parse_origin, scope_entry_matches_host
+from axiom.modules.tasks.origin import parse_intent_network_target, scope_entry_matches_host
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.tasks.tables import tasks
 from axiom.modules.todos.repository import TodoRepository
@@ -1592,6 +1592,8 @@ class ReasonService:
             )
         task = self.tasks.get(conn, task_id)
         assert task is not None
+        if task.scope.enabled and not proposal.targets:
+            raise ConflictError("Intent targets are required when Task Scope is configured")
         for target in proposal.targets:
             if not self._target_allowed(task, target):
                 raise ConflictError(f"Intent target outside Task Scope: {target}")
@@ -1610,18 +1612,18 @@ class ReasonService:
         if not scope.enabled:
             return True
         try:
-            candidate = parse_origin(target)
+            candidate = parse_intent_network_target(target)
         except Exception:
             return False
+        if candidate is None:
+            return True
         host = candidate.host
         if any(scope_entry_matches_host(item, host) for item in scope.exclude):
             return False
-        if not scope.targets:
+        if scope.targets and not any(
+            scope_entry_matches_host(item, host) for item in scope.targets
+        ):
             return False
-        if not any(scope_entry_matches_host(item, host) for item in scope.targets):
-            return False
-        if host == task.origin.host and task.origin.port is not None:
-            return candidate.port == task.origin.port
         return True
 
     @staticmethod

@@ -72,7 +72,7 @@ class DraftIntent(BaseModel):
     todo_id: str | None = None
     from_facts: list[str]
     description: str
-    targets: list[str]
+    targets: list[str] = Field(default_factory=list)
     execute_seconds: int = Field(gt=0)
     conclude_seconds: int = Field(gt=0)
 
@@ -84,13 +84,18 @@ class DraftIntent(BaseModel):
             raise ValueError("description must not be empty")
         return value
 
-    @field_validator("from_facts", "targets")
+    @field_validator("from_facts")
     @classmethod
     def normalize_required_list(cls, values: list[str]) -> list[str]:
         values = list(dict.fromkeys(value.strip() for value in values if value.strip()))
         if not values:
             raise ValueError("must not be empty")
         return values
+
+    @field_validator("targets")
+    @classmethod
+    def normalize_optional_targets(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(value.strip() for value in values if value.strip()))
 
     @model_validator(mode="after")
     def require_one_todo_reference(self) -> "DraftIntent":

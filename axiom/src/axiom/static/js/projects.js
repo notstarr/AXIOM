@@ -751,6 +751,8 @@ window.AxiomModules.projects = {
           this.showToast('请填写有效的运行时长', 'error');
           return;
         }
+        const taskScopeTargets = String(this.newProject.task_scope_targets || '').split(/\n|,/).map(x => x.trim()).filter(Boolean);
+        const taskScopeExclude = String(this.newProject.task_scope_exclude || '').split(/\n|,/).map(x => x.trim()).filter(Boolean);
         const body = {
           parent_project_id: parentProjectId,
           title: this.newProject.title,
@@ -763,9 +765,9 @@ window.AxiomModules.projects = {
             : [],
           worker_pool: Array.isArray(this.newProject.worker_pool) ? this.newProject.worker_pool : [],
           task_scope: {
-            enabled: !!this.newProject.task_scope_enabled,
-            targets: String(this.newProject.task_scope_targets || '').split(/\n|,/).map(x => x.trim()).filter(Boolean),
-            exclude: String(this.newProject.task_scope_exclude || '').split(/\n|,/).map(x => x.trim()).filter(Boolean),
+            enabled: taskScopeTargets.length > 0 || taskScopeExclude.length > 0,
+            targets: taskScopeTargets,
+            exclude: taskScopeExclude,
             notes: this.newProject.task_scope_notes || '',
           },
           run_duration_seconds: runDurationSeconds,
@@ -778,7 +780,7 @@ window.AxiomModules.projects = {
           parent_project_id: parentProjectId || this.projectGroups[0]?.id || '',
           title:'', origin:'', goal:'对该系统进行渗透测试，并挖掘10个高置信度的漏洞',
           bootstrap: true, kk_report_enabled: false, depth_mode: false, guard_enabled: !!this.judgeSettings?.enabled_default, hints: '',
-          task_scope_enabled: false, task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '',
+          task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '',
           depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false,
         };
         await this.loadProjectGroups();

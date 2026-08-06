@@ -25,7 +25,7 @@ from axiom.shared.model_registry import ALL_TABLES
 
 
 LEGACY_SQLITE_REVISION = "20260805_0035"
-POSTGRESQL_BASELINE_REVISION = "20260805_pg0001"
+POSTGRESQL_TARGET_REVISION = "20260806_pg0002"
 DEFAULT_BATCH_SIZE = 1_000
 
 
@@ -308,9 +308,9 @@ def _validate_target(engine: Engine) -> str:
         revision = conn.execute(
             text(f'SELECT version_num FROM "{AXIOM_SCHEMA}".alembic_version')
         ).scalar_one_or_none()
-    if revision != POSTGRESQL_BASELINE_REVISION:
+    if revision != POSTGRESQL_TARGET_REVISION:
         raise ValueError(
-            f"PostgreSQL revision must be {POSTGRESQL_BASELINE_REVISION}, "
+            f"PostgreSQL revision must be {POSTGRESQL_TARGET_REVISION}, "
             f"found {revision or 'none'}"
         )
     return str(revision)

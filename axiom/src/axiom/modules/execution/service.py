@@ -47,6 +47,7 @@ from axiom.modules.graph.tables import facts
 from axiom.modules.axiom_tools.service import AxiomToolService
 from axiom.modules.reason.service import ReasonService
 from axiom.modules.settings.service import load_runtime_config
+from axiom.modules.tasks.schemas import TaskScope
 from axiom.modules.workers.tables import workers
 from axiom.modules.skills.service import SkillService
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
@@ -60,6 +61,10 @@ from axiom.shared.storage import FileStore
 
 
 logger = logging.getLogger(__name__)
+
+
+def _scope_payload(scope: TaskScope) -> dict[str, object]:
+    return scope.model_dump(mode="json") if scope.enabled else {}
 
 
 class ExecutionService:
@@ -330,7 +335,7 @@ class ExecutionService:
             worker_name=run.worker or "",
             intent_kind="reason",
             intent_description=trigger_summary,
-            intent_targets=list(task.scope.targets) or [task.origin.host],
+            intent_targets=[],
             intent_source_facts=run.source_fact_ids,
             todo_id=None,
             origin=task.origin.original_input,
@@ -341,7 +346,7 @@ class ExecutionService:
             capability_environment=capabilities.mcp_environment,
             capability_snapshot_path=capabilities.capability_snapshot_path,
             guard_enabled=task.guard_enabled,
-            scope=task.scope.model_dump(mode="json"),
+            scope=_scope_payload(task.scope),
             run_dir=run_dir,
             execute_timeout_seconds=run.execute_timeout_seconds,
             conclude_timeout_seconds=run.conclude_timeout_seconds,
@@ -409,8 +414,6 @@ class ExecutionService:
             run_dir=run_dir,
         )
         targets = [vulnerability.affected_target] if vulnerability.affected_target else []
-        if not targets:
-            targets = list(task.scope.targets) or [task.origin.host]
         return ExecutionInput(
             task_id=task_id,
             project_id=task.project_id,
@@ -430,7 +433,7 @@ class ExecutionService:
             capability_environment=capabilities.mcp_environment,
             capability_snapshot_path=capabilities.capability_snapshot_path,
             guard_enabled=task.guard_enabled,
-            scope=task.scope.model_dump(mode="json"),
+            scope=_scope_payload(task.scope),
             run_dir=run_dir,
             execute_timeout_seconds=run.execute_timeout_seconds,
             conclude_timeout_seconds=run.conclude_timeout_seconds,

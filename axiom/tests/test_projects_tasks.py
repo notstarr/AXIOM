@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 
 def create_project(client, title: str = "示例系统") -> dict:
     response = client.post("/api/v1/projects", json={"title": title})
@@ -24,14 +26,14 @@ def test_task_creation_is_atomic_and_seeds_graph(client) -> None:
     task = response.json()
     assert task["id"] == "t_001"
     assert task["origin"] == {
-        "host": "api.example.com",
-        "scheme": "https",
-        "port": 8443,
-        "original_input": "https://api.example.com:8443",
+        "host": None,
+        "scheme": None,
+        "port": None,
+        "original_input": "https://API.Example.com:8443",
     }
     assert task["scope"] == {
-        "enabled": True,
-        "targets": ["api.example.com"],
+        "enabled": False,
+        "targets": [],
         "exclude": [],
     }
     assert task["worker_pool"] == ["worker-a"]
@@ -57,7 +59,7 @@ def test_task_creation_is_atomic_and_seeds_graph(client) -> None:
             "creator": "dispatcher.bootstrap",
             "worker": None,
             "worker_pool": ["worker-a"],
-            "targets": ["api.example.com"],
+            "targets": [],
             "execute_timeout_seconds": None,
             "conclude_timeout_seconds": None,
             "lease_id": None,
@@ -81,14 +83,44 @@ def test_task_creation_is_atomic_and_seeds_graph(client) -> None:
     ]
 
 
-def test_invalid_origin_does_not_leave_partial_task(client) -> None:
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://example.com/private?token=secret",
+        "微信小程序“测试商城”，AppID wx1234567890abcdef，重点测试投诉与退款流程",
+        "Android App：测试客户端 3.2.1",
+        "traffic-session.har",
+    ],
+)
+def test_origin_accepts_nonempty_natural_language(client, origin: str) -> None:
     project = create_project(client)
     response = client.post(
         "/api/v1/tasks",
         json={
             "project_id": project["id"],
-            "title": "非法起点",
-            "origin": "https://example.com/private?token=secret",
+            "title": "自然语言入口",
+            "origin": origin,
+            "goal": "测试目标",
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["origin"] == {
+        "host": None,
+        "scheme": None,
+        "port": None,
+        "original_input": origin,
+    }
+    assert response.json()["scope"] == {"enabled": False, "targets": [], "exclude": []}
+
+
+def test_blank_origin_does_not_leave_partial_task(client) -> None:
+    project = create_project(client)
+    response = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "空入口",
+            "origin": "   ",
             "goal": "测试目标",
         },
     )
@@ -170,7 +202,11 @@ def test_task_settings_and_hints_can_be_edited_without_stale_graph_state(client)
     assert updated.status_code == 200, updated.text
     body = updated.json()
     assert body["title"] == "新任务"
-    assert body["scope"]["targets"] == ["a.example.com"]
+    assert body["scope"] == {
+        "enabled": True,
+        "targets": [],
+        "exclude": ["blocked.example.com"],
+    }
     assert body["worker_pool"] == ["worker-b"]
     assert body["guard_enabled"] is True
     assert body["external_report_enabled"] is True

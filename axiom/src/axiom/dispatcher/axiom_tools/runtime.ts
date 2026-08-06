@@ -133,17 +133,35 @@ export function normalizeHost(value: string): string {
   return value.trim().toLowerCase().replace(/\.$/, "");
 }
 
+function scopeEntryMatchesHost(entryText: string, hostname: string): boolean {
+  const raw = normalizeHost(entryText);
+  let entry = raw;
+  if (!raw.startsWith("*.")) {
+    try {
+      const candidate = raw.includes("://")
+        ? raw
+        : raw.split(":").length > 2 && !raw.startsWith("[")
+          ? `http://[${raw}]`
+          : `http://${raw}`;
+      entry = normalizeHost(new URL(candidate).hostname).replace(/^\[|\]$/g, "");
+    } catch {
+      entry = "";
+    }
+  }
+  if (!entry) return false;
+  return entry.startsWith("*.")
+    ? hostname.endsWith(entry.slice(1))
+    : hostname === entry || hostname.endsWith(`.${entry}`);
+}
+
 export function targetAllowed(urlText: string): boolean {
   const scope = parseJsonEnv("AXIOM_SCOPE_JSON", {});
   if (!scope || scope.enabled === false) return true;
   const url = new URL(urlText);
-  const hostname = normalizeHost(url.hostname);
+  const hostname = normalizeHost(url.hostname).replace(/^\[|\]$/g, "");
   const excluded = Array.isArray(scope.exclude) ? scope.exclude.map(normalizeHost) : [];
-  if (excluded.some((item: string) => hostname === item || hostname.endsWith(`.${item}`))) return false;
+  if (excluded.some((item: string) => scopeEntryMatchesHost(item, hostname))) return false;
   const targets = Array.isArray(scope.targets) ? scope.targets.map(normalizeHost).filter(Boolean) : [];
   if (!targets.length) return true;
-  return targets.some((item: string) => {
-    const withoutScheme = item.replace(/^[a-z]+:\/\//, "").split("/")[0].split(":")[0];
-    return hostname === withoutScheme || hostname.endsWith(`.${withoutScheme}`);
-  });
+  return targets.some((item: string) => scopeEntryMatchesHost(item, hostname));
 }

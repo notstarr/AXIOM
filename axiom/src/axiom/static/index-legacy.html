@@ -629,16 +629,16 @@
           </div>
           <!-- Origin -->
           <div>
-            <label class="text-xs font-semibold text-slate-500 mb-1 block" x-text="newProject.depth_mode ? '流量数据' : '起点（已知信息）'"></label>
+            <label class="text-xs font-semibold text-slate-500 mb-1 block" x-text="newProject.depth_mode ? '流量数据' : '测试入口 / 初始信息'"></label>
             <div class="flex items-center gap-2 mb-1">
-              <p class="text-[11px] text-slate-400" x-text="newProject.depth_mode ? '上传 HAR 或粘贴文件路径' : '目标 URL 或已知信息'"></p>
+              <p class="text-[11px] text-slate-400" x-text="newProject.depth_mode ? '上传 HAR 或粘贴文件路径' : '可填写网站、小程序、App、文件目标及业务说明'"></p>
               <label x-show="newProject.depth_mode" class="px-2 py-0.5 text-[10px] rounded border border-amber-200 text-amber-600 hover:bg-amber-50 cursor-pointer">
                 上传 HAR
                 <input type="file" accept=".har,.json" @change="uploadHarFile($event)" class="hidden">
               </label>
             </div>
-            <textarea x-model="newProject.origin" rows="6" :placeholder="newProject.depth_mode ? '/tmp/axiom-uploads/traffic.har' : 'https://example.com'"
-              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
+            <textarea x-model="newProject.origin" rows="6" :placeholder="newProject.depth_mode ? '/tmp/axiom-uploads/traffic.har' : '例如：https://example.com；微信小程序 AppID 与重点业务；Android App 安装包或 HAR 文件'"
+              class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
           </div>
           <!-- Goal (only for breadth mode) -->
           <div x-show="!newProject.depth_mode">

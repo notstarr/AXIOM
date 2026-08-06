@@ -133,6 +133,7 @@ class PiBootstrapExecutor:
                     "intent_id": execution_input.intent_id,
                     "origin": execution_input.origin,
                     "goal": execution_input.goal,
+                    "scope_guidance": _scope_guidance(execution_input.scope),
                     "context_manifest_path": execution_input.context_manifest_path,
                     "run_dir": execution_input.run_dir,
                     "skill_directories": _format_skill_directories(execution_input.skill_directories),
@@ -666,6 +667,7 @@ class PiReasonExecutor(PiBootstrapExecutor):
                     ),
                     "origin": execution_input.origin,
                     "goal": execution_input.goal,
+                    "target_guidance": _reason_target_guidance(execution_input.scope),
                     "context_manifest_path": execution_input.context_manifest_path,
                     "run_dir": execution_input.run_dir,
                     "skill_directories": _format_skill_directories(execution_input.skill_directories),
@@ -702,6 +704,7 @@ class PiReasonExecutor(PiBootstrapExecutor):
                     "reason_run_id": execution_input.reason_run_id or "",
                     "workspace_id": workspace.id,
                     "run_dir": execution_input.run_dir,
+                    "target_guidance": _reason_target_guidance(execution_input.scope),
                 },
             )
             + f"\n收口原因：{reason}\n",
@@ -738,12 +741,10 @@ class PiExploreExecutor(PiBootstrapExecutor):
                     "intent_id": execution_input.intent_id,
                     "todo_id": execution_input.todo_id or "无",
                     "intent_description": execution_input.intent_description,
-                    "intent_targets": json.dumps(
-                        execution_input.intent_targets,
-                        ensure_ascii=False,
-                    ),
+                    "intent_targets": _intent_targets_text(execution_input.intent_targets),
                     "origin": execution_input.origin,
                     "goal": execution_input.goal,
+                    "scope_guidance": _scope_guidance(execution_input.scope),
                     "context_manifest_path": execution_input.context_manifest_path,
                     "run_dir": execution_input.run_dir,
                     "skill_directories": _format_skill_directories(execution_input.skill_directories),
@@ -816,6 +817,7 @@ class PiReviewExecutor(PiBootstrapExecutor):
                     "review_reason": execution_input.intent_description,
                     "origin": execution_input.origin,
                     "goal": execution_input.goal,
+                    "scope_guidance": _scope_guidance(execution_input.scope),
                     "context_manifest_path": execution_input.context_manifest_path,
                     "run_dir": execution_input.run_dir,
                     "skill_directories": _format_skill_directories(
@@ -867,6 +869,40 @@ class PiReviewExecutor(PiBootstrapExecutor):
             raise ReviewExecutionTimeout("Reviewer conclude budget exhausted")
         self._raise_on_process_failure(result)
         return self._last_assistant_text(result)
+
+
+def _scope_guidance(scope: dict[str, object]) -> str:
+    if not scope or scope.get("enabled") is False:
+        return ""
+    allow = [str(item) for item in scope.get("targets", []) if str(item).strip()]
+    deny = [str(item) for item in scope.get("exclude", []) if str(item).strip()]
+    if allow and deny:
+        detail = f"白名单：{', '.join(allow)}；黑名单：{', '.join(deny)}（黑名单优先）"
+    elif allow:
+        detail = f"白名单：{', '.join(allow)}"
+    else:
+        detail = f"黑名单：{', '.join(deny)}；其余网络目标允许"
+    return f"- 网络范围（Scope）：{detail}"
+
+
+def _reason_target_guidance(scope: dict[str, object]) -> str:
+    if not scope or scope.get("enabled") is False:
+        return (
+            "本任务未配置网络黑白名单；创建 Explore Intent 时可以省略 --target，"
+            "不得从 Origin 推导或补造 Target。"
+        )
+    return (
+        "本任务配置了网络黑白名单；每个新 Explore Intent 必须至少提供一个 --target。"
+        "URL、域名和 IP 必须位于 Scope 内；AppID、页面路由、Artifact、安装包等逻辑 Target "
+        "可以使用 miniapp:/page:/artifact:/package: 等明确前缀，但它们不会扩大网络权限。"
+    )
+
+
+def _intent_targets_text(targets: list[str]) -> str:
+    if not targets:
+        return "未指定独立 Target；按 Intent 描述和 Origin 初始信息执行"
+    return json.dumps(targets, ensure_ascii=False)
+
 
 def _message_text(message: dict[str, Any]) -> list[str]:
     content = message.get("content")
