@@ -254,6 +254,29 @@ def test_invalid_conclude_releases_intent_into_existing_retry_state(client) -> N
     assert events.count("release") == 1
 
 
+def test_transient_control_plane_failure_does_not_consume_bootstrap_retry(client) -> None:
+    events: list[str] = []
+    task, control, work = claimed_work(client, events)
+    executor = FakeBootstrapExecutor(events)
+
+    def unavailable_input(_work: ClaimedIntent) -> ExecutionInput:
+        events.append("input_timeout")
+        raise ControlPlaneError("timed out", status_code=0)
+
+    control.input = unavailable_input  # type: ignore[method-assign]
+
+    with pytest.raises(ControlPlaneError, match="timed out"):
+        BootstrapRunner(control, heartbeat_interval_seconds=60).run(work, executor)
+
+    intent = client.get(f"/api/v1/tasks/{task['id']}/graph").json()["intents"][0]
+    assert executor.execute_calls == 0
+    assert executor.conclude_calls == 0
+    assert intent["retry_count"] == 0
+    assert intent["infrastructure_retry_count"] == 1
+    assert intent["last_failure_kind"] == "control_plane_unavailable"
+    assert intent["failure_class"] == "transient"
+
+
 def test_transient_worker_failure_does_not_consume_execution_retry(client) -> None:
     events: list[str] = []
     task, control, work = claimed_work(client, events)

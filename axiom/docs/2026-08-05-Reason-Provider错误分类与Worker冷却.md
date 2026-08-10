@@ -69,3 +69,9 @@ failure_class = transient
 - 故障 Worker 写入 `cooldown_until`。
 
 本轮全量验证为 `480 passed, 1 warning`；唯一 warning 是既有 Starlette/httpx 弃用提示。
+
+## 2026-08-10 补充：控制面输入阶段
+
+Provider 终态错误修复之外，Bootstrap／Reason／Explore／Reviewer 的控制面 `input` 请求现使用 120 秒超时，并把连接失败、408、429 和 5xx 统一识别为 `control_plane_unavailable` / `transient`。该错误发生在 Pi 启动前，不进入 Conclude，不消耗普通 `retry_count`，只增加 `infrastructure_retry_count` 并沿用 Worker 冷却。
+
+另见 [[2026-08-10-控制面输入超时与API-Runner源码一致性]]，其中记录了 `t_163` 的两次 Bootstrap 超时、`rr000509` 的 API／Runner 版本错配及重启规则。

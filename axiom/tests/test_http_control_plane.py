@@ -7,9 +7,16 @@ import pytest
 
 from axiom.dispatcher.schemas import ClaimedIntent
 from axiom.dispatcher.heartbeat import LeaseLostError
-from axiom.dispatcher.http import ControlPlaneError, HttpControlPlane
-from axiom.modules.execution.schemas import ReleaseIntentCommand
-from axiom.modules.execution.schemas import ActivityCommand
+from axiom.dispatcher.http import (
+    CONTROL_PLANE_INPUT_TIMEOUT_SECONDS,
+    ControlPlaneError,
+    HttpControlPlane,
+)
+from axiom.modules.execution.schemas import (
+    ActivityCommand,
+    ExecutionInput,
+    ReleaseIntentCommand,
+)
 
 
 def test_http_control_plane_uses_api_only_and_maps_claim_conflict() -> None:
@@ -166,3 +173,41 @@ def test_http_control_plane_maps_inactive_activity_lease_to_lease_loss() -> None
                 activity_tool="nmap",
             ),
         )
+
+
+def test_http_control_plane_input_uses_extended_timeout() -> None:
+    observed_timeouts: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed_timeouts.append(request.extensions["timeout"]["read"])
+        payload = ExecutionInput(
+            task_id="t_001",
+            intent_id="i001",
+            lease_id="lease-a",
+            worker_name="worker-a",
+            origin="https://a.example.com",
+            goal="完成测试",
+            scope={"enabled": False, "targets": [], "exclude": []},
+            run_dir="/tmp/axiom-test",
+        ).model_dump(mode="json")
+        return httpx.Response(200, json=payload)
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="http://axiom.test/api/v1",
+        timeout=20,
+    )
+    control = HttpControlPlane("http://axiom.test", client=client)
+    work = ClaimedIntent(
+        task_id="t_001",
+        intent_id="i001",
+        kind="bootstrap",
+        worker_name="worker-a",
+        lease_id="lease-a",
+        claimed_at="2026-08-10T00:00:00Z",
+    )
+
+    result = control.input(work)
+
+    assert result.task_id == "t_001"
+    assert observed_timeouts == [CONTROL_PLANE_INPUT_TIMEOUT_SECONDS]

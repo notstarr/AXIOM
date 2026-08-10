@@ -8,6 +8,7 @@ from typing import Protocol
 from axiom.dispatcher.bootstrap import AxiomToolLoadError, TransientWorkerError
 from axiom.dispatcher.closeout import bounded_closeout
 from axiom.dispatcher.heartbeat import LeaseHeartbeat, LeaseLostError
+from axiom.dispatcher.http import ControlPlaneError, is_transient_control_plane_error
 from axiom.dispatcher.schemas import ClaimedIntent
 from axiom.modules.execution.schemas import (
     CompleteExploreCommand,
@@ -148,6 +149,14 @@ class ExploreRunner:
                 work,
                 failure_kind="worker_infrastructure",
                 failure_class="transient",
+            )
+            raise
+        except ControlPlaneError as exc:
+            transient = is_transient_control_plane_error(exc)
+            self._release_best_effort(
+                work,
+                failure_kind="control_plane_unavailable" if transient else "explore_execution_failed",
+                failure_class="transient" if transient else "execution",
             )
             raise
         except BaseException:

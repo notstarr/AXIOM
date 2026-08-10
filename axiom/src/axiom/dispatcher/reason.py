@@ -8,6 +8,7 @@ from typing import Protocol
 from axiom.dispatcher.bootstrap import AxiomToolLoadError, TransientWorkerError
 from axiom.dispatcher.closeout import bounded_closeout
 from axiom.dispatcher.heartbeat import LeaseHeartbeat, LeaseLostError
+from axiom.dispatcher.http import ControlPlaneError, is_transient_control_plane_error
 from axiom.modules.execution.schemas import ExecutionInput, ReleaseIntentCommand
 from axiom.modules.execution.stage_outputs import StageOutputError, require_finish
 from axiom.modules.reason.schemas import (
@@ -182,6 +183,19 @@ class ReasonRunner:
                 workspace,
                 failure_kind="reason_plan_invalid",
                 failure_class="execution",
+            )
+            raise
+        except ControlPlaneError as exc:
+            transient = is_transient_control_plane_error(exc)
+            self._close_failed_attempt(
+                work,
+                workspace,
+                failure_kind=(
+                    "control_plane_unavailable"
+                    if transient
+                    else "reason_execution_failed"
+                ),
+                failure_class="transient" if transient else "execution",
             )
             raise
         except BaseException:

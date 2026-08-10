@@ -8,6 +8,7 @@ from typing import Protocol
 from axiom.dispatcher.bootstrap import AxiomToolLoadError, TransientWorkerError
 from axiom.dispatcher.closeout import bounded_closeout
 from axiom.dispatcher.heartbeat import LeaseHeartbeat, LeaseLostError
+from axiom.dispatcher.http import ControlPlaneError, is_transient_control_plane_error
 from axiom.modules.execution.schemas import ExecutionInput, ReleaseIntentCommand
 from axiom.modules.execution.stage_outputs import StageOutputError, require_finish, review_files
 from axiom.modules.vulnerability_reviews.schemas import (
@@ -152,6 +153,14 @@ class ReviewRunner:
                 work,
                 failure_kind="review_output_invalid",
                 failure_class="execution",
+            )
+            raise
+        except ControlPlaneError as exc:
+            transient = is_transient_control_plane_error(exc)
+            self._release_best_effort(
+                work,
+                failure_kind="control_plane_unavailable" if transient else "review_execution_failed",
+                failure_class="transient" if transient else "execution",
             )
             raise
         except BaseException:

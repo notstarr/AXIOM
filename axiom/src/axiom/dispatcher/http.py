@@ -50,11 +50,20 @@ from axiom.modules.workers.schemas import Worker
 logger = logging.getLogger(__name__)
 
 
+CONTROL_PLANE_INPUT_TIMEOUT_SECONDS = 120.0
+
+
 class ControlPlaneError(RuntimeError):
     def __init__(self, message: str, *, status_code: int, code: str = ""):
         super().__init__(message)
         self.status_code = status_code
         self.code = code
+
+
+def is_transient_control_plane_error(exc: ControlPlaneError) -> bool:
+    """Return whether a control-plane failure is safe to retry as infrastructure."""
+
+    return exc.status_code == 0 or exc.status_code in {408, 429} or exc.status_code >= 500
 
 
 class HttpControlPlane:
@@ -251,7 +260,12 @@ class HttpControlPlane:
 
     def input(self, work: ClaimedWork) -> ExecutionInput:
         return ExecutionInput.model_validate(
-            self._request("POST", self._work_path("input", work), self._lease(work))
+            self._request(
+                "POST",
+                self._work_path("input", work),
+                self._lease(work),
+                timeout_seconds=CONTROL_PLANE_INPUT_TIMEOUT_SECONDS,
+            )
         )
 
     def begin_conclude(self, work: ClaimedWork) -> None:
@@ -405,9 +419,19 @@ class HttpControlPlane:
                 raise LeaseLostError(str(exc)) from exc
             raise
 
-    def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> Any:
         try:
-            response = self._client.request(method, path, json=body)
+            request_kwargs: dict[str, Any] = {"json": body}
+            if timeout_seconds is not None:
+                request_kwargs["timeout"] = timeout_seconds
+            response = self._client.request(method, path, **request_kwargs)
         except httpx.HTTPError as exc:
             raise ControlPlaneError(str(exc), status_code=0) from exc
         if response.is_error:

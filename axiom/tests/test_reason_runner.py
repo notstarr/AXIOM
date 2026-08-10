@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import update
 
 from axiom.dispatcher.bootstrap import TransientWorkerError
+from axiom.dispatcher.http import ControlPlaneError
+from axiom.dispatcher.reason import ReasonRunner
 from axiom.dispatcher.runner import AxiomRunner
 from axiom.dispatcher.schemas import (
     ClaimAction,
@@ -341,6 +344,48 @@ def test_invalid_reason_plan_abandons_workspace_and_can_retry_with_a_new_lease(c
     assert reason_run["last_failure_kind"] == ""
     assert reason_run["failure_class"] == ""
     assert reason_run["activity_kind"] == "completed"
+
+
+def test_transient_control_plane_failure_does_not_enter_reason_execution() -> None:
+    releases = []
+
+    class UnavailableControlPlane:
+        def start(self, _work) -> None:
+            return None
+
+        def heartbeat(self, _work) -> None:
+            return None
+
+        def input(self, _work) -> ExecutionInput:
+            raise ControlPlaneError("timed out", status_code=0)
+
+        def release(self, _work, command) -> None:
+            releases.append(command)
+
+    class UnusedExecutor:
+        def execute(self, *_args, **_kwargs):
+            raise AssertionError("Reason execute must not run without its input")
+
+        def conclude(self, *_args, **_kwargs):
+            raise AssertionError("Reason conclude must not run without its input")
+
+    work = ClaimedReasonRun(
+        task_id="t_001",
+        reason_run_id="rr000001",
+        worker_name="worker-a",
+        lease_id="lease-a",
+        claimed_at="2026-08-10T00:00:00Z",
+    )
+
+    with pytest.raises(ControlPlaneError, match="timed out"):
+        ReasonRunner(
+            UnavailableControlPlane(),  # type: ignore[arg-type]
+            heartbeat_interval_seconds=60,
+        ).run(work, UnusedExecutor())
+
+    assert len(releases) == 1
+    assert releases[0].failure_kind == "control_plane_unavailable"
+    assert releases[0].failure_class == "transient"
 
 
 def test_transient_reason_failure_skips_conclude_and_cools_worker(client) -> None:
