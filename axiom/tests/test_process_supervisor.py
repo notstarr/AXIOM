@@ -660,6 +660,443 @@ settle("FINISH")
     assert reminders == []
 
 
+def test_rpc_process_supervisor_recovers_a_silent_assistant_turn_in_session(tmp_path) -> None:
+    command_log = tmp_path / "commands.jsonl"
+    script = _rpc_script(
+        tmp_path,
+        """
+prompt = read_command()
+record(prompt)
+emit({"id": prompt["id"], "type": "response", "command": "prompt", "success": True})
+emit({"type": "message_start", "message": {"role": "assistant"}})
+abort = read_command()
+record(abort)
+emit({"id": abort["id"], "type": "response", "command": "abort", "success": True})
+emit({"type": "agent_settled"})
+recovery = read_command()
+record(recovery)
+emit({"id": recovery["id"], "type": "response", "command": "prompt", "success": True})
+emit({"type": "message_start", "message": {"role": "assistant"}})
+emit({"type": "message_end", "message": {"role": "assistant", "stopReason": "stop"}})
+emit({"type": "agent_end", "messages": [{"role": "assistant", "content": [{"type": "text", "text": "FINISH"}]}]})
+settle("FINISH")
+""",
+    )
+
+    result = RpcProcessSupervisor().run(
+        RpcProcessSpec(
+            command=[sys.executable, str(script)],
+            log_dir=tmp_path / "logs",
+            timeout_seconds=1,
+            stream_idle_timeout_seconds=0.05,
+            stream_recovery_abort_timeout_seconds=0.1,
+            stream_recovery_prompt="继续当前 Intent",
+            terminate_grace_seconds=0.2,
+            poll_interval_seconds=0.01,
+            environment={
+                "COMMAND_LOG": str(command_log),
+                "AXIOM_TASK_ID": "t_001",
+                "AXIOM_INTENT_ID": "i002",
+                "AXIOM_LEASE_ID": "lease-test",
+            },
+            prompt="执行测试",
+        )
+    )
+
+    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
+    assert [command["type"] for command in commands] == [
+        "prompt",
+        "abort",
+        "prompt",
+        "get_last_assistant_text",
+    ]
+    assert commands[1]["id"] == "axiom-stream-recovery-abort"
+    assert commands[2]["id"] == "axiom-stream-recovery-prompt"
+    assert commands[2]["message"] == "继续当前 Intent"
+    assert result.returncode == 0
+    assert result.timed_out is False
+    assert result.rpc_stream_stalled is False
+    assert result.last_assistant_text == "FINISH"
+    assert "pi_rpc_stream_recovery_started" in result.stderr
+    assert "pi_rpc_stream_recovery_resumed" in result.stderr
+
+
+def test_rpc_process_supervisor_does_not_recover_before_assistant_stream_starts(tmp_path) -> None:
+    command_log = tmp_path / "commands.jsonl"
+    script = _rpc_script(
+        tmp_path,
+        """
+prompt = read_command()
+record(prompt)
+emit({"id": prompt["id"], "type": "response", "command": "prompt", "success": True})
+abort = read_command()
+record(abort)
+""",
+    )
+
+    result = RpcProcessSupervisor().run(
+        RpcProcessSpec(
+            command=[sys.executable, str(script)],
+            log_dir=tmp_path / "logs",
+            timeout_seconds=0.15,
+            stream_idle_timeout_seconds=0.03,
+            stream_recovery_abort_timeout_seconds=0.05,
+            stream_recovery_prompt="继续当前 Intent",
+            terminate_grace_seconds=0.2,
+            poll_interval_seconds=0.01,
+            environment={"COMMAND_LOG": str(command_log)},
+            prompt="执行测试",
+        )
+    )
+
+    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
+    assert [command["type"] for command in commands] == ["prompt", "abort"]
+    assert commands[1]["id"] == "axiom-abort"
+    assert result.timed_out is True
+    assert result.rpc_stream_stalled is False
+
+
+def test_rpc_process_supervisor_does_not_recover_while_a_tool_is_running(tmp_path) -> None:
+    command_log = tmp_path / "commands.jsonl"
+    script = _rpc_script(
+        tmp_path,
+        """
+prompt = read_command()
+record(prompt)
+emit({"id": prompt["id"], "type": "response", "command": "prompt", "success": True})
+emit({"type": "message_start", "message": {"role": "assistant"}})
+emit({"type": "tool_execution_start", "toolName": "bash", "toolCallId": "call-1"})
+abort = read_command()
+record(abort)
+""",
+    )
+
+    result = RpcProcessSupervisor().run(
+        RpcProcessSpec(
+            command=[sys.executable, str(script)],
+            log_dir=tmp_path / "logs",
+            timeout_seconds=0.15,
+            stream_idle_timeout_seconds=0.03,
+            stream_recovery_abort_timeout_seconds=0.05,
+            stream_recovery_prompt="继续当前 Intent",
+            terminate_grace_seconds=0.2,
+            poll_interval_seconds=0.01,
+            environment={"COMMAND_LOG": str(command_log)},
+            prompt="执行测试",
+        )
+    )
+
+    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
+    assert [command["type"] for command in commands] == ["prompt", "abort"]
+    assert commands[1]["id"] == "axiom-abort"
+    assert result.timed_out is True
+    assert result.rpc_stream_stalled is False
+
+
+def test_rpc_process_supervisor_recovers_after_a_tool_finishes(tmp_path) -> None:
+    command_log = tmp_path / "commands.jsonl"
+    script = _rpc_script(
+        tmp_path,
+        """
+prompt = read_command()
+record(prompt)
+emit({"id": prompt["id"], "type": "response", "command": "prompt", "success": True})
+emit({"type": "message_start", "message": {"role": "assistant"}})
+emit({"type": "message_end", "message": {"role": "assistant", "stopReason": "toolUse"}})
+emit({"type": "tool_execution_start", "toolName": "bash", "toolCallId": "call-1"})
+emit({"type": "tool_execution_end", "toolName": "bash", "toolCallId": "call-1"})
+emit({"type": "message_start", "message": {"role": "assistant"}})
+abort = read_command()
+record(abort)
+emit({"id": abort["id"], "type": "response", "command": "abort", "success": True})
+emit({"type": "agent_settled"})
+recovery = read_command()
+record(recovery)
+emit({"id": recovery["id"], "type": "response", "command": "prompt", "success": True})
+emit({"type": "message_start", "message": {"role": "assistant"}})
+emit({"type": "message_end", "message": {"role": "assistant", "stopReason": "stop"}})
+emit({"type": "agent_end", "messages": [{"role": "assistant", "content": [{"type": "text", "text": "FINISH"}]}]})
+settle("FINISH")
+""",
+    )
+
+    result = RpcProcessSupervisor().run(
+        RpcProcessSpec(
+            command=[sys.executable, str(script)],
+            log_dir=tmp_path / "logs",
+            timeout_seconds=1,
+            stream_idle_timeout_seconds=0.05,
+            stream_recovery_abort_timeout_seconds=0.1,
+            stream_recovery_prompt="继续当前 Intent",
+            terminate_grace_seconds=0.2,
+            poll_interval_seconds=0.01,
+            environment={"COMMAND_LOG": str(command_log)},
+            prompt="执行测试",
+        )
+    )
+
+    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
+    assert [command["type"] for command in commands] == [
+        "prompt",
+        "abort",
+        "prompt",
+        "get_last_assistant_text",
+    ]
+    assert result.returncode == 0
+    assert result.rpc_stream_stalled is False
+
+
+def test_rpc_process_supervisor_fails_when_recovery_abort_is_not_acknowledged(tmp_path) -> None:
+    command_log = tmp_path / "commands.jsonl"
+    script = _rpc_script(
+        tmp_path,
+        """
+prompt = read_command()
+record(prompt)
+emit({"id": prompt["id"], "type": "response", "command": "prompt", "success": True})
+emit({"type": "message_start", "message": {"role": "assistant"}})
+abort = read_command()
+record(abort)
+time.sleep(1)
+""",
+    )
+
+    result = RpcProcessSupervisor().run(
+        RpcProcessSpec(
+            command=[sys.executable, str(script)],
+            log_dir=tmp_path / "logs",
+            timeout_seconds=1,
+            stream_idle_timeout_seconds=0.03,
+            stream_recovery_abort_timeout_seconds=0.05,
+            stream_recovery_prompt="继续当前 Intent",
+            terminate_grace_seconds=0.1,
+            poll_interval_seconds=0.01,
+            environment={"COMMAND_LOG": str(command_log)},
+            prompt="执行测试",
+        )
+    )
+
+    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
+    assert commands[1]["id"] == "axiom-stream-recovery-abort"
+    assert result.returncode != 0
+    assert result.rpc_stream_stalled is True
+    assert "recovery_state=abort_sent" in result.stderr
+
+
+def test_rpc_process_supervisor_fails_when_recovery_abort_never_settles(tmp_path) -> None:
+    script = _rpc_script(
+        tmp_path,
+        """
+prompt = read_command()
+emit({"id": prompt["id"], "type": "response", "command": "prompt", "success": True})
+emit({"type": "message_start", "message": {"role": "assistant"}})
+abort = read_command()
+emit({"id": abort["id"], "type": "response", "command": "abort", "success": True})
+time.sleep(1)
+""",
+    )
+
+    result = RpcProcessSupervisor().run(
+        RpcProcessSpec(
+            command=[sys.executable, str(script)],
+            log_dir=tmp_path / "logs",
+            timeout_seconds=1,
+            stream_idle_timeout_seconds=0.03,
+            stream_recovery_abort_timeout_seconds=0.05,
+            stream_recovery_prompt="继续当前 Intent",
+            terminate_grace_seconds=0.1,
+            poll_interval_seconds=0.01,
+            prompt="执行测试",
+        )
+    )
+
+    assert result.returncode != 0
+    assert result.rpc_stream_stalled is True
+    assert "recovery_state=abort_acknowledged" in result.stderr
+
+
+def test_rpc_process_supervisor_fails_when_recovery_prompt_is_rejected(tmp_path) -> None:
+    command_log = tmp_path / "commands.jsonl"
+    script = _rpc_script(
+        tmp_path,
+        """
+prompt = read_command()
+record(prompt)
+emit({"id": prompt["id"], "type": "response", "command": "prompt", "success": True})
+emit({"type": "message_start", "message": {"role": "assistant"}})
+abort = read_command()
+record(abort)
+emit({"id": abort["id"], "type": "response", "command": "abort", "success": True})
+emit({"type": "agent_settled"})
+recovery = read_command()
+record(recovery)
+emit({"id": recovery["id"], "type": "response", "command": "prompt", "success": False, "error": "busy"})
+fallback_abort = read_command()
+record(fallback_abort)
+""",
+    )
+
+    result = RpcProcessSupervisor().run(
+        RpcProcessSpec(
+            command=[sys.executable, str(script)],
+            log_dir=tmp_path / "logs",
+            timeout_seconds=1,
+            stream_idle_timeout_seconds=0.03,
+            stream_recovery_abort_timeout_seconds=0.1,
+            stream_recovery_prompt="继续当前 Intent",
+            terminate_grace_seconds=0.1,
+            poll_interval_seconds=0.01,
+            environment={"COMMAND_LOG": str(command_log)},
+            prompt="执行测试",
+        )
+    )
+
+    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
+    assert [command["type"] for command in commands] == ["prompt", "abort", "prompt", "abort"]
+    assert result.returncode != 0
+    assert result.rpc_stream_stalled is True
+    assert "Pi RPC stream recovery prompt failed: busy" in result.stderr
+
+
+def test_rpc_process_supervisor_fails_on_a_second_silent_assistant_turn(tmp_path) -> None:
+    command_log = tmp_path / "commands.jsonl"
+    script = _rpc_script(
+        tmp_path,
+        """
+prompt = read_command()
+record(prompt)
+emit({"id": prompt["id"], "type": "response", "command": "prompt", "success": True})
+emit({"type": "message_start", "message": {"role": "assistant"}})
+abort = read_command()
+record(abort)
+emit({"id": abort["id"], "type": "response", "command": "abort", "success": True})
+emit({"type": "agent_settled"})
+recovery = read_command()
+record(recovery)
+emit({"id": recovery["id"], "type": "response", "command": "prompt", "success": True})
+emit({"type": "message_start", "message": {"role": "assistant"}})
+fallback_abort = read_command()
+record(fallback_abort)
+""",
+    )
+
+    result = RpcProcessSupervisor().run(
+        RpcProcessSpec(
+            command=[sys.executable, str(script)],
+            log_dir=tmp_path / "logs",
+            timeout_seconds=1,
+            stream_idle_timeout_seconds=0.03,
+            stream_recovery_abort_timeout_seconds=0.1,
+            stream_recovery_prompt="继续当前 Intent",
+            terminate_grace_seconds=0.1,
+            poll_interval_seconds=0.01,
+            environment={"COMMAND_LOG": str(command_log)},
+            prompt="执行测试",
+        )
+    )
+
+    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
+    assert [command["type"] for command in commands] == ["prompt", "abort", "prompt", "abort"]
+    assert commands[-1]["id"] == "axiom-abort"
+    assert result.returncode != 0
+    assert result.rpc_stream_stalled is True
+    assert "recovery_state=recovery_prompt_sent" in result.stderr
+
+
+def test_rpc_process_supervisor_does_not_count_soft_reminder_ack_as_model_progress(tmp_path) -> None:
+    command_log = tmp_path / "commands.jsonl"
+    script = _rpc_script(
+        tmp_path,
+        """
+prompt = read_command()
+record(prompt)
+emit({"id": prompt["id"], "type": "response", "command": "prompt", "success": True})
+emit({"type": "message_start", "message": {"role": "assistant"}})
+steer = read_command()
+record(steer)
+emit({"id": steer["id"], "type": "response", "command": "steer", "success": True})
+abort = read_command()
+record(abort)
+emit({"id": abort["id"], "type": "response", "command": "abort", "success": True})
+emit({"type": "agent_settled"})
+recovery = read_command()
+record(recovery)
+emit({"id": recovery["id"], "type": "response", "command": "prompt", "success": True})
+emit({"type": "message_start", "message": {"role": "assistant"}})
+emit({"type": "message_end", "message": {"role": "assistant", "stopReason": "stop"}})
+emit({"type": "agent_end", "messages": [{"role": "assistant", "content": [{"type": "text", "text": "FINISH"}]}]})
+settle("FINISH")
+""",
+    )
+    reminders: list[str] = []
+
+    result = RpcProcessSupervisor().run(
+        RpcProcessSpec(
+            command=[sys.executable, str(script)],
+            log_dir=tmp_path / "logs",
+            timeout_seconds=1,
+            stream_idle_timeout_seconds=0.05,
+            stream_recovery_abort_timeout_seconds=0.1,
+            stream_recovery_prompt="继续当前 Intent",
+            steer_after_seconds=0.01,
+            steer_message="立即收口",
+            terminate_grace_seconds=0.2,
+            poll_interval_seconds=0.01,
+            environment={"COMMAND_LOG": str(command_log)},
+            prompt="执行测试",
+        ),
+        on_steer=lambda: reminders.append("sent"),
+    )
+
+    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
+    assert [command["type"] for command in commands] == [
+        "prompt",
+        "steer",
+        "abort",
+        "prompt",
+        "get_last_assistant_text",
+    ]
+    assert reminders == ["sent"]
+    assert result.returncode == 0
+    assert result.rpc_stream_stalled is False
+
+
+def test_rpc_process_supervisor_refreshes_stall_watchdog_on_model_progress(tmp_path) -> None:
+    script = _rpc_script(
+        tmp_path,
+        """
+prompt = read_command()
+emit({"id": prompt["id"], "type": "response", "command": "prompt", "success": True})
+time.sleep(0.02)
+emit({"type": "message_start", "message": {"role": "assistant"}})
+for _ in range(4):
+    time.sleep(0.02)
+    emit({"type": "message_update", "message": {"role": "assistant"}})
+emit({"type": "message_end", "message": {"role": "assistant", "stopReason": "stop"}})
+emit({"type": "agent_end", "messages": [{"role": "assistant", "content": [{"type": "text", "text": "FINISH"}]}]})
+settle("FINISH")
+""",
+    )
+
+    result = RpcProcessSupervisor().run(
+        RpcProcessSpec(
+            command=[sys.executable, str(script)],
+            log_dir=tmp_path / "logs",
+            timeout_seconds=1,
+            stream_idle_timeout_seconds=0.03,
+            stream_recovery_abort_timeout_seconds=0.05,
+            stream_recovery_prompt="继续当前 Intent",
+            terminate_grace_seconds=0.2,
+            poll_interval_seconds=0.01,
+            prompt="执行测试",
+        )
+    )
+
+    assert result.returncode == 0
+    assert result.rpc_stream_stalled is False
+    assert result.last_assistant_text == "FINISH"
+
+
 def _rpc_script(tmp_path, body: str):
     path = tmp_path / f"rpc-{time.monotonic_ns()}.py"
     path.write_text(

@@ -21,6 +21,8 @@ _RPC_PROMPT_ID = "axiom-initial-prompt"
 _RPC_STEER_ID = "axiom-soft-reminder"
 _RPC_FINAL_TEXT_ID = "axiom-final-text"
 _RPC_ABORT_ID = "axiom-abort"
+_RPC_STREAM_RECOVERY_ABORT_ID = "axiom-stream-recovery-abort"
+_RPC_STREAM_RECOVERY_PROMPT_ID = "axiom-stream-recovery-prompt"
 _RPC_INTERVENTION_PREFIX = "axiom-human-intervention:"
 _RPC_CONTROL_EVENT_TYPES = frozenset(
     {
@@ -33,6 +35,20 @@ _RPC_CONTROL_EVENT_TYPES = frozenset(
 )
 _RPC_OMITTED_LOG_EVENT_TYPES = frozenset(
     {"message_update", "tool_execution_update", "bash_execution_update"}
+)
+_RPC_PROGRESS_EVENT_TYPES = frozenset(
+    {
+        "message_start",
+        "message_end",
+        "message_update",
+        "turn_end",
+        "tool_execution_start",
+        "tool_execution_end",
+        "tool_execution_update",
+        "bash_execution_start",
+        "bash_execution_end",
+        "bash_execution_update",
+    }
 )
 
 
@@ -62,12 +78,22 @@ class ProcessResult:
     cancelled: bool = False
     cancel_reason: str | None = None
     last_assistant_text: str | None = None
+    rpc_stream_stalled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class RpcProcessSpec(ProcessSpec):
     prompt: str = ""
     steer_after_seconds: float | None = None
+    # Optional semantic progress watchdog.  It is deliberately disabled by
+    # default so JSON/RPC callers other than Explore retain their current
+    # timeout semantics.
+    stream_idle_timeout_seconds: float | None = None
+    # When configured, one silent Assistant provider turn may be aborted and
+    # resumed in the same Pi process/session.  Callers that omit the recovery
+    # prompt retain the previous fail-fast watchdog behavior.
+    stream_recovery_prompt: str | None = None
+    stream_recovery_abort_timeout_seconds: float = 8.0
     steer_message: str | None = None
     provider_failure_grace_seconds: float = 5.0
     intervention_poller: Callable[[], list[tuple[str, str]]] | None = None
@@ -205,6 +231,22 @@ class RpcProcessSupervisor(ProcessSupervisor):
         provider_error = ""
         provider_failure_deadline: float | None = None
         last_assistant_text: str | None = None
+        rpc_stream_stalled = False
+        last_progress_at = 0.0
+        assistant_stream_active = False
+        active_tool_calls: set[str] = set()
+        last_event_type = ""
+        last_tool_name = ""
+        last_tool_started_at: float | None = None
+        last_tool_finished_at: float | None = None
+        soft_reminder_acknowledged = False
+        agent_end_seen = False
+        agent_settled_seen = False
+        stream_recovery_attempted = False
+        stream_recovery_state = "none"
+        stream_recovery_abort_acknowledged = False
+        stream_recovery_settled = False
+        stream_recovery_deadline: float | None = None
         reader_done = False
         events: queue.Queue[dict[str, Any] | None] = queue.Queue()
         process: subprocess.Popen[bytes] | None = None
@@ -248,6 +290,7 @@ class RpcProcessSupervisor(ProcessSupervisor):
                     protocol_error = f"failed to send Pi RPC prompt: {exc}"
 
                 started = time.monotonic()
+                last_progress_at = started
                 deadline = started + spec.timeout_seconds
                 steer_deadline = (
                     started + spec.steer_after_seconds
@@ -257,6 +300,62 @@ class RpcProcessSupervisor(ProcessSupervisor):
                 steer_attempted = False
                 next_intervention_poll = started
                 intervention_commands: dict[str, str] = {}
+
+                def resume_after_stream_abort() -> str:
+                    nonlocal assistant_stream_active
+                    nonlocal agent_end_seen
+                    nonlocal agent_settled_seen
+                    nonlocal last_event_type
+                    nonlocal last_progress_at
+                    nonlocal provider_error
+                    nonlocal provider_failure_deadline
+                    nonlocal settled
+                    nonlocal stream_recovery_deadline
+                    nonlocal stream_recovery_settled
+                    nonlocal stream_recovery_state
+
+                    if not (
+                        stream_recovery_abort_acknowledged
+                        and stream_recovery_settled
+                    ):
+                        return ""
+                    try:
+                        _send_rpc(
+                            process,
+                            {
+                                "id": _RPC_STREAM_RECOVERY_PROMPT_ID,
+                                "type": "prompt",
+                                "message": spec.stream_recovery_prompt,
+                            },
+                        )
+                    except OSError as exc:
+                        return f"failed to send Pi RPC stream recovery prompt: {exc}"
+
+                    stream_recovery_state = "recovery_prompt_sent"
+                    stream_recovery_deadline = None
+                    stream_recovery_settled = False
+                    assistant_stream_active = False
+                    active_tool_calls.clear()
+                    provider_error = ""
+                    provider_failure_deadline = None
+                    settled = False
+                    agent_end_seen = False
+                    agent_settled_seen = False
+                    last_progress_at = time.monotonic()
+                    last_event_type = "stream_recovery_prompt_sent"
+                    _write_rpc_diagnostic(
+                        stderr_log,
+                        _rpc_stream_recovery_diagnostic(
+                            event="pi_rpc_stream_recovery_resumed",
+                            task_id=spec.environment.get("AXIOM_TASK_ID", ""),
+                            intent_id=spec.environment.get("AXIOM_INTENT_ID", ""),
+                            lease_id=spec.environment.get("AXIOM_LEASE_ID", ""),
+                            idle_seconds=0.0,
+                            last_event_type=last_event_type,
+                            last_tool_name=last_tool_name,
+                        ),
+                    )
+                    return ""
 
                 while not protocol_error and not completed:
                     if should_cancel is not None:
@@ -277,6 +376,97 @@ class RpcProcessSupervisor(ProcessSupervisor):
                         break
                     if now >= deadline:
                         timed_out = True
+                        break
+                    if (
+                        stream_recovery_deadline is not None
+                        and now >= stream_recovery_deadline
+                    ):
+                        rpc_stream_stalled = True
+                        protocol_error = _rpc_stream_stall_diagnostic(
+                            task_id=spec.environment.get("AXIOM_TASK_ID", ""),
+                            intent_id=spec.environment.get("AXIOM_INTENT_ID", ""),
+                            lease_id=spec.environment.get("AXIOM_LEASE_ID", ""),
+                            idle_seconds=max(0.0, now - last_progress_at),
+                            last_event_type=last_event_type,
+                            last_tool_name=last_tool_name,
+                            last_tool_started_at=last_tool_started_at,
+                            last_tool_finished_at=last_tool_finished_at,
+                            soft_reminder_sent=steer_attempted,
+                            soft_reminder_acknowledged=soft_reminder_acknowledged,
+                            agent_end_seen=agent_end_seen,
+                            agent_settled_seen=agent_settled_seen,
+                            recovery_state=stream_recovery_state,
+                            recovery_abort_acknowledged=(
+                                stream_recovery_abort_acknowledged
+                            ),
+                        )
+                        break
+                    if (
+                        spec.stream_idle_timeout_seconds is not None
+                        and process.poll() is None
+                        and assistant_stream_active
+                        and not active_tool_calls
+                        and stream_recovery_deadline is None
+                        and now - last_progress_at >= spec.stream_idle_timeout_seconds
+                    ):
+                        idle_seconds = now - last_progress_at
+                        if spec.stream_recovery_prompt and not stream_recovery_attempted:
+                            stream_recovery_attempted = True
+                            stream_recovery_state = "abort_sent"
+                            stream_recovery_abort_acknowledged = False
+                            stream_recovery_settled = False
+                            stream_recovery_deadline = min(
+                                deadline,
+                                now + spec.stream_recovery_abort_timeout_seconds,
+                            )
+                            _write_rpc_diagnostic(
+                                stderr_log,
+                                _rpc_stream_recovery_diagnostic(
+                                    event="pi_rpc_stream_recovery_started",
+                                    task_id=spec.environment.get("AXIOM_TASK_ID", ""),
+                                    intent_id=spec.environment.get("AXIOM_INTENT_ID", ""),
+                                    lease_id=spec.environment.get("AXIOM_LEASE_ID", ""),
+                                    idle_seconds=idle_seconds,
+                                    last_event_type=last_event_type,
+                                    last_tool_name=last_tool_name,
+                                ),
+                            )
+                            try:
+                                _send_rpc(
+                                    process,
+                                    {
+                                        "id": _RPC_STREAM_RECOVERY_ABORT_ID,
+                                        "type": "abort",
+                                    },
+                                )
+                            except OSError as exc:
+                                rpc_stream_stalled = True
+                                protocol_error = (
+                                    "failed to abort stalled Pi RPC provider turn: "
+                                    f"{exc}"
+                                )
+                                break
+                            continue
+
+                        rpc_stream_stalled = True
+                        protocol_error = _rpc_stream_stall_diagnostic(
+                            task_id=spec.environment.get("AXIOM_TASK_ID", ""),
+                            intent_id=spec.environment.get("AXIOM_INTENT_ID", ""),
+                            lease_id=spec.environment.get("AXIOM_LEASE_ID", ""),
+                            idle_seconds=idle_seconds,
+                            last_event_type=last_event_type,
+                            last_tool_name=last_tool_name,
+                            last_tool_started_at=last_tool_started_at,
+                            last_tool_finished_at=last_tool_finished_at,
+                            soft_reminder_sent=steer_attempted,
+                            soft_reminder_acknowledged=soft_reminder_acknowledged,
+                            agent_end_seen=agent_end_seen,
+                            agent_settled_seen=agent_settled_seen,
+                            recovery_state=stream_recovery_state,
+                            recovery_abort_acknowledged=(
+                                stream_recovery_abort_acknowledged
+                            ),
+                        )
                         break
 
                     if (
@@ -302,6 +492,7 @@ class RpcProcessSupervisor(ProcessSupervisor):
                         spec.intervention_poller is not None
                         and now >= next_intervention_poll
                         and process.poll() is None
+                        and stream_recovery_deadline is None
                     ):
                         next_intervention_poll = now + max(0.2, spec.intervention_poll_interval_seconds)
                         try:
@@ -324,6 +515,8 @@ class RpcProcessSupervisor(ProcessSupervisor):
                         wait_until = min(wait_until, steer_deadline)
                     if provider_failure_deadline is not None:
                         wait_until = min(wait_until, provider_failure_deadline)
+                    if stream_recovery_deadline is not None:
+                        wait_until = min(wait_until, stream_recovery_deadline)
                     wait_seconds = max(
                         0.01,
                         min(spec.poll_interval_seconds, wait_until - time.monotonic()),
@@ -348,20 +541,44 @@ class RpcProcessSupervisor(ProcessSupervisor):
                                 event.get("error") or "Pi RPC prompt command failed"
                             )
                             break
+                        if event_id == _RPC_STREAM_RECOVERY_ABORT_ID:
+                            if not success:
+                                rpc_stream_stalled = True
+                                protocol_error = str(
+                                    event.get("error")
+                                    or "Pi RPC stream recovery abort failed"
+                                )
+                                break
+                            stream_recovery_abort_acknowledged = True
+                            stream_recovery_state = "abort_acknowledged"
+                            recovery_error = resume_after_stream_abort()
+                            if recovery_error:
+                                rpc_stream_stalled = True
+                                protocol_error = recovery_error
+                                break
+                        if event_id == _RPC_STREAM_RECOVERY_PROMPT_ID and not success:
+                            rpc_stream_stalled = True
+                            protocol_error = (
+                                "Pi RPC stream recovery prompt failed: "
+                                + str(event.get("error") or "prompt command failed")
+                            )
+                            break
                         if event_id == _RPC_STEER_ID:
                             if not success:
                                 logger.warning(
                                     "Pi RPC soft reminder was rejected: %s",
                                     str(event.get("error") or "Pi RPC steer command failed"),
                                 )
-                            elif on_steer is not None:
-                                try:
-                                    on_steer()
-                                except Exception:
-                                    logger.warning(
-                                        "failed to report Pi RPC soft reminder activity",
-                                        exc_info=True,
-                                    )
+                            else:
+                                soft_reminder_acknowledged = True
+                                if on_steer is not None:
+                                    try:
+                                        on_steer()
+                                    except Exception:
+                                        logger.warning(
+                                            "failed to report Pi RPC soft reminder activity",
+                                            exc_info=True,
+                                        )
                         if event_id in intervention_commands:
                             intervention_id = intervention_commands.pop(event_id)
                             if spec.intervention_result_reporter is not None:
@@ -404,7 +621,49 @@ class RpcProcessSupervisor(ProcessSupervisor):
                             completed = True
                             continue
 
+                    if event_type == "_progress":
+                        progress_type = str(event.get("event_type") or "")
+                        last_progress_at = time.monotonic()
+                        last_event_type = progress_type
+                        message_role = str(event.get("message_role") or "")
+                        tool_name = str(event.get("tool_name") or "")
+                        tool_id = str(event.get("tool_id") or tool_name or "unknown")
+                        if tool_name:
+                            last_tool_name = tool_name
+                        if progress_type == "message_start" and message_role == "assistant":
+                            assistant_stream_active = True
+                        elif progress_type == "message_update" and (
+                            message_role == "assistant" or assistant_stream_active
+                        ):
+                            assistant_stream_active = True
+                        elif progress_type == "message_end" and (
+                            message_role == "assistant" or assistant_stream_active
+                        ):
+                            assistant_stream_active = False
+                        elif progress_type in {
+                            "tool_execution_start",
+                            "bash_execution_start",
+                        }:
+                            active_tool_calls.add(tool_id)
+                            assistant_stream_active = False
+                            last_tool_started_at = last_progress_at
+                        elif progress_type in {
+                            "tool_execution_end",
+                            "bash_execution_end",
+                        }:
+                            active_tool_calls.discard(tool_id)
+                            if tool_id == "unknown" and len(active_tool_calls) == 1:
+                                active_tool_calls.clear()
+                            last_tool_finished_at = last_progress_at
+                        continue
+
                     if event_type == "agent_end":
+                        last_progress_at = time.monotonic()
+                        last_event_type = event_type
+                        agent_end_seen = True
+                        assistant_stream_active = False
+                        if stream_recovery_deadline is not None:
+                            continue
                         terminal_error = _rpc_terminal_agent_error(event)
                         if terminal_error:
                             provider_error = terminal_error
@@ -415,11 +674,19 @@ class RpcProcessSupervisor(ProcessSupervisor):
                         continue
 
                     if event_type == "auto_retry_start":
+                        last_progress_at = time.monotonic()
+                        last_event_type = event_type
+                        assistant_stream_active = False
                         provider_error = ""
                         provider_failure_deadline = None
                         continue
 
                     if event_type == "auto_retry_end":
+                        last_progress_at = time.monotonic()
+                        last_event_type = event_type
+                        assistant_stream_active = False
+                        if stream_recovery_deadline is not None:
+                            continue
                         if event.get("success") is True:
                             provider_error = ""
                             provider_failure_deadline = None
@@ -438,7 +705,20 @@ class RpcProcessSupervisor(ProcessSupervisor):
                     # ``agent_end`` is deliberately not a completion boundary.
                     # Pi may still retry, compact, or process queued messages.
                     if event_type == "agent_settled" and not final_text_requested:
+                        last_progress_at = time.monotonic()
+                        last_event_type = event_type
+                        agent_settled_seen = True
                         settled = True
+                        assistant_stream_active = False
+                        if stream_recovery_deadline is not None:
+                            stream_recovery_settled = True
+                            if not stream_recovery_abort_acknowledged:
+                                stream_recovery_state = "agent_settled"
+                            recovery_error = resume_after_stream_abort()
+                            if recovery_error:
+                                rpc_stream_stalled = True
+                                protocol_error = recovery_error
+                            continue
                         if provider_error:
                             protocol_error = f"Pi RPC provider failed: {provider_error}"
                             break
@@ -518,6 +798,7 @@ class RpcProcessSupervisor(ProcessSupervisor):
             cancelled=cancelled,
             cancel_reason=cancel_reason,
             last_assistant_text=last_assistant_text,
+            rpc_stream_stalled=rpc_stream_stalled,
         )
 
     def _validate_rpc(self, spec: RpcProcessSpec) -> None:
@@ -530,6 +811,15 @@ class RpcProcessSupervisor(ProcessSupervisor):
             0 < spec.steer_after_seconds < spec.timeout_seconds
         ):
             raise ValueError("RPC steer timing must fall within the process timeout")
+        if spec.stream_idle_timeout_seconds is not None and spec.stream_idle_timeout_seconds <= 0:
+            raise ValueError("RPC stream idle timeout must be positive")
+        if spec.stream_recovery_prompt is not None:
+            if spec.stream_idle_timeout_seconds is None:
+                raise ValueError("RPC stream recovery requires an idle timeout")
+            if not spec.stream_recovery_prompt.strip():
+                raise ValueError("RPC stream recovery prompt must not be empty")
+        if spec.stream_recovery_abort_timeout_seconds <= 0:
+            raise ValueError("RPC stream recovery abort timeout must be positive")
         if spec.provider_failure_grace_seconds <= 0:
             raise ValueError("RPC provider failure grace must be positive")
 
@@ -562,6 +852,8 @@ def _read_rpc_lines(
 
             if event is not None and event_type in _RPC_CONTROL_EVENT_TYPES:
                 events.put(_compact_rpc_control_event(event))
+            elif event is not None and event_type in _RPC_PROGRESS_EVENT_TYPES:
+                events.put(_compact_rpc_progress_event(event))
     finally:
         if omitted:
             summary = {
@@ -601,6 +893,132 @@ def _compact_rpc_control_event(event: dict[str, Any]) -> dict[str, Any]:
             "finalError": event.get("finalError"),
         }
     return event
+
+
+def _compact_rpc_progress_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Return only the metadata needed by the semantic stream watchdog."""
+
+    return {
+        "type": "_progress",
+        "event_type": str(event.get("type") or ""),
+        "message_role": _rpc_event_message_role(event),
+        "tool_name": _rpc_event_tool_name(event),
+        "tool_id": _rpc_event_tool_id(event),
+    }
+
+
+def _rpc_event_message_role(event: dict[str, Any]) -> str:
+    role = event.get("role")
+    if isinstance(role, str) and role.strip():
+        return role.strip()[:50]
+    message = event.get("message")
+    if isinstance(message, dict):
+        role = message.get("role")
+        if isinstance(role, str) and role.strip():
+            return role.strip()[:50]
+    return ""
+
+
+def _rpc_event_tool_id(event: dict[str, Any]) -> str:
+    for key in ("toolCallId", "tool_call_id", "id"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:200]
+    for key in ("toolCall", "tool_call"):
+        nested = event.get(key)
+        if isinstance(nested, dict):
+            tool_id = _rpc_event_tool_id(nested)
+            if tool_id:
+                return tool_id
+    return _rpc_event_tool_name(event)
+
+
+def _rpc_event_tool_name(event: dict[str, Any]) -> str:
+    for key in ("toolName", "tool_name", "tool", "name", "toolCallId", "tool_call_id"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:200]
+    for key in ("toolCall", "tool_call"):
+        nested = event.get(key)
+        if isinstance(nested, dict):
+            name = _rpc_event_tool_name(nested)
+            if name:
+                return name
+    return ""
+
+
+def _rpc_stream_stall_diagnostic(
+    *,
+    task_id: str,
+    intent_id: str,
+    lease_id: str,
+    idle_seconds: float,
+    last_event_type: str,
+    last_tool_name: str,
+    last_tool_started_at: float | None,
+    last_tool_finished_at: float | None,
+    soft_reminder_sent: bool,
+    soft_reminder_acknowledged: bool,
+    agent_end_seen: bool,
+    agent_settled_seen: bool,
+    recovery_state: str,
+    recovery_abort_acknowledged: bool,
+) -> str:
+    now = time.monotonic()
+
+    def age(value: float | None) -> str:
+        return "" if value is None else f"{max(0.0, now - value):.3f}"
+
+    return "\n".join(
+        (
+            "pi_rpc_stream_stalled",
+            f"task_id={task_id or 'unknown'}",
+            f"intent_id={intent_id or 'unknown'}",
+            f"lease_id={lease_id or 'unknown'}",
+            f"idle_seconds={idle_seconds:.3f}",
+            f"last_event_type={last_event_type or 'none'}",
+            f"last_tool={last_tool_name or 'none'}",
+            f"last_tool_started_ago_seconds={age(last_tool_started_at) or 'none'}",
+            f"last_tool_finished_ago_seconds={age(last_tool_finished_at) or 'none'}",
+            f"soft_reminder_sent={'true' if soft_reminder_sent else 'false'}",
+            f"soft_reminder_acknowledged={'true' if soft_reminder_acknowledged else 'false'}",
+            f"agent_end_seen={'true' if agent_end_seen else 'false'}",
+            f"agent_settled_seen={'true' if agent_settled_seen else 'false'}",
+            f"recovery_state={recovery_state or 'none'}",
+            (
+                "recovery_abort_acknowledged="
+                f"{'true' if recovery_abort_acknowledged else 'false'}"
+            ),
+        )
+    )
+
+
+def _rpc_stream_recovery_diagnostic(
+    *,
+    event: str,
+    task_id: str,
+    intent_id: str,
+    lease_id: str,
+    idle_seconds: float,
+    last_event_type: str,
+    last_tool_name: str,
+) -> str:
+    return "\n".join(
+        (
+            event,
+            f"task_id={task_id or 'unknown'}",
+            f"intent_id={intent_id or 'unknown'}",
+            f"lease_id={lease_id or 'unknown'}",
+            f"idle_seconds={idle_seconds:.3f}",
+            f"last_event_type={last_event_type or 'none'}",
+            f"last_tool={last_tool_name or 'none'}",
+        )
+    )
+
+
+def _write_rpc_diagnostic(log, diagnostic: str) -> None:
+    log.write((diagnostic + "\n").encode("utf-8", errors="replace"))
+    log.flush()
 
 
 def _rpc_terminal_agent_error(event: dict[str, Any]) -> str:

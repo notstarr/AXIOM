@@ -48,6 +48,12 @@ from axiom.modules.workers.schemas import Worker
 
 PiSettings = PiWorkerConfig
 EXPLORE_SOFT_REMINDER_RATIO = 0.70
+EXPLORE_RPC_STREAM_IDLE_TIMEOUT_SECONDS = 120.0
+EXPLORE_RPC_STREAM_RECOVERY_PROMPT = (
+    "上一轮模型响应流长时间没有完成，该轮请求已被中止。请基于当前会话、已完成的工具结果和现有 "
+    "Workspace 继续执行。不要重复已经完成的测试；先检查最后一个完整 Tool Result，然后从尚未完成的"
+    "步骤继续。最终仍须遵守当前 Intent、产物和 FINISH 合同。"
+)
 CONTEXT_ATTENTION_SYSTEM_PROMPT = (
     "在开始规划或执行任何操作前，必须先读取 Context Manifest，并完整读取其中的 "
     "hints.json、knowledge.json、vulnerabilities.json；随后查看本轮相关 Skill，再按需展开 "
@@ -188,6 +194,8 @@ class PiBootstrapExecutor:
         rpc: bool = False,
         steer_after_seconds: float | None = None,
         steer_message: str | None = None,
+        stream_idle_timeout_seconds: float | None = None,
+        stream_recovery_prompt: str | None = None,
         enable_axiom_tools: bool = True,
     ) -> ProcessResult:
         session_dir = Path(self.settings.session_dir or Path(execution_input.run_dir) / "sessions")
@@ -333,6 +341,8 @@ class PiBootstrapExecutor:
                         prompt=prompt,
                         steer_after_seconds=steer_after_seconds,
                         steer_message=steer_message,
+                        stream_idle_timeout_seconds=stream_idle_timeout_seconds,
+                        stream_recovery_prompt=stream_recovery_prompt,
                         intervention_poller=self.intervention_poller if execution_input.intent_kind == "explore" else None,
                         intervention_result_reporter=self.intervention_result_reporter if execution_input.intent_kind == "explore" else None,
                     ),
@@ -756,6 +766,8 @@ class PiExploreExecutor(PiBootstrapExecutor):
             rpc=True,
             steer_after_seconds=steer_after_seconds,
             steer_message=_explore_soft_reminder(remaining_seconds),
+            stream_idle_timeout_seconds=EXPLORE_RPC_STREAM_IDLE_TIMEOUT_SECONDS,
+            stream_recovery_prompt=EXPLORE_RPC_STREAM_RECOVERY_PROMPT,
         )
         if result.cancelled:
             raise LeaseLostError(result.cancel_reason or "worker cancelled")

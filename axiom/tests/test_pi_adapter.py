@@ -188,6 +188,24 @@ def test_pi_json_empty_output_without_provider_error_is_not_process_failure(tmp_
     assert PiBootstrapExecutor._last_assistant_text(result) == ""
 
 
+def test_pi_rpc_stream_stall_is_a_transient_worker_error(tmp_path) -> None:
+    stdout_path = tmp_path / "stdout.log"
+    stderr_path = tmp_path / "stderr.log"
+    stdout_path.write_text("", encoding="utf-8")
+    stderr_path.write_text("pi_rpc_stream_stalled\nidle_seconds=120.001\n", encoding="utf-8")
+    result = ProcessResult(
+        returncode=1,
+        stdout="",
+        stderr=stderr_path.read_text(encoding="utf-8"),
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        rpc_stream_stalled=True,
+    )
+
+    with pytest.raises(TransientWorkerError, match="pi_rpc_stream_stalled"):
+        PiBootstrapExecutor._raise_on_process_failure(result)
+
+
 def test_bootstrap_rejects_missing_context_manifest(tmp_path) -> None:
     input_value = execution_input(tmp_path / "run").model_copy(
         update={"context_manifest_path": None}
@@ -890,6 +908,9 @@ def test_explore_uses_rpc_without_print_prompt_and_reports_soft_reminder(
     assert len(rpc.specs) == 1
     spec = rpc.specs[0]
     assert spec.steer_after_seconds == expected_reminder
+    assert spec.stream_idle_timeout_seconds == 120.0
+    assert "上一轮模型响应流长时间没有完成" in (spec.stream_recovery_prompt or "")
+    assert "不要重复已经完成的测试" in (spec.stream_recovery_prompt or "")
     assert f"剩余约 {execute_seconds * 3 // 10} 秒" in (spec.steer_message or "")
     assert "Evidence 有则保留，没有也不要补跑" in (spec.steer_message or "")
     assert spec.command[spec.command.index("--mode") + 1] == "rpc"
@@ -927,6 +948,8 @@ def test_explore_conclude_also_uses_rpc_without_another_reminder(tmp_path) -> No
     spec = rpc.specs[0]
     assert spec.steer_after_seconds is None
     assert spec.steer_message is None
+    assert spec.stream_idle_timeout_seconds is None
+    assert spec.stream_recovery_prompt is None
     assert spec.command[spec.command.index("--mode") + 1] == "rpc"
     assert "-p" not in spec.command
     assert "mcp__demo__selected__12345678" in spec.command[spec.command.index("--tools") + 1]
