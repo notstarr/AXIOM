@@ -7,9 +7,11 @@ requirements:
 
 # Browser Control
 
-Explore 启用本 Skill 后，直接使用 `browser_*` 原生工具。Browser Broker 会自动连接或受控启动共享的 Chrome-SecTest，并为当前 Lease 创建独占页面。
+浏览器控制只是测试的一种手段，主要用于触发真实业务流程并取得真实参数和值；对于已经明确的接口，优先使用 `curl` 等直接、可复现的方式验证。
 
-**不要**通过 Bash 调用 `cdp_ctl.py`、启动 Chrome、拼接 CDP 命令或读取全局 mitmproxy 流量。原生工具不可用时应报告基础设施错误，不得回退到可能操作其他 Worker 页面的旧路径。
+Explore 启用本 Skill 后，直接使用 AXIOM 内置 Extension 注册的 `browser_*` 工具。本 Skill 只是使用指南，不是工具实现；Chrome 生命周期、CDP 连接、页面隔离、网络记录和 Lease 清理都由 Browser Broker 管理。Chrome 未运行时，第一次调用浏览器工具会由 Broker 自动启动受控的 Chrome-SecTest。
+
+浏览器工具是 Explore 阶段固定的内置 Tool，不进入阶段能力绑定表，也不需要在页面单独启停。**不要**通过 Bash 调用任何 `browser-control/scripts/`、`cdp_ctl.py`、启动 Chrome、拼接 CDP 命令或读取全局 mitmproxy/Reqable 流量。原生工具不可用时应报告基础设施错误，不得回退到可能操作其他 Worker 页面的旧路径。小程序和 App 的原生流量不属于本 Skill 范围。
 
 ## 默认流程
 
@@ -79,6 +81,15 @@ Snapshot Ref 是可访问性记录，不是 CSS/XPath，也不是长期稳定的
 
 ## 网络、Console 与截图
 
+页面网络记录由 Browser Broker 在当前 Lease 内监听 Playwright 页面事件。需要观察某个动作产生的请求时，先读取当前游标，再执行动作，最后用新游标读取增量：
+
+```text
+browser_read_network(page_id, after_cursor=当前 cursor)
+→ browser_click / browser_fill / browser_press
+→ browser_wait（必要时等待 text、url 或 load_state）
+→ browser_read_network(page_id, after_cursor=上一步返回的 cursor)
+```
+
 - `browser_read_network` 按游标增量读取当前页面的 HTTP 和 WebSocket 活动，不会清空其他 Worker 数据。
 - `browser_read_console` 按游标读取 Console、Page Error 和 Dialog。
 - 敏感 Header 默认脱敏；只有验证确实需要时才设置 `include_sensitive=true`。
@@ -90,6 +101,8 @@ Snapshot Ref 是可访问性记录，不是 CSS/XPath，也不是长期稳定的
 ## 人工验证与安全边界
 
 出现验证码、异常流量警告或人工验证时：
+
+Chrome-SecTest 窗口默认最小化运行，AI 操作不抢占前台焦点；需要人工介入时，从 Dock 恢复窗口查看和操作即可，恢复后 AI 不会再次强制最小化。
 
 1. 立即停止自动化交互，不绕过或脚本化验证；
 2. 保持页面打开，通过 Explore 对话说明需要的人工操作；

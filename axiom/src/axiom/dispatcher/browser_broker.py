@@ -5,7 +5,10 @@ import contextlib
 import hashlib
 import json
 import os
+import platform
 import secrets
+import shutil
+import signal
 import socket
 import subprocess
 import tempfile
@@ -15,7 +18,8 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
+from urllib.request import urlopen
 
 from playwright.async_api import (
     Browser,
@@ -131,7 +135,6 @@ class LeaseState:
     run_dir: Path
     scope: dict[str, Any]
     cdp_url: str
-    launch_script: Path | None
     pages: dict[str, PageState] = field(default_factory=dict)
     page_sequence: int = 0
 
@@ -142,7 +145,7 @@ def browser_skill_directory(paths: list[str]) -> Path | None:
             Path(value)
             for value in paths
             if Path(value).name == "browser-control"
-            and (Path(value) / "scripts" / "launch-chrome.sh").is_file()
+            and (Path(value) / "SKILL.md").is_file()
         ),
         None,
     )
@@ -220,7 +223,6 @@ class BrowserBrokerManager:
         run_dir: str,
         scope: dict[str, Any],
         cdp_url: str,
-        skill_directory: Path,
     ) -> BrowserLeaseHandle:
         self._ensure_started()
         token = secrets.token_urlsafe(32)
@@ -235,7 +237,6 @@ class BrowserBrokerManager:
                 "run_dir": run_dir,
                 "scope": scope,
                 "cdp_url": cdp_url,
-                "launch_script": str(skill_directory / "scripts" / "launch-chrome.sh"),
             }
         )
         if not response.get("ok"):
@@ -355,6 +356,10 @@ class BrowserBrokerServer:
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._cdp_url = ""
+        self._chrome_pid: int | None = None
+        self._chrome_port: int | None = None
+        self._chrome_profile: Path | None = None
+        self._chrome_pid_file: Path | None = None
         self._connect_lock = asyncio.Lock()
 
     async def serve(self) -> None:
@@ -377,6 +382,7 @@ class BrowserBrokerServer:
             if self._playwright is not None:
                 with contextlib.suppress(Exception):
                     await self._playwright.stop()
+            self._stop_owned_chrome()
             self.socket_path.unlink(missing_ok=True)
 
     async def _handle_client(
@@ -479,8 +485,6 @@ class BrowserBrokerServer:
             return self._ok("Browser Lease 已存在")
         run_dir = Path(str(payload.get("run_dir") or "")).resolve()
         run_dir.mkdir(parents=True, exist_ok=True)
-        launch_raw = str(payload.get("launch_script") or "")
-        launch_script = Path(launch_raw).resolve() if launch_raw else None
         self.leases[token] = LeaseState(
             token=token,
             lease_id=lease_id,
@@ -489,7 +493,6 @@ class BrowserBrokerServer:
             run_dir=run_dir,
             scope=dict(payload.get("scope") or {}),
             cdp_url=str(payload.get("cdp_url") or "http://127.0.0.1:9223"),
-            launch_script=launch_script,
         )
         return self._ok("Browser Lease 已注册")
 
@@ -544,69 +547,246 @@ class BrowserBrokerServer:
                 return self._context
             if self._playwright is None:
                 self._playwright = await async_playwright().start()
+            # Always verify ownership before attaching.  A live CDP endpoint may
+            # belong to the user's ordinary browser; attaching to it would leak
+            # pages and credentials across Tasks.  _launch_chrome is idempotent
+            # for the Broker-owned profile and starts Chrome only when needed.
+            await self._launch_chrome(lease)
             try:
                 self._browser = await self._playwright.chromium.connect_over_cdp(
                     lease.cdp_url, timeout=10_000
                 )
-            except Exception:
-                await self._launch_chrome(lease)
-                try:
-                    self._browser = await self._playwright.chromium.connect_over_cdp(
-                        lease.cdp_url, timeout=10_000
-                    )
-                except Exception as exc:
-                    raise BrowserBrokerError(
-                        "browser_unavailable",
-                        f"无法连接Chrome-SecTest：{exc}",
-                        retryable=True,
-                    ) from exc
+            except Exception as exc:
+                raise BrowserBrokerError(
+                    "browser_unavailable",
+                    f"无法连接Chrome-SecTest：{exc}",
+                    retryable=True,
+                ) from exc
             if not self._browser.contexts:
                 raise BrowserBrokerError("browser_context_missing", "Chrome没有可用BrowserContext")
             self._context = self._browser.contexts[0]
             self._cdp_url = lease.cdp_url
             await self._rebind_pages()
+            await self._minimize_all_windows()
             return self._context
 
+    @staticmethod
+    def _chrome_profile_dir() -> Path:
+        configured = os.environ.get("AXIOM_CHROME_PROFILE_DIR", "").strip()
+        if configured:
+            return Path(configured).expanduser().resolve()
+        if platform.system() == "Darwin":
+            return (Path.home() / "Library/Application Support/Chrome-SecTest").resolve()
+        return (Path.home() / ".config/Chrome-SecTest").resolve()
+
+    @staticmethod
+    def _chrome_binary() -> str | None:
+        configured = os.environ.get("CHROME_BIN", "").strip()
+        candidates = [
+            configured,
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+            "chrome",
+        ]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            path = Path(candidate).expanduser()
+            if path.is_file() and os.access(path, os.X_OK):
+                return str(path)
+            resolved = shutil.which(candidate)
+            if resolved:
+                return resolved
+        return None
+
+    @staticmethod
+    def _cdp_version_url(cdp_url: str) -> str:
+        parsed = urlparse(cdp_url)
+        return urlunparse((parsed.scheme or "http", parsed.netloc, "/json/version", "", "", ""))
+
+    @classmethod
+    def _cdp_alive(cls, cdp_url: str) -> bool:
+        try:
+            with urlopen(cls._cdp_version_url(cdp_url), timeout=1.0) as response:
+                return 200 <= int(response.status) < 500
+        except Exception:
+            return False
+
+    @staticmethod
+    def _port_is_open(host: str, port: int) -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=0.25):
+                return True
+        except OSError:
+            return False
+
+    @staticmethod
+    def _process_command(pid: int) -> str:
+        try:
+            result = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "command="],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=1.0,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        return result.stdout.strip()
+
+    @classmethod
+    def _is_expected_chrome_command(cls, pid: int, *, port: int, profile: Path) -> bool:
+        command = cls._process_command(pid)
+        return bool(
+            command
+            and "--type=" not in command
+            and f"--remote-debugging-port={port}" in command
+            and f"--user-data-dir={profile}" in command
+        )
+
+    @classmethod
+    def _find_expected_chrome_pid(cls, *, port: int, profile: Path) -> int | None:
+        try:
+            result = subprocess.run(
+                ["ps", "ax", "-o", "pid=", "-o", "command="],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        for line in result.stdout.splitlines():
+            parts = line.strip().split(None, 1)
+            if not parts:
+                continue
+            try:
+                pid = int(parts[0])
+            except ValueError:
+                continue
+            if cls._is_expected_chrome_command(pid, port=port, profile=profile):
+                return pid
+        return None
+
+    def _stop_owned_chrome(self) -> None:
+        pid = self._chrome_pid
+        if pid is None:
+            return
+        profile = self._chrome_profile or self._chrome_profile_dir()
+        port = self._chrome_port or urlparse(self._cdp_url).port or 9223
+        if self._is_expected_chrome_command(pid, port=port, profile=profile):
+            try:
+                pgid_result = subprocess.run(
+                    ["ps", "-p", str(pid), "-o", "pgid="],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=1.0,
+                )
+                pgid_text = pgid_result.stdout.strip()
+                pgid = int(pgid_text) if pgid_text.isdigit() else pid
+                os.killpg(pgid, signal.SIGTERM)
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                pass
+        if self._chrome_pid_file is not None:
+            self._chrome_pid_file.unlink(missing_ok=True)
+        self._chrome_pid = None
+        self._chrome_port = None
+        self._chrome_profile = None
+        self._chrome_pid_file = None
+
     async def _launch_chrome(self, lease: LeaseState) -> None:
-        script = lease.launch_script
-        if script is None or not script.is_file():
+        parsed_cdp = urlparse(lease.cdp_url)
+        host = (parsed_cdp.hostname or "127.0.0.1").lower()
+        if host not in {"127.0.0.1", "localhost", "::1"}:
             raise BrowserBrokerError(
-                "browser_launcher_missing",
-                "browser-control启动脚本不可用",
+                "browser_cdp_invalid",
+                "Browser Broker 只允许连接本机 Chrome CDP",
+            )
+        port = parsed_cdp.port or 9223
+        profile = self._chrome_profile_dir()
+        pid_file = Path(tempfile.gettempdir()) / f"chrome-sectest-{port}.pid"
+        if self._cdp_alive(lease.cdp_url):
+            expected_pid = self._find_expected_chrome_pid(port=port, profile=profile)
+            if expected_pid is None:
+                raise BrowserBrokerError(
+                    "browser_cdp_port_occupied",
+                    f"CDP 端口 {port} 已被非 Chrome-SecTest 进程占用，拒绝接管",
+                    retryable=True,
+                )
+            # This Broker did not start the already-running browser, so keep
+            # it attached but do not claim ownership or terminate it on close.
+            return
+        # A non-CDP service can still occupy the configured port.  Do not
+        # start Chrome and let it fail ambiguously; report the ownership issue
+        # explicitly so the caller can choose another port or stop that service.
+        if self._port_is_open(host, port):
+            raise BrowserBrokerError(
+                "browser_cdp_port_occupied",
+                f"CDP 端口 {port} 已被其他进程占用，拒绝接管",
                 retryable=True,
             )
+        binary = self._chrome_binary()
+        if binary is None:
+            raise BrowserBrokerError(
+                "browser_launcher_missing",
+                "未找到 Chrome/Chromium；请配置 CHROME_BIN",
+                retryable=True,
+            )
+        profile.mkdir(parents=True, exist_ok=True)
+        args = [
+            binary,
+            f"--user-data-dir={profile}",
+            f"--remote-debugging-port={port}",
+            "--remote-allow-origins=*",
+            "--no-first-run",
+            "--window-size=1280,800",
+        ]
+        if os.environ.get("CHROME_HEADLESS") == "1":
+            args.append("--headless")
+        if os.environ.get("CHROME_WINDOW", "minimized") != "normal":
+            args.append("--start-minimized")
         environment = {
             key: value
             for key, value in os.environ.items()
             if not any(marker in key.upper() for marker in ("API_KEY", "TOKEN", "SECRET"))
         }
-        environment["CDP_URL"] = lease.cdp_url
-        parsed_cdp = urlparse(lease.cdp_url)
-        if parsed_cdp.port:
-            environment["CDP_PORT"] = str(parsed_cdp.port)
         try:
             process = await asyncio.create_subprocess_exec(
-                "bash",
-                str(script),
+                *args,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 env=environment,
+                start_new_session=True,
             )
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=22.0)
-        except asyncio.TimeoutError as exc:
-            with contextlib.suppress(Exception):
-                process.kill()
+        except OSError as exc:
             raise BrowserBrokerError(
-                "browser_start_timeout", "Chrome-SecTest启动超时", retryable=True
+                "browser_start_failed", f"启动 Chrome-SecTest 失败：{exc}", retryable=True
             ) from exc
-        if process.returncode != 0:
-            detail = (stderr or stdout).decode("utf-8", errors="replace")[-1000:]
-            raise BrowserBrokerError(
-                "browser_start_failed",
-                detail or "Chrome-SecTest启动失败",
-                retryable=True,
-            )
+        self._chrome_pid = process.pid
+        self._chrome_port = port
+        self._chrome_profile = profile
+        self._chrome_pid_file = pid_file
+        pid_file.write_text(str(process.pid), encoding="ascii")
+        for _ in range(20):
+            await asyncio.sleep(0.5)
+            if not self._cdp_alive(lease.cdp_url):
+                continue
+            ready_pid = self._find_expected_chrome_pid(port=port, profile=profile)
+            if ready_pid is not None:
+                self._chrome_pid = ready_pid
+                pid_file.write_text(str(ready_pid), encoding="ascii")
+                return
+        self._stop_owned_chrome()
+        raise BrowserBrokerError(
+            "browser_start_timeout", "Chrome-SecTest 启动超时", retryable=True
+        )
 
     async def _rebind_pages(self) -> None:
         if self._context is None:
@@ -1352,6 +1532,28 @@ class BrowserBrokerServer:
         try:
             payload = await session.send("Target.getTargetInfo")
             return str((payload.get("targetInfo") or {}).get("targetId") or "")
+        finally:
+            with contextlib.suppress(Exception):
+                await session.detach()
+
+    async def _minimize_all_windows(self) -> None:
+        if os.environ.get("CHROME_WINDOW", "minimized") == "normal" or self._browser is None:
+            return
+        for context in self._browser.contexts:
+            for page in context.pages:
+                with contextlib.suppress(Exception):
+                    await self._minimize_window(page)
+
+    async def _minimize_window(self, page: Page) -> None:
+        session = await page.context.new_cdp_session(page)
+        try:
+            info = await session.send("Browser.getWindowForTarget")
+            window_id = info.get("windowId")
+            if window_id is not None:
+                await session.send(
+                    "Browser.setWindowBounds",
+                    {"windowId": window_id, "bounds": {"windowState": "minimized"}},
+                )
         finally:
             with contextlib.suppress(Exception):
                 await session.detach()

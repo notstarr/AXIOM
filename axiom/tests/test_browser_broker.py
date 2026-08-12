@@ -15,6 +15,7 @@ from axiom.dispatcher.browser_broker import (
     BrowserBrokerManager,
     BrowserBrokerServer,
     LeaseState,
+    browser_skill_directory,
     PageState,
     RefState,
     redact_headers,
@@ -24,10 +25,8 @@ from axiom.dispatcher.browser_broker import (
 
 def _browser_skill(tmp_path: Path) -> Path:
     skill = tmp_path / "browser-control"
-    script = skill / "scripts" / "launch-chrome.sh"
-    script.parent.mkdir(parents=True)
-    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    script.chmod(0o700)
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: browser-control\n---\n", encoding="utf-8")
     return skill
 
 
@@ -43,7 +42,6 @@ def test_browser_broker_registers_and_closes_lease_without_starting_chrome(
             run_dir=str(tmp_path / "run"),
             scope={"enabled": True, "targets": ["example.com"]},
             cdp_url="http://127.0.0.1:65530",
-            skill_directory=_browser_skill(tmp_path),
         )
 
         response = manager._request(
@@ -71,6 +69,200 @@ def test_browser_tool_contract_is_explicit_and_does_not_expose_session_identity(
     assert "browser_snapshot" in BROWSER_TOOL_NAMES
     assert "browser_read_network" in BROWSER_TOOL_NAMES
     assert all("session" not in name and "lease" not in name for name in BROWSER_TOOL_NAMES)
+
+
+def test_browser_skill_directory_only_requires_skill_markdown(tmp_path: Path) -> None:
+    skill = _browser_skill(tmp_path)
+    assert browser_skill_directory([str(skill)]) == skill
+
+
+def _lease_for_chrome(tmp_path: Path) -> LeaseState:
+    return LeaseState(
+        token="token",
+        lease_id="lease",
+        task_id="t_001",
+        intent_id="i001",
+        run_dir=tmp_path / "run",
+        scope={},
+        cdp_url="http://127.0.0.1:19223",
+    )
+
+
+def test_browser_launcher_rejects_a_non_cdp_process_on_the_cdp_port(
+    tmp_path: Path, monkeypatch
+) -> None:
+    server = BrowserBrokerServer(
+        manager_secret="secret",
+        socket_path=tmp_path / "broker.sock",
+        ready=threading.Event(),
+    )
+    monkeypatch.setattr(BrowserBrokerServer, "_cdp_alive", classmethod(lambda _cls, _url: False))
+    monkeypatch.setattr(BrowserBrokerServer, "_port_is_open", staticmethod(lambda _host, _port: True))
+
+    with pytest.raises(BrowserBrokerError) as raised:
+        asyncio.run(server._launch_chrome(_lease_for_chrome(tmp_path)))
+
+    assert raised.value.code == "browser_cdp_port_occupied"
+
+
+def test_browser_launcher_reports_missing_chrome(tmp_path: Path, monkeypatch) -> None:
+    server = BrowserBrokerServer(
+        manager_secret="secret",
+        socket_path=tmp_path / "broker.sock",
+        ready=threading.Event(),
+    )
+    monkeypatch.setattr(BrowserBrokerServer, "_cdp_alive", classmethod(lambda _cls, _url: False))
+    monkeypatch.setattr(BrowserBrokerServer, "_port_is_open", staticmethod(lambda _host, _port: False))
+    monkeypatch.setattr(BrowserBrokerServer, "_chrome_binary", staticmethod(lambda: None))
+
+    with pytest.raises(BrowserBrokerError) as raised:
+        asyncio.run(server._launch_chrome(_lease_for_chrome(tmp_path)))
+
+    assert raised.value.code == "browser_launcher_missing"
+
+
+def test_browser_launcher_uses_an_isolated_profile_and_expected_flags(
+    tmp_path: Path, monkeypatch
+) -> None:
+    server = BrowserBrokerServer(
+        manager_secret="secret",
+        socket_path=tmp_path / "broker.sock",
+        ready=threading.Event(),
+    )
+    lease = _lease_for_chrome(tmp_path)
+    monkeypatch.setenv("AXIOM_CHROME_PROFILE_DIR", str(tmp_path / "Chrome-SecTest"))
+    monkeypatch.setattr(BrowserBrokerServer, "_cdp_alive", classmethod(lambda _cls, _url: next(alive)))
+    monkeypatch.setattr(BrowserBrokerServer, "_port_is_open", staticmethod(lambda _host, _port: False))
+    monkeypatch.setattr(BrowserBrokerServer, "_chrome_binary", staticmethod(lambda: "/fake/chrome"))
+    monkeypatch.setattr(BrowserBrokerServer, "_find_expected_chrome_pid", classmethod(lambda _cls, **_kwargs: 4242))
+    alive = iter((False, True))
+    seen: dict[str, object] = {}
+
+    class FakeProcess:
+        pid = 1234
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    asyncio.run(server._launch_chrome(lease))
+
+    args = list(seen["args"])
+    assert args[0] == "/fake/chrome"
+    assert f"--user-data-dir={tmp_path / 'Chrome-SecTest'}" in args
+    assert "--remote-debugging-port=19223" in args
+    assert "--remote-allow-origins=*" in args
+    assert "--start-minimized" in args
+    assert seen["kwargs"]["start_new_session"] is True
+    assert server._chrome_pid == 4242
+    if server._chrome_pid_file is not None:
+        server._chrome_pid_file.unlink(missing_ok=True)
+
+
+def test_browser_launcher_keeps_window_visible_when_chrome_window_normal(
+    tmp_path: Path, monkeypatch
+) -> None:
+    server = BrowserBrokerServer(
+        manager_secret="secret",
+        socket_path=tmp_path / "broker.sock",
+        ready=threading.Event(),
+    )
+    lease = _lease_for_chrome(tmp_path)
+    monkeypatch.setenv("AXIOM_CHROME_PROFILE_DIR", str(tmp_path / "Chrome-SecTest"))
+    monkeypatch.setenv("CHROME_WINDOW", "normal")
+    monkeypatch.setattr(BrowserBrokerServer, "_cdp_alive", classmethod(lambda _cls, _url: next(alive)))
+    monkeypatch.setattr(BrowserBrokerServer, "_port_is_open", staticmethod(lambda _host, _port: False))
+    monkeypatch.setattr(BrowserBrokerServer, "_chrome_binary", staticmethod(lambda: "/fake/chrome"))
+    monkeypatch.setattr(BrowserBrokerServer, "_find_expected_chrome_pid", classmethod(lambda _cls, **_kwargs: 4242))
+    alive = iter((False, True))
+    seen: dict[str, object] = {}
+
+    class FakeProcess:
+        pid = 1234
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    asyncio.run(server._launch_chrome(lease))
+
+    args = list(seen["args"])
+    assert "--start-minimized" not in args
+    if server._chrome_pid_file is not None:
+        server._chrome_pid_file.unlink(missing_ok=True)
+
+
+class _FakeCdpSession:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, object | None]] = []
+
+    async def send(self, method: str, params: object | None = None) -> dict[str, object]:
+        self.sent.append((method, params))
+        if method == "Browser.getWindowForTarget":
+            return {"windowId": 7}
+        return {}
+
+    async def detach(self) -> None:
+        return None
+
+
+class _FakeCdpPage:
+    def __init__(self) -> None:
+        self.session = _FakeCdpSession()
+        self.context = self
+
+    async def new_cdp_session(self, page: "_FakeCdpPage") -> "_FakeCdpSession":
+        return self.session
+
+
+class _FakeCdpContext:
+    def __init__(self, pages: list[_FakeCdpPage]) -> None:
+        self.pages = pages
+
+
+class _FakeCdpBrowser:
+    def __init__(self, contexts: list[_FakeCdpContext]) -> None:
+        self.contexts = contexts
+
+
+def test_browser_broker_minimizes_all_windows_by_default(monkeypatch) -> None:
+    server = BrowserBrokerServer(
+        manager_secret="secret",
+        socket_path=Path("/tmp/broker-minimize.sock"),
+        ready=threading.Event(),
+    )
+    monkeypatch.delenv("CHROME_WINDOW", raising=False)
+    page = _FakeCdpPage()
+    server._browser = _FakeCdpBrowser([_FakeCdpContext([page])])
+
+    asyncio.run(server._minimize_all_windows())
+
+    assert ("Browser.getWindowForTarget", None) in page.session.sent
+    assert (
+        "Browser.setWindowBounds",
+        {"windowId": 7, "bounds": {"windowState": "minimized"}},
+    ) in page.session.sent
+
+
+def test_browser_broker_skips_minimizing_when_chrome_window_normal(monkeypatch) -> None:
+    server = BrowserBrokerServer(
+        manager_secret="secret",
+        socket_path=Path("/tmp/broker-normal.sock"),
+        ready=threading.Event(),
+    )
+    monkeypatch.setenv("CHROME_WINDOW", "normal")
+    page = _FakeCdpPage()
+    server._browser = _FakeCdpBrowser([_FakeCdpContext([page])])
+
+    asyncio.run(server._minimize_all_windows())
+
+    assert page.session.sent == []
 
 
 def test_browser_scope_reuses_task_target_rules() -> None:
@@ -137,7 +329,7 @@ def test_browser_extension_registers_every_native_tool() -> None:
     assert "AXIOM_BROWSER_TOKEN" in extension
     assert "session_id" not in extension
     assert 'pi.on("tool_call"' in extension
-    assert "cdp_ctl.py" in extension
+    assert "LEGACY_BROWSER_COMMANDS" in extension
     assert "禁止通过 Bash 调用旧浏览器脚本" in extension
 
 
@@ -156,7 +348,6 @@ def test_browser_page_and_ref_identity_are_lease_scoped(tmp_path: Path) -> None:
         run_dir=tmp_path / "first",
         scope={},
         cdp_url="http://127.0.0.1:9223",
-        launch_script=None,
         pages={"p001": page},
     )
     second = LeaseState(
@@ -167,7 +358,6 @@ def test_browser_page_and_ref_identity_are_lease_scoped(tmp_path: Path) -> None:
         run_dir=tmp_path / "second",
         scope={},
         cdp_url="http://127.0.0.1:9223",
-        launch_script=None,
     )
     server = BrowserBrokerServer(
         manager_secret="secret",
