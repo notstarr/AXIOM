@@ -26,13 +26,13 @@ jobs:
       postgres:
         image: postgres:18.4-bookworm@sha256:882236b897e39051d2368c5ccc6cda944904723506b2dfc97f2a8f5bc9afa382
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: axiom_bootstrap
+          POSTGRES_PASSWORD: axiom-bootstrap-test
           POSTGRES_DB: postgres
         ports:
           - 55433:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-cmd "pg_isready -U axiom_bootstrap -d postgres"
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
@@ -55,11 +55,11 @@ jobs:
       - name: Prepare isolated PostgreSQL test database
         run: |
           set -eux
-          docker run --rm --network host -e PGPASSWORD=postgres \
-            "$POSTGRES_IMAGE" psql -h 127.0.0.1 -p 55433 -U postgres -d postgres \
+          docker run --rm --network host -e PGPASSWORD=axiom-bootstrap-test \
+            "$POSTGRES_IMAGE" psql -h 127.0.0.1 -p 55433 -U axiom_bootstrap -d postgres \
             -v ON_ERROR_STOP=1 -c "CREATE ROLE axiom_owner NOLOGIN; CREATE ROLE axiom_migrator LOGIN PASSWORD 'axiom-migrator-test'; CREATE ROLE axiom_app LOGIN PASSWORD 'axiom-app-test'; GRANT axiom_owner TO axiom_migrator; REVOKE CREATE ON SCHEMA public FROM PUBLIC;"
-          docker run --rm --network host -e PGPASSWORD=postgres \
-            "$POSTGRES_IMAGE" psql -h 127.0.0.1 -p 55433 -U postgres -d postgres \
+          docker run --rm --network host -e PGPASSWORD=axiom-bootstrap-test \
+            "$POSTGRES_IMAGE" psql -h 127.0.0.1 -p 55433 -U axiom_bootstrap -d postgres \
             -v ON_ERROR_STOP=1 -c "CREATE DATABASE axiom_test OWNER axiom_owner;"
       - name: Run pytest
         working-directory: axiom
