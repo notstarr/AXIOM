@@ -52,7 +52,7 @@ bash install.sh
 
 ```bash
 AXIOM_INSTALL_DIR=/srv/axiom AXIOM_PORT=8988 \\
-  AXIOM_RELEASE_REF=v0.1.0 bash install.sh
+  AXIOM_RELEASE_REF=v0.2.0 bash install.sh
 ```
 
 ## 安装目录和数据卷
