@@ -31,6 +31,28 @@ SERVER_PLIST="$LAUNCH_AGENT_DIR/$SERVER_LABEL.plist"
 RUNNER_PLIST="$LAUNCH_AGENT_DIR/$RUNNER_LABEL.plist"
 mkdir -p "$PID_DIR" "$LOG_DIR" "$LAUNCH_AGENT_DIR"
 
+nmap_data_complete() {
+  local directory="$1"
+  [[ -f "$directory/nmap-services" \
+    && -f "$directory/nmap-protocols" \
+    && -f "$directory/nse_main.lua" \
+    && -f "$directory/scripts/script.db" ]]
+}
+
+# The local Nmap binary is also reachable through /usr/local/bin/nmap, but
+# that symlink makes Nmap derive its data path from /usr/local rather than
+# ~/.local.  Export the validated data directory explicitly for both AXIOM
+# workers and direct CLI use.
+if [[ -n "${NMAPDIR:-}" ]]; then
+  # Preserve an explicit operator override, including NMAPDIR=.
+  NMAPDIR="$NMAPDIR"
+else
+  NMAPDIR="${AXIOM_NMAP_DATA_DIR:-$HOME/.local/share/nmap}"
+  if ! nmap_data_complete "$NMAPDIR"; then
+    NMAPDIR=""
+  fi
+fi
+
 require_runtime() {
   [[ -x "$AXIOM_BIN" ]] || { echo "[axiom] runtime not found: $AXIOM_BIN" >&2; exit 1; }
   require_command docker
@@ -68,9 +90,9 @@ write_launch_agent() {
   local plist="$1" label="$2" log_path="$3"
   shift 3
   python3 - "$plist" "$label" "$AXIOM_DIR" "$log_path" "$AXIOM_DATA_DIR" \
-    "$AXIOM_PG_ENV_FILE" "$@" <<'PY'
+    "$AXIOM_PG_ENV_FILE" "$NMAPDIR" "$@" <<'PY'
 import os, plistlib, sys
-plist,label,workdir,log_path,data_dir,env_file,*argv=sys.argv[1:]
+plist,label,workdir,log_path,data_dir,env_file,nmap_dir,*argv=sys.argv[1:]
 payload={
     'Label': label,
     'ProgramArguments': argv,
@@ -85,6 +107,8 @@ payload={
         'PATH': '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
     },
 }
+if nmap_dir:
+    payload['EnvironmentVariables']['NMAPDIR'] = nmap_dir
 with open(plist,'wb') as handle: plistlib.dump(payload,handle)
 os.chmod(plist, 0o600)
 PY
@@ -141,6 +165,9 @@ start_runtime() {
     launch_pid "$SERVER_LABEL" > "$PID_DIR/server.pid"
     launch_pid "$RUNNER_LABEL" > "$PID_DIR/runner.pid"
   else
+    if [[ -n "$NMAPDIR" ]]; then
+      export NMAPDIR
+    fi
     AXIOM_DATABASE_URL="$AXIOM_DATABASE_URL" nohup "$AXIOM_BIN" serve \
       --host "$HOST" --port "$PORT" --data-dir "$AXIOM_DATA_DIR" --log-level info \
       >"$LOG_DIR/server.log" 2>&1 &
