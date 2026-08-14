@@ -8,6 +8,7 @@ node_modules/
 *.pyc
 .env
 .venv/
+runtime/
 *.log
 cairn/logs/
 package.json

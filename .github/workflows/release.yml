@@ -51,8 +51,9 @@ jobs:
         with:
           node-version: '22.22.2'
           cache: npm
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: axiom/package-lock.json
       - name: Install Python dependencies
+        working-directory: axiom
         run: |
           python -m pip install --upgrade pip
           pip install uv==0.8.9
@@ -67,27 +68,30 @@ jobs:
             "$POSTGRES_IMAGE" psql -h 127.0.0.1 -p 55433 -U postgres -d postgres \
             -v ON_ERROR_STOP=1 -c "CREATE DATABASE axiom_test OWNER axiom_owner;"
       - name: Run pytest
+        working-directory: axiom
         env:
           AXIOM_TEST_DATABASE_URL: postgresql+psycopg://axiom_app:axiom-app-test@127.0.0.1:55433/axiom_test
           AXIOM_TEST_MIGRATOR_URL: postgresql+psycopg://axiom_migrator:axiom-migrator-test@127.0.0.1:55433/axiom_test
         run: uv run pytest
       - name: Ruff
+        working-directory: axiom
         run: uv run ruff check .
       - name: Compile Python
-        run: python -m compileall -q src migrations deploy
+        run: python -m compileall -q axiom/src axiom/migrations deploy
       - name: Shell and deployment contract checks
         run: |
           set -euo pipefail
           bash -n deploy/install.sh deploy/axiomctl deploy/verify_toolchain.sh deploy/postgres-init/001-axiom-roles.sh
           python -m unittest discover -s deploy/tests -p 'test_*.py'
       - name: Build frontend CSS
+        working-directory: axiom
         run: npm ci --ignore-scripts --no-audit --no-fund && npm run build:css
       - name: Check frontend JavaScript syntax
         run: |
           set -euo pipefail
           while IFS= read -r file; do
             node --check "$file"
-          done < <(find src/axiom/static -type f -name '*.js' ! -path '*/vendor/*' -print)
+          done < <(find axiom/src/axiom/static -type f -name '*.js' ! -path '*/vendor/*' -print)
       - name: Compose syntax
         run: |
           cp deploy/.env.example /tmp/axiom.env

@@ -64,8 +64,8 @@ class DeploymentAssetContractTests(unittest.TestCase):
         self.assertGreater(ignore.index("!runtime/**"), node_modules)
 
     def test_browser_skill_uses_native_broker_without_legacy_scripts(self) -> None:
-        skill = (ROOT / "src/axiom/dispatcher/skills/browser-control/SKILL.md").read_text(encoding="utf-8")
-        scripts_dir = ROOT / "src/axiom/dispatcher/skills/browser-control/scripts"
+        skill = (ROOT / "axiom/src/axiom/dispatcher/skills/browser-control/SKILL.md").read_text(encoding="utf-8")
+        scripts_dir = ROOT / "axiom/src/axiom/dispatcher/skills/browser-control/scripts"
         self.assertIn("内置 Extension", skill)
         self.assertIn("Browser Broker", skill)
         self.assertFalse(scripts_dir.exists())

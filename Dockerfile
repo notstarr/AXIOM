@@ -9,10 +9,10 @@ ARG AXIOM_PYTHON_BASE_IMAGE
 
 FROM ${AXIOM_NODE_BASE_IMAGE} AS frontend-builder
 WORKDIR /build/axiom
-COPY package.json package-lock.json ./
+COPY axiom/package.json axiom/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
-COPY tailwind.config.js ./
-COPY src/axiom/static ./src/axiom/static
+COPY axiom/tailwind.config.js ./
+COPY axiom/src/axiom/static ./src/axiom/static
 RUN npm run build:css
 
 FROM ${AXIOM_GOLANG_BASE_IMAGE} AS tools-builder
@@ -49,10 +49,10 @@ FROM ${AXIOM_PYTHON_BASE_IMAGE} AS python-builder
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/opt/venv
 WORKDIR /build/axiom
 RUN pip install --no-cache-dir uv==0.8.9
-COPY pyproject.toml uv.lock ./
-COPY src ./src
-COPY migrations ./migrations
-COPY alembic.ini ./alembic.ini
+COPY axiom/pyproject.toml axiom/uv.lock ./
+COPY axiom/src ./src
+COPY axiom/migrations ./migrations
+COPY axiom/alembic.ini ./alembic.ini
 RUN uv sync --frozen --no-dev --no-editable
 COPY --from=frontend-builder /build/axiom/src/axiom/static/tailwind.generated.css ./src/axiom/static/tailwind.generated.css
 
@@ -99,12 +99,12 @@ COPY --from=tools-builder /go/bin/katana /usr/local/bin/katana
 COPY --from=tools-builder /go/bin/httpx /usr/local/bin/httpx
 COPY --from=tools-builder /go/bin/subfinder /usr/local/bin/subfinder
 COPY --from=tools-builder /go/bin/nuclei /usr/local/bin/nuclei
-COPY src/axiom /app/axiom/src/axiom
-COPY migrations /app/axiom/migrations
-COPY alembic.ini pyproject.toml /app/axiom/
+COPY axiom/src/axiom /app/axiom/src/axiom
+COPY axiom/migrations /app/axiom/migrations
+COPY axiom/alembic.ini axiom/pyproject.toml /app/axiom/
 COPY --from=frontend-builder /build/axiom/src/axiom/static/tailwind.generated.css /app/axiom/src/axiom/static/tailwind.generated.css
 # Preserve the checked-in artifact used by the current 8888 source after validating the CSS build above.
-COPY src/axiom/static/tailwind.generated.css /app/axiom/src/axiom/static/tailwind.generated.css
+COPY axiom/src/axiom/static/tailwind.generated.css /app/axiom/src/axiom/static/tailwind.generated.css
 COPY deploy/verify_runtime.py deploy/verify_toolchain.sh deploy/smoke_runtime.py deploy/generate_release_manifest.py /app/deploy/
 COPY --from=runtime-validator /opt/axiom/runtime /opt/axiom/runtime
 RUN chmod +x /app/deploy/verify_runtime.py /app/deploy/verify_toolchain.sh /app/deploy/smoke_runtime.py /app/deploy/generate_release_manifest.py \
