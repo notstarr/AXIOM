@@ -1,6 +1,6 @@
 name: AXIOM Linux release
 
-on:
+'on':
   workflow_dispatch:
     inputs:
       push_image:
