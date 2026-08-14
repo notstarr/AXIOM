@@ -107,7 +107,7 @@ class DeploymentAssetContractTests(unittest.TestCase):
         self.assertIn("/opt/axiom/release/manifest.json", self.ctl)
 
     def test_release_workflow_passes_tool_and_database_metadata(self) -> None:
-        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github/workflows/axiom-release.yml").read_text(encoding="utf-8")
         self.assertIn("grep -E '^AXIOM_[A-Z0-9_]+=' deploy/tools.env >> \"$GITHUB_ENV\"", workflow)
         self.assertIn("AXIOM_DATABASE_MIGRATION_TARGET=${{ env.AXIOM_DATABASE_MIGRATION_TARGET }}", workflow)
         self.assertIn("AXIOM_DATABASE_ROLLBACK_COMPATIBLE=${{ env.AXIOM_DATABASE_ROLLBACK_COMPATIBLE }}", workflow)
