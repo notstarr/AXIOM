@@ -1,9 +1,6 @@
 name: AXIOM Linux release
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       push_image:
@@ -11,6 +8,9 @@ on:
         required: true
         default: true
         type: boolean
+  push:
+    tags:
+      - 'v*.*.*'
 
 permissions:
   contents: read
