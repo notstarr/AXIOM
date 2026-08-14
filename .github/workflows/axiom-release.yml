@@ -199,4 +199,4 @@ jobs:
           sbom: true
           provenance: true
       - name: Print image digest
-        run: echo "Published image digest: ${{ steps.build.outputs.digest }}"
+        run: 'echo "Published image digest: ${{ steps.build.outputs.digest }}"'
