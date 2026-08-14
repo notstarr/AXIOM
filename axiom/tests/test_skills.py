@@ -162,8 +162,9 @@ def test_skill_file_preview_is_bounded_and_reports_full_size(client) -> None:
 def test_ffuf_bundled_references_include_complete_upstream_tree(client) -> None:
     files = client.get("/api/v1/skills/ffuf/files")
     assert files.status_code == 200, files.text
-    paths = {item["path"] for item in files.json()}
-    assert len(paths) == 556  # 554 upstream files plus SKILL.md and the runner.
+    paths = {item["path"] for item in files.json() if "__pycache__" not in item["path"]}
+    assert len(paths) == 555  # 553 upstream files plus SKILL.md and the runner.
+    assert not any("__pycache__" in path for path in paths)
     assert {
         "SKILL.md",
         "scripts/ffuf_background.sh",
@@ -318,8 +319,8 @@ def test_ffuf_bundled_skill_contains_manual_and_background_runbook(client) -> No
 
     files = client.get("/api/v1/skills/ffuf/files")
     assert files.status_code == 200, files.text
-    paths = {item["path"] for item in files.json()}
-    assert len(paths) == 556
+    paths = {item["path"] for item in files.json() if "__pycache__" not in item["path"]}
+    assert len(paths) == 555
     assert "references/Web-Fuzzing-Box/README_CN.md" in paths
     assert "references/fuzz.md" not in paths
     assert "scripts/build_dictionaries.py" not in paths
