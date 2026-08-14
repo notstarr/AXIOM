@@ -166,7 +166,8 @@ jobs:
           test -f /tmp/pi-runtime/runtime/manifest.json
           cp -a /tmp/pi-runtime/runtime/. runtime/
           AXIOM_RUNTIME_ROOT="$PWD/runtime" python deploy/verify_runtime.py
-          AXIOM_RUNTIME_ROOT="$PWD/runtime" python deploy/smoke_runtime.py
+          AXIOM_RUNTIME_ROOT="$PWD/runtime" python deploy/smoke_runtime.py \
+            --extension-root "$PWD/axiom/src/axiom/dispatcher/extensions"
       - name: Load pinned tool versions and build metadata
         id: build_meta
         run: |
