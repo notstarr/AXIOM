@@ -9,7 +9,11 @@ from axiom.dispatcher.bootstrap import AxiomToolLoadError, TransientWorkerError
 from axiom.dispatcher.closeout import bounded_closeout
 from axiom.dispatcher.heartbeat import LeaseHeartbeat, LeaseLostError
 from axiom.dispatcher.http import ControlPlaneError, is_transient_control_plane_error
-from axiom.modules.execution.schemas import ExecutionInput, ReleaseIntentCommand
+from axiom.modules.execution.schemas import (
+    ActivityCommand,
+    ExecutionInput,
+    ReleaseIntentCommand,
+)
 from axiom.modules.execution.stage_outputs import StageOutputError, require_finish
 from axiom.modules.reason.schemas import (
     ClaimedReasonRun,
@@ -67,6 +71,9 @@ class ReasonControlPlane(Protocol):
         *,
         context_revision: int,
     ) -> ReasonWorkspace:
+        ...
+
+    def activity(self, work: ClaimedReasonRun, command: ActivityCommand) -> None:
         ...
 
     def reason_workspace_status(
@@ -131,6 +138,15 @@ class ReasonRunner:
             workspace = self.control_plane.open_reason_workspace(
                 work,
                 context_revision=execution_input.context_revision,
+            )
+            self.control_plane.activity(
+                work,
+                ActivityCommand(
+                    lease_id=work.lease_id,
+                    activity_kind="analyzing",
+                    activity_summary="正在分析任务上下文并规划下一批 Intent",
+                    activity_tool="",
+                ),
             )
             try:
                 raw_output = executor.execute(

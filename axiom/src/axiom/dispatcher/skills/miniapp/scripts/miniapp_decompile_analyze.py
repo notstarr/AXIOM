@@ -2,8 +2,8 @@
 """AXIOM miniapp discovery, decompile orchestration, and static extraction.
 
 This script is intentionally model-friendly: workers can run one command and get
-stable artifacts that guide Yak MCP verification instead of guessing headers,
-paths, or parameters.
+stable artifacts that guide Reqable-backed traffic verification instead of
+guessing headers, paths, or parameters.
 """
 from __future__ import annotations
 
@@ -1116,11 +1116,14 @@ def write_summary(out_dir: Path, manifest: dict[str, Any], scan: dict[str, Any],
     if not sensitive:
         lines.append("- No sensitive findings found")
     lines.extend(["", "## Media Resources", f"- Count: {len(media)}", "", "## Next Step"])
-    lines.append("Open `yak_workflow.md`, query real Yak HTTP flows by host/path/code, then replay real raw packets. Do not guess headers or body fields from static code alone.")
+    lines.append(
+        "Open `traffic_workflow.md`, use Reqable live capture records to recover a real request, "
+        "then replay and mutate that request. Do not guess headers or body fields from static code alone."
+    )
     (out_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def write_yak_workflow(out_dir: Path, profile: dict[str, Any], scan: dict[str, Any]) -> None:
+def write_traffic_workflow(out_dir: Path, profile: dict[str, Any], scan: dict[str, Any]) -> None:
     api_candidates: list[ApiCandidate] = scan["api_candidates"]
     host_counter: Counter[str] = scan["host_counter"]
     hosts = [host for host, _ in host_counter.most_common(30) if not is_noise_host(host)]
@@ -1135,14 +1138,21 @@ def write_yak_workflow(out_dir: Path, profile: dict[str, Any], scan: dict[str, A
         if item.kind == "url" and "/" in item.value and item.value not in paths:
             paths.append(item.value)
     lines = [
-        "# Yak MCP Miniapp Verification Workflow",
+        "# Reqable 小程序真实流量验证流程",
         "",
-        "## 1. Confirm Yak project database",
-        "- Call `get_current_database_context` first.",
-        "- If flows are missing, call `list_project_databases` and confirm the target database before switching.",
+        "静态分析只提供 Host、Path 和业务 Code 线索，不足以证明接口行为或漏洞。",
+        "必须优先从 Reqable 取得真实请求，再进行重放和单变量变异。",
         "",
-        "## 2. Query real HTTP flows",
-        "Use `query_http_flow` with these static clues:",
+        "## 1. 确认有真实流量",
+        "- 先调用 `capture_live_filter` 查询现有记录，不要先凭静态代码构造请求。",
+        "- 如果没有目标流量，调用 `capture_live_set_enabled(enabled=true)` 开始捕获，",
+        "  然后真实操作小程序触发对应业务流程，再重新查询。",
+        "- 不要为了查询流量调用 `proxy_set`；是否修改系统代理应由人工或明确任务决定。",
+        "",
+        "## 2. 使用静态线索筛选 Reqable 记录",
+        "- Host 使用 `capture_live_filter` 的 `host` 过滤器。",
+        "- Path、接口 Code 或其他关键字使用 `keyword` 过滤器。",
+        "- 先宽后窄；没有结果时分别查询 Host、Path 和业务 Code，不要一次叠加过多条件。",
         "",
         "### Hosts",
     ]
@@ -1162,13 +1172,30 @@ def write_yak_workflow(out_dir: Path, profile: dict[str, Any], scan: dict[str, A
         lines.append("- No code candidates")
     lines.extend([
         "",
-        "## 3. Replay discipline",
-        "- Prefer Yak raw flow over reconstructed curl.",
-        "- Keep Cookie, X-TOKEN, Client, Referer, User-Agent, content type, project/version, and form encoding unchanged.",
-        "- Mutate one field at a time with `http_fuzzer`.",
-        "- If auth expires or response is busy/empty, record credential/header gap before claiming tested.",
+        "## 3. 读取并重放真实请求",
+        "1. 对候选记录调用 `capture_live_get_by_id(id)`，检查完整 URL、方法、请求头、Cookie、请求体和响应。",
+        "2. 对确认的记录调用 `capture_live_generate_curl(id)`，获取保留真实请求字段的 cURL。",
+        "3. Explore Worker 使用 `bash` 执行该 cURL；不要把生成的命令直接当作已验证结果。",
+        "4. 每次只修改一个身份、对象 ID、状态、数量或业务参数，并比较响应差异。",
+        "5. 保留 Cookie、X-TOKEN、Client、Referer、User-Agent、Content-Type、project/version 和编码方式。",
+        "6. 如需在 Reqable 界面继续人工调试，可选用 `capture_live_compose(id)`；这不是自动验证的必需步骤。",
+        "",
+        "## 4. 结论纪律",
+        "- 登录失效、请求头缺失、参数不完整、服务繁忙或空响应，不得记为已测试成功。",
+        "- 找不到真实请求时，记录流量缺口并继续触发业务流程，不要猜造 Header 或 Body。",
+        "- 静态敏感信息必须结合真实可达接口和实际影响验证后，才能作为漏洞证据。",
     ])
-    (out_dir / "yak_workflow.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    workflow = "\n".join(lines) + "\n"
+    (out_dir / "traffic_workflow.md").write_text(workflow, encoding="utf-8")
+
+    # Keep a non-Yak compatibility pointer for older consumers that still look up
+    # this filename. New prompts and payloads use traffic_workflow.md.
+    legacy = [
+        "# Compatibility pointer",
+        "",
+        "Reqable is the active traffic backend. Read `traffic_workflow.md`.",
+    ]
+    (out_dir / "yak_workflow.md").write_text("\n".join(legacy) + "\n", encoding="utf-8")
 
 
 def analyze_decompiled(root: Path, out_dir: Path, profile: dict[str, Any], rules: list[dict[str, Any]], manifest: dict[str, Any] | None = None, notes: list[str] | None = None) -> dict[str, Any]:
@@ -1200,12 +1227,13 @@ def analyze_decompiled(root: Path, out_dir: Path, profile: dict[str, Any], rules
     write_json(out_dir / "media_resources.json", [asdict(item) for item in scan["media_resources"]])
     write_json(out_dir / "business_groups.json", business_groups(scan["api_candidates"]))
     write_summary(out_dir, manifest, scan, notes or manifest.get("notes", []))
-    write_yak_workflow(out_dir, profile, scan)
+    write_traffic_workflow(out_dir, profile, scan)
     return {
         "output_dir": str(out_dir),
         "decompiled_path": str(root),
         "manifest": str(out_dir / "manifest.json"),
         "summary": str(out_dir / "summary.md"),
+        "traffic_workflow": str(out_dir / "traffic_workflow.md"),
         "yak_workflow": str(out_dir / "yak_workflow.md"),
         "api_candidates": len(scan["api_candidates"]),
         "regex_findings": len(scan["regex_findings"]),
@@ -1280,19 +1308,39 @@ def filter_package_groups(candidates: list[MiniappCandidate]) -> list[MiniappCan
 
 def candidate_output_paths(candidate: MiniappCandidate) -> dict[str, str]:
     source = Path(candidate.source_path)
-    if candidate.kind == "decompiled" and source.name == "decompiled":
-        output_dir = source.parent
-    else:
-        output_dir = Path("")
-    if output_dir and (output_dir / "summary.md").exists() and (output_dir / "yak_workflow.md").exists():
+    output_dir = (
+        source.parent
+        if candidate.kind == "decompiled" and source.name == "decompiled"
+        else None
+    )
+    traffic_workflow = output_dir / "traffic_workflow.md" if output_dir else None
+    legacy_workflow = output_dir / "yak_workflow.md" if output_dir else None
+    workflow = (
+        traffic_workflow
+        if traffic_workflow and traffic_workflow.exists()
+        else legacy_workflow
+    )
+    if output_dir and (output_dir / "summary.md").exists() and workflow and workflow.exists():
         return {
             "output_dir": str(output_dir),
             "summary": str(output_dir / "summary.md"),
-            "yak_workflow": str(output_dir / "yak_workflow.md"),
+            "traffic_workflow": str(workflow),
+            "yak_workflow": (
+                str(legacy_workflow)
+                if legacy_workflow and legacy_workflow.exists()
+                else ""
+            ),
             "api_candidates": str(output_dir / "api_candidates.json"),
             "sensitive_findings": str(output_dir / "sensitive_findings.json"),
         }
-    return {"output_dir": "", "summary": "", "yak_workflow": "", "api_candidates": "", "sensitive_findings": ""}
+    return {
+        "output_dir": "",
+        "summary": "",
+        "traffic_workflow": "",
+        "yak_workflow": "",
+        "api_candidates": "",
+        "sensitive_findings": "",
+    }
 
 
 def ready_target_from_candidate(candidate: MiniappCandidate) -> dict[str, Any]:
@@ -1305,7 +1353,7 @@ def ready_target_from_candidate(candidate: MiniappCandidate) -> dict[str, Any]:
         "kind": candidate.kind,
         "source_path": candidate.source_path,
         "decompiled_path": candidate.decompiled_path or candidate.source_path,
-        "is_analyzed": bool(paths["summary"] and paths["yak_workflow"]),
+        "is_analyzed": bool(paths["summary"] and paths["traffic_workflow"]),
         **paths,
     }
 

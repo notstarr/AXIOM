@@ -129,6 +129,47 @@ def _task_with_two_pending_explores(client, **runtime_changes) -> tuple[dict, li
     return task, committed.json()["created_intent_ids"]
 
 
+def _task_with_two_pending_reviews(client, **runtime_changes) -> tuple[dict, list[str]]:
+    update_runtime_settings(client, **runtime_changes)
+    project = client.post("/api/v1/projects", json={"title": "审核并发事务"}).json()
+    task = _bootstrap_task(
+        client,
+        project_id=project["id"],
+        title="review-limits",
+        worker_name="reviewer-a",
+    )
+    worker = client.put(
+        "/api/v1/workers/reviewer-a",
+        json={"capabilities": ["review"], "max_running": 4},
+    )
+    assert worker.status_code == 200, worker.text
+    review_run_ids: list[str] = []
+    for number in (1, 2):
+        vulnerability = client.post(
+            f"/api/v1/tasks/{task['id']}/vulnerabilities",
+            json={
+                "title": f"待审核漏洞 {number}",
+                "type": "authorization",
+                "severity": "high",
+                "description": "低权限身份可以访问其他用户对象。",
+                "prerequisites": "需要低权限测试账号。",
+                "impact": "可能造成跨用户数据泄露。",
+                "remediation": "服务端校验对象归属。",
+                "affected_target": f"review-limits.example.com/object/{number}",
+                "source": "human",
+                "reported_by": "test",
+            },
+        )
+        assert vulnerability.status_code == 201, vulnerability.text
+        reviews = client.get(
+            f"/api/v1/tasks/{task['id']}/vulnerabilities/"
+            f"{vulnerability.json()['id']}/reviews"
+        )
+        assert reviews.status_code == 200, reviews.text
+        review_run_ids.append(reviews.json()[0]["id"])
+    return task, review_run_ids
+
+
 def test_dispatcher_claims_bootstrap_for_an_allowed_idle_worker(client) -> None:
     project = client.post("/api/v1/projects", json={"title": "系统"}).json()
     task = client.post(
@@ -224,6 +265,7 @@ def test_stop_invalidates_the_claim_and_resume_makes_intent_dispatchable_again(c
                 "global_max_active_tasks": 1,
                 "per_task_max_active_runs": 1,
                 "per_task_explore_concurrency": 1,
+                "per_task_review_concurrency": 1,
             },
             2,
             "Global active run limit reached",
@@ -234,6 +276,7 @@ def test_stop_invalidates_the_claim_and_resume_makes_intent_dispatchable_again(c
                 "global_max_active_tasks": 1,
                 "per_task_max_active_runs": 1,
                 "per_task_explore_concurrency": 1,
+                "per_task_review_concurrency": 1,
             },
             2,
             "Global active Task limit reached",
@@ -244,6 +287,7 @@ def test_stop_invalidates_the_claim_and_resume_makes_intent_dispatchable_again(c
                 "global_max_active_tasks": 2,
                 "per_task_max_active_runs": 1,
                 "per_task_explore_concurrency": 1,
+                "per_task_review_concurrency": 1,
             },
             1,
             "Worker has no free capacity",
@@ -297,6 +341,7 @@ def test_claim_transaction_enforces_global_task_and_worker_limits(
                 "global_max_active_tasks": 1,
                 "per_task_max_active_runs": 1,
                 "per_task_explore_concurrency": 1,
+                "per_task_review_concurrency": 1,
             },
             "Per-Task active run limit reached",
         ),
@@ -306,6 +351,7 @@ def test_claim_transaction_enforces_global_task_and_worker_limits(
                 "global_max_active_tasks": 1,
                 "per_task_max_active_runs": 2,
                 "per_task_explore_concurrency": 1,
+                "per_task_review_concurrency": 2,
             },
             "Per-Task explore concurrency limit reached",
         ),
@@ -330,3 +376,49 @@ def test_claim_transaction_enforces_per_task_and_explore_limits(
 
     assert conflict.status_code == 409
     assert conflict.json()["error"]["message"] == expected
+
+
+def test_claim_transaction_enforces_configurable_per_task_review_limit(client) -> None:
+    task, review_run_ids = _task_with_two_pending_reviews(
+        client,
+        global_max_active_runs=4,
+        global_max_active_tasks=1,
+        per_task_max_active_runs=4,
+        per_task_explore_concurrency=4,
+        per_task_review_concurrency=1,
+    )
+    base = f"/api/v1/dispatch/tasks/{task['id']}/vulnerability-review-runs"
+
+    first = client.post(
+        f"{base}/{review_run_ids[0]}/claim",
+        json={"worker_name": "reviewer-a"},
+    )
+    assert first.status_code == 200, first.text
+    conflict = client.post(
+        f"{base}/{review_run_ids[1]}/claim",
+        json={"worker_name": "reviewer-a"},
+    )
+
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["message"] == (
+        "Per-Task review concurrency limit reached"
+    )
+
+    settings = client.get("/api/v1/settings/runtime").json()
+    updated = client.put(
+        "/api/v1/settings/runtime",
+        json={
+            "actor": "test",
+            "expected_version": settings["version"],
+            "config": {
+                **settings["config"],
+                "per_task_review_concurrency": 4,
+            },
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    second = client.post(
+        f"{base}/{review_run_ids[1]}/claim",
+        json={"worker_name": "reviewer-a"},
+    )
+    assert second.status_code == 200, second.text

@@ -227,8 +227,8 @@ const methods = Object.assign({{}}, window.AxiomModules.helpers.methods, window.
 const ctx = Object.assign({{}}, methods, {{
   vulnFilter: {{ projectId:'', keyword:'' }},
   vulnerabilityPage:0, vulnerabilityPageSize:50, vulnerabilityLoading:false,
-  vulnerabilityItems:[], vulnerabilityTotal:0, vulnerabilityBoard:{{}},
-  showVulnBoard:true, selectedVulnerabilityKey:'', vulnerabilityRouteTaskId:'', vulnerabilityRouteId:'',
+  vulnerabilityItems:[], vulnerabilityTotal:0,
+  selectedVulnerabilityKey:'', vulnerabilityRouteTaskId:'', vulnerabilityRouteId:'',
   vulnerabilitySelectionBlocked:false,
   _vulnerabilityListRequestId:0, projects:[{{ id:'t_153', title:'任务 153', project_id:'p001' }}], projectGroups:[],
   showToast: message => calls.push({{ toast:message }}),
@@ -239,7 +239,6 @@ const ctx = Object.assign({{}}, methods, {{
   await ctx.loadVulnerabilityPage();
   process.stdout.write(JSON.stringify({{
     hash,
-    showVulnBoard:ctx.showVulnBoard,
     taskFilter:ctx.vulnFilter.projectId,
     selected:ctx.selectedVulnerabilityKey,
     first:ctx.vulnerabilityItems[0]?.id || null,
@@ -308,8 +307,8 @@ const methods = Object.assign(
 const ctx = Object.assign({{}}, methods, {{
   vulnFilter: {{ projectId:'', keyword:'' }},
   vulnerabilityPage:0, vulnerabilityPageSize:50, vulnerabilityLoading:false,
-  vulnerabilityItems:[], vulnerabilityTotal:0, vulnerabilityBoard:{{}},
-  showVulnBoard:true, selectedVulnerabilityKey:'', vulnerabilityRouteTaskId:'', vulnerabilityRouteId:'',
+  vulnerabilityItems:[], vulnerabilityTotal:0,
+  selectedVulnerabilityKey:'', vulnerabilityRouteTaskId:'', vulnerabilityRouteId:'',
   vulnerabilitySelectionBlocked:false,
   _vulnerabilityListRequestId:0, projects:[{{ id:'t_153', title:'任务 153', project_id:'p001' }}], projectGroups:[],
   showToast: (message, type) => calls.push({{ toast:message, type }}),
@@ -336,6 +335,137 @@ ctx.filteredVulnerabilities = () => ctx.vulnerabilityItems;
     )
     return json.loads(result.stdout)
 
+
+
+def _run_vulnerability_project_load_order_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    scripts = [
+        ROOT / "src/axiom/static/js/core.js",
+        ROOT / "src/axiom/static/js/v2-adapter.js",
+    ]
+    program = f"""
+const fs = require('fs');
+const events = [];
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+global.window = {{ AxiomModules: {{
+  state: {{ state: {{}} }}, core: {{ methods: {{}} }}, projects: {{ methods: {{}} }},
+  dashboard: {{ methods: {{}} }}, graph: {{ methods: {{}} }}, files: {{ methods: {{}} }},
+}} }};
+global.location = {{ origin:'http://testserver', hash:'#/vulnerabilities' }};
+global.fetch = async url => {{
+  events.push('vulnerabilities:fetch');
+  return {{
+    ok:true, status:200,
+    headers:{{ get:name => name === 'X-Total-Count' ? '1' : null }},
+    text:async () => JSON.stringify([{{
+      id:'v007', task_id:'t_161', title:'目标漏洞', type:'越权', severity:'high',
+      description:'d', prerequisites:'p', impact:'i', remediation:'r', status:'待验证',
+      finding_artifact:null, evidence_artifacts:[],
+    }}]),
+  }};
+}};
+for (const script of {json.dumps([str(path) for path in scripts])}) eval(fs.readFileSync(script, 'utf8'));
+const methods = Object.assign(
+  {{}},
+  window.AxiomModules.core.methods,
+  window.AxiomModules.projects.methods,
+);
+const ctx = Object.assign({{}}, methods, {{
+  projectGroups:[], projects:[],
+  vulnFilter:{{ projectId:'', keyword:'' }},
+  vulnerabilityPage:0, vulnerabilityPageSize:50, vulnerabilityLoading:false,
+  vulnerabilityItems:[], vulnerabilityTotal:0, _vulnerabilityListRequestId:0,
+  selectedVulnerabilityKey:'', vulnerabilityRouteTaskId:'', vulnerabilityRouteId:'',
+  vulnerabilitySelectionBlocked:false,
+  _pageAbortController:{{ signal:undefined }},
+  loadProjectGroups:async () => {{
+    events.push('groups:start');
+    await sleep(20);
+    ctx.projectGroups = [{{ id:'prj_026', title:'通用小程序' }}];
+    events.push('groups:end');
+  }},
+  loadProjects:async () => {{
+    events.push('tasks:start');
+    await sleep(5);
+    ctx.projects = [{{ id:'t_161', title:'AgentPark 小程序', parent_project_id:'prj_026' }}];
+    events.push('tasks:end');
+  }},
+  showToast:() => {{}},
+}});
+(async () => {{
+  await ctx.activateMountedPage('vulnerabilities');
+  process.stdout.write(JSON.stringify({{
+    events,
+    projectTitle:ctx.vulnerabilityItems[0]?.project_group_title || '',
+    parentProjectId:ctx.vulnerabilityItems[0]?.parent_project_id || '',
+  }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def _run_task_management_deep_link_fixture(*, task_id: str) -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    scripts = [
+        ROOT / "src/axiom/static/js/projects.js",
+        ROOT / "src/axiom/static/js/v2-adapter.js",
+    ]
+    program = f"""
+const fs = require('fs');
+const calls = [];
+global.window = {{ AxiomModules: {{
+  state: {{ state: {{}} }}, core: {{ methods: {{}} }}, projects: {{ methods: {{}} }},
+  dashboard: {{ methods: {{}} }}, graph: {{ methods: {{}} }}, files: {{ methods: {{}} }},
+}} }};
+global.location = {{ origin:'http://testserver', hash:'#/projects' }};
+global.document = {{
+  querySelector: selector => selector.includes('t_161')
+    ? {{ scrollIntoView: options => calls.push({{ scroll:options }}) }}
+    : null,
+}};
+for (const script of {json.dumps([str(path) for path in scripts])}) eval(fs.readFileSync(script, 'utf8'));
+const methods = window.AxiomModules.projects.methods;
+const ctx = Object.assign({{}}, methods, {{
+  projects:[], projectsLoading:false, projectsLoaded:false, projectsError:'',
+  selectedTaskManagementId:'', taskManagementRouteId:'', taskManagementSelectionBlocked:false,
+  selectedProjectManagementTaskId:'', selectedProjectManagementId:'',
+  projectDetailsCache:{{}}, projectEventsCache:{{}}, taskDiagnostics:{{}}, taskDiagnosticsLoading:{{}},
+  taskWorkerPoolEditor:{{ projectId:'' }}, taskScopeEditor:{{ taskId:'' }},
+  taskSearch:'old query', taskStatusFilter:'active',
+  api:async () => [
+    {{ id:'t_160', title:'其他任务', status:'active', parent_project_id:'prj_025' }},
+    {{ id:'t_161', title:'AgentPark 小程序', status:'stopped', parent_project_id:'prj_026' }},
+  ],
+  tasksForGroup:() => [],
+  syncTaskWorkerPoolEditor:() => {{}}, syncTaskScopeEditor:() => {{}},
+  loadTaskDiagnostics:() => null,
+  showToast:(message, type='success') => calls.push({{ toast:message, type }}),
+  $nextTick:callback => callback(),
+}});
+(async () => {{
+  ctx.openTaskManagementLocation({json.dumps(task_id)});
+  ctx.applyTaskManagementRouteParams(new URLSearchParams(`task=${{encodeURIComponent({json.dumps(task_id)})}}`));
+  await ctx.loadProjects();
+  process.stdout.write(JSON.stringify({{
+    hash:global.location.hash,
+    search:ctx.taskSearch,
+    status:ctx.taskStatusFilter,
+    selectedId:ctx.selectedTaskManagementId,
+    selected:ctx.selectedTaskSummary()?.id || null,
+    blocked:ctx.taskManagementSelectionBlocked,
+    calls,
+  }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
 
 def _run_vulnerability_review_ui_fixture() -> dict[str, object]:
     node = shutil.which("node")
@@ -661,6 +791,157 @@ const ctx = Object.assign({{
     return json.loads(result.stdout)
 
 
+def _run_skill_refresh_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    skills = ROOT / "src/axiom/static/js/skills.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+eval(fs.readFileSync({json.dumps(str(skills))}, 'utf8'));
+let listed = [{{
+  name:'miniapp', description:'新版说明', content:'---\\nname: miniapp\\ndescription: 新版说明\\n---\\n\\n新版正文\\n',
+  builtin:false, enabled:true, source:'managed', bundled_hash:'bundled-2', effective_hash:'effective-2',
+  sync_status:'synced', bundled_update_available:false,
+}}];
+const calls = [];
+const ctx = Object.assign({{
+  skills: [],
+  skillFiles: [{{ path:'SKILL.md', size:1 }}],
+  skillFileTree: [],
+  skillExpandedDirs: {{}},
+  skillEditor: {{
+    name:'miniapp', description:'旧版说明', content:'旧版正文', isNew:false, builtin:false,
+    enabled:true, source:'managed', bundledHash:'bundled-1', effectiveHash:'effective-1',
+    sync_status:'synced', bundledUpdateAvailable:false, activeFile:'SKILL.md',
+    fileContent:'旧版正文', fileDirty:false, fileTruncated:false,
+  }},
+  api: async (method, path) => {{
+    calls.push({{ method, path }});
+    if (method === 'GET' && path === '/skills') return listed;
+    if (method === 'GET' && path === '/skills/miniapp/files') return [{{ path:'SKILL.md', size:100 }}];
+    throw new Error(`unexpected ${{method}} ${{path}}`);
+  }},
+  loadPhaseCapabilities: async () => {{}},
+  showToast: () => {{}},
+}}, window.AxiomModules.skills.methods);
+(async () => {{
+  await ctx.loadSkills();
+  const clean = {{
+    description:ctx.skillEditor.description,
+    fileContent:ctx.skillEditor.fileContent,
+    bundledHash:ctx.skillEditor.bundledHash,
+    effectiveHash:ctx.skillEditor.effectiveHash,
+    syncStatus:ctx.skillEditor.sync_status,
+  }};
+  ctx.skillEditor.fileContent = '本地未保存修改';
+  ctx.skillEditor.fileDirty = true;
+  listed = [{{ ...listed[0], description:'第三版说明', content:'---\\nname: miniapp\\ndescription: 第三版说明\\n---\\n\\n第三版正文\\n' }}];
+  await ctx.loadSkills();
+  process.stdout.write(JSON.stringify({{
+    clean,
+    dirty:{{ description:ctx.skillEditor.description, fileContent:ctx.skillEditor.fileContent, fileDirty:ctx.skillEditor.fileDirty }},
+    calls,
+  }}));
+}})();
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+
+def _run_skill_large_file_preview_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    skills = ROOT / "src/axiom/static/js/skills.js"
+    program = f"""
+const fs = require('fs');
+global.confirm = () => true;
+global.window = {{ AxiomModules: {{}} }};
+eval(fs.readFileSync({json.dumps(str(skills))}, 'utf8'));
+const calls = [];
+const toasts = [];
+const ctx = Object.assign({{}}, window.AxiomModules.skills.methods, {{
+  skillFiles: [
+    {{ path:'small.txt', size:12 }},
+    {{ path:'large.txt', size:600000 }},
+  ],
+  skillEditor: {{ name:'ffuf', isNew:false, activeFile:'', fileContent:'', fileDirty:false, fileTruncated:false }},
+  api: async (method, path) => {{
+    calls.push({{ method, path }});
+    if (path.includes('large.txt')) return {{ path:'large.txt', content:'A'.repeat(524288), truncated:true, size:600000 }};
+    return {{ path:'small.txt', content:'small', truncated:false, size:12 }};
+  }},
+  showToast: (message, type='info') => toasts.push({{ message, type }}),
+}});
+(async () => {{
+  await ctx.openSkillFile('large.txt');
+  const large = {{ contentLength:ctx.skillEditor.fileContent.length, truncated:ctx.skillEditor.fileTruncated }};
+  ctx.skillEditor.fileDirty = true;
+  await ctx.saveSkillFile();
+  await ctx.openSkillFile('small.txt');
+  process.stdout.write(JSON.stringify({{
+    calls,
+    large,
+    saveCalls:calls.filter(call => call.method === 'PUT').length,
+    smallTruncated:ctx.skillEditor.fileTruncated,
+    toasts,
+  }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+def _run_skill_file_tree_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    skills = ROOT / "src/axiom/static/js/skills.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+eval(fs.readFileSync({json.dumps(str(skills))}, 'utf8'));
+const ctx = Object.assign({{
+  skillFiles: [],
+  skillFileTree: [],
+  skillExpandedDirs: {{}},
+}}, window.AxiomModules.skills.methods);
+ctx.buildSkillFileTree([
+  {{ path: 'SKILL.md', size: 120 }},
+  {{ path: 'references/Web-Fuzzing-Box/README_CN.md', size: 2048 }},
+  {{ path: 'references/Web-Fuzzing-Box/Brute/Username/top.txt', size: 4096 }},
+  {{ path: 'references/Web-Fuzzing-Box/Web/Dir/common.txt', size: 8192 }},
+  {{ path: 'assets/sample.xlsx', size: 1024 }},
+]);
+const initial = ctx.skillFileTreeRows().map(item => [item.type, item.path, item.depth]);
+ctx.toggleSkillDirectory('references/Web-Fuzzing-Box/Brute');
+const expanded = ctx.skillFileTreeRows().map(item => item.path);
+process.stdout.write(JSON.stringify({{
+  initial,
+  expanded,
+  binaryPreviewable: ctx.skillFilePreviewable('assets/sample.xlsx'),
+  textPreviewable: ctx.skillFilePreviewable('references/Web-Fuzzing-Box/README_CN.md'),
+}}));
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
 def _run_artifact_classification_fixture() -> dict[str, object]:
     node = shutil.which("node")
     if not node:
@@ -689,81 +970,6 @@ process.stdout.write(JSON.stringify(items.map(item => ({{
   label: methods.artifactKindLabel(item),
   icon: methods.artifactTypeIcon(item.artifact_type),
 }}))));
-"""
-    result = subprocess.run(
-        [node, "-e", program],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return json.loads(result.stdout)
-
-
-def _run_manual_reason_fixture() -> dict[str, object]:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for frontend behavior tests")
-
-    adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
-    program = f"""
-const fs = require('fs');
-const calls = [];
-const refreshed = [];
-const toasts = [];
-let requestCount = 0;
-global.window = {{ AxiomModules: {{
-  state: {{ state: {{ manualReasonTriggering: false }} }},
-  core: {{ methods: {{}} }},
-  projects: {{ methods: {{}} }},
-  graph: {{ methods: {{}} }},
-  files: {{ methods: {{}} }},
-}} }};
-global.location = {{ origin: 'http://testserver' }};
-global.fetch = async (url, init = {{}}) => {{
-  calls.push({{ method: init.method || 'GET', url, body: init.body ? JSON.parse(init.body) : null }});
-  requestCount += 1;
-  if (requestCount === 2) return {{
-    status: 409,
-    ok: false,
-    text: async () => JSON.stringify({{ detail: 'ReasonRun rr000124 已在进行中' }}),
-  }};
-  return {{
-    status: 200,
-    ok: true,
-    text: async () => JSON.stringify({{ id: 'rr000123', trigger: 'manual' }}),
-  }};
-}};
-eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
-const methods = window.AxiomModules.projects.methods;
-const ctx = Object.assign({{
-  selectedProjectId: 't_150',
-  manualReasonTriggering: false,
-  project: {{
-    project: {{
-      id: 't_150', status: 'active', legacy_readonly: false,
-      run_deadline_at: null, reason: null,
-    }},
-    intents: [{{ id: 'i001', kind: 'bootstrap', status: 'completed', archived: false }}],
-  }},
-  actorName: () => 'Alice',
-  loadProject: async taskId => refreshed.push(`task:${{taskId}}`),
-  loadProjects: async () => refreshed.push('tasks'),
-  showToast: (message, type = 'success') => toasts.push({{ message, type }}),
-}}, methods);
-(async () => {{
-  const enabled = ctx.canTriggerManualReason();
-  await ctx.triggerManualReason();
-  const afterSuccess = {{ loading: ctx.manualReasonTriggering, refreshed: [...refreshed], toasts: [...toasts] }};
-  ctx.project.project.reason = null;
-  await ctx.triggerManualReason();
-  const afterConflict = {{ loading: ctx.manualReasonTriggering, refreshed: [...refreshed], toasts: [...toasts] }};
-  ctx.project.project.reason = {{ id: 'rr000124' }};
-  const activeReason = {{ enabled: ctx.canTriggerManualReason(), reason: ctx.manualReasonDisabledReason() }};
-  ctx.project.project.reason = null;
-  ctx.project.project.status = 'stopped';
-  const stopped = {{ enabled: ctx.canTriggerManualReason(), reason: ctx.manualReasonDisabledReason() }};
-  process.stdout.write(JSON.stringify({{ enabled, calls, afterSuccess, afterConflict, activeReason, stopped }}));
-}})();
 """
     result = subprocess.run(
         [node, "-e", program],
@@ -1487,7 +1693,7 @@ def test_frontend_and_static_assets_are_served(client):
         )
         assert match is not None
         worker_asset_versions.add(match.group(1))
-    assert worker_asset_versions == {"20260804-explore-conversation-v2"}
+    assert worker_asset_versions == {"20260807-manual-reason-v1"}
 
     asset = client.get("/static/js/v2-adapter.js")
     assert asset.status_code == 200
@@ -1505,6 +1711,8 @@ def test_frontend_and_static_assets_are_served(client):
     assert "tokenChartRows()" in dashboard.text
     for label in ("输入（未命中）", "缓存命中", "缓存写入", "输出", "任务占比"):
         assert label in dashboard.text
+    assert "Skill 调用统计" not in dashboard.text
+    assert "globalSkillUsage" not in dashboard.text
 
     vulnerabilities = client.get("/static/templates/vulnerabilities.html")
     assert vulnerabilities.status_code == 200
@@ -1518,6 +1726,10 @@ def test_frontend_and_static_assets_are_served(client):
     assert "vulnerabilityReviewDecisionLabel" in vulnerabilities.text
     assert "只有已验证漏洞可以外部上报" in vulnerabilities.text
     assert "duplicate_of_vulnerability_id" in vulnerabilities.text
+    assert "看板视图" not in vulnerabilities.text
+    assert "vulnerabilityBoard" not in vulnerabilities.text
+    assert "导出报告" not in vulnerabilities.text
+    assert "导出 MD" not in vulnerabilities.text
 
     files = client.get("/static/templates/files.html")
     assert files.status_code == 200
@@ -1536,6 +1748,8 @@ def test_frontend_and_static_assets_are_served(client):
         assert heading in settings.text
     assert "Bootstrap 并发" in settings.text
     assert "Reason 并发" in settings.text
+    assert "单 Task Reviewer 并发" in settings.text
+    assert "per_task_review_concurrency" in settings.text
     assert settings.text.count("1（固定）") >= 2
     assert "Worker 管理已迁移" in settings.text
     assert "打开 Worker 管理" in settings.text
@@ -1579,6 +1793,9 @@ def test_frontend_and_static_assets_are_served(client):
     assert "阶段分配由 Worker 统一管理" in skills.text
     assert "Worker 可见性" in skills.text
     assert "navigateToWorkerCapability('skill'" in skills.text
+    assert "skillFileTreeRows()" in skills.text
+    assert "toggleSkillDirectory(f.path)" in skills.text
+    assert "skillDirectoryExpanded(f.path)" in skills.text
     assert "saveSelectedSkillScopes" not in skills.text
     assert "togglePhaseCapabilityScope" not in skills.text
 
@@ -1617,7 +1834,14 @@ def test_frontend_and_static_assets_are_served(client):
     assert "ReasonRun" in graph.text
     assert "配置快照" in graph.text
     assert "triggerManualReason()" in graph.text
-    assert "manual-reason-trigger" in graph.text
+    assert "立即 Reason" in graph.text
+    assert "toggleProjectGuardById" in graph.text
+    assert "开启守卫" in graph.text
+    assert "关闭守卫" in graph.text
+    assert "漏洞报告" not in graph.text
+    assert "showLocalPrefs" not in graph.text
+    assert "task-view-switcher" in graph.text
+    assert 'class="app-page-header shrink-0 bg-white/90 backdrop-blur border-b border-slate-200/70 z-[60]"' in graph.text
     assert "openTaskContinuation(project.project)" in graph.text
     assert "showGoalHistory" in graph.text
     assert "selectedNode.type === 'goal_history'" in graph.text
@@ -1637,18 +1861,23 @@ def test_frontend_and_static_assets_are_served(client):
     assert 'x-ref="exploreConversationScroll"' in human.text
     assert "event.tool" in human.text
     assert "humanArtifactPageCount" in human.text
-    assert "triggerManualReason()" in human.text
-    assert "manual-reason-trigger" in human.text
+    assert "triggerManualReason()" not in human.text
+    assert "manual-reason-trigger" not in human.text
+    assert "task-view-switcher" in human.text
     assert "Goal 历史" in human.text
     assert "openTaskContinuation(project.project)" in human.text
+    assert "toggleProjectGuardById" in human.text
+    assert "开启守卫" in human.text
+    assert "关闭守卫" in human.text
     assert "本任务 Token 消耗" in human.text
     assert "taskTokenModel" in human.text
     assert "taskTokenRange" in human.text
 
     archive = client.get("/static/templates/archive-view.html")
     assert archive.status_code == 200
-    assert "triggerManualReason()" in archive.text
-    assert "manual-reason-trigger" in archive.text
+    assert "triggerManualReason()" not in archive.text
+    assert "manual-reason-trigger" not in archive.text
+    assert "task-view-switcher" in archive.text
     assert "openTaskContinuation(project.project)" in archive.text
 
     core = client.get("/static/js/core.js").text
@@ -1664,9 +1893,16 @@ def test_frontend_and_static_assets_are_served(client):
     assert "source.map(async task" not in adapter
     assert "if (fromRoute) this.mountCurrentPage()" not in projects
     assert "this.navigateTo('tasks'); this.openProject" not in core
+    open_project = projects[
+        projects.index("async openProject(") : projects.index("backToList(", projects.index("async openProject("))
+    ]
+    assert "await this.loadSeeEvents(true" not in open_project
+    assert open_project.index("await this.mountCurrentPage()") < open_project.index(
+        "void this.loadSeeEvents(true"
+    )
     assert "_globalSearchAbortController?.abort()" in core
     assert "`/audit-events?task_id=${encodeURIComponent(taskId)}&limit=100`" not in adapter
-    assert "const offset = append ? currentLength : 0" in adapter
+    assert "const offset = append ? currentLength : 0" not in adapter
     assert "kind: intent.kind || ''" in adapter
     assert "`/tasks/${taskId}/reason-runs/trigger`" in adapter
     assert "`/tasks/${form.projectId}/continuations`" in adapter
@@ -1681,17 +1917,39 @@ def test_frontend_and_static_assets_are_served(client):
     assert "thinking_level" in adapter
     assert "token_range: this.dashboardTokenRange" in adapter
     assert "model: this.dashboardTokenModel" in adapter
+    assert "loadGlobalSkillUsage" not in core
+    assert "loadGlobalSkillUsage" not in projects
+    assert "loadGlobalSkillUsage" not in adapter
+    assert "loadVulnerabilityBoard" not in adapter
+    assert "toggleVulnerabilityView" not in adapter
+    assert "stopAllActiveProjects" not in projects
+    assert "manualReasonTriggering" in state.text
+    assert "showLocalPrefs" not in response.text
+    assert "switchExportTab" not in response.text
+
+    task_list = client.get("/static/templates/task-list.html")
+    assert task_list.status_code == 200
+    assert "暂停运行中" not in task_list.text
+    assert "stopAllActiveProjects" not in task_list.text
+    assert "showLocalPrefs" not in task_list.text
+    assert "查看漏洞报告" not in task_list.text
+
+    apple_css = client.get("/static/apple.css")
+    assert apple_css.status_code == 200
     assert "factDescriptionSegments" in graph_js
     assert "openFactReference" in graph_js
     assert "x-html" not in graph.text
     assert "selectedVulnerability().prerequisites || '未填写'" in vulnerabilities.text
     assert "selectedVulnerability().remediation || '未填写'" in vulnerabilities.text
+    assert "按列表查看证据、影响和修复建议" in vulnerabilities.text
+    assert "按卡片查看证据、影响和修复建议" not in vulnerabilities.text
 
     css = client.get("/static/apple.css").text
     assert "@media (prefers-color-scheme: dark)" not in css
     assert "#cy {\n  background: #f8fafc" not in css
     assert "background-color: var(--surface-graph)" in css
-    assert "button.manual-reason-trigger" in css
+    assert ".task-view-switcher button.is-active" in css
+    assert "@media (max-width: 640px)" in css
     custom_css = client.get("/static/custom.css").text
     assert ".worker-capability-drawer" in custom_css
     assert ".worker-capability-scope-button.is-selected" in custom_css
@@ -1758,47 +2016,6 @@ def test_runtime_save_uses_the_put_response_and_does_not_touch_workers() -> None
     assert result["calls"][1]["body"]["config"]["reason_low_watermark"] == 0
 
 
-def test_manual_reason_button_uses_shared_trigger_and_disables_invalid_states() -> None:
-    result = _run_manual_reason_fixture()
-
-    assert result["enabled"] is True
-    assert result["calls"] == [
-        {
-            "method": "POST",
-            "url": "/api/v1/tasks/t_150/reason-runs/trigger",
-            "body": {"actor": "Alice"},
-        },
-        {
-            "method": "POST",
-            "url": "/api/v1/tasks/t_150/reason-runs/trigger",
-            "body": {"actor": "Alice"},
-        },
-    ]
-    assert result["afterSuccess"] == {
-        "loading": False,
-        "refreshed": ["task:t_150", "tasks"],
-        "toasts": [
-            {"message": "已触发 rr000123，等待 Reason Worker 领取", "type": "success"}
-        ],
-    }
-    assert result["afterConflict"] == {
-        "loading": False,
-        "refreshed": ["task:t_150", "tasks", "task:t_150"],
-        "toasts": [
-            {"message": "已触发 rr000123，等待 Reason Worker 领取", "type": "success"},
-            {"message": "ReasonRun rr000124 已在进行中", "type": "error"},
-        ],
-    }
-    assert result["activeReason"] == {
-        "enabled": False,
-        "reason": "rr000124 已在进行中",
-    }
-    assert result["stopped"] == {
-        "enabled": False,
-        "reason": "只有运行中的任务可以触发 Reason",
-    }
-
-
 def test_skill_toggle_uses_dedicated_patch_endpoint_and_server_state() -> None:
     result = _run_skill_toggle_fixture()
 
@@ -1833,6 +2050,45 @@ def test_global_search_aborts_stale_requests_and_only_keeps_latest_results() -> 
     }
 
 
+def test_skill_file_tree_expands_nested_directories_without_flattening() -> None:
+    result = _run_skill_file_tree_fixture()
+
+    assert result["initial"] == [
+        ["directory", "assets", 0],
+        ["directory", "references", 0],
+        ["directory", "references/Web-Fuzzing-Box", 1],
+        ["directory", "references/Web-Fuzzing-Box/Brute", 2],
+        ["directory", "references/Web-Fuzzing-Box/Web", 2],
+        ["file", "references/Web-Fuzzing-Box/README_CN.md", 2],
+        ["file", "SKILL.md", 0],
+    ]
+    assert result["expanded"] == [
+        "assets",
+        "references",
+        "references/Web-Fuzzing-Box",
+        "references/Web-Fuzzing-Box/Brute",
+        "references/Web-Fuzzing-Box/Brute/Username",
+        "references/Web-Fuzzing-Box/Web",
+        "references/Web-Fuzzing-Box/README_CN.md",
+        "SKILL.md",
+    ]
+    assert result["binaryPreviewable"] is False
+    assert result["textPreviewable"] is True
+
+
+
+def test_skill_large_file_uses_truncated_preview_and_blocks_save() -> None:
+    result = _run_skill_large_file_preview_fixture()
+
+    assert result["large"] == {"contentLength": 524288, "truncated": True}
+    assert result["calls"][:1] == [
+        {"method": "GET", "path": "/skills/ffuf/files/large.txt?preview_bytes=524288"}
+    ]
+    assert result["saveCalls"] == 0
+    assert result["smallTruncated"] is False
+    assert any("文件过大，仅显示前 512 KB" in item["message"] for item in result["toasts"])
+
+
 def test_skill_editor_hides_frontmatter_and_saves_body_only() -> None:
     result = _run_skill_editor_frontmatter_fixture()
 
@@ -1845,6 +2101,29 @@ def test_skill_editor_hides_frontmatter_and_saves_body_only() -> None:
             "content": "# Vulnerability reporting\n\n正文内容\n",
         },
     }
+
+
+def test_skill_refresh_updates_open_clean_editor_but_preserves_unsaved_text() -> None:
+    result = _run_skill_refresh_fixture()
+
+    assert result["clean"] == {
+        "description": "新版说明",
+        "fileContent": "新版正文\n",
+        "bundledHash": "bundled-2",
+        "effectiveHash": "effective-2",
+        "syncStatus": "synced",
+    }
+    assert result["dirty"] == {
+        "description": "第三版说明",
+        "fileContent": "本地未保存修改",
+        "fileDirty": True,
+    }
+    assert result["calls"] == [
+        {"method": "GET", "path": "/skills"},
+        {"method": "GET", "path": "/skills/miniapp/files"},
+        {"method": "GET", "path": "/skills"},
+        {"method": "GET", "path": "/skills/miniapp/files"},
+    ]
 
 
 def test_artifact_center_classifies_new_explore_paths_by_type() -> None:
@@ -2096,12 +2375,55 @@ def test_fact_references_are_safe_inline_links_with_precise_targets() -> None:
     ]
 
 
+
+def test_vulnerability_page_waits_for_projects_before_mapping_project_ownership() -> None:
+    result = _run_vulnerability_project_load_order_fixture()
+
+    assert result == {
+        "events": [
+            "groups:start",
+            "tasks:start",
+            "tasks:end",
+            "groups:end",
+            "vulnerabilities:fetch",
+        ],
+        "projectTitle": "通用小程序",
+        "parentProjectId": "prj_026",
+    }
+
+
+def test_task_management_deep_link_selects_exact_task_and_resets_filters() -> None:
+    result = _run_task_management_deep_link_fixture(task_id="t_161")
+
+    assert result["hash"] == "#/tasks?task=t_161"
+    assert result["search"] == ""
+    assert result["status"] == "all"
+    assert result["selectedId"] == "t_161"
+    assert result["selected"] == "t_161"
+    assert result["blocked"] is False
+    assert result["calls"] == [
+        {"scroll": {"block": "nearest", "behavior": "smooth"}},
+    ]
+
+
+def test_missing_task_management_deep_link_does_not_select_another_task() -> None:
+    result = _run_task_management_deep_link_fixture(task_id="t_404")
+
+    assert result["hash"] == "#/tasks?task=t_404"
+    assert result["search"] == ""
+    assert result["status"] == "all"
+    assert result["selectedId"] == ""
+    assert result["selected"] is None
+    assert result["blocked"] is True
+    assert result["calls"] == [
+        {"toast": "任务不存在或无法打开", "type": "error"},
+    ]
+
 def test_vulnerability_deep_link_selects_an_item_outside_the_current_page() -> None:
     result = _run_vulnerability_deep_link_fixture()
 
     assert result == {
         "hash": "#/vulnerabilities?task=t_153&vulnerability=v001",
-        "showVulnBoard": False,
         "taskFilter": "t_153",
         "selected": "t_153:v001",
         "first": "v001",
@@ -2237,4 +2559,521 @@ def test_worker_capability_deep_link_opens_after_cold_page_load() -> None:
         "overview",
         "phases",
         "capabilities",
+    ]
+
+
+def test_mcp_tool_toggle_is_not_overridden_by_legacy_dispatch_module() -> None:
+    mcp = (ROOT / "src/axiom/static/js/mcp.js").read_text(encoding="utf-8")
+    dispatch = (ROOT / "src/axiom/static/js/dispatch.js").read_text(encoding="utf-8")
+
+    assert "async toggleMcpTool(server, tool)" in mcp
+    assert "this.api('PATCH', `/mcp/servers/${server.id}/tools/${tool.id}`" in mcp
+    assert "async toggleMcpTool(server, tool)" not in dispatch
+
+
+def test_human_intervention_frontend_contract_is_fact_scoped_and_escaped(client) -> None:
+    graph = client.get("/static/js/graph.js")
+    assert graph.status_code == 200
+    graph_js = graph.text
+    adapter = client.get("/static/js/v2-adapter.js")
+    assert adapter.status_code == 200
+    adapter_js = adapter.text
+    template = client.get("/static/templates/graph-view.html")
+    assert template.status_code == 200
+    css = client.get("/static/custom.css")
+    assert css.status_code == 200
+
+    for field in (
+        "human_intervention_required",
+        "human_intervention_reason",
+        "human_intervention_marked_at",
+    ):
+        assert field in adapter_js
+    assert "this.getProducingIntent(f.id)" in graph_js
+    assert "['fact', 'depth_fact'].includes(nodeType)" in graph_js
+    assert "['origin', 'goal'].includes(factId)" in graph_js
+    assert "node-card__human-dot" in graph_js
+    assert "title=\"${interventionLabel}\"" in graph_js
+    assert "aria-label=\"${interventionLabel}\"" in graph_js
+    assert "replace(/&/g, '&amp;')" in graph_js
+    assert "replace(/</g, '&lt;')" in graph_js
+    assert "replace(/'/g, '&#39;')" in graph_js
+    assert "humanInterventionForFact(fact.id)" in template.text
+    assert "humanInterventionForFact(selectedFactId())" in template.text
+    assert 'x-text="humanInterventionForFact(fact.id).human_intervention_reason"' in template.text
+    assert 'x-text="humanInterventionForFact(selectedFactId()).human_intervention_reason"' in template.text
+    assert "var(--danger)" in css.text
+    assert "var(--status-danger-bg)" in css.text
+
+
+def _run_task_detail_loading_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
+    program = f"""
+const fs = require('fs');
+const calls = [];
+const sections = [];
+const task = {{
+  id:'t_164', project_id:'prj_001', title:'任务 164', goal:'验证目标',
+  origin:{{ original_input:'AgentPark 小程序' }}, status:'running', phase:'reason',
+  archived:false, worker_pool:[], scope:{{ enabled:false, targets:[], exclude:[] }},
+  fact_count:2, intent_count:1, todo_count:1, vulnerability_count:1, artifact_count:1,
+}};
+const payloads = {{
+  '/api/v1/tasks/t_164': task,
+  '/api/v1/projects/prj_001': {{ id:'prj_001', title:'测试项目' }},
+  '/api/v1/tasks/t_164/graph': {{
+    facts:[{{ id:'origin', description:'AgentPark 小程序' }}, {{ id:'f001', description:'事实' }}],
+    intents:[{{ id:'i001', from_facts:['origin'], description:'Bootstrap', status:'completed', kind:'bootstrap' }}],
+    goal_from_fact_ids:['f001'], goal_history:[],
+  }},
+  '/api/v1/tasks/t_164/hints': [{{ id:'h001', content:'hint' }}],
+  '/api/v1/tasks/t_164/todos?limit=200': [{{ id:'td001', title:'todo' }}],
+  '/api/v1/tasks/t_164/vulnerabilities?limit=200': [{{ id:'v001', task_id:'t_164', title:'vuln', evidence_artifacts:[] }}],
+  '/api/v1/tasks/t_164/artifacts?limit=12': [{{ id:'a001', path:'artifacts/a.md' }}],
+  '/api/v1/tasks/t_164/artifacts?artifact_type=explore.leads&limit=20': [{{ id:'a002', path:'artifacts/leads.md' }}],
+  '/api/v1/tasks/t_164/artifacts?artifact_type=bootstrap.initial_leads&limit=20': [],
+  '/api/v1/tasks/t_164/goal-cycles': [{{ id:'gc001' }}],
+  '/api/v1/tasks/t_164/goal-evaluations': [{{ id:'ge001' }}],
+}};
+global.window = {{ AxiomModules: {{
+  state:{{ state:{{}} }}, core:{{ methods:{{}} }}, projects:{{ methods:{{}} }},
+  dashboard:{{ methods:{{}} }}, graph:{{ methods:{{}} }}, files:{{ methods:{{}} }},
+}} }};
+global.location = {{ origin:'http://testserver', hash:'#/tasks/t_164' }};
+global.fetch = async (url) => {{
+  const path = String(url).replace('http://testserver', '');
+  calls.push(path);
+  const body = payloads[path];
+  return {{
+    ok:body !== undefined, status:body !== undefined ? 200 : 404,
+    headers:{{ get:() => null }},
+    text:async () => JSON.stringify(body !== undefined ? body : {{ detail:'missing mock' }}),
+  }};
+}};
+eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
+const api = window.AxiomModules.core.methods.api;
+(async () => {{
+  const summary = await api('GET', '/projects/t_164', null, {{ detailMode:'summary' }});
+  const summaryCalls = [...calls];
+  calls.length = 0;
+  const incremental = await api('GET', '/projects/t_164', null, {{
+    detailMode:'incremental',
+    baseDetail:summary,
+    onTaskDetailSection:section => sections.push({{
+      name:section.name,
+      error:section.error ? String(section.error.message || section.error) : '',
+    }}),
+  }});
+  process.stdout.write(JSON.stringify({{
+    summaryCalls,
+    summaryShape:{{
+      title:summary.project.title,
+      facts:summary.facts.length,
+      intents:summary.intents.length,
+      archivedLocked:summary.archived_locked,
+    }},
+    detailCalls:calls,
+    sections,
+    finalShape:{{
+      facts:incremental.facts.length,
+      intents:incremental.intents.length,
+      todos:incremental.todos.length,
+      vulns:incremental.vulns.length,
+      artifacts:incremental.artifacts.length,
+      leads:incremental.lead_artifacts.length,
+      cycles:incremental.goal_cycles.length,
+      evaluations:incremental.goal_evaluations.length,
+    }},
+  }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def _run_task_detail_open_order_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    projects = ROOT / "src/axiom/static/js/projects.js"
+    program = f"""
+const fs = require('fs');
+const events = [];
+let resolveHydration;
+const hydration = new Promise(resolve => {{ resolveHydration = resolve; }});
+global.window = {{ AxiomModules: {{ projects:{{ methods:{{}} }} }} }};
+global.location = {{ hash:'#/tasks/t_164' }};
+global.history = {{ pushState:() => {{}} }};
+global.document = {{ hidden:false }};
+eval(fs.readFileSync({json.dumps(str(projects))}, 'utf8'));
+const methods = window.AxiomModules.projects.methods;
+const oldProject = {{ project:{{ id:'t_old', title:'old' }}, facts:[{{ id:'old' }}] }};
+const ctx = Object.assign({{}}, methods, {{
+  project:oldProject,
+  projectDetailsCache:{{}},
+  taskDetailLoad:{{ taskId:'', summary:'idle', hydrating:false, sections:{{}}, errors:{{}} }},
+  taskDiagnosticsRequested:{{}},
+  taskDiagnostics:{{}}, taskDiagnosticsLoading:{{}},
+  _projectOpenGeneration:0,
+  _pageAbortController:{{ signal:{{ aborted:false }} }},
+  replay:{{ active:false }}, polling:true,
+  rememberProjectListScroll:() => {{}}, cleanupMountedPage:() => {{}}, showPageSkeleton:() => events.push('skeleton'),
+  loadTaskSummary:async id => {{
+    events.push('summary');
+    ctx.project = {{ project:{{ id, title:'任务 164', archived:false }}, facts:[], intents:[], todos:[], vulns:[], artifacts:[], lead_artifacts:[] }};
+    ctx.taskDetailLoad = {{ taskId:id, summary:'ready', hydrating:false, sections:{{}}, errors:{{}} }};
+    return ctx.project;
+  }},
+  mountCurrentPage:async () => {{
+    events.push('mount');
+    ctx._pageAbortController = {{ signal:{{ aborted:false, mounted:true }} }};
+  }},
+  hydrateTaskDetails:(id, options) => {{ events.push(options.signal.mounted ? 'hydrate:new-signal' : 'hydrate:old-signal'); return hydration; }},
+  loadSeeEvents:async () => {{ events.push('events'); return []; }},
+  scheduleTaskDiagnostics:() => events.push('diagnostics:scheduled'),
+  clampPanelWidth:value => value, sidePanelWidth:320,
+  $nextTick:fn => fn(), initGraph:() => events.push('graph:init'), cy:null,
+  view:'human', activePage:'task-detail', selectedProjectId:'',
+  seeEvents:[], selectedFacts:[], humanArtifactItems:[],
+}});
+(async () => {{
+  await ctx.openProject('t_164', true, 'human');
+  const beforeHydration = [...events];
+  resolveHydration();
+  await hydration;
+  ctx.project = {{ project:{{ id:'t_new' }}, facts:[{{ id:'new' }}] }};
+  ctx.selectedProjectId = 't_new';
+  ctx._projectOpenGeneration += 1;
+  ctx.applyTaskDetailSection?.('t_164', ctx._projectOpenGeneration - 1, {{ name:'graph', data:{{ facts:[{{ id:'late' }}], intents:[] }} }});
+  process.stdout.write(JSON.stringify({{
+    beforeHydration,
+    selectedProjectId:ctx.selectedProjectId,
+    factId:ctx.project.facts[0].id,
+  }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def _run_task_diagnostics_idle_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    projects = ROOT / "src/axiom/static/js/projects.js"
+    program = f"""
+const fs = require('fs');
+const calls = [];
+let idleCallback = null;
+global.window = {{
+  AxiomModules:{{ projects:{{ methods:{{}} }} }},
+  requestIdleCallback:callback => {{ idleCallback = callback; return 7; }},
+  cancelIdleCallback:() => {{}},
+}};
+global.document = {{ hidden:false }};
+eval(fs.readFileSync({json.dumps(str(projects))}, 'utf8'));
+const methods = window.AxiomModules.projects.methods;
+const ctx = Object.assign({{}}, methods, {{
+  activePage:'task-detail', selectedProjectId:'t_164', _projectOpenGeneration:3,
+  taskDiagnostics:{{}}, taskDiagnosticsLoading:{{}}, taskDiagnosticsRequested:{{}},
+  loadTaskDiagnostics:async id => {{ calls.push(id); ctx.taskDiagnostics[id] = {{ ok:true }}; }},
+}});
+const first = ctx.selectedTaskDiagnostics();
+const beforeIdle = calls.length;
+(async () => {{
+  await idleCallback({{ didTimeout:false, timeRemaining:() => 20 }});
+  process.stdout.write(JSON.stringify({{
+    first,
+    beforeIdle,
+    afterIdle:calls.length,
+    requested:ctx.taskDiagnosticsRequested.t_164,
+  }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+
+def _run_task_detail_edge_cases_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
+    program = f"""
+const fs = require('fs');
+const calls = [];
+const sections = [];
+let failTodos = true;
+const normalTask = {{
+  id:'t_165', project_id:'prj_001', title:'任务 165', goal:'验证目标',
+  origin:{{ original_input:'AgentPark 小程序' }}, status:'running', phase:'reason',
+  archived:false, worker_pool:[], scope:{{ enabled:false, targets:[], exclude:[] }},
+}};
+const archivedTask = {{ ...normalTask, id:'t_archived', title:'归档任务', archived:true }};
+const payloads = {{
+  '/api/v1/tasks/t_165': normalTask,
+  '/api/v1/tasks/t_archived': archivedTask,
+  '/api/v1/projects/prj_001': {{ id:'prj_001', title:'测试项目' }},
+  '/api/v1/tasks/t_165/graph': {{ facts:[{{ id:'origin', description:'origin' }}], intents:[] }},
+  '/api/v1/tasks/t_165/hints': [],
+  '/api/v1/tasks/t_165/todos?limit=200': [{{ id:'td001' }}],
+  '/api/v1/tasks/t_165/vulnerabilities?limit=200': [],
+  '/api/v1/tasks/t_165/artifacts?limit=12': [],
+  '/api/v1/tasks/t_165/artifacts?artifact_type=explore.leads&limit=20': [],
+  '/api/v1/tasks/t_165/artifacts?artifact_type=bootstrap.initial_leads&limit=20': [],
+  '/api/v1/tasks/t_165/goal-cycles': [],
+  '/api/v1/tasks/t_165/goal-evaluations': [],
+}};
+global.window = {{ AxiomModules: {{
+  state:{{ state:{{}} }}, core:{{ methods:{{}} }}, projects:{{ methods:{{}} }},
+  dashboard:{{ methods:{{}} }}, graph:{{ methods:{{}} }}, files:{{ methods:{{}} }},
+}} }};
+global.location = {{ origin:'http://testserver', hash:'#/tasks/t_165' }};
+global.fetch = async (url) => {{
+  const path = String(url).replace('http://testserver', '');
+  calls.push(path);
+  if (path === '/api/v1/tasks/t_165/todos?limit=200' && failTodos) {{
+    return {{ ok:false, status:503, headers:{{ get:() => null }}, text:async () => JSON.stringify({{ detail:'Todo unavailable' }}) }};
+  }}
+  const body = payloads[path];
+  return {{
+    ok:body !== undefined, status:body !== undefined ? 200 : 404,
+    headers:{{ get:() => null }},
+    text:async () => JSON.stringify(body !== undefined ? body : {{ detail:'missing mock' }}),
+  }};
+}};
+eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
+const api = window.AxiomModules.core.methods.api;
+(async () => {{
+  const archivedSummary = await api('GET', '/projects/t_archived', null, {{ detailMode:'summary' }});
+  calls.length = 0;
+  const archivedDetail = await api('GET', '/projects/t_archived', null, {{
+    detailMode:'incremental', baseDetail:archivedSummary,
+    onTaskDetailSection:section => sections.push({{ archived: true, name:section.name }}),
+  }});
+  const archivedCalls = [...calls];
+  calls.length = 0;
+  const summary = await api('GET', '/projects/t_165', null, {{ detailMode:'summary' }});
+  const failedDetail = await api('GET', '/projects/t_165', null, {{
+    detailMode:'incremental', baseDetail:summary,
+    onTaskDetailSection:section => sections.push({{
+      archived: false, name:section.name,
+      error:section.error ? String(section.error.message || section.error) : '',
+    }}),
+  }});
+  const failedCalls = [...calls];
+  failTodos = false;
+  calls.length = 0;
+  const retried = await api('GET', '/projects/t_165', null, {{
+    detailMode:'incremental', baseDetail:failedDetail, sections:['todos'],
+    onTaskDetailSection:section => sections.push({{ retry:true, name:section.name }}),
+  }});
+  process.stdout.write(JSON.stringify({{
+    archivedCalls,
+    archivedLocked:archivedDetail.archived_locked,
+    archivedCallbacks:sections.filter(item => item.archived),
+    failedCalls,
+    failedTodo:sections.find(item => item.name === 'todos' && !item.retry)?.error || '',
+    failedFacts:failedDetail.facts.length,
+    retryCalls:calls,
+    retryTodo:retried.todos.length,
+    retryCallbacks:sections.filter(item => item.retry).map(item => item.name),
+  }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def _run_task_diagnostics_switch_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    projects = ROOT / "src/axiom/static/js/projects.js"
+    program = f"""
+const fs = require('fs');
+const callbacks = {{}};
+const cancelled = [];
+const loaded = [];
+let nextHandle = 1;
+global.window = {{
+  AxiomModules:{{ projects:{{ methods:{{}} }} }},
+  requestIdleCallback:callback => {{ const handle = nextHandle++; callbacks[handle] = callback; return handle; }},
+  cancelIdleCallback:handle => {{ cancelled.push(handle); }},
+}};
+global.document = {{ hidden:false }};
+eval(fs.readFileSync({json.dumps(str(projects))}, 'utf8'));
+const methods = window.AxiomModules.projects.methods;
+const ctx = Object.assign({{}}, methods, {{
+  activePage:'task-detail', selectedProjectId:'t_a', _projectOpenGeneration:1,
+  taskDiagnostics:{{}}, taskDiagnosticsLoading:{{}}, taskDiagnosticsRequested:{{}},
+  loadTaskDiagnostics:async id => {{ loaded.push(id); ctx.taskDiagnostics[id] = {{ ok:true }}; }},
+}});
+(async () => {{
+  ctx.scheduleTaskDiagnostics('t_a', {{ generation:1 }});
+  const afterA = {{ ...ctx.taskDiagnosticsRequested }};
+  ctx.selectedProjectId = 't_b';
+  ctx._projectOpenGeneration = 2;
+  ctx.scheduleTaskDiagnostics('t_b', {{ generation:2 }});
+  const afterB = {{ ...ctx.taskDiagnosticsRequested }};
+  callbacks[2]({{ didTimeout:false, timeRemaining:() => 20 }});
+  await Promise.resolve();
+  ctx.selectedProjectId = 't_a';
+  ctx._projectOpenGeneration = 3;
+  ctx.scheduleTaskDiagnostics('t_a', {{ generation:3 }});
+  callbacks[3]({{ didTimeout:false, timeRemaining:() => 20 }});
+  await Promise.resolve();
+  process.stdout.write(JSON.stringify({{ afterA, afterB, cancelled, loaded, requested:ctx.taskDiagnosticsRequested }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def _run_task_view_switch_hydration_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    human = ROOT / "src/axiom/static/js/human.js"
+    program = f"""
+const fs = require('fs');
+const events = [];
+let resolveOld;
+global.window = {{ AxiomModules:{{ human:{{ methods:{{}} }} }} }};
+eval(fs.readFileSync({json.dumps(str(human))}, 'utf8'));
+const methods = window.AxiomModules.human.methods;
+let ctx;
+const oldHydration = new Promise(resolve => {{ resolveOld = resolve; }}).finally(() => {{
+  ctx._taskDetailHydrationPromise = null;
+  ctx.taskDetailLoad = {{ ...ctx.taskDetailLoad, hydrating:false }};
+}});
+ctx = Object.assign({{}}, methods, {{
+  selectedProjectId:'t_164', _projectOpenGeneration:4, view:'human', project:{{ project:{{ id:'t_164', archived:false }}, archived_locked:false }},
+  taskDetailLoad:{{ hydrating:true, sections:{{ graph:'loading', todos:'idle', hints:'ready' }}, errors:{{}} }},
+  _taskDetailHydrationPromise:oldHydration,
+  showPageSkeleton:() => events.push('skeleton'),
+  mountCurrentPage:async () => {{ events.push('mount'); ctx._pageAbortController = {{ signal:{{ name:'new' }} }}; }},
+  taskDetailSectionReady:name => ctx.taskDetailLoad.sections[name] === 'ready',
+  hydrateTaskDetails:async (id, options) => {{ events.push({{ id, signal:options.signal.name, sections:options.sections }}); }},
+  initGraph:() => events.push('graph:init'),
+}});
+(async () => {{
+  const switching = ctx.switchTaskView('graph');
+  await Promise.resolve();
+  const beforeRelease = [...events];
+  resolveOld();
+  await switching;
+  process.stdout.write(JSON.stringify({{ beforeRelease, after:events }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+def test_task_detail_adapter_supports_summary_then_incremental_sections() -> None:
+    result = _run_task_detail_loading_fixture()
+
+    assert result["summaryCalls"] == ["/api/v1/tasks/t_164"]
+    assert result["summaryShape"] == {
+        "title": "任务 164",
+        "facts": 0,
+        "intents": 0,
+        "archivedLocked": False,
+    }
+    assert "/api/v1/tasks/t_164" not in result["detailCalls"]
+    assert {item["name"] for item in result["sections"]} == {
+        "project_group",
+        "graph",
+        "hints",
+        "todos",
+        "vulnerabilities",
+        "artifacts",
+        "lead_artifacts",
+        "goal_cycles",
+        "goal_evaluations",
+    }
+    assert all(not item["error"] for item in result["sections"])
+    assert result["finalShape"] == {
+        "facts": 2,
+        "intents": 1,
+        "todos": 1,
+        "vulns": 1,
+        "artifacts": 1,
+        "leads": 1,
+        "cycles": 1,
+        "evaluations": 1,
+    }
+
+
+def test_open_project_mounts_after_summary_and_ignores_late_detail_results() -> None:
+    result = _run_task_detail_open_order_fixture()
+
+    assert result["beforeHydration"][:4] == [
+        "skeleton",
+        "summary",
+        "mount",
+        "hydrate:new-signal",
+    ]
+    assert "events" in result["beforeHydration"]
+    assert "diagnostics:scheduled" in result["beforeHydration"]
+    assert result["selectedProjectId"] == "t_new"
+    assert result["factId"] == "new"
+
+
+def test_task_diagnostics_are_requested_on_idle_not_template_evaluation() -> None:
+    result = _run_task_diagnostics_idle_fixture()
+
+    assert result["first"] is None
+    assert result["beforeIdle"] == 0
+    assert result["afterIdle"] == 1
+    assert result["requested"] is True
+
+
+def test_task_detail_incremental_skips_archived_and_isolates_section_failures() -> None:
+    result = _run_task_detail_edge_cases_fixture()
+
+    assert result["archivedCalls"] == []
+    assert result["archivedLocked"] is True
+    assert result["archivedCallbacks"] == []
+    assert "Todo unavailable" in result["failedTodo"]
+    assert result["failedFacts"] == 1
+    assert "/api/v1/tasks/t_165/graph" in result["failedCalls"]
+    assert "/api/v1/tasks/t_165/artifacts?limit=12" in result["failedCalls"]
+
+
+def test_task_detail_retry_requests_only_the_failed_section() -> None:
+    result = _run_task_detail_edge_cases_fixture()
+
+    assert result["retryCalls"] == ["/api/v1/tasks/t_165/todos?limit=200"]
+    assert result["retryCallbacks"] == ["todos"]
+    assert result["retryTodo"] == 1
+
+
+def test_task_diagnostics_idle_schedule_cleans_cancelled_task_and_can_reschedule() -> None:
+    result = _run_task_diagnostics_switch_fixture()
+
+    assert result["afterA"] == {"t_a": True}
+    assert result["afterB"] == {"t_b": True}
+    assert result["cancelled"] == [1]
+    assert result["loaded"] == ["t_b", "t_a"]
+    assert result["requested"] == {"t_b": True, "t_a": True}
+
+
+def test_task_view_switch_restarts_incomplete_hydration_with_new_page_signal() -> None:
+    result = _run_task_view_switch_hydration_fixture()
+
+    assert result["beforeRelease"] == ["skeleton", "mount"]
+    assert result["after"] == [
+        "skeleton",
+        "mount",
+        {"id": "t_164", "signal": "new", "sections": ["graph", "todos"]},
     ]

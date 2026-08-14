@@ -13,7 +13,7 @@ from axiom.dispatcher.schemas import (
     ClaimedWork,
     DispatcherSnapshot,
 )
-from axiom.modules.execution.schemas import ExecutionInput
+from axiom.modules.execution.schemas import ActivityCommand, ExecutionInput
 from axiom.modules.reason.schemas import (
     ClaimedReasonRun,
     CommitResult,
@@ -75,6 +75,13 @@ class ApiControlPlane:
         response = self.client.post(
             self._url(work, "heartbeat"),
             json={"lease_id": work.lease_id},
+        )
+        assert response.status_code == 204, response.text
+
+    def activity(self, work: ClaimedWork, command: ActivityCommand) -> None:
+        response = self.client.post(
+            self._url(work, "activity"),
+            json=command.model_dump(mode="json"),
         )
         assert response.status_code == 204, response.text
 
@@ -304,6 +311,48 @@ def test_reason_runner_commits_a_plan_without_reason_choosing_a_worker(client) -
     ).json()
     assert reason_run["status"] == "completed"
     assert reason_run["activity_kind"] == "completed"
+
+
+def test_reason_reports_context_preparation_before_model_execution(client) -> None:
+    task, _reason_run_id, control = _pending_reason(client)
+    observed_after_start: list[str] = []
+    original_start = control.start
+
+    def recording_start(work: ClaimedWork) -> None:
+        original_start(work)
+        run = client.get(
+            f"/api/v1/tasks/{work.task_id}/reason-runs/{work.reason_run_id}"
+        ).json()
+        observed_after_start.append(run["activity_kind"])
+
+    control.start = recording_start  # type: ignore[method-assign]
+
+    class InspectingExecutor(FakeReasonExecutor):
+        def execute(self, execution_input, *, workspace, lease_active):
+            run = client.get(
+                f"/api/v1/tasks/{task['id']}/reason-runs/{workspace.reason_run_id}"
+            ).json()
+            assert run["activity_kind"] == "analyzing"
+            assert run["activity_summary"] == "正在分析任务上下文并规划下一批 Intent"
+            return super().execute(
+                execution_input,
+                workspace=workspace,
+                lease_active=lease_active,
+            )
+
+    runner = AxiomRunner(
+        control,
+        executor_factory=lambda _worker, _work: InspectingExecutor(client, _valid_plan()),
+        heartbeat_interval_seconds=60,
+    )
+    try:
+        report = runner.run_once()
+        runner.wait_for_idle()
+    finally:
+        runner.close()
+
+    assert report.claimed == 1
+    assert observed_after_start == ["preparing_context"]
 
 
 def test_invalid_reason_plan_abandons_workspace_and_can_retry_with_a_new_lease(client) -> None:

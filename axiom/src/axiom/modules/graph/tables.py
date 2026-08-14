@@ -10,6 +10,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    false,
 )
 
 from axiom.modules.tasks.tables import tasks
@@ -59,6 +60,21 @@ intents = Table(
     Column("activity_started_at", UTCDateTimeText),
     Column("activity_updated_at", UTCDateTimeText),
     Column("to_fact_id", String),
+    Column(
+        "human_intervention_required",
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=false(),
+    ),
+    Column(
+        "human_intervention_reason",
+        Text,
+        nullable=False,
+        default="",
+        server_default="",
+    ),
+    Column("human_intervention_marked_at", UTCDateTimeText),
     Column("created_at", UTCDateTimeText, nullable=False),
     Column("concluded_at", UTCDateTimeText),
     Column("archived", Boolean, nullable=False, default=False),

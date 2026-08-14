@@ -223,6 +223,7 @@ class DispatchRepository:
                 global_max_active_tasks=config.global_max_active_tasks,
                 per_task_max_active_runs=config.per_task_max_active_runs,
                 per_task_explore_concurrency=config.per_task_explore_concurrency,
+                per_task_review_concurrency=config.per_task_review_concurrency,
             ),
         )
 

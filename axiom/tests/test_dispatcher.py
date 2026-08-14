@@ -105,6 +105,21 @@ def test_reconciler_assigns_pending_intents_to_idle_workers_without_reason_assig
     ]
 
 
+def test_reconciler_randomizes_equal_priority_workers(monkeypatch):
+    monkeypatch.setattr(
+        "axiom.dispatcher.reconciler.random.choice",
+        lambda candidates: next(item for item in candidates if item.name == "worker-b"),
+    )
+    snapshot = DispatcherSnapshot(
+        tasks=[TaskSnapshot(id="t_001", status="running", intents=[intent("t_001", 2)])],
+        workers=[worker("worker-a"), worker("worker-b")],
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert actions[0].claim.worker_name == "worker-b"
+
+
 def test_reconciler_respects_capability_pool_capacity_and_retry_time():
     snapshot = DispatcherSnapshot(
         tasks=[
@@ -347,6 +362,68 @@ def test_pending_review_is_schedulable_for_a_completed_task() -> None:
     assert actions[0].claim.kind == "review"
     assert actions[0].claim.review_run_id == "vr000001"
     assert actions[0].claim.intent_id is None
+
+
+def test_reconciler_schedules_reviews_up_to_the_configured_per_task_limit() -> None:
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="completed",
+                review_runs=[review_run("t_001", number) for number in range(1, 6)],
+            )
+        ],
+        workers=[worker("reviewer-a", capabilities=("review",), max_running=5)],
+        limits=DispatchLimits(
+            global_max_active_runs=5,
+            global_max_active_tasks=1,
+            per_task_max_active_runs=5,
+            per_task_explore_concurrency=4,
+            per_task_review_concurrency=4,
+        ),
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert len(actions) == 4
+    assert [item.claim.review_run_id for item in actions] == [
+        "vr000001",
+        "vr000002",
+        "vr000003",
+        "vr000004",
+    ]
+
+
+def test_reconciler_stops_new_reviews_at_the_configured_per_task_limit() -> None:
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="completed",
+                review_runs=[
+                    review_run("t_001", 1, status="running"),
+                    review_run("t_001", 2),
+                ],
+            )
+        ],
+        workers=[
+            worker(
+                "reviewer-a",
+                capabilities=("review",),
+                running=1,
+                max_running=4,
+            )
+        ],
+        limits=DispatchLimits(
+            global_max_active_runs=4,
+            global_max_active_tasks=1,
+            per_task_max_active_runs=4,
+            per_task_explore_concurrency=4,
+            per_task_review_concurrency=1,
+        ),
+    )
+
+    assert Reconciler(now=lambda: NOW).calculate(snapshot) == []
 
 
 def test_reconciler_keeps_main_chain_explore_ahead_of_reviewer() -> None:

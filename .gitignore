@@ -15,3 +15,27 @@ package.json
 package-lock.json
 !axiom/package.json
 !axiom/package-lock.json
+
+# 本地测试残留(不提交)
+axiom/token.txt
+axiom/evidence/
+axiom/output/
+axiom/baseline_https_*.html
+axiom/dos_*.csv
+axiom/smuggle_*.py
+axiom/smuggle_*.sh
+axiom/cos_exploit.py
+axiom/mcp_ssrf_test*.sh
+axiom/test_rate_limit.sh
+axiom/t_i036_test*.py
+axiom/test-upload.txt
+axiom/lease-upload-test.txt
+axiom/test-xss.html
+axiom/xss_payload.html
+axiom/*.mp4
+axiom/*.jpg
+axiom/t.jpeg
+axiom/real_test.mp4
+axiom/goal_assess_reason.txt
+axiom/intent_i087_desc.txt
+axiom/td076_completed_reason.txt

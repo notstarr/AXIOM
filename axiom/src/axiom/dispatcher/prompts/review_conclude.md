@@ -16,7 +16,7 @@ ReviewRun：`{review_run_id}`
 4. 检查审核记录是否按 CVSS v4.0 风格写明 `AV/AC/AT/PR/UI`、`VC/VI/VA`、`SC/SI/SA` 的证据或未知原因，并包含本 ReviewRun 的独立验证和关键对照。
 5. 若没有独立验证，只有在记录了明确阻塞条件或“直接静态证据已完整、复测无新增价值”的具体理由时，才能提交终态裁决。
 6. 若尚未完成必要验证且现在已无法安全补做，不得仅根据旧 Finding/Evidence 强行提交 `verified` 或 `ignored`；应提交 `needs-human` 并写明已尝试步骤和阻塞原因。
-7. 如果尚未提交结构化裁决，依据上述规则调用一次 `axiom review decision submit`。
+7. 如果尚未提交结构化裁决，依据上述规则调用一次 `axiom review decision submit`。`--reason` 必须精炼、专业、直击要害，控制在 1 至 3 句，只概括决定性证据或阻塞、核心影响和状态依据；完整过程留在 `review.md`，不要塞进审核原因。
 8. 运行 `axiom review status`，修复其中可修复的错误。
 9. 不修改漏洞原始正文，不创建 Fact、Todo 或 Intent。
 

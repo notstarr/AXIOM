@@ -54,6 +54,25 @@ class PreparedFiles:
         shutil.rmtree(self.staging_dir, ignore_errors=True)
 
 
+@dataclass(slots=True)
+class PreparedTaskDeletion:
+    """Task directories moved out of the live namespace pending DB commit."""
+
+    staging_dir: Path
+    moved_paths: list[tuple[Path, Path]] = field(default_factory=list)
+
+    def rollback(self) -> None:
+        for original, quarantined in reversed(self.moved_paths):
+            if not quarantined.exists() and not quarantined.is_symlink():
+                continue
+            original.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(quarantined, original)
+        shutil.rmtree(self.staging_dir, ignore_errors=True)
+
+    def finish(self) -> None:
+        shutil.rmtree(self.staging_dir)
+
+
 class FileStore:
     """Safe, relocatable storage rooted outside the source tree."""
 
@@ -210,6 +229,32 @@ class FileStore:
         path = self.resolve(f"runs/{task_id}/{owner_id}/{lease_id}")
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def prepare_task_deletion(self, task_id: str) -> PreparedTaskDeletion:
+        """Quarantine every persisted directory owned by a Task.
+
+        Moving first keeps the database and filesystem changes reversible until
+        the surrounding database transaction commits.  The quarantined tree is
+        permanently removed only after a successful commit.
+        """
+
+        _validate_segment(task_id, "task_id")
+        staging_dir = Path(
+            tempfile.mkdtemp(prefix=f"task-delete-{task_id}-", dir=self.root / ".staging")
+        )
+        prepared = PreparedTaskDeletion(staging_dir=staging_dir)
+        try:
+            for namespace in ("tasks", "runs"):
+                original = self.resolve(f"{namespace}/{task_id}")
+                if not original.exists() and not original.is_symlink():
+                    continue
+                quarantined = staging_dir / namespace
+                os.replace(original, quarantined)
+                prepared.moved_paths.append((original, quarantined))
+        except BaseException:
+            prepared.rollback()
+            raise
+        return prepared
 
     def delete(self, storage_key: str) -> None:
         self.resolve(storage_key).unlink(missing_ok=True)

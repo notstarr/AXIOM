@@ -72,7 +72,6 @@ def test_completed_task_continues_with_new_goal_and_reason_run(client) -> None:
     assert run["source_fact_ids"] == []
     assert run["trigger_payload"]["previous_goal"] == "完成第一轮目标"
     assert run["trigger_payload"]["current_goal"] == "第二轮唯一目标"
-
     cycles = client.get(f"/api/v1/tasks/{task['id']}/goal-cycles").json()
     assert [cycle["sequence"] for cycle in cycles] == [2, 1]
     assert cycles[1]["status"] == "completed"
@@ -100,6 +99,7 @@ def test_continuation_reason_can_finish_without_new_intents(client) -> None:
     assert "本轮重点：优先复盘授权边界" in execution["intent_description"]
     assert "人工说明是有效的规划依据" in execution["intent_description"]
     assert "即使本轮没有新 Fact" in execution["intent_description"]
+    assert execution["reason_prompt_profile"] == "continuation"
     assert "上一轮 Goal" not in execution["intent_description"]
     context_dir = Path(execution["context_manifest_path"]).parent
     manifest = json.loads(

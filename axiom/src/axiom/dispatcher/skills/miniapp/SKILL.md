@@ -7,7 +7,7 @@ requirements:
     - scripts/miniapp_regex_rules.json
 ---
 
-# 微信小程序渗透测试工作流（Miniapp CLI + Yak MCP）
+# 微信小程序渗透测试工作流（Miniapp CLI + Reqable MCP）
 
 ## 目标
 
@@ -16,7 +16,7 @@ requirements:
 1. 用 Miniapp CLI 发现已有解包/分析结果，优先复用。
 2. 没有可用结果时，轻量探测未解包包组，让 worker 根据名称、appid、页面标题、域名、业务 code 判断目标。
 3. 只用 `target_id` 准备目标，脚本自动定位包路径、解包、分析并生成产物。
-4. 读取 `summary.md` 和 `yak_workflow.md`，再结合 Yak MCP 的真实流量验证接口。
+4. 读取 `summary.md` 和 `traffic_workflow.md`，再结合 Reqable MCP 的真实流量验证接口。
 
 所有默认状态和产物都写入 `output/miniapp/`，不会因为重启丢失。
 
@@ -43,11 +43,11 @@ python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" statu
 
 重点字段：
 
-- `ready_targets[]`：已经解包/已分析目标，包含 `target_id`、名称、appid、路径、`summary`、`yak_workflow`。
+- `ready_targets[]`：已经解包/已分析目标，包含 `target_id`、名称、appid、路径、`summary`、`traffic_workflow`。
 - `package_targets[]`：未解包包组，只做基础归组，不做深度识别。
 - `next_action`：`use_ready_target`、`run_probe` 或 `no_targets`。
 
-如果 `ready_targets` 里有 `is_analyzed=true`，优先直接读返回的 `summary` / `yak_workflow`，不要重复解包。
+如果 `ready_targets` 里有 `is_analyzed=true`，优先直接读返回的 `summary` / `traffic_workflow`，不要重复解包。
 
 ### 2. probe：没有可用目标时识别未解包包组
 
@@ -90,7 +90,7 @@ output/miniapp/<target_id>/
 - `sensitive_findings.json`：账号密码、token、key、手机号、身份证、JDBC 等。
 - `media_resources.json`：图片、视频、音频、字体等资源。
 - `summary.md`：worker 必须先读。
-- `yak_workflow.md`：下一步如何用 Yak MCP 验证接口。
+- `traffic_workflow.md`：下一步如何用 Reqable 的真实捕获流量验证接口。
 
 ## Worker 固定流程
 
@@ -98,7 +98,7 @@ output/miniapp/<target_id>/
 python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" status
 ```
 
-- 如果返回 `ready_targets` 且 `is_analyzed=true`：读取对应 `summary.md` / `yak_workflow.md`。
+- 如果返回 `ready_targets` 且 `is_analyzed=true`：读取对应 `summary.md` / `traffic_workflow.md`。
 - 如果没有可用 `ready_targets`：运行 `probe`。
 
 ```bash
@@ -112,8 +112,22 @@ python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" probe
 python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" prepare --target-id <target_id>
 ```
 
-- 读取输出里的 `summary.md` / `yak_workflow.md`。
-- 使用 Yak MCP 查询真实 HTTP flow，再基于真实请求包重放和变异。
+- 读取输出里的 `summary.md` / `traffic_workflow.md`。
+- 使用 Reqable MCP 查询真实 HTTP flow，再基于真实请求包重放和变异。
+
+## Reqable 固定验证流程
+
+Explore Worker 按以下顺序使用 Reqable，不得跳过真实请求恢复环节：
+
+1. `capture_live_filter`：按 Host、Path 或业务 Code 查询候选流量 ID。
+2. 没有目标流量时，调用 `capture_live_set_enabled(enabled=true)` 开始捕获，并真实操作小程序触发业务流程。
+3. `capture_live_get_by_id(id)`：读取完整 URL、方法、请求头、Cookie、请求体和响应。
+4. `capture_live_generate_curl(id)`：从真实记录生成保留原始字段的 cURL。
+5. Explore 使用 `bash` 重放 cURL，每次只改变一个身份、对象 ID、状态、数量或业务参数。
+
+`capture_live_compose` 只用于把流量放进 Reqable 调试标签，`capture_live_collection_add` 只用于保存到集合，都不是自动验证必需工具。不要自动调用 `proxy_set` 修改系统代理。
+
+Reason 没有 Reqable Tool 时只读取静态分析结果并规划 Explore Intent，不得声称已经完成真实流量验证。
 
 ## 兼容命令
 
@@ -146,6 +160,6 @@ python3 "$(axiom skill path miniapp)/scripts/miniapp_decompile_analyze.py" analy
 ## 注意！！！
 
 - 没有 `summary.md` / `api_candidates.json` 前，不要直接构造业务请求。
-- 静态结果只负责给线索，真正测试必须优先找 Yak 里的真实 HTTP flow。
+- 静态结果只负责给线索，真正测试必须优先找 Reqable 里的真实 HTTP flow。
 - 不要只带 Cookie，也不要只带 X-TOKEN；真实请求里的 Cookie、X-TOKEN、Client、Referer、User-Agent、Content-Type、project/version、form 编码都要保持一致。
 - 出现“登录失败 / 请先登录 / data 为空 / 太火爆啦 / 参数缺失”等失败请求时，99%的情况是请求头，参数和值不完整导致的，补充好对应部分再尝试。

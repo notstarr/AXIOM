@@ -3,14 +3,9 @@
   <header class="app-page-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
     <div>
       <h2 class="text-base font-semibold text-slate-800 tracking-tight">漏洞管理</h2>
-      <p class="text-xs text-slate-400 mt-0.5">跨任务聚合漏洞，按卡片查看证据、影响和修复建议</p>
+      <p class="text-xs text-slate-400 mt-0.5">跨任务聚合漏洞，按列表查看证据、影响和修复建议</p>
     </div>
     <div class="flex-1"></div>
-    <button @click="toggleVulnerabilityView()" class="h-8 px-3 rounded-lg border border-slate-200 text-xs transition"
-      :class="showVulnBoard ? 'bg-brand-500 text-white border-brand-500' : 'text-slate-600 hover:bg-slate-50'">
-      <span x-show="!showVulnBoard">看板视图</span>
-      <span x-show="showVulnBoard">列表视图</span>
-    </button>
     <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition">刷新</button>
   </header>
   <!-- Filter bar - sticky above scroll area -->
@@ -23,45 +18,14 @@
           <option :value="p.id" x-text="`${p.id} ${p.title}`"></option>
         </template>
       </select>
-      <button @click="exportCurrentTaskVulnReport()" :disabled="!vulnFilter.projectId && !selectedVulnerability()" class="px-3 py-2 text-xs rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed">导出报告</button>
       <button @click="openVulnEditor()" class="px-3 py-2 text-xs rounded-lg bg-rose-500 text-white hover:bg-rose-600">新增漏洞</button>
     </div>
-    <p class="mt-2 text-xs text-slate-400" x-text="showVulnBoard ? `看板已加载 ${allVulnerabilities().length} / ${Object.values(vulnerabilityBoardTotals).reduce((sum, value) => sum + Number(value || 0), 0)}` : `显示 ${filteredVulnerabilities().length} / ${vulnerabilityTotal}`"></p>
+    <p class="mt-2 text-xs text-slate-400" x-text="`显示 ${filteredVulnerabilities().length} / ${vulnerabilityTotal}`"></p>
   </div>
 
   <main class="flex-1 min-h-0 p-5">
-    <!-- Board view -->
-    <template x-if="showVulnBoard">
-      <div class="grid grid-cols-4 gap-4 h-full overflow-x-auto">
-        <template x-for="column in vulnerabilityBoardColumns()" :key="column.status">
-          <section class="min-w-[220px] flex flex-col min-h-0">
-            <div class="flex items-center gap-2 px-1 pb-2 shrink-0">
-              <span class="h-2 w-2 rounded-full" :class="column.dotClass"></span>
-              <span class="text-xs font-semibold text-slate-600" x-text="column.status"></span>
-              <span class="text-[10px] text-slate-400" x-text="vulnerabilityBoardTotals[column.status] || 0"></span>
-            </div>
-            <div class="space-y-2 overflow-y-auto min-h-0 pr-1">
-              <template x-for="v in (vulnerabilityBoard[column.status] || [])" :key="`${column.status}-${v.project_id}-${v.id}`">
-                <div @click="openVulnStatusQuick(v)" class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm card-hover cursor-pointer min-w-0 overflow-hidden">
-                  <div class="flex items-center gap-1.5">
-                    <span class="px-1.5 py-0.5 rounded-md text-[9px] font-semibold" :class="vulnSeverityClass(v.severity)" x-text="vulnSeverityLabel(v.severity)"></span>
-                    <span class="text-[10px] text-slate-400 font-mono truncate" x-text="v.project_id"></span>
-                  </div>
-                  <p class="text-sm font-medium text-slate-700 mt-1.5 line-clamp-2" x-text="v.title"></p>
-                </div>
-              </template>
-              <button x-show="vulnerabilityBoardHasMore(column.status)" @click="loadVulnerabilityBoardStatus(column.status, true)"
-                :disabled="vulnerabilityBoardLoading[column.status]"
-                class="w-full py-2 rounded-xl border border-dashed border-slate-200 text-xs text-slate-500 hover:bg-white disabled:opacity-40"
-                x-text="vulnerabilityBoardLoading[column.status] ? '加载中…' : '加载更多'"></button>
-            </div>
-          </section>
-        </template>
-      </div>
-    </template>
-    <!-- List view -->
-    <template x-if="!showVulnBoard">
-      <div class="grid grid-cols-[340px_minmax(0,1fr)] gap-4 flex-1 min-h-0 h-full">
+    <!-- Paginated list view -->
+    <div class="grid grid-cols-[340px_minmax(0,1fr)] gap-4 flex-1 min-h-0 h-full">
         <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3 overflow-y-auto overflow-x-hidden space-y-2">
           <template x-if="filteredVulnerabilities().length === 0">
             <div class="px-4 py-10 text-sm text-center text-slate-400">暂无漏洞记录</div>
@@ -115,10 +79,6 @@
                 <div class="mt-2 flex gap-2">
                   <button @click="editVuln(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">编辑</button>
                   <button @click="deleteVuln(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-rose-200 text-rose-500 hover:bg-rose-50">删除</button>
-                  <button @click="exportVulnMd(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-emerald-200 text-emerald-600 hover:bg-emerald-50 flex items-center gap-1">
-                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-                    导出 MD
-                  </button>
                   <button @click="previewExternalVulnerability(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-violet-200 text-violet-600 hover:bg-violet-50">外部预览</button>
                   <button @click="reportExternalVulnerability(selectedVulnerability())" :disabled="selectedVulnerability().status !== '已验证'" :title="selectedVulnerability().status === '已验证' ? '将已验证漏洞上报到外部系统' : '只有已验证漏洞可以外部上报'" class="text-[10px] px-2 py-0.5 rounded border border-brand-200 text-brand-600 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40">外部上报</button>
                   <button @click="triggerVulnerabilityReview(selectedVulnerability())" :disabled="!vulnerabilityReviewCanRetry()" :title="vulnerabilityReviewCanRetry() ? '创建一次新的 Reviewer 审核' : '已有审核正在排队或运行'" class="text-[10px] px-2 py-0.5 rounded border border-cyan-200 text-cyan-700 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-40" x-text="vulnerabilityReviewSubmitting ? '正在排队…' : '重新审核'"></button>
@@ -224,8 +184,7 @@
             </article>
           </template>
         </section>
-      </div>
-    </template>
+    </div>
   </main>
 </div>
 

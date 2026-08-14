@@ -9,10 +9,6 @@ window.AxiomModules.projects = {
       return this.projects.filter(project => project.status === status).length;
     },
 
-    hasActiveProjects() {
-      return this.projects.some(project => project.status === 'active');
-    },
-
     projectCanWriteHints() {
       return !this.replay.active && !this.project?.project?.archived && ['active', 'stopped', 'completed'].includes(this.project?.project?.status);
     },
@@ -28,7 +24,9 @@ window.AxiomModules.projects = {
         this.projects = await this.api('GET', '/projects', null, options);
         this.projectsLoaded = true;
         this.pruneDeletedProjectCaches();
-        if (!this.selectedTaskManagementId && this.projects.length > 0) {
+        if (this.taskManagementRouteId) {
+          this.resolveTaskManagementRoute();
+        } else if (!this.taskManagementSelectionBlocked && !this.selectedTaskManagementId && this.projects.length > 0) {
           this.selectedTaskManagementId = this.projects[0].id;
         }
         if (!this.selectedProjectManagementTaskId && this.projects.length > 0) {
@@ -43,9 +41,72 @@ window.AxiomModules.projects = {
       }
     },
 
+    applyTaskManagementRouteParams(params) {
+      const taskId = String(params?.get('task') || '').trim();
+      this.taskManagementRouteId = taskId;
+      this.taskManagementSelectionBlocked = false;
+      if (!taskId) return;
+      this.taskSearch = '';
+      this.taskStatusFilter = 'all';
+      this.selectedTaskManagementId = '';
+    },
+
+    taskManagementHash(taskId = '') {
+      return taskId ? `#/tasks?task=${encodeURIComponent(taskId)}` : '#/tasks';
+    },
+
+    openTaskManagementLocation(taskId) {
+      if (!taskId) return;
+      const target = this.taskManagementHash(taskId);
+      if (location.hash === target) {
+        this.applyTaskManagementRouteParams(new URLSearchParams(target.split('?')[1] || ''));
+        void this.loadProjects();
+      } else {
+        location.hash = target;
+      }
+    },
+
+    resolveTaskManagementRoute() {
+      const taskId = String(this.taskManagementRouteId || '').trim();
+      if (!taskId) return;
+      this.taskManagementRouteId = '';
+      const task = (this.projects || []).find(item => item.id === taskId);
+      if (!task) {
+        this.selectedTaskManagementId = '';
+        this.taskManagementSelectionBlocked = true;
+        this.showToast('任务不存在或无法打开', 'error');
+        return;
+      }
+      this.taskManagementSelectionBlocked = false;
+      this.selectedTaskManagementId = taskId;
+      this.scrollTaskManagementSelection(taskId);
+    },
+
+    scrollTaskManagementSelection(taskId) {
+      this.$nextTick(() => {
+        if (typeof document === 'undefined') return;
+        const escaped = String(taskId).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        document.querySelector(`[data-task-management-id="${escaped}"]`)
+          ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+    },
+
+    selectTaskManagement(taskId) {
+      if (!taskId) return;
+      this.taskManagementRouteId = '';
+      this.taskManagementSelectionBlocked = false;
+      this.selectedTaskManagementId = taskId;
+    },
+
     pruneDeletedProjectCaches() {
       const liveIds = new Set((this.projects || []).map(project => project.id));
-      for (const cache of [this.projectDetailsCache, this.projectEventsCache, this.taskDiagnostics, this.taskDiagnosticsLoading]) {
+      for (const cache of [
+        this.projectDetailsCache,
+        this.projectEventsCache,
+        this.taskDiagnostics,
+        this.taskDiagnosticsLoading,
+        this.taskDiagnosticsRequested,
+      ]) {
         for (const id of Object.keys(cache || {})) {
           if (!liveIds.has(id)) delete cache[id];
         }
@@ -174,19 +235,8 @@ window.AxiomModules.projects = {
         this.loadProjectGroups(),
         this.loadProjects(),
         this.loadDashboardSummary?.(),
-        this.loadGlobalSkillUsage(),
       ]);
       if (!options.silent) this.showToast('仪表盘已刷新');
-    },
-
-    async loadGlobalSkillUsage() {
-      try {
-        const resp = await fetch('/skill-usage');
-        if (resp.ok) {
-          const data = await resp.json();
-          this.globalSkillUsage = data.items || [];
-        }
-      } catch (e) { /* ignore */ }
     },
 
     allProjectDetails() {
@@ -202,6 +252,7 @@ window.AxiomModules.projects = {
 
     selectedTaskSummary() {
       const tasks = this.projects || [];
+      if (this.taskManagementSelectionBlocked) return null;
       if (!this.selectedTaskManagementId && tasks.length > 0) this.selectedTaskManagementId = tasks[0].id;
       const selected = tasks.find(task => task.id === this.selectedTaskManagementId) || tasks[0] || null;
       if (selected && this.taskWorkerPoolEditor.projectId !== selected.id) {
@@ -216,14 +267,68 @@ window.AxiomModules.projects = {
         : this.selectedTaskSummary()?.id;
       if (!id) return null;
       if (!this.taskDiagnostics[id] && !this.taskDiagnosticsLoading[id]) {
-        this.loadTaskDiagnostics(id, true);
+        this.scheduleTaskDiagnostics(id);
       }
       return this.taskDiagnostics[id] || null;
+    },
+
+    cancelTaskDiagnosticsSchedule() {
+      const handle = this._taskDiagnosticsIdleHandle;
+      const scheduledTaskId = this._taskDiagnosticsIdleTaskId;
+      if (handle != null) {
+        if (this._taskDiagnosticsIdleKind === 'idle' && typeof window?.cancelIdleCallback === 'function') {
+          window.cancelIdleCallback(handle);
+        } else {
+          clearTimeout(handle);
+        }
+      }
+      this._taskDiagnosticsIdleHandle = null;
+      this._taskDiagnosticsIdleKind = '';
+      this._taskDiagnosticsIdleTaskId = '';
+      if (scheduledTaskId && !this.taskDiagnostics?.[scheduledTaskId] && !this.taskDiagnosticsLoading?.[scheduledTaskId]) {
+        const requested = { ...(this.taskDiagnosticsRequested || {}) };
+        delete requested[scheduledTaskId];
+        this.taskDiagnosticsRequested = requested;
+      }
+    },
+
+    scheduleTaskDiagnostics(projectId = '', options = {}) {
+      const id = String(projectId || '').trim();
+      if (!id || this.taskDiagnostics[id] || this.taskDiagnosticsLoading[id] || this.taskDiagnosticsRequested?.[id]) return;
+      this.cancelTaskDiagnosticsSchedule();
+      this.taskDiagnosticsRequested = { ...(this.taskDiagnosticsRequested || {}), [id]: true };
+      const generation = options.generation ?? this._projectOpenGeneration;
+      const run = () => {
+        this._taskDiagnosticsIdleHandle = null;
+        this._taskDiagnosticsIdleKind = '';
+        this._taskDiagnosticsIdleTaskId = '';
+        const stillSelected = this.activePage === 'task-detail'
+          ? this.selectedProjectId === id && generation === this._projectOpenGeneration
+          : this.selectedTaskSummary?.()?.id === id;
+        if (!stillSelected) {
+          const requested = { ...(this.taskDiagnosticsRequested || {}) };
+          delete requested[id];
+          this.taskDiagnosticsRequested = requested;
+          return;
+        }
+        void this.loadTaskDiagnostics(id, true);
+      };
+      if (typeof window?.requestIdleCallback === 'function') {
+        this._taskDiagnosticsIdleKind = 'idle';
+        this._taskDiagnosticsIdleTaskId = id;
+        this._taskDiagnosticsIdleHandle = window.requestIdleCallback(run, { timeout: 1000 });
+      } else {
+        this._taskDiagnosticsIdleKind = 'timeout';
+        this._taskDiagnosticsIdleTaskId = id;
+        this._taskDiagnosticsIdleHandle = setTimeout(run, 400);
+      }
     },
 
     async loadTaskDiagnostics(projectId = '', silent = false) {
       const id = projectId || (this.activePage === 'task-detail' ? this.selectedProjectId : '') || this.selectedTaskSummary()?.id || '';
       if (!id) return null;
+      if (this._taskDiagnosticsIdleTaskId === id) this.cancelTaskDiagnosticsSchedule();
+      this.taskDiagnosticsRequested = { ...(this.taskDiagnosticsRequested || {}), [id]: true };
       try {
         this.taskDiagnosticsLoading[id] = true;
         const params = new URLSearchParams({
@@ -429,11 +534,197 @@ window.AxiomModules.projects = {
       return vulns[0];
     },
 
+    resetTaskDetailLoad(taskId = '') {
+      const sectionNames = [
+        'project_group', 'graph', 'hints', 'todos', 'vulnerabilities',
+        'artifacts', 'lead_artifacts', 'goal_cycles', 'goal_evaluations',
+      ];
+      this.taskDetailLoad = {
+        taskId: String(taskId || ''),
+        summary: 'idle',
+        summaryError: '',
+        hydrating: false,
+        sections: Object.fromEntries(sectionNames.map(name => [name, 'idle'])),
+        errors: {},
+      };
+      this._taskDetailHydrationPromise = null;
+      this._taskDetailHydrationTaskId = '';
+    },
+
+    taskDetailSectionLoading(name) {
+      return this.taskDetailLoad?.taskId === this.selectedProjectId
+        && this.taskDetailLoad?.sections?.[name] === 'loading';
+    },
+
+    taskDetailSectionPending(name) {
+      if (this.taskDetailLoad?.taskId !== this.selectedProjectId) return false;
+      const status = this.taskDetailLoad?.sections?.[name];
+      return status === 'idle' || status === 'loading';
+    },
+
+    taskDetailSectionReady(name) {
+      return this.taskDetailLoad?.taskId === this.selectedProjectId
+        && this.taskDetailLoad?.sections?.[name] === 'ready';
+    },
+
+    taskDetailSectionError(name) {
+      return this.taskDetailLoad?.taskId === this.selectedProjectId
+        ? (this.taskDetailLoad?.errors?.[name] || '')
+        : '';
+    },
+
+    taskDetailHasErrors() {
+      return Object.keys(this.taskDetailLoad?.errors || {}).length > 0;
+    },
+
+    applyTaskDetailSection(taskId, generation, section = {}) {
+      if (String(taskId) !== String(this.selectedProjectId || '') || generation !== this._projectOpenGeneration) return;
+      if (!this.project?.project || this.taskDetailLoad?.taskId !== taskId) return;
+      const name = section.name;
+      if (!name) return;
+      const sections = { ...(this.taskDetailLoad.sections || {}) };
+      const errors = { ...(this.taskDetailLoad.errors || {}) };
+      if (section.error) {
+        if (section.error.name === 'AbortError') return;
+        sections[name] = 'error';
+        errors[name] = section.error.message || String(section.error);
+        this.taskDetailLoad = { ...this.taskDetailLoad, sections, errors };
+        return;
+      }
+      sections[name] = 'ready';
+      delete errors[name];
+      const next = { ...this.project };
+      if (name === 'graph') {
+        next.facts = section.data?.facts || [];
+        next.intents = (section.data?.intents || []).map(intent => intent?.from ? intent : intent);
+        next.goal_from_fact_ids = section.data?.goal_from_fact_ids || [];
+        next.goal_history = section.data?.goal_history || [];
+        next.project = { ...next.project, fact_count: next.facts.length, intent_count: next.intents.length };
+      } else if (name === 'hints') next.hints = section.data || [];
+      else if (name === 'todos') next.todos = section.data || [];
+      else if (name === 'vulnerabilities') next.vulns = section.data || [];
+      else if (name === 'artifacts') next.artifacts = section.data || [];
+      else if (name === 'lead_artifacts') next.lead_artifacts = section.data || [];
+      else if (name === 'goal_cycles') next.goal_cycles = section.data || [];
+      else if (name === 'goal_evaluations') next.goal_evaluations = section.data || [];
+      this.project = next;
+      this.projectDetailsCache[taskId] = next;
+      this.taskDetailLoad = { ...this.taskDetailLoad, sections, errors };
+      if (name === 'graph' && this.view === 'graph') {
+        this.$nextTick?.(() => {
+          if (this.selectedProjectId !== taskId || generation !== this._projectOpenGeneration) return;
+          if (this.cy) this.updateGraph?.();
+          else if (this.project && this.taskDetailSectionReady('graph')) this.initGraph?.();
+        });
+      }
+    },
+
+    async loadTaskSummary(id, options = {}) {
+      const taskId = String(id || '').trim();
+      if (!taskId) return null;
+      this.resetTaskDetailLoad(taskId);
+      this.project = null;
+      this.projectDetailsError = '';
+      this.taskDetailLoad = { ...this.taskDetailLoad, summary: 'loading' };
+      try {
+        const detail = await this.api('GET', `/projects/${taskId}`, null, {
+          ...options,
+          detailMode: 'summary',
+        });
+        if (this.selectedProjectId !== taskId) return null;
+        this.project = detail;
+        this.projectDetailsCache[taskId] = detail;
+        this.taskDetailLoad = { ...this.taskDetailLoad, summary: 'ready', summaryError: '' };
+        return detail;
+      } catch (error) {
+        if (error?.name === 'AbortError') return null;
+        if (this.selectedProjectId === taskId) {
+          this.project = null;
+          this.taskDetailLoad = { ...this.taskDetailLoad, summary: 'error', summaryError: error.message || String(error) };
+          this.projectDetailsError = error.message || String(error);
+        }
+        return null;
+      }
+    },
+
+    async hydrateTaskDetails(id, options = {}) {
+      const taskId = String(id || '').trim();
+      if (!taskId || !this.project || this.project?.archived_locked) return null;
+      if (this._taskDetailHydrationPromise && this._taskDetailHydrationTaskId === taskId) {
+        return this._taskDetailHydrationPromise;
+      }
+      const generation = options.generation ?? this._projectOpenGeneration;
+      const signal = options.signal || this._pageAbortController?.signal;
+      const knownNames = Object.keys(this.taskDetailLoad?.sections || {});
+      const requestedNames = Array.isArray(options.sections) && options.sections.length
+        ? options.sections.filter(name => knownNames.includes(name))
+        : knownNames;
+      if (!requestedNames.length) return null;
+      const sections = { ...(this.taskDetailLoad?.sections || {}) };
+      const errors = { ...(this.taskDetailLoad?.errors || {}) };
+      for (const name of requestedNames) {
+        sections[name] = 'loading';
+        delete errors[name];
+      }
+      this.taskDetailLoad = { ...this.taskDetailLoad, taskId, hydrating: true, sections, errors };
+      const promise = this.api('GET', `/projects/${taskId}`, null, {
+        signal,
+        detailMode: 'incremental',
+        baseDetail: this.project,
+        sections: requestedNames,
+        onTaskDetailSection: section => this.applyTaskDetailSection(taskId, generation, section),
+      }).then(detail => {
+        if (this.selectedProjectId === taskId && generation === this._projectOpenGeneration && detail) {
+          this.projectDetailsCache[taskId] = this.project;
+        }
+        return detail;
+      }).catch(error => {
+        if (error?.name !== 'AbortError') console.debug('Task detail hydration failed', error);
+        return null;
+      }).finally(() => {
+        if (this._taskDetailHydrationPromise === promise) {
+          this._taskDetailHydrationPromise = null;
+          this._taskDetailHydrationTaskId = '';
+        }
+        if (this.selectedProjectId === taskId && generation === this._projectOpenGeneration) {
+          this.taskDetailLoad = { ...this.taskDetailLoad, hydrating: false };
+        }
+      });
+      this._taskDetailHydrationTaskId = taskId;
+      this._taskDetailHydrationPromise = promise;
+      return promise;
+    },
+
+    retryTaskDetailSection(name = '') {
+      if (!this.selectedProjectId || this.taskDetailLoad?.summary !== 'ready') return;
+      const knownNames = Object.keys(this.taskDetailLoad?.sections || {});
+      const requested = name && knownNames.includes(name)
+        ? [name]
+        : Object.keys(this.taskDetailLoad?.errors || {});
+      return this.hydrateTaskDetails(this.selectedProjectId, {
+        generation: this._projectOpenGeneration,
+        signal: this._pageAbortController?.signal,
+        sections: requested.length ? requested : knownNames.filter(section => !this.taskDetailSectionReady(section)),
+      });
+    },
+
     async loadProject(id, options = {}) {
       try {
         this.project = await this.api('GET', `/projects/${id}`, null, options);
         this.projectDetailsCache[id] = this.project;
-      } catch(e) { if (e?.name !== 'AbortError') this.showToast(e.message, 'error'); }
+        if (this.selectedProjectId === id && this.activePage === 'task-detail') {
+          const names = Object.keys(this.taskDetailLoad?.sections || {});
+          this.taskDetailLoad = {
+            ...this.taskDetailLoad,
+            taskId: id,
+            summary: 'ready',
+            summaryError: '',
+            sections: Object.fromEntries(names.map(name => [name, 'ready'])),
+            errors: {},
+          };
+        }
+        return this.project;
+      } catch(e) { if (e?.name !== 'AbortError') this.showToast(e.message, 'error'); return null; }
     },
 
     async loadConversation(projectId = '', options = {}) {
@@ -988,6 +1279,32 @@ window.AxiomModules.projects = {
       }
     },
 
+    async toggleProjectGuardById(projectId, currentEnabled) {
+      if (!projectId) return;
+      const task = this.projects.find(item => item.id === projectId)
+        || (this.selectedProjectId === projectId ? this.project?.project : null);
+      if (task?.legacy_readonly || task?.archived) return;
+      const enabled = !Boolean(currentEnabled);
+      const action = enabled ? '开启守卫' : '关闭守卫';
+      if (!confirm(`确认${action}「${this.projectLabel(projectId, task?.title || projectId)}」？`)) return;
+      try {
+        const updated = await this.api('PUT', `/projects/${projectId}/guard`, { enabled });
+        const projectSummary = this.projects.find(item => item.id === projectId);
+        if (projectSummary) {
+          Object.assign(projectSummary, updated);
+        }
+        if (this.selectedProjectId === projectId && this.project?.project) {
+          this.project.project.guard_enabled = Boolean(updated.guard_enabled);
+        }
+        if (this.projectDetailsCache?.[projectId]?.project) {
+          this.projectDetailsCache[projectId].project.guard_enabled = Boolean(updated.guard_enabled);
+        }
+        this.showToast(`${action}成功`);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
     async setProjectStatus(projectId, status, options = {}) {
       const { reload = true, toast = true, runDurationSeconds = null } = options;
       const body = { status };
@@ -1024,30 +1341,6 @@ window.AxiomModules.projects = {
       }
       if (toast) this.showToast(status === 'stopped' ? '任务已暂停' : '任务已继续');
       return updated;
-    },
-
-    async stopAllActiveProjects() {
-      const activeProjects = this.projects.filter(project => project.status === 'active');
-      if (activeProjects.length === 0 || this.isStoppingAllProjects) return;
-      this.isStoppingAllProjects = true;
-      try {
-        const results = await Promise.allSettled(
-          activeProjects.map(project => this.setProjectStatus(project.id, 'stopped', { reload: false, toast: false }))
-        );
-        await this.loadProjects();
-        await this.loadProjectGroups();
-        const successCount = results.filter(result => result.status === 'fulfilled').length;
-        const failureCount = results.length - successCount;
-        if (failureCount === 0) {
-          this.showToast(`已暂停 ${successCount} 个运行中任务`);
-        } else {
-          this.showToast(`已暂停 ${successCount} 个任务，${failureCount} 个失败`, 'error');
-        }
-      } catch (e) {
-        this.showToast(e.message, 'error');
-      } finally {
-        this.isStoppingAllProjects = false;
-      }
     },
 
     openReopenProject(projectId, projectTitle = '') {
@@ -1135,6 +1428,7 @@ window.AxiomModules.projects = {
         this.polling = true;
       }
       this.rememberProjectListScroll();
+      this.cancelTaskDiagnosticsSchedule?.();
       this.selectedProjectId = id;
       this.seeEvents = [];
       this.seeLastEventId = 0;
@@ -1150,28 +1444,49 @@ window.AxiomModules.projects = {
       this.activePage = 'task-detail';
       this.cleanupMountedPage?.();
       this.showPageSkeleton();
-      const signal = this._pageAbortController?.signal;
-      await this.loadProject(id, { signal });
-      if (generation !== this._projectOpenGeneration || this.selectedProjectId !== id) return;
-      await this.loadSeeEvents(true, { signal });
+      const summarySignal = this._pageAbortController?.signal;
+      await this.loadTaskSummary(id, { signal: summarySignal });
       if (generation !== this._projectOpenGeneration || this.selectedProjectId !== id) return;
       if (!fromRoute && location.hash !== `#/tasks/${id}`) {
         history.pushState(null, '', `#/tasks/${encodeURIComponent(id)}`);
       }
       await this.mountCurrentPage();
       if (generation !== this._projectOpenGeneration || this.selectedProjectId !== id) return;
+      if (!this.project || this.taskDetailLoad?.summary !== 'ready') return;
+
+      // mountCurrentPage() replaces the page AbortController, so all background
+      // work must use the new signal rather than the summary request's signal.
+      const detailSignal = this._pageAbortController?.signal;
+      if (!this.project.archived_locked && !this.project?.project?.archived) {
+        void this.hydrateTaskDetails(id, { signal: detailSignal, generation });
+        // Audit events are useful for the timeline, but they are not required
+        // to render the task page. Load them after the first meaningful view is
+        // mounted so a large history cannot block navigation or graph startup.
+        void this.loadSeeEvents(true, { signal: detailSignal }).then(() => {
+          if (generation !== this._projectOpenGeneration || this.selectedProjectId !== id) return;
+          if (this.view === 'graph' && this.cy) this.updateGraph?.();
+        });
+        this.scheduleTaskDiagnostics?.(id, { generation });
+      }
       this.$nextTick(() => {
         const clampedWidth = this.clampPanelWidth(this.sidePanelWidth);
         if (clampedWidth !== this.sidePanelWidth) {
           this.sidePanelWidth = clampedWidth;
           this.saveSidePanelWidth();
         }
-        if (this.view === 'graph' && !this.cy) this.initGraph();
+        if (this.view === 'graph' && !this.cy && this.taskDetailSectionReady?.('graph')) this.initGraph();
       });
+    },
+
+    retryTaskSummary() {
+      const id = this.selectedProjectId;
+      if (!id) return;
+      return this.openProject(id, true, this.view === 'graph' ? 'graph' : 'human');
     },
 
     backToList(fromRoute) {
       this._projectOpenGeneration += 1;
+      this.cancelTaskDiagnosticsSchedule?.();
       if (this.replay.active) {
         this.stopReplayTimer();
         this.replay.active = false;
@@ -1188,6 +1503,7 @@ window.AxiomModules.projects = {
       this.shouldRestoreProjectListScroll = true;
       this.project = null;
       this.selectedProjectId = '';
+      this.resetTaskDetailLoad?.('');
       this.humanArtifactItems = [];
       this.humanArtifactPage = 0;
       this.humanArtifactTotal = 0;
@@ -1267,8 +1583,10 @@ window.AxiomModules.projects = {
         const routeKey = `task:${this.selectedProjectId}:${this.view}`;
         const force = this.routeSafeRefreshDue(routeKey);
         const events = await this.loadSeeEvents(false, { signal });
-        await this.refreshTaskDetailSections?.(events, force);
-        if (this.view === 'graph' && (force || events.length)) this.updateGraph();
+        const hydrating = this.taskDetailLoad?.taskId === this.selectedProjectId
+          && !!this.taskDetailLoad?.hydrating;
+        if (!hydrating) await this.refreshTaskDetailSections?.(events, force);
+        if (!hydrating && this.view === 'graph' && (force || events.length)) this.updateGraph();
         if (this.view === 'archive' && (force || events.length)) await this.loadArchives(this.selectedArchiveId);
         return;
       }
@@ -1277,9 +1595,8 @@ window.AxiomModules.projects = {
       } else if (this.activePage === 'tasks') {
         await this.loadProjects({ signal });
       } else if (this.activePage === 'vulnerabilities') {
-        await this.loadProjects({ signal });
-        if (this.showVulnBoard) await this.loadVulnerabilityBoard(true);
-        else await this.loadVulnerabilityPage({ selectFirst: false });
+        await Promise.all([this.loadProjectGroups({ signal }), this.loadProjects({ signal })]);
+        await this.loadVulnerabilityPage({ selectFirst: false });
       } else if (this.activePage === 'files') {
         await this.loadArtifactCenter();
       } else if (this.activePage === 'projects') {

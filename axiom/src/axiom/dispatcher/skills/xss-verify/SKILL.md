@@ -17,13 +17,13 @@ requirements:
 
 ## 工具路径
 
-脚本在本 skill 目录下。Chrome 启动脚本在 `browser-control` skill 中。
+检测脚本在本 Skill 目录下。Chrome 的启动和页面生命周期由 Explore 的 Browser Broker 管理，不再调用 browser-control 的启动/停止脚本。
 
 用运行时解析器获取脚本，不依赖当前目录：
 
 ```bash
 axiom skill path xss-verify
-axiom skill path browser-control
+axiom skill path browser-control  # 仅用于确认指南目录；不调用其中的 scripts
 ```
 
 依赖：`python3 + websocket-client`（已安装）
@@ -32,18 +32,9 @@ axiom skill path browser-control
 
 ## 操作步骤
 
-### Step 1：确保 Chrome-SecTest 已运行
+### Step 1：使用当前 Explore 的 Browser Tool
 
-```bash
-bash "$(axiom skill path browser-control)/scripts/launch-chrome.sh"
-```
-
-launch.sh 是幂等的——如果 Chrome-SecTest 已在运行，直接返回。多 worker 可以安全地各自调用。
-
-验证是否就绪：
-```bash
-curl -s http://localhost:9223/json/list | python3 -c "import json,sys; print(f'Chrome-SecTest: {len(json.load(sys.stdin))} tab(s)')" 2>/dev/null || echo "Chrome-SecTest 未运行"
-```
+不要手动启动 Chrome 或直接访问 CDP。首次调用 `browser_open_page`、`browser_list_pages` 或其他 `browser_*` 工具时，Browser Broker 会自动连接或启动当前 Explore Lease 的 Chrome-SecTest。工具不可用时报告 Browser Broker 错误，不要回退到旧脚本。
 
 ### Step 2：运行检测工具
 
@@ -120,7 +111,7 @@ stderr 输出：过程日志（创建 tab、导航、关闭 tab）
 | 问题 | 解决 |
 |------|------|
 | dialog 未弹出 | 确认是前端页面 URL，不是 API endpoint；确认受害者视角能看到含 payload 的字段；增加 `--timeout 15` |
-| Chrome 未运行 | `bash "$(axiom skill path browser-control)/scripts/launch-chrome.sh"` 启动 |
+| Chrome 未运行 | 直接调用 `browser_open_page` 让 Browser Broker 受控启动；不要执行旧启动脚本 |
 | `--tab-index` 冲突 | 不要用 `--tab-index`，默认创建新 tab 即可 |
 | 创建 tab 失败 | Chrome 可能 tab 数量过多，关闭一些不需要的 tab |
 | payload 被 WAF 拦截 | 尝试编码绕过：`\u003cscript\u003e`、`<scr<script>ipt>` 等 |

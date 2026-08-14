@@ -98,13 +98,18 @@ window.AxiomModules.actions = {
       if (!this.projectCanWriteHints()) return;
       try {
         const actor = this.actorName();
-        await this.api('POST', `/projects/${this.selectedProjectId}/hints`, { content: this.hintForm.content, creator: actor });
+        const hint = await this.api('POST', `/projects/${this.selectedProjectId}/hints`, { content: this.hintForm.content, creator: actor });
         this.showHintModal = false;
         this.hintForm = { content:'' };
         await this.loadProjects();
         await this.loadProject(this.selectedProjectId);
         this.sideTab = 'hints';
-        this.showToast('提示已添加');
+        const reason = this.project?.project?.reason;
+        const triggeredByHint = reason?.trigger === 'hint'
+          && reason?.trigger_payload?.hint_id === hint?.id;
+        this.showToast(triggeredByHint
+          ? `提示已添加，已触发 ${reason.id}`
+          : '提示已添加');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 

@@ -35,6 +35,9 @@ class ExecutionRepository:
                 intents.c.conclude_timeout_seconds,
                 intents.c.retry_count,
                 intents.c.infrastructure_retry_count,
+                intents.c.human_intervention_required,
+                intents.c.human_intervention_reason,
+                intents.c.human_intervention_marked_at,
             )
             .join(intents, intents.c.task_id == tasks.c.id)
             .where(tasks.c.id == task_id, intents.c.id == intent_id)
@@ -136,6 +139,33 @@ class ExecutionRepository:
                 activity_summary=activity_summary,
                 activity_tool=activity_tool,
                 activity_updated_at=now,
+            )
+        )
+        return bool(result.rowcount)
+
+    @staticmethod
+    def mark_human_intervention(
+        conn: Connection,
+        *,
+        task_id: str,
+        intent_id: str,
+        lease_id: str,
+        reason: str,
+        now: str,
+    ) -> bool:
+        result = conn.execute(
+            update(intents)
+            .where(
+                intents.c.task_id == task_id,
+                intents.c.id == intent_id,
+                intents.c.lease_id == lease_id,
+                intents.c.kind == "explore",
+                intents.c.status.in_(["claimed", "running", "concluding"]),
+            )
+            .values(
+                human_intervention_required=True,
+                human_intervention_reason=reason,
+                human_intervention_marked_at=now,
             )
         )
         return bool(result.rowcount)

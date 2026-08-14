@@ -3,8 +3,11 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
+import pytest
+
 from sqlalchemy import func, insert, select, update
 
+from axiom.modules.execution.service import reason_prompt_profile_for_trigger
 from axiom.modules.graph.tables import facts, intents
 from axiom.modules.reason.tables import reason_runs, reason_workspaces
 from axiom.modules.tasks.tables import tasks
@@ -16,6 +19,23 @@ from protocol_helpers import (
     open_reason_workspace,
     update_runtime_settings,
 )
+
+
+@pytest.mark.parametrize(
+    ("trigger", "profile"),
+    [
+        ("bootstrap", "bootstrap"),
+        ("fact_batch", "progress"),
+        ("low_watermark", "progress"),
+        ("max_wait", "progress"),
+        ("manual", "human"),
+        ("hint", "human"),
+        ("continuation", "continuation"),
+        ("future_trigger", "default"),
+    ],
+)
+def test_reason_trigger_uses_one_code_selected_prompt_profile(trigger: str, profile: str) -> None:
+    assert reason_prompt_profile_for_trigger(trigger) == profile
 
 
 BOOTSTRAP_FILES = {
@@ -254,6 +274,7 @@ def test_manual_reason_can_run_while_waiting_without_new_facts_and_reuses_reason
     assert execution["intent_source_facts"] == []
     assert "人工 Alice 请求立即复盘当前任务" in execution["intent_description"]
     assert "允许新增 0 个 Intent" in execution["intent_description"]
+    assert execution["reason_prompt_profile"] == "human"
 
     duplicate = _trigger_manual_reason(client, task["id"])
     assert duplicate.status_code == 409
@@ -279,6 +300,77 @@ def test_manual_reason_can_run_while_waiting_without_new_facts_and_reuses_reason
     assert committed.status_code == 200, committed.text
     assert committed.json()["created_intent_ids"] == []
     assert client.get(f"/api/v1/tasks/{task['id']}").json()["phase"] == "waiting"
+
+
+def test_new_human_hint_immediately_triggers_reason_with_that_hint_as_reason(client) -> None:
+    task, completed = _bootstrap_to_reason(client)
+    engine = client.app.state.container.engine
+    _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
+
+    response = client.post(
+        f"/api/v1/tasks/{task['id']}/hints",
+        json={"content": "优先验证投诉撤销后是否仍能重复提交", "creator": "Alice"},
+    )
+
+    assert response.status_code == 201, response.text
+    hint = response.json()
+    current = client.get(f"/api/v1/tasks/{task['id']}").json()
+    run = current["active_reason_run"]
+    assert run["trigger"] == "hint"
+    assert run["trigger_payload"]["hint_id"] == hint["id"]
+    assert run["trigger_payload"]["hint_content"] == hint["content"]
+    assert run["trigger_payload"]["creator"] == "Alice"
+    assert current["phase"] == "reason"
+
+    _claim, execution = claim_reason_run(
+        client,
+        task_id=task["id"],
+        reason_run_id=run["id"],
+    )
+    assert f"Hint {hint['id']}" in execution["intent_description"]
+    assert hint["content"] in execution["intent_description"]
+    assert "Hint 是人工规划依据而不是已验证 Fact" in execution["intent_description"]
+    assert hint["content"] in execution["hints"]
+    assert execution["reason_prompt_profile"] == "human"
+
+
+def test_new_hint_is_saved_without_duplicate_reason_when_trigger_conditions_are_unmet(
+    client,
+) -> None:
+    project = client.post("/api/v1/projects", json={"title": "Hint Trigger Guard"}).json()
+    fresh = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "Bootstrap 未完成",
+            "origin": "fresh.example.com",
+        },
+    ).json()
+    before_bootstrap = client.post(
+        f"/api/v1/tasks/{fresh['id']}/hints",
+        json={"content": "先确认登录入口", "creator": "人工"},
+    )
+    assert before_bootstrap.status_code == 201, before_bootstrap.text
+    assert client.get(f"/api/v1/tasks/{fresh['id']}").json()["active_reason_run"] is None
+
+    task, completed = _bootstrap_to_reason(client)
+    active_id = completed["next_reason_run_id"]
+    while_active = client.post(
+        f"/api/v1/tasks/{task['id']}/hints",
+        json={"content": "检查已有 Reason 是否会被重复创建", "creator": "人工"},
+    )
+    assert while_active.status_code == 201, while_active.text
+    current = client.get(f"/api/v1/tasks/{task['id']}").json()
+    assert current["active_reason_run"]["id"] == active_id
+    with client.app.state.container.engine.connect() as conn:
+        count = conn.execute(
+            select(func.count()).select_from(reason_runs).where(
+                reason_runs.c.task_id == task["id"],
+                reason_runs.c.status.in_(("pending", "claimed", "running", "concluding")),
+            )
+        ).scalar_one()
+    assert count == 1
+    assert while_active.json() in client.get(f"/api/v1/tasks/{task['id']}/hints").json()
 
 
 def test_manual_reason_snapshots_open_and_failed_explore_but_not_later_facts(client) -> None:

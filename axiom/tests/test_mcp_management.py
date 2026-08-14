@@ -84,6 +84,13 @@ def test_mcp_import_exposes_tool_schema_usage_and_toggle(client) -> None:
     assert disabled.status_code == 200, disabled.text
     assert disabled.json()["enabled"] is False
 
+    reenabled = client.put(
+        f"/api/v1/mcp/servers/{server['id']}/tools/{tool['id']}",
+        json={"enabled": True},
+    )
+    assert reenabled.status_code == 200, reenabled.text
+    assert reenabled.json()["enabled"] is True
+
 
 def test_mcp_jsonb_preserves_optional_parameter_signature_order(client) -> None:
     server = client.post(

@@ -25,8 +25,16 @@ from axiom.shared.model_registry import ALL_TABLES
 
 
 LEGACY_SQLITE_REVISION = "20260805_0035"
-POSTGRESQL_TARGET_REVISION = "20260806_pg0002"
+POSTGRESQL_TARGET_REVISION = "20260810_pg0003"
 DEFAULT_BATCH_SIZE = 1_000
+
+LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
+    "intents": {
+        "human_intervention_required": False,
+        "human_intervention_reason": "",
+        "human_intervention_marked_at": None,
+    },
+}
 
 
 def _migration_tables():
@@ -321,7 +329,10 @@ def _validate_source_table(
     table,
 ) -> None:
     table_name = table.name
-    expected_columns = [column.name for column in table.columns]
+    target_only_columns = set(LEGACY_SQLITE_COLUMN_DEFAULTS.get(table_name, {}))
+    expected_columns = [
+        column.name for column in table.columns if column.name not in target_only_columns
+    ]
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
         (table_name,),
@@ -367,8 +378,9 @@ def _read_source_rows(conn: sqlite3.Connection, table) -> list[dict[str, Any]]:
 
 def _normalize_row_for_insert(table, row: dict[str, Any]) -> dict[str, Any]:
     normalized: dict[str, Any] = {}
+    legacy_defaults = LEGACY_SQLITE_COLUMN_DEFAULTS.get(table.name, {})
     for column in table.columns:
-        value = row.get(column.name)
+        value = row.get(column.name, legacy_defaults.get(column.name))
         if isinstance(column.type, Boolean) and value is not None:
             value = bool(value)
         elif isinstance(column.type, JSONText) and value is not None:

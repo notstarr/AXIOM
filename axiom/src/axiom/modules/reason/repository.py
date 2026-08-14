@@ -243,8 +243,8 @@ class ReasonRepository:
             .values(
                 status="running",
                 last_heartbeat_at=now,
-                activity_kind="analyzing",
-                activity_summary="正在分析任务上下文并规划下一批 Intent",
+                activity_kind="preparing_context",
+                activity_summary="正在准备 Reason Context 与能力快照",
                 activity_updated_at=now,
                 updated_at=now,
             )

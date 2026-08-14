@@ -66,7 +66,12 @@ class PhaseCapabilityService:
         if initialize_defaults:
             self._initialize_existing_skills_once()
 
-    def matrix(self) -> PhaseCapabilitiesResponse:
+    def matrix(self, *, skill_records=None) -> PhaseCapabilitiesResponse:
+        # A lease snapshot may already have loaded the Skill catalog outside
+        # the database connection. Reuse it so large Skill packages are not
+        # scanned repeatedly while a PostgreSQL transaction is open.
+        if skill_records is None:
+            skill_records = self.skills.list()
         with self.engine.connect() as conn:
             bindings = self.repository.list_rows(conn)
             axiom_rows = self.axiom_tools.list_rows(conn)
@@ -88,7 +93,7 @@ class PhaseCapabilityService:
                 row["scope"]
             )
         items: list[PhaseCapabilityRecord] = []
-        for skill in self.skills.list():
+        for skill in skill_records:
             item_scopes = self._ordered_scopes(scopes_by_capability[("skill", skill.name)])
             skill_ready = Path(skill.path).is_file()
             inactive = {
@@ -306,11 +311,26 @@ class PhaseCapabilityService:
                     if row["scope"] in {"common", phase}
                 }
             )
-            return [
-                key
-                for key in requested
-                if self._inactive_reason(conn, kind=kind, key=key, phase=phase) == ""
-            ]
+            if kind != "skill":
+                return [
+                    key
+                    for key in requested
+                    if self._inactive_reason(conn, kind=kind, key=key, phase=phase) == ""
+                ]
+
+        # Do not perform Skill filesystem discovery while the connection above
+        # is still checked out. SkillService.list() is cached, but a package
+        # refresh may still need to inspect large support files.
+        skill_map = {skill.name: skill for skill in self.skills.list()}
+        return [
+            key
+            for key in requested
+            if (
+                (skill := skill_map.get(key)) is not None
+                and skill.enabled
+                and Path(skill.path).is_file()
+            )
+        ]
 
     def snapshot_for_lease(
         self,
@@ -326,14 +346,28 @@ class PhaseCapabilityService:
         if path.is_file():
             return self._snapshot_from_file(path, worker_name=worker_name, phase=phase)
 
-        matrix = self.matrix()
+        # Load the Skill catalog once, before opening any database connection.
+        # The catalog may contain very large dictionaries and should never hold
+        # an idle PostgreSQL transaction open while it is being synchronized.
+        skill_records = self.skills.list()
+        matrix = self.matrix(skill_records=skill_records)
         item_map = {
             (item.capability_kind, item.capability_key): item for item in matrix.items
         }
-        skill_keys = self.effective_keys(phase=phase, kind="skill")
-        mcp_keys = self.effective_keys(phase=phase, kind="mcp_tool")
-        axiom_keys = self.effective_keys(phase=phase, kind="axiom_tool")
-        skill_map = {skill.name: skill for skill in self.skills.list()}
+
+        def effective_matrix_keys(kind: str) -> list[str]:
+            return sorted(
+                item.capability_key
+                for item in matrix.items
+                if item.capability_kind == kind
+                and self._assigned(item.scopes, phase)
+                and phase not in item.inactive_reasons
+            )
+
+        skill_keys = effective_matrix_keys("skill")
+        mcp_keys = effective_matrix_keys("mcp_tool")
+        axiom_keys = effective_matrix_keys("axiom_tool")
+        skill_map = {skill.name: skill for skill in skill_records}
         skill_items: list[dict[str, Any]] = []
         for key in skill_keys:
             skill = skill_map.get(key)
@@ -345,7 +379,14 @@ class PhaseCapabilityService:
                     "key": key,
                     "scope": self._effective_scope(item_map[("skill", key)].scopes, phase),
                     "directory": str(skill_path.parent),
-                    "content_hash": self._file_hash(skill_path),
+                    # Skill packages can include references, scripts, profiles,
+                    # and other files that are just as relevant to execution as
+                    # SKILL.md.  The Skill service already computes a stable
+                    # directory hash after synchronizing the effective package;
+                    # persist that value so a new Lease records attachment-only
+                    # updates too.
+                    "content_hash": skill.effective_hash
+                    or self._file_hash(skill_path),
                 }
             )
 
@@ -527,10 +568,11 @@ class PhaseCapabilityService:
 
     def _initialize_existing_skills_once(self) -> None:
         marker = self.data_dir / _DEFAULTS_MARKER
+        skill_records = self.skills.list()
         with transaction(self.engine) as conn:
             if not marker.exists():
                 now = utcnow()
-                for skill in self.skills.list():
+                for skill in skill_records:
                     if not skill.enabled:
                         continue
                     if self.repository.list_rows(
@@ -544,16 +586,18 @@ class PhaseCapabilityService:
                         capability_key=skill.name,
                         now=now,
                     )
-            self._ensure_mandatory_locked(conn)
+            self._ensure_mandatory_locked(conn, skill_records=skill_records)
         if not marker.exists():
             marker.parent.mkdir(parents=True, exist_ok=True)
             temporary = marker.with_name(f".{marker.name}.tmp")
             temporary.write_text(utcnow() + "\n", encoding="utf-8")
             temporary.replace(marker)
 
-    def _ensure_mandatory_locked(self, conn) -> None:
+    def _ensure_mandatory_locked(self, conn, *, skill_records=None) -> None:
         now = utcnow()
-        available = {skill.name for skill in self.skills.list()}
+        if skill_records is None:
+            skill_records = self.skills.list()
+        available = {skill.name for skill in skill_records}
         for name in MANDATORY_COMMON_SKILLS & available:
             self.repository.ensure(
                 conn,

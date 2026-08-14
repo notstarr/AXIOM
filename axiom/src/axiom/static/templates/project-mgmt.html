@@ -75,7 +75,7 @@
             </template>
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               <template x-for="task in selectedProjectGroupTasks()" :key="`managed-task-${task.id}`">
-                <button type="button" @click="selectedProjectManagementTaskId = task.id; loadProjectDetailForManagement(task.id)" class="text-left rounded-xl border p-3 transition"
+                <button type="button" @click="openTaskManagementLocation(task.id)" class="text-left rounded-xl border p-3 transition"
                   :class="selectedProjectManagementTaskId === task.id ? 'border-brand-200 bg-brand-50/50' : 'border-slate-200 hover:bg-slate-50'">
                   <div class="flex items-center justify-between gap-2">
                     <span class="font-mono text-[11px] text-slate-400" x-text="task.id"></span>

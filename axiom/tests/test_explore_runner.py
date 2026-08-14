@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from axiom.dispatcher.bootstrap import TransientWorkerError
 from axiom.dispatcher.explore import ExploreExecutionTimeout, ExploreRunner
 from axiom.dispatcher.schemas import ClaimedIntent
 from axiom.modules.execution.schemas import (
@@ -160,6 +161,25 @@ class _CloseoutExecutor:
         return self.conclude_result
 
 
+class _StalledExecutor:
+    def __init__(self) -> None:
+        self.conclude_calls = 0
+
+    def execute(self, _execution_input: ExecutionInput, *, lease_active) -> object:
+        assert lease_active()
+        raise TransientWorkerError("pi_rpc_stream_stalled")
+
+    def conclude(
+        self,
+        _execution_input: ExecutionInput,
+        *,
+        reason: str,
+        lease_active,
+    ) -> object:
+        self.conclude_calls += 1
+        raise AssertionError("stalled Explore execution must not enter conclude")
+
+
 def _claimed_intent() -> ClaimedIntent:
     return ClaimedIntent(
         task_id="t_001",
@@ -256,3 +276,23 @@ def test_explore_closeout_still_releases_when_core_outputs_are_missing(
     assert control.completed == 0
     assert len(control.released) == 1
     assert control.released[0].failure_kind == "explore_execution_failed"
+
+
+def test_explore_stream_stall_releases_as_infrastructure_without_conclude(
+    tmp_path: Path,
+) -> None:
+    control = _ControlPlane(_execution_input(tmp_path))
+    executor = _StalledExecutor()
+
+    with pytest.raises(TransientWorkerError, match="pi_rpc_stream_stalled"):
+        ExploreRunner(control, heartbeat_interval_seconds=60).run(
+            _claimed_intent(),
+            executor,
+        )
+
+    assert executor.conclude_calls == 0
+    assert control.began_conclude == 0
+    assert control.completed == 0
+    assert len(control.released) == 1
+    assert control.released[0].failure_kind == "worker_infrastructure"
+    assert control.released[0].failure_class == "transient"

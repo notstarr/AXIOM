@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 
 from sqlalchemy import Connection, select, update
 
@@ -138,12 +139,29 @@ class GraphRepository:
             select(facts)
             .where(facts.c.task_id == task_id, facts.c.archived.is_(False))
             .order_by(facts.c.created_at, facts.c.id)
-        ).mappings()
+        ).mappings().all()
+        visible_fact_ids = {row["id"] for row in fact_rows}
         intent_rows = conn.execute(
             select(intents)
             .where(intents.c.task_id == task_id, intents.c.archived.is_(False))
             .order_by(intents.c.created_at, intents.c.id)
-        ).mappings()
+        ).mappings().all()
+        source_rows = conn.execute(
+            select(intent_sources.c.intent_id, intent_sources.c.fact_id)
+            .join(
+                facts,
+                (facts.c.task_id == intent_sources.c.task_id)
+                & (facts.c.id == intent_sources.c.fact_id),
+            )
+            .where(
+                intent_sources.c.task_id == task_id,
+                facts.c.archived.is_(False),
+            )
+            .order_by(intent_sources.c.intent_id, intent_sources.c.fact_id)
+        ).mappings().all()
+        sources_by_intent: dict[str, list[str]] = defaultdict(list)
+        for source in source_rows:
+            sources_by_intent[source["intent_id"]].append(source["fact_id"])
         latest_goal_refs = conn.execute(
             select(goal_evaluations.c.evidence_refs_json)
             .where(
@@ -165,15 +183,6 @@ class GraphRepository:
                     if separator and kind == "fact" and item_id not in {"origin", "goal"}
                 )
             )
-            visible_fact_ids = set(
-                conn.execute(
-                    select(facts.c.id).where(
-                        facts.c.task_id == task_id,
-                        facts.c.id.in_(candidate_fact_ids),
-                        facts.c.archived.is_(False),
-                    )
-                ).scalars()
-            )
             goal_from_fact_ids = [
                 fact_id for fact_id in candidate_fact_ids if fact_id in visible_fact_ids
             ]
@@ -186,21 +195,38 @@ class GraphRepository:
                 task_goal_cycles.c.status == "completed",
             )
             .order_by(task_goal_cycles.c.sequence)
-        ).mappings()
-        for cycle in cycle_rows:
-            refs = conn.execute(
-                select(goal_evaluations.c.evidence_refs_json)
+        ).mappings().all()
+        cycle_ids = [cycle["id"] for cycle in cycle_rows]
+        latest_evidence_by_cycle: dict[str, str] = {}
+        if cycle_ids:
+            evaluation_rows = conn.execute(
+                select(
+                    goal_evaluations.c.goal_cycle_id,
+                    goal_evaluations.c.evidence_refs_json,
+                    goal_evaluations.c.created_at,
+                    goal_evaluations.c.id,
+                )
                 .where(
                     goal_evaluations.c.task_id == task_id,
-                    goal_evaluations.c.goal_cycle_id == cycle["id"],
+                    goal_evaluations.c.goal_cycle_id.in_(cycle_ids),
                     goal_evaluations.c.achieved.is_(True),
                 )
-                .order_by(goal_evaluations.c.created_at.desc(), goal_evaluations.c.id.desc())
-                .limit(1)
-            ).scalar_one_or_none()
+                .order_by(
+                    goal_evaluations.c.goal_cycle_id,
+                    goal_evaluations.c.created_at.desc(),
+                    goal_evaluations.c.id.desc(),
+                )
+            ).mappings().all()
+            for evaluation in evaluation_rows:
+                latest_evidence_by_cycle.setdefault(
+                    evaluation["goal_cycle_id"],
+                    evaluation["evidence_refs_json"],
+                )
+        for cycle in cycle_rows:
+            refs = latest_evidence_by_cycle.get(cycle["id"])
             if refs is None:
                 continue
-            evidence_fact_ids = self._visible_fact_refs(conn, task_id, refs)
+            evidence_fact_ids = self._visible_fact_refs_from_set(refs, visible_fact_ids)
             history.append(
                 {
                     "goal_cycle_id": cycle["id"],
@@ -212,7 +238,16 @@ class GraphRepository:
             )
         return TaskGraph(
             facts=[Fact.model_validate(row) for row in fact_rows],
-            intents=[self._intent(conn, row, visible_relations_only=True) for row in intent_rows],
+            intents=[
+                self._intent(
+                    conn,
+                    row,
+                    visible_relations_only=True,
+                    sources=sources_by_intent.get(row["id"], []),
+                    visible_fact_ids=visible_fact_ids,
+                )
+                for row in intent_rows
+            ],
             current_goal_cycle_id=current_goal_cycle_id,
             goal_from_fact_ids=goal_from_fact_ids,
             goal_history=history,
@@ -242,32 +277,59 @@ class GraphRepository:
         return [fact_id for fact_id in candidate_fact_ids if fact_id in visible]
 
     @staticmethod
-    def _intent(conn: Connection, row, *, visible_relations_only: bool = False) -> Intent:
-        source_query = (
-            select(intent_sources.c.fact_id)
-            .where(
-                intent_sources.c.task_id == row["task_id"],
-                intent_sources.c.intent_id == row["id"],
+    def _visible_fact_refs_from_set(
+        refs_json: str, visible_fact_ids: set[str]
+    ) -> list[str]:
+        candidate_fact_ids = list(
+            dict.fromkeys(
+                item_id
+                for ref in json.loads(refs_json or "[]")
+                for kind, separator, item_id in [ref.partition(":")]
+                if separator and kind == "fact" and item_id not in {"origin", "goal"}
             )
-            .order_by(intent_sources.c.fact_id)
         )
-        if visible_relations_only:
-            source_query = source_query.join(
-                facts,
-                (facts.c.task_id == intent_sources.c.task_id)
-                & (facts.c.id == intent_sources.c.fact_id),
-            ).where(facts.c.archived.is_(False))
-        sources = list(conn.execute(source_query).scalars())
+        return [fact_id for fact_id in candidate_fact_ids if fact_id in visible_fact_ids]
+
+    @staticmethod
+    def _intent(
+        conn: Connection,
+        row,
+        *,
+        visible_relations_only: bool = False,
+        sources: list[str] | None = None,
+        visible_fact_ids: set[str] | None = None,
+    ) -> Intent:
+        if sources is None:
+            source_query = (
+                select(intent_sources.c.fact_id)
+                .where(
+                    intent_sources.c.task_id == row["task_id"],
+                    intent_sources.c.intent_id == row["id"],
+                )
+                .order_by(intent_sources.c.fact_id)
+            )
+            if visible_relations_only:
+                source_query = source_query.join(
+                    facts,
+                    (facts.c.task_id == intent_sources.c.task_id)
+                    & (facts.c.id == intent_sources.c.fact_id),
+                ).where(facts.c.archived.is_(False))
+            sources = list(conn.execute(source_query).scalars())
+        else:
+            sources = list(sources)
         to_fact_id = row["to_fact_id"]
         if visible_relations_only and to_fact_id is not None:
-            visible_output = conn.execute(
-                select(facts.c.id).where(
-                    facts.c.task_id == row["task_id"],
-                    facts.c.id == to_fact_id,
-                    facts.c.archived.is_(False),
-                )
-            ).scalar_one_or_none()
-            if visible_output is None:
+            if visible_fact_ids is not None:
+                visible_output = to_fact_id in visible_fact_ids
+            else:
+                visible_output = conn.execute(
+                    select(facts.c.id).where(
+                        facts.c.task_id == row["task_id"],
+                        facts.c.id == to_fact_id,
+                        facts.c.archived.is_(False),
+                    )
+                ).scalar_one_or_none() is not None
+            if not visible_output:
                 to_fact_id = None
         return Intent(
             id=row["id"],
@@ -297,6 +359,9 @@ class GraphRepository:
             activity_updated_at=row["activity_updated_at"],
             next_retry_at=row["next_retry_at"],
             to_fact_id=to_fact_id,
+            human_intervention_required=bool(row["human_intervention_required"]),
+            human_intervention_reason=row["human_intervention_reason"] or "",
+            human_intervention_marked_at=row["human_intervention_marked_at"],
             created_at=row["created_at"],
             concluded_at=row["concluded_at"],
             archived=bool(row["archived"]),

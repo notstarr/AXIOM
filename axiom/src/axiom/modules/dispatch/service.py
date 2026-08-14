@@ -355,7 +355,12 @@ class DispatchService:
             raise ConflictError("Global active Task limit reached")
         if self.repository.task_active_count(conn, task_id) >= config.per_task_max_active_runs:
             raise ConflictError("Per-Task active run limit reached")
-        kind_limit = config.per_task_explore_concurrency if kind == "explore" else 1
+        if kind == "explore":
+            kind_limit = config.per_task_explore_concurrency
+        elif kind == "review":
+            kind_limit = config.per_task_review_concurrency
+        else:
+            kind_limit = 1
         if self.repository.task_kind_active_count(conn, task_id, kind) >= kind_limit:
             raise ConflictError(f"Per-Task {kind} concurrency limit reached")
         return config

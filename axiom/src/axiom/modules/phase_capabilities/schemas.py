@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 Phase = Literal["bootstrap", "reason", "explore", "review"]
 CapabilityScope = Literal["common", "bootstrap", "reason", "explore", "review"]
 CapabilityKind = Literal["skill", "mcp_tool", "axiom_tool"]
-BuiltinToolSource = Literal["pi_native", "axiom_internal"]
+BuiltinToolSource = Literal["pi_native", "axiom_internal", "axiom_browser"]
 BuiltinToolMode = Literal["execute", "conclude"]
 
 

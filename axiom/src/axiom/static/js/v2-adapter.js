@@ -18,6 +18,7 @@
     'global_max_active_tasks',
     'per_task_max_active_runs',
     'per_task_explore_concurrency',
+    'per_task_review_concurrency',
     'heartbeat_interval_seconds',
     'lease_timeout_seconds',
     'execution_retry_limit',
@@ -94,6 +95,16 @@
     };
   }
 
+  function reasonActivitySummary(activityKind, status, summary = '') {
+    if (summary) return summary;
+    return {
+      pending: '等待可用的 Reason Worker 领取',
+      claimed: '正在启动 Reason 环境',
+      preparing_context: '正在准备 Reason Context 与能力快照',
+      analyzing: '正在分析任务上下文并规划下一批 Intent',
+    }[activityKind || status] || '正在分析任务上下文并规划下一批 Intent';
+  }
+
   function mapTask(task) {
     const activeReasonRun = task.active_reason_run || null;
     const legacyReason = !activeReasonRun && task.reason_worker ? {
@@ -103,7 +114,11 @@
       trigger: 'legacy',
       last_heartbeat_at: task.reason_heartbeat_at,
       activity_kind: task.reason_activity_kind || 'analyzing',
-      activity_summary: task.reason_activity_summary || '正在分析任务上下文并规划下一批 Intent',
+      activity_summary: reasonActivitySummary(
+        task.reason_activity_kind,
+        'running',
+        task.reason_activity_summary,
+      ),
       activity_tool: task.reason_activity_tool || '',
       activity_started_at: task.reason_activity_started_at || task.reason_heartbeat_at,
       activity_updated_at: task.reason_activity_updated_at || task.reason_heartbeat_at,
@@ -140,9 +155,11 @@
         conclude_timeout_seconds: activeReasonRun.conclude_timeout_seconds,
         last_heartbeat_at: activeReasonRun.last_heartbeat_at,
         activity_kind: activeReasonRun.activity_kind || activeReasonRun.status || 'pending',
-        activity_summary: activeReasonRun.activity_summary || (activeReasonRun.status === 'pending'
-          ? '等待可用的 Reason Worker 领取'
-          : '正在分析任务上下文并规划下一批 Intent'),
+        activity_summary: reasonActivitySummary(
+          activeReasonRun.activity_kind,
+          activeReasonRun.status,
+          activeReasonRun.activity_summary,
+        ),
         activity_tool: activeReasonRun.activity_tool || '',
         activity_started_at: activeReasonRun.activity_started_at || activeReasonRun.created_at,
         activity_updated_at: activeReasonRun.activity_updated_at || activeReasonRun.last_heartbeat_at || activeReasonRun.created_at,
@@ -167,10 +184,11 @@
   }
 
   function mapVulnerability(item, task, project) {
+    const parentProjectId = task?.parent_project_id || task?.project_id || project?.id || '';
     return {
       ...item,
       project_id: item.task_id,
-      parent_project_id: task?.project_id || project?.id || '',
+      parent_project_id: parentProjectId,
       task_title: task?.title || item.task_id,
       project_group_title: project?.title || '',
       recommendation: item.remediation || '',
@@ -238,6 +256,9 @@
       failure_class: intent.failure_class || '',
       next_retry_at: intent.next_retry_at || null,
       last_failure_kind: intent.last_failure_kind || '',
+      human_intervention_required: !!intent.human_intervention_required,
+      human_intervention_reason: intent.human_intervention_reason || '',
+      human_intervention_marked_at: intent.human_intervention_marked_at || null,
       activity_kind: intent.activity_kind || '',
       activity_summary: intent.activity_summary || '',
       activity_tool: intent.activity_tool || '',
@@ -281,28 +302,167 @@
     };
   }
 
-  async function taskDetail(taskId, options = {}) {
-    const task = await request('GET', `/tasks/${taskId}`, null, options);
-    const project = await request('GET', `/projects/${task.project_id}`, null, options).catch(() => null);
-    const mappedTask = mapTask(task);
-    if (task.archived) {
-      return {
-        project: mappedTask,
-        facts: [],
-        intents: [],
-        goal_from_fact_ids: [],
-        goal_history: [],
-        goal_cycles: [],
-        goal_evaluations: [],
-        hints: [],
-        todos: [],
-        vulns: [],
-        artifacts: [],
-        lead_artifacts: [],
-        archived_locked: true,
-        events: [],
-      };
+  function emptyTaskDetail(mappedTask, archivedLocked = false) {
+    return {
+      project: mappedTask,
+      facts: [],
+      intents: [],
+      goal_from_fact_ids: [],
+      goal_history: [],
+      goal_cycles: [],
+      goal_evaluations: [],
+      hints: [],
+      todos: [],
+      vulns: [],
+      artifacts: [],
+      lead_artifacts: [],
+      archived_locked: archivedLocked,
+      events: [],
+    };
+  }
+
+  function copyTaskDetailBase(baseDetail, mappedTask) {
+    const base = baseDetail || {};
+    return {
+      ...emptyTaskDetail(mappedTask, !!base.archived_locked),
+      facts: [...(base.facts || [])],
+      intents: [...(base.intents || [])],
+      goal_from_fact_ids: [...(base.goal_from_fact_ids || [])],
+      goal_history: [...(base.goal_history || [])],
+      goal_cycles: [...(base.goal_cycles || [])],
+      goal_evaluations: [...(base.goal_evaluations || [])],
+      hints: [...(base.hints || [])],
+      todos: [...(base.todos || [])],
+      vulns: [...(base.vulns || [])],
+      artifacts: [...(base.artifacts || [])],
+      lead_artifacts: [...(base.lead_artifacts || [])],
+      events: [...(base.events || [])],
+    };
+  }
+
+  function emitTaskDetailSection(options, section) {
+    if (typeof options.onTaskDetailSection !== 'function') return;
+    try { options.onTaskDetailSection(section); }
+    catch (error) { console.debug('Task detail section callback failed', error); }
+  }
+
+  async function taskDetailIncremental(taskId, baseDetail, options) {
+    let mappedTask = baseDetail?.project || null;
+    if (!mappedTask) {
+      const task = await request('GET', `/tasks/${taskId}`, null, options);
+      mappedTask = mapTask(task);
+      baseDetail = emptyTaskDetail(mappedTask, !!task.archived);
     }
+    const detail = copyTaskDetailBase(baseDetail, mappedTask);
+    if (mappedTask.archived || detail.archived_locked) {
+      detail.archived_locked = true;
+      return detail;
+    }
+
+    const allSections = [
+      'project_group', 'graph', 'hints', 'todos', 'vulnerabilities',
+      'artifacts', 'lead_artifacts', 'goal_cycles', 'goal_evaluations',
+    ];
+    const selectedSections = Array.isArray(options.sections) && options.sections.length
+      ? new Set(options.sections.filter(name => allSections.includes(name)))
+      : new Set(allSections);
+    const runSection = async (name, loader, apply) => {
+      try {
+        const data = await loader();
+        apply(data);
+        emitTaskDetailSection(options, { name, data });
+        return data;
+      } catch (error) {
+        emitTaskDetailSection(options, { name, error });
+        return null;
+      }
+    };
+
+    let projectGroupPromise = Promise.resolve(null);
+    if (selectedSections.has('project_group')) {
+      projectGroupPromise = runSection(
+        'project_group',
+        () => request('GET', `/projects/${mappedTask.parent_project_id}`, null, options),
+        () => {},
+      );
+    } else if (selectedSections.has('vulnerabilities')) {
+      projectGroupPromise = request('GET', `/projects/${mappedTask.parent_project_id}`, null, options).catch(() => null);
+    }
+
+    const pending = [];
+    if (selectedSections.has('graph')) {
+      pending.push(runSection('graph', async () => {
+        const graph = await request('GET', `/tasks/${taskId}/graph`, null, options);
+        return { ...graph, facts: graph.facts || [], intents: (graph.intents || []).map(mapIntent) };
+      }, graph => {
+        detail.facts = graph.facts || [];
+        detail.intents = graph.intents || [];
+        detail.goal_from_fact_ids = graph.goal_from_fact_ids || [];
+        detail.goal_history = graph.goal_history || [];
+        detail.project.fact_count = detail.facts.length;
+        detail.project.intent_count = detail.intents.length;
+      }));
+    }
+    if (selectedSections.has('hints')) {
+      pending.push(runSection('hints', () => request('GET', `/tasks/${taskId}/hints`, null, options), items => {
+        detail.hints = items || [];
+      }));
+    }
+    if (selectedSections.has('todos')) {
+      pending.push(runSection('todos', () => request('GET', `/tasks/${taskId}/todos?limit=200`, null, options), items => {
+        detail.todos = items || [];
+      }));
+    }
+    if (selectedSections.has('vulnerabilities')) {
+      pending.push(runSection('vulnerabilities', async () => {
+        const [items, group] = await Promise.all([
+          request('GET', `/tasks/${taskId}/vulnerabilities?limit=200`, null, options),
+          projectGroupPromise,
+        ]);
+        return (items || []).map(item => mapVulnerability(item, detail.project, group));
+      }, items => { detail.vulns = items; }));
+    }
+    if (selectedSections.has('artifacts')) {
+      pending.push(runSection('artifacts', () => request('GET', `/tasks/${taskId}/artifacts?limit=12`, null, options), items => {
+        detail.artifacts = (items || []).map(mapArtifact);
+      }));
+    }
+    if (selectedSections.has('lead_artifacts')) {
+      pending.push(runSection('lead_artifacts', async () => {
+        const [exploreLeads, bootstrapLeads] = await Promise.all([
+          request('GET', `/tasks/${taskId}/artifacts?artifact_type=explore.leads&limit=20`, null, options),
+          request('GET', `/tasks/${taskId}/artifacts?artifact_type=bootstrap.initial_leads&limit=20`, null, options),
+        ]);
+        return [...(exploreLeads || []), ...(bootstrapLeads || [])].map(mapArtifact);
+      }, items => { detail.lead_artifacts = items; }));
+    }
+    if (selectedSections.has('goal_cycles')) {
+      pending.push(runSection('goal_cycles', () => request('GET', `/tasks/${taskId}/goal-cycles`, null, options), items => {
+        detail.goal_cycles = items || [];
+      }));
+    }
+    if (selectedSections.has('goal_evaluations')) {
+      pending.push(runSection('goal_evaluations', () => request('GET', `/tasks/${taskId}/goal-evaluations`, null, options), items => {
+        detail.goal_evaluations = items || [];
+      }));
+    }
+    if (selectedSections.has('project_group')) pending.push(projectGroupPromise);
+    await Promise.all(pending);
+    return detail;
+  }
+
+  async function taskDetail(taskId, options = {}) {
+    const detailMode = options.detailMode || 'full';
+    if (detailMode === 'incremental') {
+      return taskDetailIncremental(taskId, options.baseDetail || null, options);
+    }
+
+    const task = await request('GET', `/tasks/${taskId}`, null, options);
+    const mappedTask = mapTask(task);
+    if (detailMode === 'summary') return emptyTaskDetail(mappedTask, !!task.archived);
+
+    const project = await request('GET', `/projects/${task.project_id}`, null, options).catch(() => null);
+    if (task.archived) return emptyTaskDetail(mappedTask, true);
     const [graph, hints, todos, vulnerabilities, artifacts, leadArtifacts, bootstrapLeadArtifacts, goalCycles, goalEvaluations] = await Promise.all([
       request('GET', `/tasks/${taskId}/graph`, null, options),
       request('GET', `/tasks/${taskId}/hints`, null, options),
@@ -637,6 +797,11 @@
     if ((match = path.match(/^\/projects\/([^/]+)\/title$/)) && method === 'PUT') {
       return mapTask(await request('PATCH', `/tasks/${match[1]}`, { title: body.title }));
     }
+    if ((match = path.match(/^\/projects\/([^/]+)\/guard$/)) && method === 'PUT') {
+      return mapTask(await request('PATCH', `/tasks/${match[1]}`, {
+        guard_enabled: !!body?.enabled,
+      }));
+    }
     if ((match = path.match(/^\/projects\/([^/]+)\/status$/)) && method === 'PUT') {
       const endpoint = body.status === 'stopped' ? 'stop' : 'resume';
       const payload = endpoint === 'resume'
@@ -821,21 +986,7 @@
     taskScopeEditor: { taskId: '', targetsText: '', excludeText: '', notes: '', saving: false },
   });
 
-  Object.assign(M.core.methods, {
-    api: legacyApi,
-    async fetchText(path) {
-      let match;
-      if ((match = path.match(/^\/projects\/([^/]+)\/vulns\/([^/]+)\/export$/))) {
-        return request('GET', `/tasks/${match[1]}/vulnerabilities/${match[2]}/export`);
-      }
-      if ((match = path.match(/^\/projects\/([^/]+)\/export/))) {
-        const format = new URL(path, location.origin).searchParams.get('format') || 'yaml';
-        if (format === 'vulns_md') return request('GET', `/tasks/${match[1]}/vulnerabilities-export`);
-        return request('GET', `/tasks/${match[1]}/export?format=${encodeURIComponent(format)}`);
-      }
-      return request('GET', path);
-    },
-  });
+  Object.assign(M.core.methods, { api: legacyApi });
 
   Object.assign(M.projects.methods, {
     manualReasonDisabledReason() {
@@ -866,6 +1017,7 @@
         });
         await this.loadProject(taskId);
         await this.loadProjects();
+        if (this.view === 'graph') this.updateGraph?.();
         this.showToast(`已触发 ${run.id}，等待 Reason Worker 领取`);
       } catch (error) {
         if (error?.status === 409) await this.loadProject(taskId);
@@ -954,7 +1106,6 @@
       this.vulnerabilityReviews = [];
       this.vulnerabilityReviewsError = '';
       if (!taskId) return;
-      this.showVulnBoard = false;
       this.vulnFilter = { ...(this.vulnFilter || {}), projectId: taskId, keyword: '' };
       this.vulnerabilityPage = 0;
       this.selectedVulnerabilityKey = vulnerabilityId ? `${taskId}:${vulnerabilityId}` : '';
@@ -1119,7 +1270,8 @@
         const projectMap = new Map((this.projectGroups || []).map(project => [project.id, project]));
         let items = page.items.map(item => {
           const task = taskMap.get(item.task_id) || { id: item.task_id, project_id: '' };
-          return mapVulnerability(item, task, projectMap.get(task.project_id));
+          const parentProjectId = task.parent_project_id || task.project_id || '';
+          return mapVulnerability(item, task, projectMap.get(parentProjectId));
         });
         const routeTaskId = String(this.vulnerabilityRouteTaskId || '');
         const routeVulnerabilityId = String(this.vulnerabilityRouteId || '');
@@ -1137,7 +1289,8 @@
             );
             if (raw?.archived) throw new Error('漏洞已归档');
             const task = taskMap.get(routeTaskId) || { id: routeTaskId, project_id: '' };
-            routeTarget = mapVulnerability(raw, task, projectMap.get(task.project_id));
+            const parentProjectId = task.parent_project_id || task.project_id || '';
+            routeTarget = mapVulnerability(raw, task, projectMap.get(parentProjectId));
             items = [routeTarget, ...items.filter(item => this.vulnerabilityKey(item) !== this.vulnerabilityKey(routeTarget))];
           } catch (error) {
             if (error?.name === 'AbortError') return;
@@ -1174,25 +1327,12 @@
       clearTimeout(this._vulnerabilitySearchTimer);
       this._vulnerabilitySearchTimer = setTimeout(() => {
         this.vulnerabilityPage = 0;
-        if (this.showVulnBoard) this.loadVulnerabilityBoard(true);
-        else this.loadVulnerabilityPage();
+        this.loadVulnerabilityPage();
       }, 250);
     },
     async applyVulnerabilityFilters() {
       this.vulnerabilityPage = 0;
-      if (this.showVulnBoard) await this.loadVulnerabilityBoard(true);
-      else await this.loadVulnerabilityPage();
-    },
-    vulnerabilityBoardColumns() {
-      return [
-        { status: '待验证', dotClass: 'bg-amber-400' },
-        { status: '已验证', dotClass: 'bg-blue-400' },
-        { status: '忽略', dotClass: 'bg-slate-400' },
-        { status: '重复', dotClass: 'bg-rose-400' },
-      ];
-    },
-    vulnerabilityBoardHasMore(status) {
-      return (this.vulnerabilityBoard?.[status]?.length || 0) < (this.vulnerabilityBoardTotals?.[status] || 0);
+      await this.loadVulnerabilityPage();
     },
     vulnerabilityPageCount() { return Math.max(1, Math.ceil((this.vulnerabilityTotal || 0) / this.vulnerabilityPageSize)); },
     async setVulnerabilityPage(page) {
@@ -1200,67 +1340,6 @@
       if (next === this.vulnerabilityPage) return;
       this.vulnerabilityPage = next;
       await this.loadVulnerabilityPage();
-    },
-    async toggleVulnerabilityView() {
-      this.showVulnBoard = !this.showVulnBoard;
-      if (this.showVulnBoard) await this.loadVulnerabilityBoard(true);
-      else await this.loadVulnerabilityPage();
-    },
-    async loadVulnerabilityBoard(reset = true) {
-      const statuses = ['待验证', '已验证', '忽略', '重复'];
-      if (reset) {
-        this.vulnerabilityBoard = { '待验证': [], '已验证': [], '忽略': [], '重复': [] };
-        this.vulnerabilityBoardPages = { '待验证': 0, '已验证': 0, '忽略': 0, '重复': 0 };
-      }
-      try {
-        await Promise.all(statuses.map(status => {
-          if (!reset && this.vulnerabilityBoardLoading[status]) return Promise.resolve();
-          const currentLength = this.vulnerabilityBoard[status]?.length || 0;
-          if (!reset && currentLength > 200) return Promise.resolve();
-          const loaded = reset ? 25 : Math.max(25, currentLength);
-          return this.loadVulnerabilityBoardStatus(status, false, { limit: loaded });
-        }));
-      } catch (error) {
-        if (error?.name !== 'AbortError') this.showToast(error.message || String(error), 'error');
-      }
-    },
-    async loadVulnerabilityBoardStatus(status, append = true, options = {}) {
-      if (append && this.vulnerabilityBoardLoading[status]) return;
-      const requestId = (this._vulnerabilityBoardRequestIds[status] || 0) + 1;
-      this._vulnerabilityBoardRequestIds[status] = requestId;
-      this.vulnerabilityBoardLoading = { ...this.vulnerabilityBoardLoading, [status]: true };
-      const currentLength = this.vulnerabilityBoard[status]?.length || 0;
-      const offset = append ? currentLength : 0;
-      const limit = append ? 25 : Math.max(25, Number(options.limit) || 25);
-      const params = new URLSearchParams({ status, limit: String(limit), offset: String(offset) });
-      const keyword = String(this.vulnFilter.keyword || '').trim();
-      if (keyword) params.set('search', keyword);
-      if (this.vulnFilter.projectId) params.set('task_id', this.vulnFilter.projectId);
-      try {
-        const page = await requestPage(`/vulnerabilities?${params}`, {
-          signal: this._pageAbortController?.signal,
-        });
-        if (requestId !== this._vulnerabilityBoardRequestIds[status]) return;
-        const taskMap = new Map((this.projects || []).map(task => [task.id, task]));
-        const projectMap = new Map((this.projectGroups || []).map(project => [project.id, project]));
-        const mapped = page.items.map(item => {
-          const task = taskMap.get(item.task_id) || { id: item.task_id, project_id: '' };
-          return mapVulnerability(item, task, projectMap.get(task.project_id));
-        });
-        this.vulnerabilityBoard = {
-          ...this.vulnerabilityBoard,
-          [status]: append ? [...(this.vulnerabilityBoard[status] || []), ...mapped] : mapped,
-        };
-        this.vulnerabilityBoardTotals = { ...this.vulnerabilityBoardTotals, [status]: page.total };
-        this.vulnerabilityBoardPages = {
-          ...this.vulnerabilityBoardPages,
-          [status]: Math.max(1, Math.ceil((append ? currentLength + mapped.length : mapped.length) / 25)),
-        };
-      } finally {
-        if (requestId === this._vulnerabilityBoardRequestIds[status]) {
-          this.vulnerabilityBoardLoading = { ...this.vulnerabilityBoardLoading, [status]: false };
-        }
-      }
     },
     async refreshTaskDetailSections(events = [], force = false) {
       const taskId = this.selectedProjectId;
@@ -1320,14 +1399,6 @@
         if (error?.name !== 'AbortError') console.debug('Task detail incremental refresh failed', error);
       }
     },
-    async loadGlobalSkillUsage() {
-      try {
-        const data = await request('GET', '/skills/usage');
-        this.globalSkillUsage = data.items || [];
-      } catch (_) {
-        this.globalSkillUsage = [];
-      }
-    },
     filteredTasks() {
       const keyword = String(this.taskSearch || '').trim().toLowerCase();
       const status = this.taskStatusFilter || 'all';
@@ -1350,6 +1421,7 @@
     },
     selectedTaskSummary() {
       const tasks = this.filteredTasks();
+      if (this.taskManagementSelectionBlocked) return null;
       if (!tasks.length) return null;
       let selected = tasks.find(task => task.id === this.selectedTaskManagementId);
       if (!selected) {
@@ -1359,7 +1431,7 @@
       if (this.taskWorkerPoolEditor.projectId !== selected.id) this.syncTaskWorkerPoolEditor(selected);
       if (this.taskScopeEditor.taskId !== selected.id) this.syncTaskScopeEditor(selected);
       if (!this.taskDiagnostics[selected.id] && !this.taskDiagnosticsLoading[selected.id]) {
-        this.loadTaskDiagnostics(selected.id, true);
+        this.scheduleTaskDiagnostics?.(selected.id);
       }
       return selected;
     },

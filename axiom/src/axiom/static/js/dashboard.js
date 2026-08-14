@@ -180,8 +180,7 @@ window.AxiomModules.dashboard = {
     },
 
     allVulnerabilities() {
-      if (!this.showVulnBoard) return this.vulnerabilityItems || [];
-      return Object.values(this.vulnerabilityBoard || {}).flat();
+      return this.vulnerabilityItems || [];
     },
 
     filteredVulnerabilities() {
@@ -567,38 +566,12 @@ window.AxiomModules.dashboard = {
       try {
         await this.api('PUT', `/projects/${current.project_id}/vulns/${current.id}`, body);
         this.closeVulnStatusQuick();
-        if (this.showVulnBoard) await this.loadVulnerabilityBoard(true);
-        else await this.loadVulnerabilityPage();
+        await this.loadVulnerabilityPage();
         await this.loadDashboardSummary?.();
         this.showToast(`状态已更新为 ${nextStatus}`);
       } catch (e) {
         this.showToast(e.message, 'error');
       }
-    },
-
-    async exportVulnMd(v) {
-      if (!v?.project_id || !v?.id) return;
-      try {
-        const text = await this.fetchText(`/projects/${v.project_id}/vulns/${v.id}/export`);
-        const filename = `${v.id}_${(v.title || 'vuln').replace(/[^\w\u4e00-\u9fff]/g, '_').slice(0, 40)}.md`;
-        this.downloadTextFile(filename, text);
-        this.showToast('已导出');
-      } catch(e) { this.showToast(e.message, 'error'); }
-    },
-
-    async exportCurrentTaskVulnReport() {
-      const projectId = this.vulnFilter?.projectId || this.selectedVulnerability()?.project_id || '';
-      if (!projectId) {
-        this.showToast('请先选择一个任务', 'error');
-        return;
-      }
-      try {
-        const text = await this.fetchText(`/projects/${projectId}/export?format=vulns_md`);
-        const project = (this.projects || []).find(p => p.id === projectId);
-        const title = (project?.title || projectId || 'task').replace(/[^\w\u4e00-\u9fff]/g, '_').slice(0, 48);
-        this.downloadTextFile(`${projectId}_${title}_pentest_report.md`, text);
-        this.showToast('报告已导出');
-      } catch(e) { this.showToast(e.message, 'error'); }
     },
 
     async openVulnerabilityArtifact(v, artifact) {

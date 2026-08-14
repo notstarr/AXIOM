@@ -49,6 +49,9 @@ class Intent(BaseModel):
     activity_updated_at: str | None = None
     next_retry_at: str | None = None
     to_fact_id: str | None = None
+    human_intervention_required: bool = False
+    human_intervention_reason: str = ""
+    human_intervention_marked_at: str | None = None
     created_at: str
     concluded_at: str | None = None
     archived: bool = False

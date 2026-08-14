@@ -101,6 +101,7 @@ class DispatchLimits(BaseModel):
     global_max_active_tasks: int = Field(default=3, ge=1)
     per_task_max_active_runs: int = Field(default=4, ge=1)
     per_task_explore_concurrency: int = Field(default=4, ge=1)
+    per_task_review_concurrency: int = Field(default=4, ge=1)
 
 
 class DispatcherSnapshot(BaseModel):

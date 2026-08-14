@@ -232,6 +232,7 @@ def test_builtin_tool_catalog_matches_fixed_stage_contracts_and_is_read_only(
         "axiom.reason.intent.propose",
         "axiom.reason.goal.assess",
         "axiom.explore.vulnerability.report",
+        "axiom.explore.human_intervention.mark",
     }.issubset(tools)
     assert tools["bash"]["availability"] == {
         "bootstrap": ["execute"],
@@ -241,8 +242,38 @@ def test_builtin_tool_catalog_matches_fixed_stage_contracts_and_is_read_only(
     }
     assert tools["axiom.reason.status"]["phases"] == ["reason"]
     assert tools["axiom.explore.vulnerability.report"]["phases"] == ["explore"]
+    assert tools["axiom.explore.human_intervention.mark"]["phases"] == ["explore"]
+    assert tools["axiom.explore.human_intervention.mark"]["availability"] == {
+        "explore": ["execute", "conclude"],
+    }
     assert tools["axiom.review.status"]["phases"] == ["review"]
     assert tools["axiom.review.decision.submit"]["phases"] == ["review"]
+    browser_tools = {
+        "browser_open_page",
+        "browser_list_pages",
+        "browser_close_page",
+        "browser_navigate",
+        "browser_read_page",
+        "browser_snapshot",
+        "browser_click",
+        "browser_fill",
+        "browser_press",
+        "browser_hover",
+        "browser_scroll",
+        "browser_select",
+        "browser_check",
+        "browser_upload_file",
+        "browser_wait",
+        "browser_screenshot",
+        "browser_read_network",
+        "browser_read_console",
+        "browser_evaluate",
+    }
+    assert browser_tools <= set(tools)
+    assert all(tools[name]["source"] == "axiom_browser" for name in browser_tools)
+    assert all(tools[name]["phases"] == ["explore"] for name in browser_tools)
+    assert all(tools[name]["locked"] is True for name in browser_tools)
+    assert not (browser_tools & {item["capability_key"] for item in body["items"]})
     assert all(item["locked"] is True for item in tools.values())
     assert not (RETIRED_PLACEHOLDER_TOOLS & set(tools))
     assert not (
@@ -318,6 +349,94 @@ def test_skill_snapshot_is_filtered_by_phase(client, tmp_path: Path) -> None:
         RETIRED_PLACEHOLDER_TOOLS
         & {item["key"] for item in payload["axiom_tools"]}
     )
+
+
+def test_new_skill_snapshot_hash_tracks_support_file_updates(client, tmp_path: Path) -> None:
+    created = client.post(
+        "/api/v1/skills",
+        json={
+            "name": "snapshot-package",
+            "description": "snapshot package",
+            "content": "读取 references/guide.md。",
+        },
+    )
+    assert created.status_code == 201, created.text
+    support = client.post(
+        "/api/v1/skills/snapshot-package/files",
+        json={"path": "references/guide.md", "content": "版本一"},
+    )
+    assert support.status_code == 200, support.text
+    binding = client.put(
+        "/api/v1/phase-capabilities/skill/snapshot-package",
+        json={"scopes": ["explore"]},
+    )
+    assert binding.status_code == 200, binding.text
+    _put_worker(client, "skill-hash-backend", ["explore"])
+
+    service = client.app.state.container.phase_capabilities
+    first = service.snapshot_for_lease(
+        worker_name="skill-hash-backend",
+        phase="explore",
+        run_dir=tmp_path / "first",
+    )
+    first_payload = json.loads(
+        Path(first.capability_snapshot_path).read_text(encoding="utf-8")
+    )
+    first_item = next(
+        item for item in first_payload["skills"] if item["key"] == "snapshot-package"
+    )
+
+    updated = client.put(
+        "/api/v1/skills/snapshot-package/files/references/guide.md",
+        json={"content": "版本二"},
+    )
+    assert updated.status_code == 200, updated.text
+    second = service.snapshot_for_lease(
+        worker_name="skill-hash-backend",
+        phase="explore",
+        run_dir=tmp_path / "second",
+    )
+    second_payload = json.loads(
+        Path(second.capability_snapshot_path).read_text(encoding="utf-8")
+    )
+    second_item = next(
+        item for item in second_payload["skills"] if item["key"] == "snapshot-package"
+    )
+
+    assert first_item["content_hash"] != second_item["content_hash"]
+
+    same = service.snapshot_for_lease(
+        worker_name="skill-hash-backend",
+        phase="explore",
+        run_dir=tmp_path / "first",
+    )
+    frozen_payload = json.loads(
+        Path(same.capability_snapshot_path).read_text(encoding="utf-8")
+    )
+    frozen_item = next(
+        item for item in frozen_payload["skills"] if item["key"] == "snapshot-package"
+    )
+    assert frozen_item["content_hash"] == first_item["content_hash"]
+
+
+def test_lease_snapshot_lists_skills_only_once(client, tmp_path: Path, monkeypatch) -> None:
+    service = client.app.state.container.phase_capabilities
+    original_list = service.skills.list
+    calls = 0
+
+    def counting_list():
+        nonlocal calls
+        calls += 1
+        return original_list()
+
+    monkeypatch.setattr(service.skills, "list", counting_list)
+    service.snapshot_for_lease(
+        worker_name="reason-backend",
+        phase="reason",
+        run_dir=tmp_path / "reason-snapshot",
+    )
+
+    assert calls == 1
 
 
 def test_mcp_snapshot_contains_only_selected_tool_and_freezes_server_config(client, tmp_path: Path) -> None:

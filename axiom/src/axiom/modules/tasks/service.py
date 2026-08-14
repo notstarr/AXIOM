@@ -3,8 +3,7 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 
-from sqlalchemy import Engine, func, literal, select, union_all, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import Engine, delete as sql_delete, func, literal, select, union_all, update
 
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
@@ -37,14 +36,18 @@ from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.tables import vulnerabilities
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
+from axiom.shared import model_registry as _model_registry  # noqa: F401
 from axiom.shared.clock import format_utc, parse_utc, utcnow
-from axiom.shared.database import run_transaction, transaction
+from axiom.shared.database import metadata, run_transaction, transaction
 from axiom.shared.errors import ConflictError, NotFoundError
+from axiom.shared.ids import id_counters
+from axiom.shared.storage import FileStore, PreparedTaskDeletion
 
 
 class TaskService:
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, store: FileStore):
         self.engine = engine
+        self.store = store
         self.projects = ProjectRepository()
         self.tasks = TaskRepository()
         self.graph = GraphRepository()
@@ -370,16 +373,50 @@ class TaskService:
         )
 
     def delete(self, task_id: str) -> None:
+        prepared: PreparedTaskDeletion | None = None
         try:
             with self.engine.begin() as conn:
-                task = self.tasks.get(conn, task_id)
-                if task is None:
+                locked_task_id = conn.execute(
+                    select(tasks.c.id).where(tasks.c.id == task_id).with_for_update()
+                ).scalar_one_or_none()
+                if locked_task_id is None:
                     raise NotFoundError(f"Task not found: {task_id}")
-                if task.status == "running":
-                    raise ConflictError("Stop a running Task before deleting it")
-                self.tasks.delete(conn, task_id)
-        except IntegrityError as exc:
-            raise ConflictError("任务包含执行历史，不能物理删除，请使用“归档任务”") from exc
+                task = self.tasks.get(conn, task_id)
+                assert task is not None
+                if task.legacy_readonly:
+                    raise ConflictError("历史只读任务不能永久删除")
+                if not task.archived:
+                    raise ConflictError("请先归档任务，再永久删除")
+                active_count = sum(
+                    conn.execute(
+                        select(func.count())
+                        .select_from(table)
+                        .where(
+                            table.c.task_id == task_id,
+                            table.c.status.in_(("claimed", "running", "concluding")),
+                        )
+                    ).scalar_one()
+                    for table in (intents, reason_runs, vulnerability_review_runs)
+                )
+                if active_count:
+                    raise ConflictError("任务仍有活动 Worker Lease，暂时不能永久删除")
+
+                prepared = self.store.prepare_task_deletion(task_id)
+                for table in reversed(metadata.sorted_tables):
+                    if table is tasks or "task_id" not in table.c:
+                        continue
+                    conn.execute(sql_delete(table).where(table.c.task_id == task_id))
+                conn.execute(sql_delete(id_counters).where(id_counters.c.scope == task_id))
+                deleted = self.tasks.delete(conn, task_id)
+                if not deleted:
+                    raise NotFoundError(f"Task not found: {task_id}")
+        except BaseException:
+            if prepared is not None:
+                prepared.rollback()
+            raise
+        else:
+            assert prepared is not None
+            prepared.finish()
 
     def archive(self, task_id: str, *, actor: str = "human.frontend") -> Task:
         actor = actor.strip() or "human.frontend"
@@ -471,14 +508,26 @@ class TaskService:
 
     def add_hint(self, task_id: str, command: CreateTaskHint) -> TaskHint:
         with self.engine.begin() as conn:
-            task = self.tasks.get(conn, task_id)
-            if task is None:
+            task_lock = conn.execute(
+                select(tasks.c.id).where(tasks.c.id == task_id).with_for_update()
+            ).scalar_one_or_none()
+            if task_lock is None:
                 raise NotFoundError(f"Task not found: {task_id}")
+            task = self.tasks.get(conn, task_id)
+            assert task is not None
             if task.legacy_readonly:
                 raise ConflictError("Legacy Task is read-only")
             if task.archived:
                 raise ConflictError("已归档任务不能修改 Hint")
-            return self.tasks.create_hint(conn, task_id=task_id, command=command, now=utcnow())
+            now = utcnow()
+            hint = self.tasks.create_hint(conn, task_id=task_id, command=command, now=now)
+            self.reason_service.trigger_hint_in(
+                conn,
+                task_id=task_id,
+                hint=hint,
+                now=now,
+            )
+            return hint
 
     def update_hint(self, task_id: str, hint_id: str, command: UpdateTaskHint) -> TaskHint:
         with self.engine.begin() as conn:
@@ -669,7 +718,15 @@ class TaskService:
                         "reason_activity_kind": reason["activity_kind"] if reason_present else "",
                         "reason_activity_summary": (
                             reason["activity_summary"]
-                            or "正在分析任务上下文并规划下一批 Intent"
+                            or {
+                                "pending": "等待可用的 Reason Worker 领取",
+                                "claimed": "正在启动 Reason 环境",
+                                "preparing_context": "正在准备 Reason Context 与能力快照",
+                                "analyzing": "正在分析任务上下文并规划下一批 Intent",
+                            }.get(
+                                reason["activity_kind"] or reason["status"],
+                                "正在分析任务上下文并规划下一批 Intent",
+                            )
                         )
                         if reason_present
                         else "",

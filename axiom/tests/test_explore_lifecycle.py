@@ -200,6 +200,203 @@ def test_explore_completion_atomically_registers_artifact_fact_and_reason(client
     assert task_after["active_reason_run"]["id"] == completed["reason_run_id"]
 
 
+def test_explore_human_intervention_marker_is_durable_idempotent_and_visible(
+    client,
+) -> None:
+    task, intent_ids = _task_with_explore_intents(client)
+    intent_id = intent_ids[0]
+    base = f"/api/v1/dispatch/tasks/{task['id']}/intents/{intent_id}"
+    claim = client.post(
+        f"{base}/claim",
+        json={"worker_name": "worker-a"},
+    ).json()
+    task_phase = client.get(f"/api/v1/tasks/{task['id']}").json()["phase"]
+
+    first = client.post(
+        f"{base}/human-intervention",
+        json={
+            "lease_id": claim["lease_id"],
+            "reason": "需要人工提供短信验证码，当前 Lease 无法接收该验证码",
+        },
+    )
+    assert first.status_code == 200, first.text
+    first_marker = first.json()
+    assert first_marker["required"] is True
+    assert first_marker["updated"] is True
+
+    repeated = client.post(
+        f"{base}/human-intervention",
+        json={
+            "lease_id": claim["lease_id"],
+            "reason": "需要人工提供短信验证码，当前 Lease 无法接收该验证码",
+        },
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["updated"] is False
+    assert repeated.json()["marked_at"] == first_marker["marked_at"]
+
+    graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
+    claimed_intent = next(item for item in graph["intents"] if item["id"] == intent_id)
+    assert claimed_intent["status"] == "claimed"
+    assert claimed_intent["retry_count"] == 0
+    assert claimed_intent["infrastructure_retry_count"] == 0
+    assert claimed_intent["human_intervention_required"] is True
+    assert client.get(f"/api/v1/tasks/{task['id']}").json()["phase"] == task_phase
+
+    started = client.post(f"{base}/start", json={"lease_id": claim["lease_id"]})
+    assert started.status_code == 200, started.text
+    changed = client.post(
+        f"{base}/human-intervention",
+        json={
+            "lease_id": claim["lease_id"],
+            "reason": "需要人工在真实设备完成扫码授权，当前工具无法代替设备确认",
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["updated"] is True
+    assert changed.json()["marked_at"] != first_marker["marked_at"]
+
+    execution_input = client.post(
+        f"{base}/input",
+        json={"lease_id": claim["lease_id"]},
+    ).json()
+    artifacts_dir = Path(execution_input["run_dir"]) / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (artifacts_dir / "findings.md").write_text(
+        "# 已确认事实\n\n本轮未确认漏洞。\n",
+        encoding="utf-8",
+    )
+    (artifacts_dir / "leads.md").write_text(
+        "# 待验证线索\n\n需要人工在真实设备完成扫码授权。\n",
+        encoding="utf-8",
+    )
+    concluding = client.post(
+        f"{base}/conclude",
+        json={"lease_id": claim["lease_id"]},
+    )
+    assert concluding.status_code == 204, concluding.text
+    concluded_marker = client.post(
+        f"{base}/human-intervention",
+        json={
+            "lease_id": claim["lease_id"],
+            "reason": "需要人工在真实设备完成扫码授权，当前 Lease 无法执行设备手工确认",
+        },
+    )
+    assert concluded_marker.status_code == 200, concluded_marker.text
+    assert concluded_marker.json()["updated"] is True
+
+    completed = client.post(
+        f"{base}/explore-complete",
+        json={"lease_id": claim["lease_id"]},
+    )
+    assert completed.status_code == 200, completed.text
+
+    graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
+    producing_intent = next(item for item in graph["intents"] if item["id"] == intent_id)
+    assert producing_intent["status"] == "completed"
+    assert producing_intent["to_fact_id"] == completed.json()["fact_id"]
+    assert producing_intent["human_intervention_required"] is True
+    assert producing_intent["human_intervention_reason"] == (
+        "需要人工在真实设备完成扫码授权，当前 Lease 无法执行设备手工确认"
+    )
+    assert producing_intent["human_intervention_marked_at"] == (
+        concluded_marker.json()["marked_at"]
+    )
+    assert any(item["id"] == completed.json()["fact_id"] for item in graph["facts"])
+
+    events = client.get(
+        "/api/v1/audit-events",
+        params={
+            "task_id": task["id"],
+            "intent_id": intent_id,
+            "event_type": "intent.human_intervention_marked",
+        },
+    ).json()
+    assert len(events) == 3
+    assert all(item["level"] == "warning" for item in events)
+    assert events[-1]["payload"] == {
+        "phase": "explore",
+        "reason": "需要人工提供短信验证码，当前 Lease 无法接收该验证码",
+    }
+    assert all("lease_id" not in item["payload"] for item in events)
+
+
+@pytest.mark.parametrize("reason", ["", "   ", "x" * 2_001])
+def test_explore_human_intervention_marker_validates_reason(client, reason: str) -> None:
+    task, intent_ids = _task_with_explore_intents(client)
+    intent_id = intent_ids[0]
+    claim = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/intents/{intent_id}/claim",
+        json={"worker_name": "worker-a"},
+    ).json()
+
+    response = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/intents/{intent_id}/human-intervention",
+        json={"lease_id": claim["lease_id"], "reason": reason},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_explore_human_intervention_marker_rejects_wrong_or_inactive_lease(client) -> None:
+    task, intent_ids = _task_with_explore_intents(client)
+    intent_id = intent_ids[0]
+    base = f"/api/v1/dispatch/tasks/{task['id']}/intents/{intent_id}"
+    claim = client.post(f"{base}/claim", json={"worker_name": "worker-a"}).json()
+    reason = "需要人工完成真实支付，当前 Lease 无法安全替代该动作"
+
+    wrong_lease = client.post(
+        f"{base}/human-intervention",
+        json={"lease_id": "wrong-lease", "reason": reason},
+    )
+    assert wrong_lease.status_code == 409, wrong_lease.text
+
+    released = client.post(
+        f"{base}/release",
+        json={"lease_id": claim["lease_id"], "failure_kind": "test_release"},
+    )
+    assert released.status_code == 200, released.text
+    inactive = client.post(
+        f"{base}/human-intervention",
+        json={"lease_id": claim["lease_id"], "reason": reason},
+    )
+    assert inactive.status_code == 409, inactive.text
+
+
+def test_human_intervention_marker_rejects_non_explore_intent(client) -> None:
+    update_runtime_settings(client, reason_min_interval_seconds=0)
+    project = client.post("/api/v1/projects", json={"title": "系统"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "Bootstrap 标记拒绝",
+            "origin": "a.example.com",
+            "goal": "验证阶段限制",
+            "worker_pool": ["worker-a"],
+        },
+    ).json()
+    client.put(
+        "/api/v1/workers/worker-a",
+        json={"capabilities": ["bootstrap", "reason", "explore"], "max_running": 8},
+    )
+    claim = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/intents/i001/claim",
+        json={"worker_name": "worker-a"},
+    ).json()
+
+    response = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/intents/i001/human-intervention",
+        json={
+            "lease_id": claim["lease_id"],
+            "reason": "需要人工完成真实设备操作",
+        },
+    )
+
+    assert response.status_code == 409, response.text
+    assert "not an Explore Intent" in response.text
+
+
 def test_reason_trigger_batches_new_facts_while_explore_backlog_remains(client) -> None:
     task, intent_ids = _task_with_explore_intents(client, count=4)
 

@@ -1,10 +1,29 @@
 window.AxiomModules = window.AxiomModules || {};
 window.AxiomModules.human = {
   methods: {
-    switchTaskView(mode) {
+    async switchTaskView(mode) {
+      const taskId = this.selectedProjectId;
+      const generation = this._projectOpenGeneration;
+      const previousHydration = this._taskDetailHydrationPromise;
       this.view = ['graph', 'archive'].includes(mode) ? mode : 'human';
       this.showPageSkeleton();
-      this.mountCurrentPage();
+      await this.mountCurrentPage();
+      if (previousHydration) await previousHydration;
+      if (!taskId || taskId !== this.selectedProjectId || generation !== this._projectOpenGeneration) return;
+      if (this.view !== 'archive' && this.project && !this.project.archived_locked) {
+        const graphReady = this.taskDetailSectionReady?.('graph');
+        if (this.view === 'graph' && graphReady && !this.cy) this.initGraph?.();
+        const incompleteSections = Object.entries(this.taskDetailLoad?.sections || {})
+          .filter(([, status]) => status !== 'ready')
+          .map(([name]) => name);
+        if (!this.taskDetailLoad?.hydrating && incompleteSections.length) {
+          void this.hydrateTaskDetails?.(taskId, {
+            generation,
+            signal: this._pageAbortController?.signal,
+            sections: incompleteSections,
+          });
+        }
+      }
     },
 
     switchHumanTab(tab) {

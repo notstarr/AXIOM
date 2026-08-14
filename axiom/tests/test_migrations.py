@@ -468,3 +468,100 @@ def test_sqlite_importer_rejects_wrong_revision_invalid_json_and_invalid_time(
         connection.close()
     with pytest.raises(ValueError, match="Invalid isoformat"):
         importer.migrate_sqlite_to_postgresql(invalid_time, app_url)
+
+
+def test_human_intervention_marker_migration_adds_defaults_and_round_trips(
+    isolated_postgresql_database,
+) -> None:
+    migrator_url, app_url = isolated_postgresql_database
+    config = alembic_config(migrator_url)
+    command.upgrade(config, POSTGRESQL_ALEMBIC_BRANCH)
+    command.downgrade(config, "20260806_pg0002")
+
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        assert {
+            item["name"]
+            for item in inspect(engine).get_columns("intents", schema=AXIOM_SCHEMA)
+        }.isdisjoint(
+            {
+                "human_intervention_required",
+                "human_intervention_reason",
+                "human_intervention_marked_at",
+            }
+        )
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, POSTGRESQL_ALEMBIC_BRANCH)
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        columns = {
+            item["name"]: item
+            for item in inspect(engine).get_columns("intents", schema=AXIOM_SCHEMA)
+        }
+        assert columns["human_intervention_required"]["nullable"] is False
+        assert columns["human_intervention_reason"]["nullable"] is False
+        assert columns["human_intervention_marked_at"]["nullable"] is True
+        assert str(columns["human_intervention_required"]["type"]).upper() == "BOOLEAN"
+        assert columns["human_intervention_required"]["default"]
+        assert columns["human_intervention_reason"]["default"]
+
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    f'INSERT INTO "{AXIOM_SCHEMA}".projects '
+                    "(id, title, description, status, created_at, updated_at) "
+                    "VALUES ('prj_marker', 'marker', '', 'active', now(), now())"
+                )
+            )
+            conn.execute(
+                text(
+                    f'INSERT INTO "{AXIOM_SCHEMA}".tasks '
+                    "(id, project_id, title, origin_host, origin_input, goal, status, phase, "
+                    "scope_json, worker_pool_json, guard_enabled, external_report_enabled, "
+                    "legacy_readonly, archived, created_at, updated_at) "
+                    "VALUES ('t_marker', 'prj_marker', 'marker', NULL, '自然语言入口', 'goal', "
+                    "'running', 'explore', CAST('{}' AS jsonb), CAST('[]' AS jsonb), "
+                    "false, false, false, false, now(), now())"
+                )
+            )
+            conn.execute(
+                text(
+                    f'INSERT INTO "{AXIOM_SCHEMA}".intents '
+                    "(id, task_id, kind, description, status, creator, worker_pool_json, "
+                    "targets_json, retry_count, infrastructure_retry_count, last_failure_kind, "
+                    "failure_class, activity_kind, activity_summary, activity_tool, archived, "
+                    "created_at) VALUES ('i_marker', 't_marker', 'explore', 'marker', 'pending', "
+                    "'reason', CAST('[]' AS jsonb), CAST('[]' AS jsonb), 0, 0, '', '', '', '', '', "
+                    "false, now())"
+                )
+            )
+            marker = conn.execute(
+                text(
+                    f'SELECT human_intervention_required, human_intervention_reason, '
+                    f'human_intervention_marked_at FROM "{AXIOM_SCHEMA}".intents '
+                    "WHERE task_id = 't_marker' AND id = 'i_marker'"
+                )
+            ).one()
+            assert marker == (False, "", None)
+    finally:
+        engine.dispose()
+
+    command.downgrade(config, "20260806_pg0002")
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        assert {
+            item["name"]
+            for item in inspect(engine).get_columns("intents", schema=AXIOM_SCHEMA)
+        }.isdisjoint(
+            {
+                "human_intervention_required",
+                "human_intervention_reason",
+                "human_intervention_marked_at",
+            }
+        )
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, POSTGRESQL_ALEMBIC_BRANCH)

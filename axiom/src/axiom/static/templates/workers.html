@@ -168,7 +168,7 @@
 
         <section x-show="workerCapabilityDrawerTab === 'builtin'" class="space-y-5">
           <div class="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-xs leading-5 text-blue-700">内置 Tool 来自真实 Pi 与 AXIOM 阶段合同，系统锁定且不进入能力绑定表。</div>
-          <template x-for="source in ['pi_native','axiom_internal']" :key="`builtin-source-${source}`">
+          <template x-for="source in ['pi_native','axiom_internal','axiom_browser']" :key="`builtin-source-${source}`">
             <div>
               <div class="mb-2 flex items-center justify-between"><h4 class="text-sm font-semibold text-slate-800" x-text="builtinToolSourceLabel(source)"></h4><span class="text-[10px] text-slate-400" x-text="`${builtinToolsForPhase(workerCapabilityDrawerPhase).filter(tool => tool.source === source).length} 个`"></span></div>
               <div class="grid grid-cols-1 gap-3 md:grid-cols-2"><template x-for="tool in builtinToolsForPhase(workerCapabilityDrawerPhase).filter(item => item.source === source)" :key="`drawer-builtin-${tool.key}`"><article class="rounded-xl border border-slate-200 bg-white p-3"><div class="flex items-start gap-2"><div class="min-w-0 flex-1"><strong class="text-xs text-slate-700" x-text="tool.title"></strong><code class="mt-1 block truncate text-[10px] text-blue-600" x-text="tool.invocation"></code></div><span class="rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[9px] text-slate-500">🔒 固定</span></div><p class="mt-2 text-[11px] leading-5 text-slate-500" x-text="tool.description"></p><p class="mt-2 text-[10px] text-slate-400" x-text="builtinToolAvailabilityLabel(tool, workerCapabilityDrawerPhase)"></p></article></template></div>

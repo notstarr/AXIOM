@@ -44,6 +44,7 @@ class RuntimeConfig(BaseModel):
     global_max_active_tasks: int = Field(default=3, ge=1, le=128)
     per_task_max_active_runs: int = Field(default=4, ge=1, le=128)
     per_task_explore_concurrency: int = Field(default=4, ge=1, le=128)
+    per_task_review_concurrency: int = Field(default=4, ge=1, le=128)
     heartbeat_interval_seconds: int = Field(default=10, ge=1, le=300)
     lease_timeout_seconds: int = Field(default=60, ge=20, le=3_600)
     execution_retry_limit: int = Field(default=6, ge=1, le=50)
@@ -113,6 +114,10 @@ class RuntimeConfig(BaseModel):
         if self.per_task_explore_concurrency > self.per_task_max_active_runs:
             raise ValueError(
                 "per_task_explore_concurrency cannot exceed per_task_max_active_runs"
+            )
+        if self.per_task_review_concurrency > self.per_task_max_active_runs:
+            raise ValueError(
+                "per_task_review_concurrency cannot exceed per_task_max_active_runs"
             )
         if self.lease_timeout_seconds < self.heartbeat_interval_seconds * 3:
             raise ValueError("lease_timeout_seconds must allow at least three heartbeats")

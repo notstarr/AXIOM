@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import uuid
 from collections.abc import Callable
@@ -54,6 +53,13 @@ EXPLORE_RPC_STREAM_RECOVERY_PROMPT = (
     "Workspace 继续执行。不要重复已经完成的测试；先检查最后一个完整 Tool Result，然后从尚未完成的"
     "步骤继续。最终仍须遵守当前 Intent、产物和 FINISH 合同。"
 )
+_REASON_PROMPT_PROFILE_FILES = {
+    "default": "reason_default.md",
+    "bootstrap": "reason_bootstrap.md",
+    "progress": "reason_progress.md",
+    "human": "reason_human.md",
+    "continuation": "reason_continuation.md",
+}
 CONTEXT_ATTENTION_SYSTEM_PROMPT = (
     "在开始规划或执行任何操作前，必须先读取 Context Manifest，并完整读取其中的 "
     "hints.json、knowledge.json、vulnerabilities.json；随后查看本轮相关 Skill，再按需展开 "
@@ -123,8 +129,6 @@ class PiBootstrapExecutor:
         self.browser_broker = browser_broker
         self._session_id: str | None = None
         self._browser_lease: BrowserLeaseHandle | None = None
-        self._browser_execution_input: ExecutionInput | None = None
-        self._browser_environment: dict[str, str] | None = None
 
     def execute(self, execution_input: ExecutionInput, *, lease_active) -> object:
         if not execution_input.context_manifest_path:
@@ -277,14 +281,13 @@ class PiBootstrapExecutor:
             environment.setdefault(name, value)
         browser_enabled = False
         if execution_input.intent_kind == "explore":
-            skill_directory = browser_skill_directory(execution_input.skill_directories)
-            if skill_directory is not None and self.browser_broker is not None:
+            browser_skill = browser_skill_directory(execution_input.skill_directories)
+            if browser_skill is not None and self.browser_broker is not None:
                 browser_enabled = True
                 try:
                     browser_lease = self._ensure_browser_lease(
                         execution_input,
                         environment,
-                        skill_directory=skill_directory,
                     )
                 except BrowserBrokerError as exc:
                     raise TransientWorkerError(
@@ -362,10 +365,6 @@ class PiBootstrapExecutor:
         finally:
             if tracker is not None:
                 tracker.stop()
-            # Broker pages must survive Explore Execute -> Conclude. Legacy
-            # CLI tabs retain their per-process cleanup when no Broker exists.
-            if self._browser_lease is None:
-                self._cleanup_browser_tabs(execution_input, environment)
         if tracker is not None and tracker.lease_lost:
             raise LeaseLostError("Intent activity lease is no longer active")
         return result
@@ -376,20 +375,11 @@ class PiBootstrapExecutor:
         if self._browser_lease is not None and self.browser_broker is not None:
             self.browser_broker.close_lease(self._browser_lease)
         self._browser_lease = None
-        if self._browser_execution_input is not None and self._browser_environment is not None:
-            self._cleanup_browser_tabs(
-                self._browser_execution_input,
-                self._browser_environment,
-            )
-        self._browser_execution_input = None
-        self._browser_environment = None
 
     def _ensure_browser_lease(
         self,
         execution_input: ExecutionInput,
         environment: dict[str, str],
-        *,
-        skill_directory: Path,
     ) -> BrowserLeaseHandle:
         if self._browser_lease is not None:
             if self._browser_lease.lease_id != execution_input.lease_id:
@@ -406,59 +396,9 @@ class PiBootstrapExecutor:
             run_dir=execution_input.run_dir,
             scope=execution_input.scope,
             cdp_url=environment.get("CDP_URL", "http://127.0.0.1:9223"),
-            skill_directory=skill_directory,
         )
         self._browser_lease = handle
-        self._browser_execution_input = execution_input
-        self._browser_environment = dict(environment)
         return handle
-
-    @staticmethod
-    def _cleanup_browser_tabs(
-        execution_input: ExecutionInput, environment: dict[str, str]
-    ) -> None:
-        """Best-effort cleanup for tabs created by this Worker Lease.
-
-        Browser tabs live outside the Pi process group.  Without an explicit
-        Lease cleanup they accumulate across retries and eventually make
-        Playwright's CDP attachment unusable.  The browser script only closes
-        tabs registered by ``cdp_ctl.py`` for this exact Lease; human tabs and
-        tabs owned by concurrent Workers are never selected.
-        """
-
-        if environment.get("AXIOM_BROWSER_PRESERVE_LEASE_TABS") == "1":
-            return
-        script = next(
-            (
-                Path(directory) / "scripts" / "cdp_ctl.py"
-                for directory in execution_input.skill_directories
-                if Path(directory).name == "browser-control"
-                and (Path(directory) / "scripts" / "cdp_ctl.py").is_file()
-            ),
-            None,
-        )
-        if script is None:
-            return
-        command = [
-            sys.executable,
-            str(script),
-            "--cdp",
-            environment.get("CDP_URL", "http://localhost:9223"),
-            "close-lease-tabs",
-            execution_input.lease_id,
-        ]
-        try:
-            subprocess.run(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=8,
-                check=False,
-                env={**os.environ, **environment},
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            pass
 
     def _build_argv(
         self,
@@ -665,24 +605,7 @@ class PiReasonExecutor(PiBootstrapExecutor):
         self._session_id = self._session_id or uuid.uuid4().hex
         result = self._run(
             execution_input,
-            self.prompts.render(
-                "reason.md",
-                {
-                    "task_id": execution_input.task_id,
-                    "reason_run_id": execution_input.reason_run_id or "",
-                    "intent_description": execution_input.intent_description,
-                    "source_fact_ids": json.dumps(
-                        execution_input.intent_source_facts,
-                        ensure_ascii=False,
-                    ),
-                    "origin": execution_input.origin,
-                    "goal": execution_input.goal,
-                    "target_guidance": _reason_target_guidance(execution_input.scope),
-                    "context_manifest_path": execution_input.context_manifest_path,
-                    "run_dir": execution_input.run_dir,
-                    "skill_directories": _format_skill_directories(execution_input.skill_directories),
-                },
-            ),
+            self._build_reason_prompt(execution_input),
             lease_active=lease_active,
             timeout_seconds=execution_input.execute_timeout_seconds or 600,
             tool_names=native_tool_names("reason", "execute"),
@@ -694,6 +617,31 @@ class PiReasonExecutor(PiBootstrapExecutor):
             raise ReasonExecutionTimeout("Reason execution budget exhausted")
         self._raise_on_process_failure(result)
         return self._last_assistant_text(result)
+
+    def _build_reason_prompt(self, execution_input: ExecutionInput) -> str:
+        values = {
+            "task_id": execution_input.task_id,
+            "reason_run_id": execution_input.reason_run_id or "",
+            "intent_description": execution_input.intent_description,
+            "source_fact_ids": json.dumps(
+                execution_input.intent_source_facts,
+                ensure_ascii=False,
+            ),
+            "origin": execution_input.origin,
+            "goal": execution_input.goal,
+            "target_guidance": _reason_target_guidance(execution_input.scope),
+            "context_manifest_path": execution_input.context_manifest_path,
+            "run_dir": execution_input.run_dir,
+            "skill_directories": _format_skill_directories(execution_input.skill_directories),
+        }
+        profile = getattr(execution_input, "reason_prompt_profile", "default") or "default"
+        profile_file = _REASON_PROMPT_PROFILE_FILES.get(profile, "reason_default.md")
+        return (
+            self.prompts.render("reason.md", values)
+            + "\n\n---\n\n"
+            + f"# 本轮 Reason 场景策略（由 AXIOM 代码固定注入：{profile}）\n\n"
+            + self.prompts.render(profile_file, {})
+        )
 
     def conclude(
         self,

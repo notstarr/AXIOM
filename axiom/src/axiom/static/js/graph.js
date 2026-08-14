@@ -9,6 +9,7 @@ window.AxiomModules.graph = {
         const nodeType = this.project.project.depth_mode
           ? (f.id === 'origin' ? 'depth_origin' : f.id === 'goal' ? 'goal' : f.id === 'f001' ? 'depth_plan' : 'depth_fact')
           : (f.id === 'origin' ? 'origin' : f.id === 'goal' ? 'goal' : 'fact');
+        const producingIntent = this.getProducingIntent(f.id);
         const label = this.summarizeFactLabel(f);
         const size = this.factNodeSize(label, nodeType);
         nodes.push({ data: {
@@ -21,6 +22,9 @@ window.AxiomModules.graph = {
           width: size.width,
           height: size.height,
           archived: f.archived || false,
+          humanInterventionRequired: ['fact', 'depth_fact'].includes(nodeType)
+            && !!producingIntent?.human_intervention_required,
+          humanInterventionReason: producingIntent?.human_intervention_reason || '',
         }});
       }
       for (const intent of this.project.intents) {
@@ -126,16 +130,32 @@ window.AxiomModules.graph = {
     nodeCardTpl(data) {
       const cardTypes = ['origin','depth_origin','goal','goal_history','fact','depth_plan','depth_fact','bootstrap_pending','bootstrap_running'];
       if (!cardTypes.includes(data.nodeType)) return '';
-      const title = data.title || '';
+      const title = this.escapeNodeHtml(data.title || '');
       const icon = this.nodeIconSvg(data.iconType);
-      const body = (data.label || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const body = this.escapeNodeHtml(data.label || '');
       const w = data.width || 60;
       const h = data.height || 40;
       const archivedClass = data.archived ? ' node-card--archived' : '';
+      const interventionLabel = this.escapeNodeHtml(
+        `需要人工介入：${data.humanInterventionReason || '未提供原因'}`,
+      );
+      const interventionDot = data.humanInterventionRequired
+        ? `<span class="node-card__human-dot" title="${interventionLabel}" aria-label="${interventionLabel}"></span>`
+        : '';
       return `<div class="node-card node-card--${data.nodeType}${archivedClass}" style="width:${w}px;height:${h}px">`
+        + interventionDot
         + `<div class="node-card__header">${icon}<span class="node-card__title">${title}</span></div>`
         + `<div class="node-card__body">${body}</div>`
         + `</div>`;
+    },
+
+    escapeNodeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     },
 
     setupHtmlLabels() {
@@ -1206,6 +1226,12 @@ window.AxiomModules.graph = {
       return this.project ? this.project.intents.find(i => i.to === fid) || null : null;
     },
 
+    humanInterventionForFact(factId) {
+      if (!factId || ['origin', 'goal'].includes(factId)) return null;
+      const intent = this.getProducingIntent(factId);
+      return intent?.human_intervention_required ? intent : null;
+    },
+
     selectedFactId() {
       return this.selectedNode?.type === 'fact' ? this.selectedNode.id : null;
     },
@@ -1367,6 +1393,18 @@ window.AxiomModules.graph = {
         finished: '已完成',
       };
       return labels[reason?.activity_kind] || labels[reason?.status] || '运行中';
+    },
+
+    reasonActivitySummary(reason) {
+      if (reason?.activity_summary) return reason.activity_summary;
+      const summaries = {
+        pending: '等待可用的 Reason Worker 领取',
+        claimed: '正在启动 Reason 环境',
+        preparing_context: '正在准备 Reason Context 与能力快照',
+        analyzing: '正在分析任务上下文并规划下一批 Intent',
+      };
+      return summaries[reason?.activity_kind || reason?.status]
+        || '正在分析任务上下文并规划下一批 Intent';
     },
 
     reasonActivityAge(reason) {

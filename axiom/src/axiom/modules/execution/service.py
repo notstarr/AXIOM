@@ -27,7 +27,9 @@ from axiom.modules.execution.schemas import (
     ExecutionInput,
     ExploreCompleted,
     ExploreVulnerabilityRecorded,
+    HumanInterventionMarker,
     LeaseCommand,
+    MarkHumanInterventionCommand,
     ReportExploreVulnerabilityCommand,
     ReleaseIntentCommand,
     ReleasedIntent,
@@ -61,6 +63,23 @@ from axiom.shared.storage import FileStore
 
 
 logger = logging.getLogger(__name__)
+
+
+_REASON_PROMPT_PROFILE_BY_TRIGGER = {
+    "bootstrap": "bootstrap",
+    "fact_batch": "progress",
+    "low_watermark": "progress",
+    "max_wait": "progress",
+    "manual": "human",
+    "hint": "human",
+    "continuation": "continuation",
+}
+
+
+def reason_prompt_profile_for_trigger(trigger: str) -> str:
+    """Return the one code-selected prompt profile for a ReasonRun trigger."""
+
+    return _REASON_PROMPT_PROFILE_BY_TRIGGER.get(trigger, "default")
 
 
 def _scope_payload(scope: TaskScope) -> dict[str, object]:
@@ -293,6 +312,21 @@ class ExecutionService:
                 f"待处理 Todo {len(payload.get('actionable_todo_ids') or [])} 个，"
                 f"待收口 Todo {len(payload.get('todo_review_ids') or [])} 个。"
             )
+        elif run.trigger == "hint":
+            payload = run.trigger_payload
+            trigger_summary = (
+                f"人工 {payload.get('creator') or '操作员'} 新增了一条提示并触发本轮 Reason。"
+                f"本轮首要触发原因（Hint {payload.get('hint_id') or '未知'}）："
+                f"{payload.get('hint_content') or '未提供内容'}。"
+                "请优先围绕这条提示复盘现有 Fact、Todo、Intent、Artifact、漏洞和开放 Explore，"
+                "据此调整规划；Hint 是人工规划依据而不是已验证 Fact，不得伪造为 Todo source、"
+                "Intent from_fact 或 Goal evidence。"
+                f"触发快照：新 Fact {payload.get('unplanned_fact_count', 0)} 个，"
+                f"开放 Explore {payload.get('open_explore_count', 0)} 个，"
+                f"失败/取消 Explore {len(payload.get('failed_intent_ids') or [])} 个，"
+                f"待处理 Todo {len(payload.get('actionable_todo_ids') or [])} 个，"
+                f"待收口 Todo {len(payload.get('todo_review_ids') or [])} 个。"
+            )
         elif run.trigger == "continuation":
             payload = run.trigger_payload
             continuation_reason = (
@@ -334,6 +368,7 @@ class ExecutionService:
             lease_id=command.lease_id,
             worker_name=run.worker or "",
             intent_kind="reason",
+            reason_prompt_profile=reason_prompt_profile_for_trigger(run.trigger),
             intent_description=trigger_summary,
             intent_targets=[],
             intent_source_facts=run.source_fact_ids,
@@ -519,6 +554,73 @@ class ExecutionService:
                 now=utcnow(),
             ):
                 raise LeaseInactiveError("Intent lease is no longer active")
+
+    def mark_human_intervention(
+        self,
+        *,
+        task_id: str,
+        intent_id: str,
+        command: MarkHumanInterventionCommand,
+    ) -> HumanInterventionMarker:
+        with transaction(self.engine) as conn:
+            row = self.repository.input_row(conn, task_id, intent_id)
+            self._require_row(row, task_id, intent_id)
+            self._require_lease(row, command.lease_id)
+            if row["task_status"] != "running":
+                raise LeaseInactiveError("Task is not running")
+            if row["kind"] != "explore":
+                raise ConflictError("Intent is not an Explore Intent")
+            if row["intent_status"] not in {"claimed", "running", "concluding"}:
+                raise LeaseInactiveError("Explore Intent lease is not active")
+
+            reason = command.reason
+            unchanged = (
+                bool(row["human_intervention_required"])
+                and row["human_intervention_reason"] == reason
+                and bool(row["human_intervention_marked_at"])
+            )
+            if unchanged:
+                return HumanInterventionMarker(
+                    task_id=task_id,
+                    intent_id=intent_id,
+                    reason=reason,
+                    marked_at=row["human_intervention_marked_at"],
+                    updated=False,
+                )
+
+            now = utcnow()
+            if not self.repository.mark_human_intervention(
+                conn,
+                task_id=task_id,
+                intent_id=intent_id,
+                lease_id=command.lease_id,
+                reason=reason,
+                now=now,
+            ):
+                raise LeaseInactiveError("Explore Intent lease is no longer active")
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=row["project_id"],
+                    task_id=task_id,
+                    intent_id=intent_id,
+                    worker=row["worker"] or "",
+                    event_type="intent.human_intervention_marked",
+                    level="warning",
+                    message="Explore Intent 标记为需要人工介入",
+                    payload={
+                        "phase": "explore",
+                        "reason": reason,
+                    },
+                ),
+            )
+            return HumanInterventionMarker(
+                task_id=task_id,
+                intent_id=intent_id,
+                reason=reason,
+                marked_at=now,
+                updated=True,
+            )
 
     def begin_conclude(self, *, task_id: str, intent_id: str, command: LeaseCommand) -> None:
         with transaction(self.engine) as conn:

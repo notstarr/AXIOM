@@ -58,7 +58,7 @@ def _bootstrap_execute_else_all() -> tuple[tuple[str, tuple[str, ...]], ...]:
     )
 
 
-BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = (
+_CORE_BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = (
     BuiltinToolDefinition(
         key="read",
         title="读取文件",
@@ -180,6 +180,14 @@ BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = (
         availability=_all_modes("explore"),
     ),
     BuiltinToolDefinition(
+        key="axiom.explore.human_intervention.mark",
+        title="需要人工介入",
+        description="标记当前 Explore Intent 中必须由人类完成才能继续验证的方向。",
+        source="axiom_internal",
+        invocation="axiom explore human-intervention mark --reason ...",
+        availability=_all_modes("explore"),
+    ),
+    BuiltinToolDefinition(
         key="axiom.review.status",
         title="读取漏洞审核状态",
         description="读取当前 ReviewRun、目标漏洞和结构化裁决状态。",
@@ -195,6 +203,74 @@ BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = (
         invocation="axiom review decision submit ...",
         availability=_all_modes("review"),
     ),
+)
+
+
+# Browser Control is a fixed AXIOM Extension, not a managed package.  The
+# browser-control Skill only documents these tools; the Broker owns Chrome
+# startup, Lease isolation, network capture and cleanup.
+BROWSER_BUILTIN_TOOL_NAMES = (
+    "browser_open_page",
+    "browser_list_pages",
+    "browser_close_page",
+    "browser_navigate",
+    "browser_read_page",
+    "browser_snapshot",
+    "browser_click",
+    "browser_fill",
+    "browser_press",
+    "browser_hover",
+    "browser_scroll",
+    "browser_select",
+    "browser_check",
+    "browser_upload_file",
+    "browser_wait",
+    "browser_screenshot",
+    "browser_read_network",
+    "browser_read_console",
+    "browser_evaluate",
+)
+
+_BROWSER_TOOL_TITLES = {
+    "browser_open_page": "打开页面",
+    "browser_list_pages": "列出页面",
+    "browser_close_page": "关闭页面",
+    "browser_navigate": "页面导航",
+    "browser_read_page": "读取页面",
+    "browser_snapshot": "页面快照",
+    "browser_click": "点击元素",
+    "browser_fill": "填写输入",
+    "browser_press": "发送按键",
+    "browser_hover": "悬停元素",
+    "browser_scroll": "滚动页面",
+    "browser_select": "选择下拉项",
+    "browser_check": "切换复选框",
+    "browser_upload_file": "上传文件",
+    "browser_wait": "等待页面",
+    "browser_screenshot": "页面截图",
+    "browser_read_network": "读取页面流量",
+    "browser_read_console": "读取控制台",
+    "browser_evaluate": "检查页面脚本",
+}
+
+BROWSER_BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = tuple(
+    BuiltinToolDefinition(
+        key=name,
+        title=_BROWSER_TOOL_TITLES[name],
+        description=(
+            "通过当前 Explore Browser Lease 操作受控 Chrome 页面；"
+            "仅能访问任务 Scope 允许的网络目标。"
+        ),
+        source="axiom_browser",
+        invocation=name,
+        availability=_all_modes("explore"),
+    )
+    for name in BROWSER_BUILTIN_TOOL_NAMES
+)
+
+BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = (
+    *_CORE_BUILTIN_TOOLS,
+    *BROWSER_BUILTIN_TOOLS,
 )
 
 

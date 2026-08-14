@@ -34,6 +34,7 @@ from axiom.modules.settings.service import load_runtime_config
 from axiom.modules.settings.tables import runtime_settings
 from axiom.modules.tasks.origin import parse_intent_network_target, scope_entry_matches_host
 from axiom.modules.tasks.repository import TaskRepository
+from axiom.modules.tasks.schemas import TaskHint
 from axiom.modules.tasks.tables import tasks
 from axiom.modules.todos.repository import TodoRepository
 from axiom.modules.todos.schemas import CreateTodo, TodoSource
@@ -171,6 +172,97 @@ class ReasonService:
             return run
 
         return run_transaction(self.engine, trigger)
+
+    def trigger_hint_in(
+        self,
+        conn,
+        *,
+        task_id: str,
+        hint: TaskHint,
+        now: str,
+    ) -> ReasonRun | None:
+        """Create an immediate ReasonRun for a newly added human Hint when possible.
+
+        Hint persistence must not fail merely because the task cannot start a new
+        ReasonRun.  The caller owns the transaction, so a successful trigger is
+        committed atomically with the Hint that caused it.
+        """
+
+        task_lock = conn.execute(
+            select(tasks.c.id).where(tasks.c.id == task_id).with_for_update()
+        ).scalar_one_or_none()
+        if task_lock is None:
+            raise NotFoundError(f"Task not found: {task_id}")
+        task = self.tasks.get(conn, task_id)
+        if (
+            task is None
+            or task.legacy_readonly
+            or not task.is_runnable_at(now)
+            or self.repository.active_for_task(conn, task_id) is not None
+        ):
+            return None
+        bootstrap_completed = conn.execute(
+            select(intents.c.id)
+            .where(
+                intents.c.task_id == task_id,
+                intents.c.kind == "bootstrap",
+                intents.c.status == "completed",
+                intents.c.archived.is_(False),
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if bootstrap_completed is None:
+            return None
+
+        state = self._input_state(conn, task_id)
+        source_fact_ids = [row["id"] for row in state["unplanned_facts"]]
+        open_explore_ids = list(state["open_explore_ids"])
+        failed_intent_ids = list(state["failed_intent_ids"])
+        actionable_todo_ids = list(state["actionable_todo_ids"])
+        todo_review_ids = list(state["todo_review_ids"])
+        base_fingerprint = self._fingerprint(
+            source_fact_ids=source_fact_ids,
+            failed_intent_ids=failed_intent_ids,
+            actionable_todo_ids=actionable_todo_ids,
+            todo_review_ids=todo_review_ids,
+            open_explore_ids=open_explore_ids,
+        )
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "base": base_fingerprint,
+                    "trigger": "hint",
+                    "hint_id": hint.id,
+                    "hint_content": hint.content,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        run = self._create_run(
+            conn,
+            task=task,
+            source_fact_ids=source_fact_ids,
+            trigger="hint",
+            trigger_payload={
+                "hint_id": hint.id,
+                "hint_content": hint.content,
+                "creator": hint.creator,
+                "requested_at": now,
+                "task_phase": task.phase,
+                "unplanned_fact_count": len(source_fact_ids),
+                "source_fact_ids": source_fact_ids,
+                "open_explore_count": len(open_explore_ids),
+                "open_explore_ids": open_explore_ids,
+                "failed_intent_ids": failed_intent_ids,
+                "actionable_todo_ids": actionable_todo_ids,
+                "todo_review_ids": todo_review_ids,
+            },
+            input_fingerprint=fingerprint,
+            now=now,
+        )
+        self._set_phase(conn, task_id, "reason", now)
+        return run
 
     def create_continuation_in(
         self,

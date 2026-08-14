@@ -207,6 +207,105 @@ def test_explore_cli_report_does_not_allow_worker_to_choose_identity(monkeypatch
     assert json.loads(result.output)["total"] == 1
 
 
+def test_explore_cli_marks_human_intervention_with_reason(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return {
+            "task_id": "t_001",
+            "intent_id": "i003",
+            "required": True,
+            "reason": "需要人工完成短信验证码",
+            "marked_at": "2026-08-10T00:00:00Z",
+            "updated": True,
+        }
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+    result = CliRunner().invoke(
+        main,
+        [
+            "explore",
+            "human-intervention",
+            "mark",
+            "--reason",
+            "需要人工完成短信验证码",
+        ],
+        env=_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        (
+            "POST",
+            "/dispatch/tasks/t_001/intents/i003/human-intervention",
+            {
+                "lease_id": "lease-1",
+                "reason": "需要人工完成短信验证码",
+            },
+        )
+    ]
+    assert json.loads(result.output)["updated"] is True
+
+
+def test_explore_cli_reads_human_intervention_reason_file(monkeypatch, tmp_path: Path) -> None:
+    calls: list[tuple[str, str, dict]] = []
+    reason_file = tmp_path / "reason.md"
+    reason_file.write_text("需要人工在真实设备上完成扫码授权\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "axiom.worker_cli._request",
+        lambda method, path, payload: calls.append((method, path, payload)) or {},
+    )
+    result = CliRunner().invoke(
+        main,
+        [
+            "explore",
+            "human-intervention",
+            "mark",
+            "--reason-file",
+            str(reason_file),
+        ],
+        env=_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls[0][2]["reason"] == "需要人工在真实设备上完成扫码授权"
+
+
+def test_explore_cli_rejects_two_or_empty_human_intervention_reasons(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        "axiom.worker_cli._request",
+        lambda method, path, payload: calls.append((method, path, payload)),
+    )
+
+    both = CliRunner().invoke(
+        main,
+        [
+            "explore",
+            "human-intervention",
+            "mark",
+            "--reason",
+            "需要人工操作",
+            "--reason-file",
+            "/tmp/reason.md",
+        ],
+        env=_env(),
+    )
+    empty = CliRunner().invoke(
+        main,
+        ["explore", "human-intervention", "mark", "--reason", "  "],
+        env=_env(),
+    )
+
+    assert both.exit_code == 2
+    assert "either --reason or its --*-file option" in both.output
+    assert empty.exit_code == 2
+    assert "reason is required" in empty.output
+    assert calls == []
+
+
 def test_explore_cli_allows_report_without_an_evidence_path(monkeypatch) -> None:
     calls: list[tuple[str, str, dict]] = []
 

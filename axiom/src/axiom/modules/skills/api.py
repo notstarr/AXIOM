@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
@@ -47,8 +47,13 @@ def list_skill_files(name: str, container: Container = Depends(get_container)) -
 
 
 @router.get("/{name}/files/{path:path}")
-def get_skill_file(name: str, path: str, container: Container = Depends(get_container)) -> dict[str, str]:
-    return container.skills.file(name, path)
+def get_skill_file(
+    name: str,
+    path: str,
+    preview_bytes: int | None = Query(default=None, ge=1, le=512 * 1024),
+    container: Container = Depends(get_container),
+) -> dict[str, object]:
+    return container.skills.file(name, path, preview_bytes=preview_bytes)
 
 
 @router.post("/{name}/files")
@@ -89,3 +94,13 @@ def set_skill_enabled(
 def delete_skill(name: str, container: Container = Depends(get_container)) -> Response:
     container.skills.delete(name)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{name}/restore-bundled", response_model=SkillContent)
+def restore_bundled_skill(
+    name: str,
+    container: Container = Depends(get_container),
+) -> SkillContent:
+    """Explicitly discard a managed override and use the source Skill."""
+
+    return container.skills.restore_bundled(name)

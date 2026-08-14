@@ -14,6 +14,18 @@ class Skill(BaseModel):
     content: str = ""
     enabled: bool = True
     builtin: bool = False
+    # ``managed`` is a runtime override directory.  It may be an intentionally
+    # customized copy, so expose its relationship with the bundled source
+    # instead of making the UI guess from the path alone.
+    bundled_hash: str = ""
+    effective_hash: str = ""
+    sync_status: Literal[
+        "bundled",
+        "synced",
+        "custom",
+        "bundled_update_available",
+    ] = "bundled"
+    bundled_update_available: bool = False
 
 
 class SkillContent(Skill):

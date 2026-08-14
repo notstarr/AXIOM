@@ -18,7 +18,9 @@ from axiom.modules.execution.schemas import (
     ExecutionInput,
     ExploreCompleted,
     ExploreVulnerabilityRecorded,
+    HumanInterventionMarker,
     LeaseCommand,
+    MarkHumanInterventionCommand,
     ReportExploreVulnerabilityCommand,
     ReleaseIntentCommand,
     ReleasedIntent,
@@ -113,6 +115,23 @@ def update_intent_activity(
     container: Container = Depends(get_container),
 ) -> None:
     container.execution.activity(task_id=task_id, intent_id=intent_id, command=body)
+
+
+@router.post(
+    "/tasks/{task_id}/intents/{intent_id}/human-intervention",
+    response_model=HumanInterventionMarker,
+)
+def mark_human_intervention(
+    task_id: str,
+    intent_id: str,
+    body: MarkHumanInterventionCommand,
+    container: Container = Depends(get_container),
+) -> HumanInterventionMarker:
+    return container.execution.mark_human_intervention(
+        task_id=task_id,
+        intent_id=intent_id,
+        command=body,
+    )
 
 
 @router.post("/tasks/{task_id}/intents/{intent_id}/conclude", status_code=204)

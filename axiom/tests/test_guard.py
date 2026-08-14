@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import pytest
+
+from axiom.modules.guard.defaults import HARD_BLOCK_RULES, SYSTEM_PROMPT
+from axiom.modules.guard.policy import evaluate
 from axiom.modules.guard.policy import _external_operation
+from axiom.modules.guard.schemas import GuardRequest
+from axiom.modules.settings.schemas import RuntimeConfig
 
 
 def _task(client, *, enabled: bool) -> dict:
@@ -163,3 +169,58 @@ def test_guard_rejects_an_invalid_configured_regex(client) -> None:
 def test_guard_treats_native_browser_tools_as_external_operations() -> None:
     assert _external_operation({"tool_name": "browser_click", "command": "{}"})
     assert _external_operation({"tool_name": "browser_read_network", "command": "{}"})
+
+
+@pytest.mark.parametrize(
+    ("command", "reason"),
+    [
+        ("passwd alice", "修改或重置用户密码"),
+        ("systemctl restart nginx", "停止或重启业务服务"),
+        ("crontab -e", "修改系统或服务配置"),
+        ('echo "x" > /etc/nginx/conf.d/test.conf', "修改系统或服务配置"),
+        ("userdel alice", "篡改账户或权限体系"),
+        ("rm -rf /etc", "删除或大规模破坏关键数据"),
+        ("psql -c \"DROP TABLE users\"", "删除或大规模破坏关键数据"),
+        ("ab -n 100000 https://target.example", "高并发或 DoS 操作"),
+    ],
+)
+def test_default_hard_rules_block_explicit_destructive_commands(command: str, reason: str) -> None:
+    config = RuntimeConfig(guard_mode="enforce")
+    decision = evaluate(
+        GuardRequest(tool_name="bash", input={"command": command}),
+        config,
+    )
+    assert decision.decision == "BLOCK"
+    assert decision.source == "hard_rule"
+    assert decision.reason == reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat /etc/passwd",
+        "curl https://target.example/api -d 'reset_password=true'",
+        "curl https://target.example/api -d \"DROP TABLE users\"",
+        "curl https://target.example/upload -F file=@webshell.php",
+        "hydra -l admin -P passwords.txt target.example http-post-form",
+        "ffuf -w paths.txt -u https://target.example/FUZZ",
+        "nmap -sV target.example",
+    ],
+)
+def test_default_hard_rules_do_not_block_normal_security_testing(command: str) -> None:
+    config = RuntimeConfig(guard_mode="enforce")
+    decision = evaluate(
+        GuardRequest(tool_name="bash", input={"command": command}),
+        config,
+    )
+    assert decision.decision == "ALLOW"
+
+
+def test_default_judge_prompt_preserves_allow_first_contract() -> None:
+    assert "默认倾向 ALLOW" in SYSTEM_PROMPT
+    assert "只回复一行" in SYSTEM_PROMPT
+    assert "BLOCK:<不超过30字" in SYSTEM_PROMPT
+    assert "SQL 注入" in SYSTEM_PROMPT
+    assert "上传 WebShell" in SYSTEM_PROMPT
+    assert "大规模压测" in SYSTEM_PROMPT
+    assert len(HARD_BLOCK_RULES) == 6

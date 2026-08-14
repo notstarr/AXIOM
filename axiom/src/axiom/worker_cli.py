@@ -336,6 +336,31 @@ def register_worker_commands(main: click.Group) -> None:
         path = f"/dispatch/tasks/{task_id}/intents/{intent_id}/explore-vulnerabilities"
         _echo(_request("POST", path, {"lease_id": _lease_id(), "report": report}))
 
+    @explore_group.group("human-intervention")
+    def explore_human_intervention_group() -> None:
+        """Mark a direction that requires a real human action to continue."""
+
+    @explore_human_intervention_group.command("mark")
+    @click.option("--reason")
+    @click.option("--reason-file", type=click.Path(path_type=Path, dir_okay=False))
+    def explore_human_intervention_mark(
+        reason: str | None,
+        reason_file: Path | None,
+    ) -> None:
+        task_id = _environment("AXIOM_TASK_ID")
+        intent_id = _environment("AXIOM_INTENT_ID")
+        path = f"/dispatch/tasks/{task_id}/intents/{intent_id}/human-intervention"
+        _echo(
+            _request(
+                "POST",
+                path,
+                {
+                    "lease_id": _lease_id(),
+                    "reason": _text_value(reason, reason_file, "reason", required=True),
+                },
+            )
+        )
+
     @main.group("review")
     def review_group() -> None:
         """Review-stage operations for the active Vulnerability ReviewRun."""

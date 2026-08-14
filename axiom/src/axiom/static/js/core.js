@@ -98,13 +98,14 @@ window.AxiomModules.core = {
       if (name === 'dashboard') {
         await Promise.all([
           this.loadProjectGroups(), this.loadProjects(),
-          this.loadDashboardSummary?.(), this.loadGlobalSkillUsage?.(),
+          this.loadDashboardSummary?.(),
         ]);
       } else if (name === 'task-list') {
         await Promise.all([this.loadProjects(), this.loadDispatchSettings()]);
         this.$nextTick(() => this.restoreProjectListScroll?.());
       } else if (name === 'vulnerabilities') {
-        await Promise.all([this.loadProjects(), this.loadVulnerabilityPage?.()]);
+        await Promise.all([this.loadProjectGroups(), this.loadProjects()]);
+        await this.loadVulnerabilityPage?.();
       } else if (name === 'project-mgmt') {
         await Promise.all([this.loadProjectGroups(), this.loadProjects()]);
         if (this.selectedProjectManagementId) await this.loadProjectCredentials(this.selectedProjectManagementId);
@@ -116,7 +117,9 @@ window.AxiomModules.core = {
       else if (name === 'workers') await this.loadAxiomWorkersPage();
       else if (name === 'tools') await this.loadAxiomToolsPage();
       else if (name === 'prompts') this.loadPrompts();
-      else if (name === 'graph-view') this.$nextTick(() => { if (!this.cy && this.project) this.initGraph(); });
+      else if (name === 'graph-view') this.$nextTick(() => {
+        if (!this.cy && this.project && this.taskDetailSectionReady?.('graph')) this.initGraph();
+      });
       else if (name === 'archive-view') await this.loadArchives();
     },
 
@@ -306,6 +309,9 @@ window.AxiomModules.core = {
       if (newPage === 'vulnerabilities') {
         this.applyVulnerabilityRouteParams?.(new URLSearchParams(routeQuery));
       }
+      if (newPage === 'tasks') {
+        this.applyTaskManagementRouteParams?.(new URLSearchParams(routeQuery));
+      }
       if (newPage === 'workers') {
         this.applyWorkerRouteParams?.(new URLSearchParams(routeQuery));
       }
@@ -409,9 +415,8 @@ window.AxiomModules.core = {
           if (this.sideTab === 'board') await this.reloadBlackboardGroup(this.project?.project?.parent_project_id);
           if (this.view === 'graph') this.updateGraph();
         } else if (this.activePage === 'vulnerabilities') {
-          await this.loadProjects();
-          if (this.showVulnBoard) await this.loadVulnerabilityBoard(true);
-          else await this.loadVulnerabilityPage();
+          await Promise.all([this.loadProjectGroups(), this.loadProjects()]);
+          await this.loadVulnerabilityPage();
         } else if (this.activePage === 'projects') {
           await Promise.all([this.loadProjectGroups(), this.loadProjects()]);
           if (this.selectedProjectManagementTaskId) await this.loadProjectDetailForManagement(this.selectedProjectManagementTaskId);
@@ -443,11 +448,8 @@ window.AxiomModules.core = {
     loadLocalPrefs() {
       try {
         const raw = localStorage.getItem('axiom.localPrefs');
-        if (!raw) {
-          this.localPrefs.actor_name = '人工';
-        } else {
+        if (raw) {
           const parsed = JSON.parse(raw);
-          if (typeof parsed.actor_name === 'string') this.localPrefs.actor_name = parsed.actor_name;
           if (this.isValidLayoutMode(parsed.layout_mode)) {
             this.localPrefs.layout_mode = parsed.layout_mode;
           } else if (parsed.layout_dir === 'TB' || parsed.layout_dir === 'LR') {
@@ -462,7 +464,6 @@ window.AxiomModules.core = {
       } catch (e) {
         console.error(e);
       }
-      if (!this.localPrefs.actor_name.trim()) this.localPrefs.actor_name = '人工';
       if (!this.isValidLayoutMode(this.localPrefs.layout_mode)) this.localPrefs.layout_mode = 'elk_tb';
       this.layoutMode = this.localPrefs.layout_mode;
     },
@@ -483,18 +484,6 @@ window.AxiomModules.core = {
       }
     },
 
-    saveLocalSettings() {
-      try {
-        this.localPrefs.actor_name = this.actorName();
-        this.localPrefs.layout_mode = this.isValidLayoutMode(this.localPrefs.layout_mode) ? this.localPrefs.layout_mode : 'elk_tb';
-        this.layoutMode = this.localPrefs.layout_mode;
-        this.saveLocalPrefs();
-        if (this.cy) this.cy.layout(this.layoutOpts()).run();
-        this.showLocalPrefs = false;
-        this.showToast('本地偏好已保存');
-      } catch(e) { this.showToast(e.message, 'error'); }
-    },
-
     async copyYamlPreview() {
       if (!this.yamlPreviewText) return;
       try {
@@ -505,22 +494,12 @@ window.AxiomModules.core = {
       }
     },
 
-    async viewProjectYaml(projectId, projectTitle = '') {
-      if (!projectId) return;
-      this.exportProjectId = projectId;
-      this.yamlPreviewTitle = this.projectLabel(projectId, projectTitle);
-      this.exportTab = 'yaml';
-      await this.loadExportTab('yaml');
-      this.showYamlModal = true;
-    },
-
     async viewCrawlerSnapshot(groupId, filename, title = '') {
       if (!groupId || !filename) return;
       try {
         const data = await this.api('GET', `/file-groups/${groupId}/crawler/${encodeURIComponent(filename)}`);
         const text = data.content || '';
         this.yamlPreviewTitle = `爬虫快照 · ${title || groupId} · ${filename}`;
-        this.exportTab = 'yaml';
         this.yamlPreviewText = text;
         this.yamlPreviewHtml = this.highlightYaml(text);
         this.showYamlModal = true;
@@ -529,21 +508,5 @@ window.AxiomModules.core = {
       }
     },
 
-    async switchExportTab(tab) {
-      if (tab === this.exportTab) return;
-      this.exportTab = tab;
-      await this.loadExportTab(tab);
-    },
-
-    async loadExportTab(tab) {
-      if (!this.exportProjectId) return;
-      try {
-        const text = await this.fetchText(`/projects/${this.exportProjectId}/export?format=${tab}`);
-        this.yamlPreviewText = text;
-        this.yamlPreviewHtml = tab === 'yaml' ? this.highlightYaml(text) : this.highlightTimeline(text);
-      } catch (e) {
-        this.showToast(e.message, 'error');
-      }
-    },
   }
 };

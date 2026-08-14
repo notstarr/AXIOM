@@ -106,7 +106,7 @@ class Container:
         return cls(
             engine=engine,
             projects=ProjectService(engine),
-            tasks=TaskService(engine),
+            tasks=TaskService(engine, store),
             graph=GraphService(engine, archives=archives),
             axiom_tools=axiom_tools,
             workers=WorkerService(engine),

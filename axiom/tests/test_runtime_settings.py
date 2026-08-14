@@ -27,6 +27,7 @@ def test_runtime_settings_expose_the_formal_scheduler_defaults(client) -> None:
             "global_max_active_tasks",
             "per_task_max_active_runs",
             "per_task_explore_concurrency",
+            "per_task_review_concurrency",
             "heartbeat_interval_seconds",
             "lease_timeout_seconds",
             "bootstrap_execute_seconds",
@@ -50,6 +51,7 @@ def test_runtime_settings_expose_the_formal_scheduler_defaults(client) -> None:
         "global_max_active_tasks": 3,
         "per_task_max_active_runs": 4,
         "per_task_explore_concurrency": 4,
+        "per_task_review_concurrency": 4,
         "heartbeat_interval_seconds": 10,
         "lease_timeout_seconds": 60,
         "bootstrap_execute_seconds": 300,
@@ -82,6 +84,25 @@ def test_runtime_settings_reject_explore_closeout_below_180_seconds(client) -> N
             "config": {
                 **current["config"],
                 "explore_conclude_min_seconds": 179,
+            },
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_runtime_settings_reject_review_concurrency_above_task_limit(client) -> None:
+    current = client.get("/api/v1/settings/runtime").json()
+    response = client.put(
+        "/api/v1/settings/runtime",
+        json={
+            "actor": "test",
+            "expected_version": current["version"],
+            "config": {
+                **current["config"],
+                "per_task_max_active_runs": 2,
+                "per_task_explore_concurrency": 2,
+                "per_task_review_concurrency": 3,
             },
         },
     )
@@ -132,6 +153,7 @@ def test_runner_acknowledges_the_runtime_version_it_actually_applied(client) -> 
         global_max_active_tasks=2,
         per_task_max_active_runs=2,
         per_task_explore_concurrency=2,
+        per_task_review_concurrency=2,
     )
     control = HttpControlPlane(
         "http://testserver",
@@ -221,6 +243,7 @@ def test_stage_budgets_are_snapshotted_at_claim_and_lower_limits_do_not_kill_wor
         global_max_active_tasks=1,
         per_task_max_active_runs=1,
         per_task_explore_concurrency=1,
+        per_task_review_concurrency=1,
         reason_execute_seconds=900,
         reason_conclude_seconds=180,
     )

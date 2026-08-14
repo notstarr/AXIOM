@@ -24,7 +24,7 @@ window.AxiomModules.helpers = {
     },
 
     actorName() {
-      return this.localPrefs.actor_name.trim() || '人工';
+      return '人工';
     },
 
     projectStatusBadgeClass(status) {

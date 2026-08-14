@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from collections.abc import Callable
 from datetime import datetime, timezone
 
@@ -108,6 +109,7 @@ class Reconciler:
                     active_review=active_review_by_task[task.id],
                     active_explore=active_explore_by_task[task.id],
                     explore_limit=limits.per_task_explore_concurrency,
+                    review_limit=limits.per_task_review_concurrency,
                 )
                 if candidate is None:
                     continue
@@ -180,6 +182,7 @@ class Reconciler:
         active_review: int,
         active_explore: int,
         explore_limit: int,
+        review_limit: int,
     ) -> tuple[IntentSnapshot | ReasonRunSnapshot | ReviewRunSnapshot, WorkerSnapshot] | None:
         candidates: list[IntentSnapshot | ReasonRunSnapshot | ReviewRunSnapshot] = [
             *(
@@ -213,7 +216,7 @@ class Reconciler:
                 continue
             if work.kind == "reason" and active_reason >= 1:
                 continue
-            if work.kind == "review" and active_review >= 1:
+            if work.kind == "review" and active_review >= review_limit:
                 continue
             if work.kind == "explore" and active_explore >= explore_limit:
                 continue
@@ -256,8 +259,14 @@ class Reconciler:
             and (not work.worker_pool or worker.name in work.worker_pool)
             and reserved[worker.name] < worker.max_running
         ]
-        return min(
-            candidates,
-            key=lambda item: (item.priority, reserved[item.name], item.name),
-            default=None,
-        )
+        if not candidates:
+            return None
+        best_priority = min(item.priority for item in candidates)
+        priority_candidates = [
+            item for item in candidates if item.priority == best_priority
+        ]
+        least_reserved = min(reserved[item.name] for item in priority_candidates)
+        balanced_candidates = [
+            item for item in priority_candidates if reserved[item.name] == least_reserved
+        ]
+        return random.choice(balanced_candidates)

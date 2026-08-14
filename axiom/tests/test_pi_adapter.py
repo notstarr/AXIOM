@@ -12,6 +12,7 @@ from axiom.dispatcher.pi import (
     NO_BASH_CONTEXT_ATTENTION_SYSTEM_PROMPT,
     PiBootstrapExecutor,
     PiExploreExecutor,
+    PiReasonExecutor,
     PiReviewExecutor,
     PromptRenderer,
     _explore_soft_reminder_timing,
@@ -458,19 +459,12 @@ def test_pi_adapter_injects_discovered_nmap_data_directory(
     assert output == "FINISH"
 
 
-def test_pi_adapter_closes_browser_tabs_registered_to_finished_lease(
-    tmp_path: Path,
-) -> None:
+def test_pi_adapter_does_not_call_removed_browser_cli_cleanup(tmp_path: Path) -> None:
     browser_skill = tmp_path / "browser-control"
-    cleanup_script = browser_skill / "scripts" / "cdp_ctl.py"
-    cleanup_script.parent.mkdir(parents=True)
-    cleanup_script.write_text(
-        "import json, os, pathlib, sys\n"
-        "pathlib.Path(os.environ['CLEANUP_RECORD']).write_text("
-        "json.dumps(sys.argv), encoding='utf-8')\n",
-        encoding="utf-8",
+    browser_skill.mkdir(parents=True)
+    (browser_skill / "SKILL.md").write_text(
+        "---\nname: browser-control\n---\n", encoding="utf-8"
     )
-    record = tmp_path / "cleanup.json"
     script = make_script(
         tmp_path,
         "printf '# 资产' > \"$AXIOM_RUN_DIR/asset_inventory.md\"\n"
@@ -483,7 +477,6 @@ def test_pi_adapter_closes_browser_tabs_registered_to_finished_lease(
             "config": {
                 "binary": str(script),
                 "model": "test-model",
-                "environment": {"CLEANUP_RECORD": str(record)},
             }
         }
     )
@@ -496,9 +489,6 @@ def test_pi_adapter_closes_browser_tabs_registered_to_finished_lease(
     )
 
     assert output == "FINISH"
-    argv = json.loads(record.read_text(encoding="utf-8"))
-    assert argv[-2:] == ["close-lease-tabs", "lease_test"]
-
 
 def test_pi_adapter_converts_process_timeout_to_closeout_signal(tmp_path) -> None:
     script = make_script(tmp_path, "sleep 5")
@@ -553,6 +543,80 @@ def test_native_tool_contracts_are_fixed_by_phase_and_run_mode() -> None:
     assert native_tool_names("review", "conclude") == ["read", "write", "edit", "bash"]
 
 
+@pytest.mark.parametrize(
+    ("profile", "marker"),
+    [
+        ("bootstrap", "Bootstrap 完成后的首次规划"),
+        ("progress", "自动增量规划"),
+        ("human", "人工触发或人工提示"),
+        ("continuation", "人工继续任务后的新 Goal 规划"),
+        ("default", "默认安全策略"),
+    ],
+)
+def test_reason_executor_injects_only_the_code_selected_prompt_profile(
+    tmp_path: Path, profile: str, marker: str
+) -> None:
+    run_dir = tmp_path / "reason-run"
+    input_value = execution_input(run_dir).model_copy(
+        update={
+            "intent_kind": "reason",
+            "intent_id": None,
+            "reason_run_id": "rr000001",
+            "reason_prompt_profile": profile,
+            "context_manifest_path": str(run_dir / "context.json"),
+        }
+    )
+    prompt = PiReasonExecutor(pi_worker(tmp_path / "unused-pi"))._build_reason_prompt(
+        input_value
+    )
+
+    assert "所有 ReasonRun 共用的主提示词" in prompt
+    assert f"由 AXIOM 代码固定注入：{profile}" in prompt
+    assert marker in prompt
+    # The selected profile is appended by code; the main prompt must not ask the
+    # model to discover or choose a different profile.
+    assert "不得自行选择、读取或叠加其它 Reason 子提示词" in prompt
+
+
+def test_reason_prompt_defaults_profile_for_pre_restart_execution_input(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "reason-run"
+    input_value = execution_input(run_dir).model_copy(
+        update={
+            "intent_kind": "reason",
+            "intent_id": None,
+            "reason_run_id": "rr000001",
+            "context_manifest_path": str(run_dir / "context.json"),
+        }
+    )
+    input_value.__dict__.pop("reason_prompt_profile", None)
+
+    prompt = PiReasonExecutor(pi_worker(tmp_path / "unused-pi"))._build_reason_prompt(
+        input_value
+    )
+
+    assert "由 AXIOM 代码固定注入：default" in prompt
+    assert "默认安全策略" in prompt
+
+
+def test_reason_conclude_prompt_is_not_profile_split() -> None:
+    prompt = PromptRenderer().render(
+        "reason_conclude.md",
+        {
+            "task_id": "t_001",
+            "reason_run_id": "rr000001",
+            "workspace_id": "rw_000001",
+            "run_dir": "/tmp/run",
+            "target_guidance": _reason_target_guidance({}),
+        },
+    )
+
+    assert "reason_bootstrap.md" not in prompt
+    assert "reason_progress.md" not in prompt
+    assert "reason_continuation.md" not in prompt
+
+
 def test_reason_prompt_requires_small_todos_and_intents_without_fixed_budget_example() -> None:
     prompt = PromptRenderer().render(
         "reason.md",
@@ -570,30 +634,25 @@ def test_reason_prompt_requires_small_todos_and_intents_without_fixed_budget_exa
         },
     )
 
-    assert "一个待办只描述一个攻击主题" in prompt
-    assert "最多包含 2–3 个紧密相关" in prompt
-    assert "获取对象 ID、准备登录态" in prompt
-    assert "完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`" in prompt
-    assert "Reason 上下文不会披露历史 Goal、Goal Evaluation 及其证据" in prompt
-    assert "goal_cycles.json" not in prompt
-    assert "goal_evaluations.json" not in prompt
-    assert "status_reason" in prompt
-    assert "本轮新事实（Fact）：`[\"f002\", \"f003\"]`" in prompt
-    assert "目标类型、当前目标身份和身份判断依据" in prompt
-    assert "不得从无法绑定当前身份或已被排除的候选中重新引入" in prompt
-    assert "小程序和 App 应优先规划真实流量恢复" in prompt
-    assert "静态端点或敏感字符串" in prompt
-    assert "完整读取上下文清单中的 `todos.json` 索引" in prompt
-    assert "完成新事实（若有）和 `todo_review_ids` 处理前，禁止新增待办或派发执行意图" in prompt
-    assert "已有同义开放执行意图时禁止重复派发" in prompt
-    assert "`0` 个执行意图是极少数例外" in prompt
-    assert "不可放宽的收口门槛" in prompt
-    assert "若无法证明已穷尽" in prompt
-    assert "至少派发一个具体的非重复 Intent" in prompt
+    assert "一个 Todo 只描述一个攻击主题" in prompt
+    assert "一个 Intent 最多覆盖 2–3 个紧密相关分支" in prompt
+    assert "获取对象、准备身份、调用前置接口和刷新凭证属于同一攻击链" in prompt
+    assert "完整读取其中的 `hints.json`、`knowledge.json`、`vulnerabilities.json`、`todos.json` 和 `graph.json`" in prompt
+    assert "历史 Goal、Goal Evaluation 及其证据不作为本轮自动达成依据" in prompt
+    assert "source_fact_ids" in prompt
+    assert "保持 Bootstrap 已确认的目标类型、名称、AppID、包名、域名、入口和身份边界" in prompt
+    assert "无 Scope 时不补造 Target" in prompt
+    assert "execute_seconds" in prompt
+    assert "## 目标评估" in prompt
+    assert "只要存在未验证的材料性方向，就必须保留或恢复对应 Todo" in prompt
+    assert "0` 个 Intent" not in prompt
+    assert "提交 0 Intent" not in prompt
+    assert "只有存在真实 Fact 证据" in prompt
     assert "--execute-seconds 600 --conclude-seconds 120" not in prompt
 
 
-def test_reason_conclude_prompt_allows_only_a_strictly_justified_no_op_plan() -> None:
+
+def test_reason_conclude_prompt_keeps_strict_planning_gate() -> None:
     prompt = PromptRenderer().render(
         "reason_conclude.md",
         {
@@ -605,10 +664,11 @@ def test_reason_conclude_prompt_allows_only_a_strictly_justified_no_op_plan() ->
         },
     )
 
-    assert "`0` 个执行意图不是默认结果" in prompt
-    assert "必须通过严格门槛" in prompt
-    assert "提交 0 Intent 时必须记录每个接口/接口组的终态" in prompt
+    assert "收口时必须通过严格规划门槛" in prompt
+    assert "所有收口结论都必须记录每个接口/接口组的终态" in prompt
     assert "没有新 Fact" in prompt
+    assert "0` 个执行意图" not in prompt
+    assert "提交 0 Intent" not in prompt
     assert "至少保留一个可执行" not in prompt
 
 
@@ -629,7 +689,7 @@ def test_bootstrap_prompt_receives_manifest_and_requires_priority_context_readin
 
     assert "上下文清单（Context Manifest）：`/tmp/context.json`" in prompt
     assert "完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`" in prompt
-    assert "避免重复测试和重复上报" in prompt
+    assert "避免重复测试和上报" in prompt
 
 
 def test_bootstrap_prompt_routes_one_target_profile_and_locks_target_identity() -> None:
@@ -647,18 +707,29 @@ def test_bootstrap_prompt_routes_one_target_profile_and_locks_target_identity() 
         },
     )
 
-    assert '$AXIOM_PYTHON' in prompt
+    assert "$AXIOM_PYTHON" in prompt
     assert "import axiom" in prompt
     assert "bootstrap_web.md" in prompt
     assert "bootstrap_miniapp.md" in prompt
     assert "bootstrap_app.md" in prompt
-    assert "每轮只能读取一份类型子提示词" in prompt
-    assert "小程序内部使用 WebView/H5 时仍然属于小程序" in prompt
-    assert "不要默认按 Web 扫描" in prompt
-    assert "不得因为发现其它应用或小程序而改变当前目标" in prompt
+    assert "每轮最多读取一份类型子提示词" in prompt
+    assert "不得读取任何类型子提示词" in prompt
+    assert "WebView/H5 仍属于该小程序" in prompt
+    assert "不要默认按 Web" in prompt
+    assert "不得因为发现其它缓存应用" in prompt
+    assert "JS 资源收集" in prompt
+    assert "认证前后资源" in prompt
+    assert "credential-refresh" in prompt
+    assert "业务全景图" in prompt
+    assert "whatisvul" in prompt
+    assert "asset_inventory.md" in prompt
+    assert "initial_leads.md" in prompt
+    assert "findings.md" in prompt
     assert "目标类型：Web / 小程序 / App / 尚未确认" in prompt
     assert "当前目标身份" in prompt
     assert "身份判断依据" in prompt
+    assert "FINISH" in prompt
+    assert len(prompt.splitlines()) <= 75
 
 
 @pytest.mark.parametrize(
@@ -667,7 +738,7 @@ def test_bootstrap_prompt_routes_one_target_profile_and_locks_target_identity() 
         (
             "bootstrap_web.md",
             "Web",
-            ("Source Map", "OpenAPI", "相似域名"),
+            ("Source Map", "OpenAPI", "相似域名", "认证后资源", "动态 chunk"),
         ),
         (
             "bootstrap_miniapp.md",
@@ -677,29 +748,31 @@ def test_bootstrap_prompt_routes_one_target_profile_and_locks_target_identity() 
                 "Reqable",
                 "混元",
                 "CodeBuddy",
+                "登录后 JS",
+                "主包、分包、插件",
             ),
         ),
         (
             "bootstrap_app.md",
             "App",
-            ("包名或 Bundle ID", "Deep Link", "设备上的其它 App"),
+            ("包名或 Bundle ID", "Deep Link", "设备上的其它 App", "认证后资源", "WebView JS"),
         ),
     ],
 )
-def test_bootstrap_target_profiles_keep_shared_artifacts_and_identity_boundary(
+def test_bootstrap_target_profiles_only_add_platform_workflow(
     template: str,
     target_type: str,
     required_markers: tuple[str, ...],
 ) -> None:
     prompt = PromptRenderer().render(template, {})
 
-    assert "asset_inventory.md" in prompt
-    assert "initial_leads.md" in prompt
-    assert "findings.md" in prompt
-    assert "目标类型" in prompt
-    assert "当前目标身份" in prompt
-    assert "身份判断依据" in prompt
+    assert "主 `bootstrap.md` 为准" in prompt
     assert f"目标类型填写 `{target_type}`" in prompt
+    assert "目标身份" in prompt
+    assert "FINISH" not in prompt
+    assert "asset_inventory.md" not in prompt
+    assert "initial_leads.md" not in prompt
+    assert "findings.md" not in prompt
     for marker in required_markers:
         assert marker in prompt
 
@@ -857,6 +930,39 @@ def test_explore_prompts_prioritize_core_outputs_over_optional_evidence() -> Non
     assert "`evidence/` 完全可选" in conclude_prompt
 
 
+def test_explore_prompts_expose_human_intervention_marker_contract() -> None:
+    values = {
+        "task_id": "t_001",
+        "intent_id": "i002",
+        "todo_id": "td001",
+        "intent_description": "验证支付流程",
+        "intent_targets": '[]',
+        "origin": "agentpark 小程序",
+        "goal": "完成测试",
+        "scope_guidance": _scope_guidance({}),
+        "context_manifest_path": "/tmp/context.json",
+        "run_dir": "/tmp/run",
+        "skill_directories": "- /tmp/skills",
+    }
+
+    execute_prompt = PromptRenderer().render("explore.md", values)
+    conclude_prompt = PromptRenderer().render("explore_conclude.md", values)
+
+    for prompt in (execute_prompt, conclude_prompt):
+        assert "axiom explore human-intervention mark" in prompt
+        assert "验证码" in prompt
+        assert "真实设备" in prompt
+        assert "工具失败" in prompt or "工具暂时失败" in prompt
+        assert "leads.md" in prompt
+
+    assert "真实支付" in execute_prompt
+    assert "不会暂停任务" in execute_prompt
+    assert "不会自动触发 Reason" in execute_prompt
+    assert "不要因为工具暂时失败" in execute_prompt
+    assert "原因不得包含凭证、验证码、支付信息或敏感响应正文" in execute_prompt
+    assert "当前 Intent 仍必须正常生成两个产物并以 FINISH 收口" in execute_prompt
+
+
 @pytest.mark.parametrize(
     ("execute_seconds", "expected_reminder", "expected_remaining"),
     [
@@ -991,9 +1097,10 @@ def test_explore_browser_skill_loads_native_tools_and_reuses_one_browser_lease(
 ) -> None:
     rpc = _RecordingRpcSupervisor(tmp_path, invoke_steer=False)
     browser_skill = tmp_path / "browser-control"
-    launch = browser_skill / "scripts" / "launch-chrome.sh"
-    launch.parent.mkdir(parents=True)
-    launch.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    browser_skill.mkdir(parents=True)
+    (browser_skill / "SKILL.md").write_text(
+        "---\nname: browser-control\n---\n", encoding="utf-8"
+    )
     broker = _FakeBrowserBroker()
     input_value = execution_input(tmp_path / "run").model_copy(
         update={
@@ -1059,11 +1166,14 @@ def test_review_prompt_enforces_single_target_decision_and_review_artifact() -> 
     assert "至少一个关键对照结果" in prompt
     assert "VC/VI/VA" in prompt
     assert "不得猜测分数" in prompt
+    assert "精炼、专业、直击裁决要害" in prompt
+    assert "详细过程只写入 `review.md`" in prompt
     assert "最后一条 assistant 消息必须只包含 6 个 ASCII 字符" in prompt
     assert "不修改漏洞原始正文" in conclude
     assert "不得仅根据旧 Finding/Evidence 强行提交" in conclude
     assert "references/*-example.md" in conclude
     assert "AV/AC/AT/PR/UI" in conclude
+    assert "完整过程留在 `review.md`" in conclude
     assert "axiom review status" in conclude
 
 

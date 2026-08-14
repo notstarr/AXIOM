@@ -30,7 +30,7 @@ window.AxiomModules.workerTools = {
     },
 
     builtinToolSourceLabel(source) {
-      return ({ pi_native: 'Pi 原生', axiom_internal: 'AXIOM 内部' }[source] || source || '内置');
+      return ({ pi_native: 'Pi 原生', axiom_internal: 'AXIOM 内部', axiom_browser: 'AXIOM 浏览器' }[source] || source || '内置');
     },
 
     builtinToolsForPhase(phase) {
@@ -825,7 +825,7 @@ window.AxiomModules.workerTools = {
       }
     },
 
-    async scanAxiomTools() {
+    async scanAxiomTools({ silent = false } = {}) {
       if (this.axiomToolsScanLoading) return;
       this.axiomToolsScanLoading = true;
       try {
@@ -835,7 +835,7 @@ window.AxiomModules.workerTools = {
           this.selectedAxiomTool = this.axiomToolsCatalog[0]?.key || '';
         }
         await this.loadPhaseCapabilities();
-        this.showToast(`扫描完成：${result.ready} 个扩展 Tool 就绪`);
+        if (!silent) this.showToast(`扫描完成：${result.ready} 个扩展 Tool 就绪`);
       } catch (error) {
         this.showToast(error?.message || '扫描扩展 Tool 失败', 'error');
       } finally {
@@ -1007,7 +1007,7 @@ window.AxiomModules.workerTools = {
 
     async loadAxiomToolsPage() {
       await Promise.all([
-        this.loadAxiomToolsCatalog({ preserveSelection: true }),
+        this.scanAxiomTools({ silent: true }),
         this.loadPhaseCapabilities(),
       ]);
     },

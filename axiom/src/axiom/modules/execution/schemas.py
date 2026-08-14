@@ -59,6 +59,27 @@ class ActivityCommand(LeaseCommand):
         return value.strip()
 
 
+class MarkHumanInterventionCommand(LeaseCommand):
+    reason: str = Field(min_length=1, max_length=2_000)
+
+    @field_validator("reason")
+    @classmethod
+    def require_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("human intervention reason must not be empty")
+        return normalized
+
+
+class HumanInterventionMarker(BaseModel):
+    task_id: str
+    intent_id: str
+    required: bool = True
+    reason: str
+    marked_at: str
+    updated: bool
+
+
 class ReleaseIntentCommand(LeaseCommand):
     failure_kind: str = ""
     failure_class: Literal["execution", "transient"] = "execution"
@@ -75,6 +96,10 @@ class ExecutionInput(BaseModel):
     lease_id: str
     worker_name: str
     intent_kind: Literal["bootstrap", "reason", "explore", "review"] = "bootstrap"
+    # Reason 场景策略由控制面按 ReasonRun.trigger 固定选择，模型不能自行切换。
+    reason_prompt_profile: Literal[
+        "default", "bootstrap", "progress", "human", "continuation"
+    ] = "default"
     intent_description: str = ""
     intent_targets: list[str] = Field(default_factory=list)
     intent_source_facts: list[str] = Field(default_factory=list)

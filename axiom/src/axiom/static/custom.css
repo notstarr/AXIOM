@@ -419,10 +419,27 @@
   /* ── Node card (html-label overlay) ── */
   .node-card {
     display: flex; flex-direction: column;
+    position: relative;
     border-radius: 6px; overflow: hidden;
     pointer-events: none; user-select: none;
     font-family: -apple-system, BlinkMacSystemFont, Inter, sans-serif;
     box-sizing: border-box;
+  }
+  .node-card__human-dot {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    z-index: 2;
+    width: 7px;
+    height: 7px;
+    border-radius: 9999px;
+    background: var(--danger);
+    box-shadow: 0 0 0 2px var(--surface-card);
+  }
+  .human-intervention-alert {
+    border-color: var(--status-danger-border);
+    background: var(--status-danger-bg);
+    color: var(--status-danger-fg);
   }
   .node-card__header {
     display: flex; align-items: center; gap: 3px;

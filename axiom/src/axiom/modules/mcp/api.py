@@ -86,6 +86,7 @@ def replace_mcp_tools(
 
 
 @router.patch("/servers/{server_id}/tools/{tool_id}", response_model=MCPTool)
+@router.put("/servers/{server_id}/tools/{tool_id}", response_model=MCPTool)
 def toggle_mcp_tool(
     server_id: str,
     tool_id: str,

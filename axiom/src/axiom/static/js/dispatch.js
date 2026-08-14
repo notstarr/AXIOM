@@ -214,6 +214,7 @@ window.AxiomModules.dispatch = {
         global_max_active_tasks: data.global_max_active_tasks ?? 3,
         per_task_max_active_runs: data.per_task_max_active_runs ?? 4,
         per_task_explore_concurrency: data.per_task_explore_concurrency ?? 4,
+        per_task_review_concurrency: data.per_task_review_concurrency ?? 4,
         heartbeat_interval_seconds: data.heartbeat_interval_seconds ?? 10,
         lease_timeout_seconds: data.lease_timeout_seconds ?? 60,
         execution_retry_limit: data.execution_retry_limit ?? 6,
@@ -568,6 +569,7 @@ window.AxiomModules.dispatch = {
         global_max_active_tasks: Number(this.dispatchSettings.global_max_active_tasks ?? 3),
         per_task_max_active_runs: Number(this.dispatchSettings.per_task_max_active_runs ?? 4),
         per_task_explore_concurrency: Number(this.dispatchSettings.per_task_explore_concurrency ?? 4),
+        per_task_review_concurrency: Number(this.dispatchSettings.per_task_review_concurrency ?? 4),
         heartbeat_interval_seconds: Number(this.dispatchSettings.heartbeat_interval_seconds ?? 10),
         lease_timeout_seconds: Number(this.dispatchSettings.lease_timeout_seconds ?? 60),
         execution_retry_limit: Number(this.dispatchSettings.execution_retry_limit ?? 6),
@@ -845,16 +847,6 @@ window.AxiomModules.dispatch = {
         this.mcpToolImportText[server.id] = '';
         await this.loadMcpServers();
         this.showToast('MCP 工具已导入');
-      } catch (e) {
-        this.showToast(e.message, 'error');
-      }
-    },
-
-    async toggleMcpTool(server, tool) {
-      try {
-        await this.api('PUT', `/mcp/servers/${server.id}/tools/${tool.id}`, { enabled: !tool.enabled });
-        await this.loadMcpServers();
-        this.showToast(`工具 ${tool.name} ${tool.enabled ? '已禁用' : '已启用'}`);
       } catch (e) {
         this.showToast(e.message, 'error');
       }
