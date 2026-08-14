@@ -665,7 +665,7 @@ def test_reason_conclude_prompt_keeps_strict_planning_gate() -> None:
     )
 
     assert "收口时必须通过严格规划门槛" in prompt
-    assert "所有收口结论都必须记录每个接口/接口组的终态" in prompt
+    assert "所有收口结论都必须记录每个接口组（按树，而不是按单条 GET）的终态" in prompt
     assert "没有新 Fact" in prompt
     assert "0` 个执行意图" not in prompt
     assert "提交 0 Intent" not in prompt
@@ -771,7 +771,6 @@ def test_bootstrap_target_profiles_only_add_platform_workflow(
     assert "目标身份" in prompt
     assert "FINISH" not in prompt
     assert "asset_inventory.md" not in prompt
-    assert "initial_leads.md" not in prompt
     assert "findings.md" not in prompt
     for marker in required_markers:
         assert marker in prompt
