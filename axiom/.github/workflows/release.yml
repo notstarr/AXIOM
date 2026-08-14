@@ -1,0 +1,204 @@
+name: AXIOM Linux release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      push_image:
+        description: Push the image to GHCR
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: notstarr/axiom
+  POSTGRES_IMAGE: postgres:18.4-bookworm@sha256:882236b897e39051d2368c5ccc6cda944904723506b2dfc97f2a8f5bc9afa382
+  PI_RUNTIME_URL: ${{ secrets.AXIOM_PI_RUNTIME_URL }}
+  PI_RUNTIME_SHA256: ${{ secrets.AXIOM_PI_RUNTIME_SHA256 }}
+  PI_RUNTIME_TOKEN: ${{ secrets.AXIOM_PI_RUNTIME_TOKEN }}
+
+jobs:
+  checks:
+    name: Python and frontend checks
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:18.4-bookworm@sha256:882236b897e39051d2368c5ccc6cda944904723506b2dfc97f2a8f5bc9afa382
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 55433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install uv==0.8.9
+          uv sync --frozen
+      - name: Prepare isolated PostgreSQL test database
+        run: |
+          set -eux
+          docker run --rm --network host -e PGPASSWORD=postgres \
+            "$POSTGRES_IMAGE" psql -h 127.0.0.1 -p 55433 -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 -c "CREATE ROLE axiom_owner NOLOGIN; CREATE ROLE axiom_migrator LOGIN PASSWORD 'axiom-migrator-test'; CREATE ROLE axiom_app LOGIN PASSWORD 'axiom-app-test'; GRANT axiom_owner TO axiom_migrator; REVOKE CREATE ON SCHEMA public FROM PUBLIC;"
+          docker run --rm --network host -e PGPASSWORD=postgres \
+            "$POSTGRES_IMAGE" psql -h 127.0.0.1 -p 55433 -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 -c "CREATE DATABASE axiom_test OWNER axiom_owner;"
+      - name: Run pytest
+        env:
+          AXIOM_TEST_DATABASE_URL: postgresql+psycopg://axiom_app:axiom-app-test@127.0.0.1:55433/axiom_test
+          AXIOM_TEST_MIGRATOR_URL: postgresql+psycopg://axiom_migrator:axiom-migrator-test@127.0.0.1:55433/axiom_test
+        run: uv run pytest
+      - name: Ruff
+        run: uv run ruff check .
+      - name: Compile Python
+        run: python -m compileall -q src migrations deploy
+      - name: Shell and deployment contract checks
+        run: |
+          set -euo pipefail
+          bash -n deploy/install.sh deploy/axiomctl deploy/verify_toolchain.sh deploy/postgres-init/001-axiom-roles.sh
+          python -m unittest discover -s deploy/tests -p 'test_*.py'
+      - name: Build frontend CSS
+        run: npm ci --ignore-scripts --no-audit --no-fund && npm run build:css
+      - name: Check frontend JavaScript syntax
+        run: |
+          set -euo pipefail
+          while IFS= read -r file; do
+            node --check "$file"
+          done < <(find src/axiom/static -type f -name '*.js' ! -path '*/vendor/*' -print)
+      - name: Compose syntax
+        run: |
+          cp deploy/.env.example /tmp/axiom.env
+          sed -i \
+            -e 's|^AXIOM_IMAGE=.*$|AXIOM_IMAGE=ghcr.io/notstarr/axiom:ci|' \
+            -e 's|^AXIOM_DB_MIGRATOR_PASSWORD=.*$|AXIOM_DB_MIGRATOR_PASSWORD=test-migrator|' \
+            -e 's|^AXIOM_DB_APP_PASSWORD=.*$|AXIOM_DB_APP_PASSWORD=test-app|' \
+            -e 's|^AXIOM_POSTGRES_BOOTSTRAP_PASSWORD=.*$|AXIOM_POSTGRES_BOOTSTRAP_PASSWORD=test-bootstrap|' \
+            -e 's|^AXIOM_SERVICE_TOKEN=.*$|AXIOM_SERVICE_TOKEN=test-service|' /tmp/axiom.env
+          docker compose --env-file /tmp/axiom.env -f deploy/compose.yaml config --quiet
+
+  image:
+    name: Build and publish Linux x86_64 image
+    needs: checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name == 'push' || inputs.push_image == true
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate release version
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n ' < deploy/VERSION)"
+          test -n "$version"
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            tag_version="${GITHUB_REF_NAME#v}"
+            test "$tag_version" = "$version" || {
+              echo "deploy/VERSION=$version does not match tag $GITHUB_REF_NAME"
+              exit 1
+            }
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=sha
+            type=raw,value=${{ steps.version.outputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
+      - name: Resolve immutable base image references
+        id: bases
+        run: |
+          set -euo pipefail
+          resolve() {
+            local ref="$1" digest
+            digest="$(docker buildx imagetools inspect "$ref" | awk '$1 == "Digest:" {print $2; exit}')"
+            test -n "$digest"
+            printf '%s@%s\n' "$ref" "$digest"
+          }
+          {
+            echo "node=$(resolve node:22.22.2-bookworm-slim)"
+            echo "golang=$(resolve golang:1.24-bookworm)"
+            echo "python=$(resolve python:3.12-slim-bookworm)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Download and verify Pi runtime bundle
+        env:
+          TOKEN: ${{ env.PI_RUNTIME_TOKEN }}
+        run: |
+          set -euxo pipefail
+          test -n "$PI_RUNTIME_URL" || { echo 'AXIOM_PI_RUNTIME_URL is required'; exit 1; }
+          test -n "$PI_RUNTIME_SHA256" || { echo 'AXIOM_PI_RUNTIME_SHA256 is required'; exit 1; }
+          mkdir -p /tmp/pi-runtime
+          if [ -n "${TOKEN:-}" ]; then
+            curl --fail --location --retry 3 -H "Authorization: Bearer $TOKEN" \
+              "$PI_RUNTIME_URL" -o /tmp/pi-runtime.tar.gz
+          else
+            curl --fail --location --retry 3 "$PI_RUNTIME_URL" -o /tmp/pi-runtime.tar.gz
+          fi
+          echo "$PI_RUNTIME_SHA256  /tmp/pi-runtime.tar.gz" | sha256sum --check -
+          tar -xzf /tmp/pi-runtime.tar.gz -C /tmp/pi-runtime
+          test -f /tmp/pi-runtime/runtime/manifest.json
+          cp -a /tmp/pi-runtime/runtime/. runtime/
+          AXIOM_RUNTIME_ROOT="$PWD/runtime" python deploy/verify_runtime.py
+          AXIOM_RUNTIME_ROOT="$PWD/runtime" python deploy/smoke_runtime.py
+      - name: Load pinned tool versions and build metadata
+        id: build_meta
+        run: |
+          set -euo pipefail
+          grep -E '^AXIOM_[A-Z0-9_]+=' deploy/tools.env >> "$GITHUB_ENV"
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - name: Build and publish
+        uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'push' || inputs.push_image == true }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            AXIOM_NODE_BASE_IMAGE=${{ steps.bases.outputs.node }}
+            AXIOM_GOLANG_BASE_IMAGE=${{ steps.bases.outputs.golang }}
+            AXIOM_PYTHON_BASE_IMAGE=${{ steps.bases.outputs.python }}
+            AXIOM_VERSION=${{ steps.version.outputs.version }}
+            AXIOM_REVISION=${{ github.sha }}
+            AXIOM_BUILD_DATE=${{ steps.build_meta.outputs.created }}
+            AXIOM_FFUF_VERSION=${{ env.AXIOM_FFUF_VERSION }}
+            AXIOM_KATANA_VERSION=${{ env.AXIOM_KATANA_VERSION }}
+            AXIOM_HTTPX_VERSION=${{ env.AXIOM_HTTPX_VERSION }}
+            AXIOM_SUBFINDER_VERSION=${{ env.AXIOM_SUBFINDER_VERSION }}
+            AXIOM_NUCLEI_VERSION=${{ env.AXIOM_NUCLEI_VERSION }}
+            AXIOM_DATABASE_MIGRATION_TARGET=${{ env.AXIOM_DATABASE_MIGRATION_TARGET }}
+            AXIOM_DATABASE_ROLLBACK_COMPATIBLE=${{ env.AXIOM_DATABASE_ROLLBACK_COMPATIBLE }}
+          sbom: true
+          provenance: true
+      - name: Print image digest
+        run: echo "Published image digest: ${{ steps.build.outputs.digest }}"

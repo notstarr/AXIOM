@@ -1,0 +1,126 @@
+name: ${AXIOM_COMPOSE_PROJECT:-axiom}
+
+services:
+  postgres:
+    image: ${AXIOM_POSTGRES_IMAGE:-postgres:18.4-bookworm@sha256:882236b897e39051d2368c5ccc6cda944904723506b2dfc97f2a8f5bc9afa382}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: axiom_bootstrap
+      POSTGRES_PASSWORD: ${AXIOM_POSTGRES_BOOTSTRAP_PASSWORD}
+      POSTGRES_DB: postgres
+      AXIOM_DB_NAME: ${AXIOM_DB_NAME:-axiom}
+      AXIOM_DB_MIGRATOR_PASSWORD: ${AXIOM_DB_MIGRATOR_PASSWORD}
+      AXIOM_DB_APP_PASSWORD: ${AXIOM_DB_APP_PASSWORD}
+      PGDATA: /var/lib/postgresql/18/docker
+    volumes:
+      - axiom-postgres:/var/lib/postgresql
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U axiom_bootstrap -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      - axiom
+
+  migrator:
+    image: ${AXIOM_IMAGE}
+    restart: "no"
+    environment:
+      AXIOM_DB_HOST: ${AXIOM_DB_HOST:-postgres}
+      AXIOM_DB_PORT: "${AXIOM_DB_PORT:-5432}"
+      AXIOM_DB_NAME: ${AXIOM_DB_NAME:-axiom}
+      AXIOM_DB_USER: axiom_migrator
+      AXIOM_DB_PASSWORD: ${AXIOM_DB_MIGRATOR_PASSWORD}
+      AXIOM_RUNTIME_ROOT: /opt/axiom/runtime
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["axiom", "db", "upgrade"]
+    networks:
+      - axiom
+
+  api:
+    image: ${AXIOM_IMAGE}
+    restart: unless-stopped
+    environment:
+      AXIOM_DB_HOST: ${AXIOM_DB_HOST:-postgres}
+      AXIOM_DB_PORT: "${AXIOM_DB_PORT:-5432}"
+      AXIOM_DB_NAME: ${AXIOM_DB_NAME:-axiom}
+      AXIOM_DB_USER: axiom_app
+      AXIOM_DB_PASSWORD: ${AXIOM_DB_APP_PASSWORD}
+      AXIOM_DATA_DIR: ${AXIOM_DATA_DIR:-/var/lib/axiom}
+      AXIOM_RUNTIME_ROOT: /opt/axiom/runtime
+      AXIOM_SERVICE_TOKEN: ${AXIOM_SERVICE_TOKEN}
+      AXIOM_SERVER: ${AXIOM_INTERNAL_SERVER_URL:-http://api:8899}
+      AXIOM_SERVER_URL: ${AXIOM_INTERNAL_SERVER_URL:-http://api:8899}
+      AXIOM_PYTHON: /opt/venv/bin/python
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - axiom-data:${AXIOM_DATA_DIR:-/var/lib/axiom}
+    ports:
+      - "${AXIOM_PUBLISH_HOST:-127.0.0.1}:${AXIOM_PORT:-8888}:8899"
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    command: ["axiom", "serve", "--host", "0.0.0.0", "--port", "8899", "--data-dir", "${AXIOM_DATA_DIR:-/var/lib/axiom}", "--log-level", "info"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl --connect-timeout 2 --max-time 5 -fsS http://127.0.0.1:8899/health | grep -q '\"status\":\"ok\"'"]
+      interval: 5s
+      timeout: 8s
+      retries: 30
+      start_period: 10s
+    networks:
+      - axiom
+
+  runner:
+    image: ${AXIOM_IMAGE}
+    restart: unless-stopped
+    environment:
+      AXIOM_DB_HOST: ${AXIOM_DB_HOST:-postgres}
+      AXIOM_DB_PORT: "${AXIOM_DB_PORT:-5432}"
+      AXIOM_DB_NAME: ${AXIOM_DB_NAME:-axiom}
+      AXIOM_DB_USER: axiom_app
+      AXIOM_DB_PASSWORD: ${AXIOM_DB_APP_PASSWORD}
+      AXIOM_DATA_DIR: ${AXIOM_DATA_DIR:-/var/lib/axiom}
+      AXIOM_RUNTIME_ROOT: /opt/axiom/runtime
+      AXIOM_SERVICE_TOKEN: ${AXIOM_SERVICE_TOKEN}
+      AXIOM_SERVER: ${AXIOM_INTERNAL_SERVER_URL:-http://api:8899}
+      AXIOM_SERVER_URL: ${AXIOM_INTERNAL_SERVER_URL:-http://api:8899}
+      AXIOM_GUARD_SERVER_URL: ${AXIOM_INTERNAL_SERVER_URL:-http://api:8899}
+      AXIOM_PYTHON: /opt/venv/bin/python
+      AXIOM_CHROME_PROFILE_DIR: ${AXIOM_CHROME_PROFILE_DIR:-/var/lib/axiom-browser-profile}
+      CHROME_HEADLESS: ${CHROME_HEADLESS:-1}
+      CHROME_BIN: ${CHROME_BIN:-/usr/bin/chromium}
+      CHROME_NO_SANDBOX: ${CHROME_NO_SANDBOX:-1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - axiom-data:${AXIOM_DATA_DIR:-/var/lib/axiom}
+      - axiom-browser-profile:${AXIOM_CHROME_PROFILE_DIR:-/var/lib/axiom-browser-profile}
+    depends_on:
+      api:
+        condition: service_healthy
+    shm_size: "1gb"
+    command: ["axiom", "runner", "--api-url", "${AXIOM_INTERNAL_SERVER_URL:-http://api:8899}", "--service-token", "${AXIOM_SERVICE_TOKEN}"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'axiom runner' >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    networks:
+      - axiom
+
+volumes:
+  axiom-postgres:
+    name: ${AXIOM_POSTGRES_VOLUME:-axiom-postgres}
+  axiom-data:
+    name: ${AXIOM_DATA_VOLUME:-axiom-data}
+  axiom-browser-profile:
+    name: ${AXIOM_BROWSER_VOLUME:-axiom-browser-profile}
+
+networks:
+  axiom:
+    name: ${AXIOM_NETWORK:-axiom}

@@ -1,0 +1,571 @@
+#!/usr/bin/env bash
+# AXIOM Docker Compose operations. This script deliberately never removes data
+# volumes unless `uninstall --purge` is explicitly requested and confirmed.
+set -Eeuo pipefail
+
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+  SCRIPT_PATH="$(readlink -f -- "$SCRIPT_PATH" 2>/dev/null || printf '%s' "$SCRIPT_PATH")"
+fi
+INSTALL_DIR="${AXIOM_INSTALL_DIR:-$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)}"
+ENV_FILE="$INSTALL_DIR/.env"
+COMPOSE_FILE="$INSTALL_DIR/compose.yaml"
+COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+STATE_FILE="$INSTALL_DIR/.axiom-update-state"
+RELEASE_MANIFEST_PATH="/opt/axiom/release/manifest.json"
+
+log() { printf '[axiomctl] %s\n' "$*"; }
+fail() { printf '[axiomctl] ERROR: %s\n' "$*" >&2; exit 1; }
+require_install() {
+  command -v docker >/dev/null 2>&1 || fail "Docker is required"
+  docker compose version >/dev/null 2>&1 || fail "Docker Compose Plugin is required"
+  [[ -f "$ENV_FILE" ]] || fail "missing $ENV_FILE; run install.sh first"
+  [[ -f "$COMPOSE_FILE" ]] || fail "missing $COMPOSE_FILE"
+}
+compose() { "${COMPOSE[@]}" "$@"; }
+file_value() {
+  local file=$1 key=$2 value
+  value="$(awk -v key="$key" 'index($0, key "=") == 1 {sub("^[^=]*=", ""); print; exit}' "$file")"
+  value="${value#\"}"; value="${value%\"}"
+  value="${value#\'}"; value="${value%\'}"
+  printf '%s' "$value"
+}
+env_value() { file_value "$ENV_FILE" "$1"; }
+state_value() {
+  [[ -f "$STATE_FILE" ]] || return 0
+  file_value "$STATE_FILE" "$1"
+}
+write_update_state() {
+  local previous_image=$1 target_image=$2 target_version=$3 migration_succeeded=$4
+  local rollback_compatible=$5 state=$6
+  umask 077
+  cat > "$STATE_FILE" <<EOF
+STATE_VERSION=1
+STATE=$state
+UPDATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+PREVIOUS_IMAGE=$previous_image
+TARGET_IMAGE=$target_image
+TARGET_VERSION=$target_version
+MIGRATION_SUCCEEDED=$migration_succeeded
+ROLLBACK_COMPATIBLE=$rollback_compatible
+EOF
+  chmod 600 "$STATE_FILE"
+}
+release_manifest_summary() {
+  local image=$1
+  docker image inspect "$image" >/dev/null 2>&1 || return 1
+  # Use -c rather than stdin so this also works when axiomctl is invoked from
+  # a non-interactive container exec or a service without an attached TTY.
+  docker run --rm --network none --entrypoint python "$image" -c '
+import json
+from pathlib import Path
+
+path = Path("/opt/axiom/release/manifest.json")
+data = json.loads(path.read_text(encoding="utf-8"))
+database = data.get("database")
+if not isinstance(database, dict):
+    raise SystemExit("release manifest has no database section")
+rollback_compatible = database.get("rollback_compatible")
+if not isinstance(rollback_compatible, bool):
+    raise SystemExit("database.rollback_compatible must be boolean")
+required = {
+    "version": data.get("axiom_version"),
+    "revision": data.get("git_revision"),
+    "database_migration_target": database.get("migration_target"),
+    "database_rollback_compatible": rollback_compatible,
+}
+if any(value in (None, "") for value in required.values()):
+    raise SystemExit("release manifest is missing required deployment fields")
+print("version=" + str(required["version"]))
+print("revision=" + str(required["revision"]))
+print("database_migration_target=" + str(required["database_migration_target"]))
+print("database_rollback_compatible=" + ("1" if required["database_rollback_compatible"] else "0"))
+'
+}
+manifest_value() {
+  local summary=$1 key=$2
+  printf '%s\n' "$summary" | awk -F= -v key="$key" '$1 == key {print substr($0, index($0, "=") + 1); exit}'
+}
+validate_release_manifest() {
+  local image=$1 summary target compatible
+  if ! summary="$(release_manifest_summary "$image")"; then
+    printf '[axiomctl] ERROR: image %s does not contain a valid %s\n' "$image" "$RELEASE_MANIFEST_PATH" >&2
+    return 1
+  fi
+  target="$(manifest_value "$summary" database_migration_target)"
+  if [[ "$target" != "postgresql@head" ]]; then
+    printf '[axiomctl] ERROR: image %s targets unsupported database branch: %s\n' "$image" "${target:-missing}" >&2
+    return 1
+  fi
+  compatible="$(manifest_value "$summary" database_rollback_compatible)"
+  if [[ "$compatible" != 0 && "$compatible" != 1 ]]; then
+    printf '[axiomctl] ERROR: image %s has invalid database rollback compatibility metadata\n' "$image" >&2
+    return 1
+  fi
+  printf '%s' "$summary"
+}
+env_or_default() {
+  local key=$1 fallback=$2 value
+  value="$(env_value "$key")"
+  printf '%s' "${value:-$fallback}"
+}
+set_env_value() {
+  local key=$1 value=$2 file=${3:-$ENV_FILE}
+  if grep -qE "^${key}=" "$file"; then
+    sed -i.bak -E "s|^${key}=.*$|${key}=${value}|" "$file"
+    rm -f "$file.bak"
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$file"
+  fi
+}
+pin_image_digest() {
+  local image repo digest
+  image="$(env_value AXIOM_IMAGE)"
+  [[ -n "$image" ]] || fail "AXIOM_IMAGE is empty"
+  [[ "$image" == *@sha256:* ]] && return 0
+  # A deliberately local image is useful for development and cannot have a
+  # registry RepoDigest.  Release images are pinned immediately after pull.
+  [[ "$image" == *":local" || "$image" == *"/local" ]] && return 0
+  repo="${image%:*}"
+  digest="$(docker image inspect "$image" --format '{{range .RepoDigests}}{{println .}}{{end}}' 2>/dev/null \
+    | awk -v prefix="${repo}@" 'index($0, prefix) == 1 {print; exit}')"
+  [[ -n "$digest" ]] || fail "pulled image $image has no immutable registry digest"
+  set_env_value AXIOM_IMAGE "$digest"
+  chmod 600 "$ENV_FILE"
+  log "pinned AXIOM_IMAGE to $digest"
+}
+api_url() {
+  local host
+  host="$(env_or_default AXIOM_PUBLISH_HOST 127.0.0.1)"
+  [[ "$host" == "0.0.0.0" ]] && host=127.0.0.1
+  printf 'http://%s:%s' "$host" "$(env_or_default AXIOM_PORT 8888)"
+}
+wait_for_postgres() {
+  local timeout=${1:-90}
+  for _ in $(seq 1 "$timeout"); do
+    if compose exec -T postgres pg_isready -U axiom_bootstrap -d postgres >/dev/null 2>&1; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+wait_for_api() {
+  local timeout=${1:-90} url
+  url="$(api_url)"
+  for _ in $(seq 1 "$timeout"); do
+    if curl --fail --silent --max-time 3 "$url/health" | grep -q '"status":"ok"'; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+wait_for_migrator() {
+  local timeout=${1:-120} container state exit_code
+  for _ in $(seq 1 "$timeout"); do
+    container="$(compose ps --all -q migrator 2>/dev/null || true)"
+    if [[ -n "$container" ]]; then
+      state="$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || true)"
+      case "$state" in
+        exited)
+          exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$container")"
+          [[ "$exit_code" == "0" ]] && return 0
+          compose logs --tail=200 migrator >&2 || true
+          return 1
+          ;;
+        running|created|restarting) sleep 1 ;;
+        *) sleep 1 ;;
+      esac
+    else
+      sleep 1
+    fi
+  done
+  compose logs --tail=200 migrator >&2 || true
+  return 1
+}
+run_migrator() {
+  if ! wait_for_postgres 90; then
+    log "PostgreSQL did not become ready" >&2
+    return 1
+  fi
+  log "running PostgreSQL migrations ($(env_value AXIOM_VERSION))"
+  if ! compose up -d --force-recreate migrator; then
+    log "could not start the migration container" >&2
+    return 1
+  fi
+  if ! wait_for_migrator 120; then
+    log "PostgreSQL migration failed" >&2
+    return 1
+  fi
+}
+start() {
+  require_install
+  compose up -d postgres
+  if ! run_migrator; then
+    fail "PostgreSQL migration failed; inspect: $INSTALL_DIR/axiomctl logs migrator"
+  fi
+  compose up -d api runner
+  wait_for_api 120 || { compose ps --all; fail "API did not become healthy"; }
+  log "AXIOM is running at $(api_url)"
+}
+stop() {
+  require_install
+  compose stop
+}
+restart() {
+  require_install
+  compose up -d postgres
+  if ! run_migrator; then
+    fail "PostgreSQL migration failed; inspect: $INSTALL_DIR/axiomctl logs migrator"
+  fi
+  compose up -d --force-recreate api runner
+  wait_for_api 120 || fail "API did not become healthy after restart"
+}
+status() {
+  require_install
+  local image version data_volume postgres_volume browser_volume health_json migration backend
+  local runner_container runner_state runner_health manifest state
+  image="$(env_or_default AXIOM_IMAGE unknown)"
+  version="$(env_or_default AXIOM_VERSION unknown)"
+  data_volume="$(env_or_default AXIOM_DATA_VOLUME axiom-data)"
+  postgres_volume="$(env_or_default AXIOM_POSTGRES_VOLUME axiom-postgres)"
+  browser_volume="$(env_or_default AXIOM_BROWSER_VOLUME axiom-browser-profile)"
+  printf 'AXIOM status\n  Version: %s\n  Image: %s\n  Data volume: %s\n  PostgreSQL volume: %s\n  Browser volume: %s\n' \
+    "$version" "$image" "$data_volume" "$postgres_volume" "$browser_volume"
+  state="$(state_value STATE)"
+  [[ -n "$state" ]] && printf '  Update state: %s\n' "$state"
+  manifest="$(release_manifest_summary "$image" 2>/dev/null || true)"
+  if [[ -n "$manifest" ]]; then
+    printf '  Release manifest: version=%s revision=%s migration=%s rollback-compatible=%s\n' \
+      "$(manifest_value "$manifest" version)" \
+      "$(manifest_value "$manifest" revision)" \
+      "$(manifest_value "$manifest" database_migration_target)" \
+      "$(manifest_value "$manifest" database_rollback_compatible)"
+  else
+    printf '  Release manifest: unavailable\n'
+  fi
+  printf '\nCompose services:\n'
+  compose ps --all
+  printf '\nAPI health / migration:\n'
+  health_json="$(curl --fail --silent --max-time 5 "$(api_url)/health" || true)"
+  if [[ -z "$health_json" ]]; then
+    printf 'unavailable\n'
+  else
+    migration="$(printf '%s' "$health_json" | sed -n 's/.*"migration":"\([^"]*\)".*/\1/p')"
+    backend="$(printf '%s' "$health_json" | sed -n 's/.*"backend":"\([^"]*\)".*/\1/p')"
+    printf '  status: %s\n  backend: %s\n  migration: %s\n' \
+      "$(printf '%s' "$health_json" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p')" \
+      "${backend:-unknown}" "${migration:-unknown}"
+  fi
+  runner_container="$(compose ps --all -q runner 2>/dev/null || true)"
+  if [[ -n "$runner_container" ]]; then
+    runner_state="$(docker inspect --format '{{.State.Status}}' "$runner_container" 2>/dev/null || true)"
+    runner_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}' "$runner_container" 2>/dev/null || true)"
+    printf '\nRunner: state=%s health=%s\n' "${runner_state:-missing}" "${runner_health:-unknown}"
+  else
+    printf '\nRunner: missing\n'
+  fi
+}
+
+logs() {
+  require_install
+  if (($#)); then compose logs -f --tail=200 "$@"; else compose logs -f --tail=200; fi
+}
+backup() {
+  require_install
+  local db_name stamp out_dir bootstrap_password
+  db_name="$(env_or_default AXIOM_DB_NAME axiom)"
+  bootstrap_password="$(env_value AXIOM_POSTGRES_BOOTSTRAP_PASSWORD)"
+  [[ -n "$bootstrap_password" ]] || fail "AXIOM_POSTGRES_BOOTSTRAP_PASSWORD is empty"
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  out_dir="$INSTALL_DIR/backups/$stamp"
+  umask 077
+  mkdir -p "$out_dir"
+  log "writing PostgreSQL backup to $out_dir"
+  if ! compose exec -T -e PGPASSWORD="$bootstrap_password" postgres \
+      pg_dump -h 127.0.0.1 -U axiom_bootstrap -d "$db_name" --format=custom \
+      > "$out_dir/axiom-${stamp}.dump"; then
+    rm -f "$out_dir/axiom-${stamp}.dump"
+    fail "PostgreSQL database dump failed"
+  fi
+  if ! compose exec -T -e PGPASSWORD="$bootstrap_password" postgres \
+      pg_dumpall -h 127.0.0.1 -U axiom_bootstrap --globals-only \
+      > "$out_dir/globals-${stamp}.sql"; then
+    rm -f "$out_dir/globals-${stamp}.sql"
+    fail "PostgreSQL globals dump failed"
+  fi
+  cp "$ENV_FILE" "$out_dir/.env"
+  [[ -f "$INSTALL_DIR/VERSION" ]] && cp "$INSTALL_DIR/VERSION" "$out_dir/VERSION"
+  (
+    cd "$out_dir"
+    find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+      | sort -z \
+      | xargs -0 sha256sum > SHA256SUMS
+  )
+  find "$out_dir" -maxdepth 1 -type f -exec chmod 600 {} +
+  printf '%s\n' "$out_dir"
+}
+
+doctor() {
+  require_install
+  local failed=0 image free_kb health_json migration backend
+  local runner_container runner_state runner_health manifest manifest_target manifest_rollback
+  printf 'AXIOM doctor\n'
+  if docker info >/dev/null 2>&1; then printf '  Docker: OK\n'; else printf '  Docker: FAILED\n'; failed=1; fi
+  if compose config --quiet >/dev/null 2>&1; then printf '  Compose config: OK\n'; else printf '  Compose config: FAILED\n'; compose config || true; failed=1; fi
+  image="$(env_value AXIOM_IMAGE)"
+  if [[ -n "$image" ]] && docker image inspect "$image" >/dev/null 2>&1; then
+    printf '  Application image: OK (%s)\n' "$image"
+  else
+    printf '  Application image: FAILED (%s)\n' "${image:-unset}"
+    failed=1
+  fi
+  manifest="$(release_manifest_summary "$image" 2>/dev/null || true)"
+  if [[ -n "$manifest" ]]; then
+    manifest_target="$(manifest_value "$manifest" database_migration_target)"
+    manifest_rollback="$(manifest_value "$manifest" database_rollback_compatible)"
+    printf '  Release manifest: OK (migration=%s rollback-compatible=%s revision=%s)\n' \
+      "$manifest_target" "$manifest_rollback" "$(manifest_value "$manifest" revision)"
+    if [[ "$manifest_target" != "postgresql@head" ]]; then
+      printf '  Database release branch: FAILED (%s)\n' "$manifest_target"
+      failed=1
+    fi
+  else
+    printf '  Release manifest: FAILED (%s)\n' "$RELEASE_MANIFEST_PATH"
+    failed=1
+  fi
+  free_kb="$(df -Pk "$INSTALL_DIR" 2>/dev/null | awk 'NR == 2 {print $4}')"
+  if [[ "$free_kb" =~ ^[0-9]+$ ]] && ((free_kb >= 1048576)); then
+    printf '  Disk free: OK (%s MiB)\n' "$((free_kb / 1024))"
+  else
+    printf '  Disk free: FAILED (%s KiB; at least 1 GiB required)\n' "${free_kb:-unknown}"
+    failed=1
+  fi
+  if wait_for_postgres 5; then printf '  PostgreSQL: OK\n'; else printf '  PostgreSQL: FAILED\n'; failed=1; fi
+  health_json="$(curl --fail --silent --max-time 5 "$(api_url)/health" || true)"
+  if [[ -n "$health_json" && "$health_json" == *'"status":"ok"'* ]]; then
+    migration="$(printf '%s' "$health_json" | sed -n 's/.*"migration":"\([^"]*\)".*/\1/p')"
+    backend="$(printf '%s' "$health_json" | sed -n 's/.*"backend":"\([^"]*\)".*/\1/p')"
+    printf '  API health: OK (backend=%s migration=%s)\n' "${backend:-unknown}" "${migration:-unknown}"
+    if [[ "$backend" != "postgresql" || -z "$migration" ]]; then
+      printf '  Database migration: FAILED\n'
+      failed=1
+    else
+      printf '  Database migration: OK (%s)\n' "$migration"
+    fi
+  else
+    printf '  API health: FAILED\n'
+    failed=1
+  fi
+  runner_container="$(compose ps --all -q runner 2>/dev/null || true)"
+  if [[ -n "$runner_container" ]]; then
+    runner_state="$(docker inspect --format '{{.State.Status}}' "$runner_container" 2>/dev/null || true)"
+    runner_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}' "$runner_container" 2>/dev/null || true)"
+    if [[ "$runner_state" == "running" && "$runner_health" == "healthy" ]]; then
+      printf '  Runner: OK (%s)\n' "$runner_health"
+    else
+      printf '  Runner: FAILED (state=%s health=%s)\n' "${runner_state:-missing}" "${runner_health:-unknown}"
+      failed=1
+    fi
+  else
+    printf '  Runner: FAILED (container is missing)\n'
+    failed=1
+  fi
+  if [[ -n "$runner_container" ]] && compose exec -T runner python /app/deploy/verify_runtime.py >/dev/null 2>&1; then
+    printf '  Pi/Node runtime: OK (Runner)\n'
+  else
+    printf '  Pi/Node runtime: FAILED (Runner)\n'; failed=1
+  fi
+  if [[ -n "$runner_container" ]] && compose exec -T runner /app/deploy/smoke_runtime.py >/dev/null 2>&1; then
+    printf '  Pi JSON/RPC and extensions: OK (Runner)\n'
+  else
+    printf '  Pi JSON/RPC and extensions: FAILED (Runner)\n'; failed=1
+  fi
+  if [[ -n "$runner_container" ]] && compose exec -T runner /app/deploy/verify_toolchain.sh >/dev/null 2>&1; then
+    printf '  Security toolchain: OK (Runner)\n'
+  else
+    printf '  Security toolchain: FAILED (Runner)\n'; failed=1
+  fi
+  if [[ -n "$runner_container" ]] && compose exec -T runner test -s "$RELEASE_MANIFEST_PATH"; then
+    printf '  Release manifest in Runner: OK\n'
+  else
+    printf '  Release manifest in Runner: FAILED\n'; failed=1
+  fi
+  if ((failed)); then return 1; fi
+  printf '  Result: OK\n'
+}
+
+update() {
+  require_install
+  local requested_version=${1:-} requested_image=${2:-}
+  local previous_image previous_version target_image target_version rollback_compatible manifest
+  previous_image="$(env_value AXIOM_IMAGE)"
+  previous_version="$(env_value AXIOM_VERSION)"
+  [[ -n "$previous_image" ]] || fail "current AXIOM_IMAGE is empty"
+  cp "$ENV_FILE" "$ENV_FILE.previous"
+  chmod 600 "$ENV_FILE.previous"
+  if [[ -n "$requested_version" ]]; then
+    sed -i.bak -E "s|^AXIOM_VERSION=.*$|AXIOM_VERSION=$requested_version|" "$ENV_FILE"; rm -f "$ENV_FILE.bak"
+    sed -i.bak -E "s|^AXIOM_IMAGE=.*$|AXIOM_IMAGE=ghcr.io/notstarr/axiom:$requested_version|" "$ENV_FILE"; rm -f "$ENV_FILE.bak"
+  fi
+  if [[ -n "$requested_image" ]]; then
+    sed -i.bak -E "s|^AXIOM_IMAGE=.*$|AXIOM_IMAGE=$requested_image|" "$ENV_FILE"; rm -f "$ENV_FILE.bak"
+  fi
+  chmod 600 "$ENV_FILE"
+  log "pulling new image"
+  if ! compose pull api runner migrator; then
+    cp "$ENV_FILE.previous" "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    rm -f "$STATE_FILE"
+    fail "image pull failed; previous .env restored and running services were not replaced"
+  fi
+  pin_image_digest
+  target_image="$(env_value AXIOM_IMAGE)"
+  if ! manifest="$(validate_release_manifest "$target_image")"; then
+    cp "$ENV_FILE.previous" "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    rm -f "$STATE_FILE"
+    fail "candidate image validation failed; previous .env restored"
+  fi
+  target_version="$(manifest_value "$manifest" version)"
+  rollback_compatible="$(manifest_value "$manifest" database_rollback_compatible)"
+  write_update_state "$previous_image" "$target_image" "$target_version" 0 "$rollback_compatible" prepared
+
+  if ! compose up -d postgres; then
+    cp "$ENV_FILE.previous" "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    rm -f "$STATE_FILE"
+    fail "PostgreSQL could not be started; previous .env restored"
+  fi
+  if ! run_migrator; then
+    cp "$ENV_FILE.previous" "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    rm -f "$STATE_FILE"
+    fail "migration failed before application replacement; previous .env restored"
+  fi
+  write_update_state "$previous_image" "$target_image" "$target_version" 1 "$rollback_compatible" migrated
+
+  # Once the new schema has been applied, do not silently boot the old image.
+  # An incompatible rollback could make the old application corrupt data or
+  # fail in less obvious ways; operators must fix forward unless the release
+  # manifest explicitly permits rollback.
+  if ! compose up -d --force-recreate api runner; then
+    fail "new API/Runner could not be started after migration; database was migrated, inspect logs and fix forward"
+  fi
+  if ! wait_for_api 120; then
+    compose ps --all >&2 || true
+    fail "new API failed health checks after migration; database was migrated, inspect logs and fix forward"
+  fi
+  write_update_state "$previous_image" "$target_image" "$target_version" 1 "$rollback_compatible" completed
+  log "update completed: $previous_version/$previous_image -> $target_version/$target_image"
+  if [[ "$rollback_compatible" == 1 ]]; then
+    log "rollback is permitted by the release manifest (database schema is not downgraded automatically)"
+  else
+    log "rollback is blocked after migration; use fix-forward for this release"
+  fi
+}
+rollback() {
+  require_install
+  [[ -f "$ENV_FILE.previous" ]] || fail "no saved previous .env; update has not created a rollback point"
+  [[ -f "$STATE_FILE" ]] || fail "rollback metadata is missing; refusing an unsafe rollback"
+  local state migration_succeeded rollback_compatible rollback_completed current_env
+  state="$(state_value STATE)"
+  migration_succeeded="$(state_value MIGRATION_SUCCEEDED)"
+  rollback_compatible="$(state_value ROLLBACK_COMPATIBLE)"
+  rollback_completed="$(state_value ROLLBACK_COMPLETED)"
+  [[ "$rollback_completed" != 1 ]] || fail "the saved update has already been rolled back"
+  [[ "$state" == completed || "$state" == migrated ]] || fail "no migrated update is available for rollback (state=${state:-unknown})"
+  if [[ "$migration_succeeded" == 1 && "$rollback_compatible" != 1 ]]; then
+    fail "rollback is blocked: the release manifest marks the database migration as incompatible; fix forward instead"
+  fi
+  umask 077
+  current_env="$ENV_FILE.rollback-current"
+  cp "$ENV_FILE" "$current_env"
+  cp "$ENV_FILE.previous" "$ENV_FILE"
+  chmod 600 "$ENV_FILE" "$current_env"
+  if ! compose pull api runner >/dev/null 2>&1; then
+    cp "$current_env" "$ENV_FILE"
+    rm -f "$current_env"
+    fail "previous application image could not be pulled; active configuration was restored"
+  fi
+  if ! compose up -d postgres; then
+    cp "$current_env" "$ENV_FILE"
+    rm -f "$current_env"
+    fail "PostgreSQL could not be started during rollback; active configuration was restored"
+  fi
+  # This is configuration/image recovery only. The PostgreSQL schema is never
+  # downgraded here; compatibility is asserted by the release manifest above.
+  if ! compose up -d --no-deps --force-recreate api runner || ! wait_for_api 120; then
+    cp "$current_env" "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    # Best effort: recreate the containers from the restored active config so
+    # the on-disk environment and running containers do not diverge.
+    compose up -d --no-deps --force-recreate api runner >/dev/null 2>&1 || true
+    rm -f "$current_env"
+    fail "rollback API/Runner did not become healthy; active configuration was restored"
+  fi
+  rm -f "$current_env"
+  set_env_value ROLLBACK_COMPLETED 1 "$STATE_FILE"
+  log "previous application image restored; PostgreSQL schema was not downgraded"
+}
+
+uninstall() {
+  require_install
+  local purge=${1:-}
+  if [[ "$purge" != "--purge" ]]; then
+    compose down --remove-orphans --rmi all
+    log "containers and images removed; data volumes were retained"
+    return 0
+  fi
+  printf 'This permanently deletes AXIOM data volumes and %s. Type DELETE to continue: ' "$INSTALL_DIR" >&2
+  local answer path_answer
+  read -r answer
+  [[ "$answer" == "DELETE" ]] || fail "purge cancelled"
+  printf 'Type the install directory again (%s): ' "$INSTALL_DIR" >&2
+  read -r path_answer
+  [[ "$path_answer" == "$INSTALL_DIR" ]] || fail "purge cancelled"
+  compose down --remove-orphans --rmi all --volumes
+  if [[ -L /usr/local/bin/axiomctl ]] && command -v readlink >/dev/null 2>&1 && \
+      [[ "$(readlink -f /usr/local/bin/axiomctl 2>/dev/null || true)" == "$(readlink -f "$INSTALL_DIR/axiomctl" 2>/dev/null || true)" ]]; then
+    rm -f /usr/local/bin/axiomctl
+  fi
+  rm -rf -- "$INSTALL_DIR"
+  log "AXIOM installation and data volumes removed"
+}
+
+usage() {
+  cat <<'USAGE'
+Usage: axiomctl <command>
+
+Commands:
+  install                 Initialize and start AXIOM
+  start                   Start PostgreSQL, migrate, API and Runner
+  stop                    Stop containers without deleting data
+  restart                 Migrate if needed and recreate API/Runner
+  status                  Show services and API health
+  logs [service]          Follow recent Compose logs
+  update [VERSION] [IMAGE] Pull, pin, migrate and restart on a fixed image
+  rollback                Restore the previous image configuration
+  backup                  Create PostgreSQL custom and globals dumps
+  doctor                  Diagnose Docker, database, API, runtime and tools
+  uninstall               Remove containers/local images, retain volumes
+  uninstall --purge      Permanently remove installation and data (confirm)
+USAGE
+}
+
+main() {
+  local command=${1:-status}; shift || true
+  case "$command" in
+    install|start) start "$@" ;;
+    stop) stop "$@" ;;
+    restart) restart "$@" ;;
+    status) status "$@" ;;
+    logs) logs "$@" ;;
+    update) update "$@" ;;
+    rollback) rollback "$@" ;;
+    backup) backup "$@" ;;
+    doctor) doctor "$@" ;;
+    uninstall) uninstall "$@" ;;
+    pin-image) require_install; pin_image_digest ;;
+    help|-h|--help) usage ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+main "$@"
