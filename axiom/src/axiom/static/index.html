@@ -4,11 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>axiom</title>
-<link rel="icon" href="/static/logo.jpg?v=20260803-overview-loop-v2" type="image/jpeg">
-<link rel="stylesheet" href="/static/apple.css?v=20260807-skill-file-preview-v1">
-<link rel="stylesheet" href="/static/tailwind.generated.css?v=20260804-explore-conversation-v2">
-<script defer src="/static/vendor/alpine.min.js?v=20260803-overview-loop-v2"></script>
-<link rel="stylesheet" href="/static/custom.css?v=20260804-worker-center-v1">
+<link rel="icon" href="/static/logo.jpg?v=92901aede9f3" type="image/jpeg">
+<link rel="stylesheet" href="/static/apple.css?v=92901aede9f3">
+<link rel="stylesheet" href="/static/tailwind.generated.css?v=92901aede9f3">
+<script defer src="/static/vendor/alpine.min.js?v=92901aede9f3"></script>
+<link rel="stylesheet" href="/static/custom.css?v=92901aede9f3">
 </head>
 <body class="h-screen overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="cairnApp()" style="background:var(--bg-secondary);color:var(--text-primary)">
 
@@ -18,7 +18,7 @@
 </button>
 <div class="mobile-sidebar-backdrop" x-show="mobileSidebarOpen" x-cloak @click="mobileSidebarOpen = false"></div>
 <aside class="sidebar" :class="{ 'is-collapsed': sidebarCollapsed, 'is-mobile-open': mobileSidebarOpen }">
-  <div class="sidebar-logo-row"><div class="sidebar-logo"><img src="/static/logo.jpg?v=20260803-overview-loop-v2" alt="axiom"></div><span class="sidebar-brand">AXIOM</span><button type="button" class="sidebar-collapse" @click="toggleSidebar()" :aria-label="sidebarCollapsed ? '展开侧栏' : '折叠侧栏'"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path :d="sidebarCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'"/></svg></button></div>
+  <div class="sidebar-logo-row"><div class="sidebar-logo"><img src="/static/logo.jpg?v=92901aede9f3" alt="axiom"></div><span class="sidebar-brand">AXIOM</span><button type="button" class="sidebar-collapse" @click="toggleSidebar()" :aria-label="sidebarCollapsed ? '展开侧栏' : '折叠侧栏'"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path :d="sidebarCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'"/></svg></button></div>
   <button type="button" class="nav-item nav-back" data-tooltip="返回上一页" x-show="pageHistory.length > 0" @click="goBack()"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg><span class="nav-label">返回</span></button>
   <nav class="sidebar-nav">
     <button type="button" class="nav-item" data-tooltip="仪表盘" :class="{ 'is-active': activePage === 'dashboard' }" @click="navigateTo('dashboard')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6V4h-6v16ZM4 20h6v-4H4v4Z"/></svg><span class="nav-label">仪表盘</span></button>
@@ -436,23 +436,23 @@
   <span x-text="toast ? toast.message : ''"></span>
 </div>
 
-<script src="/static/js/state.js?v=20260807-manual-reason-v1"></script>
-<script src="/static/js/helpers.js?v=20260807-skill-file-preview-v1"></script>
-<script src="/static/js/core.js?v=20260807-manual-reason-v1"></script>
-<script src="/static/js/projects.js?v=20260812-guard-toggle-v1"></script>
-<script src="/static/js/dashboard.js?v=20260807-skill-file-preview-v1"></script>
-<script src="/static/js/skills.js?v=20260807-manual-reason-v1"></script>
-<script src="/static/js/files.js?v=20260803-overview-loop-v2"></script>
-<script src="/static/js/mcp.js?v=20260807-manual-reason-v1"></script>
-<script src="/static/js/graph.js?v=20260803-overview-loop-v2"></script>
-<script src="/static/js/human.js?v=20260804-explore-conversation-v2"></script>
-<script src="/static/js/archives.js?v=20260803-overview-loop-v2"></script>
-<script src="/static/js/timeline.js?v=20260803-overview-loop-v2"></script>
-<script src="/static/js/actions.js?v=20260807-hint-reason-v1"></script>
-<script src="/static/js/dispatch.js?v=20260806-mcp-toggle-v1"></script>
-<script src="/static/js/worker-tools.js?v=20260807-manual-reason-v1"></script>
-<script src="/static/js/prompts.js?v=20260803-overview-loop-v2"></script>
-<script src="/static/js/v2-adapter.js?v=20260812-guard-toggle-v1"></script>
-<script src="/static/js/app.js?v=20260803-overview-loop-v2"></script>
+<script src="/static/js/state.js?v=92901aede9f3"></script>
+<script src="/static/js/helpers.js?v=92901aede9f3"></script>
+<script src="/static/js/core.js?v=92901aede9f3"></script>
+<script src="/static/js/projects.js?v=92901aede9f3"></script>
+<script src="/static/js/dashboard.js?v=92901aede9f3"></script>
+<script src="/static/js/skills.js?v=92901aede9f3"></script>
+<script src="/static/js/files.js?v=92901aede9f3"></script>
+<script src="/static/js/mcp.js?v=92901aede9f3"></script>
+<script src="/static/js/graph.js?v=92901aede9f3"></script>
+<script src="/static/js/human.js?v=92901aede9f3"></script>
+<script src="/static/js/archives.js?v=92901aede9f3"></script>
+<script src="/static/js/timeline.js?v=92901aede9f3"></script>
+<script src="/static/js/actions.js?v=92901aede9f3"></script>
+<script src="/static/js/dispatch.js?v=92901aede9f3"></script>
+<script src="/static/js/worker-tools.js?v=92901aede9f3"></script>
+<script src="/static/js/prompts.js?v=92901aede9f3"></script>
+<script src="/static/js/v2-adapter.js?v=92901aede9f3"></script>
+<script src="/static/js/app.js?v=92901aede9f3"></script>
 </body>
 </html>
