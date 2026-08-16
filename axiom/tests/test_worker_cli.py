@@ -71,7 +71,7 @@ def test_reason_cli_sends_one_small_todo_operation_with_repeatable_sources(monke
                     "category": "authorization",
                     "theme": "",
                     "priority": 50,
-                    "status": "pending",
+                    "status": "open",
                     "status_reason": "",
                     "sources": [
                         {"type": "fact", "id": "f001"},

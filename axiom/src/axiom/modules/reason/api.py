@@ -8,6 +8,7 @@ from axiom.modules.reason.schemas import (
     AbandonWorkspace,
     AddWorkspaceTodo,
     AssessWorkspaceGoal,
+    AssessWorkspaceIntent,
     CommitResult,
     OpenWorkspace,
     ProposeWorkspaceIntent,
@@ -210,6 +211,32 @@ def propose_workspace_intent(
     return container.reason.propose_intent(
         workspace_id,
         body.intent,
+        lease_id=body.lease_id,
+    )
+
+
+@router.post(
+    "/reason-workspaces/{workspace_id}/intent-assessments",
+    response_model=ReasonWorkspace,
+)
+@router.post(
+    "/reason-workspaces/{workspace_id}/intent-assessment",
+    response_model=ReasonWorkspace,
+    include_in_schema=False,
+)
+@router.post(
+    "/reason-workspaces/{workspace_id}/intents/assess",
+    response_model=ReasonWorkspace,
+    include_in_schema=False,
+)
+def assess_workspace_intent(
+    workspace_id: str,
+    body: AssessWorkspaceIntent,
+    container: Container = Depends(get_container),
+) -> ReasonWorkspace:
+    return container.reason.assess_intent(
+        workspace_id,
+        body.assessment,
         lease_id=body.lease_id,
     )
 

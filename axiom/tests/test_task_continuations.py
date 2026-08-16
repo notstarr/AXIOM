@@ -303,7 +303,7 @@ def test_continuation_can_reopen_completed_todo_without_new_fact(client) -> None
 
     todos = client.get(f"/api/v1/tasks/{task['id']}/todos").json()
     assert todos[0]["id"] == todo_id
-    assert todos[0]["status"] == "active"
+    assert todos[0]["status"] == "partial"
     graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
     intent = next(item for item in graph["intents"] if item["id"] == intent_id)
     assert intent["todo_id"] == todo_id

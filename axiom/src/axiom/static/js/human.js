@@ -178,13 +178,24 @@ window.AxiomModules.human = {
       const groups = {};
       for (const todo of (this.project?.todos || []).filter(item => !item.archived)) {
         const key = todo.category || todo.theme || '其他';
-        if (!groups[key]) groups[key] = { name: key, total: 0, pending: 0, active: 0, completed: 0, items: [] };
+        if (!groups[key]) {
+          groups[key] = {
+            name: key,
+            total: 0,
+            open: 0,
+            partial: 0,
+            blocked: 0,
+            completed: 0,
+            items: [],
+          };
+        }
         const group = groups[key];
         group.total++;
         group.items.push(todo);
         if (todo.status === 'completed') group.completed++;
-        else if (todo.status === 'active') group.active++;
-        else group.pending++;
+        else if (todo.status === 'partial') group.partial++;
+        else if (todo.status === 'blocked') group.blocked++;
+        else group.open++;
       }
       return Object.values(groups).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
     },
@@ -196,13 +207,13 @@ window.AxiomModules.human = {
     },
 
     humanTodoLabel(status) {
-      return ({ pending: '待处理', active: '进行中', completed: '已完成', rejected: '已拒绝', obsolete: '已失效' }[status] || status || '待处理');
+      return ({ open: '开放', partial: '部分', blocked: '阻塞', completed: '已完成' }[status] || status || '开放');
     },
 
     humanTodoClass(status) {
       if (status === 'completed') return 'bg-emerald-50 text-emerald-700 border-emerald-100';
-      if (status === 'active') return 'bg-amber-50 text-amber-700 border-amber-100';
-      if (status === 'rejected' || status === 'obsolete') return 'bg-slate-100 text-slate-500 border-slate-200';
+      if (status === 'partial') return 'bg-amber-50 text-amber-700 border-amber-100';
+      if (status === 'blocked') return 'bg-rose-50 text-rose-700 border-rose-100';
       return 'bg-blue-50 text-blue-700 border-blue-100';
     },
 

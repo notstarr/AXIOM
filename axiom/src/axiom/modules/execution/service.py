@@ -70,6 +70,7 @@ _REASON_PROMPT_PROFILE_BY_TRIGGER = {
     "fact_batch": "progress",
     "low_watermark": "progress",
     "max_wait": "progress",
+    "intent_assessment": "progress",
     "manual": "human",
     "hint": "human",
     "continuation": "continuation",
@@ -345,6 +346,17 @@ class ExecutionService:
                 "历史 Goal、Goal Evaluation 及其证据不会作为本轮上下文提供，"
                 "必须依据当前可见的原始事实和产物独立判断；人工续跑说明/重点可以作为恢复 Todo 和规划新 Intent 的依据，"
                 "没有材料性方向时才允许新增 0 个 Intent。"
+            )
+        elif run.trigger == "intent_assessment":
+            payload = run.trigger_payload
+            intent_ids = payload.get("unassessed_intent_ids") or []
+            trigger_summary = (
+                "代码发现以下已结束的 Explore Intent 尚未完成一次性评估："
+                f"{', '.join(str(item) for item in intent_ids) or '未提供'}。"
+                "请先逐项读取这些 Intent 的 findings、leads、输出 Fact 和执行结果，"
+                "对每个 Intent 只调用一次 `axiom reason intent assess`，状态只能是 partial、blocked 或 completed，"
+                "并写明具体理由；若仍需继续测试，保留原评估并创建关联相关 Fact 的新 Intent。"
+                "评估本身不消费 Fact，仍需通过 Todo source、后续 Intent from_fact 或 Goal evidence 引用新 Fact。"
             )
         if goal_cycle_guidance:
             trigger_summary += goal_cycle_guidance

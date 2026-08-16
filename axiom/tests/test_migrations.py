@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import sqlite3
@@ -11,6 +12,7 @@ import pytest
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 
@@ -476,6 +478,7 @@ def test_human_intervention_marker_migration_adds_defaults_and_round_trips(
     migrator_url, app_url = isolated_postgresql_database
     config = alembic_config(migrator_url)
     command.upgrade(config, POSTGRESQL_ALEMBIC_BRANCH)
+
     command.downgrade(config, "20260806_pg0002")
 
     engine = create_database_engine(app_url, application_name="axiom-migration-test")
@@ -565,3 +568,353 @@ def test_human_intervention_marker_migration_adds_defaults_and_round_trips(
         engine.dispose()
 
     command.upgrade(config, POSTGRESQL_ALEMBIC_BRANCH)
+
+
+def test_dynamic_todo_migration_maps_legacy_statuses_and_round_trips(
+    isolated_postgresql_database,
+) -> None:
+    """Legacy pending/active rows become open/partial at the PG head.
+
+    ``active`` must map to ``partial`` even when the old row has no terminal
+    Intent evidence: Todo lifecycle and Intent execution are independent.  A
+    downgrade remains reversible for the legacy application.
+    """
+
+    migrator_url, app_url = isolated_postgresql_database
+    config = alembic_config(migrator_url)
+    command.upgrade(config, "20260810_pg0003")
+
+    # The current PostgreSQL baseline is generated from the latest metadata,
+    # so emulate an installation created by the legacy application before
+    # inserting its pending/active rows.
+    owner_engine = create_database_engine(
+        migrator_url, application_name="axiom-migration-test-owner"
+    )
+    try:
+        with owner_engine.begin() as conn:
+            conn.execute(
+                text(
+                    f'ALTER TABLE "{AXIOM_SCHEMA}".todos '
+                    'DROP CONSTRAINT IF EXISTS "ck_todos_status"'
+                )
+            )
+            conn.execute(
+                text(
+                    f'ALTER TABLE "{AXIOM_SCHEMA}".todos '
+                    'ADD CONSTRAINT ck_todos_status '
+                    "CHECK (status IN ('pending','active','completed','rejected','obsolete'))"
+                )
+            )
+    finally:
+        owner_engine.dispose()
+
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    f'INSERT INTO "{AXIOM_SCHEMA}".projects '
+                    "(id, title, description, status, created_at, updated_at) "
+                    "VALUES ('prj_todo_lifecycle', 'todo lifecycle', '', 'active', now(), now())"
+                )
+            )
+            conn.execute(
+                text(
+                    f'INSERT INTO "{AXIOM_SCHEMA}".tasks '
+                    "(id, project_id, title, origin_host, origin_input, goal, status, phase, "
+                    "scope_json, worker_pool_json, guard_enabled, external_report_enabled, "
+                    "legacy_readonly, archived, created_at, updated_at) "
+                    "VALUES ('t_todo_lifecycle', 'prj_todo_lifecycle', 'lifecycle', NULL, "
+                    "'自然语言入口', 'goal', 'running', 'reason', CAST('{}' AS jsonb), "
+                    "CAST('[]' AS jsonb), false, false, false, false, now(), now())"
+                )
+            )
+            conn.execute(
+                text(
+                    f'INSERT INTO "{AXIOM_SCHEMA}".todos '
+                    "(id, task_id, title, category, theme, priority, status, created_by, "
+                    "status_reason, created_at, updated_at, completed_at, archived) VALUES "
+                    "('td_pending', 't_todo_lifecycle', 'pending direction', 'recon', '', 50, "
+                    "'pending', 'legacy', '', now(), now(), now(), false), "
+                    "('td_active', 't_todo_lifecycle', 'active direction', 'recon', '', 50, "
+                    "'active', 'legacy', '', now(), now(), now(), false), "
+                    "('td_completed', 't_todo_lifecycle', 'completed direction', 'recon', '', 50, "
+                    "'completed', 'legacy', 'legacy completed', now(), now(), now(), false), "
+                    "('td_rejected', 't_todo_lifecycle', 'rejected direction', 'recon', '', 50, "
+                    "'rejected', 'legacy', 'legacy rejected', now(), now(), now(), false)"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, POSTGRESQL_ALEMBIC_BRANCH)
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        with engine.connect() as conn:
+            rows = {
+                row["id"]: dict(row)
+                for row in conn.execute(
+                    text(
+                        f'SELECT id, status, status_reason FROM "{AXIOM_SCHEMA}".todos '
+                        "WHERE task_id = 't_todo_lifecycle' ORDER BY id"
+                    )
+                ).mappings()
+            }
+            assert rows == {
+                "td_active": {
+                    "id": "td_active",
+                    "status": "partial",
+                    "status_reason": "从旧 Todo 状态迁移",
+                },
+                "td_completed": {
+                    "id": "td_completed",
+                    "status": "completed",
+                    "status_reason": "legacy completed",
+                },
+                "td_pending": {
+                    "id": "td_pending",
+                    "status": "open",
+                    "status_reason": "",
+                },
+                "td_rejected": {
+                    "id": "td_rejected",
+                    "status": "rejected",
+                    "status_reason": "legacy rejected",
+                },
+            }
+            completed_at = {
+                row["id"]: row["completed_at"]
+                for row in conn.execute(
+                    text(
+                        f'SELECT id, completed_at FROM "{AXIOM_SCHEMA}".todos '
+                        "WHERE task_id = 't_todo_lifecycle'"
+                    )
+                ).mappings()
+            }
+            assert completed_at["td_pending"] is None
+            assert completed_at["td_active"] is None
+            assert completed_at["td_rejected"] is None
+            assert completed_at["td_completed"] is not None
+            intent_columns = {
+                item["name"]
+                for item in inspect(engine).get_columns("intents", schema=AXIOM_SCHEMA)
+            }
+            assert {
+                "priority",
+                "assessment_status",
+                "assessment_reason",
+                "assessed_at",
+            } <= intent_columns
+    finally:
+        engine.dispose()
+
+    command.downgrade(config, "20260810_pg0003")
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        with engine.connect() as conn:
+            rows = {
+                row["id"]: dict(row)
+                for row in conn.execute(
+                    text(
+                        f'SELECT id, status FROM "{AXIOM_SCHEMA}".todos '
+                        "WHERE task_id = 't_todo_lifecycle' ORDER BY id"
+                    )
+                ).mappings()
+            }
+            assert rows == {
+                "td_active": {"id": "td_active", "status": "active"},
+                "td_completed": {"id": "td_completed", "status": "completed"},
+                "td_pending": {"id": "td_pending", "status": "pending"},
+                "td_rejected": {"id": "td_rejected", "status": "rejected"},
+            }
+            intent_columns = {
+                item["name"]
+                for item in inspect(engine).get_columns("intents", schema=AXIOM_SCHEMA)
+            }
+            assert {
+                "priority",
+                "assessment_status",
+                "assessment_reason",
+                "assessed_at",
+            }.isdisjoint(intent_columns)
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_importer_normalizes_legacy_todo_statuses_without_intent_evidence() -> None:
+    rows = {
+        "todos": [
+            {"id": "td_pending", "status": "pending", "status_reason": ""},
+            {"id": "td_active", "status": "active", "status_reason": ""},
+            {"id": "td_done", "status": "completed", "status_reason": ""},
+        ],
+        "intents": [],
+    }
+
+    importer._normalize_legacy_todo_statuses(rows)
+
+    assert rows["todos"] == [
+        {"id": "td_pending", "status": "open", "status_reason": ""},
+        {
+            "id": "td_active",
+            "status": "partial",
+            "status_reason": "从旧 Todo 状态迁移",
+        },
+        {
+            "id": "td_done",
+            "status": "completed",
+            "status_reason": "从旧 Todo 状态迁移",
+        },
+    ]
+
+
+def test_sqlite_importer_clears_stale_todo_completion_timestamps() -> None:
+    rows = {
+        "todos": [
+            {
+                "id": "td_open",
+                "status": "pending",
+                "status_reason": "",
+                "completed_at": "2026-08-14T00:00:00Z",
+            },
+            {
+                "id": "td_partial",
+                "status": "active",
+                "status_reason": "",
+                "completed_at": "2026-08-14T00:00:00Z",
+            },
+            {
+                "id": "td_rejected",
+                "status": "rejected",
+                "status_reason": "历史归档",
+                "completed_at": "2026-08-14T00:00:00Z",
+            },
+            {
+                "id": "td_completed",
+                "status": "completed",
+                "status_reason": "已完成",
+                "completed_at": "2026-08-14T00:00:00Z",
+            },
+        ],
+        "intents": [],
+    }
+
+    importer._normalize_legacy_todo_statuses(rows)
+
+    assert rows["todos"][0]["status"] == "open"
+    assert rows["todos"][1]["status"] == "partial"
+    assert rows["todos"][0]["completed_at"] is None
+    assert rows["todos"][1]["completed_at"] is None
+    assert rows["todos"][2]["completed_at"] is None
+    assert rows["todos"][3]["completed_at"] == "2026-08-14T00:00:00Z"
+
+
+def test_sqlite_dynamic_todo_migration_preserves_sources_and_round_trips(tmp_path) -> None:
+    source = tmp_path / "dynamic-todo.sqlite3"
+    _create_sqlite_source(source)
+    raw = sqlite3.connect(source)
+    engine = create_engine("sqlite://", creator=lambda: raw)
+    migration_path = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "20260814_0036_dynamic_todo_intent.py"
+    )
+    spec = importlib.util.spec_from_file_location("dynamic_todo_sqlite_migration", migration_path)
+    assert spec is not None and spec.loader is not None
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    try:
+        raw.execute("PRAGMA foreign_keys = ON")
+        now = "2026-08-14T00:00:00Z"
+        raw.execute(
+            "INSERT INTO projects (id, title, description, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("prj_dynamic", "dynamic", "", "active", now, now),
+        )
+        raw.execute(
+            "INSERT INTO tasks "
+            "(id, project_id, title, origin_host, origin_input, goal, status, phase, "
+            "scope_json, worker_pool_json, guard_enabled, external_report_enabled, "
+            "legacy_readonly, created_at, updated_at, archived) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "t_dynamic",
+                "prj_dynamic",
+                "dynamic",
+                "example.com",
+                "https://example.com",
+                "goal",
+                "running",
+                "reason",
+                "{}",
+                "[]",
+                False,
+                False,
+                False,
+                now,
+                now,
+                False,
+            ),
+        )
+        raw.execute(
+            "INSERT INTO todos "
+            "(id, task_id, title, category, theme, priority, status, created_by, "
+            "status_reason, created_at, updated_at, completed_at, archived) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "td_dynamic",
+                "t_dynamic",
+                "dynamic",
+                "recon",
+                "",
+                50,
+                "active",
+                "legacy",
+                "",
+                now,
+                now,
+                now,
+                False,
+            ),
+        )
+        raw.execute(
+            "INSERT INTO todo_sources (task_id, todo_id, source_type, source_id) "
+            "VALUES (?, ?, ?, ?)",
+            ("t_dynamic", "td_dynamic", "origin", "origin"),
+        )
+        raw.commit()
+
+        with engine.begin() as conn:
+            original_op = migration.op
+            migration.op = Operations(MigrationContext.configure(conn))
+            try:
+                migration.upgrade()
+            finally:
+                migration.op = original_op
+
+        assert raw.execute(
+            "SELECT status, status_reason, completed_at FROM todos WHERE id = 'td_dynamic'"
+        ).fetchone() == ("partial", "从旧 Todo 状态迁移", None)
+        assert raw.execute("SELECT count(*) FROM todo_sources").fetchone() == (1,)
+        with pytest.raises(sqlite3.IntegrityError):
+            raw.execute("UPDATE todos SET status = 'pending' WHERE id = 'td_dynamic'")
+        raw.rollback()
+
+        with engine.begin() as conn:
+            original_op = migration.op
+            migration.op = Operations(MigrationContext.configure(conn))
+            try:
+                migration.downgrade()
+            finally:
+                migration.op = original_op
+
+        assert raw.execute(
+            "SELECT status, completed_at FROM todos WHERE id = 'td_dynamic'"
+        ).fetchone() == ("active", None)
+        assert raw.execute("SELECT count(*) FROM todo_sources").fetchone() == (1,)
+        with pytest.raises(sqlite3.IntegrityError):
+            raw.execute("UPDATE todos SET status = 'partial' WHERE id = 'td_dynamic'")
+        raw.rollback()
+    finally:
+        engine.dispose()

@@ -25,7 +25,7 @@ from axiom.shared.model_registry import ALL_TABLES
 
 
 LEGACY_SQLITE_REVISION = "20260805_0035"
-POSTGRESQL_TARGET_REVISION = "20260810_pg0003"
+POSTGRESQL_TARGET_REVISION = "20260814_pg0004"
 DEFAULT_BATCH_SIZE = 1_000
 
 LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
@@ -33,6 +33,10 @@ LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
         "human_intervention_required": False,
         "human_intervention_reason": "",
         "human_intervention_marked_at": None,
+        "priority": 50,
+        "assessment_status": "open",
+        "assessment_reason": "",
+        "assessed_at": None,
     },
 }
 
@@ -203,6 +207,8 @@ def migrate_sqlite_to_postgresql(
             _validate_source_table(source, table)
             rows = _read_source_rows(source, table)
             source_rows[table.name] = rows
+
+        _normalize_legacy_todo_statuses(source_rows)
 
         counters = _synchronize_source_counters(source_rows)
         source_hashes = {
@@ -394,6 +400,23 @@ def _normalize_row_for_insert(table, row: dict[str, Any]) -> dict[str, Any]:
             value = _normalize_timestamp(value)
         normalized[column.name] = value
     return normalized
+
+
+def _normalize_legacy_todo_statuses(source_rows: dict[str, list[dict[str, Any]]]) -> None:
+    """Map the legacy Todo lifecycle to the canonical four business states."""
+
+    for row in source_rows.get("todos", []):
+        status = str(row.get("status") or "")
+        if status == "pending":
+            row["status"] = "open"
+        elif status == "active":
+            row["status"] = "partial"
+        if row.get("status") in {"partial", "blocked", "completed"} and not str(
+            row.get("status_reason") or ""
+        ).strip():
+            row["status_reason"] = "从旧 Todo 状态迁移"
+        if row.get("status") != "completed" and "completed_at" in row:
+            row["completed_at"] = None
 
 
 def _normalize_timestamp(value: Any) -> str | None:

@@ -22,7 +22,7 @@ TODO_CATEGORIES = (
     "client_side",
     "other",
 )
-TODO_STATUSES = ("pending", "active", "completed", "rejected", "obsolete")
+TODO_STATUSES = ("open", "partial", "blocked", "completed")
 SOURCE_TYPES = {"fact", "hint", "artifact", "vulnerability", "knowledge", "origin"}
 
 
@@ -109,7 +109,7 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--category", type=click.Choice(TODO_CATEGORIES), required=True)
     @click.option("--theme", default="")
     @click.option("--priority", type=click.IntRange(0, 100), default=50, show_default=True)
-    @click.option("--status", type=click.Choice(TODO_STATUSES), default="pending")
+    @click.option("--status", type=click.Choice(TODO_STATUSES), default="open")
     @click.option("--status-reason", default="")
     @click.option("--status-reason-file", type=click.Path(path_type=Path, dir_okay=False))
     @click.option("--source", multiple=True, required=True, help="Repeat kind:id sources.")
@@ -203,6 +203,7 @@ def register_worker_commands(main: click.Group) -> None:
         multiple=True,
         help="Optional without Task Scope; repeat for scoped or multi-target work.",
     )
+    @click.option("--priority", type=click.IntRange(0, 100), default=50, show_default=True)
     @click.option("--execute-seconds", type=click.IntRange(1), required=True)
     @click.option("--conclude-seconds", type=click.IntRange(1), required=True)
     def reason_intent_propose(
@@ -212,6 +213,7 @@ def register_worker_commands(main: click.Group) -> None:
         description: str | None,
         description_file: Path | None,
         target: tuple[str, ...],
+        priority: int,
         execute_seconds: int,
         conclude_seconds: int,
     ) -> None:
@@ -228,10 +230,50 @@ def register_worker_commands(main: click.Group) -> None:
                 required=True,
             ),
             "targets": list(target),
+            "priority": priority,
             "execute_seconds": execute_seconds,
             "conclude_seconds": conclude_seconds,
         }
         _echo_workspace(_workspace_request("POST", "intents", {"intent": proposal}))
+
+    @reason_intent_group.command("assess")
+    @click.option("--intent-id", required=True, help="Terminal Explore Intent ID to assess.")
+    @click.option(
+        "--status",
+        "--assessment-status",
+        type=click.Choice(("partial", "blocked", "completed")),
+        required=True,
+        help="One-time evaluation of the finished Intent.",
+    )
+    @click.option("--reason", "--assessment-reason", "assessment_reason")
+    @click.option(
+        "--reason-file",
+        "--assessment-reason-file",
+        type=click.Path(path_type=Path, dir_okay=False),
+    )
+    def reason_intent_assess(
+        intent_id: str,
+        status: str,
+        assessment_reason: str | None,
+        reason_file: Path | None,
+    ) -> None:
+        assessment = {
+            "intent_id": intent_id,
+            "status": status,
+            "reason": _text_value(
+                assessment_reason,
+                reason_file,
+                "reason",
+                required=True,
+            ),
+        }
+        _echo_workspace(
+            _workspace_request(
+                "POST",
+                "intent-assessments",
+                {"assessment": assessment},
+            )
+        )
 
     @reason_group.group("goal")
     def reason_goal_group() -> None:
@@ -589,6 +631,7 @@ def _echo_workspace(value: dict[str, Any]) -> None:
             "todo_add_count": len(draft.get("todo_adds", [])),
             "todo_update_count": len(draft.get("todo_updates", [])),
             "intent_proposal_count": len(draft.get("intent_proposals", [])),
+            "intent_assessment_count": len(draft.get("intent_assessments", [])),
             "goal_assessed": draft.get("goal_assessment") is not None,
         }
     )

@@ -60,6 +60,10 @@ class AxiomRunner:
         self.browser_broker = BrowserBrokerManager()
         self._futures: dict[Future, tuple[ClaimedWork, threading.Event]] = {}
         self._lock = threading.Lock()
+        # A completed Future releases a local runner slot.  Wake the loop as
+        # soon as that happens so a pending Intent can be claimed immediately
+        # instead of waiting for the normal three-second polling tick.
+        self._dispatch_wakeup = threading.Event()
         self._closed = False
 
     def run_once(self) -> DispatchReport:
@@ -93,6 +97,10 @@ class AxiomRunner:
             future = self._pool.submit(self._execute_claim, work, cancellation)
             with self._lock:
                 self._futures[future] = (work, cancellation)
+            # Register after publishing the Future so an executor that
+            # completes synchronously cannot notify the loop before the slot
+            # is visible to ``_reap_finished``.
+            future.add_done_callback(self._on_future_done)
         return report
 
     def run_forever(
@@ -104,11 +112,19 @@ class AxiomRunner:
         if interval_seconds is not None and interval_seconds <= 0:
             raise ValueError("interval_seconds must be positive")
         while not stop_event.is_set():
+            # Clear before the reconciliation pass.  If a Future finishes
+            # during the pass (or between clear and wait), its callback sets
+            # the event and the wait returns immediately.  The periodic wait
+            # remains a recovery path for control-plane changes unrelated to
+            # local Future completion.
+            self._dispatch_wakeup.clear()
             try:
                 self.run_once()
             except ControlPlaneError as exc:
                 logger.warning("control plane unavailable; reconciliation will retry: %s", exc)
-            stop_event.wait(interval_seconds or self.runner_interval_seconds)
+            if stop_event.is_set():
+                break
+            self._dispatch_wakeup.wait(interval_seconds or self.runner_interval_seconds)
 
     def wait_for_idle(self, timeout_seconds: float = 30.0) -> None:
         deadline = time.monotonic() + timeout_seconds
@@ -258,6 +274,11 @@ class AxiomRunner:
             finished = [future for future in self._futures if future.done()]
             for future in finished:
                 self._futures.pop(future, None)
+
+    def _on_future_done(self, _future: Future) -> None:
+        """Wake ``run_forever`` after execution releases a runner slot."""
+
+        self._dispatch_wakeup.set()
 
     def _cancel_inactive_tasks(self, snapshot) -> None:
         active_task_ids = {task.id for task in snapshot.tasks if task.status == "running"}

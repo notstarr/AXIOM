@@ -707,9 +707,9 @@
         </template>
         <template x-for="todo in [...project.todos].sort((a,b) => (b.priority || 0) - (a.priority || 0))" :key="todo.id">
           <article class="rounded-2xl border bg-white p-4 shadow-sm"
-            :class="todo.status === 'completed' ? 'border-emerald-100 opacity-75' : todo.status === 'active' ? 'border-brand-200' : 'border-slate-200'">
+            :class="todo.status === 'completed' ? 'border-emerald-100 opacity-75' : todo.status === 'blocked' ? 'border-amber-200' : todo.status === 'partial' ? 'border-brand-200' : 'border-slate-200'">
             <div class="flex items-start gap-2">
-              <button type="button" @click="updateTodoStatus(todo.id, todo.status === 'completed' ? 'pending' : 'completed')"
+              <button type="button" @click="updateTodoStatus(todo.id, todo.status === 'completed' ? 'open' : 'completed')"
                 :disabled="project.project.legacy_readonly"
                 class="mt-0.5 h-5 w-5 shrink-0 rounded-md border inline-flex items-center justify-center transition disabled:opacity-40"
                 :class="todo.status === 'completed' ? 'border-emerald-400 bg-emerald-500 text-white' : 'border-slate-300 text-transparent hover:border-brand-400'">
@@ -728,8 +728,9 @@
                 <div class="mt-2 flex items-center justify-between gap-2">
                   <span class="text-[10px] text-slate-400" x-text="todo.status"></span>
                   <div class="flex gap-1" x-show="!project.project.legacy_readonly && todo.status !== 'completed'">
-                    <button x-show="todo.status !== 'active'" @click="updateTodoStatus(todo.id, 'active')" class="px-2 py-1 rounded-md border border-brand-100 text-[10px] text-brand-600 hover:bg-brand-50">开始</button>
-                    <button @click="updateTodoStatus(todo.id, 'obsolete')" class="px-2 py-1 rounded-md border border-slate-200 text-[10px] text-slate-500 hover:bg-slate-50">作废</button>
+                    <button x-show="todo.status !== 'partial'" @click="updateTodoStatus(todo.id, 'partial')" class="px-2 py-1 rounded-md border border-brand-100 text-[10px] text-brand-600 hover:bg-brand-50">部分</button>
+                    <button x-show="todo.status !== 'blocked'" @click="updateTodoStatus(todo.id, 'blocked')" class="px-2 py-1 rounded-md border border-amber-200 text-[10px] text-amber-700 hover:bg-amber-50">阻塞</button>
+                    <button x-show="todo.status !== 'open'" @click="updateTodoStatus(todo.id, 'open')" class="px-2 py-1 rounded-md border border-slate-200 text-[10px] text-slate-500 hover:bg-slate-50">开放</button>
                   </div>
                 </div>
                 <p x-show="todo.status_reason" class="mt-2 text-[11px] text-slate-400" x-text="todo.status_reason"></p>

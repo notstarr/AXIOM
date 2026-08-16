@@ -20,6 +20,7 @@ class Intent(BaseModel):
     kind: Literal["bootstrap", "reason", "explore"]
     from_facts: list[str]
     description: str
+    priority: int = Field(default=50, ge=0, le=100)
     status: Literal[
         "pending",
         "claimed",
@@ -52,6 +53,9 @@ class Intent(BaseModel):
     human_intervention_required: bool = False
     human_intervention_reason: str = ""
     human_intervention_marked_at: str | None = None
+    assessment_status: Literal["open", "partial", "blocked", "completed"] = "open"
+    assessment_reason: str = ""
+    assessed_at: str | None = None
     created_at: str
     concluded_at: str | None = None
     archived: bool = False

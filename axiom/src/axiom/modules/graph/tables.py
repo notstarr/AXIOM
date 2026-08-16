@@ -39,6 +39,7 @@ intents = Table(
     Column("todo_id", String),
     Column("kind", String, nullable=False, default="explore"),
     Column("description", Text, nullable=False),
+    Column("priority", Integer, nullable=False, default=50, server_default="50"),
     Column("status", String, nullable=False),
     Column("creator", String, nullable=False),
     Column("worker", String),
@@ -75,6 +76,21 @@ intents = Table(
         server_default="",
     ),
     Column("human_intervention_marked_at", UTCDateTimeText),
+    Column(
+        "assessment_status",
+        String,
+        nullable=False,
+        default="open",
+        server_default="open",
+    ),
+    Column(
+        "assessment_reason",
+        Text,
+        nullable=False,
+        default="",
+        server_default="",
+    ),
+    Column("assessed_at", UTCDateTimeText),
     Column("created_at", UTCDateTimeText, nullable=False),
     Column("concluded_at", UTCDateTimeText),
     Column("archived", Boolean, nullable=False, default=False),
@@ -90,6 +106,11 @@ intents = Table(
         name="status",
     ),
     CheckConstraint("kind IN ('bootstrap','reason','explore')", name="kind"),
+    CheckConstraint("priority BETWEEN 0 AND 100", name="priority"),
+    CheckConstraint(
+        "assessment_status IN ('open','partial','blocked','completed')",
+        name="assessment_status",
+    ),
 )
 
 

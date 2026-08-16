@@ -438,3 +438,40 @@ def test_axiom_runner_keeps_running_when_control_plane_is_temporarily_unavailabl
         runner.close()
 
     assert calls == 2
+
+
+def test_axiom_runner_wakes_dispatch_loop_when_a_future_finishes() -> None:
+    runner = AxiomRunner(object())
+    stop_event = threading.Event()
+    first_pass = threading.Event()
+    second_pass = threading.Event()
+    calls = 0
+
+    def run_once() -> DispatchReport:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first_pass.set()
+        else:
+            second_pass.set()
+            stop_event.set()
+        return DispatchReport()
+
+    runner.run_once = run_once  # type: ignore[method-assign]
+    thread = threading.Thread(
+        target=runner.run_forever,
+        kwargs={"stop_event": stop_event, "interval_seconds": 30.0},
+    )
+    thread.start()
+    try:
+        assert first_pass.wait(2)
+        runner._on_future_done(None)  # type: ignore[arg-type]
+        assert second_pass.wait(2)
+    finally:
+        stop_event.set()
+        runner._dispatch_wakeup.set()
+        thread.join(timeout=2)
+        runner.close()
+
+    assert not thread.is_alive()
+    assert calls == 2

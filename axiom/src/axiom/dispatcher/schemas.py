@@ -19,6 +19,10 @@ class IntentSnapshot(BaseModel):
     task_id: str
     id: str
     kind: IntentKind
+    # Reason chooses this when it writes an Intent proposal.  Keep the
+    # scheduler-side default at the neutral midpoint so snapshots produced by
+    # older control planes remain valid while the column is being rolled out.
+    priority: int = Field(default=50, ge=0, le=100)
     status: Literal[
         "pending",
         "claimed",

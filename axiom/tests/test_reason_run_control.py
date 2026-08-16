@@ -28,6 +28,7 @@ from protocol_helpers import (
         ("fact_batch", "progress"),
         ("low_watermark", "progress"),
         ("max_wait", "progress"),
+        ("intent_assessment", "progress"),
         ("manual", "human"),
         ("hint", "human"),
         ("continuation", "continuation"),
@@ -187,6 +188,55 @@ def _commit_plan(client, task: dict, completed: dict, *, count: int) -> list[str
     return committed.json()["created_intent_ids"]
 
 
+def _closed_todo_terminal_explore_signal(
+    client,
+    *,
+    reason_low_watermark: int = 0,
+    reason_min_interval_seconds: int = 3_600,
+) -> tuple[dict, str]:
+    """Build the exact signal that must not be lost by Reason reconciliation.
+
+    The Intent is terminal, its Todo is already completed, and there are no
+    unplanned Facts.  The only remaining planning work is the one-time Intent
+    assessment.  Keeping this setup in SQL avoids coupling this regression to
+    the Explore artifact parser while still exercising the persisted lifecycle
+    fields and the dispatcher-facing reconciliation path.
+    """
+
+    task, completed = _bootstrap_to_reason(
+        client,
+        reason_low_watermark=reason_low_watermark,
+        reason_min_interval_seconds=reason_min_interval_seconds,
+        reason_batch_size=5,
+    )
+    [intent_id] = _commit_plan(client, task, completed, count=1)
+    engine = client.app.state.container.engine
+    _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
+
+    todo = client.get(f"/api/v1/tasks/{task['id']}/todos").json()[0]
+    closed = client.patch(
+        f"/api/v1/tasks/{task['id']}/todos/{todo['id']}",
+        json={"status": "completed", "status_reason": "该方向已覆盖"},
+    )
+    assert closed.status_code == 200, closed.text
+
+    now = utcnow()
+    with engine.begin() as conn:
+        conn.execute(
+            update(intents)
+            .where(intents.c.task_id == task["id"], intents.c.id == intent_id)
+            .values(
+                status="completed",
+                worker=None,
+                lease_id=None,
+                last_heartbeat_at=None,
+                concluded_at=now,
+                to_fact_id=completed["fact_id"],
+            )
+        )
+    return task, intent_id
+
+
 def test_reason_run_is_unique_invisible_and_recovers_a_stale_lease(client) -> None:
     task, completed = _bootstrap_to_reason(client)
     reason_run_id = completed["next_reason_run_id"]
@@ -260,6 +310,7 @@ def test_manual_reason_can_run_while_waiting_without_new_facts_and_reuses_reason
         "failed_intent_ids": [],
         "actionable_todo_ids": [],
         "todo_review_ids": [],
+        "unassessed_intent_ids": [],
     }
     assert client.get(f"/api/v1/tasks/{task['id']}").json()["phase"] == "reason"
 
@@ -403,6 +454,7 @@ def test_manual_reason_snapshots_open_and_failed_explore_but_not_later_facts(cli
     assert run["trigger_payload"]["open_explore_ids"] == [created_intent_ids[0]]
     assert run["trigger_payload"]["failed_intent_ids"] == [created_intent_ids[1]]
     assert run["trigger_payload"]["open_explore_count"] == 1
+    assert run["trigger_payload"]["unassessed_intent_ids"] == [created_intent_ids[1]]
     original_source_ids = list(run["source_fact_ids"])
 
     with engine.begin() as conn:
@@ -599,7 +651,7 @@ def test_reason_run_can_read_project_credentials_only_while_its_lease_is_active(
     assert rejected.status_code == 409
 
 
-def test_reason_workspace_todos_can_outnumber_intents_and_fifth_proposal_is_rejected(client) -> None:
+def test_reason_workspace_can_persist_more_proposals_than_dispatcher_quota(client) -> None:
     task, completed = _bootstrap_to_reason(
         client,
         reason_target_open_intents=4,
@@ -615,7 +667,7 @@ def test_reason_workspace_todos_can_outnumber_intents_and_fifth_proposal_is_reje
         )
         assert response.status_code == 200, response.text
 
-    for number in range(1, 5):
+    for number in range(1, 6):
         response = _propose(
             client,
             workspace,
@@ -623,22 +675,16 @@ def test_reason_workspace_todos_can_outnumber_intents_and_fifth_proposal_is_reje
             _proposal(number, completed["fact_id"]),
         )
         assert response.status_code == 200, response.text
-    fifth = _propose(
-        client,
-        workspace,
-        claim["lease_id"],
-        _proposal(5, completed["fact_id"]),
-    )
-
-    assert fifth.status_code == 409
-    assert "Intent quota exhausted" in fifth.json()["error"]["message"]
     status = client.post(
         f"/api/v1/reason-workspaces/{workspace['id']}/status",
         json={"lease_id": claim["lease_id"]},
     ).json()
     assert status["todo_add_count"] == 5
-    assert status["intent_proposal_count"] == 4
-    assert status["remaining_intent_quota"] == 0
+    assert status["intent_proposal_count"] == 5
+    # Runtime scheduling settings do not limit Reason's durable planning
+    # backlog.  The only remaining bound is the workspace infrastructure cap.
+    assert status["proposal_limit"] == 256
+    assert status["remaining_intent_quota"] == 251
     # Workspace mutations remain private until the atomic commit.
     assert [
         item["id"] for item in client.get(f"/api/v1/tasks/{task['id']}/graph").json()["intents"]
@@ -650,10 +696,18 @@ def test_reason_workspace_todos_can_outnumber_intents_and_fifth_proposal_is_reje
         json={"lease_id": claim["lease_id"]},
     )
     assert committed.status_code == 200, committed.text
-    assert committed.json()["created_intent_ids"] == ["i002", "i003", "i004", "i005"]
+    assert committed.json()["created_intent_ids"] == [
+        "i002",
+        "i003",
+        "i004",
+        "i005",
+        "i006",
+    ]
 
 
-def test_reason_quota_and_explore_budget_bounds_are_snapshotted_at_claim(client) -> None:
+def test_reason_runtime_quota_does_not_bound_proposals_but_explore_budget_is_snapshotted(
+    client,
+) -> None:
     task, completed = _bootstrap_to_reason(
         client,
         reason_batch_size=1,
@@ -692,8 +746,7 @@ def test_reason_quota_and_explore_budget_bounds_are_snapshotted_at_claim(client)
     out_of_snapshot_bounds = _propose(client, workspace, claim["lease_id"], too_long)
 
     assert first.status_code == 200, first.text
-    assert second.status_code == 409
-    assert "open=3, target=4" in second.json()["error"]["message"]
+    assert second.status_code == 200, second.text
     assert out_of_snapshot_bounds.status_code == 409
     assert "60-600" in out_of_snapshot_bounds.json()["error"]["message"]
 
@@ -725,6 +778,146 @@ def test_reason_low_watermark_ignores_todos_that_already_have_open_explore(clien
     ).json()
     assert run["trigger"] == "low_watermark"
     assert created_todo.json()["id"] in run["trigger_payload"]["actionable_todo_ids"]
+
+
+def test_unassessed_terminal_explore_reconciles_past_debounce_and_zero_low_watermark(
+    client,
+) -> None:
+    task, intent_id = _closed_todo_terminal_explore_signal(client)
+
+    reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    assert reconciled.status_code == 200, reconciled.text
+    [reason_run_id] = reconciled.json()["created_reason_run_ids"]
+    run = client.get(
+        f"/api/v1/tasks/{task['id']}/reason-runs/{reason_run_id}"
+    ).json()
+
+    assert run["trigger"] == "intent_assessment"
+    assert run["trigger_payload"]["unassessed_intent_ids"] == [intent_id]
+
+    # The active run itself is the deduplication guard; a second dispatcher
+    # sweep must not create another ReasonRun for the same assessment signal.
+    repeated = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["created_reason_run_ids"] == []
+
+
+def test_unassessed_terminal_explore_prefers_assessment_over_default_low_watermark(
+    client,
+) -> None:
+    task, intent_id = _closed_todo_terminal_explore_signal(
+        client,
+        reason_low_watermark=4,
+    )
+
+    reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    assert reconciled.status_code == 200, reconciled.text
+    [reason_run_id] = reconciled.json()["created_reason_run_ids"]
+    run = client.get(
+        f"/api/v1/tasks/{task['id']}/reason-runs/{reason_run_id}"
+    ).json()
+
+    assert run["trigger"] == "intent_assessment"
+    assert run["trigger_payload"]["unassessed_intent_ids"] == [intent_id]
+
+
+def test_intent_assessment_commits_once_and_rejects_a_later_reassessment(client) -> None:
+    task, intent_id = _closed_todo_terminal_explore_signal(client)
+    reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={}).json()
+    [reason_run_id] = reconciled["created_reason_run_ids"]
+    claim, execution = claim_reason_run(
+        client,
+        task_id=task["id"],
+        reason_run_id=reason_run_id,
+    )
+    assert execution["reason_prompt_profile"] == "progress"
+    assert intent_id in execution["intent_description"]
+    assert "评估本身不消费 Fact" in execution["intent_description"]
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    assessment = {
+        "intent_id": intent_id,
+        "status": "completed",
+        "reason": "该 Intent 已完成验证，未发现需要继续扩展的方向",
+    }
+
+    staged = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/intent-assessments",
+        json={"lease_id": claim["lease_id"], "assessment": assessment},
+    )
+    assert staged.status_code == 200, staged.text
+    assert staged.json()["draft"]["intent_assessments"] == [assessment]
+
+    # Repeating the exact command while the Workspace is open is idempotent.
+    repeated_stage = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/intent-assessments",
+        json={"lease_id": claim["lease_id"], "assessment": assessment},
+    )
+    assert repeated_stage.status_code == 200, repeated_stage.text
+    assert len(repeated_stage.json()["draft"]["intent_assessments"]) == 1
+
+    conflicting_stage = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/intent-assessments",
+        json={
+            "lease_id": claim["lease_id"],
+            "assessment": {
+                **assessment,
+                "status": "partial",
+                "reason": "仍有部分边界需要继续确认",
+            },
+        },
+    )
+    assert conflicting_stage.status_code == 409
+
+    goal = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/goal-assessment",
+        json={
+            "lease_id": claim["lease_id"],
+            "assessment": {
+                "achieved": False,
+                "reason": "目标仍需后续方向，但本轮没有新的 Intent",
+                "evidence_refs": [],
+            },
+        },
+    )
+    assert goal.status_code == 200, goal.text
+    committed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        json={"lease_id": claim["lease_id"]},
+    )
+    assert committed.status_code == 200, committed.text
+
+    engine = client.app.state.container.engine
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(
+                intents.c.assessment_status,
+                intents.c.assessment_reason,
+                intents.c.assessed_at,
+            ).where(intents.c.task_id == task["id"], intents.c.id == intent_id)
+        ).mappings().one()
+    assert row["assessment_status"] == "completed"
+    assert row["assessment_reason"] == assessment["reason"]
+    assert row["assessed_at"] is not None
+
+    # A later Reason run cannot assess the same terminal Intent a second time.
+    manual = _trigger_manual_reason(client, task["id"], actor="重复评估回归")
+    assert manual.status_code == 200, manual.text
+    duplicate_claim, _ = claim_reason_run(
+        client,
+        task_id=task["id"],
+        reason_run_id=manual.json()["id"],
+    )
+    duplicate_workspace = open_reason_workspace(
+        client,
+        task_id=task["id"],
+        claim=duplicate_claim,
+    )
+    duplicate = client.post(
+        f"/api/v1/reason-workspaces/{duplicate_workspace['id']}/intent-assessments",
+        json={"lease_id": duplicate_claim["lease_id"], "assessment": assessment},
+    )
+    assert duplicate.status_code == 409
+    assert "already been assessed" in duplicate.text
 
 
 def test_reason_min_interval_and_max_wait_use_the_latest_runtime_config(client) -> None:
@@ -846,5 +1039,8 @@ def test_failed_explore_and_resume_follow_trigger_rules(client) -> None:
     run = client.get(
         f"/api/v1/tasks/{task['id']}/reason-runs/{triggered['created_reason_run_ids'][0]}"
     ).json()
-    assert run["trigger"] == "low_watermark"
+    # A failed terminal Explore must be assessed before the normal low-watermark
+    # replenishment signal, otherwise its result can be forgotten.
+    assert run["trigger"] == "intent_assessment"
     assert run["trigger_payload"]["failed_intent_ids"] == [intent_id]
+    assert run["trigger_payload"]["unassessed_intent_ids"] == [intent_id]

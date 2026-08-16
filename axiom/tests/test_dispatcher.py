@@ -46,16 +46,52 @@ class FakeControlPlane:
         return None
 
 
-def intent(task_id: str, number: int, *, kind="explore", pool=None, retry_at=None):
+def intent(
+    task_id: str,
+    number: int,
+    *,
+    kind="explore",
+    pool=None,
+    retry_at=None,
+    priority=50,
+):
     return IntentSnapshot(
         task_id=task_id,
         id=f"i{number:03d}",
         kind=kind,
+        priority=priority,
         status="pending",
         worker_pool=pool or [],
         next_retry_at=retry_at,
         created_at=NOW + timedelta(seconds=number),
     )
+
+
+def test_reconciler_prioritizes_intents_within_a_work_kind():
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                intents=[
+                    intent("t_001", 2, priority=10),
+                    intent("t_001", 3, priority=90),
+                    intent("t_001", 4, priority=90),
+                ],
+            )
+        ],
+        workers=[worker("worker-a", max_running=3)],
+        limits=DispatchLimits(
+            global_max_active_runs=3,
+            global_max_active_tasks=1,
+            per_task_max_active_runs=3,
+            per_task_explore_concurrency=3,
+        ),
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert [item.claim.intent_id for item in actions] == ["i003", "i004", "i002"]
 
 
 def worker(name: str, *, capabilities=("explore",), running=0, max_running=1, priority=0):

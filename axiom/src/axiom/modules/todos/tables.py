@@ -26,7 +26,7 @@ todos = Table(
     Column("category", String, nullable=False),
     Column("theme", String, nullable=False, default=""),
     Column("priority", Integer, nullable=False, default=50),
-    Column("status", String, nullable=False, default="pending"),
+    Column("status", String, nullable=False, default="open", server_default="open"),
     Column("created_by", String, nullable=False),
     Column("status_reason", Text, nullable=False, default=""),
     Column("created_at", UTCDateTimeText, nullable=False),
@@ -37,7 +37,7 @@ todos = Table(
     ForeignKeyConstraint(["task_id"], [tasks.c.id], ondelete="CASCADE"),
     CheckConstraint("priority BETWEEN 0 AND 100", name="priority"),
     CheckConstraint(
-        "status IN ('pending','active','completed','rejected','obsolete')",
+        "status IN ('open','partial','blocked','completed','rejected','obsolete')",
         name="status",
     ),
     CheckConstraint(

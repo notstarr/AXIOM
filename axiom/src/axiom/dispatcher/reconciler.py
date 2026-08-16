@@ -205,6 +205,10 @@ class Reconciler:
                 # work ahead of it so a newly reported vulnerability cannot
                 # consume the Task's last slot before its Explore work.
                 {"bootstrap": 0, "reason": 1, "explore": 2, "review": 3}[item.kind],
+                # Intent priority is owned by Reason and is only meaningful
+                # within a work kind.  Higher values run first; old snapshots
+                # without the field retain the neutral default.
+                -self._work_priority(item),
                 item.created_at,
                 item.id,
             )
@@ -224,6 +228,21 @@ class Reconciler:
             if worker is not None:
                 return work, worker
         return None
+
+    @staticmethod
+    def _work_priority(
+        work: IntentSnapshot | ReasonRunSnapshot | ReviewRunSnapshot,
+    ) -> int:
+        """Return the scheduler priority for a pending work item.
+
+        Only Intent rows carry an Intent priority.  ``getattr`` is deliberate:
+        dispatchers can briefly talk to an older API during a rolling upgrade,
+        in which case the neutral value preserves the existing FIFO behavior.
+        """
+
+        if isinstance(work, IntentSnapshot):
+            return int(getattr(work, "priority", 50))
+        return 50
 
     @staticmethod
     def _remove_pending(

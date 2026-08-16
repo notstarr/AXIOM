@@ -30,7 +30,7 @@ def test_todo_is_single_level_and_status_can_be_updated(client) -> None:
     assert created.status_code == 201, created.text
     todo = created.json()
     assert todo["id"] == "td001"
-    assert todo["status"] == "pending"
+    assert todo["status"] == "open"
     assert todo["sources"] == [{"type": "fact", "id": "origin"}]
 
     updated = client.patch(

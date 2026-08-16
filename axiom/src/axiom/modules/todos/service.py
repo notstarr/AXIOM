@@ -4,7 +4,13 @@ from sqlalchemy import Engine
 
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.todos.repository import TodoRepository
-from axiom.modules.todos.schemas import CreateTodo, Todo, UpdateTodo
+from axiom.modules.todos.schemas import (
+    CreateTodo,
+    LEGACY_TODO_STATUS_MAP,
+    Todo,
+    UpdateTodo,
+    TODO_STATUS_REASON_REQUIRED,
+)
 from axiom.shared.clock import utcnow
 from axiom.shared.errors import ConflictError, NotFoundError
 
@@ -47,6 +53,9 @@ class TodoService:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[Todo], int]:
+        if status is not None:
+            normalized_status = status.strip()
+            status = LEGACY_TODO_STATUS_MAP.get(normalized_status, normalized_status)
         with self.engine.connect() as conn:
             task = self.tasks.get(conn, task_id)
             if task is None:
@@ -83,6 +92,16 @@ class TodoService:
                 raise NotFoundError(f"Todo not found: {todo_id}")
             if current.archived:
                 raise ConflictError(f"Archived Todo cannot be updated: {todo_id}")
+            effective_status = command.status or current.status
+            effective_reason = (
+                command.status_reason
+                if command.status_reason is not None
+                else current.status_reason
+            )
+            if effective_status in TODO_STATUS_REASON_REQUIRED and not effective_reason.strip():
+                raise ConflictError(
+                    f"status_reason is required for Todo status {effective_status}"
+                )
             for source in command.source_adds:
                 if not self.repository.source_exists(conn, task_id=task_id, source=source):
                     raise ConflictError(f"Todo source not found: {source.type}:{source.id}")

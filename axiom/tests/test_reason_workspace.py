@@ -223,7 +223,7 @@ def test_reason_requires_explicit_review_when_a_todo_has_no_open_intent(client) 
         json={"lease_id": claim["lease_id"]},
     )
     assert committed.status_code == 409
-    assert client.get(f"/api/v1/tasks/{task['id']}/todos").json()[0]["status"] == "active"
+    assert client.get(f"/api/v1/tasks/{task['id']}/todos").json()[0]["status"] == "open"
 
 
 def test_reason_rejects_commit_when_a_source_fact_is_not_consumed(client) -> None:
@@ -343,7 +343,7 @@ def test_reason_no_op_requires_actionable_todos_to_be_closed(client) -> None:
             "lease_id": claim["lease_id"],
             "update": {
                 "todo_id": todo_id,
-                "status": "obsolete",
+                "status": "blocked",
                 "status_reason": "现有材料不足且没有材料性的新验证方向",
             },
         },
@@ -356,7 +356,7 @@ def test_reason_no_op_requires_actionable_todos_to_be_closed(client) -> None:
     assert committed.status_code == 200, committed.text
     assert committed.json()["created_intent_ids"] == []
     todo = client.get(f"/api/v1/tasks/{task['id']}/todos").json()[0]
-    assert todo["status"] == "obsolete"
+    assert todo["status"] == "blocked"
 
 
 def test_reason_completes_a_reviewed_todo_and_records_completed_at(client) -> None:
@@ -398,7 +398,7 @@ def test_reason_keeps_a_reviewed_todo_active_only_with_a_new_intent(client) -> N
             "lease_id": claim["lease_id"],
             "update": {
                 "todo_id": "td001",
-                "status": "active",
+                "status": "partial",
                 "status_reason": "仍需验证订单修改接口",
             },
         },
@@ -421,7 +421,7 @@ def test_reason_keeps_a_reviewed_todo_active_only_with_a_new_intent(client) -> N
         json={"lease_id": claim["lease_id"]},
     )
     assert rejected.status_code == 409
-    assert "保持 active 时必须派发新的关联 Intent" in rejected.text
+    assert "必须先收口无后续工作的 Todo：td001" in rejected.text
 
     proposed = client.post(
         f"/api/v1/reason-workspaces/{workspace['id']}/intents",
@@ -445,7 +445,7 @@ def test_reason_keeps_a_reviewed_todo_active_only_with_a_new_intent(client) -> N
     assert committed.status_code == 200, committed.text
     assert committed.json()["created_intent_ids"] == ["i003"]
     todo = client.get(f"/api/v1/tasks/{task['id']}/todos").json()[0]
-    assert todo["status"] == "active"
+    assert todo["status"] == "partial"
     assert todo["status_reason"] == "仍需验证订单修改接口"
 
 
@@ -549,7 +549,7 @@ def test_reason_workspace_commits_todos_and_pending_intents_atomically(client, d
     assert result["created_intent_ids"] == ["i002"]
 
     todo = client.get(f"/api/v1/tasks/{task['id']}/todos").json()[0]
-    assert todo["status"] == "active"
+    assert todo["status"] == "open"
     graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
     assert [item["id"] for item in graph["intents"]] == ["i001", "i002"]
     explore = next(item for item in graph["intents"] if item["id"] == "i002")

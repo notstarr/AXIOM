@@ -91,13 +91,14 @@ def test_paginated_artifact_vulnerability_and_todo_endpoints(client) -> None:
     assert vulnerability_page.headers["X-Total-Count"] == "3"
     assert len(vulnerability_page.json()) == 2
 
-    for index, status in enumerate(["pending", "active", "completed"]):
+    for index, status in enumerate(["open", "partial", "completed"]):
         response = client.post(
             f"/api/v1/tasks/{task['id']}/todos",
             json={
                 "title": f"验证授权分支 {index}",
                 "category": "authorization",
                 "status": status,
+                "status_reason": "本轮状态说明" if status != "open" else "",
                 "sources": [{"type": "fact", "id": "origin"}],
             },
         )

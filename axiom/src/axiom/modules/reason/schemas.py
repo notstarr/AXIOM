@@ -2,10 +2,17 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 from axiom.modules.goals.schemas import GoalAssessment
-from axiom.modules.todos.schemas import TodoCategory, TodoSource, TodoStatus
+from axiom.modules.todos.schemas import (
+    LEGACY_TODO_STATUS_MAP,
+    LEGACY_TODO_STATUSES,
+    TODO_STATUS_REASON_REQUIRED,
+    TodoCategory,
+    TodoSource,
+    TodoStatus,
+)
 
 
 class DraftTodo(BaseModel):
@@ -14,7 +21,7 @@ class DraftTodo(BaseModel):
     category: TodoCategory
     theme: str = ""
     priority: int = Field(default=50, ge=0, le=100)
-    status: TodoStatus = "pending"
+    status: TodoStatus = "open"
     status_reason: str = ""
     sources: list[TodoSource]
 
@@ -31,10 +38,24 @@ class DraftTodo(BaseModel):
     def normalize_optional_text(cls, value: str) -> str:
         return value.strip()
 
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, value: str) -> str:
+        normalized = str(value).strip()
+        return LEGACY_TODO_STATUS_MAP.get(normalized, normalized)
+
     @model_validator(mode="after")
     def require_sources(self) -> "DraftTodo":
         if not self.sources:
             raise ValueError("Todo requires at least one source")
+        return self
+
+    @model_validator(mode="after")
+    def require_status_reason(self) -> "DraftTodo":
+        if self.status in LEGACY_TODO_STATUSES:
+            raise ValueError(f"legacy Todo status is read-only: {self.status}")
+        if self.status in TODO_STATUS_REASON_REQUIRED and not self.status_reason:
+            raise ValueError(f"status_reason is required for Todo status {self.status}")
         return self
 
 
@@ -66,6 +87,20 @@ class DraftTodoUpdate(BaseModel):
             raise ValueError("title must not be empty")
         return value
 
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return LEGACY_TODO_STATUS_MAP.get(normalized, normalized)
+
+    @model_validator(mode="after")
+    def reject_legacy_status(self) -> "DraftTodoUpdate":
+        if self.status in LEGACY_TODO_STATUSES:
+            raise ValueError(f"legacy Todo status is read-only: {self.status}")
+        return self
+
 
 class DraftIntent(BaseModel):
     todo_ref: str | None = None
@@ -73,6 +108,7 @@ class DraftIntent(BaseModel):
     from_facts: list[str]
     description: str
     targets: list[str] = Field(default_factory=list)
+    priority: int = Field(default=50, ge=0, le=100)
     execute_seconds: int = Field(gt=0)
     conclude_seconds: int = Field(gt=0)
 
@@ -115,10 +151,58 @@ class DraftIntent(BaseModel):
         return self
 
 
+IntentAssessmentStatus = Literal["open", "partial", "blocked", "completed"]
+
+
+class DraftIntentAssessment(BaseModel):
+    """One immutable evaluation of a terminal Explore Intent.
+
+    ``open`` is the persisted/default value for an Intent which has not been
+    evaluated yet.  Workspace commands may only transition it to one of the
+    three terminal evaluation states; the service enforces that rule against
+    the current database row as well as the in-memory draft.
+    """
+
+    intent_id: str
+    status: IntentAssessmentStatus = Field(
+        validation_alias=AliasChoices("status", "assessment_status")
+    )
+    reason: str = Field(
+        validation_alias=AliasChoices("reason", "assessment_reason")
+    )
+
+    @field_validator("intent_id")
+    @classmethod
+    def require_intent_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("intent_id must not be empty")
+        return value
+
+    @field_validator("reason")
+    @classmethod
+    def require_reason(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("reason must not be empty")
+        return value
+
+
+# Public alias for callers that do not distinguish a staged assessment from
+# the persisted Intent assessment payload.
+IntentAssessment = DraftIntentAssessment
+
+
 class WorkspaceDraft(BaseModel):
     todo_adds: list[DraftTodo] = Field(default_factory=list, max_length=20)
     todo_updates: list[DraftTodoUpdate] = Field(default_factory=list, max_length=50)
-    intent_proposals: list[DraftIntent] = Field(default_factory=list, max_length=8)
+    # Reason is intentionally allowed to persist a large backlog in one run.
+    # This is only an infrastructure guard against an accidentally unbounded
+    # request; it is not a scheduling/concurrency quota.
+    intent_proposals: list[DraftIntent] = Field(default_factory=list, max_length=256)
+    intent_assessments: list[DraftIntentAssessment] = Field(
+        default_factory=list, max_length=256
+    )
     goal_assessment: GoalAssessment | None = None
 
 
@@ -173,6 +257,10 @@ class ProposeWorkspaceIntent(WorkspaceWorkerCommand):
     intent: DraftIntent
 
 
+class AssessWorkspaceIntent(WorkspaceWorkerCommand):
+    assessment: DraftIntentAssessment
+
+
 class AssessWorkspaceGoal(WorkspaceWorkerCommand):
     assessment: GoalAssessment
 
@@ -184,6 +272,7 @@ class WorkspaceStatus(BaseModel):
     todo_add_count: int = 0
     todo_update_count: int = 0
     intent_proposal_count: int = 0
+    intent_assessment_count: int = 0
     todo_refs: list[str] = Field(default_factory=list)
     updated_todo_ids: list[str] = Field(default_factory=list)
     todo_review_ids: list[str] = Field(default_factory=list)

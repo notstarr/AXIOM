@@ -224,6 +224,13 @@
   }
 
   function mapIntent(intent) {
+    // ``priority`` is optional on payloads produced before the Intent
+    // lifecycle migration.  Preserve a real numeric zero, while treating
+    // null/undefined/blank legacy values as the neutral default.
+    const rawPriority = intent.priority;
+    const normalizedPriority =
+      typeof rawPriority === 'string' && rawPriority.trim() === '' ? null : rawPriority;
+    const parsedPriority = Number(normalizedPriority);
     return {
       id: intent.id,
       from: intent.from_facts || [],
@@ -233,6 +240,13 @@
       goal_cycle_id: intent.goal_cycle_id || null,
       kind: intent.kind || '',
       description: intent.description,
+      priority:
+        normalizedPriority === null || normalizedPriority === undefined || !Number.isFinite(parsedPriority)
+          ? 50
+          : parsedPriority,
+      assessment_status: intent.assessment_status || 'open',
+      assessment_reason: intent.assessment_reason || '',
+      assessed_at: intent.assessed_at || null,
       status: intent.status,
       creator: intent.creator,
       worker: intent.worker,
@@ -1599,10 +1613,15 @@
         this.showToast('凭证已删除');
       } catch (error) { this.showToast(error.message, 'error'); }
     },
-    async updateTodoStatus(todoId, status) {
+    async updateTodoStatus(todoId, status, reason = '') {
       if (!this.selectedProjectId) return;
       try {
-        await request('PATCH', `/tasks/${this.selectedProjectId}/todos/${todoId}`, { status, actor: this.actorName(), status_reason: '' });
+        let statusReason = String(reason || '').trim();
+        if (['partial', 'blocked', 'completed'].includes(status) && !statusReason) {
+          statusReason = String(prompt('请填写状态说明', '') || '').trim();
+          if (!statusReason) return;
+        }
+        await request('PATCH', `/tasks/${this.selectedProjectId}/todos/${todoId}`, { status, actor: this.actorName(), status_reason: statusReason });
         await this.loadProject(this.selectedProjectId);
         this.sideTab = 'todo';
       } catch (error) { this.showToast(error.message, 'error'); }

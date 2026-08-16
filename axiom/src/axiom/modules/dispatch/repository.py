@@ -57,17 +57,24 @@ class DispatchRepository:
             for row in task_rows
         }
 
+        # ``priority`` was added after the first dispatcher schema.  Build the
+        # projection dynamically so an upgraded application can still read a
+        # pre-migration database (all such rows use the schema default).
+        intent_columns = [
+            intents.c.task_id,
+            intents.c.id,
+            intents.c.kind,
+            intents.c.status,
+            intents.c.worker_pool_json,
+            intents.c.next_retry_at,
+            intents.c.created_at,
+            intents.c.claimed_at,
+        ]
+        priority_column = getattr(intents.c, "priority", None)
+        if priority_column is not None:
+            intent_columns.append(priority_column)
         intent_rows = conn.execute(
-            select(
-                intents.c.task_id,
-                intents.c.id,
-                intents.c.kind,
-                intents.c.status,
-                intents.c.worker_pool_json,
-                intents.c.next_retry_at,
-                intents.c.created_at,
-                intents.c.claimed_at,
-            )
+            select(*intent_columns)
             .where(
                 intents.c.archived.is_(False),
                 intents.c.status.in_(OPEN_STATUSES),
@@ -83,6 +90,7 @@ class DispatchRepository:
                     task_id=row["task_id"],
                     id=row["id"],
                     kind=row["kind"],
+                    priority=50 if row.get("priority") is None else int(row["priority"]),
                     status=row["status"],
                     worker_pool=json.loads(row["worker_pool_json"] or "[]"),
                     next_retry_at=(

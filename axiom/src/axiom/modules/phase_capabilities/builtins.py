@@ -164,6 +164,14 @@ _CORE_BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = (
         availability=_all_modes("reason"),
     ),
     BuiltinToolDefinition(
+        key="axiom.reason.intent.assess",
+        title="评估 Explore Intent",
+        description="对已结束且尚未评估的 Explore Intent 做一次性状态评估。",
+        source="axiom_internal",
+        invocation="axiom reason intent assess --intent-id ... --status ... --reason ...",
+        availability=_all_modes("reason"),
+    ),
+    BuiltinToolDefinition(
         key="axiom.reason.goal.assess",
         title="评估当前 Goal",
         description="提交当前 Goal 是否达成及其证据引用。",
