@@ -545,6 +545,11 @@
 </div>
 </div></template>
 
+<!-- ═══ 服务端按登录态动态选择：未登录 → 仅 login.js；已登录 → 完整业务脚本列表 ═══
+  中间件仍对 /static/js/ 下业务脚本做 404 伪装保护（未登录 200 仅 login.js）。
+  sentinel 区间在未登录请求时被 app.py 替换为单条 login.js 引用。
+  ═══════════════════════════════════════════════════════════════════ -->
+<!--AXIOM_AUTH_SCRIPTS_START-->
 <script src="/static/js/state.js?v=20260807-manual-reason-v1"></script>
 <script src="/static/js/helpers.js?v=20260807-manual-reason-v1"></script>
 <script src="/static/js/core.js?v=20260807-manual-reason-v1"></script>
@@ -563,5 +568,6 @@
 <script src="/static/js/prompts.js?v=20260807-manual-reason-v1"></script>
 <script src="/static/js/v2-adapter.js?v=20260807-manual-reason-v1"></script>
 <script src="/static/js/app.js?v=20260807-manual-reason-v1"></script>
+<!--AXIOM_AUTH_SCRIPTS_END-->
 </body>
 </html>

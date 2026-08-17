@@ -115,15 +115,17 @@ def test_logout_clears_cookie(client):
     [
         "/health",
         "/api/v1/auth/status",
-        "/api/v1/auth/login",
-        "/static/js/app.js",
+        "/static/js/login.js",
+        "/static/vendor/alpine.min.js",
+        "/static/apple.css",
+        "/static/logo.jpg",
         "/",
     ],
 )
 def test_middleware_whitelists_public_paths(client, monkeypatch, path):
     monkeypatch.setenv("AXIOM_AUTH_DISABLED", "0")
     response = client.get(path)
-    assert response.status_code != 401
+    assert response.status_code == 200, f"{path} 公开资源未登录应可直接访问"
 
 
 def test_middleware_blocks_unauthenticated_api(client, monkeypatch):
@@ -259,3 +261,155 @@ def test_docs_and_openapi_disabled(client):
     for path in ("/docs", "/redoc", "/openapi.json"):
         response = client.get(path)
         assert response.status_code == 404, f"{path} 应返回 404"
+
+
+# ─── 前端业务 JS / 模板鉴权隔离（未登录 404 伪装，登录后放行） ───
+# 方案1：未登录攻击者无法通过下载静态 JS/模板枚举内部 API 路径
+
+
+def test_unauthenticated_business_js_returns_404(client, monkeypatch):
+    """未登录请求业务 JS（含全部内部 API 路径）应伪装 404，不暴露接口清单。"""
+    monkeypatch.setenv("AXIOM_AUTH_DISABLED", "0")
+    for path in (
+        "/static/js/app.js",
+        "/static/js/core.js",
+        "/static/js/state.js",
+        "/static/js/projects.js",
+        "/static/js/helpers.js",
+        "/static/js/v2-adapter.js",
+    ):
+        response = client.get(path)
+        assert response.status_code == 404, f"{path} 未登录应返回 404"
+        assert response.json()["error"]["code"] == "not_found"
+
+
+def test_unauthenticated_templates_returns_404(client, monkeypatch):
+    """未登录请求页面模板（含业务结构与 API 字段）应伪装 404。"""
+    monkeypatch.setenv("AXIOM_AUTH_DISABLED", "0")
+    for path in (
+        "/static/templates/dashboard.html",
+        "/static/templates/human-view.html",
+        "/static/templates/settings.html",
+        "/static/templates/task-list.html",
+    ):
+        response = client.get(path)
+        assert response.status_code == 404, f"{path} 未登录应返回 404"
+
+
+def test_unauthenticated_vendor_libs_returns_404(client, monkeypatch):
+    """图库/渲染器等登录后按需加载的 vendor 库同样隐藏（未登录 404）。"""
+    monkeypatch.setenv("AXIOM_AUTH_DISABLED", "0")
+    for path in (
+        "/static/vendor/cytoscape.min.js",
+        "/static/vendor/dagre.min.js",
+        "/static/vendor/marked.min.js",
+        "/static/vendor/elk.bundled.js",
+    ):
+        response = client.get(path)
+        assert response.status_code == 404, f"{path} 未登录应返回 404"
+
+
+def test_public_login_assets_available_unauthenticated(client, monkeypatch):
+    """登录卡必需公开资源（login.js/alpine/css/logo）未登录可访问。"""
+    monkeypatch.setenv("AXIOM_AUTH_DISABLED", "0")
+    for path in (
+        "/static/js/login.js",
+        "/static/vendor/alpine.min.js",
+        "/static/apple.css",
+        "/static/tailwind.generated.css",
+        "/static/custom.css",
+        "/static/logo.jpg",
+    ):
+        response = client.get(path)
+        assert response.status_code == 200, f"{path} 公开资源应可访问"
+    # login.js 不得包含任何业务接口路径（仅登录网关逻辑）
+    login_js = client.get("/static/js/login.js").text
+    assert "AxiomLogin" in login_js
+    assert "performLogin" in login_js
+    assert "/api/v1/auth/login" in login_js
+    assert "/api/v1/projects" not in login_js
+
+
+def test_authenticated_business_assets_available(client, monkeypatch):
+    """登录后携带有效 token 访问业务 JS/模板/vendor 应 200。"""
+    monkeypatch.setenv("AXIOM_AUTH_DISABLED", "0")
+    token = _login(client).json()["token"]
+    for path in (
+        "/static/js/core.js",
+        "/static/js/app.js",
+        "/static/js/state.js",
+        "/static/templates/dashboard.html",
+        "/static/templates/human-view.html",
+        "/static/vendor/marked.min.js",
+    ):
+        response = client.get(path, headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 200, f"{path} 登录后应可访问"
+
+
+def test_authenticated_business_assets_via_cookie(client, monkeypatch):
+    """登录后浏览器携带 HttpOnly Cookie 访问业务 JS 也应 200（SPA 动态加载场景）。"""
+    monkeypatch.setenv("AXIOM_AUTH_DISABLED", "0")
+    login = _login(client)
+    token = login.json()["token"]
+    response = client.get(
+        "/static/js/core.js",
+        cookies={"axiom_token": token},
+    )
+    assert response.status_code == 200
+
+
+# ─── HTML 脚本段按登录态切换（未登录只注入 login.js，已登录注入完整业务脚本） ───
+
+
+def test_unauthenticated_index_serves_login_only_html(client, monkeypatch):
+    """未登录 GET / 返回的 HTML 不得内联任何业务脚本，仅含公开登录网关 login.js。"""
+    monkeypatch.setenv("AXIOM_AUTH_DISABLED", "0")
+    response = client.get("/")
+    assert response.status_code == 200
+    text = response.text
+    # 公开登录网关必须存在
+    assert "/static/js/login.js?v=" in text
+    # 全部业务脚本不得出现在未登录 HTML（攻击者无法通过静态分析枚举 API 路径）
+    for script in [
+        "state.js", "core.js", "helpers.js", "projects.js", "dashboard.js",
+        "skills.js", "files.js", "mcp.js", "graph.js", "human.js",
+        "archives.js", "timeline.js", "actions.js", "dispatch.js",
+        "worker-tools.js", "prompts.js", "v2-adapter.js", "app.js",
+    ]:
+        assert f"/static/js/{script}" not in text, (
+            f"未登录 HTML 不应内联 {script}（已登录版才暴露）"
+        )
+    # 未登录版仍可使用业务 JS 中的页面骨架（模板由运行时 fetch 拉取）
+    assert 'id="page-host"' in text
+
+
+def test_authenticated_index_serves_full_html(client, monkeypatch):
+    """已登录 GET / 返回的 HTML 包含完整业务脚本（用户已认证可使用全部功能）。"""
+    monkeypatch.setenv("AXIOM_AUTH_DISABLED", "0")
+    token = _login(client).json()["token"]
+    response = client.get("/", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    text = response.text
+    # 完整业务脚本列表必须存在
+    for script in [
+        "state.js", "core.js", "helpers.js", "projects.js", "app.js",
+    ]:
+        assert f"/static/js/{script}" in text, f"已登录 HTML 应内联 {script}"
+
+
+def test_spa_fallback_respects_auth_state(client, monkeypatch):
+    """SPA 路由 fallback（如 /tasks/123）同样按登录态返回对应 HTML 版本。"""
+    monkeypatch.setenv("AXIOM_AUTH_DISABLED", "0")
+    # 未登录 fallback → login.js only
+    unauth = client.get("/some/spa/route")
+    assert unauth.status_code == 200
+    assert "/static/js/login.js?v=" in unauth.text
+    assert "/static/js/app.js" not in unauth.text
+    # 已登录 fallback → 完整业务脚本
+    token = _login(client).json()["token"]
+    authed = client.get(
+        "/some/spa/route",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert authed.status_code == 200
+    assert "/static/js/app.js" in authed.text

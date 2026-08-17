@@ -1670,6 +1670,7 @@ def test_frontend_and_static_assets_are_served(client):
     response = client.get("/")
     assert response.status_code == 200
     assert "<title>axiom</title>" in response.text
+    # AXIOM_AUTH_DISABLED=1 等价于已登录模式：HTML 包含完整业务脚本列表
     for script in [
         "state", "projects", "skills", "v2-adapter", "helpers", "graph", "human", "timeline",
     ]:
