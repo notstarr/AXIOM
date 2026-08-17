@@ -92,6 +92,7 @@ browser_read_network(page_id, after_cursor=当前 cursor)
 
 - `browser_read_network` 按游标增量读取当前页面的 HTTP 和 WebSocket 活动，不会清空其他 Worker 数据。
 - `browser_read_console` 按游标读取 Console、Page Error 和 Dialog。
+- `browser_get_credentials` 从受控浏览器提取指定主域（如 `qq.com` 或 `*.qq.com`）或子域的 Cookie（含 HttpOnly）与 Storage，用于 API 探测或会话续期。
 - 敏感 Header 默认脱敏；只有验证确实需要时才设置 `include_sensitive=true`。
 - `browser_screenshot` 默认保存到本轮 `process/browser/screenshots/`；需要正式证据时显式提供当前运行目录内的路径。
 - `labels=true` 会在截图中标注当前 Snapshot 的 Ref；标记只对当时页面状态有效。

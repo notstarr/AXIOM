@@ -219,6 +219,14 @@ window.AxiomModules.helpers = {
     formatDate(ts) { if (!ts) return ''; const d = new Date(ts); return d.toLocaleDateString([],{year:'numeric',month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); },
     formatShortDate(ts) { if (!ts) return ''; const d = new Date(ts); return d.toLocaleDateString([],{year:'numeric',month:'short',day:'numeric'}); },
     formatTimelineDate(ts) { if (!ts) return ''; return new Date(ts).toLocaleDateString([],{year:'numeric',month:'short',day:'numeric'}); },
+    // 大模型输出常把换行写成字面量 "\n" 存进 DB;前端 CSS `whitespace-pre-wrap`
+    // 只认真换行,需要先把字面 `\n`/`\\n` 归一化成真换行,排版才正常。
+    formatMultiline(text) {
+      if (text === null || text === undefined) return '';
+      // 大模型输出常把换行写成字面量 "\r\n"/"\n"(两个字符:反斜杠+n)存进 DB;
+      // CSS whitespace-pre-wrap 只认真换行,需先归一化成真换行。
+      return String(text).replace(/\\r\\n|\\n/g, '\n');
+    },
     formatDurationMs(ms) {
       const totalSeconds = Math.max(0, Math.round(ms / 1000));
       const hours = Math.floor(totalSeconds / 3600);

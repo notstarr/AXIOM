@@ -54,6 +54,7 @@ BROWSER_TOOL_NAMES = (
     "browser_read_network",
     "browser_read_console",
     "browser_evaluate",
+    "browser_get_credentials",
 )
 
 INTERACTIVE_SELECTOR = (
@@ -529,6 +530,7 @@ class BrowserBrokerServer:
             "browser_read_network": self._read_network,
             "browser_read_console": self._read_console,
             "browser_evaluate": self._evaluate,
+            "browser_get_credentials": self._get_credentials,
         }
         handler = handlers.get(operation)
         if handler is None:
@@ -567,7 +569,7 @@ class BrowserBrokerServer:
             self._context = self._browser.contexts[0]
             self._cdp_url = lease.cdp_url
             await self._rebind_pages()
-            await self._minimize_all_windows()
+            await self._minimize_only_if_already_minimized()
             return self._context
 
     @staticmethod
@@ -749,6 +751,10 @@ class BrowserBrokerServer:
         ]
         if os.environ.get("CHROME_HEADLESS") == "1":
             args.append("--headless")
+        elif os.environ.get("CHROME_WINDOW", "minimized") != "normal":
+            # 有头 + 非 normal:把窗口放到屏幕外,启动瞬间不抢前台焦点。
+            # 窗口仍然存在,用户需要人工介入时从 Dock/任务栏恢复即可。
+            args.append("--window-position=-32000,-32000")
         if os.environ.get("CHROME_WINDOW", "minimized") != "normal":
             args.append("--start-minimized")
         environment = {
@@ -812,6 +818,7 @@ class BrowserBrokerServer:
         url = str(params.get("url") or "about:blank")
         self._require_target(lease, url)
         context = await self._ensure_browser(lease)
+        was_minimized = await self._all_windows_minimized()
         page = await context.new_page()
         state = await self._register_page(lease, page)
         wait_until = str(params.get("wait_until") or "domcontentloaded")
@@ -825,6 +832,10 @@ class BrowserBrokerServer:
                 )
             except Exception as exc:
                 navigation_note = str(exc)
+        if was_minimized:
+            # new_page() 会把 Chrome 窗口激活到前台;若之前所有窗口都是
+            # 最小化状态(用户没有人工恢复),立刻压回,避免抢占前台焦点。
+            await self._minimize_all_windows()
         return await self._page_response(
             state,
             f"已打开页面 {state.page_id}",
@@ -1193,6 +1204,113 @@ class BrowserBrokerServer:
         data["value"] = value
         return self._ok(rendered[:MAX_RESPONSE_CHARS], data)
 
+    async def _get_credentials(
+        self, lease: LeaseState, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        context = await self._ensure_browser(lease)
+        domain_query = str(params.get("domain") or "").strip().lower()
+        page_id = str(params.get("page_id") or "").strip()
+        include_storage = bool(params.get("include_storage", True))
+        include_expired = bool(params.get("include_expired", False))
+
+        target_host = ""
+        if page_id:
+            state = self._page(lease, {"page_id": page_id})
+            target_host = urlparse(state.page.url).hostname or ""
+        elif domain_query:
+            if "://" in domain_query:
+                target_host = urlparse(domain_query).hostname or ""
+            else:
+                target_host = domain_query.lstrip("*.")
+
+        if not target_host and not domain_query:
+            # 如果既未传 page_id 也未传 domain，尝试使用 lease 内第一个打开页面的 host
+            for st in lease.pages.values():
+                h = urlparse(st.page.url).hostname
+                if h:
+                    target_host = h
+                    break
+
+        if not target_host and domain_query:
+            target_host = domain_query.lstrip("*.")
+
+        # 1. 提取所有 Cookie
+        all_cookies = await context.cookies()
+        matched_cookies = []
+        now = time.time()
+
+        for c in all_cookies:
+            c_domain = str(c.get("domain") or "").lower().lstrip(".")
+            if not include_expired:
+                exp = c.get("expires", -1)
+                if 0 < exp < now:
+                    continue
+
+            if target_host:
+                if c_domain == target_host or target_host.endswith("." + c_domain) or c_domain.endswith("." + target_host):
+                    matched_cookies.append(c)
+            else:
+                matched_cookies.append(c)
+
+        # 2. 构造格式化请求头
+        cookie_header = "; ".join(f"{c['name']}={c['value']}" for c in matched_cookies)
+        formatted_headers = {}
+        if cookie_header:
+            formatted_headers["Cookie"] = cookie_header
+
+        # 3. 提取相关页面的 Storage
+        storage_by_origin: dict[str, Any] = {}
+        if include_storage and lease.pages:
+            for st in lease.pages.values():
+                try:
+                    p_url = st.page.url
+                    p_host = urlparse(p_url).hostname or ""
+                    if target_host and not (p_host == target_host or p_host.endswith("." + target_host) or target_host.endswith("." + p_host)):
+                        continue
+                    origin = f"{urlparse(p_url).scheme}://{urlparse(p_url).netloc}" if "://" in p_url else p_url
+                    storage_res = await st.page.evaluate(
+                        "() => ({localStorage: Object.fromEntries(Object.entries(localStorage)), sessionStorage: Object.fromEntries(Object.entries(sessionStorage))})"
+                    )
+                    if isinstance(storage_res, dict):
+                        storage_by_origin[origin] = storage_res
+                        # 如果 storage 里有 token 类字段，辅助填充 Authorization
+                        ls = storage_res.get("localStorage") or {}
+                        for k, v in ls.items():
+                            if isinstance(v, str) and ("token" in k.lower() or "auth" in k.lower()):
+                                if v.lower().startswith("bearer "):
+                                    formatted_headers["Authorization"] = v
+                                elif len(v) > 20 and not formatted_headers.get("Authorization"):
+                                    formatted_headers["Authorization"] = f"Bearer {v}"
+                except Exception:
+                    pass
+
+        # 4. 组装展示文本
+        lines = [
+            f"### 凭证提取结果 (目标: {target_host or '全量域'})",
+            f"- **匹配 Cookie 数**: {len(matched_cookies)} (HttpOnly: {sum(1 for c in matched_cookies if c.get('httpOnly'))})",
+            f"- **关联 Storage Origin 数**: {len(storage_by_origin)}",
+        ]
+        if formatted_headers:
+            lines.append("\n**Formatted Headers:**")
+            for hk, hv in formatted_headers.items():
+                lines.append(f"- `{hk}`: `{hv[:200] + '...' if len(hv) > 200 else hv}`")
+
+        if matched_cookies:
+            lines.append("\n**Cookies 详情:**")
+            for c in matched_cookies:
+                http_only_tag = " [HttpOnly]" if c.get("httpOnly") else ""
+                lines.append(f"- `{c.get('name')}`: `{c.get('value')}` (domain: `{c.get('domain')}`){http_only_tag}")
+
+        rendered = "\n".join(lines)
+        data = {
+            "target": target_host or domain_query or "all",
+            "cookie_count": len(matched_cookies),
+            "cookies": matched_cookies,
+            "storage_by_origin": storage_by_origin,
+            "formatted_headers": formatted_headers,
+        }
+        return self._ok(rendered[:MAX_RESPONSE_CHARS], data)
+
     async def _register_page(self, lease: LeaseState, page: Page) -> PageState:
         lease.page_sequence += 1
         page_id = f"p{lease.page_sequence:03d}"
@@ -1538,6 +1656,53 @@ class BrowserBrokerServer:
 
     async def _minimize_all_windows(self) -> None:
         if os.environ.get("CHROME_WINDOW", "minimized") == "normal" or self._browser is None:
+            return
+        for context in self._browser.contexts:
+            for page in context.pages:
+                with contextlib.suppress(Exception):
+                    await self._minimize_window(page)
+
+    async def _window_state(self, page: Page) -> str:
+        """Return the CDP windowState ('minimized'/'normal'/...) for ``page``."""
+        session = await page.context.new_cdp_session(page)
+        try:
+            info = await session.send("Browser.getWindowForTarget")
+            window_id = info.get("windowId")
+            if window_id is None:
+                return "unknown"
+            bounds = await session.send(
+                "Browser.getWindowBounds", {"windowId": window_id}
+            )
+            return str((bounds.get("bounds") or {}).get("windowState") or "unknown")
+        finally:
+            with contextlib.suppress(Exception):
+                await session.detach()
+
+    async def _all_windows_minimized(self) -> bool:
+        """True when every live window is minimized (or no window is open).
+
+        Used to decide whether a new page opened by the AI may steal focus: if
+        the user has already restored a window (state != minimized), AXIOM must
+        not force it back, per the browser-control SKILL contract.
+        """
+        if self._browser is None:
+            return True
+        for context in self._browser.contexts:
+            for page in context.pages:
+                with contextlib.suppress(Exception):
+                    if await self._window_state(page) != "minimized":
+                        return False
+        return True
+
+    async def _minimize_only_if_already_minimized(self) -> None:
+        """Minimize all windows only when none has been restored by the user.
+
+        Called on a fresh CDP attach so a window the operator opened manually
+        (e.g. to log in and persist cookies) is never collapsed by AXIOM.
+        """
+        if os.environ.get("CHROME_WINDOW", "minimized") == "normal" or self._browser is None:
+            return
+        if not await self._all_windows_minimized():
             return
         for context in self._browser.contexts:
             for page in context.pages:

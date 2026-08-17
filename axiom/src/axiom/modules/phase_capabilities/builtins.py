@@ -237,6 +237,7 @@ BROWSER_BUILTIN_TOOL_NAMES = (
     "browser_read_network",
     "browser_read_console",
     "browser_evaluate",
+    "browser_get_credentials",
 )
 
 _BROWSER_TOOL_TITLES = {
@@ -259,6 +260,7 @@ _BROWSER_TOOL_TITLES = {
     "browser_read_network": "读取页面流量",
     "browser_read_console": "读取控制台",
     "browser_evaluate": "检查页面脚本",
+    "browser_get_credentials": "提取凭证与Cookie",
 }
 
 BROWSER_BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = tuple(

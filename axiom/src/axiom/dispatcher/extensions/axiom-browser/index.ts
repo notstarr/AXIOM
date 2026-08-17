@@ -298,4 +298,16 @@ export default function axiomBrowser(pi: ExtensionAPI) {
       timeout_ms: TIMEOUT,
     }),
   });
+  register(pi, {
+    name: "browser_get_credentials",
+    label: "提取凭证与Cookie",
+    description: "从当前受控浏览器中提取指定主域名（如 '*.qq.com' 或 'qq.com'）或子域名的所有有效 Cookie（含 HttpOnly）、格式化 Header 与 Storage 凭证。",
+    parameters: Type.Object({
+      domain: Type.Optional(Type.String({ description: "目标主域名或通配符表达式（如 'qq.com'、'*.qq.com'、'mail.qq.com'）" })),
+      page_id: Type.Optional(PAGE_ID),
+      include_storage: Type.Optional(Type.Boolean({ description: "是否同时提取相关已打开页面的 localStorage 与 sessionStorage（默认 true）" })),
+      include_expired: Type.Optional(Type.Boolean({ description: "是否包含已过期的 Cookie（默认 false）" })),
+      timeout_ms: TIMEOUT,
+    }),
+  });
 }
