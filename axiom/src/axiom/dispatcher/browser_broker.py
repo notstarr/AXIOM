@@ -746,6 +746,9 @@ class BrowserBrokerServer:
             f"--user-data-dir={profile}",
             f"--remote-debugging-port={port}",
             "--remote-allow-origins=*",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-features=CalculateNativeWinOcclusion",
             "--no-first-run",
             "--window-size=1280,800",
         ]
