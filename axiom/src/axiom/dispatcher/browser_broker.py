@@ -741,7 +741,16 @@ class BrowserBrokerServer:
                 retryable=True,
             )
         profile.mkdir(parents=True, exist_ok=True)
+        # Apple Silicon 上强制以 arm64 原生运行 Chrome：
+        # 若进程树被 Rosetta (x86_64 转译) 拉起，JS 执行全走翻译层，
+        # 高频动画页面 CPU 会飙到 100%+ 且严重掉帧（实测 108% vs 原生 14%）。
+        launcher = (
+            ["arch", "-arm64"]
+            if platform.system() == "Darwin" and platform.machine() == "arm64"
+            else []
+        )
         args = [
+            *launcher,
             binary,
             f"--user-data-dir={profile}",
             f"--remote-debugging-port={port}",

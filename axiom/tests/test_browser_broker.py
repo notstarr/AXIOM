@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import platform
 import tempfile
 import threading
 import uuid
@@ -132,6 +133,7 @@ def test_browser_launcher_uses_an_isolated_profile_and_expected_flags(
     )
     lease = _lease_for_chrome(tmp_path)
     monkeypatch.setenv("AXIOM_CHROME_PROFILE_DIR", str(tmp_path / "Chrome-SecTest"))
+    monkeypatch.setenv("CHROME_WINDOW", "minimized")
     monkeypatch.setattr(BrowserBrokerServer, "_cdp_alive", classmethod(lambda _cls, _url: next(alive)))
     monkeypatch.setattr(BrowserBrokerServer, "_port_is_open", staticmethod(lambda _host, _port: False))
     monkeypatch.setattr(BrowserBrokerServer, "_chrome_binary", staticmethod(lambda: "/fake/chrome"))
@@ -152,11 +154,19 @@ def test_browser_launcher_uses_an_isolated_profile_and_expected_flags(
     asyncio.run(server._launch_chrome(lease))
 
     args = list(seen["args"])
-    assert args[0] == "/fake/chrome"
+    # Apple Silicon 上强制前置 `arch -arm64`（避免 Rosetta 转译导致 CPU 100%+ 掉帧）
+    if platform.system() == "Darwin" and platform.machine() == "arm64":
+        assert args[0] == "arch"
+        assert args[1] == "-arm64"
+        assert args[2] == "/fake/chrome"
+    else:
+        assert args[0] == "/fake/chrome"
     assert f"--user-data-dir={tmp_path / 'Chrome-SecTest'}" in args
     assert "--remote-debugging-port=19223" in args
     assert "--remote-allow-origins=*" in args
-    assert "--window-position=-32000,-32000" in args
+    # 屏幕外坐标已移除（避免 macOS 将窗口识别为不可见而锁 10~15fps）
+    assert not any(a.startswith("--window-position") for a in args)
+    assert "--window-size=1280,800" in args
     assert "--start-minimized" in args
     assert seen["kwargs"]["start_new_session"] is True
     assert server._chrome_pid == 4242

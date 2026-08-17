@@ -4,6 +4,12 @@
 # 用途：从访达/程序坞手动打开 AXIOM 专用的 Sec 浏览器（独立 Profile + CDP 9223）。
 #      与 dispatcher browser_broker.py 保持同一套性能参数，避免手动打开时退化卡顿。
 #
+# ⚠️ 架构铁律（Apple Silicon / M4）：
+#   `arch -arm64` 强制 Chrome 以原生 arm64 运行。若进程树被 Rosetta (x86_64 转译)
+#   拉起，JS 执行全走翻译层，高频动画页面 CPU 会飙到 100%+ 且严重掉帧——
+#   实测同一 ardot 页面：Rosetta 108% CPU vs arm64 原生 14% CPU。
+#   Intel Mac 上 `arch -arm64` 不存在，该启动器仅面向 macOS arm64 部署。
+#
 # 安装方式（生成 ~/Applications/Chrome-SecTest.app）：
 #   mkdir -p "$HOME/Applications/Chrome-SecTest.app/Contents/MacOS"
 #   cp "$(dirname "$0")/Chrome-SecTest-launch.sh" \
@@ -21,7 +27,7 @@
 #   --window-size=1280,800
 #       默认窗口尺寸；不设屏幕外坐标，避免 macOS 将窗口识别为不可见锁 10~15fps
 
-exec "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+exec arch -arm64 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --user-data-dir="$HOME/Library/Application Support/Chrome-SecTest" \
   --remote-debugging-port=9223 \
   --remote-allow-origins="*" \
