@@ -748,16 +748,18 @@ class BrowserBrokerServer:
             "--remote-allow-origins=*",
             "--disable-backgrounding-occluded-windows",
             "--disable-renderer-backgrounding",
+            "--disable-background-timer-throttling",
+            "--enable-gpu-rasterization",
+            "--enable-zero-copy",
+            "--ignore-gpu-blocklist",
+            "--autoplay-policy=user-gesture-required",
             "--no-first-run",
+            "--no-default-browser-check",
             "--window-size=1280,800",
         ]
         if os.environ.get("CHROME_HEADLESS") == "1":
             args.append("--headless")
-        elif os.environ.get("CHROME_WINDOW", "minimized") != "normal":
-            # 有头 + 非 normal:把窗口放到屏幕外,启动瞬间不抢前台焦点。
-            # 窗口仍然存在,用户需要人工介入时从 Dock/任务栏恢复即可。
-            args.append("--window-position=-32000,-32000")
-        if os.environ.get("CHROME_WINDOW", "minimized") != "normal":
+        elif os.environ.get("CHROME_WINDOW") == "minimized":
             args.append("--start-minimized")
         environment = {
             key: value
