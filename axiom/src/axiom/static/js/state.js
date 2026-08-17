@@ -387,6 +387,13 @@ window.AxiomModules.state = {
     axiomToolStatusFilter: 'all',
     axiomToolSourceFilter: 'all',
     axiomToolPhaseFilter: 'all',
+    // Auth state
+    currentUser: null,
+    isAuthenticated: false,
+    authLoading: true,
+    loginForm: { username: '', password: '', remember: true, error: '', loading: false },
+    changePasswordDialog: { open: false, oldPassword: '', newPassword: '', confirmPassword: '', error: '', success: '', loading: false },
+
     axiomToolRiskFilter: 'all',
     selectedAxiomTool: '',
     toolPageMode: 'builtin',

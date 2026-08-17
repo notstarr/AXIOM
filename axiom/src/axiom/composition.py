@@ -9,6 +9,7 @@ from axiom.modules.artifacts.service import ArtifactService
 from axiom.modules.axiom_tools.service import AxiomToolService
 from axiom.modules.archives.service import ArchiveService
 from axiom.modules.audit.service import AuditService
+from axiom.modules.auth.service import AuthService
 from axiom.modules.context.service import ContextService
 from axiom.modules.credentials.service import CredentialService
 from axiom.modules.dashboard.service import DashboardService
@@ -70,6 +71,7 @@ class Container:
     dashboard: DashboardService
     token_usage: TokenUsageService
     interventions: InterventionService
+    auth: AuthService
 
     @classmethod
     def build(
@@ -147,4 +149,5 @@ class Container:
             dashboard=DashboardService(engine, token_usage=token_usage),
             token_usage=token_usage,
             interventions=interventions,
+            auth=AuthService(data_dir),
         )

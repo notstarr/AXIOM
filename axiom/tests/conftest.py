@@ -13,6 +13,13 @@ from axiom.shared import model_registry as _model_registry  # noqa: F401
 from axiom.shared.database import create_database_engine, metadata
 
 
+# 测试环境关闭鉴权中间件拦截（鉴权路由本身仍可用）
+os.environ.setdefault("AXIOM_AUTH_DISABLED", "1")
+# 测试环境固定管理员初始密码，便于 auth 单测登录
+os.environ.setdefault("AXIOM_ADMIN_USER", "axiom")
+os.environ.setdefault("AXIOM_ADMIN_PASSWORD", "axiom-test-password-123")
+
+
 TEST_DATABASE_URL = os.getenv(
     "AXIOM_TEST_DATABASE_URL",
     "postgresql+psycopg://axiom_app:axiom-app-test@127.0.0.1:55433/axiom_test",

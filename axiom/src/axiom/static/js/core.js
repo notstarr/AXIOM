@@ -123,6 +123,141 @@ window.AxiomModules.core = {
       else if (name === 'archive-view') await this.loadArchives();
     },
 
+    async checkAuthStatus() {
+      try {
+        const token = localStorage.getItem('axiom_token');
+        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+        const resp = await fetch('/api/v1/auth/status', { headers });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.authenticated) {
+            this.isAuthenticated = true;
+            this.currentUser = data.username;
+          } else {
+            this.isAuthenticated = false;
+            this.currentUser = null;
+          }
+        } else {
+          this.isAuthenticated = false;
+          this.currentUser = null;
+        }
+      } catch (e) {
+        console.error('Failed to check auth status:', e);
+        this.isAuthenticated = false;
+      } finally {
+        this.authLoading = false;
+      }
+    },
+
+    async performLogin() {
+      if (!this.loginForm.username || !this.loginForm.password) {
+        this.loginForm.error = '请输入用户名和密码';
+        return;
+      }
+      this.loginForm.loading = true;
+      this.loginForm.error = '';
+      try {
+        const resp = await fetch('/api/v1/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: this.loginForm.username,
+            password: this.loginForm.password,
+            remember: this.loginForm.remember,
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          throw new Error(data.error?.message || '登录失败，请检查账号密码');
+        }
+        localStorage.setItem('axiom_token', data.token);
+        this.isAuthenticated = true;
+        this.currentUser = data.username;
+        this.loginForm.password = '';
+        this.showToast('登录成功，欢迎回来！');
+        this.handleRoute();
+      } catch (err) {
+        this.loginForm.error = err.message || '登录失败';
+      } finally {
+        this.loginForm.loading = false;
+      }
+    },
+
+    async performLogout() {
+      try {
+        await fetch('/api/v1/auth/logout', { method: 'POST' });
+      } catch (e) {}
+      localStorage.removeItem('axiom_token');
+      this.isAuthenticated = false;
+      this.currentUser = null;
+      this.showToast('已安全退出登录');
+    },
+
+    openChangePasswordDialog() {
+      this.changePasswordDialog = {
+        open: true,
+        oldPassword: '',
+        newPassword: '',
+        confirmPassword: '',
+        error: '',
+        success: '',
+        loading: false,
+      };
+    },
+
+    async submitChangePassword() {
+      const d = this.changePasswordDialog;
+      if (!d.oldPassword) {
+        d.error = '请输入原密码';
+        return;
+      }
+      if (!d.newPassword) {
+        d.error = '请输入新密码';
+        return;
+      }
+      if (d.newPassword.length < 6) {
+        d.error = '新密码长度至少需要 6 位';
+        return;
+      }
+      if (d.newPassword !== d.confirmPassword) {
+        d.error = '两次输入的新密码不一致';
+        return;
+      }
+      d.loading = true;
+      d.error = '';
+      d.success = '';
+      try {
+        const token = localStorage.getItem('axiom_token');
+        const resp = await fetch('/api/v1/auth/change-password', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': token ? `Bearer ${token}` : '',
+          },
+          body: JSON.stringify({
+            old_password: d.oldPassword,
+            new_password: d.newPassword,
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          throw new Error(data.error?.message || '修改密码失败');
+        }
+        if (data.token) {
+          localStorage.setItem('axiom_token', data.token);
+        }
+        d.success = '密码修改成功！请妥善保管新密码';
+        this.showToast('密码修改成功');
+        setTimeout(() => {
+          d.open = false;
+        }, 1200);
+      } catch (err) {
+        d.error = err.message || '修改失败';
+      } finally {
+        d.loading = false;
+      }
+    },
+
     async init() {
       this._panelResizeMove = (e) => this.onPanelResize(e);
       this._panelResizeStop = () => this.stopPanelResize();
@@ -133,8 +268,27 @@ window.AxiomModules.core = {
       this.initDarkMode();
       this.loadPrompts();
       this._pageAbortController = new AbortController();
-      this.startPolling();
-      window.addEventListener('hashchange', () => this.handleRoute());
+      
+      // 鉴权检测
+      await this.checkAuthStatus();
+      if (this.isAuthenticated) {
+        this.startPolling();
+      }
+
+      // 全局 401 兜底：凭据失效时切回登录态
+      window.addEventListener('axiom:unauthorized', () => {
+        this.isAuthenticated = false;
+        this.currentUser = null;
+        this.authLoading = false;
+        this.stopPolling?.();
+        try { localStorage.removeItem('axiom_token'); } catch (_) {}
+      });
+
+      window.addEventListener('hashchange', () => {
+        if (this.isAuthenticated) {
+          this.handleRoute();
+        }
+      });
       window.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); this.openGlobalSearch(); }
         if (e.key === 'Escape') {
@@ -142,7 +296,9 @@ window.AxiomModules.core = {
           if (this.errorDetail) this.errorDetail = null;
         }
       });
-      this.handleRoute();
+      if (this.isAuthenticated) {
+        this.handleRoute();
+      }
     },
 
     toggleSidebar() {

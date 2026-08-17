@@ -1569,6 +1569,17 @@ window.AxiomModules.projects = {
       this.intentActivityPollTimer = setTimeout(activityTick, 2000);
     },
 
+    stopPolling() {
+      this._pollGeneration++;
+      if (this.pollTimer) { clearTimeout(this.pollTimer); this.pollTimer = null; }
+      if (this.intentActivityPollTimer) { clearTimeout(this.intentActivityPollTimer); this.intentActivityPollTimer = null; }
+      if (this.runClockTimer) { clearInterval(this.runClockTimer); this.runClockTimer = null; }
+      if (this._pollVisibilityHandler) {
+        document.removeEventListener('visibilitychange', this._pollVisibilityHandler);
+        this._pollVisibilityHandler = null;
+      }
+    },
+
     routeSafeRefreshDue(routeKey) {
       const now = Date.now();
       const last = Number(this._lastSafeRefreshByRoute?.[routeKey] || 0);

@@ -6,6 +6,7 @@ from axiom.modules.artifacts.api import router as artifacts_router
 from axiom.modules.axiom_tools.api import router as axiom_tools_router
 from axiom.modules.archives.api import router as archives_router
 from axiom.modules.audit.api import router as audit_router
+from axiom.modules.auth.api import router as auth_router
 from axiom.modules.context.api import router as context_router
 from axiom.modules.credentials.api import router as credentials_router
 from axiom.modules.dashboard.api import router as dashboard_router
@@ -65,3 +66,4 @@ router.include_router(guard_router)
 router.include_router(goals_router)
 router.include_router(token_usage_router)
 router.include_router(interventions_router)
+router.include_router(auth_router)

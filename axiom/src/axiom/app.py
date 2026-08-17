@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -29,6 +30,45 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
         allow_startup_writes=initial_maintenance.state != "frozen",
     )
     app.include_router(router)
+
+    @app.middleware("http")
+    async def enforce_auth(request: Request, call_next):
+        # 测试/开发模式开关：AXIOM_AUTH_DISABLED=1 时跳过鉴权拦截
+        if os.environ.get("AXIOM_AUTH_DISABLED") == "1":
+            return await call_next(request)
+        path = request.url.path
+        # 豁免路径：健康检查、认证接口、静态前端资源与 OpenAPI 文档
+        if (
+            path == "/health"
+            or path.startswith("/api/v1/auth/login")
+            or path.startswith("/api/v1/auth/status")
+            or path.startswith("/static")
+            or path in {"/", "/favicon.svg", "/docs", "/redoc", "/openapi.json"}
+            or not path.startswith("/api/")
+        ):
+            return await call_next(request)
+
+        # 检查 Authorization header 或 Cookie
+        auth_header = request.headers.get("Authorization")
+        token = None
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+        elif "axiom_token" in request.cookies:
+            token = request.cookies.get("axiom_token", "").strip()
+
+        container: Container = request.app.state.container
+        if not token or not container.auth.verify_token(token):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": {
+                        "code": "unauthorized",
+                        "message": "未登录或登录凭据已过期，请重新登录",
+                    }
+                },
+            )
+
+        return await call_next(request)
 
     @app.middleware("http")
     async def enforce_maintenance(request: Request, call_next):

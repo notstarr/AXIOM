@@ -199,6 +199,29 @@ chmod +x "$HOME/.local/bin/axiomctl"
 # 启动服务
 "$HOME/.local/bin/axiomctl" start
 
+# 6. 回显管理员初始凭据（首次启动由 AuthService 自动生成随机密码）
+CRED_FILE="$HOME/.local/share/axiom-v3/credentials.txt"
+log "等待服务完成初始化以生成管理员凭据..."
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  [[ -f "$CRED_FILE" ]] && break
+  sleep 1
+done
+
+if [[ -f "$CRED_FILE" ]]; then
+  ADMIN_USER="$(grep -m1 '^Username:' "$CRED_FILE" | cut -d: -f2- | xargs)"
+  ADMIN_PASS="$(grep -m1 '^Password:' "$CRED_FILE" | cut -d: -f2- | xargs)"
+  log "================================================="
+  log "🔐 管理员登录凭据（请妥善保存，登录后建议立即修改密码）"
+  log "================================================="
+  printf '\033[1;32m[axiom-install] 登录地址: \033[0m\033[1;36mhttp://%s:%s\033[0m\n' "$HOST" "$PORT"
+  printf '\033[1;32m[axiom-install] 登录账号: \033[0m\033[1;36m%s\033[0m\n' "$ADMIN_USER"
+  printf '\033[1;32m[axiom-install] 登录密码: \033[0m\033[1;33;41m %s \033[0m\n' "$ADMIN_PASS"
+  log "凭据文件: $CRED_FILE (权限 600，仅当前用户可读)"
+  log "================================================="
+else
+  warn "暂未找到凭据文件，可稍后执行: cat $CRED_FILE"
+fi
+
 log "================================================="
 log "🎉 AXIOM Mac ARM64 一键部署成功！"
 log "访问地址: http://$HOST:$PORT"

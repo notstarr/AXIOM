@@ -55,6 +55,12 @@
     return `${origin.scheme ? `${origin.scheme}://` : ''}${wrapped}${origin.port ? `:${origin.port}` : ''}`;
   };
 
+  function onUnauthorized() {
+    // 凭据过期/失效：清除本地 token 并通知应用切回登录态
+    try { localStorage.removeItem('axiom_token'); } catch (_) {}
+    try { window.dispatchEvent(new CustomEvent('axiom:unauthorized')); } catch (_) {}
+  }
+
   async function request(method, path, body, options = {}) {
     const headers = { ...(options.headers || {}) };
     const init = { method, headers, signal: options.signal };
@@ -70,6 +76,7 @@
     let data = text;
     try { data = text ? JSON.parse(text) : null; } catch (_) {}
     if (!response.ok) {
+      if (response.status === 401 && !path.startsWith('/auth/')) onUnauthorized();
       const detail = data && typeof data === 'object'
         ? (data.detail || data.error?.message || data.message)
         : text;
@@ -88,7 +95,10 @@
     const text = await response.text();
     let items = [];
     try { items = text ? JSON.parse(text) : []; } catch (_) {}
-    if (!response.ok) throw new Error(items?.detail || text || `HTTP ${response.status}`);
+    if (!response.ok) {
+      if (response.status === 401 && !path.startsWith('/auth/')) onUnauthorized();
+      throw new Error(items?.detail || text || `HTTP ${response.status}`);
+    }
     return {
       items: Array.isArray(items) ? items : [],
       total: Number(response.headers.get('X-Total-Count') || items.length || 0),
