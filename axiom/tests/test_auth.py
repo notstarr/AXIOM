@@ -159,3 +159,58 @@ def test_middleware_rejects_expired_token(client, monkeypatch):
         headers={"Authorization": "Bearer forged.token.here"},
     )
     assert response.status_code == 401
+
+
+# ─── 机器控制面 service token（runner 专用，与用户登录态解耦） ───
+
+SERVICE_TOKEN = "test-service-token-abc123"
+
+
+@pytest.fixture()
+def auth_client(client, monkeypatch):
+    """强制开启中间件 + 注入 service token 的客户端（模拟生产环境）。"""
+    monkeypatch.setenv("AXIOM_AUTH_DISABLED", "0")
+    monkeypatch.setenv("AXIOM_SERVICE_TOKEN", SERVICE_TOKEN)
+    from fastapi.testclient import TestClient
+
+    from axiom.app import create_app
+    from axiom.shared.database import create_database_engine
+
+    from tests.conftest import TEST_DATABASE_URL
+
+    data_dir = client.app.state.container.store.root
+    engine = create_database_engine(TEST_DATABASE_URL, application_name="axiom-pytest-auth")
+    try:
+        with TestClient(create_app(engine=engine, data_dir=data_dir)) as test_client:
+            yield test_client
+    finally:
+        engine.dispose()
+
+
+def test_service_token_allows_machine_control_plane(auth_client):
+    """runner 用 service token 访问机器接口（如 settings/runtime）应放行。"""
+    response = auth_client.get(
+        "/api/v1/settings/runtime",
+        headers={"Authorization": f"Bearer {SERVICE_TOKEN}"},
+    )
+    assert response.status_code == 200
+
+
+def test_service_token_wrong_value_rejected(auth_client):
+    response = auth_client.get(
+        "/api/v1/settings/runtime",
+        headers={"Authorization": "Bearer wrong-service-token"},
+    )
+    assert response.status_code == 401
+
+
+def test_user_token_still_works_alongside_service_token(auth_client):
+    """用户登录 token 与 service token 并存互不干扰。"""
+    login = _login(auth_client)
+    assert login.status_code == 200
+    token = login.json()["token"]
+    response = auth_client.get(
+        "/api/v1/projects",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200

@@ -52,6 +52,14 @@ log "配置 macOS LaunchAgent 系统服务守护 (127.0.0.1:$PORT)..."
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 mkdir -p "$LAUNCH_AGENTS_DIR" "$HOME/.local/share/axiom-v3/logs" "$HOME/.local/share/axiom-v3/run"
 
+# 生成/复用机器控制面 service token（runner 与 server 共享，不依赖用户登录态）
+SERVICE_TOKEN_FILE="$HOME/.local/share/axiom-v3/service_token"
+if [[ ! -f "$SERVICE_TOKEN_FILE" ]]; then
+  "$AXIOM_ROOT/.venv/bin/python" -c "import secrets; print(secrets.token_hex(24))" > "$SERVICE_TOKEN_FILE"
+  chmod 600 "$SERVICE_TOKEN_FILE"
+  log "已生成内部 service token: $SERVICE_TOKEN_FILE"
+fi
+
 SERVER_PLIST="$LAUNCH_AGENTS_DIR/com.xrayai.axiom.plist"
 RUNNER_PLIST="$LAUNCH_AGENTS_DIR/com.xrayai.axiom.runner.plist"
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import os
 from pathlib import Path
 
@@ -16,6 +17,20 @@ from axiom.shared.errors import DomainError
 from axiom.shared.maintenance import read_maintenance
 
 
+def _read_service_token(data_dir: Path) -> str:
+    """机器控制面（runner）专用凭据：优先 env，其次 service_token 文件。"""
+    env_token = os.environ.get("AXIOM_SERVICE_TOKEN", "").strip()
+    if env_token:
+        return env_token
+    try:
+        token_file = data_dir / "service_token"
+        if token_file.exists():
+            return token_file.read_text("utf-8").strip()
+    except Exception:
+        pass
+    return ""
+
+
 def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
     data_dir = data_dir.expanduser().resolve()
     app = FastAPI(
@@ -29,6 +44,7 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
         data_dir=data_dir,
         allow_startup_writes=initial_maintenance.state != "frozen",
     )
+    app.state.service_token = _read_service_token(data_dir)
     app.include_router(router)
 
     @app.middleware("http")
@@ -57,16 +73,23 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
             token = request.cookies.get("axiom_token", "").strip()
 
         container: Container = request.app.state.container
-        if not token or not container.auth.verify_token(token):
-            return JSONResponse(
-                status_code=401,
-                content={
-                    "error": {
-                        "code": "unauthorized",
-                        "message": "未登录或登录凭据已过期，请重新登录",
-                    }
-                },
-            )
+        # 用户登录 token
+        if token and container.auth.verify_token(token):
+            return await call_next(request)
+        # 机器控制面 service token（runner 专用，与用户登录态解耦）
+        service_token = request.app.state.service_token
+        if service_token and token and hmac.compare_digest(token, service_token):
+            return await call_next(request)
+
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": {
+                    "code": "unauthorized",
+                    "message": "未登录或登录凭据已过期，请重新登录",
+                }
+            },
+        )
 
         return await call_next(request)
 
