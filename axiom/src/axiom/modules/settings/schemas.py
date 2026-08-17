@@ -36,35 +36,35 @@ class GuardHardBlockRule(BaseModel):
 class RuntimeConfig(BaseModel):
     runner_interval_seconds: float = Field(default=3.0, gt=0, le=60)
     global_max_active_runs: int = Field(
-        default=10,
+        default=15,
         ge=1,
         le=128,
         validation_alias=AliasChoices("global_max_active_runs", "max_parallel"),
     )
     global_max_active_tasks: int = Field(default=3, ge=1, le=128)
-    per_task_max_active_runs: int = Field(default=4, ge=1, le=128)
+    per_task_max_active_runs: int = Field(default=10, ge=1, le=128)
     per_task_explore_concurrency: int = Field(default=4, ge=1, le=128)
     per_task_review_concurrency: int = Field(default=4, ge=1, le=128)
     heartbeat_interval_seconds: int = Field(default=10, ge=1, le=300)
     lease_timeout_seconds: int = Field(default=60, ge=20, le=3_600)
     execution_retry_limit: int = Field(default=6, ge=1, le=50)
     infrastructure_retry_limit: int = Field(default=30, ge=1, le=200)
-    retry_base_seconds: int = Field(default=15, ge=1, le=3_600)
+    retry_base_seconds: int = Field(default=30, ge=1, le=3_600)
     retry_max_seconds: int = Field(default=300, ge=1, le=86_400)
     worker_failure_cooldown_seconds: int = Field(default=30, ge=1, le=3_600)
-    bootstrap_execute_seconds: int = Field(default=300, ge=60, le=86_400)
-    bootstrap_conclude_seconds: int = Field(default=120, ge=30, le=7_200)
-    reason_execute_seconds: int = Field(default=300, ge=60, le=7_200)
-    reason_conclude_seconds: int = Field(default=120, ge=30, le=7_200)
-    review_execute_seconds: int = Field(default=300, ge=60, le=7_200)
-    review_conclude_seconds: int = Field(default=120, ge=30, le=7_200)
+    bootstrap_execute_seconds: int = Field(default=600, ge=60, le=86_400)
+    bootstrap_conclude_seconds: int = Field(default=180, ge=30, le=7_200)
+    reason_execute_seconds: int = Field(default=600, ge=60, le=7_200)
+    reason_conclude_seconds: int = Field(default=300, ge=30, le=7_200)
+    review_execute_seconds: int = Field(default=400, ge=60, le=7_200)
+    review_conclude_seconds: int = Field(default=180, ge=30, le=7_200)
     reason_batch_size: int = Field(default=2, ge=1, le=20)
     reason_low_watermark: int = Field(default=1, ge=0, le=20)
     reason_max_wait_seconds: int = Field(default=180, ge=10, le=3_600)
     reason_min_interval_seconds: int = Field(default=60, ge=0, le=3_600)
     reason_target_open_intents: int = Field(default=4, ge=1, le=8)
     reason_max_new_intents_per_run: int = Field(default=4, ge=1, le=8)
-    explore_execute_min_seconds: int = Field(default=60, ge=10, le=86_400)
+    explore_execute_min_seconds: int = Field(default=300, ge=10, le=86_400)
     explore_execute_max_seconds: int = Field(default=3_600, ge=10, le=86_400)
     explore_conclude_min_seconds: int = Field(default=180, ge=180, le=7_200)
     explore_conclude_max_seconds: int = Field(default=600, ge=10, le=7_200)
@@ -76,8 +76,8 @@ class RuntimeConfig(BaseModel):
     external_report_max_attempts: int = Field(default=3, ge=1, le=10)
     guard_mode: Literal["off", "audit", "enforce"] = "enforce"
     guard_enabled_default: bool = False
-    guard_model_base_url: str = ""
-    guard_model_name: str = ""
+    guard_model_base_url: str = "https://api.siliconflow.cn/v1"
+    guard_model_name: str = "Qwen/Qwen3.5-9B"
     guard_api_key: str = ""
     guard_timeout_seconds: int = Field(default=3, ge=1, le=30)
     guard_whitelist_tools: list[str] = Field(
