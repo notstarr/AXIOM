@@ -28,13 +28,27 @@ def extract_token(request: Request, authorization: str | None = None) -> str | N
     return None
 
 
+def client_ip(request: Request) -> str:
+    """优先取 X-Forwarded-For 第一个 IP（反代场景），否则直连 IP。"""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else ""
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(
     payload: LoginRequest,
+    request: Request,
     response: Response,
     service: AuthService = Depends(get_auth_service),
 ) -> LoginResponse:
-    res = service.login(payload.username, payload.password, remember=payload.remember)
+    res = service.login(
+        payload.username,
+        payload.password,
+        remember=payload.remember,
+        ip=client_ip(request),
+    )
     # 写入 HttpOnly Cookie
     response.set_cookie(
         key="axiom_token",

@@ -29,6 +29,56 @@ class AuthError(DomainError):
         self.status_code = status_code
 
 
+class LoginThrottle:
+    """登录爆破防护（进程内）：连续失败锁定 + 单 IP 限速。
+
+    适用于单进程 uvicorn 部署（launchd 场景）。多 worker/多副本部署时
+    应把计数迁移到 Redis 等共享存储。
+    """
+
+    MAX_CONSECUTIVE_FAILURES = 5
+    LOCKOUT_SECONDS = 15 * 60
+    PER_MINUTE_LIMIT = 10
+
+    def __init__(self) -> None:
+        # (ip, username) -> (fail_count, locked_until_epoch)
+        self._failures: dict[tuple[str, str], tuple[int, float]] = {}
+        # (ip, minute_window) -> attempt_count
+        self._attempts: dict[tuple[str, int], int] = {}
+
+    def check(self, ip: str, username: str) -> None:
+        key = (ip, username.strip().lower())
+        now = time.time()
+        _, locked_until = self._failures.get(key, (0, 0.0))
+        if locked_until > now:
+            raise AuthError(
+                "login_locked",
+                "登录失败次数过多，账号已临时锁定，请 15 分钟后再试",
+                status_code=429,
+            )
+        minute_key = (ip, int(now // 60))
+        attempts = self._attempts.get(minute_key, 0)
+        if attempts >= self.PER_MINUTE_LIMIT:
+            raise AuthError(
+                "login_rate_limited",
+                "登录尝试过于频繁，请稍后再试",
+                status_code=429,
+            )
+        self._attempts[minute_key] = attempts + 1
+
+    def record_failure(self, ip: str, username: str) -> None:
+        key = (ip, username.strip().lower())
+        now = time.time()
+        count, _ = self._failures.get(key, (0, 0.0))
+        count += 1
+        locked_until = now + self.LOCKOUT_SECONDS if count >= self.MAX_CONSECUTIVE_FAILURES else 0.0
+        self._failures[key] = (count, locked_until)
+
+    def record_success(self, ip: str, username: str) -> None:
+        key = (ip, username.strip().lower())
+        self._failures.pop(key, None)
+
+
 def hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
     if salt is None:
         salt = secrets.token_hex(16)
@@ -60,6 +110,7 @@ class AuthService:
         self.secret_file = self.data_dir / "auth_secret.key"
         self._jwt_secret = self._get_or_create_secret()
         self._ensure_admin_user()
+        self.login_throttle = LoginThrottle()
 
     def _get_or_create_secret(self) -> bytes:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -129,12 +180,21 @@ class AuthService:
         self.auth_file.write_text(record.model_dump_json(indent=2), "utf-8")
         self.auth_file.chmod(0o600)
 
-    def login(self, username: str, password: str, remember: bool = True) -> LoginResponse:
+    def login(
+        self,
+        username: str,
+        password: str,
+        remember: bool = True,
+        ip: str = "",
+    ) -> LoginResponse:
+        self.login_throttle.check(ip, username)
         record = self._get_record()
-        if username.strip() != record.username:
+        if username.strip() != record.username or not verify_password(
+            password, record.password_hash, record.salt
+        ):
+            self.login_throttle.record_failure(ip, username)
             raise AuthError("invalid_credentials", "用户名或密码错误", status_code=401)
-        if not verify_password(password, record.password_hash, record.salt):
-            raise AuthError("invalid_credentials", "用户名或密码错误", status_code=401)
+        self.login_throttle.record_success(ip, username)
 
         expires_in = self.TOKEN_VALIDITY_SECONDS if remember else 24 * 3600
         token = self._create_token(record.username, expires_in)

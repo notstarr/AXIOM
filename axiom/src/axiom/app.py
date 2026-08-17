@@ -37,6 +37,10 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
         title="AXIOM API",
         version=__version__,
         description="Modular Task/Fact/Intent orchestration backend",
+        # 公网安全：关闭自动 API 文档，避免暴露全部接口结构（/docs /redoc /openapi.json）
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
     )
     initial_maintenance = read_maintenance(data_dir)
     app.state.container = Container.build(
@@ -175,6 +179,9 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
         def frontend_fallback(frontend_path: str) -> FileResponse:
             if frontend_path == "favicon.svg":
                 return FileResponse(static_dir / "favicon.svg")
+            # 公网安全：API 文档路径显式 404（FastAPI 自动文档已关闭，这里兜底）
+            if frontend_path in {"docs", "redoc", "openapi.json"}:
+                raise HTTPException(status_code=404, detail="Not Found")
             if frontend_path == "api" or frontend_path.startswith("api/"):
                 raise HTTPException(status_code=404, detail="Not Found")
             return FileResponse(index_file)

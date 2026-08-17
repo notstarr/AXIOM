@@ -214,3 +214,48 @@ def test_user_token_still_works_alongside_service_token(auth_client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
+
+
+# ─── 登录爆破防护（失败锁定 + 单 IP 限速） ───
+
+
+def test_login_lockout_after_repeated_failures(client):
+    """连续 5 次密码错误后，即使密码正确也返回 429 锁定。"""
+    for _ in range(5):
+        response = _login(client, password="wrong-pass-1")
+        assert response.status_code == 401
+    # 第 6 次：即使密码正确也被锁定
+    response = _login(client)
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "login_locked"
+
+
+def test_login_lockout_cleared_after_success(client):
+    """登录成功后清零失败计数。"""
+    for _ in range(3):
+        assert _login(client, password="wrong-pass-1").status_code == 401
+    assert _login(client).status_code == 200
+    # 失败计数已清零，再来 4 次失败不会锁定
+    for _ in range(4):
+        assert _login(client, password="wrong-pass-1").status_code == 401
+    assert _login(client).status_code == 200
+
+
+def test_login_rate_limit_per_ip(client):
+    """同一 IP 每分钟超过 10 次登录尝试被限速（不同用户名不触发锁定）。"""
+    for i in range(10):
+        response = _login(client, username=f"user{i}", password="wrong-pass-1")
+        assert response.status_code == 401
+    # 第 11 次尝试被限速
+    response = _login(client, username="user11", password="wrong-pass-1")
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "login_rate_limited"
+
+
+# ─── 关闭公网 API 文档（/docs /redoc /openapi.json） ───
+
+
+def test_docs_and_openapi_disabled(client):
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        response = client.get(path)
+        assert response.status_code == 404, f"{path} 应返回 404"
