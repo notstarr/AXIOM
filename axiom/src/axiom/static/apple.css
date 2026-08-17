@@ -94,7 +94,7 @@
   --font-mono: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", monospace;
 
   /* Sidebar */
-  --sidebar-width: 176px;
+  --sidebar-width: 192px;
   --sidebar-collapsed-width: 56px;
 
   /* Transitions */
@@ -334,7 +334,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 10px;
+  gap: 14px;
   padding: 0 11px;
   transition: background var(--transition-fast), color var(--transition-fast);
   flex-shrink: 0;
@@ -361,10 +361,11 @@ html, body {
 
 .nav-label {
   min-width: 0;
+  margin-left: 2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 520;
   opacity: 0;
   transform: translateX(-4px);
