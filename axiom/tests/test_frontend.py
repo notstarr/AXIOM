@@ -1751,8 +1751,7 @@ def test_frontend_and_static_assets_are_served(client):
     assert "单 Task Reviewer 并发" in settings.text
     assert "per_task_review_concurrency" in settings.text
     assert settings.text.count("1（固定）") >= 2
-    assert "Worker 管理已迁移" in settings.text
-    assert "打开 Worker 管理" in settings.text
+    assert "Worker 管理已迁移" not in settings.text
 
     workers = client.get("/static/templates/workers.html")
     assert workers.status_code == 200

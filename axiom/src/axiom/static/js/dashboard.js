@@ -173,7 +173,6 @@ window.AxiomModules.dashboard = {
 
     settingsTabs() {
       return [
-        { id: 'workers', title: 'Worker 管理', description: '模型、阶段与并发配置' },
         { id: 'config', title: '配置管理', description: '并发、超时、心跳与租约' },
         { id: 'judge', title: 'Guard 管理', description: '监管模型、密钥与规则' },
       ];

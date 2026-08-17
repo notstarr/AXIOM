@@ -174,7 +174,7 @@ window.AxiomModules.state = {
     crawlerTesting: false,
     crawlerTestResult: null,
     localPrefs: { layout_mode: 'elk_tb' },
-    activeSettingsTab: 'workers',
+    activeSettingsTab: 'config',
     settingsForm: {
       crawler_active_window_seconds: 180,
       crawler_flush_window_seconds: 45,

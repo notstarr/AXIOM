@@ -3,7 +3,7 @@
   <header class="app-page-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 shrink-0 flex items-center justify-between gap-3">
     <div>
       <h2 class="text-base font-semibold text-slate-800 tracking-tight">系统设置</h2>
-      <p class="text-xs text-slate-400 mt-0.5">沿用原有设置布局，对接 Backend V2 的 Dispatcher、Worker 与 Guard 配置。</p>
+      <p class="text-xs text-slate-400 mt-0.5">对接 Backend V2 的 Dispatcher 调度与 Guard 监管配置。</p>
     </div>
     <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition">刷新</button>
   </header>
@@ -93,17 +93,6 @@
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">重试退避上限（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.retry_max_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
           <div class="md:col-span-2"><label class="text-[11px] text-slate-400 mb-1 block font-medium">Worker 失败冷却（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.worker_failure_cooldown_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
         </div>
-      </div>
-    </section>
-
-    <section x-show="activeSettingsTab === 'workers'" x-cloak class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-      <div class="flex items-start justify-between gap-5">
-        <div>
-          <h3 class="text-sm font-semibold text-slate-700">Worker 管理已迁移</h3>
-          <p class="text-xs text-slate-400 mt-1 leading-5">模型、Base URL、Key、上下文窗口、思考模式和并发在 Worker 页面维护；阶段后端池及 Skill、MCP Tool、扩展 Tool 能力分配由四个逻辑 Worker 统一维护。</p>
-          <p class="text-[11px] text-slate-400 mt-2">系统运行预算和 Dispatcher 参数仍保留在本设置页。</p>
-        </div>
-        <button @click="navigateTo('workers')" class="shrink-0 h-8 px-3 rounded-lg bg-brand-500 text-white text-xs hover:bg-brand-600">打开 Worker 管理</button>
       </div>
     </section>
 
