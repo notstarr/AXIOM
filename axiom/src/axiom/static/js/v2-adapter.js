@@ -961,6 +961,7 @@
     }
 
     if (path === '/skills' || path.startsWith('/skills/')) return request(method, path, body);
+    if (path.startsWith('/integrations/')) return request(method, path, body);
 
     // MCP is a standalone V2 resource.  The compatibility adapter keeps the
     // established frontend API surface while the page itself no longer lives
