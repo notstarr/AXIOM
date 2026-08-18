@@ -586,6 +586,9 @@ class BrowserBrokerServer:
         configured = os.environ.get("CHROME_BIN", "").strip()
         candidates = [
             configured,
+            # 优先使用 Playwright 自带的独立 Google Chrome for Testing，实现进程与内存空间的物理级隔离
+            str(Path.home() / "Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"),
+            str(Path.home() / "Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"),
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
             "/Applications/Chromium.app/Contents/MacOS/Chromium",
@@ -613,8 +616,13 @@ class BrowserBrokerServer:
 
     @classmethod
     def _cdp_alive(cls, cdp_url: str) -> bool:
+        import urllib.request
         try:
-            with urlopen(cls._cdp_version_url(cdp_url), timeout=1.0) as response:
+            # 强制不使用本地 HTTP 代理探测 127.0.0.1
+            handler = urllib.request.ProxyHandler({})
+            opener = urllib.request.build_opener(handler)
+            req = urllib.request.Request(cls._cdp_version_url(cdp_url), headers={"Connection": "close"})
+            with opener.open(req, timeout=1.0) as response:
                 return 200 <= int(response.status) < 500
         except Exception:
             return False
@@ -648,7 +656,7 @@ class BrowserBrokerServer:
             command
             and "--type=" not in command
             and f"--remote-debugging-port={port}" in command
-            and f"--user-data-dir={profile}" in command
+            and ("Chrome-SecTest" in command or f"--user-data-dir={profile}" in command)
         )
 
     @classmethod
