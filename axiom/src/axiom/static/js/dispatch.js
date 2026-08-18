@@ -265,6 +265,9 @@ window.AxiomModules.dispatch = {
         effective_workers: data.effective_workers || [],
         network_proxy_mode: data.network_proxy_mode || 'off',
         network_proxy_url: data.network_proxy_url || 'http://127.0.0.1:7890',
+        dingtalk_enabled: !!data.dingtalk_enabled,
+        dingtalk_webhook_url: data.dingtalk_webhook_url || '',
+        dingtalk_secret: data.dingtalk_secret || '',
       };
       this.settingsForm.proxy_url = data.proxy_url ?? this.settingsForm.proxy_url ?? '';
       this.settingsForm.proxy_username = data.proxy_username || '';

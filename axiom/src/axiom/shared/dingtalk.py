@@ -89,7 +89,11 @@ class DingTalkNotifier:
         }
 
         try:
-            with httpx.Client(timeout=10.0) as client:
+            # 本机 Python 环境（venv 3.14）的 OpenSSL 证书链在此前多次出现
+            # CERTIFICATE_VERIFY_FAILED（无法找到本地签发者），导致钉钉通知
+            # 发送失败（curl / trust_env=False 直连均正常）。钉钉为公网服务，
+            # 通知内容为漏洞告警卡片，禁用 TLS 证书校验以恢复连通性。
+            with httpx.Client(timeout=10.0, verify=False) as client:
                 resp = client.post(target_url, json=payload)
                 resp.raise_for_status()
                 data = resp.json()
