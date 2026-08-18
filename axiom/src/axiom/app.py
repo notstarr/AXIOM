@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from axiom.composition import Container
 from axiom.shared.database import AXIOM_SCHEMA
 from axiom.shared.errors import DomainError
 from axiom.shared.maintenance import read_maintenance
+
+logger = logging.getLogger(__name__)
 
 
 def _read_service_token(data_dir: Path) -> str:
@@ -134,7 +137,7 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
             bot.start()
             app.state.dingtalk_bot = bot
         except Exception:
-            logger.exception("Failed to start DingTalk Stream bot")
+            logging.getLogger(__name__).exception("Failed to start DingTalk Stream bot")
 
     _start_dingtalk_stream()
 
