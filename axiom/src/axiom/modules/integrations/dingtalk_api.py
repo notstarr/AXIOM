@@ -269,6 +269,7 @@ async def dingtalk_incoming_webhook(
 
 
 @router.post("/test")
+@router.get("/test")
 async def dingtalk_test_notification() -> dict[str, Any]:
     """一键测试钉钉 Webhook 连通性"""
     ok = dingtalk_notifier.send_markdown(
