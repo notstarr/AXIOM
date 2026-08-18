@@ -137,28 +137,32 @@ class DingTalkNotifier:
             logger.error("Failed to send DingTalk notification: %s", e)
             return False
 
-    def _format_description(self, description: str, limit: int = 300) -> str:
+    def _format_description(self, description: str, limit: int = 600) -> str:
         """把漏洞描述整理成钉钉 markdown 卡片能识别的段落。
 
-        钉钉 markdown 卡片对单个 \n 不做换行（当作空格），需要 \n\n
-        才视为段落分隔；同时按 \n 边界截断，避免截到句子中间。
+        探索 worker 上报时常把换行写成字面 "\n"/"\\n"(两个字符：反斜杠+n)
+        存进 DB；钉钉 markdown 卡片对单个 \\n 不做换行，对 \\n\\n 也不渲染，
+        必须用 <br/> 强制换行，并按段落边界截断避免截到句子中间。
         """
         if not description:
             return ""
-        text = description.strip().replace("\r\n", "\n").replace("\n", "\n\n")
+        # 1. 归一化字面 "\n" -> 真换行
+        text = description.replace("\\r\\n", "\n").replace("\\n", "\n").strip()
+        # 2. 真换行转 <br/> 让钉钉 markdown 卡片渲染换行
+        text = text.replace("\n", "<br/>")
         if len(text) <= limit:
             return text
-        # 按段落边界截断
-        paragraphs = text.split("\n\n")
+        # 3. 按 <br/><br/> 段落边界截断
+        paragraphs = text.split("<br/><br/>")
         chunks: list[str] = []
         total = 0
         for p in paragraphs:
-            cost = len(p) + 2  # 段间 "\n\n"
+            cost = len(p) + len("<br/><br/>")
             if chunks and total + cost > limit:
                 break
             chunks.append(p)
             total += cost
-        return "\n\n".join(chunks).rstrip() + "…"
+        return "<br/><br/>".join(chunks).rstrip() + "…"
 
     def notify_vulnerability_reported(
         self,
@@ -195,7 +199,7 @@ class DingTalkNotifier:
             lines.append(f"**受影响资产**: `{affected_target}`")
         desc_preview = self._format_description(description)
         if desc_preview:
-            lines.append(f"**漏洞描述**:\n\n> {desc_preview.replace(chr(10) + chr(10), chr(10) + chr(10) + '> ')}")
+            lines.append(f"**漏洞描述**:\n\n{desc_preview}")
         if curl_command:
             lines.append(f"**复现命令 (Curl)**:\n\n```bash\n{curl_command.strip()[:400]}\n```")
 
@@ -237,7 +241,7 @@ class DingTalkNotifier:
             lines.append(f"**评审人/阶段**: `{reviewed_by}`")
         status_reason_text = self._format_description(status_reason, limit=400)
         if status_reason_text:
-            lines.append(f"**裁决理由**:\n\n> {status_reason_text.replace(chr(10) + chr(10), chr(10) + chr(10) + '> ')}")
+            lines.append(f"**裁决理由**:\n\n{status_reason_text}")
 
         lines.append(f"\n*AXIOM 自动化安全测试平台 · 评审通知*")
         card_text = "\n\n".join(lines)
