@@ -178,6 +178,7 @@ class PiBootstrapExecutor:
             timeout_seconds=execution_input.conclude_timeout_seconds or self.default_conclude_seconds,
             tool_names=native_tool_names("bootstrap", "conclude"),
             enable_axiom_tools=False,
+            enable_browser=False,
         )
         if result.cancelled:
             raise LeaseLostError(result.cancel_reason or "worker cancelled")
@@ -201,6 +202,7 @@ class PiBootstrapExecutor:
         stream_idle_timeout_seconds: float | None = None,
         stream_recovery_prompt: str | None = None,
         enable_axiom_tools: bool = True,
+        enable_browser: bool = True,
     ) -> ProcessResult:
         session_dir = Path(self.settings.session_dir or Path(execution_input.run_dir) / "sessions")
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -280,7 +282,7 @@ class PiBootstrapExecutor:
         for name, value in discovered_environment.items():
             environment.setdefault(name, value)
         browser_enabled = False
-        if execution_input.intent_kind == "explore":
+        if enable_browser and execution_input.intent_kind in {"bootstrap", "explore"}:
             browser_skill = browser_skill_directory(execution_input.skill_directories)
             if browser_skill is not None and self.browser_broker is not None:
                 browser_enabled = True

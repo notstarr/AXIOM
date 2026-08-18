@@ -9,9 +9,9 @@ requirements:
 
 浏览器控制只是测试的一种手段，主要用于触发真实业务流程并取得真实参数和值；对于已经明确的接口，优先使用 `curl` 等直接、可复现的方式验证。
 
-Explore 启用本 Skill 后，直接使用 AXIOM 内置 Extension 注册的 `browser_*` 工具。本 Skill 只是使用指南，不是工具实现；Chrome 生命周期、CDP 连接、页面隔离、网络记录和 Lease 清理都由 Browser Broker 管理。Chrome 未运行时，第一次调用浏览器工具会由 Broker 自动启动受控的 Chrome-SecTest。
+Bootstrap 或 Explore 启用本 Skill 后，直接使用 AXIOM 内置 Extension 注册的 `browser_*` 工具。本 Skill 只是使用指南，不是工具实现；Chrome 生命周期、CDP 连接、页面隔离、网络记录和 Lease 清理都由 Browser Broker 管理。Chrome 未运行时，第一次调用浏览器工具会由 Broker 自动启动受控的 Chrome-SecTest。
 
-浏览器工具是 Explore 阶段固定的内置 Tool，不进入阶段能力绑定表，也不需要在页面单独启停。**不要**通过 Bash 调用任何 `browser-control/scripts/`、`cdp_ctl.py`、启动 Chrome、拼接 CDP 命令或读取全局 mitmproxy/Reqable 流量。原生工具不可用时应报告基础设施错误，不得回退到可能操作其他 Worker 页面的旧路径。小程序和 App 的原生流量不属于本 Skill 范围。
+浏览器工具是 Bootstrap/Explore 执行阶段固定的内置 Tool，不进入阶段能力绑定表，也不需要在页面单独启停。Bootstrap 收口阶段没有浏览器工具，不能在收口时重新探测。**不要**通过 Bash 调用任何 `browser-control/scripts/`、`cdp_ctl.py`、启动 Chrome、拼接 CDP 命令或读取全局 mitmproxy/Reqable 流量。原生工具不可用时应报告基础设施错误，不得回退到可能操作其他 Worker 页面的旧路径。小程序和 App 的原生流量不属于本 Skill 范围。
 
 ## 默认流程
 

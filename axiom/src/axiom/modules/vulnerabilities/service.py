@@ -42,6 +42,12 @@ def dispatch_vulnerability_reported_notification(
             bool(dingtalk_notifier.config and dingtalk_notifier.config.webhook_url),
         )
         if dingtalk_notifier.is_enabled:
+            curl_command = ""
+            if hasattr(vulnerability, "curl_command") and vulnerability.curl_command:
+                curl_command = vulnerability.curl_command
+            elif getattr(vulnerability, "legacy", None) and vulnerability.legacy.curl_command:
+                curl_command = vulnerability.legacy.curl_command
+
             ok = dingtalk_notifier.notify_vulnerability_reported(
                 task_id=effective_task_id,
                 vuln_id=vulnerability.id,
@@ -51,7 +57,7 @@ def dispatch_vulnerability_reported_notification(
                 status=vulnerability.status,
                 affected_target=vulnerability.affected_target or "",
                 description=vulnerability.description or "",
-                curl_command=vulnerability.curl_command or "",
+                curl_command=curl_command,
             )
             if not ok:
                 logger.warning(

@@ -36,7 +36,7 @@ function brokerCall(operation: string, params: Record<string, unknown>, signal?:
     const socketPath = process.env.AXIOM_BROWSER_SOCKET || "";
     const token = process.env.AXIOM_BROWSER_TOKEN || "";
     if (!socketPath || !token) {
-      reject(new Error("browser_broker_unavailable: 当前 Explore Lease 没有 Browser Broker 身份"));
+      reject(new Error("browser_broker_unavailable: 当前阶段 Lease 没有 Browser Broker 身份"));
       return;
     }
     const socket = net.createConnection({ path: socketPath });
@@ -118,14 +118,14 @@ export default function axiomBrowser(pi: ExtensionAPI) {
     if (!legacy) return;
     return {
       block: true,
-      reason: `Explore 已启用原生 browser_* Tool，禁止通过 Bash 调用旧浏览器脚本 ${legacy}`,
+      reason: `当前阶段已启用原生 browser_* Tool，禁止通过 Bash 调用旧浏览器脚本 ${legacy}`,
     };
   });
 
   register(pi, {
     name: "browser_open_page",
     label: "打开浏览器页面",
-    description: "在当前 Explore Lease 中创建独占页面并打开 URL，返回 page_id。",
+    description: "在当前阶段 Browser Lease 中创建独占页面并打开 URL，返回 page_id。",
     parameters: Type.Object({
       url: Type.String({ minLength: 1 }),
       wait_until: Type.Optional(Type.Union([
@@ -137,13 +137,13 @@ export default function axiomBrowser(pi: ExtensionAPI) {
   register(pi, {
     name: "browser_list_pages",
     label: "列出浏览器页面",
-    description: "只列出当前 Explore Lease 拥有的页面。",
+    description: "只列出当前阶段 Browser Lease 拥有的页面。",
     parameters: Type.Object({}),
   });
   register(pi, {
     name: "browser_close_page",
     label: "关闭浏览器页面",
-    description: "关闭当前 Explore Lease 的指定页面。",
+    description: "关闭当前阶段 Browser Lease 的指定页面。",
     parameters: Type.Object({ page_id: PAGE_ID }),
   });
   register(pi, {

@@ -32,8 +32,12 @@ PHASES = ("bootstrap", "reason", "explore", "review")
 SCOPES = ("common", *PHASES)
 KINDS = ("skill", "mcp_tool", "axiom_tool")
 _DEFAULTS_MARKER = ".phase-capabilities-v1-initialized"
+_BROWSER_BOOTSTRAP_MARKER = ".phase-capabilities-v2-browser-bootstrap"
 _MCP_NAME_PART = re.compile(r"[^a-z0-9_]+")
-_DEFAULT_SKILL_SCOPES = {"vuln-review": "review"}
+_DEFAULT_SKILL_SCOPES = {
+    "vuln-review": ("review",),
+    "browser-control": ("bootstrap", "explore"),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -568,6 +572,7 @@ class PhaseCapabilityService:
 
     def _initialize_existing_skills_once(self) -> None:
         marker = self.data_dir / _DEFAULTS_MARKER
+        browser_marker = self.data_dir / _BROWSER_BOOTSTRAP_MARKER
         skill_records = self.skills.list()
         with transaction(self.engine) as conn:
             if not marker.exists():
@@ -579,12 +584,35 @@ class PhaseCapabilityService:
                         conn, capability_kind="skill", capability_key=skill.name
                     ):
                         continue
+                    for scope in _DEFAULT_SKILL_SCOPES.get(skill.name, ("common",)):
+                        self.repository.ensure(
+                            conn,
+                            scope=scope,
+                            capability_kind="skill",
+                            capability_key=skill.name,
+                            now=now,
+                        )
+
+            # Existing installations were initialized before Bootstrap could
+            # use the native Browser Broker.  Add only the new Bootstrap
+            # binding once, preserving any user choice about the Explore
+            # binding and avoiding a startup-time re-enable after the marker.
+            if not browser_marker.exists():
+                browser_skill = next(
+                    (skill for skill in skill_records if skill.name == "browser-control"),
+                    None,
+                )
+                if (
+                    browser_skill is not None
+                    and browser_skill.enabled
+                    and Path(browser_skill.path).is_file()
+                ):
                     self.repository.ensure(
                         conn,
-                        scope=_DEFAULT_SKILL_SCOPES.get(skill.name, "common"),
+                        scope="bootstrap",
                         capability_kind="skill",
-                        capability_key=skill.name,
-                        now=now,
+                        capability_key="browser-control",
+                        now=utcnow(),
                     )
             self._ensure_mandatory_locked(conn, skill_records=skill_records)
         if not marker.exists():
@@ -592,6 +620,11 @@ class PhaseCapabilityService:
             temporary = marker.with_name(f".{marker.name}.tmp")
             temporary.write_text(utcnow() + "\n", encoding="utf-8")
             temporary.replace(marker)
+        if not browser_marker.exists():
+            browser_marker.parent.mkdir(parents=True, exist_ok=True)
+            temporary = browser_marker.with_name(f".{browser_marker.name}.tmp")
+            temporary.write_text(utcnow() + "\n", encoding="utf-8")
+            temporary.replace(browser_marker)
 
     def _ensure_mandatory_locked(self, conn, *, skill_records=None) -> None:
         now = utcnow()

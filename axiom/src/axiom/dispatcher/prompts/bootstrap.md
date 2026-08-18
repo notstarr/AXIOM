@@ -8,6 +8,7 @@
 - Context Manifest：`{context_manifest_path}` | 运行目录：`{run_dir}`
 - 技能目录（按需读取）：
 {skill_directories}
+- 若技能目录包含 `browser-control`，执行阶段可使用原生 `browser_*` 工具完成真实页面交互、读取渲染结果并获取网络基线；Bootstrap 收口阶段不可用，不能在收口时重新探测。
 
 ## 执行步骤
 

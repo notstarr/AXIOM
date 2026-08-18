@@ -970,16 +970,6 @@ class ExecutionService:
                             now=now,
                         )
                         vulnerability_records.append(vulnerability)
-                        # 上报漏洞入库后，事务外触发钉钉第 1 次推送
-                        # （explore worker 走 repository.create 绕过 service.report，
-                        #   推送必须在此补齐）
-                        from axiom.modules.vulnerabilities.service import (
-                            dispatch_vulnerability_reported_notification,
-                        )
-
-                        dispatch_vulnerability_reported_notification(
-                            vulnerability, task_id=task_id
-                        )
                         self.reviews.enqueue_in(
                             conn,
                             task_id=task_id,
@@ -1042,6 +1032,29 @@ class ExecutionService:
                     prepared.finish()
                 except OSError:
                     logger.exception(
+                        "failed to clean Explore run outputs: %s/%s",
+                        task_id,
+                        intent_id,
+                    )
+
+                # 事务成功提交后再触发钉钉推送，确保漏洞 ID 已落库且不会在事务内发生网络 IO 阻塞
+                for vuln in vulnerability_records:
+                    try:
+                        from axiom.modules.vulnerabilities.service import (
+                            dispatch_vulnerability_reported_notification,
+                        )
+                        dispatch_vulnerability_reported_notification(vuln, task_id=task_id)
+                    except Exception:
+                        logger.exception("Failed to dispatch DingTalk notification for vuln %s", vuln.id)
+
+                result = ExploreCompleted(
+                    task_id=task_id,
+                    intent_id=intent_id,
+                    fact_id=fact_id,
+                    reason_run_id=reason_run_id,
+                    artifacts=records,
+                    vulnerabilities=vulnerability_records,
+                )
                         "failed to clean Explore run outputs: %s/%s",
                         task_id,
                         intent_id,

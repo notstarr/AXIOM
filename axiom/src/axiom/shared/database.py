@@ -174,7 +174,7 @@ def database_url_from_env() -> str:
 def _load_postgresql_env_file() -> None:
     path_value = os.getenv("AXIOM_PG_ENV_FILE", "").strip()
     if not path_value:
-        return
+        path_value = "~/.local/share/axiom-v3/postgresql.env"
     path = os.path.expanduser(path_value)
     try:
         lines = open(path, encoding="utf-8").read().splitlines()

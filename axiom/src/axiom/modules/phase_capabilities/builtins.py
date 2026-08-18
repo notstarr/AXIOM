@@ -268,12 +268,20 @@ BROWSER_BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = tuple(
         key=name,
         title=_BROWSER_TOOL_TITLES[name],
         description=(
-            "通过当前 Explore Browser Lease 操作受控 Chrome 页面；"
+            "通过当前阶段 Browser Lease 操作受控 Chrome 页面；"
             "仅能访问任务 Scope 允许的网络目标。"
         ),
         source="axiom_browser",
         invocation=name,
-        availability=_all_modes("explore"),
+        # Bootstrap uses the browser during its execute pass to establish a
+        # real baseline.  Its conclude pass is deliberately kept artifact-
+        # only, matching the Bootstrap conclude contract.
+        availability=(
+            ("bootstrap", ("execute",)),
+            ("reason", ()),
+            ("explore", RUN_MODES),
+            ("review", ()),
+        ),
     )
     for name in BROWSER_BUILTIN_TOOL_NAMES
 )
