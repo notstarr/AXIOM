@@ -137,6 +137,20 @@ window.AxiomModules.dispatch = {
       }
     },
 
+    async testDingTalkSettings() {
+      try {
+        this.dingtalkTesting = true;
+        const res = await this.api('POST', '/integrations/dingtalk/test', {});
+        this.dingtalkTestResult = { ok: true, message: res.message || '测试通知已发送' };
+        this.showToast('钉钉测试通知发送成功', 'success');
+      } catch (e) {
+        this.dingtalkTestResult = { ok: false, message: e.message };
+        this.showToast(e.message, 'error');
+      } finally {
+        this.dingtalkTesting = false;
+      }
+    },
+
     async loadGuardAuditEvents() {
       try {
         this.guardAudit.loading = true;

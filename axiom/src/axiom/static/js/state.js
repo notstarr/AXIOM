@@ -204,6 +204,8 @@ window.AxiomModules.state = {
     judgeKeyForm: { api_key: '' },
     judgeTestResult: null,
     judgeTesting: false,
+    dingtalkTestResult: null,
+    dingtalkTesting: false,
     guardAudit: { events: [], loading: false, decision: 'all', project_id: '', limit: 100, expanded: {} },
     dispatchSettings: {
       runner_interval_seconds: 3,
@@ -239,6 +241,9 @@ window.AxiomModules.state = {
       reason_concurrency: 1,
       network_proxy_mode: 'off',
       network_proxy_url: 'http://127.0.0.1:7890',
+      dingtalk_enabled: false,
+      dingtalk_webhook_url: '',
+      dingtalk_secret: '',
       workers: [],
       config_version: 1,
       config_updated_at: '',

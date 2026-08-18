@@ -199,6 +199,43 @@
       </div>
     </section>
 
+    <!-- 钉钉告警设置 -->
+    <section x-show="activeSettingsTab === 'dingtalk'" x-cloak class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-5">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-sm font-semibold text-slate-700">钉钉告警与指令交互</h3>
+          <p class="mt-1 text-[11px] text-slate-400">配置钉钉自定义机器人 Webhook 与加签 Secret。漏洞发现时将实时推送初报，评审完毕时推送裁决理由；支持在钉钉群发送 /help 进行状态查询与启停控制。</p>
+        </div>
+      </div>
+
+      <div class="space-y-4">
+        <div class="flex items-center gap-2">
+          <input type="checkbox" id="dingtalk_enabled_box" x-model="dispatchSettings.dingtalk_enabled" class="rounded border-slate-300 text-brand-500 focus:ring-brand-400">
+          <label for="dingtalk_enabled_box" class="text-sm font-medium text-slate-700">启用钉钉通知与指令交互</label>
+        </div>
+
+        <div>
+          <label class="text-[11px] text-slate-400 mb-1 block font-medium">Webhook URL</label>
+          <input type="text" x-model="dispatchSettings.dingtalk_webhook_url" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+        </div>
+
+        <div>
+          <label class="text-[11px] text-slate-400 mb-1 block font-medium">加签 Secret（可选）</label>
+          <input type="password" x-model="dispatchSettings.dingtalk_secret" placeholder="SEC..." class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between gap-3 pt-2">
+        <div class="text-xs" x-show="dingtalkTestResult" :class="dingtalkTestResult && dingtalkTestResult.ok ? 'text-emerald-600' : 'text-rose-600'">
+          <span x-text="dingtalkTestResult ? dingtalkTestResult.message : ''"></span>
+        </div>
+        <div class="flex gap-2 ml-auto">
+          <button @click="testDingTalkSettings()" :disabled="dingtalkTesting" class="px-4 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition disabled:opacity-40" x-text="dingtalkTesting ? '发送中...' : '发送测试通知'"></button>
+          <button @click="saveServerSettings()" class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition">保存钉钉配置</button>
+        </div>
+      </div>
+    </section>
+
     <div x-show="activeSettingsTab === 'config'" x-cloak class="flex justify-end">
       <button @click="saveServerSettings()" class="px-5 py-2.5 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200">保存系统设置</button>
     </div>
