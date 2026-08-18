@@ -213,6 +213,8 @@ class ReasonRepository:
                 explore_conclude_min_seconds=explore_conclude_min_seconds,
                 explore_conclude_max_seconds=explore_conclude_max_seconds,
                 next_retry_at=None,
+                last_failure_kind="",
+                failure_class="",
                 activity_kind="claimed",
                 activity_summary=f"已由 {worker_name} 领取，正在启动 Reason 环境",
                 activity_tool="",
@@ -242,6 +244,8 @@ class ReasonRepository:
             )
             .values(
                 status="running",
+                last_failure_kind="",
+                failure_class="",
                 last_heartbeat_at=now,
                 activity_kind="preparing_context",
                 activity_summary="正在准备 Reason Context 与能力快照",

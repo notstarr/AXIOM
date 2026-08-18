@@ -36,6 +36,7 @@ window.AxiomModules.state = {
     crawlerResultsPageTab: 'pages',
     crawlerResultsPageData: null,
     treeExpanded: {},
+    todoExpandedState: {},
     // Prompt memo
     prompts: [],
     promptSearch: '',

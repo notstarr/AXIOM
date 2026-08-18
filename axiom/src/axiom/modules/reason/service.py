@@ -48,6 +48,7 @@ from axiom.modules.workers.tables import workers
 from axiom.shared.clock import format_utc, parse_utc, utcnow
 from axiom.shared.database import run_transaction, transaction
 from axiom.shared.errors import ConflictError, LeaseInactiveError, NotFoundError
+from axiom.shared.ids import allocate_id, id_counters
 from axiom.shared.ids import allocate_id
 from axiom.shared.storage import FileStore
 
@@ -1280,6 +1281,14 @@ class ReasonService:
                         now=now,
                     )
 
+                # Align the task intent counter with the real table before
+                # handing out ids.  A rolled-back transaction (e.g. a prior
+                # commit that failed on a unique violation) leaves the
+                # counter behind the table; re-using an existing id would
+                # then wedge every later commit in an infinite
+                # control_plane_unavailable retry loop.
+                self._align_intent_counter(conn, workspace.task_id)
+
                 created_intent_ids: list[str] = []
                 for proposal in draft.intent_proposals:
                     todo_id = proposal.todo_id or todo_refs.get(proposal.todo_ref or "")
@@ -1829,6 +1838,34 @@ class ReasonService:
             raise ConflictError(
                 "Intent assessment already exists with different parameters"
             )
+
+    @staticmethod
+    def _align_intent_counter(conn, task_id: str) -> None:
+        """Bring the task intent counter at least past the highest existing id.
+
+        A rolled-back Reason commit (e.g. a unique violation raised while
+        inserting a proposed Intent) rolls back the atomic id-counter
+        upsert with it, leaving ``id_counters.next_value`` behind the real
+        table.  The next commit then re-allocates an id that already exists,
+        fails again, and wedges the ReasonRun in an infinite
+        ``control_plane_unavailable`` retry loop.  Aligning here makes every
+        commit self-healing.
+        """
+        rows = conn.execute(
+            select(intents.c.id).where(intents.c.task_id == task_id)
+        ).scalars().all()
+        max_num = 0
+        for rid in rows:
+            if rid.startswith("i") and rid[1:].isdigit():
+                max_num = max(max_num, int(rid[1:]))
+        conn.execute(
+            update(id_counters)
+            .where(
+                id_counters.c.scope == task_id,
+                id_counters.c.kind == "intent",
+            )
+            .values(next_value=func.greatest(id_counters.c.next_value, max_num + 1))
+        )
 
     @staticmethod
     def _commit_intent_assessment(

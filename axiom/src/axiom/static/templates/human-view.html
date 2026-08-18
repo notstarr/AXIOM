@@ -373,14 +373,125 @@
   <!-- Todo 全量视图 -->
   <template x-if="humanTab === 'todos'">
   <main x-show="!project?.project?.archived" class="flex-1 min-h-0 overflow-y-auto p-5">
-    <div class="max-w-[1200px] mx-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div class="flex items-start justify-between gap-3"><div><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Reason workspace</p><h3 class="mt-1 text-base font-semibold text-slate-800">Todo 覆盖清单</h3><p class="mt-1 text-xs text-slate-400">Todo 是跨 Reason 轮次共享的任务清单，不按 Host / Path 聚类。</p></div><span class="px-2.5 py-1 rounded-lg bg-brand-50 text-brand-700 text-xs font-semibold" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total} 已完成`"></span></div>
-      <div class="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        <template x-for="group in humanTodoGroups()" :key="`todo-tab-${group.name}`"><section class="rounded-xl border border-slate-200 p-3"><div class="flex items-center justify-between"><h4 class="text-xs font-semibold text-slate-700" x-text="group.name"></h4><span class="text-[10px] text-slate-400" x-text="`${group.completed}/${group.total}`"></span></div><div class="mt-2 h-1.5 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full bg-emerald-400" :style="`width:${group.total ? group.completed / group.total * 100 : 0}%`"></div></div><div class="mt-3 space-y-2"><template x-for="todo in group.items" :key="todo.id"><div class="flex items-start gap-2"><span class="mt-0.5 h-3 w-3 rounded border shrink-0" :class="todo.status === 'completed' ? 'bg-emerald-400 border-emerald-400' : 'border-slate-300'"></span><div class="min-w-0 flex-1"><p class="text-xs leading-5" :class="todo.status === 'completed' ? 'line-through text-slate-400' : 'text-slate-600'" x-text="todo.title"></p><span class="inline-flex mt-1 px-1.5 py-0.5 rounded border text-[9px]" :class="humanTodoClass(todo.status)" x-text="humanTodoLabel(todo.status)"></span></div></div></template></div></section></template>
+    <div class="max-w-[1300px] mx-auto space-y-5">
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div class="flex items-start justify-between gap-3 pb-4 border-b border-slate-100">
+          <div>
+            <p class="text-[10px] uppercase tracking-[0.16em] text-slate-400 font-medium">Reason workspace</p>
+            <h3 class="mt-1 text-base font-semibold text-slate-800">Todo 覆盖与执行清单</h3>
+            <p class="mt-0.5 text-xs text-slate-400">所有 Reason 轮次共享的任务清单。有子任务时自动展现派发执行链路。</p>
+          </div>
+          <span class="px-2.5 py-1 rounded-lg bg-brand-50 text-brand-700 text-xs font-semibold" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total} Todo 完成`"></span>
+        </div>
+
+        <div class="mt-5 space-y-6">
+          <template x-for="group in humanTodoGroups()" :key="`todo-tab-${group.name}`">
+            <section class="rounded-xl border border-slate-200/80 bg-slate-50/40 p-4">
+              <!-- Group Header -->
+              <div class="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-200/60">
+                <div class="flex items-center gap-2">
+                  <h4 class="text-xs font-bold text-slate-800 tracking-tight" x-text="group.name"></h4>
+                  <span class="px-2 py-0.5 rounded-full bg-slate-200/60 text-[10px] font-mono font-medium text-slate-600" x-text="`${group.completed}/${group.total}`"></span>
+                </div>
+                <div class="w-32 flex items-center gap-2">
+                  <div class="flex-1 h-1.5 rounded-full bg-slate-200 overflow-hidden">
+                    <div class="h-full rounded-full bg-emerald-500 transition-all" :style="`width:${group.total ? group.completed / group.total * 100 : 0}%`"></div>
+                  </div>
+                  <span class="text-[10px] font-mono text-slate-400 tabular-nums" x-text="`${group.total ? Math.round(group.completed / group.total * 100) : 0}%`"></span>
+                </div>
+              </div>
+
+              <!-- Todo Cards Grid (Responsive 2-col) -->
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <template x-for="todo in group.items" :key="todo.id">
+                  <article class="rounded-xl border bg-white p-3 shadow-xs hover:border-slate-300 transition flex flex-col justify-between"
+                    :class="todo.status === 'completed' ? 'border-emerald-100 bg-emerald-50/10' : todo.status === 'blocked' ? 'border-amber-200' : todo.status === 'partial' ? 'border-brand-200' : 'border-slate-200/80'">
+                    <div>
+                      <!-- Card Top Meta -->
+                      <div class="flex items-center gap-2">
+                        <span class="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded" x-text="todo.id"></span>
+                        <span x-show="todo.theme" class="px-1.5 py-0.5 rounded bg-violet-50 text-[9px] text-violet-600 truncate max-w-[120px]" x-text="todo.theme"></span>
+                        <span class="ml-auto font-mono text-[10px] font-semibold text-slate-400" x-text="'P' + (todo.priority ?? 0)"></span>
+                        <span class="px-1.5 py-0.5 rounded border text-[9px]" :class="humanTodoClass(todo.status)" x-text="humanTodoLabel(todo.status)"></span>
+                      </div>
+
+                      <!-- Title -->
+                      <p class="mt-2 text-xs font-semibold leading-relaxed break-words"
+                        :class="todo.status === 'completed' ? 'text-slate-500 font-normal' : 'text-slate-800'"
+                        x-text="todo.title"></p>
+
+                      <!-- Status reason if any -->
+                      <p x-show="todo.status_reason" class="mt-1 text-[10px] text-slate-400" x-text="todo.status_reason"></p>
+
+                      <!-- Sub Intent List (Rendered cleanly if exists) -->
+                      <div x-show="getIntentsForTodo(todo.id).length > 0" class="mt-2.5">
+                        <div class="space-y-1.5 pl-2 border-l-2 border-slate-100">
+                          <template x-for="intent in getIntentsForTodo(todo.id)" :key="intent.id">
+                            <div class="rounded-md border border-slate-100 bg-slate-50/80 px-2 py-1.5 text-xs flex items-center justify-between gap-1.5">
+                              <div class="flex items-center gap-1.5 min-w-0">
+                                <span class="h-1.5 w-1.5 rounded-full shrink-0" :class="intentDotClass(intent)"></span>
+                                <span class="font-mono text-[10px] font-bold text-slate-600" x-text="intent.id"></span>
+                                <p class="text-[11px] text-slate-700 truncate" x-text="intent.description"></p>
+                              </div>
+                              <span class="shrink-0 text-[9px] font-medium" :class="intentStatusClass(intent)" x-text="intentStatusLabel(intent)"></span>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Bottom Bar (Progress indicator or Empty status) -->
+                    <div class="mt-2.5 pt-2 border-t border-slate-100/70 flex items-center justify-between text-[10px] text-slate-400">
+                      <span x-text="getIntentsForTodo(todo.id).length ? `${getIntentsForTodo(todo.id).length} 个子 Intent` : '待派发子任务'"></span>
+                      <template x-if="getIntentsForTodo(todo.id).length > 0">
+                        <div class="flex items-center gap-1.5 font-mono">
+                          <span x-show="todoIntentProgress(todo.id).completed > 0" class="text-emerald-600 font-medium" x-text="`${todoIntentProgress(todo.id).completed} 已完成`"></span>
+                          <span x-show="todoIntentProgress(todo.id).running > 0" class="text-amber-600 font-medium animate-pulse" x-text="`${todoIntentProgress(todo.id).running} 运行中`"></span>
+                        </div>
+                      </template>
+                    </div>
+                  </article>
+                </template>
+              </div>
+            </section>
+          </template>
+        </div>
+
+        <p x-show="taskDetailSectionPending('todos')" class="py-12 text-center text-xs text-slate-400">正在加载 Todo…</p>
+        <p x-show="taskDetailSectionError('todos')" class="py-12 text-center text-xs text-rose-500">Todo 加载失败。<button @click="retryTaskDetailSection('todos')" class="ml-1 text-brand-600 hover:underline">重试</button></p>
+        <p x-show="taskDetailSectionReady('todos') && humanTodoGroups().length === 0" class="py-12 text-center text-xs text-slate-400">Reason 尚未生成 Todo。</p>
       </div>
-      <p x-show="taskDetailSectionPending('todos')" class="py-12 text-center text-xs text-slate-400">正在加载 Todo…</p>
-      <p x-show="taskDetailSectionError('todos')" class="py-12 text-center text-xs text-rose-500">Todo 加载失败。<button @click="retryTaskDetailSection('todos')" class="ml-1 text-brand-600 hover:underline">重试</button></p>
-      <p x-show="taskDetailSectionReady('todos') && humanTodoGroups().length === 0" class="py-12 text-center text-xs text-slate-400">Reason 尚未生成 Todo。</p>
+
+      <!-- Unlinked Intents Section (Clean, excludes bootstrap) -->
+      <template x-if="getUnlinkedIntents().length > 0">
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+            <div>
+              <h3 class="text-sm font-semibold text-slate-800">未关联 Todo 的探索 Intent</h3>
+              <p class="mt-0.5 text-xs text-slate-400">尚未明确归属于特定攻击面 Todo 的探索行动。</p>
+            </div>
+            <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs font-mono" x-text="`${getUnlinkedIntents().length} 个`"></span>
+          </div>
+          <div class="mt-3.5 divide-y divide-slate-100">
+            <template x-for="intent in getUnlinkedIntents()" :key="intent.id">
+              <div class="py-2.5 flex items-start justify-between gap-3">
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-2">
+                    <span class="h-2 w-2 rounded-full shrink-0" :class="intentDotClass(intent)"></span>
+                    <span class="font-mono text-xs font-bold text-slate-600" x-text="intent.id"></span>
+                    <p class="text-xs text-slate-700 truncate" x-text="intent.description"></p>
+                  </div>
+                  <div class="mt-1 flex items-center gap-3 text-[10px] text-slate-400">
+                    <span x-text="`Worker: ${intent.worker || '未领取'}`"></span>
+                    <span x-show="intent.targets?.length" x-text="`目标: ${intent.targets.join(', ')}`"></span>
+                  </div>
+                </div>
+                <span class="shrink-0 px-1.5 py-0.5 rounded border text-[9px]" :class="humanIntentStatusClass(intent)" x-text="humanIntentStatusLabel(intent)"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
     </div>
   </main>
   </template>

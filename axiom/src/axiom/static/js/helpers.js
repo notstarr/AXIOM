@@ -57,14 +57,13 @@ window.AxiomModules.helpers = {
     },
 
     isBootstrapIntent(intent) {
+      if (!intent) return false;
+      if (intent.id === 'i001') return true;
+      const desc = String(intent.description || '').trim().toLowerCase();
+      if (desc === 'bootstrap') return true;
       return Boolean(
-        intent
-        && intent.description === 'bootstrap'
-        && intent.creator === 'dispatcher.bootstrap'
-        && Array.isArray(intent.from)
-        && intent.from.length === 1
-        && intent.from[0] === 'origin'
-        && intent.to === null,
+        intent.creator === 'dispatcher.bootstrap'
+        || (Array.isArray(intent.from) && intent.from.length === 1 && intent.from[0] === 'origin' && intent.to === null)
       );
     },
 
@@ -454,6 +453,47 @@ window.AxiomModules.helpers = {
         auth: 'bg-rose-50 text-rose-500',
         landing: 'bg-emerald-50 text-emerald-500',
       }[type] || 'bg-slate-100 text-slate-400';
+    },
+
+    getIntentsForTodo(todoId) {
+      if (!todoId) return [];
+      const intents = (this.project?.intents || []).filter(item => !item.archived && !this.isBootstrapIntent(item));
+      return intents.filter(item => item.todo_id === todoId);
+    },
+
+    getUnlinkedIntents() {
+      const allTodos = new Set((this.project?.todos || []).map(t => t.id));
+      const intents = (this.project?.intents || []).filter(item => !item.archived && !this.isBootstrapIntent(item));
+      return intents.filter(item => !item.todo_id || !allTodos.has(item.todo_id));
+    },
+
+    todoIntentProgress(todoId) {
+      const list = this.getIntentsForTodo(todoId);
+      if (!list.length) return { total: 0, completed: 0, running: 0, pending: 0, failed: 0, percent: 0 };
+      let completed = 0, running = 0, pending = 0, failed = 0;
+      for (const item of list) {
+        const state = this.intentLifecycleState(item);
+        if (state === 'completed') completed++;
+        else if (state === 'running') running++;
+        else if (state === 'failed') failed++;
+        else pending++;
+      }
+      const percent = Math.round((completed / list.length) * 100);
+      return { total: list.length, completed, running, pending, failed, percent };
+    },
+
+    isTodoExpanded(todoId, defaultExpanded = null) {
+      if (this.todoExpandedState && this.todoExpandedState[todoId] !== undefined) {
+        return this.todoExpandedState[todoId];
+      }
+      if (defaultExpanded !== null) return defaultExpanded;
+      // 默认策略：如果该 Todo 下面有子 Intent，则默认展开方便查看；如果为 0 则默认收起保持紧凑
+      return this.getIntentsForTodo(todoId).length > 0;
+    },
+
+    toggleTodoExpanded(todoId) {
+      if (!this.todoExpandedState) this.todoExpandedState = {};
+      this.todoExpandedState[todoId] = !this.isTodoExpanded(todoId);
     },
   }
 };

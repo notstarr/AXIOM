@@ -197,6 +197,7 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--todo-id")
     @click.option("--from-fact", multiple=True, required=True)
     @click.option("--description")
+    @click.option("--title", help="Alias for --description to support resilient model calls.")
     @click.option("--description-file", type=click.Path(path_type=Path, dir_okay=False))
     @click.option(
         "--target",
@@ -211,6 +212,7 @@ def register_worker_commands(main: click.Group) -> None:
         todo_id: str | None,
         from_fact: tuple[str, ...],
         description: str | None,
+        title: str | None,
         description_file: Path | None,
         target: tuple[str, ...],
         priority: int,
@@ -219,12 +221,13 @@ def register_worker_commands(main: click.Group) -> None:
     ) -> None:
         if bool(todo_ref) == bool(todo_id):
             raise click.UsageError("exactly one of --todo-ref or --todo-id is required")
+        raw_description = description if description is not None else title
         proposal = {
             "todo_ref": todo_ref,
             "todo_id": todo_id,
             "from_facts": list(from_fact),
             "description": _text_value(
-                description,
+                raw_description,
                 description_file,
                 "description",
                 required=True,
