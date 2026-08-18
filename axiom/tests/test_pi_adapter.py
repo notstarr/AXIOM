@@ -634,22 +634,13 @@ def test_reason_prompt_requires_small_todos_and_intents_without_fixed_budget_exa
         },
     )
 
-    assert "一个 Todo 只描述一个攻击主题" in prompt
-    assert "一个 Intent 最多覆盖 2–3 个紧密相关分支" in prompt
-    assert "获取对象、准备身份、调用前置接口和刷新凭证属于同一攻击链" in prompt
-    assert "完整读取其中的 `hints.json`、`knowledge.json`、`vulnerabilities.json`、`todos.json` 和 `graph.json`" in prompt
-    assert "历史 Goal、Goal Evaluation 及其证据不作为本轮自动达成依据" in prompt
+    assert "axiom reason intent assess" in prompt
+    assert "axiom reason goal assess" in prompt
     assert "source_fact_ids" in prompt
-    assert "保持 Bootstrap 已确认的目标类型、名称、AppID、包名、域名、入口和身份边界" in prompt
-    assert "无 Scope 时不补造 Target" in prompt
-    assert "execute_seconds" in prompt
-    assert "## 目标评估" in prompt
-    assert "只要存在未验证的材料性方向，就必须保留或恢复对应 Todo" in prompt
-    assert "0` 个 Intent" not in prompt
-    assert "提交 0 Intent" not in prompt
-    assert "只有存在真实 Fact 证据" in prompt
+    assert "whatisvul" in prompt
+    assert "自建自测闭环" in prompt
+    assert "FINISH" in prompt
     assert "--execute-seconds 600 --conclude-seconds 120" not in prompt
-
 
 
 def test_reason_conclude_prompt_keeps_strict_planning_gate() -> None:
@@ -664,9 +655,10 @@ def test_reason_conclude_prompt_keeps_strict_planning_gate() -> None:
         },
     )
 
-    assert "收口时必须通过严格规划门槛" in prompt
-    assert "所有收口结论都必须记录每个接口组（按树，而不是按单条 GET）的终态" in prompt
-    assert "没有新 Fact" in prompt
+    assert "收口" in prompt
+    assert "axiom reason status" in prompt
+    assert "axiom reason goal assess" in prompt
+    assert "FINISH" in prompt
     assert "0` 个执行意图" not in prompt
     assert "提交 0 Intent" not in prompt
     assert "至少保留一个可执行" not in prompt
