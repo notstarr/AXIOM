@@ -20,11 +20,12 @@ logger = logging.getLogger(__name__)
 # dingtalk-stream SDK 为可选依赖（Stream 双向交互才需要）；未安装时
 # Webhook 单向推送不受影响，DingTalkStreamBot 启动会报错并由调用方捕获。
 try:
-    from dingtalk_stream import AckMessage, ChatbotHandler, ChatbotMessage
+    from dingtalk_stream import AckMessage, CallbackHandler, ChatbotHandler, ChatbotMessage, CallbackMessage
 except ImportError:  # pragma: no cover - optional dependency
     AckMessage = None
     ChatbotHandler = object
     ChatbotMessage = None
+    CallbackMessage = None
 
 
 @dataclass(frozen=True)
