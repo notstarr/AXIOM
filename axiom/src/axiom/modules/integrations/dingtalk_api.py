@@ -68,7 +68,7 @@ def _handle_help() -> dict[str, Any]:
         "- `/resume <任务ID>` —— 继续/恢复指定任务（默认不限时持续运行）\n\n"
         "**🛡️【漏洞查询】**\n"
         "- `/vulns <任务ID>` —— 查看指定任务挖掘出的所有漏洞清单与状态\n"
-        "- `/vuln <漏洞ID>` —— 查看单个漏洞的详细复现 Curl 与描述（如 `/vuln v008`）\n\n"
+        "- `/vuln <任务ID> <漏洞ID>` —— 查看单个漏洞的详细复现 Curl 与描述（如 `/vuln 172 v008`）\n\n"
         "*提示：指令不区分大小写，任务ID支持纯数字简写。*"
     )
     return _build_markdown_response("AXIOM 指令指南", text)
@@ -167,14 +167,29 @@ def _handle_vulns(container: Container, task_id: str) -> dict[str, Any]:
     return _build_markdown_response(f"任务 {normalized_id} 漏洞清单", "\n".join(lines))
 
 
-def _handle_vuln(container: Container, vuln_id: str) -> dict[str, Any]:
-    cleaned_id = vuln_id.strip()
-    # 尝试从所有漏洞中搜索该 ID
-    vulns = container.vulnerabilities.list_all()
-    target = next((v for v in vulns if v.id == cleaned_id or v.id == f"v{cleaned_id}"), None)
+def _handle_vuln(container: Container, task_id: str, vuln_id: str) -> dict[str, Any]:
+    normalized_task_id = _normalize_task_id(task_id)
+    cleaned_vuln_id = vuln_id.strip()
+    try:
+        # 漏洞 ID 是每任务内独立编号（v001 从每个任务重新开始），必须限定任务查询，
+        # 否则会撞到其他任务里的同名 ID。
+        vulns = container.vulnerabilities.list(normalized_task_id)
+    except Exception as e:
+        return _build_markdown_response(
+            "查询失败",
+            f"❌ 查询任务 `{normalized_task_id}` 漏洞失败: {str(e)}",
+        )
 
+    target = next(
+        (v for v in vulns if v.id == cleaned_vuln_id or v.id == f"v{cleaned_vuln_id}"),
+        None,
+    )
     if not target:
-        return _build_markdown_response("错误", f"❌ 找不到漏洞 `{cleaned_id}`。")
+        return _build_markdown_response(
+            "错误",
+            f"❌ 任务 `{normalized_task_id}` 下找不到漏洞 `{cleaned_vuln_id}`。"
+            f"\n可用 `/vulns {normalized_task_id}` 查看该任务全部漏洞清单。",
+        )
 
     severity_map = {
         "critical": "🔴 严重 (Critical)",
@@ -239,9 +254,13 @@ def route_dingtalk_command(container: Container, text_content: str) -> dict[str,
             return _build_markdown_response("提示", "⚠️ 请指定任务 ID，例如：`/vulns 172`")
         return _handle_vulns(container, args[0])
     if cmd in ("/vuln", "vuln", "漏洞"):
-        if not args:
-            return _build_markdown_response("提示", "⚠️ 请指定漏洞 ID，例如：`/vuln v008`")
-        return _handle_vuln(container, args[0])
+        if len(args) < 2:
+            return _build_markdown_response(
+                "提示",
+                "⚠️ 漏洞 ID 是每个任务内独立编号，请同时指定任务 ID：`/vuln 172 v008`\n"
+                "（可用 `/vulns 172` 查看该任务漏洞清单）",
+            )
+        return _handle_vuln(container, args[0], args[1])
     return _handle_help()
 
 
