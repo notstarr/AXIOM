@@ -164,7 +164,7 @@
                   <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">修复建议</p>
                   <p class="text-sm whitespace-pre-wrap break-words"
                     :class="selectedVulnerability().remediation ? 'text-slate-700' : 'text-slate-400 italic'"
-                    x-text="selectedVulnerability().remediation || '未填写'"></p>
+                    x-text="formatMultiline(selectedVulnerability().remediation || '未填写')"></p>
                 </div>
                 <template x-if="selectedVulnerability().legacy">
                   <div class="rounded-xl border border-amber-200 bg-amber-50/60 p-3 space-y-3">
