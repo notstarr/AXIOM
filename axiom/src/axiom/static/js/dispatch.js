@@ -140,7 +140,10 @@ window.AxiomModules.dispatch = {
     async testDingTalkSettings() {
       try {
         this.dingtalkTesting = true;
-        const res = await this.api('POST', '/integrations/dingtalk/test', {});
+        const res = await this.api('POST', '/integrations/dingtalk/test', {
+          webhook_url: this.dispatchSettings.dingtalk_webhook_url || '',
+          secret: this.dispatchSettings.dingtalk_secret || '',
+        });
         this.dingtalkTestResult = { ok: true, message: res.message || '测试通知已发送' };
         this.showToast('钉钉测试通知发送成功', 'success');
       } catch (e) {
@@ -609,6 +612,9 @@ window.AxiomModules.dispatch = {
         explore_conclude_max_seconds: Number(this.dispatchSettings.explore_conclude_max_seconds ?? 600),
         network_proxy_mode: this.dispatchSettings.network_proxy_mode || 'off',
         network_proxy_url: this.dispatchSettings.network_proxy_url || 'http://127.0.0.1:7890',
+        dingtalk_enabled: Boolean(this.dispatchSettings.dingtalk_enabled),
+        dingtalk_webhook_url: String(this.dispatchSettings.dingtalk_webhook_url || ''),
+        dingtalk_secret: String(this.dispatchSettings.dingtalk_secret || ''),
       };
     },
 

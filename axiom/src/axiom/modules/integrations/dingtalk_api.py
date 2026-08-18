@@ -11,7 +11,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from axiom.composition import Container
-from axiom.shared.dingtalk import dingtalk_notifier
+from axiom.shared.dingtalk import DingTalkConfig, DingTalkNotifier, dingtalk_notifier
 
 logger = logging.getLogger(__name__)
 
@@ -270,18 +270,35 @@ async def dingtalk_incoming_webhook(
     return JSONResponse(content=resp)
 
 
+from pydantic import BaseModel
+
+class DingTalkTestPayload(BaseModel):
+    webhook_url: str | None = None
+    secret: str | None = None
+
+
 @router.post("/test")
-@router.get("/test")
-async def dingtalk_test_notification() -> dict[str, Any]:
-    """一键测试钉钉 Webhook 连通性"""
-    ok = dingtalk_notifier.send_markdown(
+async def dingtalk_test_notification(payload: DingTalkTestPayload | None = None) -> dict[str, Any]:
+    """一键测试钉钉 Webhook 连通性（支持直接传入输入框中的 URL 与 Secret 进行即时测试）"""
+    url = (payload.webhook_url.strip() if payload and payload.webhook_url else None)
+    secret = (payload.secret.strip() if payload and payload.secret else None)
+
+    if url:
+        notifier = DingTalkNotifier(DingTalkConfig(webhook_url=url, secret=secret, enabled=True))
+    else:
+        notifier = dingtalk_notifier
+
+    if not notifier.is_enabled:
+        raise HTTPException(status_code=400, detail="请先输入有效的 Webhook URL（以 https:// 开头）。")
+
+    ok = notifier.send_markdown(
         "AXIOM 连通性测试",
         "### 🔔 AXIOM 钉钉通知测试成功\n\n"
         "当前系统已成功连接至钉钉机器人！\n"
-        "- 漏洞发现时将实时推送上报卡片\n"
+        "- 漏洞发现时将实时推送初报卡片\n"
         "- 漏洞审核完成后将实时推送裁决理由\n\n"
         "*测试时间: " + time.strftime("%Y-%m-%d %H:%M:%S") + "*"
     )
     if not ok:
-        raise HTTPException(status_code=400, detail="钉钉通知发送失败，请检查 Webhook URL 和 Secret 是否正确配置并启用。")
-    return {"status": "ok", "message": "测试通知已发送"}
+        raise HTTPException(status_code=400, detail="钉钉通知发送失败，请检查 Webhook URL 和 Secret 是否正确，或查看服务端网络能否访问钉钉。")
+    return {"status": "ok", "message": "测试通知已成功发送至钉钉群！"}
