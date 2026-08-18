@@ -41,9 +41,11 @@ class DingTalkConfig:
         """优先从数据库 runtime_settings 读取，兜底从环境变量读取"""
         try:
             from axiom.modules.settings.service import load_runtime_config
-            from axiom.shared.database import create_engine_from_env
-            engine = create_engine_from_env()
-            config = load_runtime_config(engine)
+            from axiom.shared.database import create_database_engine, database_url_from_env
+            engine = create_database_engine(database_url_from_env())
+            # load_runtime_config 需要 Connection（SQLAlchemy 2.0 的 Engine 没有 execute）
+            with engine.connect() as conn:
+                config = load_runtime_config(conn)
             if config.dingtalk_webhook_url.strip():
                 return cls(
                     webhook_url=config.dingtalk_webhook_url.strip(),

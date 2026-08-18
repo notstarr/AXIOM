@@ -163,7 +163,7 @@ def _handle_vulns(container: Container, task_id: str) -> dict[str, Any]:
         status_tag = f"【{v.status}】"
         lines.append(f"- **`{v.id}`** {status_tag} `{v.severity}` | **{v.title}**")
 
-    lines.append("\n*发送 `/vuln <漏洞ID>` 可查看该漏洞的复现 Curl 与详细分析*")
+    lines.append(f"\n*发送 `/vuln {normalized_id} <漏洞ID>` 可查看该漏洞的复现 Curl 与详细分析*")
     return _build_markdown_response(f"任务 {normalized_id} 漏洞清单", "\n".join(lines))
 
 
