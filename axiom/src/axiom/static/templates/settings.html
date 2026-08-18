@@ -209,9 +209,21 @@
       </div>
 
       <div class="space-y-4">
-        <div class="flex items-center gap-2">
-          <input type="checkbox" id="dingtalk_enabled_box" x-model="dispatchSettings.dingtalk_enabled" class="rounded border-slate-300 text-brand-500 focus:ring-brand-400">
-          <label for="dingtalk_enabled_box" class="text-sm font-medium text-slate-700">启用钉钉通知与指令交互</label>
+        <!-- 卡片式开关 -->
+        <div class="rounded-xl border p-4 transition flex items-center justify-between"
+          :class="dispatchSettings.dingtalk_enabled ? 'border-brand-200 bg-brand-50/40' : 'border-slate-200 bg-slate-50/50'">
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="inline-block w-2.5 h-2.5 rounded-full" :class="dispatchSettings.dingtalk_enabled ? 'bg-emerald-500' : 'bg-slate-300'"></span>
+              <strong class="text-sm font-semibold text-slate-800" x-text="dispatchSettings.dingtalk_enabled ? '已开启钉钉通知与群指令' : '已关闭钉钉通知与群指令'"></strong>
+            </div>
+            <p class="mt-1 text-xs text-slate-500">开启后，探针上报和评审漏洞将实时推送到钉钉群，并响应群内指令。</p>
+          </div>
+          <button type="button" @click="dispatchSettings.dingtalk_enabled = !dispatchSettings.dingtalk_enabled"
+            class="px-4 py-1.5 text-xs font-semibold rounded-lg transition shadow-sm"
+            :class="dispatchSettings.dingtalk_enabled ? 'bg-rose-50 border border-rose-200 text-rose-600 hover:bg-rose-100' : 'bg-brand-500 text-white hover:bg-brand-600'">
+            <span x-text="dispatchSettings.dingtalk_enabled ? '关闭通知' : '立即开启'"></span>
+          </button>
         </div>
 
         <div>

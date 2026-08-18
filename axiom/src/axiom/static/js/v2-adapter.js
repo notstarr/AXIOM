@@ -611,6 +611,9 @@
     }
     if (body.network_proxy_mode !== undefined) config.network_proxy_mode = body.network_proxy_mode;
     if (body.network_proxy_url !== undefined) config.network_proxy_url = body.network_proxy_url;
+    if (body.dingtalk_enabled !== undefined) config.dingtalk_enabled = Boolean(body.dingtalk_enabled);
+    if (body.dingtalk_webhook_url !== undefined) config.dingtalk_webhook_url = String(body.dingtalk_webhook_url);
+    if (body.dingtalk_secret !== undefined) config.dingtalk_secret = String(body.dingtalk_secret);
     const savedRuntime = await request('PUT', '/settings/runtime', {
       config,
       expected_version: expectedVersion,
