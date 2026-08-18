@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import json
 import logging
 import os
 import threading
@@ -324,6 +325,20 @@ class AxiomChatbotHandler(ChatbotHandler):
     async def process(self, message: ChatbotMessage):
         try:
             from axiom.modules.integrations.dingtalk_api import route_dingtalk_command
+            # 兼容两种推送格式：
+            # - TOPIC    /v1.0/im/bot/messages/get      → SDK 直接给 ChatbotMessage
+            # - DELEGATE /v1.0/im/bot/messages/delegate → SDK 给 CallbackMessage，
+            #   真实消息体在 message.data（JSON 字符串）中，需转成 ChatbotMessage。
+            if CallbackMessage is not None and isinstance(message, CallbackMessage):
+                data = message.data
+                if isinstance(data, str):
+                    try:
+                        data = json.loads(data)
+                    except Exception:
+                        data = {}
+                if not isinstance(data, dict):
+                    data = {}
+                message = ChatbotMessage.from_dict(data)
             content = ""
             if message.text is not None:
                 content = str(getattr(message.text, "content", "") or "").strip()
