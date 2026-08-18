@@ -169,8 +169,8 @@ def _handle_vulns(container: Container, task_id: str) -> dict[str, Any]:
 
 def _handle_vuln(container: Container, vuln_id: str) -> dict[str, Any]:
     cleaned_id = vuln_id.strip()
-    # 尝试从所有未归档漏洞中搜索该 ID
-    vulns = container.vulnerabilities.list_all(archived=False)
+    # 尝试从所有漏洞中搜索该 ID
+    vulns = container.vulnerabilities.list_all()
     target = next((v for v in vulns if v.id == cleaned_id or v.id == f"v{cleaned_id}"), None)
 
     if not target:
