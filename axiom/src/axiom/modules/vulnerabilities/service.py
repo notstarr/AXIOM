@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Engine, select
@@ -15,6 +16,53 @@ from axiom.shared.errors import ConflictError, NotFoundError
 if TYPE_CHECKING:
     from axiom.modules.archives.service import ArchiveService
     from axiom.modules.vulnerability_reviews.service import VulnerabilityReviewService
+
+logger = logging.getLogger(__name__)
+
+
+def dispatch_vulnerability_reported_notification(
+    vulnerability: Vulnerability,
+    *,
+    task_id: str | None = None,
+) -> None:
+    """事务外触发钉钉漏洞上报推送（第 1 次推送）。
+
+    漏洞入库有两条路径都会调用：
+    - HTTP API: VulnerabilityService.report()（report 事务提交后）
+    - explore worker 进程内: execution/service.py 直接走
+      VulnerabilityRepository.create()（绕过了 service 层，必须在此补推）
+    """
+    try:
+        from axiom.shared.dingtalk import dingtalk_notifier
+        effective_task_id = task_id or vulnerability.task_id
+        logger.info(
+            "dingtalk notifier status for vuln %s: is_enabled=%s webhook_url_set=%s",
+            vulnerability.id,
+            dingtalk_notifier.is_enabled,
+            bool(dingtalk_notifier.config and dingtalk_notifier.config.webhook_url),
+        )
+        if dingtalk_notifier.is_enabled:
+            ok = dingtalk_notifier.notify_vulnerability_reported(
+                task_id=effective_task_id,
+                vuln_id=vulnerability.id,
+                title=vulnerability.title,
+                severity=vulnerability.severity,
+                vuln_type=vulnerability.type,
+                status=vulnerability.status,
+                affected_target=vulnerability.affected_target or "",
+                description=vulnerability.description or "",
+                curl_command=vulnerability.curl_command or "",
+            )
+            if not ok:
+                logger.warning(
+                    "DingTalk notify_vulnerability_reported returned False for %s",
+                    vulnerability.id,
+                )
+    except Exception:
+        logger.exception(
+            "Failed to dispatch DingTalk notification for vuln %s",
+            vulnerability.id,
+        )
 
 
 class VulnerabilityService:
@@ -81,36 +129,7 @@ class VulnerabilityService:
                 )
 
         # 事务外异步触发钉钉漏洞告警推送（第 1 次：初次发现待验证）
-        try:
-            from axiom.shared.dingtalk import dingtalk_notifier
-            logger.info(
-                "dingtalk notifier status for vuln %s: is_enabled=%s webhook_url_set=%s",
-                vulnerability.id,
-                dingtalk_notifier.is_enabled,
-                bool(dingtalk_notifier.config and dingtalk_notifier.config.webhook_url),
-            )
-            if dingtalk_notifier.is_enabled:
-                ok = dingtalk_notifier.notify_vulnerability_reported(
-                    task_id=task_id,
-                    vuln_id=vulnerability.id,
-                    title=vulnerability.title,
-                    severity=vulnerability.severity,
-                    vuln_type=vulnerability.type,
-                    status=vulnerability.status,
-                    affected_target=vulnerability.affected_target or "",
-                    description=vulnerability.description or "",
-                    curl_command=vulnerability.curl_command or "",
-                )
-                if not ok:
-                    logger.warning(
-                        "DingTalk notify_vulnerability_reported returned False for %s",
-                        vulnerability.id,
-                    )
-        except Exception:
-            logger.exception(
-                "Failed to dispatch DingTalk notification for vuln %s",
-                vulnerability.id,
-            )
+        dispatch_vulnerability_reported_notification(vulnerability, task_id=task_id)
 
         return vulnerability
 

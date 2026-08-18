@@ -970,6 +970,16 @@ class ExecutionService:
                             now=now,
                         )
                         vulnerability_records.append(vulnerability)
+                        # 上报漏洞入库后，事务外触发钉钉第 1 次推送
+                        # （explore worker 走 repository.create 绕过 service.report，
+                        #   推送必须在此补齐）
+                        from axiom.modules.vulnerabilities.service import (
+                            dispatch_vulnerability_reported_notification,
+                        )
+
+                        dispatch_vulnerability_reported_notification(
+                            vulnerability, task_id=task_id
+                        )
                         self.reviews.enqueue_in(
                             conn,
                             task_id=task_id,
