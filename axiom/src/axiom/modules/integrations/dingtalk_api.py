@@ -205,6 +205,46 @@ def _handle_vuln(container: Container, vuln_id: str) -> dict[str, Any]:
     return _build_markdown_response(f"漏洞 {target.id}", "\n".join(lines))
 
 
+def route_dingtalk_command(container: Container, text_content: str) -> dict[str, Any]:
+    """解析钉钉群消息并按指令路由，返回 markdown 响应体。
+
+    Webhook 回调与 Stream 模式共用同一路由逻辑。
+    """
+    text = (text_content or "").strip()
+    if not text:
+        return _handle_help()
+
+    parts = text.split()
+    cmd = parts[0].lower()
+    args = parts[1:]
+
+    if cmd in ("/help", "help", "帮助", "/start"):
+        return _handle_help()
+    if cmd in ("/tasks", "tasks", "/task", "任务"):
+        return _handle_tasks(container)
+    if cmd in ("/status", "status", "/stat", "状态"):
+        if not args:
+            return _build_markdown_response("提示", "⚠️ 请指定任务 ID，例如：`/status t_172` 或 `/status 172`")
+        return _handle_status(container, args[0])
+    if cmd in ("/pause", "pause", "暂停"):
+        if not args:
+            return _build_markdown_response("提示", "⚠️ 请指定任务 ID，例如：`/pause 172`")
+        return _handle_pause(container, args[0])
+    if cmd in ("/resume", "resume", "继续", "恢复"):
+        if not args:
+            return _build_markdown_response("提示", "⚠️ 请指定任务 ID，例如：`/resume 172`")
+        return _handle_resume(container, args[0])
+    if cmd in ("/vulns", "vulns", "/vulnerabilities", "漏洞列表"):
+        if not args:
+            return _build_markdown_response("提示", "⚠️ 请指定任务 ID，例如：`/vulns 172`")
+        return _handle_vulns(container, args[0])
+    if cmd in ("/vuln", "vuln", "漏洞"):
+        if not args:
+            return _build_markdown_response("提示", "⚠️ 请指定漏洞 ID，例如：`/vuln v008`")
+        return _handle_vuln(container, args[0])
+    return _handle_help()
+
+
 @router.post("/webhook")
 async def dingtalk_incoming_webhook(
     request: Request,
@@ -227,46 +267,7 @@ async def dingtalk_incoming_webhook(
     elif "content" in body:
         text_content = str(body["content"]).strip()
 
-    if not text_content:
-        return JSONResponse(content=_handle_help())
-
-    parts = text_content.split()
-    cmd = parts[0].lower()
-    args = parts[1:]
-
-    # 指令路由
-    if cmd in ("/help", "help", "帮助", "/start"):
-        resp = _handle_help()
-    elif cmd in ("/tasks", "tasks", "/task", "任务"):
-        resp = _handle_tasks(container)
-    elif cmd in ("/status", "status", "/stat", "状态"):
-        if not args:
-            resp = _build_markdown_response("提示", "⚠️ 请指定任务 ID，例如：`/status t_172` 或 `/status 172`")
-        else:
-            resp = _handle_status(container, args[0])
-    elif cmd in ("/pause", "pause", "暂停"):
-        if not args:
-            resp = _build_markdown_response("提示", "⚠️ 请指定任务 ID，例如：`/pause 172`")
-        else:
-            resp = _handle_pause(container, args[0])
-    elif cmd in ("/resume", "resume", "继续", "恢复"):
-        if not args:
-            resp = _build_markdown_response("提示", "⚠️ 请指定任务 ID，例如：`/resume 172`")
-        else:
-            resp = _handle_resume(container, args[0])
-    elif cmd in ("/vulns", "vulns", "/vulnerabilities", "漏洞列表"):
-        if not args:
-            resp = _build_markdown_response("提示", "⚠️ 请指定任务 ID，例如：`/vulns 172`")
-        else:
-            resp = _handle_vulns(container, args[0])
-    elif cmd in ("/vuln", "vuln", "漏洞"):
-        if not args:
-            resp = _build_markdown_response("提示", "⚠️ 请指定漏洞 ID，例如：`/vuln v008`")
-        else:
-            resp = _handle_vuln(container, args[0])
-    else:
-        resp = _handle_help()
-
+    resp = route_dingtalk_command(container, text_content)
     return JSONResponse(content=resp)
 
 

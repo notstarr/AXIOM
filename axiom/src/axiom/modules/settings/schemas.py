@@ -98,6 +98,9 @@ class RuntimeConfig(BaseModel):
     dingtalk_enabled: bool = False
     dingtalk_webhook_url: str = ""
     dingtalk_secret: str = ""
+    # 钉钉 Stream 模式机器人（企业内部应用），用于接收群消息并响应 /help 等指令
+    dingtalk_app_key: str = ""
+    dingtalk_app_secret: str = ""
 
     @field_validator("guard_whitelist_tools", "guard_whitelist_bash_verbs")
     @classmethod

@@ -114,6 +114,30 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
     app.state.service_token = _read_service_token(data_dir)
     app.include_router(router)
 
+    # ── 钉钉 Stream 模式机器人：接收群消息并响应 /help 等指令 ──
+    # 仅在配置了 AppKey/AppSecret 且启用钉钉时启动（守护线程，断线自动重连）。
+    app.state.dingtalk_bot = None
+
+    def _start_dingtalk_stream() -> None:
+        try:
+            from axiom.modules.settings.service import load_runtime_config
+            from axiom.shared.dingtalk import DingTalkStreamBot
+
+            config = load_runtime_config(engine)
+            if not (config.dingtalk_enabled and config.dingtalk_app_key.strip() and config.dingtalk_app_secret.strip()):
+                return
+            bot = DingTalkStreamBot(
+                app_key=config.dingtalk_app_key.strip(),
+                app_secret=config.dingtalk_app_secret.strip(),
+                container=app.state.container,
+            )
+            bot.start()
+            app.state.dingtalk_bot = bot
+        except Exception:
+            logger.exception("Failed to start DingTalk Stream bot")
+
+    _start_dingtalk_stream()
+
     @app.middleware("http")
     async def enforce_auth(request: Request, call_next):
         # 测试/开发模式开关：AXIOM_AUTH_DISABLED=1 时跳过鉴权拦截

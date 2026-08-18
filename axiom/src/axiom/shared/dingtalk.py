@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import logging
 import os
+import threading
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -14,12 +16,23 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# dingtalk-stream SDK 为可选依赖（Stream 双向交互才需要）；未安装时
+# Webhook 单向推送不受影响，DingTalkStreamBot 启动会报错并由调用方捕获。
+try:
+    from dingtalk_stream import AckMessage, ChatbotHandler, ChatbotMessage
+except ImportError:  # pragma: no cover - optional dependency
+    AckMessage = None
+    ChatbotHandler = object
+    ChatbotMessage = None
+
 
 @dataclass(frozen=True)
 class DingTalkConfig:
     webhook_url: str
     secret: str | None = None
     enabled: bool = True
+    app_key: str | None = None
+    app_secret: str | None = None
 
     @classmethod
     def from_runtime(cls) -> DingTalkConfig | None:
@@ -34,6 +47,8 @@ class DingTalkConfig:
                     webhook_url=config.dingtalk_webhook_url.strip(),
                     secret=config.dingtalk_secret.strip() or None,
                     enabled=config.dingtalk_enabled,
+                    app_key=config.dingtalk_app_key.strip() or None,
+                    app_secret=config.dingtalk_app_secret.strip() or None,
                 )
         except Exception:
             pass
@@ -43,7 +58,18 @@ class DingTalkConfig:
             return None
         secret = os.getenv("AXIOM_DINGTALK_SECRET") or os.getenv("DINGTALK_SECRET")
         enabled = os.getenv("AXIOM_DINGTALK_ENABLED", "true").lower() in ("true", "1", "yes")
-        return cls(webhook_url=url.strip(), secret=secret.strip() if secret else None, enabled=enabled)
+        return cls(
+            webhook_url=url.strip(),
+            secret=secret.strip() if secret else None,
+            enabled=enabled,
+            app_key=os.getenv("AXIOM_DINGTALK_APP_KEY") or None,
+            app_secret=os.getenv("AXIOM_DINGTALK_APP_SECRET") or None,
+        )
+
+    @property
+    def stream_configured(self) -> bool:
+        """是否具备 Stream 双向交互所需的 AppKey/AppSecret"""
+        return bool(self.app_key and self.app_secret)
 
 
 class DingTalkNotifier:
@@ -194,3 +220,106 @@ class DingTalkNotifier:
 
 # 全局单例
 dingtalk_notifier = DingTalkNotifier()
+
+
+class DingTalkStreamBot:
+    """钉钉 Stream 模式机器人：通过长连接接收群消息并响应 /help 等指令。
+
+    需要企业内部应用的 AppKey/AppSecret（配置于系统设置-钉钉告警）。
+    以守护线程方式运行，断线自动重连；进程退出即结束。
+    """
+
+    def __init__(self, *, app_key: str, app_secret: str, container):
+        import dingtalk_stream
+
+        self._dingtalk_stream = dingtalk_stream
+        self._app_key = app_key
+        self._app_secret = app_secret
+        self._container = container
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(
+            target=self._run,
+            name="axiom-dingtalk-stream",
+            daemon=True,
+        )
+        self._thread.start()
+        logger.info(
+            "DingTalk Stream bot started (app_key=%s...)", self._app_key[:4]
+        )
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    def is_alive(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def _run(self) -> None:
+        # start_forever() 内部会处理断线重连；每次重连间隔 3s。
+        # 我们用外层循环以便在 stop 时优雅退出。
+        while not self._stop_event.is_set():
+            try:
+                client = self._build_client()
+                client.start_forever()
+            except Exception:
+                logger.exception("DingTalk Stream client crashed; reconnecting...")
+                if self._stop_event.wait(3):
+                    break
+
+    def _build_client(self):
+        ds = self._dingtalk_stream
+        credential = ds.Credential(self._app_key, self._app_secret)
+        client = ds.DingTalkStreamClient(credential)
+        handler = AxiomChatbotHandler(container=self._container)
+        client.register_callback_handler(ds.ChatbotMessage.TOPIC, handler)
+        client.register_callback_handler(ds.ChatbotMessage.DELEGATE_TOPIC, handler)
+        return client
+
+
+class AxiomChatbotHandler(ChatbotHandler):
+    """处理钉钉群消息，复用 Webhook 指令路由（/help /status /tasks 等）。"""
+
+    def __init__(self, container):
+        super().__init__()
+        self._container = container
+
+    async def process(self, message: ChatbotMessage):
+        try:
+            from axiom.modules.integrations.dingtalk_api import route_dingtalk_command
+            content = ""
+            if message.text is not None:
+                content = str(getattr(message.text, "content", "") or "").strip()
+            if not content:
+                return AckMessage.STATUS_OK, "OK"
+            resp = await asyncio.to_thread(
+                route_dingtalk_command, self._container, content
+            )
+            markdown = (resp or {}).get("markdown") or {}
+            title = markdown.get("title", "AXIOM")
+            text = markdown.get("text", "")
+            await asyncio.to_thread(
+                self.reply_markdown_card,
+                text,
+                message,
+                title=title,
+                at_sender=True,
+            )
+        except Exception:
+            logger.exception("Failed to handle DingTalk Stream message")
+            try:
+                await asyncio.to_thread(
+                    self.reply_markdown_card,
+                    "### ⚠️ AXIOM 指令处理失败\n\n请查看服务端日志。",
+                    message,
+                    title="AXIOM 错误",
+                    at_sender=True,
+                )
+            except Exception:
+                pass
+        return AckMessage.STATUS_OK, "OK"
