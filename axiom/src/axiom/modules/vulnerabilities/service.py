@@ -83,8 +83,14 @@ class VulnerabilityService:
         # 事务外异步触发钉钉漏洞告警推送（第 1 次：初次发现待验证）
         try:
             from axiom.shared.dingtalk import dingtalk_notifier
+            logger.info(
+                "dingtalk notifier status for vuln %s: is_enabled=%s webhook_url_set=%s",
+                vulnerability.id,
+                dingtalk_notifier.is_enabled,
+                bool(dingtalk_notifier.config and dingtalk_notifier.config.webhook_url),
+            )
             if dingtalk_notifier.is_enabled:
-                dingtalk_notifier.notify_vulnerability_reported(
+                ok = dingtalk_notifier.notify_vulnerability_reported(
                     task_id=task_id,
                     vuln_id=vulnerability.id,
                     title=vulnerability.title,
@@ -95,8 +101,16 @@ class VulnerabilityService:
                     description=vulnerability.description or "",
                     curl_command=vulnerability.curl_command or "",
                 )
+                if not ok:
+                    logger.warning(
+                        "DingTalk notify_vulnerability_reported returned False for %s",
+                        vulnerability.id,
+                    )
         except Exception:
-            pass
+            logger.exception(
+                "Failed to dispatch DingTalk notification for vuln %s",
+                vulnerability.id,
+            )
 
         return vulnerability
 
