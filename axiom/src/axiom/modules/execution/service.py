@@ -1055,18 +1055,6 @@ class ExecutionService:
                     artifacts=records,
                     vulnerabilities=vulnerability_records,
                 )
-                        "failed to clean Explore run outputs: %s/%s",
-                        task_id,
-                        intent_id,
-                    )
-                result = ExploreCompleted(
-                    task_id=task_id,
-                    intent_id=intent_id,
-                    fact_id=fact_id,
-                    reason_run_id=reason_run_id,
-                    artifacts=records,
-                    vulnerabilities=vulnerability_records,
-                )
                 try:
                     finalize_explore_state(
                         run_dir,
