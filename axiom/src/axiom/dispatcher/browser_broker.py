@@ -681,6 +681,7 @@ class BrowserBrokerServer:
             return
         profile = self._chrome_profile or self._chrome_profile_dir()
         port = self._chrome_port or urlparse(self._cdp_url).port or 9223
+        # 严格安全断言：必须精确匹配包含当前 Chrome-SecTest 独立 Profile 和端口的命令，严禁触碰任何常规浏览器实例
         if self._is_expected_chrome_command(pid, port=port, profile=profile):
             try:
                 pgid_result = subprocess.run(
@@ -692,9 +693,16 @@ class BrowserBrokerServer:
                 )
                 pgid_text = pgid_result.stdout.strip()
                 pgid = int(pgid_text) if pgid_text.isdigit() else pid
-                os.killpg(pgid, signal.SIGTERM)
+                # 二次校验 pgid 领头进程是否仍属于受控 Chrome，防止系统 PID 复用误杀
+                if pgid != os.getpid() and self._is_expected_chrome_command(pgid, port=port, profile=profile):
+                    os.killpg(pgid, signal.SIGTERM)
+                else:
+                    os.kill(pid, signal.SIGTERM)
             except (OSError, ValueError, subprocess.TimeoutExpired):
                 pass
+        else:
+            # 记录警告，拒绝发送信号
+            pass
         if self._chrome_pid_file is not None:
             self._chrome_pid_file.unlink(missing_ok=True)
         self._chrome_pid = None
@@ -874,6 +882,9 @@ class BrowserBrokerServer:
     ) -> dict[str, Any]:
         state = self._page(lease, params)
         page_id = state.page_id
+        # 安全防御：只允许关闭本 Lease 登记并由当前任务创建的 page，拒绝关闭外部或用户未授权关联的页面
+        if page_id not in lease.pages:
+            raise BrowserBrokerError("page_not_owned", f"页面 {page_id} 不属于当前会话，拒绝关闭")
         with contextlib.suppress(Exception):
             await state.page.close()
         await self._clear_refs(state)
