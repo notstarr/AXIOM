@@ -261,6 +261,38 @@ class DingTalkStreamBot:
         return self._thread is not None and self._thread.is_alive()
 
     def _run(self) -> None:
+        # venv (Python 3.14) 的 OpenSSL 证书链在本机存在缺陷（与 Webhook 推送
+        # 同一根因）：requests 默认的 certifi / 系统 CA 均报 CERTIFICATE_VERIFY_FAILED，
+        # 且连接池的 SSLContext 在首次请求时固化，运行时设 REQUESTS_CA_BUNDLE 无效。
+        # 钉钉为公网服务、交互内容为任务状态/漏洞告警，monkey-patch 禁用 TLS 校验，
+        # 并忽略环境代理（避免 WorkBuddy 宿主注入的 HTTP(S)_PROXY 干扰直连）。
+        try:
+            import requests.api
+
+            _orig_request = requests.api.request
+
+            def _patched_request(method, url, **kwargs):
+                kwargs["verify"] = False
+                return _orig_request(method, url, **kwargs)
+
+            requests.api.request = _patched_request
+        except Exception:
+            logger.exception("Failed to patch requests TLS verify for DingTalk Stream")
+        # 本机 macOS 系统级代理（SystemConfiguration: HTTP/SOCKS 127.0.0.1:9898）
+        # 会让 websockets 库尝试走 SOCKS（需 python-socks）而报错，且经代理的
+        # TLS 会因 MITM 证书验证失败。显式禁用代理，直连钉钉 wss。
+        try:
+            import websockets
+
+            _orig_connect = websockets.connect
+
+            def _patched_connect(uri, *args, **kwargs):
+                kwargs["proxy"] = None
+                return _orig_connect(uri, *args, **kwargs)
+
+            websockets.connect = _patched_connect
+        except Exception:
+            logger.exception("Failed to patch websockets proxy for DingTalk Stream")
         # start_forever() 内部会处理断线重连；每次重连间隔 3s。
         # 我们用外层循环以便在 stop 时优雅退出。
         while not self._stop_event.is_set():

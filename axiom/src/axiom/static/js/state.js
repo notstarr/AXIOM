@@ -244,6 +244,8 @@ window.AxiomModules.state = {
       dingtalk_enabled: false,
       dingtalk_webhook_url: '',
       dingtalk_secret: '',
+      dingtalk_app_key: '',
+      dingtalk_app_secret: '',
       workers: [],
       config_version: 1,
       config_updated_at: '',

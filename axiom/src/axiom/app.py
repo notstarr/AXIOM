@@ -126,7 +126,8 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
             from axiom.modules.settings.service import load_runtime_config
             from axiom.shared.dingtalk import DingTalkStreamBot
 
-            config = load_runtime_config(engine)
+            with engine.connect() as conn:
+                config = load_runtime_config(conn)
             if not (config.dingtalk_enabled and config.dingtalk_app_key.strip() and config.dingtalk_app_secret.strip()):
                 return
             bot = DingTalkStreamBot(

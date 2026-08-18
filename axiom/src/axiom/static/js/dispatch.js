@@ -268,6 +268,8 @@ window.AxiomModules.dispatch = {
         dingtalk_enabled: !!data.dingtalk_enabled,
         dingtalk_webhook_url: data.dingtalk_webhook_url || '',
         dingtalk_secret: data.dingtalk_secret || '',
+        dingtalk_app_key: data.dingtalk_app_key || '',
+        dingtalk_app_secret: data.dingtalk_app_secret || '',
       };
       this.settingsForm.proxy_url = data.proxy_url ?? this.settingsForm.proxy_url ?? '';
       this.settingsForm.proxy_username = data.proxy_username || '';
@@ -618,6 +620,8 @@ window.AxiomModules.dispatch = {
         dingtalk_enabled: Boolean(this.dispatchSettings.dingtalk_enabled),
         dingtalk_webhook_url: String(this.dispatchSettings.dingtalk_webhook_url || ''),
         dingtalk_secret: String(this.dispatchSettings.dingtalk_secret || ''),
+        dingtalk_app_key: String(this.dispatchSettings.dingtalk_app_key || ''),
+        dingtalk_app_secret: String(this.dispatchSettings.dingtalk_app_secret || ''),
       };
     },
 
@@ -771,6 +775,10 @@ window.AxiomModules.dispatch = {
     runtimeSettingsApplied() {
       return Number(this.dispatchSettings.dispatcher_applied_version ?? 0)
         >= Number(this.dispatchSettings.config_version ?? 0);
+    },
+
+    dingtalkStreamReady() {
+      return !!(this.dispatchSettings.dingtalk_app_key && this.dispatchSettings.dingtalk_app_secret);
     },
 
     bootstrapOutcomeLabel(events) {

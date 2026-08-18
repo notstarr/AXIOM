@@ -614,6 +614,8 @@
     if (body.dingtalk_enabled !== undefined) config.dingtalk_enabled = Boolean(body.dingtalk_enabled);
     if (body.dingtalk_webhook_url !== undefined) config.dingtalk_webhook_url = String(body.dingtalk_webhook_url);
     if (body.dingtalk_secret !== undefined) config.dingtalk_secret = String(body.dingtalk_secret);
+    if (body.dingtalk_app_key !== undefined) config.dingtalk_app_key = String(body.dingtalk_app_key);
+    if (body.dingtalk_app_secret !== undefined) config.dingtalk_app_secret = String(body.dingtalk_app_secret);
     const savedRuntime = await request('PUT', '/settings/runtime', {
       config,
       expected_version: expectedVersion,
