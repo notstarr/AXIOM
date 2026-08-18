@@ -228,7 +228,7 @@
   }
 
   function renderSettings() {
-    const tabs = [['runtime','运行时'],['workers','Worker'],['guard','Guard'],['external','外部上报']];
+    const tabs = [['runtime','运行时'],['workers','Worker'],['guard','Guard'],['dingtalk','钉钉告警'],['external','外部上报']];
     return `${header('database backed', 'Settings', '所有新运行配置以数据库为唯一来源；Worker 自定义 MCP 继续保存在 Worker config 中。')}
       <section class="settings-grid"><nav class="settings-nav">${tabs.map(([id,label]) => `<button class="${state.settingsTab===id?'active':''}" data-action="settings-tab" data-tab="${id}">${label}</button>`).join('')}</nav><div>${renderSettingsContent()}</div></section>`;
   }
@@ -239,6 +239,11 @@
     if (state.settingsTab === 'guard') return settingsForm('guard-settings-form', 'Guard', [
       ['guard_mode','模式','select',['off','observe','guarded','enforce']],['guard_model_base_url','模型 Base URL'],['guard_model_name','模型'],['guard_api_key','API Key','password'],['guard_timeout_seconds','超时秒数','number']
     ], cfg, 'Guard 只监管外部操作工具；硬规则阻断，模型错误或超时 fail-open。');
+    if (state.settingsTab === 'dingtalk') return `<article class="panel"><div class="panel-header"><h2>钉钉告警与指令交互</h2><span class="mono muted">v${state.runtime?.version || 1}</span></div><form id="dingtalk-settings-form" class="panel-body"><p class="help">配置钉钉自定义机器人 Webhook 与加签 Secret。漏洞发现时将实时推送初报，评审完毕时推送裁决理由；支持在钉钉群发送 /help 进行状态查询与启停控制。</p><div class="form-grid" style="margin-top:1rem">
+      <div class="field full"><label class="check"><input type="checkbox" name="dingtalk_enabled" ${cfg.dingtalk_enabled?'checked':''}> 启用钉钉通知与指令交互</label></div>
+      <div class="field full"><label>Webhook URL</label><input name="dingtalk_webhook_url" type="text" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." value="${escapeHtml(cfg.dingtalk_webhook_url || '')}"></div>
+      <div class="field full"><label>加签 Secret (可选)</label><input name="dingtalk_secret" type="password" placeholder="SEC..." value="${escapeHtml(cfg.dingtalk_secret || '')}"></div>
+    </div><div class="form-actions" style="display:flex;gap:0.75rem"><button class="button primary" type="submit">保存配置</button><button class="button" type="button" data-action="test-dingtalk">发送测试通知</button></div></form></article>`;
     if (state.settingsTab === 'external') return settingsForm('external-settings-form','Mozzie / KK', [
       ['mozzie_base_url','Base URL'],['mozzie_token','Token','password'],['mozzie_timeout_seconds','超时秒数','number'],['external_report_max_attempts','最大尝试次数','number']
     ], cfg, '外部 project 通过 ingress 域名搜索解析，失败时使用 others。');
@@ -316,7 +321,21 @@
     else if (form.id === 'credential-form') { await api(`/projects/${state.selectedProject.id}/credentials`,{method:'POST',body:{name:data.get('name'),content:data.get('content'),notes:data.get('notes') || null,refresh_content:data.get('refresh_content') || null,enabled:data.has('enabled')}}); closeModal(); await openProject(state.selectedProject.id); toast('Credential 已保存'); }
     else if (form.id === 'worker-form') { let config; try { config=JSON.parse(data.get('config')); } catch (_) { throw new Error('Worker config JSON 格式无效'); } const name=data.get('name'); await api(`/settings/workers/${encodeURIComponent(name)}`,{method:'PUT',body:{name,worker_type:'pi',capabilities:data.getAll('capabilities'),max_running:Number(data.get('max_running')),priority:Number(data.get('priority')),config,disabled:data.has('disabled')}}); closeModal(); await loadCore({quiet:true}); state.settingsTab='workers'; render(); toast('Worker 已保存'); }
     else if (form.id === 'vulnerability-form') { const taskId=data.get('task_id'); await api(`/tasks/${taskId}/vulnerabilities`,{method:'POST',body:{intent_id:null,title:data.get('title'),type:data.get('type'),severity:data.get('severity'),description:data.get('description'),prerequisites:data.get('prerequisites'),impact:data.get('impact'),remediation:data.get('remediation'),affected_target:data.get('affected_target'),status:'待验证',source:'human',reported_by:'human',finding_artifact_id:null,evidence_artifact_ids:[]}}); closeModal(); await loadAllVulnerabilities(); render(); toast('漏洞已记录'); }
-    else if (form.id.endsWith('settings-form')) { const cfg={...state.runtime.config}; for (const [key,val] of data.entries()) cfg[key]=form.elements[key]?.type==='number'?Number(val):val; state.runtime=await api('/settings/runtime?actor=human',{method:'PUT',body:cfg}); render(); toast('设置已保存'); }
+    else if (form.id.endsWith('settings-form')) {
+      const cfg={...state.runtime.config};
+      for (const [key,val] of data.entries()) {
+        if (form.elements[key]?.type==='number') cfg[key]=Number(val);
+        else if (form.elements[key]?.type==='checkbox') cfg[key]=true;
+        else cfg[key]=val;
+      }
+      // 显式处理 checkbox 未勾选情况
+      if (form.id === 'dingtalk-settings-form') {
+        cfg.dingtalk_enabled = form.elements['dingtalk_enabled']?.checked || false;
+      }
+      state.runtime=await api('/settings/runtime?actor=human',{method:'PUT',body:cfg});
+      render();
+      toast('设置已保存');
+    }
   }
 
   document.addEventListener('click', async event => {
@@ -341,6 +360,10 @@
       else if (action === 'settings-tab') { state.settingsTab=target.dataset.tab; render(); }
       else if (action === 'task-tab') renderTaskTab(target.dataset.tab);
       else if (action === 'todo-status') { await api(`/tasks/${state.selectedTask.id}/todos/${target.dataset.id}`,{method:'PATCH',body:{status:target.dataset.status,status_reason:`human marked ${target.dataset.status}`,actor:'human'}}); await openTask(state.selectedTask.id); }
+      else if (action === 'test-dingtalk') {
+        const res = await api('/integrations/dingtalk/test', { method: 'POST' });
+        toast(res.message || '测试通知已发送');
+      }
       else if (action === 'stop-task') { await api(`/tasks/${state.selectedTask.id}/stop`,{method:'POST'}); await loadCore({quiet:true}); await openTask(state.selectedTask.id); toast('Task 已停止'); }
       else if (action === 'resume-task') { await api(`/tasks/${state.selectedTask.id}/resume`,{method:'POST'}); await loadCore({quiet:true}); await openTask(state.selectedTask.id); toast('Task 已恢复'); }
       else if (action === 'external-preview') { const payload=await api(`/tasks/${target.dataset.task}/vulnerabilities/${target.dataset.id}/external-preview`,{method:'POST',body:{}}); showModal('外部上报预览',`<pre class="mono" style="white-space:pre-wrap;font-size:.75rem">${escapeHtml(JSON.stringify(payload,null,2))}</pre>`); }

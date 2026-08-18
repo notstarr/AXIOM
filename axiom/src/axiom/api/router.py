@@ -33,6 +33,7 @@ from axiom.modules.vulnerabilities.api import router as vulnerabilities_router
 from axiom.modules.vulnerability_reviews.api import router as vulnerability_reviews_router
 from axiom.modules.workers.api import phase_router as worker_phases_router
 from axiom.modules.workers.api import router as workers_router
+from axiom.modules.integrations.dingtalk_api import router as dingtalk_router
 
 
 router = APIRouter(prefix="/api/v1")
@@ -67,3 +68,4 @@ router.include_router(goals_router)
 router.include_router(token_usage_router)
 router.include_router(interventions_router)
 router.include_router(auth_router)
+router.include_router(dingtalk_router)

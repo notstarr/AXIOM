@@ -79,7 +79,26 @@ class VulnerabilityService:
                     trigger_payload={"source": body.source, "reported_by": body.reported_by},
                     now=now,
                 )
-            return vulnerability
+
+        # 事务外异步触发钉钉漏洞告警推送（第 1 次：初次发现待验证）
+        try:
+            from axiom.shared.dingtalk import dingtalk_notifier
+            if dingtalk_notifier.is_enabled:
+                dingtalk_notifier.notify_vulnerability_reported(
+                    task_id=task_id,
+                    vuln_id=vulnerability.id,
+                    title=vulnerability.title,
+                    severity=vulnerability.severity,
+                    vuln_type=vulnerability.type,
+                    status=vulnerability.status,
+                    affected_target=vulnerability.affected_target or "",
+                    description=vulnerability.description or "",
+                    curl_command=vulnerability.curl_command or "",
+                )
+        except Exception:
+            pass
+
+        return vulnerability
 
     def get(self, task_id: str, vulnerability_id: str) -> Vulnerability:
         with self.engine.connect() as conn:

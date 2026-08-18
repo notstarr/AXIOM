@@ -94,6 +94,11 @@ class RuntimeConfig(BaseModel):
     )
     guard_system_prompt: str = Field(default=SYSTEM_PROMPT, max_length=20_000)
 
+    # 钉钉通知与 Webhook 配置
+    dingtalk_enabled: bool = False
+    dingtalk_webhook_url: str = ""
+    dingtalk_secret: str = ""
+
     @field_validator("guard_whitelist_tools", "guard_whitelist_bash_verbs")
     @classmethod
     def normalize_guard_allowlist(cls, values: list[str]) -> list[str]:

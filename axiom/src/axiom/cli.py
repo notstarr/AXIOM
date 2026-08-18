@@ -235,3 +235,5 @@ register_runner_command(main)
 register_skill_commands(main)
 register_worker_commands(main)
 register_token_usage_commands(main)
+
+from axiom.modules.integrations import cli as dingtalk_cli
