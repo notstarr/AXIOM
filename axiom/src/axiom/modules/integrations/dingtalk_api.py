@@ -15,7 +15,7 @@ from axiom.shared.dingtalk import dingtalk_notifier
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/integrations/dingtalk", tags=["dingtalk"])
+router = APIRouter(prefix="/integrations/dingtalk", tags=["dingtalk"])
 
 
 def _normalize_task_id(raw_id: str) -> str:
@@ -85,7 +85,8 @@ def _handle_tasks(container: Container) -> dict[str, Any]:
     lines = ["### 📋 正在运行的任务清单\n"]
     for t in running_tasks:
         duration_min = round((t.run_duration_seconds or 0) / 60, 1)
-        origin_preview = (t.origin_input or "").split("\n")[0][:40]
+        origin_input = t.origin.original_input if t.origin else ""
+        origin_preview = origin_input.split("\n")[0][:40]
         lines.append(
             f"- **`{t.id}`** | **{t.title or '未命名'}**\n"
             f"  - 阶段: `{t.phase}` | 已运行: `{duration_min}` 分钟\n"
@@ -104,14 +105,15 @@ def _handle_status(container: Container, task_id: str) -> dict[str, Any]:
         return _build_markdown_response("错误", f"❌ 找不到任务 `{normalized_id}`，请检查 ID 是否正确。")
 
     duration_min = round((task.run_duration_seconds or 0) / 60, 1)
-    status_emoji = "🟢" if task.status == "running" else ("⏸️" if task.status == "paused" else "⏹️")
+    status_emoji = "🟢" if task.status == "running" else ("⏸️" if task.status == "stopped" else "⏹️")
+    origin_input = task.origin.original_input if task.origin else "未知"
 
     lines = [
         f"### {status_emoji} 任务 `{task.id}` 状态报告",
         f"- **任务名称**: {task.title or '未命名'}",
         f"- **当前状态**: **{task.status}** (阶段: `{task.phase}`)",
         f"- **已跑时长**: `{duration_min}` 分钟",
-        f"- **目标系统**: `{task.origin_input}`",
+        f"- **目标系统**: `{origin_input}`",
         f"- **总目标**: {task.goal or '未设置'}",
         f"- **已发现漏洞**: `{task.vulnerability_count}` 个",
     ]

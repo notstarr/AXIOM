@@ -120,11 +120,12 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
         if os.environ.get("AXIOM_AUTH_DISABLED") == "1":
             return await call_next(request)
         path = request.url.path
-        # ── 1. 无条件放行：健康检查 / 登录接口 / 页面入口 / 登录卡公开资源 ──
+        # ── 1. 无条件放行：健康检查 / 登录接口 / 页面入口 / 登录卡公开资源 / 钉钉Webhook ──
         if (
             path == "/health"
             or path.startswith("/api/v1/auth/login")
             or path.startswith("/api/v1/auth/status")
+            or path.startswith("/api/v1/integrations/dingtalk/webhook")
             or path in {"/", "/favicon.svg", "/docs", "/redoc", "/openapi.json"}
         ):
             return await call_next(request)
