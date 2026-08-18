@@ -137,6 +137,29 @@ class DingTalkNotifier:
             logger.error("Failed to send DingTalk notification: %s", e)
             return False
 
+    def _format_description(self, description: str, limit: int = 300) -> str:
+        """把漏洞描述整理成钉钉 markdown 卡片能识别的段落。
+
+        钉钉 markdown 卡片对单个 \n 不做换行（当作空格），需要 \n\n
+        才视为段落分隔；同时按 \n 边界截断，避免截到句子中间。
+        """
+        if not description:
+            return ""
+        text = description.strip().replace("\r\n", "\n").replace("\n", "\n\n")
+        if len(text) <= limit:
+            return text
+        # 按段落边界截断
+        paragraphs = text.split("\n\n")
+        chunks: list[str] = []
+        total = 0
+        for p in paragraphs:
+            cost = len(p) + 2  # 段间 "\n\n"
+            if chunks and total + cost > limit:
+                break
+            chunks.append(p)
+            total += cost
+        return "\n\n".join(chunks).rstrip() + "…"
+
     def notify_vulnerability_reported(
         self,
         task_id: str,
@@ -170,13 +193,11 @@ class DingTalkNotifier:
         ]
         if affected_target:
             lines.append(f"**受影响资产**: `{affected_target}`")
-        if description:
-            desc_preview = description.strip()
-            if len(desc_preview) > 300:
-                desc_preview = desc_preview[:300] + "..."
-            lines.append(f"> **漏洞描述**: {desc_preview}")
+        desc_preview = self._format_description(description)
+        if desc_preview:
+            lines.append(f"**漏洞描述**:\n\n> {desc_preview.replace(chr(10) + chr(10), chr(10) + chr(10) + '> ')}")
         if curl_command:
-            lines.append(f"**复现命令 (Curl)**:\n```bash\n{curl_command.strip()[:400]}\n```")
+            lines.append(f"**复现命令 (Curl)**:\n\n```bash\n{curl_command.strip()[:400]}\n```")
 
         lines.append(f"\n*AXIOM 自动化安全测试平台 · 实时上报*")
         card_text = "\n\n".join(lines)
@@ -214,8 +235,9 @@ class DingTalkNotifier:
         ]
         if reviewed_by:
             lines.append(f"**评审人/阶段**: `{reviewed_by}`")
-        if status_reason:
-            lines.append(f"> **裁决理由**: {status_reason.strip()}")
+        status_reason_text = self._format_description(status_reason, limit=400)
+        if status_reason_text:
+            lines.append(f"**裁决理由**:\n\n> {status_reason_text.replace(chr(10) + chr(10), chr(10) + chr(10) + '> ')}")
 
         lines.append(f"\n*AXIOM 自动化安全测试平台 · 评审通知*")
         card_text = "\n\n".join(lines)
