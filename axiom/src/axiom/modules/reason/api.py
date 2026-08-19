@@ -10,6 +10,7 @@ from axiom.modules.reason.schemas import (
     AssessWorkspaceGoal,
     AssessWorkspaceIntent,
     CommitResult,
+    DeleteWorkspaceTodo,
     OpenWorkspace,
     ProposeWorkspaceIntent,
     ReasonWorkspace,
