@@ -390,6 +390,15 @@ class ReasonService:
         config = load_runtime_config(conn)
         queue_limit = getattr(config, "reason_queue_limit", 3)
 
+        # 输入状态在分支前统一计算：排队分支（有 in_flight）与常规创建分支共用同一份快照
+        state = self._input_state(conn, task_id)
+        source_fact_ids = [row["id"] for row in state["unplanned_facts"]]
+        open_explore_ids = list(state["open_explore_ids"])
+        failed_intent_ids = list(state["failed_intent_ids"])
+        actionable_todo_ids = list(state["actionable_todo_ids"])
+        todo_review_ids = list(state["todo_review_ids"])
+        unassessed_intent_ids = list(state["unassessed_intent_ids"])
+
         # 1. 检查是否已有活跃的 ReasonRun
         if in_flight is not None:
             # 当前已有 ReasonRun 正在运行/认领中
@@ -452,13 +461,6 @@ class ReasonService:
         if bootstrap_completed is None:
             return None
 
-        state = self._input_state(conn, task_id)
-        source_fact_ids = [row["id"] for row in state["unplanned_facts"]]
-        open_explore_ids = list(state["open_explore_ids"])
-        failed_intent_ids = list(state["failed_intent_ids"])
-        actionable_todo_ids = list(state["actionable_todo_ids"])
-        todo_review_ids = list(state["todo_review_ids"])
-        unassessed_intent_ids = list(state["unassessed_intent_ids"])
         # A terminal Explore without a follow-up is itself a planning signal.
         signals_present = bool(
             source_fact_ids
@@ -471,7 +473,6 @@ class ReasonService:
             self._set_phase(conn, task_id, "explore" if open_explore_ids else "waiting", now)
             return None
 
-        config = load_runtime_config(conn)
         latest = self.repository.latest_completed_row(conn, task_id)
         oldest_age = (
             max(
