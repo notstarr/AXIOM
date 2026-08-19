@@ -64,6 +64,7 @@ class RuntimeConfig(BaseModel):
     reason_min_interval_seconds: int = Field(default=60, ge=0, le=3_600)
     reason_target_open_intents: int = Field(default=4, ge=1, le=8)
     reason_max_new_intents_per_run: int = Field(default=4, ge=1, le=8)
+    reason_queue_limit: int = Field(default=3, ge=0, le=10)
     explore_execute_min_seconds: int = Field(default=300, ge=10, le=86_400)
     explore_execute_max_seconds: int = Field(default=3_600, ge=10, le=86_400)
     explore_conclude_min_seconds: int = Field(default=180, ge=180, le=7_200)

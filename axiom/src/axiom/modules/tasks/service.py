@@ -696,13 +696,19 @@ class TaskService:
                 )
             ).mappings()
             reasons: dict[str, object] = {}
+            queued_reasons: dict[str, list[object]] = {}
             for row in reason_rows:
-                reasons.setdefault(str(row["task_id"]), row)
+                tid = str(row["task_id"])
+                if tid not in reasons:
+                    reasons[tid] = row
+                else:
+                    queued_reasons.setdefault(tid, []).append(row)
 
         decorated: list[Task] = []
         for task in tasks_to_decorate:
             reason = reasons.get(task.id)
             reason_present = reason is not None
+            task_queued = queued_reasons.get(task.id, [])
             decorated.append(
                 task.model_copy(
                     update={
@@ -763,6 +769,27 @@ class TaskService:
                             if reason_present
                             else None
                         ),
+                        "queued_reason_runs": [
+                            ActiveReasonRun(
+                                id=qr["id"],
+                                status=qr["status"],
+                                trigger=qr["trigger"],
+                                trigger_payload=json.loads(qr["trigger_payload_json"] or "{}"),
+                                worker=qr["worker"],
+                                lease_id=qr["lease_id"],
+                                settings_version=qr["settings_version"],
+                                execute_timeout_seconds=qr["execute_timeout_seconds"],
+                                conclude_timeout_seconds=qr["conclude_timeout_seconds"],
+                                last_heartbeat_at=qr["last_heartbeat_at"],
+                                activity_kind=qr["activity_kind"] or "",
+                                activity_summary=qr["activity_summary"] or "",
+                                activity_tool=qr["activity_tool"] or "",
+                                activity_started_at=qr["activity_started_at"],
+                                activity_updated_at=qr["activity_updated_at"],
+                                created_at=qr["created_at"],
+                            )
+                            for qr in task_queued
+                        ],
                     }
                 )
             )

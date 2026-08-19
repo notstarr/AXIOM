@@ -60,6 +60,7 @@ window.AxiomModules.state = {
     projectDetailsLoaded: false,
     projectDetailsError: '',
     selectedProjectId: '',
+    reasonStackExpanded: false,
     _projectOpenGeneration: 0,
     taskDetailLoad: {
       taskId: '',
@@ -233,6 +234,7 @@ window.AxiomModules.state = {
       reason_min_interval_seconds: 60,
       reason_target_open_intents: 4,
       reason_max_new_intents_per_run: 4,
+      reason_queue_limit: 3,
       explore_execute_min_seconds: 300,
       explore_execute_max_seconds: 3600,
       explore_conclude_min_seconds: 180,

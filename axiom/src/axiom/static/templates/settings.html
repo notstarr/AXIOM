@@ -78,6 +78,7 @@
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 最短间隔（秒）</label><input type="number" min="0" max="3600" x-model.number="dispatchSettings.reason_min_interval_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">目标开放 Explore 数</label><input type="number" min="1" max="8" x-model.number="dispatchSettings.reason_target_open_intents" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">单轮最多新增 Intent</label><input type="number" min="1" max="8" x-model.number="dispatchSettings.reason_max_new_intents_per_run" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 最大排队数 (0-10)</label><input type="number" min="0" max="10" x-model.number="dispatchSettings.reason_queue_limit" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
         </div>
       </div>
 

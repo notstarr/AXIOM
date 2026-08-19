@@ -158,6 +158,13 @@ class DispatchService:
             run = self.repository.reason_run_row(conn, task_id, reason_run_id)
             if run is None:
                 raise NotFoundError(f"ReasonRun not found: {task_id}/{reason_run_id}")
+
+            # 单任务执行互斥：如果该 Task 已经有正在执行的 in_flight 实例（claimed/running/concluding），
+            # 且当前要认领的不是正在重试或当前的实例，则排队的 pending 实例暂不分发，等待前序彻底完成
+            in_flight = self.reason.repository.in_flight_for_task(conn, task_id)
+            if in_flight is not None and in_flight.id != reason_run_id:
+                raise ConflictError(f"Task 已有正在执行的 ReasonRun {in_flight.id}，排队的 {reason_run_id} 需等待前序结束")
+
             config = self._validate_claim(
                 conn,
                 task_id=task_id,

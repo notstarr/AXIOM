@@ -385,10 +385,59 @@ class ReasonService:
         if task is None or not task.is_runnable_at(now) or task.legacy_readonly or task.archived:
             return None
 
-        active = self.repository.active_for_task(conn, task_id)
-        if active is not None:
-            self._set_phase(conn, task_id, "reason", now)
-            return active.id
+        in_flight = self.repository.in_flight_for_task(conn, task_id)
+        pending_runs = self.repository.pending_runs_for_task(conn, task_id)
+        config = load_runtime_config(conn)
+        queue_limit = getattr(config, "reason_queue_limit", 3)
+
+        # 1. 检查是否已有活跃的 ReasonRun
+        if in_flight is not None:
+            # 当前已有 ReasonRun 正在运行/认领中
+            # 只有当触发原因是「真实数据事件」（非瞬态 low_watermark/max_wait），且排队数未达上限时，才允许入队排队
+            data_driven_signals = bool(
+                state["unplanned_facts"]
+                or state["unassessed_intent_ids"]
+                or state["failed_intent_ids"]
+            )
+            if not data_driven_signals:
+                return in_flight.id
+
+            if len(pending_runs) >= queue_limit:
+                # 已达最大排队数，复用现有的排队槽位
+                return pending_runs[0].id
+
+            # 检查是否已有完全相同指纹的 pending 运行
+            fingerprint = self._fingerprint(
+                source_fact_ids=source_fact_ids,
+                failed_intent_ids=failed_intent_ids,
+                actionable_todo_ids=actionable_todo_ids,
+                todo_review_ids=todo_review_ids,
+                open_explore_ids=open_explore_ids,
+                unassessed_intent_ids=unassessed_intent_ids,
+            )
+            if pending_runs and any(r.input_fingerprint == fingerprint for r in pending_runs):
+                return pending_runs[0].id
+
+            # 创建排队状态的 ReasonRun（延迟绑定：source_fact_ids 将在 worker 认领时重新刷新为最新全图）
+            queued_run = self._create_run(
+                conn,
+                task=task,
+                source_fact_ids=source_fact_ids,
+                trigger="fact_batch" if state["unplanned_facts"] else "intent_assessment",
+                trigger_payload={
+                    "queued": True,
+                    "in_flight_run_id": in_flight.id,
+                    "unplanned_fact_count": len(source_fact_ids),
+                    "source_fact_ids": source_fact_ids,
+                },
+                input_fingerprint=fingerprint,
+                now=now,
+            )
+            return queued_run.id
+
+        if pending_runs:
+            # 当前无 in_flight 但已有 pending 实例在等待调度领取
+            return pending_runs[0].id
 
         bootstrap_completed = conn.execute(
             select(intents.c.id)
@@ -692,6 +741,28 @@ class ReasonService:
                 )
             if run.status != "claimed":
                 raise ConflictError("ReasonRun is not in claimed state")
+
+            # 晚绑定 (Late-Binding)：在正式 start 时，动态从数据库重新拉取此时刻全部未规划的 Fact，
+            # 确保即使在排队期间产生的全部新 Fact 也能被 100% 完整吃进当前 ReasonRun
+            state = self._input_state(conn, task_id)
+            latest_source_fact_ids = [row["id"] for row in state["unplanned_facts"]]
+            if latest_source_fact_ids:
+                fingerprint = self._fingerprint(
+                    source_fact_ids=latest_source_fact_ids,
+                    failed_intent_ids=list(state["failed_intent_ids"]),
+                    actionable_todo_ids=list(state["actionable_todo_ids"]),
+                    todo_review_ids=list(state["todo_review_ids"]),
+                    open_explore_ids=list(state["open_explore_ids"]),
+                    unassessed_intent_ids=list(state["unassessed_intent_ids"]),
+                )
+                self.repository.refresh_run_sources(
+                    conn,
+                    task_id=task_id,
+                    run_id=reason_run_id,
+                    source_fact_ids=latest_source_fact_ids,
+                    input_fingerprint=fingerprint,
+                )
+
             if not self.repository.start(
                 conn,
                 task_id=task_id,
@@ -700,6 +771,7 @@ class ReasonService:
                 now=now,
             ):
                 raise ConflictError("ReasonRun start lost a concurrent race")
+            self._set_phase(conn, task_id, "reason", now)
             self.audit.record_in(
                 conn,
                 RecordAuditEvent(

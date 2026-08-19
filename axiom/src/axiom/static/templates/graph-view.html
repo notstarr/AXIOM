@@ -146,27 +146,73 @@
       </div>
 
       <template x-if="project.project.reason">
-        <div class="absolute top-14 right-3 z-10 w-80 max-w-[calc(100vw-1.5rem)]">
-          <div class="reason-panel-running relative overflow-hidden rounded-2xl border border-sky-200/80 bg-white/92 px-4 py-3.5 shadow-lg shadow-sky-100/60 backdrop-blur">
-            <div class="flex items-start gap-3">
-              <span class="reason-beacon mt-1 shrink-0"></span>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center justify-between gap-2">
-                  <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-500" x-text="project.project.reason.id ? `ReasonRun ${project.project.reason.id}` : 'reason 运行中'"></div>
-                  <span class="shrink-0 rounded-full border border-sky-100 bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-600" x-text="reasonActivityStateLabel(project.project.reason)"></span>
-                </div>
-                <div class="mt-0.5 text-sm font-semibold text-slate-700 truncate" x-text="project.project.reason.worker || '等待 Reason Worker'"></div>
-                <p class="mt-2 text-sm font-medium leading-relaxed text-slate-700" x-text="reasonActivitySummary(project.project.reason)"></p>
-                <div class="mt-2 text-[11px] text-slate-500"><span class="text-slate-400">正在使用</span><span class="ml-2 font-mono font-medium text-slate-600" x-text="project.project.reason.activity_tool || '—'"></span></div>
-                <div class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] text-slate-500">
-                  <div><span class="block text-slate-400">运行时间</span><span class="mt-0.5 block font-medium text-slate-600" x-text="reasonRunDuration(project.project.reason)"></span></div>
-                  <div><span class="block text-slate-400">最后更新</span><span class="mt-0.5 block font-medium text-slate-600" x-text="reasonActivityAge(project.project.reason)"></span></div>
-                  <div><span class="block text-slate-400">心跳</span><span class="mt-0.5 block font-medium text-slate-600" x-text="formatTime(project.project.reason.last_heartbeat_at)"></span></div>
-                  <div><span class="block text-slate-400">触发器</span><span class="mt-0.5 block font-medium text-slate-600" x-text="project.project.reason.trigger || 'scheduler'"></span></div>
-                  <div><span class="block text-slate-400">预算</span><span class="mt-0.5 block font-medium text-slate-600" x-text="project.project.reason.execute_timeout_seconds ? `${project.project.reason.execute_timeout_seconds}s + ${project.project.reason.conclude_timeout_seconds || 0}s` : '—'"></span></div>
-                  <div><span class="block text-slate-400">配置快照</span><span class="mt-0.5 block font-medium text-slate-600" x-text="project.project.reason.settings_version ? `v${project.project.reason.settings_version}` : '历史运行'"></span></div>
+        <div class="absolute top-14 right-3 z-10 w-80 max-w-[calc(100vw-1.5rem)] select-none">
+          <!-- 堆叠卡片容器：支持展开与折叠切换 -->
+          <div class="relative cursor-pointer" @click="reasonStackExpanded = !reasonStackExpanded">
+            <!-- 后面堆叠的排队卡片效果（折叠状态下显示多层阴影卡片） -->
+            <template x-if="!reasonStackExpanded && (project.project.queued_reasons || []).length > 0">
+              <div class="absolute -bottom-2.5 left-2 right-2 h-12 rounded-2xl border border-sky-300/40 bg-sky-50/70 shadow-md backdrop-blur -z-10 transition"></div>
+            </template>
+            <template x-if="!reasonStackExpanded && (project.project.queued_reasons || []).length > 1">
+              <div class="absolute -bottom-4.5 left-4 right-4 h-12 rounded-2xl border border-sky-300/20 bg-sky-100/40 shadow-sm backdrop-blur -z-20 transition"></div>
+            </template>
+
+            <!-- 正在运行的主 Reason 卡片 -->
+            <div class="reason-panel-running relative overflow-hidden rounded-2xl border border-sky-200/80 bg-white/92 px-4 py-3.5 shadow-lg shadow-sky-100/60 backdrop-blur transition hover:border-sky-300">
+              <div class="flex items-start gap-3">
+                <span class="reason-beacon mt-1 shrink-0"></span>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-500 flex items-center gap-1.5">
+                      <span x-text="project.project.reason.id ? `ReasonRun ${project.project.reason.id}` : 'reason 运行中'"></span>
+                      <!-- 排队徽标 -->
+                      <template x-if="(project.project.queued_reasons || []).length > 0">
+                        <span class="px-1.5 py-0.2 text-[9px] font-bold rounded-md bg-sky-500 text-white shadow-xs" x-text="`+${project.project.queued_reasons.length} 排队`"></span>
+                      </template>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <span class="shrink-0 rounded-full border border-sky-100 bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-600" x-text="reasonActivityStateLabel(project.project.reason)"></span>
+                      <template x-if="(project.project.queued_reasons || []).length > 0">
+                        <span class="text-xs text-sky-400 ml-0.5" x-text="reasonStackExpanded ? '▲' : '▼'"></span>
+                      </template>
+                    </div>
+                  </div>
+                  <div class="mt-0.5 text-sm font-semibold text-slate-700 truncate" x-text="project.project.reason.worker || '等待 Reason Worker'"></div>
+                  <p class="mt-2 text-sm font-medium leading-relaxed text-slate-700" x-text="reasonActivitySummary(project.project.reason)"></p>
+                  <div class="mt-2 text-[11px] text-slate-500"><span class="text-slate-400">正在使用</span><span class="ml-2 font-mono font-medium text-slate-600" x-text="project.project.reason.activity_tool || '—'"></span></div>
+                  <div class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] text-slate-500">
+                    <div><span class="block text-slate-400">运行时间</span><span class="mt-0.5 block font-medium text-slate-600" x-text="reasonRunDuration(project.project.reason)"></span></div>
+                    <div><span class="block text-slate-400">最后更新</span><span class="mt-0.5 block font-medium text-slate-600" x-text="reasonActivityAge(project.project.reason)"></span></div>
+                    <div><span class="block text-slate-400">心跳</span><span class="mt-0.5 block font-medium text-slate-600" x-text="formatTime(project.project.reason.last_heartbeat_at)"></span></div>
+                    <div><span class="block text-slate-400">触发器</span><span class="mt-0.5 block font-medium text-slate-600" x-text="project.project.reason.trigger || 'scheduler'"></span></div>
+                    <div><span class="block text-slate-400">预算</span><span class="mt-0.5 block font-medium text-slate-600" x-text="project.project.reason.execute_timeout_seconds ? `${project.project.reason.execute_timeout_seconds}s + ${project.project.reason.conclude_timeout_seconds || 0}s` : '—'"></span></div>
+                    <div><span class="block text-slate-400">配置快照</span><span class="mt-0.5 block font-medium text-slate-600" x-text="project.project.reason.settings_version ? `v${project.project.reason.settings_version}` : '历史运行'"></span></div>
+                  </div>
                 </div>
               </div>
+            </div>
+
+            <!-- 平行展开的排队 Reason 列表 -->
+            <div x-show="reasonStackExpanded && (project.project.queued_reasons || []).length > 0" x-collapse class="mt-2.5 space-y-2">
+              <div class="text-[11px] font-semibold text-slate-400 px-1 flex items-center justify-between">
+                <span>排队待接力列表 (将在前序完成后晚绑定最新全图)</span>
+                <span class="font-mono" x-text="`${(project.project.queued_reasons || []).length} 个任务`"></span>
+              </div>
+              <template x-for="(qr, idx) in project.project.queued_reasons" :key="qr.id">
+                <div class="rounded-xl border border-sky-200/60 bg-sky-50/80 p-3 shadow-sm backdrop-blur transition">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-1.5">
+                      <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                      <span class="font-mono text-xs font-bold text-sky-700" x-text="qr.id"></span>
+                    </div>
+                    <span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-medium" x-text="`排队 #${idx + 1}`"></span>
+                  </div>
+                  <div class="mt-1.5 flex items-center justify-between text-[11px] text-slate-500">
+                    <span>触发源: <strong class="text-slate-700" x-text="qr.trigger || 'scheduler'"></strong></span>
+                    <span x-text="formatTime(qr.created_at)"></span>
+                  </div>
+                </div>
+              </template>
             </div>
           </div>
         </div>
