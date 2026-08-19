@@ -67,11 +67,11 @@ class DraftTodoUpdate(BaseModel):
     priority: int | None = Field(default=None, ge=0, le=100)
     status: TodoStatus | None = None
     status_reason: str | None = None
-    source_adds: list[TodoSource] = Field(default_factory=list)
+    source_adds: list[TodoSource] = Field(default_factory=list, max_length=10)
 
     @field_validator("todo_id")
     @classmethod
-    def require_id(cls, value: str) -> str:
+    def require_todo_id(cls, value: str) -> str:
         value = value.strip()
         if not value:
             raise ValueError("todo_id must not be empty")
@@ -95,11 +95,25 @@ class DraftTodoUpdate(BaseModel):
         normalized = str(value).strip()
         return LEGACY_TODO_STATUS_MAP.get(normalized, normalized)
 
+
     @model_validator(mode="after")
     def reject_legacy_status(self) -> "DraftTodoUpdate":
         if self.status in LEGACY_TODO_STATUSES:
             raise ValueError(f"legacy Todo status is read-only: {self.status}")
         return self
+
+
+class DraftTodoDelete(BaseModel):
+    todo_id: str
+    reason: str
+
+    @field_validator("todo_id", "reason")
+    @classmethod
+    def require_fields(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
 
 
 class DraftIntent(BaseModel):
@@ -196,6 +210,7 @@ IntentAssessment = DraftIntentAssessment
 class WorkspaceDraft(BaseModel):
     todo_adds: list[DraftTodo] = Field(default_factory=list, max_length=20)
     todo_updates: list[DraftTodoUpdate] = Field(default_factory=list, max_length=50)
+    todo_deletions: list[DraftTodoDelete] = Field(default_factory=list, max_length=50)
     # Reason is intentionally allowed to persist a large backlog in one run.
     # This is only an infrastructure guard against an accidentally unbounded
     # request; it is not a scheduling/concurrency quota.
@@ -251,6 +266,10 @@ class AddWorkspaceTodo(WorkspaceWorkerCommand):
 
 class UpdateWorkspaceTodo(WorkspaceWorkerCommand):
     update: DraftTodoUpdate
+
+
+class DeleteWorkspaceTodo(WorkspaceWorkerCommand):
+    deletion: DraftTodoDelete
 
 
 class ProposeWorkspaceIntent(WorkspaceWorkerCommand):

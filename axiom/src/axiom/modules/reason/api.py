@@ -202,6 +202,19 @@ def update_workspace_todo(
     )
 
 
+@router.post("/reason-workspaces/{workspace_id}/todo-deletions", response_model=ReasonWorkspace)
+def delete_workspace_todo(
+    workspace_id: str,
+    body: DeleteWorkspaceTodo,
+    container: Container = Depends(get_container),
+) -> ReasonWorkspace:
+    return container.reason.delete_todo(
+        workspace_id,
+        body.deletion,
+        lease_id=body.lease_id,
+    )
+
+
 @router.post("/reason-workspaces/{workspace_id}/intents", response_model=ReasonWorkspace)
 def propose_workspace_intent(
     workspace_id: str,

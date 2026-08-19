@@ -21,9 +21,10 @@
    ```bash
    axiom reason intent assess --intent-id iXXX --status completed|partial|blocked --reason "评估理由..."
    ```
-3. **消费新 Fact 与更新 Todo**：
+3. **消费新 Fact 与更新/清理 Todo**：
    - 每个新 Fact 必须被 Todo 关联、Intent 的 `--from-fact` 或 Goal Assessment 的 evidence 引用，不得遗漏。
    - 维护 Todo 状态（`open` / `partial` / `blocked` / `completed`）。
+   - **重复 Todo 清理**：若发现重复或无意义待办，使用 `axiom reason todo delete --todo-id tdXXX --reason "与tdYYY重复"` 及时清理归档。
 4. **派发新 Intent**：
    ```bash
    axiom reason intent propose --todo-id tdXXX --title "意图标题" --description "详细测试方案" \

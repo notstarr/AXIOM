@@ -188,6 +188,21 @@ def register_worker_commands(main: click.Group) -> None:
             raise click.UsageError("todo update requires at least one changed field")
         _echo_workspace(_workspace_request("POST", "todo-updates", {"update": update}))
 
+    @reason_todo_group.command("delete")
+    @click.option("--todo-id", required=True, help="Existing Todo ID or this Workspace's draft ref.")
+    @click.option("--reason", required=True, help="Reason for deleting or archiving this Todo (e.g. duplicate).")
+    @click.option("--reason-file", type=click.Path(path_type=Path, dir_okay=False))
+    def reason_todo_delete(
+        todo_id: str,
+        reason: str | None,
+        reason_file: Path | None,
+    ) -> None:
+        deletion = {
+            "todo_id": todo_id,
+            "reason": _text_value(reason, reason_file, "reason", required=True),
+        }
+        _echo_workspace(_workspace_request("POST", "todo-deletions", {"deletion": deletion}))
+
     @reason_group.group("intent")
     def reason_intent_group() -> None:
         """Propose one pending Explore Intent."""

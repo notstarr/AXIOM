@@ -1021,6 +1021,34 @@ class ReasonService:
             draft = workspace.draft.model_copy(update={"todo_updates": updates})
             return self.repository.save_draft(conn, workspace_id, draft, now=utcnow())
 
+    def delete_todo(
+        self,
+        workspace_id: str,
+        delete_command: DraftTodoDelete,
+        *,
+        lease_id: str,
+    ) -> ReasonWorkspace:
+        with transaction(self.engine) as conn:
+            workspace = self._require_active_open(conn, workspace_id, lease_id)
+            target_id = delete_command.todo_id
+            # 1. 如果是本 Workspace 新增的草稿，直接从 todo_adds 中移除
+            todo_adds = [item for item in workspace.draft.todo_adds if item.ref != target_id]
+            # 2. 从 todo_updates 中也移除针对该 Todo 的修改
+            todo_updates = [item for item in workspace.draft.todo_updates if item.todo_id != target_id]
+            # 3. 检查数据库中是否存在已持久化的 Todo
+            is_existing = self.todos.get(conn, workspace.task_id, target_id) is not None
+            deletions = [item for item in workspace.draft.todo_deletions if item.todo_id != target_id]
+            if is_existing:
+                deletions.append(delete_command)
+            draft = workspace.draft.model_copy(
+                update={
+                    "todo_adds": todo_adds,
+                    "todo_updates": todo_updates,
+                    "todo_deletions": deletions,
+                }
+            )
+            return self.repository.save_draft(conn, workspace_id, draft, now=utcnow())
+
     def propose_intent(
         self,
         workspace_id: str,
@@ -1267,6 +1295,22 @@ class ReasonService:
                         task_id=workspace.task_id,
                         todo_id=update_command.todo_id,
                         sources=update_command.source_adds,
+                    )
+
+                # 执行已持久化 Todo 的归档/软删除
+                for delete_command in draft.todo_deletions:
+                    if delete_command.todo_id in todo_refs:
+                        continue
+                    self.todos.update(
+                        conn,
+                        workspace.task_id,
+                        delete_command.todo_id,
+                        {
+                            "archived": True,
+                            "status": "cancelled",
+                            "status_reason": delete_command.reason,
+                            "updated_at": now,
+                        },
                     )
 
                 # Apply one-time evaluations to already-dispatched terminal
