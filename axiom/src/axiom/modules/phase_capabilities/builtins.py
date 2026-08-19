@@ -156,6 +156,14 @@ _CORE_BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = (
         availability=_all_modes("reason"),
     ),
     BuiltinToolDefinition(
+        key="axiom.reason.todo.delete",
+        title="删除/归档 Todo",
+        description="删除工作区草稿待办或归档重复/无意义的已有 Todo。",
+        source="axiom_internal",
+        invocation="axiom reason todo delete --todo-id ... --reason ...",
+        availability=_all_modes("reason"),
+    ),
+    BuiltinToolDefinition(
         key="axiom.reason.intent.propose",
         title="派发 Explore Intent",
         description="在当前 Reason Workspace 中提出新的 Explore Intent。",
