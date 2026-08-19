@@ -584,6 +584,7 @@
     const config = runtime.config;
     return {
       ...config,
+      reason_queue_limit: Number(config.reason_queue_limit ?? 3),
       bootstrap_concurrency: 1,
       reason_concurrency: 1,
       workers: workers.map(mapWorker),
@@ -617,9 +618,9 @@
     }
     const config = { ...current.config };
     for (const key of runtimeConfigKeys) {
-      if (body[key] !== undefined && body[key] !== null && body[key] !== '') {
-        config[key] = Number(body[key]);
-      }
+      if (body[key] === undefined || body[key] === null || body[key] === '') continue;
+      const parsed = Number(body[key]);
+      if (Number.isFinite(parsed)) config[key] = parsed;
     }
     if (body.network_proxy_mode !== undefined) config.network_proxy_mode = body.network_proxy_mode;
     if (body.network_proxy_url !== undefined) config.network_proxy_url = body.network_proxy_url;
