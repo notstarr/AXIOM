@@ -38,6 +38,7 @@
     'reason_min_interval_seconds',
     'reason_target_open_intents',
     'reason_max_new_intents_per_run',
+    'reason_queue_limit',
     'explore_execute_min_seconds',
     'explore_execute_max_seconds',
     'explore_conclude_min_seconds',
@@ -134,6 +135,25 @@
       activity_updated_at: task.reason_activity_updated_at || task.reason_heartbeat_at,
       created_at: task.reason_activity_started_at || task.reason_heartbeat_at,
     } : null;
+    const queuedReasons = (task.queued_reason_runs || []).map(qr => ({
+      id: qr.id,
+      status: qr.status,
+      worker: qr.worker || '排队中',
+      trigger: qr.trigger || 'scheduler',
+      trigger_payload: qr.trigger_payload || {},
+      created_at: qr.created_at,
+    }));
+    const queuedReasonDisplay = !activeReasonRun && !legacyReason && queuedReasons[0] ? {
+      id: queuedReasons[0].id,
+      status: 'pending',
+      worker: '排队中',
+      trigger: queuedReasons[0].trigger,
+      trigger_payload: queuedReasons[0].trigger_payload,
+      activity_kind: 'pending',
+      activity_summary: '等待前序 Reason 完成后按 FIFO 领取',
+      activity_tool: '',
+      created_at: queuedReasons[0].created_at,
+    } : null;
     return {
       id: task.id,
       parent_project_id: task.project_id,
@@ -174,7 +194,8 @@
         activity_started_at: activeReasonRun.activity_started_at || activeReasonRun.created_at,
         activity_updated_at: activeReasonRun.activity_updated_at || activeReasonRun.last_heartbeat_at || activeReasonRun.created_at,
         created_at: activeReasonRun.created_at,
-      } : legacyReason,
+      } : legacyReason || queuedReasonDisplay,
+      queued_reasons: queuedReasons,
       created_at: task.created_at,
       updated_at: task.updated_at,
       completed_at: task.completed_at,

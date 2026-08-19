@@ -58,6 +58,14 @@ OPEN_EXPLORE_STATUSES = ("pending", "claimed", "running", "concluding")
 TERMINAL_EXPLORE_STATUSES = ("completed", "failed", "cancelled")
 INTENT_ASSESSMENT_STATUSES = ("open", "partial", "blocked", "completed")
 MAX_WORKSPACE_INTENTS = 256
+REASON_INPUT_KEYS = (
+    "source_fact_ids",
+    "failed_intent_ids",
+    "actionable_todo_ids",
+    "todo_review_ids",
+    "open_explore_ids",
+    "unassessed_intent_ids",
+)
 
 
 class ReasonService:
@@ -70,6 +78,286 @@ class ReasonService:
         self.goals = GoalRepository()
         self.audit = AuditService(engine)
 
+    @staticmethod
+    def _unique(values: list[str] | tuple[str, ...] | None) -> list[str]:
+        return list(dict.fromkeys(value for value in (values or []) if isinstance(value, str)))
+
+    @classmethod
+    def _snapshot_from_state(
+        cls,
+        state: dict[str, object],
+        *,
+        source_fact_ids: list[str] | None = None,
+    ) -> dict[str, list[str]]:
+        return {
+            "source_fact_ids": cls._unique(
+                source_fact_ids
+                if source_fact_ids is not None
+                else [row["id"] for row in state["unplanned_facts"]]
+            ),
+            "failed_intent_ids": cls._unique(list(state["failed_intent_ids"])),
+            "actionable_todo_ids": cls._unique(list(state["actionable_todo_ids"])),
+            "todo_review_ids": cls._unique(list(state["todo_review_ids"])),
+            "open_explore_ids": cls._unique(list(state["open_explore_ids"])),
+            "unassessed_intent_ids": cls._unique(list(state["unassessed_intent_ids"])),
+        }
+
+    @classmethod
+    def _snapshot_from_run(cls, run: ReasonRun) -> dict[str, list[str]]:
+        payload = run.trigger_payload or {}
+        return {
+            "source_fact_ids": cls._unique(
+                [*run.source_fact_ids, *payload.get("source_fact_ids", [])]
+            ),
+            **{
+                key: cls._unique(payload.get(key, []))
+                for key in REASON_INPUT_KEYS
+                if key != "source_fact_ids"
+            },
+        }
+
+    @classmethod
+    def _merge_snapshots(
+        cls,
+        *snapshots: dict[str, list[str]],
+    ) -> dict[str, list[str]]:
+        return {
+            key: cls._unique(
+                [value for snapshot in snapshots for value in snapshot.get(key, [])]
+            )
+            for key in REASON_INPUT_KEYS
+        }
+
+    @staticmethod
+    def _snapshot_fingerprint(snapshot: dict[str, list[str]]) -> str:
+        return ReasonService._fingerprint(
+            source_fact_ids=snapshot["source_fact_ids"],
+            failed_intent_ids=snapshot["failed_intent_ids"],
+            actionable_todo_ids=snapshot["actionable_todo_ids"],
+            todo_review_ids=snapshot["todo_review_ids"],
+            open_explore_ids=snapshot["open_explore_ids"],
+            unassessed_intent_ids=snapshot["unassessed_intent_ids"],
+        )
+
+    @staticmethod
+    def _trigger_fingerprint(
+        snapshot: dict[str, list[str]],
+        *,
+        trigger: str,
+        trigger_payload: dict,
+    ) -> str:
+        base = ReasonService._snapshot_fingerprint(snapshot)
+        identity: dict[str, object] = {"base": base, "trigger": trigger}
+        if trigger == "hint":
+            identity["hint_id"] = trigger_payload.get("hint_id")
+        elif trigger == "continuation":
+            identity["goal_cycle_id"] = trigger_payload.get("goal_cycle_id")
+        else:
+            return base
+        return hashlib.sha256(
+            json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+
+    @classmethod
+    def _payload_for_snapshot(
+        cls,
+        snapshot: dict[str, list[str]],
+        *,
+        trigger_payload: dict | None = None,
+    ) -> dict:
+        payload = dict(trigger_payload or {})
+        payload.update({key: list(snapshot[key]) for key in REASON_INPUT_KEYS})
+        payload["unplanned_fact_count"] = len(snapshot["source_fact_ids"])
+        payload["open_explore_count"] = len(snapshot["open_explore_ids"])
+        return payload
+
+    @classmethod
+    def _has_uncovered_input(
+        cls,
+        state_snapshot: dict[str, list[str]],
+        runs: list[ReasonRun],
+    ) -> bool:
+        covered = cls._merge_snapshots(*(cls._snapshot_from_run(run) for run in runs))
+        return any(
+            value not in covered[key]
+            for key in REASON_INPUT_KEYS
+            for value in state_snapshot[key]
+        )
+
+    @staticmethod
+    def _queue_limit(config) -> int:
+        return max(1, int(getattr(config, "reason_queue_limit", 3)))
+
+    def _enqueue_or_coalesce_in(
+        self,
+        conn,
+        *,
+        task,
+        trigger: str,
+        trigger_payload: dict,
+        snapshot: dict[str, list[str]],
+        input_fingerprint: str,
+        now: str,
+    ) -> ReasonRun:
+        if conn.execute(
+            select(tasks.c.id).where(tasks.c.id == task.id).with_for_update()
+        ).scalar_one_or_none() is None:
+            raise NotFoundError(f"Task not found: {task.id}")
+        pending = self.repository.pending_runs_for_task(conn, task.id)
+        matched = next(
+            (run for run in pending if run.input_fingerprint == input_fingerprint),
+            None,
+        )
+        if matched is not None:
+            merged_snapshot = self._merge_snapshots(
+                self._snapshot_from_run(matched), snapshot
+            )
+            merged_payload = self._payload_for_snapshot(
+                merged_snapshot,
+                trigger_payload=self._merge_trigger_payload(
+                    matched.trigger_payload,
+                    self._payload_for_snapshot(snapshot, trigger_payload=trigger_payload),
+                    trigger=trigger,
+                    existing_trigger=matched.trigger,
+                ),
+            )
+            if not self.repository.update_pending_snapshot(
+                conn,
+                task_id=task.id,
+                run_id=matched.id,
+                source_fact_ids=merged_snapshot["source_fact_ids"],
+                trigger_payload=merged_payload,
+                input_fingerprint=matched.input_fingerprint,
+                now=now,
+            ):
+                raise ConflictError("Pending ReasonRun changed while coalescing a trigger")
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=task.project_id,
+                    task_id=task.id,
+                    reason_run_id=matched.id,
+                    event_type="reason_run.coalesced",
+                    message="相同输入的 Reason 触发已合并到排队项",
+                    payload={
+                        "phase": "reason",
+                        "trigger": trigger,
+                        "input_fingerprint": input_fingerprint,
+                        "coalesced_count": merged_payload.get("coalesced_count", 0),
+                    },
+                ),
+            )
+            refreshed = self.repository.get_run(conn, task.id, matched.id)
+            if refreshed is None:
+                raise ConflictError("Coalesced pending ReasonRun disappeared")
+            return refreshed
+
+        config = load_runtime_config(conn)
+        payload = self._payload_for_snapshot(snapshot, trigger_payload=trigger_payload)
+        if len(pending) < self._queue_limit(config):
+            return self._create_run(
+                conn,
+                task=task,
+                source_fact_ids=snapshot["source_fact_ids"],
+                trigger=trigger,
+                trigger_payload=payload,
+                input_fingerprint=input_fingerprint,
+                now=now,
+            )
+
+        tail = pending[-1]
+        merged_snapshot = self._merge_snapshots(
+            self._snapshot_from_run(tail), snapshot
+        )
+        merged_payload = self._payload_for_snapshot(
+            merged_snapshot,
+            trigger_payload=self._merge_trigger_payload(
+                tail.trigger_payload,
+                payload,
+                trigger=trigger,
+                existing_trigger=tail.trigger,
+            ),
+        )
+        merged_fingerprint = self._snapshot_fingerprint(merged_snapshot)
+        if not self.repository.update_pending_snapshot(
+            conn,
+            task_id=task.id,
+            run_id=tail.id,
+            source_fact_ids=merged_snapshot["source_fact_ids"],
+            trigger_payload=merged_payload,
+            input_fingerprint=merged_fingerprint,
+            now=now,
+        ):
+            raise ConflictError("Pending ReasonRun changed while coalescing a trigger")
+        self.audit.record_in(
+            conn,
+            RecordAuditEvent(
+                project_id=task.project_id,
+                task_id=task.id,
+                reason_run_id=tail.id,
+                event_type="reason_run.coalesced",
+                message="新的 Reason 触发已合并到队尾排队项",
+                payload={
+                    "phase": "reason",
+                    "trigger": trigger,
+                    "queue_limit": self._queue_limit(config),
+                    "coalesced_count": merged_payload.get("coalesced_count", 0),
+                },
+            ),
+        )
+        refreshed = self.repository.get_run(conn, task.id, tail.id)
+        if refreshed is None:
+            raise ConflictError("Merged pending ReasonRun disappeared")
+        return refreshed
+
+    @staticmethod
+    def _merge_trigger_payload(
+        existing: dict,
+        incoming: dict,
+        *,
+        trigger: str,
+        existing_trigger: str | None = None,
+    ) -> dict:
+        merged = dict(existing or {})
+        trigger_sources = list(merged.get("trigger_sources") or [])
+        original_trigger = (
+            merged.get("original_trigger")
+            or merged.get("trigger")
+            or existing_trigger
+        )
+        if original_trigger and original_trigger not in trigger_sources:
+            trigger_sources.append(original_trigger)
+        if trigger not in trigger_sources:
+            trigger_sources.append(trigger)
+        merged["original_trigger"] = original_trigger or trigger
+        merged["last_trigger"] = trigger
+        merged["trigger_sources"] = trigger_sources
+        merged["coalesced_count"] = int(merged.get("coalesced_count") or 0) + 1
+        events = list(merged.get("coalesced_triggers") or [])
+        if not events and original_trigger:
+            events.append(
+                {
+                    "trigger": original_trigger,
+                    "payload": {
+                        key: value
+                        for key, value in merged.items()
+                        if key not in {*REASON_INPUT_KEYS, "coalesced_triggers"}
+                    },
+                }
+            )
+        events.append(
+            {
+                "trigger": trigger,
+                "payload": {
+                    key: value
+                    for key, value in incoming.items()
+                    if key not in REASON_INPUT_KEYS
+                },
+            }
+        )
+        merged["coalesced_triggers"] = events
+        return merged
+
     # ------------------------------------------------------------------
     # Trigger reconciliation
     # ------------------------------------------------------------------
@@ -81,29 +369,26 @@ class ReasonService:
         source_fact_id: str,
         now: str,
     ) -> str | None:
-        existing = self.repository.active_for_task(conn, task_id)
-        if existing is not None:
-            return existing.id
         task = self.tasks.get(conn, task_id)
         if task is None:
             raise NotFoundError(f"Task not found: {task_id}")
         if not task.is_runnable_at(now):
             return None
-        fingerprint = self._fingerprint(
-            source_fact_ids=[source_fact_id],
-            failed_intent_ids=[],
-            actionable_todo_ids=[],
-            todo_review_ids=[],
-            open_explore_ids=[],
-            unassessed_intent_ids=[],
-        )
-        run = self._create_run(
+        snapshot = {
+            "source_fact_ids": [source_fact_id],
+            "failed_intent_ids": [],
+            "actionable_todo_ids": [],
+            "todo_review_ids": [],
+            "open_explore_ids": [],
+            "unassessed_intent_ids": [],
+        }
+        run = self._enqueue_or_coalesce_in(
             conn,
             task=task,
-            source_fact_ids=[source_fact_id],
             trigger="bootstrap",
             trigger_payload={"source_fact_id": source_fact_id},
-            input_fingerprint=fingerprint,
+            snapshot=snapshot,
+            input_fingerprint=self._snapshot_fingerprint(snapshot),
             now=now,
         )
         self._set_phase(conn, task_id, "reason", now)
@@ -128,9 +413,6 @@ class ReasonService:
                 raise ConflictError("历史只读任务不能触发 Reason")
             if not task.is_runnable_at(now):
                 raise ConflictError("只有运行中且未到期的任务可以触发 Reason")
-            active = self.repository.active_for_task(conn, task_id)
-            if active is not None:
-                raise ConflictError(f"ReasonRun {active.id} 已在进行中")
             bootstrap_completed = conn.execute(
                 select(intents.c.id)
                 .where(
@@ -146,38 +428,19 @@ class ReasonService:
 
             state = self._input_state(conn, task_id)
             source_fact_ids = [row["id"] for row in state["unplanned_facts"]]
-            open_explore_ids = list(state["open_explore_ids"])
-            failed_intent_ids = list(state["failed_intent_ids"])
-            actionable_todo_ids = list(state["actionable_todo_ids"])
-            todo_review_ids = list(state["todo_review_ids"])
-            unassessed_intent_ids = list(state["unassessed_intent_ids"])
-            fingerprint = self._fingerprint(
-                source_fact_ids=source_fact_ids,
-                failed_intent_ids=failed_intent_ids,
-                actionable_todo_ids=actionable_todo_ids,
-                todo_review_ids=todo_review_ids,
-                open_explore_ids=open_explore_ids,
-                unassessed_intent_ids=unassessed_intent_ids,
-            )
-            run = self._create_run(
+            snapshot = self._snapshot_from_state(state)
+            run = self._enqueue_or_coalesce_in(
                 conn,
                 task=task,
-                source_fact_ids=source_fact_ids,
                 trigger="manual",
                 trigger_payload={
                     "actor": actor,
                     "requested_at": now,
                     "task_phase": task.phase,
                     "unplanned_fact_count": len(source_fact_ids),
-                    "source_fact_ids": source_fact_ids,
-                    "open_explore_count": len(open_explore_ids),
-                    "open_explore_ids": open_explore_ids,
-                    "failed_intent_ids": failed_intent_ids,
-                    "actionable_todo_ids": actionable_todo_ids,
-                    "todo_review_ids": todo_review_ids,
-                    "unassessed_intent_ids": unassessed_intent_ids,
                 },
-                input_fingerprint=fingerprint,
+                snapshot=snapshot,
+                input_fingerprint=self._snapshot_fingerprint(snapshot),
                 now=now,
             )
             self._set_phase(conn, task_id, "reason", now)
@@ -210,7 +473,6 @@ class ReasonService:
             task is None
             or task.legacy_readonly
             or not task.is_runnable_at(now)
-            or self.repository.active_for_task(conn, task_id) is not None
         ):
             return None
         bootstrap_completed = conn.execute(
@@ -228,52 +490,26 @@ class ReasonService:
 
         state = self._input_state(conn, task_id)
         source_fact_ids = [row["id"] for row in state["unplanned_facts"]]
-        open_explore_ids = list(state["open_explore_ids"])
-        failed_intent_ids = list(state["failed_intent_ids"])
-        actionable_todo_ids = list(state["actionable_todo_ids"])
-        todo_review_ids = list(state["todo_review_ids"])
-        unassessed_intent_ids = list(state["unassessed_intent_ids"])
-        base_fingerprint = self._fingerprint(
-            source_fact_ids=source_fact_ids,
-            failed_intent_ids=failed_intent_ids,
-            actionable_todo_ids=actionable_todo_ids,
-            todo_review_ids=todo_review_ids,
-            open_explore_ids=open_explore_ids,
-            unassessed_intent_ids=unassessed_intent_ids,
-        )
-        fingerprint = hashlib.sha256(
-            json.dumps(
-                {
-                    "base": base_fingerprint,
-                    "trigger": "hint",
-                    "hint_id": hint.id,
-                    "hint_content": hint.content,
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-            ).encode("utf-8")
-        ).hexdigest()
-        run = self._create_run(
+        snapshot = self._snapshot_from_state(state)
+        trigger_payload = {
+            "hint_id": hint.id,
+            "hint_content": hint.content,
+            "creator": hint.creator,
+            "requested_at": now,
+            "task_phase": task.phase,
+            "unplanned_fact_count": len(source_fact_ids),
+        }
+        run = self._enqueue_or_coalesce_in(
             conn,
             task=task,
-            source_fact_ids=source_fact_ids,
             trigger="hint",
-            trigger_payload={
-                "hint_id": hint.id,
-                "hint_content": hint.content,
-                "creator": hint.creator,
-                "requested_at": now,
-                "task_phase": task.phase,
-                "unplanned_fact_count": len(source_fact_ids),
-                "source_fact_ids": source_fact_ids,
-                "open_explore_count": len(open_explore_ids),
-                "open_explore_ids": open_explore_ids,
-                "failed_intent_ids": failed_intent_ids,
-                "actionable_todo_ids": actionable_todo_ids,
-                "todo_review_ids": todo_review_ids,
-                "unassessed_intent_ids": unassessed_intent_ids,
-            },
-            input_fingerprint=fingerprint,
+            trigger_payload=trigger_payload,
+            snapshot=snapshot,
+            input_fingerprint=self._trigger_fingerprint(
+                snapshot,
+                trigger="hint",
+                trigger_payload=trigger_payload,
+            ),
             now=now,
         )
         self._set_phase(conn, task_id, "reason", now)
@@ -291,12 +527,6 @@ class ReasonService:
         now: str,
     ) -> ReasonRun:
         state = self._input_state(conn, task.id)
-        source_fact_ids = [row["id"] for row in state["unplanned_facts"]]
-        open_explore_ids = list(state["open_explore_ids"])
-        failed_intent_ids = list(state["failed_intent_ids"])
-        actionable_todo_ids = list(state["actionable_todo_ids"])
-        todo_review_ids = list(state["todo_review_ids"])
-        unassessed_intent_ids = list(state["unassessed_intent_ids"])
         cancelled_intent_ids = list(
             conn.execute(
                 select(intents.c.id)
@@ -309,38 +539,28 @@ class ReasonService:
                 .order_by(intents.c.created_at, intents.c.id)
             ).scalars()
         )
-        base_fingerprint = self._fingerprint(
-            source_fact_ids=source_fact_ids,
-            failed_intent_ids=failed_intent_ids,
-            actionable_todo_ids=actionable_todo_ids,
-            todo_review_ids=todo_review_ids,
-            open_explore_ids=open_explore_ids,
-            unassessed_intent_ids=unassessed_intent_ids,
-        )
-        fingerprint = hashlib.sha256(
-            f"continuation:{task.current_goal_cycle_id}:{base_fingerprint}".encode()
-        ).hexdigest()
-        return self._create_run(
+        snapshot = self._snapshot_from_state(state)
+        trigger_payload = {
+            "actor": actor,
+            "requested_at": now,
+            "previous_goal": previous_goal,
+            "current_goal": task.goal,
+            "continuation_reason": continuation_reason,
+            "focus": focus,
+            "goal_cycle_id": task.current_goal_cycle_id,
+            "goal_achieved_cancelled_intent_ids": cancelled_intent_ids,
+        }
+        return self._enqueue_or_coalesce_in(
             conn,
             task=task,
-            source_fact_ids=source_fact_ids,
             trigger="continuation",
-            trigger_payload={
-                "actor": actor,
-                "requested_at": now,
-                "previous_goal": previous_goal,
-                "current_goal": task.goal,
-                "continuation_reason": continuation_reason,
-                "focus": focus,
-                "source_fact_ids": source_fact_ids,
-                "open_explore_ids": open_explore_ids,
-                "failed_intent_ids": failed_intent_ids,
-                "actionable_todo_ids": actionable_todo_ids,
-                "todo_review_ids": todo_review_ids,
-                "unassessed_intent_ids": unassessed_intent_ids,
-                "goal_achieved_cancelled_intent_ids": cancelled_intent_ids,
-            },
-            input_fingerprint=fingerprint,
+            trigger_payload=trigger_payload,
+            snapshot=snapshot,
+            input_fingerprint=self._trigger_fingerprint(
+                snapshot,
+                trigger="continuation",
+                trigger_payload=trigger_payload,
+            ),
             now=now,
         )
 
@@ -385,10 +605,8 @@ class ReasonService:
         if task is None or not task.is_runnable_at(now) or task.legacy_readonly or task.archived:
             return None
 
-        active = self.repository.active_for_task(conn, task_id)
-        if active is not None:
-            self._set_phase(conn, task_id, "reason", now)
-            return active.id
+        in_flight = self.repository.in_flight_for_task(conn, task_id)
+        pending = self.repository.pending_runs_for_task(conn, task_id)
 
         bootstrap_completed = conn.execute(
             select(intents.c.id)
@@ -401,7 +619,8 @@ class ReasonService:
             .limit(1)
         ).scalar_one_or_none()
         if bootstrap_completed is None:
-            return None
+            current = in_flight or (pending[0] if pending else None)
+            return current.id if current is not None else None
 
         state = self._input_state(conn, task_id)
         source_fact_ids = [row["id"] for row in state["unplanned_facts"]]
@@ -410,6 +629,11 @@ class ReasonService:
         actionable_todo_ids = list(state["actionable_todo_ids"])
         todo_review_ids = list(state["todo_review_ids"])
         unassessed_intent_ids = list(state["unassessed_intent_ids"])
+        snapshot = self._snapshot_from_state(state)
+        open_runs = [run for run in [in_flight, *pending] if run is not None]
+        if open_runs and not self._has_uncovered_input(snapshot, open_runs):
+            self._set_phase(conn, task_id, "reason", now)
+            return (in_flight or pending[0]).id
         # A terminal Explore without a follow-up is itself a planning signal.
         signals_present = bool(
             source_fact_ids
@@ -437,7 +661,14 @@ class ReasonService:
         )
 
         trigger = ""
-        if latest is None:
+        if open_runs:
+            if unassessed_intent_ids and not open_explore_ids:
+                trigger = "intent_assessment"
+            elif source_fact_ids:
+                trigger = "fact_batch"
+            else:
+                trigger = "low_watermark"
+        elif latest is None:
             trigger = "bootstrap"
         else:
             last_finished = latest["concluded_at"] or latest["updated_at"]
@@ -463,16 +694,11 @@ class ReasonService:
                 self._set_phase(conn, task_id, "explore" if open_explore_ids else "waiting", now)
                 return None
 
-        fingerprint = self._fingerprint(
-            source_fact_ids=source_fact_ids,
-            failed_intent_ids=failed_intent_ids,
-            actionable_todo_ids=actionable_todo_ids,
-            todo_review_ids=todo_review_ids,
-            open_explore_ids=open_explore_ids,
-            unassessed_intent_ids=unassessed_intent_ids,
-        )
+        fingerprint = self._snapshot_fingerprint(snapshot)
         latest_deduplication = self.repository.latest_deduplication_row(conn, task_id)
         if (
+            not open_runs
+            and
             not unassessed_intent_ids
             and
             latest_deduplication is not None
@@ -481,10 +707,9 @@ class ReasonService:
             self._set_phase(conn, task_id, "explore" if open_explore_ids else "waiting", now)
             return None
 
-        run = self._create_run(
+        run = self._enqueue_or_coalesce_in(
             conn,
             task=task,
-            source_fact_ids=source_fact_ids,
             trigger=trigger,
             trigger_payload={
                 "unplanned_fact_count": len(source_fact_ids),
@@ -495,6 +720,7 @@ class ReasonService:
                 "unassessed_intent_ids": unassessed_intent_ids,
                 "oldest_fact_age_seconds": oldest_age,
             },
+            snapshot=snapshot,
             input_fingerprint=fingerprint,
             now=now,
         )
@@ -679,6 +905,10 @@ class ReasonService:
     def start_run(self, task_id: str, reason_run_id: str, *, lease_id: str) -> StartedReasonRun:
         now = utcnow()
         with transaction(self.engine) as conn:
+            if conn.execute(
+                select(tasks.c.id).where(tasks.c.id == task_id).with_for_update()
+            ).scalar_one_or_none() is None:
+                raise NotFoundError(f"Task not found: {task_id}")
             run = self._require_run_lease(conn, task_id, reason_run_id, lease_id)
             task = self.tasks.get(conn, task_id)
             if task is None or task.status != "running" or task.archived:
@@ -692,6 +922,49 @@ class ReasonService:
                 )
             if run.status != "claimed":
                 raise ConflictError("ReasonRun is not in claimed state")
+            state = self._snapshot_from_state(self._input_state(conn, task_id))
+            other_pending = [
+                item
+                for item in self.repository.pending_runs_for_task(conn, task_id)
+                if item.id != reason_run_id
+            ]
+            reserved = self._merge_snapshots(
+                *(self._snapshot_from_run(item) for item in other_pending)
+            )
+            late_bound = self._merge_snapshots(
+                self._snapshot_from_run(run),
+                {
+                    key: [value for value in state[key] if value not in reserved[key]]
+                    for key in REASON_INPUT_KEYS
+                },
+            )
+            payload = self._payload_for_snapshot(
+                late_bound,
+                trigger_payload={
+                    **run.trigger_payload,
+                    "late_bound": True,
+                    "late_bound_at": now,
+                },
+            )
+            input_fingerprint = (
+                self._trigger_fingerprint(
+                    late_bound,
+                    trigger=run.trigger,
+                    trigger_payload=payload,
+                )
+                if run.trigger in {"hint", "continuation"}
+                else self._snapshot_fingerprint(late_bound)
+            )
+            if not self.repository.update_run_snapshot(
+                conn,
+                task_id=task_id,
+                run_id=reason_run_id,
+                source_fact_ids=late_bound["source_fact_ids"],
+                trigger_payload=payload,
+                input_fingerprint=input_fingerprint,
+                now=now,
+            ):
+                raise ConflictError("ReasonRun snapshot refresh lost a concurrent race")
             if not self.repository.start(
                 conn,
                 task_id=task_id,

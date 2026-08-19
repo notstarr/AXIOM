@@ -23,6 +23,10 @@
     return {
       authLoading: true,
       isAuthenticated: false,
+      // The public login shell still mounts the shared body layout.  Keep the
+      // layout-only bindings defined so Alpine does not emit a ReferenceError
+      // before the authenticated application bundle is loaded.
+      isResizingPanel: false,
       currentUser: null,
       loginForm: { username: "", password: "", remember: true, error: "", loading: false },
       changePasswordDialog: { open: false, oldPassword: "", newPassword: "", confirmPassword: "", error: "", success: "", loading: false },

@@ -25,7 +25,11 @@ from axiom.shared.model_registry import ALL_TABLES
 
 
 LEGACY_SQLITE_REVISION = "20260805_0035"
-POSTGRESQL_TARGET_REVISION = "20260814_pg0004"
+# The importer must validate against the current PostgreSQL schema head.  Keep
+# this aligned with the latest migration whenever a schema change is added;
+# otherwise a database that has successfully upgraded cannot accept a legacy
+# SQLite import.
+POSTGRESQL_TARGET_REVISION = "20260819_pg0005"
 DEFAULT_BATCH_SIZE = 1_000
 
 LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {

@@ -128,7 +128,7 @@ class ReasonRepository:
             select(reason_runs)
             .where(
                 reason_runs.c.task_id == task_id,
-                reason_runs.c.status.in_(ACTIVE_REASON_STATUSES),
+                reason_runs.c.status.in_(LEASED_REASON_STATUSES),
             )
             .order_by(reason_runs.c.created_at, reason_runs.c.id)
             .limit(1)
@@ -138,6 +138,120 @@ class ReasonRepository:
             if row is not None
             else None
         )
+
+    def in_flight_for_task(self, conn: Connection, task_id: str) -> ReasonRun | None:
+        row = conn.execute(
+            select(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.status.in_(["claimed", "running", "concluding"]),
+            )
+            .order_by(reason_runs.c.created_at, reason_runs.c.id)
+            .limit(1)
+        ).mappings().one_or_none()
+        return (
+            self._run(row, self.source_ids(conn, task_id, row["id"]))
+            if row is not None
+            else None
+        )
+
+    def pending_runs_for_task(self, conn: Connection, task_id: str) -> list[ReasonRun]:
+        rows = conn.execute(
+            select(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.status == "pending",
+            )
+            .order_by(reason_runs.c.created_at, reason_runs.c.id)
+        ).mappings().all()
+        return [self._run(row, self.source_ids(conn, task_id, row["id"])) for row in rows]
+
+    @staticmethod
+    def update_pending_snapshot(
+        conn: Connection,
+        *,
+        task_id: str,
+        run_id: str,
+        source_fact_ids: list[str],
+        trigger_payload: dict,
+        input_fingerprint: str,
+        now: str,
+    ) -> bool:
+        result = conn.execute(
+            update(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.id == run_id,
+                reason_runs.c.status == "pending",
+            )
+            .values(
+                trigger_payload_json=json.dumps(trigger_payload, ensure_ascii=False),
+                input_fingerprint=input_fingerprint,
+                updated_at=now,
+            )
+        )
+        if not result.rowcount:
+            return False
+        conn.execute(
+            reason_run_sources.delete().where(
+                reason_run_sources.c.task_id == task_id,
+                reason_run_sources.c.reason_run_id == run_id,
+            )
+        )
+        unique_ids = list(dict.fromkeys(source_fact_ids))
+        if unique_ids:
+            conn.execute(
+                reason_run_sources.insert(),
+                [
+                    {"task_id": task_id, "reason_run_id": run_id, "fact_id": fact_id}
+                    for fact_id in unique_ids
+                ],
+            )
+        return True
+
+    @staticmethod
+    def update_run_snapshot(
+        conn: Connection,
+        *,
+        task_id: str,
+        run_id: str,
+        source_fact_ids: list[str],
+        trigger_payload: dict,
+        input_fingerprint: str,
+        now: str,
+    ) -> bool:
+        """Refresh a claimed/running snapshot without changing lease state."""
+        result = conn.execute(
+            update(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.id == run_id,
+                reason_runs.c.status.in_(["claimed", "running", "concluding"]),
+            )
+            .values(
+                trigger_payload_json=json.dumps(trigger_payload, ensure_ascii=False),
+                input_fingerprint=input_fingerprint,
+                updated_at=now,
+            )
+        )
+        if not result.rowcount:
+            return False
+        conn.execute(
+            reason_run_sources.delete().where(
+                reason_run_sources.c.task_id == task_id,
+                reason_run_sources.c.reason_run_id == run_id,
+            )
+        )
+        unique_ids = list(dict.fromkeys(source_fact_ids))
+        if unique_ids:
+            conn.execute(
+                reason_run_sources.insert(),
+                [
+                    {"task_id": task_id, "reason_run_id": run_id, "fact_id": fact_id}
+                    for fact_id in unique_ids
+                ],
+            )
+        return True
 
     @staticmethod
     def latest_completed_row(conn: Connection, task_id: str):

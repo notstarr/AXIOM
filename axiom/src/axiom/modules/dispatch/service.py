@@ -158,6 +158,20 @@ class DispatchService:
             run = self.repository.reason_run_row(conn, task_id, reason_run_id)
             if run is None:
                 raise NotFoundError(f"ReasonRun not found: {task_id}/{reason_run_id}")
+            in_flight = self.reason.in_flight_for_task(conn, task_id)
+            if in_flight is not None and in_flight.id != reason_run_id:
+                raise ConflictError(
+                    f"Task 已有正在执行的 ReasonRun {in_flight.id}，"
+                    f"排队的 {reason_run_id} 需等待前序结束"
+                )
+            pending = self.reason.pending_runs_for_task(conn, task_id)
+            if run["status"] == "pending" and (
+                not pending or pending[0].id != reason_run_id
+            ):
+                raise ConflictError(
+                    f"ReasonRun {reason_run_id} 不是 Task 的 FIFO 队首，"
+                    f"当前队首为 {pending[0].id if pending else 'none'}"
+                )
             config = self._validate_claim(
                 conn,
                 task_id=task_id,

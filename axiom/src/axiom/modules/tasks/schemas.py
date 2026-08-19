@@ -176,6 +176,7 @@ class Task(BaseModel):
     reason_activity_started_at: str | None = None
     reason_activity_updated_at: str | None = None
     active_reason_run: ActiveReasonRun | None = None
+    queued_reason_runs: list[ActiveReasonRun] = Field(default_factory=list)
 
     def is_runnable_at(self, now: str) -> bool:
         return not self.archived and self.status == "running" and (

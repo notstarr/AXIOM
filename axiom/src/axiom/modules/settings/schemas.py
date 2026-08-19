@@ -64,6 +64,9 @@ class RuntimeConfig(BaseModel):
     reason_min_interval_seconds: int = Field(default=60, ge=0, le=3_600)
     reason_target_open_intents: int = Field(default=4, ge=1, le=8)
     reason_max_new_intents_per_run: int = Field(default=4, ge=1, le=8)
+    # At least one pending slot keeps the queue semantics lossless.  Legacy
+    # persisted values of 0 are normalized by the pre-validator below.
+    reason_queue_limit: int = Field(default=3, ge=1, le=10)
     explore_execute_min_seconds: int = Field(default=300, ge=10, le=86_400)
     explore_execute_max_seconds: int = Field(default=3_600, ge=10, le=86_400)
     explore_conclude_min_seconds: int = Field(default=180, ge=180, le=7_200)
@@ -93,6 +96,14 @@ class RuntimeConfig(BaseModel):
         max_length=128,
     )
     guard_system_prompt: str = Field(default=SYSTEM_PROMPT, max_length=20_000)
+
+    @field_validator("reason_queue_limit", mode="before")
+    @classmethod
+    def normalize_reason_queue_limit(cls, value: int | str | None) -> int:
+        if value is None or value == "":
+            return 3
+        parsed = int(value)
+        return 1 if parsed == 0 else parsed
 
     # 钉钉通知与 Webhook 配置
     dingtalk_enabled: bool = False

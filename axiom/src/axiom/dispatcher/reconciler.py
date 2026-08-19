@@ -184,6 +184,14 @@ class Reconciler:
         explore_limit: int,
         review_limit: int,
     ) -> tuple[IntentSnapshot | ReasonRunSnapshot | ReviewRunSnapshot, WorkerSnapshot] | None:
+        pending_reasons = sorted(
+            (
+                item
+                for item in task.reason_runs
+                if task.status == "running" and item.status == "pending"
+            ),
+            key=lambda item: (item.created_at, item.id),
+        )
         candidates: list[IntentSnapshot | ReasonRunSnapshot | ReviewRunSnapshot] = [
             *(
                 item
@@ -192,11 +200,7 @@ class Reconciler:
                 and item.status == "pending"
                 and item.kind in {"bootstrap", "explore"}
             ),
-            *(
-                item
-                for item in task.reason_runs
-                if task.status == "running" and item.status == "pending"
-            ),
+            *(pending_reasons[:1]),
             *(item for item in task.review_runs if item.status == "pending"),
         ]
         candidates.sort(

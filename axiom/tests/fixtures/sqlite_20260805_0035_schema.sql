@@ -738,6 +738,6 @@ CREATE INDEX ix_worker_axiom_tool_bindings_tool_phase ON worker_axiom_tool_bindi
 
 CREATE UNIQUE INDEX uq_intent_interventions_client ON intent_interventions (task_id, intent_id, client_message_id);
 
-CREATE UNIQUE INDEX uq_reason_runs_one_open_per_task ON reason_runs (task_id) WHERE status IN ('pending','claimed','running','concluding');
+CREATE UNIQUE INDEX uq_reason_runs_one_in_flight_per_task ON reason_runs (task_id) WHERE status IN ('claimed','running','concluding');
 
 CREATE UNIQUE INDEX uq_vulnerability_review_runs_one_open ON vulnerability_review_runs (task_id, vulnerability_id) WHERE status IN ('pending','claimed','running','concluding');

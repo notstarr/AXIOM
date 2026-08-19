@@ -85,7 +85,8 @@ def test_bootstrap_closeout_is_atomic_and_materializes_registered_files(client, 
     assert graph["intents"][0]["status"] == "completed"
     assert graph["intents"][0]["to_fact_id"] == "f001"
     assert [item["id"] for item in graph["intents"]] == ["i001"]
-    assert task_after["active_reason_run"]["id"] == "rr000001"
+    assert task_after["active_reason_run"] is None
+    assert [item["id"] for item in task_after["queued_reason_runs"]] == ["rr000001"]
     fact = next(fact for fact in graph["facts"] if fact["id"] == "f001")
     assert all(f"artifact:a00{number}" in fact["description"] for number in (1, 2, 3))
 

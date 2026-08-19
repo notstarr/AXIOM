@@ -328,8 +328,12 @@ def test_manual_reason_can_run_while_waiting_without_new_facts_and_reuses_reason
     assert execution["reason_prompt_profile"] == "human"
 
     duplicate = _trigger_manual_reason(client, task["id"])
-    assert duplicate.status_code == 409
-    assert run["id"] in duplicate.text
+    assert duplicate.status_code == 200, duplicate.text
+    assert duplicate.json()["id"] != run["id"]
+    queued_after_duplicate = client.get(f"/api/v1/tasks/{task['id']}").json()
+    assert [item["id"] for item in queued_after_duplicate["queued_reason_runs"]] == [
+        duplicate.json()["id"]
+    ]
 
     workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
     assessment = client.post(
@@ -366,7 +370,8 @@ def test_new_human_hint_immediately_triggers_reason_with_that_hint_as_reason(cli
     assert response.status_code == 201, response.text
     hint = response.json()
     current = client.get(f"/api/v1/tasks/{task['id']}").json()
-    run = current["active_reason_run"]
+    assert current["active_reason_run"] is None
+    [run] = current["queued_reason_runs"]
     assert run["trigger"] == "hint"
     assert run["trigger_payload"]["hint_id"] == hint["id"]
     assert run["trigger_payload"]["hint_content"] == hint["content"]
@@ -412,7 +417,10 @@ def test_new_hint_is_saved_without_duplicate_reason_when_trigger_conditions_are_
     )
     assert while_active.status_code == 201, while_active.text
     current = client.get(f"/api/v1/tasks/{task['id']}").json()
-    assert current["active_reason_run"]["id"] == active_id
+    assert current["active_reason_run"] is None
+    assert len(current["queued_reason_runs"]) == 2
+    assert current["queued_reason_runs"][0]["id"] == active_id
+    assert current["queued_reason_runs"][1]["trigger"] == "hint"
     with client.app.state.container.engine.connect() as conn:
         count = conn.execute(
             select(func.count()).select_from(reason_runs).where(
@@ -420,7 +428,7 @@ def test_new_hint_is_saved_without_duplicate_reason_when_trigger_conditions_are_
                 reason_runs.c.status.in_(("pending", "claimed", "running", "concluding")),
             )
         ).scalar_one()
-    assert count == 1
+    assert count == 2
     assert while_active.json() in client.get(f"/api/v1/tasks/{task['id']}/hints").json()
 
 
@@ -552,9 +560,7 @@ def test_concurrent_manual_reason_requests_create_only_one_active_run(client) ->
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _index: trigger(), range(2)))
 
-    assert results.count("conflict") == 1
-    created = [item for item in results if item != "conflict"]
-    assert len(created) == 1
+    assert results[0] == results[1]
     with engine.connect() as conn:
         active_count = conn.execute(
             select(func.count())
@@ -748,7 +754,7 @@ def test_reason_runtime_quota_does_not_bound_proposals_but_explore_budget_is_sna
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
     assert out_of_snapshot_bounds.status_code == 409
-    assert "60-600" in out_of_snapshot_bounds.json()["error"]["message"]
+    assert "300-600" in out_of_snapshot_bounds.json()["error"]["message"]
 
 
 def test_reason_low_watermark_ignores_todos_that_already_have_open_explore(client) -> None:

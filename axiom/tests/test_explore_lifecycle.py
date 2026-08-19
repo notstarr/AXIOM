@@ -197,7 +197,10 @@ def test_explore_completion_atomically_registers_artifact_fact_and_reason(client
     assert run["source_fact_ids"] == ["f002"]
     task_after = client.get(f"/api/v1/tasks/{task['id']}").json()
     assert task_after["phase"] == "reason"
-    assert task_after["active_reason_run"]["id"] == completed["reason_run_id"]
+    assert task_after["active_reason_run"] is None
+    assert [item["id"] for item in task_after["queued_reason_runs"]] == [
+        completed["reason_run_id"]
+    ]
 
 
 def test_explore_human_intervention_marker_is_durable_idempotent_and_visible(

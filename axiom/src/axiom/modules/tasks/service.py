@@ -195,9 +195,6 @@ class TaskService:
                 raise ConflictError("已归档任务不能继续运行")
             if task.status != "completed":
                 raise ConflictError("只有已完成任务可以继续运行")
-            if self.reason.active_for_task(conn, task_id) is not None:
-                raise ConflictError("任务已有活动 ReasonRun")
-
             previous_goal = task.goal
             cycle = self.goals.create_cycle(
                 conn,
@@ -691,18 +688,26 @@ class TaskService:
                 )
                 .order_by(
                     reason_runs.c.task_id,
-                    reason_runs.c.created_at.desc(),
-                    reason_runs.c.id.desc(),
+                    reason_runs.c.created_at,
+                    reason_runs.c.id,
                 )
             ).mappings()
             reasons: dict[str, object] = {}
+            queued_reasons: dict[str, list[object]] = {}
             for row in reason_rows:
-                reasons.setdefault(str(row["task_id"]), row)
+                task_id = str(row["task_id"])
+                if row["status"] in {"claimed", "running", "concluding"}:
+                    reasons.setdefault(task_id, row)
+                elif row["status"] == "pending":
+                    queued_reasons.setdefault(task_id, []).append(row)
 
         decorated: list[Task] = []
         for task in tasks_to_decorate:
             reason = reasons.get(task.id)
             reason_present = reason is not None
+            task_queued = queued_reasons.get(task.id, [])
+            legacy_reason = reason or (task_queued[0] if task_queued else None)
+            legacy_reason_present = legacy_reason is not None
             decorated.append(
                 task.model_copy(
                     update={
@@ -713,32 +718,32 @@ class TaskService:
                         "todo_count": counts.get("todos", {}).get(task.id, 0),
                         "vulnerability_count": counts.get("vulnerabilities", {}).get(task.id, 0),
                         "artifact_count": counts.get("artifacts", {}).get(task.id, 0),
-                        "reason_worker": reason["worker"] if reason_present else None,
-                        "reason_heartbeat_at": reason["last_heartbeat_at"] if reason_present else None,
-                        "reason_activity_kind": reason["activity_kind"] if reason_present else "",
+                        "reason_worker": legacy_reason["worker"] if legacy_reason_present else None,
+                        "reason_heartbeat_at": legacy_reason["last_heartbeat_at"] if legacy_reason_present else None,
+                        "reason_activity_kind": legacy_reason["activity_kind"] if legacy_reason_present else "",
                         "reason_activity_summary": (
-                            reason["activity_summary"]
+                            legacy_reason["activity_summary"]
                             or {
                                 "pending": "等待可用的 Reason Worker 领取",
                                 "claimed": "正在启动 Reason 环境",
                                 "preparing_context": "正在准备 Reason Context 与能力快照",
                                 "analyzing": "正在分析任务上下文并规划下一批 Intent",
                             }.get(
-                                reason["activity_kind"] or reason["status"],
+                                legacy_reason["activity_kind"] or legacy_reason["status"],
                                 "正在分析任务上下文并规划下一批 Intent",
                             )
                         )
-                        if reason_present
+                        if legacy_reason_present
                         else "",
-                        "reason_activity_tool": reason["activity_tool"] if reason_present else "",
+                        "reason_activity_tool": legacy_reason["activity_tool"] if legacy_reason_present else "",
                         "reason_activity_started_at": (
-                            reason["activity_started_at"] or reason["claimed_at"]
-                            if reason_present
+                            legacy_reason["activity_started_at"] or legacy_reason["claimed_at"]
+                            if legacy_reason_present
                             else None
                         ),
                         "reason_activity_updated_at": (
-                            reason["activity_updated_at"] or reason["last_heartbeat_at"]
-                            if reason_present
+                            legacy_reason["activity_updated_at"] or legacy_reason["last_heartbeat_at"]
+                            if legacy_reason_present
                             else None
                         ),
                         "active_reason_run": (
@@ -763,6 +768,27 @@ class TaskService:
                             if reason_present
                             else None
                         ),
+                        "queued_reason_runs": [
+                            ActiveReasonRun(
+                                id=row["id"],
+                                status=row["status"],
+                                trigger=row["trigger"],
+                                trigger_payload=json.loads(row["trigger_payload_json"] or "{}"),
+                                worker=row["worker"],
+                                lease_id=row["lease_id"],
+                                settings_version=row["settings_version"],
+                                execute_timeout_seconds=row["execute_timeout_seconds"],
+                                conclude_timeout_seconds=row["conclude_timeout_seconds"],
+                                last_heartbeat_at=row["last_heartbeat_at"],
+                                activity_kind=row["activity_kind"] or "",
+                                activity_summary=row["activity_summary"] or "",
+                                activity_tool=row["activity_tool"] or "",
+                                activity_started_at=row["activity_started_at"],
+                                activity_updated_at=row["activity_updated_at"],
+                                created_at=row["created_at"],
+                            )
+                            for row in task_queued
+                        ],
                     }
                 )
             )
