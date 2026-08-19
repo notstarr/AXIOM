@@ -64,10 +64,10 @@ reason_runs = Table(
 Index("ix_reason_runs_task_status", reason_runs.c.task_id, reason_runs.c.status)
 Index("ix_reason_runs_retry", reason_runs.c.status, reason_runs.c.next_retry_at)
 Index(
-    "uq_reason_runs_one_open_per_task",
+    "uq_reason_runs_one_in_flight_per_task",
     reason_runs.c.task_id,
     unique=True,
-    postgresql_where=reason_runs.c.status.in_(["pending", "claimed", "running", "concluding"]),
+    postgresql_where=reason_runs.c.status.in_(["claimed", "running", "concluding"]),
 )
 
 
