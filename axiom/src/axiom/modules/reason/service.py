@@ -1298,6 +1298,10 @@ class ReasonService:
                     )
 
                 # 执行已持久化 Todo 的归档/软删除
+                # 注意：todos.status 仅允许 open/partial/blocked/completed/
+                # rejected/obsolete（DB 约束 ck_todos_status），"cancelled"
+                # 是 intents/reason_runs 的状态，不能用于 todos（会导致
+                # commit 500 → abandon → control_plane_unavailable 死循环）。
                 for delete_command in draft.todo_deletions:
                     if delete_command.todo_id in todo_refs:
                         continue
@@ -1307,7 +1311,7 @@ class ReasonService:
                         delete_command.todo_id,
                         {
                             "archived": True,
-                            "status": "cancelled",
+                            "status": "obsolete",
                             "status_reason": delete_command.reason,
                             "updated_at": now,
                         },
