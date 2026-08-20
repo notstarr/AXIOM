@@ -595,6 +595,20 @@ window.AxiomModules.human = {
         if (current?.committed || ['waiting', 'completed'].includes(task.phase) || task.status === 'completed') return { state: 'completed', label: '已完成', icon: '✓' };
         return { state: 'waiting', label: '等待启动', icon: '•' };
       }
+      if (stage === 'plan') {
+        const current = task.active_plan_run;
+        const state = String(current?.status || '').toLowerCase();
+        if (['claimed', 'running', 'concluding'].includes(state)) {
+          return { state: 'running', label: state === 'concluding' ? '收口中' : '全景复盘', icon: '✦' };
+        }
+        if (state === 'pending' || task.phase === 'plan') {
+          return { state: 'waiting', label: '等待 Plan Worker', icon: '✦' };
+        }
+        if (Number(task.plan_run_count || 0) > 0) {
+          return { state: 'completed', label: `已复盘 ${task.plan_run_count} 次`, icon: '✓' };
+        }
+        return { state: 'waiting', label: '待触发', icon: '✦' };
+      }
       const currentIntents = this.humanCurrentIntents();
       if (currentIntents.some(intent => ['running', 'concluding', 'claimed'].includes(String(intent.status || '').toLowerCase()))) {
         return { state: 'running', label: '执行中', icon: '↻' };
@@ -633,9 +647,14 @@ window.AxiomModules.human = {
       if (this.project?.project?.status === 'completed') return 'Goal 已达成，运行循环已经结束。';
       if (this.project?.project?.status === 'stopped') return '任务已暂停，恢复后将从当前状态继续。';
       if (this.project?.project?.status === 'failed') return '任务失败，需要人工检查失败原因。';
+      if (this.humanStageState('plan').state === 'running') return 'Plan 正在复核全量历史图谱、覆盖缺口与跨模块攻击链。';
       if (this.humanStageState('reason').state === 'running') return 'Reason 正在汇总 Facts、更新 Todo 并决定下一批 Intent。';
       const active = this.humanCurrentIntents();
       if (active.length) return `等待 ${active.length} 个 Intent 返回结果，之后进入下一轮 Reason。`;
+      const planDecision = this.project?.project?.last_plan_decision;
+      if (planDecision?.decision === 'waiting') {
+        return planDecision.exhaustion_reason || 'Plan 已完成全景复盘，当前没有材料性的新方向。';
+      }
       return '等待调度器进入下一轮 Reason。';
     },
 

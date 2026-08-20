@@ -192,6 +192,10 @@ class Reconciler:
             ),
             key=lambda item: (item.created_at, item.id),
         )
+        regular_pending_reasons = [item for item in pending_reasons if item.trigger != "plan"]
+        selected_reason_queue = (
+            regular_pending_reasons[:1] if regular_pending_reasons else pending_reasons[:1]
+        )
         candidates: list[IntentSnapshot | ReasonRunSnapshot | ReviewRunSnapshot] = [
             *(
                 item
@@ -200,7 +204,7 @@ class Reconciler:
                 and item.status == "pending"
                 and item.kind in {"bootstrap", "explore"}
             ),
-            *(pending_reasons[:1]),
+            *selected_reason_queue,
             *(item for item in task.review_runs if item.status == "pending"),
         ]
         candidates.sort(

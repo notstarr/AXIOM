@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class BuildContext(BaseModel):
-    phase: Literal["bootstrap", "reason", "explore", "review"]
+    phase: Literal["bootstrap", "reason", "explore", "plan", "review"]
     intent_id: str | None = None
     reason_run_id: str | None = None
     review_run_id: str | None = None

@@ -165,12 +165,20 @@ class DispatchService:
                     f"排队的 {reason_run_id} 需等待前序结束"
                 )
             pending = self.reason.pending_runs_for_task(conn, task_id)
+            regular_pending = [item for item in pending if item.trigger != "plan"]
+            expected = (
+                regular_pending[0]
+                if regular_pending
+                else pending[0]
+                if pending
+                else None
+            )
             if run["status"] == "pending" and (
-                not pending or pending[0].id != reason_run_id
+                expected is None or expected.id != reason_run_id
             ):
                 raise ConflictError(
                     f"ReasonRun {reason_run_id} 不是 Task 的 FIFO 队首，"
-                    f"当前队首为 {pending[0].id if pending else 'none'}"
+                    f"当前队首为 {expected.id if expected else 'none'}"
                 )
             config = self._validate_claim(
                 conn,
@@ -215,7 +223,7 @@ class DispatchService:
                     event_type="reason_run.claimed",
                     message=f"ReasonRun 已由 Worker {worker_name} 领取",
                     payload={
-                        "phase": "reason",
+                        "phase": "plan" if run["trigger"] == "plan" else "reason",
                         "lease_id": lease_id,
                         "trigger": run["trigger"],
                     },
@@ -461,7 +469,7 @@ class DispatchService:
                             level="warning",
                             message="ReasonRun 租约已过期，已释放并进入重试队列",
                             payload={
-                                "phase": "reason",
+                                "phase": "plan" if row["trigger"] == "plan" else "reason",
                                 "expired_lease_id": row["lease_id"],
                                 "next_retry_at": next_retry_at,
                                 "terminal": terminal,

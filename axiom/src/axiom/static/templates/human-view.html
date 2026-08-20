@@ -129,6 +129,14 @@
             </div>
             <div class="ml-2.5 h-3 border-l border-dashed border-slate-200"></div>
             <div class="flex items-start gap-2.5">
+              <span class="mt-0.5 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold" :class="humanStageStateClass('plan')" x-text="humanStageState('plan').icon"></span>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between gap-2"><span class="text-xs font-semibold text-indigo-700">Plan 全景复盘</span><span class="text-[10px] text-indigo-400" x-text="humanStageLabel('plan')"></span></div>
+                <p class="mt-0.5 text-[10px] text-slate-400">复核历史覆盖、证据武器化和阻断替代方案</p>
+              </div>
+            </div>
+            <div class="ml-2.5 h-3 border-l border-dashed border-slate-200"></div>
+            <div class="flex items-start gap-2.5">
               <span class="mt-0.5 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold" :class="humanStageStateClass('reason')" x-text="humanStageState('reason').icon"></span>
               <div class="min-w-0 flex-1">
                 <div class="flex items-center justify-between gap-2"><span class="text-xs font-semibold text-slate-700">Reason</span><span class="text-[10px] text-blue-600" x-text="`${humanCycleCounts().reason} 轮`"></span></div>

@@ -46,7 +46,10 @@ tasks = Table(
     Column("run_deadline_at", UTCDateTimeText),
     Column("last_pause_reason", String),
     CheckConstraint("status IN ('running','stopped','completed','failed')", name="status"),
-    CheckConstraint("phase IN ('bootstrap','reason','explore','waiting','none')", name="phase"),
+    CheckConstraint(
+        "phase IN ('bootstrap','reason','explore','plan','waiting','none')",
+        name="phase",
+    ),
     CheckConstraint(
         "run_duration_seconds IS NULL OR "
         "(run_duration_seconds BETWEEN 60 AND 31536000 AND run_duration_seconds % 60 = 0)",

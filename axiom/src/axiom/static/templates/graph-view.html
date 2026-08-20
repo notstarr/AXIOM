@@ -154,19 +154,19 @@
             <template x-if="!reasonStackExpanded && (project.project.queued_reasons || []).length > 1">
               <div class="absolute -bottom-4 left-4 right-4 h-12 rounded-2xl border border-sky-300/20 bg-sky-100/40 shadow-sm backdrop-blur -z-20"></div>
             </template>
-            <div class="reason-panel-running relative overflow-hidden rounded-2xl border border-sky-200/80 bg-white/92 px-4 py-3.5 shadow-lg shadow-sky-100/60 backdrop-blur transition hover:border-sky-300">
+            <div class="reason-panel-running relative overflow-hidden rounded-2xl border px-4 py-3.5 shadow-lg backdrop-blur transition" :class="project.project.reason.is_plan ? 'border-indigo-200/80 bg-indigo-50/70 shadow-indigo-100/60 hover:border-indigo-300' : 'border-sky-200/80 bg-white/92 shadow-sky-100/60 hover:border-sky-300'">
             <div class="flex items-start gap-3">
               <span class="reason-beacon mt-1 shrink-0"></span>
               <div class="min-w-0 flex-1">
                 <div class="flex items-center justify-between gap-2">
-                  <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-500 flex items-center gap-1.5">
-                    <span x-text="project.project.reason.id ? `ReasonRun ${project.project.reason.id}` : 'Reason'"></span>
+                  <div class="text-[10px] font-semibold uppercase tracking-[0.18em] flex items-center gap-1.5" :class="project.project.reason.is_plan ? 'text-indigo-500' : 'text-sky-500'">
+                    <span x-text="project.project.reason.is_plan ? (project.project.reason.id ? `PlanRun ${project.project.reason.id}` : 'Plan') : (project.project.reason.id ? `ReasonRun ${project.project.reason.id}` : 'Reason')"></span>
                     <template x-if="(project.project.queued_reasons || []).length > 0">
                       <span class="px-1.5 py-0.5 text-[9px] font-bold rounded-md bg-sky-500 text-white" x-text="`+${project.project.queued_reasons.length} 排队`"></span>
                     </template>
                   </div>
                   <div class="flex items-center gap-1">
-                    <span class="shrink-0 rounded-full border border-sky-100 bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-600" x-text="reasonActivityStateLabel(project.project.reason)"></span>
+                    <span class="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium" :class="project.project.reason.is_plan ? 'border-indigo-100 bg-indigo-50 text-indigo-600' : 'border-sky-100 bg-sky-50 text-sky-600'" x-text="project.project.reason.is_plan ? '全景复盘' : reasonActivityStateLabel(project.project.reason)"></span>
                     <template x-if="(project.project.queued_reasons || []).length > 0">
                       <span class="text-xs text-sky-400" x-text="reasonStackExpanded ? '▲' : '▼'"></span>
                     </template>
@@ -182,6 +182,9 @@
                   <div><span class="block text-slate-400">触发器</span><span class="mt-0.5 block font-medium text-slate-600" x-text="project.project.reason.trigger || 'scheduler'"></span></div>
                   <div><span class="block text-slate-400">预算</span><span class="mt-0.5 block font-medium text-slate-600" x-text="project.project.reason.execute_timeout_seconds ? `${project.project.reason.execute_timeout_seconds}s + ${project.project.reason.conclude_timeout_seconds || 0}s` : '—'"></span></div>
                   <div><span class="block text-slate-400">配置快照</span><span class="mt-0.5 block font-medium text-slate-600" x-text="project.project.reason.settings_version ? `v${project.project.reason.settings_version}` : '历史运行'"></span></div>
+                  <template x-if="project.project.reason.is_plan">
+                    <div><span class="block text-slate-400">Plan 轮次</span><span class="mt-0.5 block font-medium text-indigo-600" x-text="`第 ${project.project.reason.trigger_payload?.plan_sequence || project.project.plan_run_count || 1} 次`"></span></div>
+                  </template>
                 </div>
               </div>
             </div>

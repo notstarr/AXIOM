@@ -14,7 +14,7 @@ def test_health(client) -> None:
     assert payload["status"] == "ok"
     assert payload["api"] == "v1"
     assert payload["database"]["backend"] == "postgresql"
-    assert payload["database"]["migration"] == "20260819_pg0005"
+    assert payload["database"]["migration"] == "20260820_pg0006"
     assert payload["database"]["pool"]["size"] >= 1
     assert payload["maintenance"]["state"] == "normal"
 

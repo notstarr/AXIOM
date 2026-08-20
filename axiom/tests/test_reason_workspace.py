@@ -250,7 +250,7 @@ def test_reason_rejects_commit_when_a_source_fact_is_not_consumed(client) -> Non
     assert completed["fact_id"] in committed.text
 
 
-def test_reason_allows_a_non_achieved_no_op_and_enters_waiting(client) -> None:
+def test_reason_allows_a_non_achieved_no_op_and_reconciles_to_plan(client) -> None:
     update_runtime_settings(client, reason_min_interval_seconds=0)
     task, reason_claim, completed = active_reason(client)
     workspace = open_reason_workspace(client, task_id=task["id"], claim=reason_claim)
@@ -276,7 +276,16 @@ def test_reason_allows_a_non_achieved_no_op_and_enters_waiting(client) -> None:
     assert evaluations[-1]["achieved"] is False
     reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
     assert reconciled.status_code == 200, reconciled.text
-    assert reconciled.json()["created_reason_run_ids"] == []
+    [plan_run_id] = reconciled.json()["created_reason_run_ids"]
+    plan = client.get(
+        f"/api/v1/tasks/{task['id']}/reason-runs/{plan_run_id}"
+    ).json()
+    assert plan["trigger"] == "plan"
+    task_after_plan = client.get(f"/api/v1/tasks/{task['id']}").json()
+    assert task_after_plan["phase"] == "plan"
+    assert task_after_plan["active_plan_run"] is None
+    assert task_after_plan["active_reason_run"] is None
+    assert task_after_plan["queued_reason_runs"] == []
 
 
 def test_reason_no_op_requires_actionable_todos_to_be_closed(client) -> None:

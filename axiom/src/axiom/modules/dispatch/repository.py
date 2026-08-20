@@ -106,6 +106,7 @@ class DispatchRepository:
                 reason_runs.c.task_id,
                 reason_runs.c.id,
                 reason_runs.c.status,
+                reason_runs.c.trigger,
                 reason_runs.c.worker_pool_json,
                 reason_runs.c.next_retry_at,
                 reason_runs.c.created_at,
@@ -123,6 +124,7 @@ class DispatchRepository:
                     task_id=row["task_id"],
                     id=row["id"],
                     status=row["status"],
+                    trigger=row["trigger"],
                     worker_pool=json.loads(row["worker_pool_json"] or "[]"),
                     next_retry_at=(
                         parse_utc(row["next_retry_at"]) if row["next_retry_at"] else None

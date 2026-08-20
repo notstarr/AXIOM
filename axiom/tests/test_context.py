@@ -3,6 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from sqlalchemy import update
+
+from axiom.modules.artifacts.tables import artifacts
+from axiom.modules.knowledge.tables import project_knowledge
+from axiom.modules.tasks.tables import task_hints
+from axiom.modules.todos.tables import todos
 from protocol_helpers import write_bootstrap_files
 
 
@@ -325,6 +331,13 @@ def test_artifact_content_is_only_available_through_expansion(client) -> None:
     assert revision.status_code == 200, revision.text
     revision = revision.json()
     directory = Path(revision["manifest_path"]).parent
+    graph = json.loads((directory / "graph.json").read_text(encoding="utf-8"))
+    bootstrap_fact = next(item for item in graph["facts"] if item["id"] == "f001")
+    assert bootstrap_fact["source_intent_ids"] == ["i001"]
+    assert artifact_id in bootstrap_fact["source_artifact_ids"]
+    assert bootstrap_fact["assessment_status"] == "not_applicable"
+    assert bootstrap_fact["consumption_status"] == "reserved"
+    assert bootstrap_fact["consumed_by_reason_runs"][0]["reason_run_id"] == completed.json()["next_reason_run_id"]
     artifact_index = (directory / "artifacts.json").read_text(encoding="utf-8")
     assert "SECRET-EVIDENCE" not in artifact_index
 
@@ -333,3 +346,119 @@ def test_artifact_content_is_only_available_through_expansion(client) -> None:
         json={"refs": [f"artifact:{artifact_id}"]},
     ).json()
     assert "SECRET-EVIDENCE" in expanded["entries"][f"artifact:{artifact_id}"]["content"]
+
+
+def test_plan_context_reuses_existing_indexes_and_includes_archived_history(
+    client,
+    engine,
+) -> None:
+    task = _create_task(client)
+    knowledge = client.post(
+        f"/api/v1/projects/{task['project_id']}/knowledge",
+        json={
+            "title": "历史凭证关系",
+            "content": "历史 Token 可用于另一模块。",
+            "category": "credential",
+            "created_by": "human",
+        },
+    ).json()
+    artifact = client.post(
+        f"/api/v1/tasks/{task['id']}/artifacts/upload",
+        files={"file": ("leads.md", b"# Leads\n\narchived-plan-lead", "text/markdown")},
+        data={"actor": "human", "summary": "历史 Lead"},
+    ).json()
+    todo_response = client.post(
+        f"/api/v1/tasks/{task['id']}/todos",
+        json={
+            "title": "重新复核历史 Lead",
+            "category": "other",
+            "sources": [{"type": "artifact", "id": artifact["id"]}],
+        },
+    )
+    assert todo_response.status_code == 201, todo_response.text
+    todo = todo_response.json()
+
+    with engine.begin() as conn:
+        conn.execute(
+            update(artifacts)
+            .where(artifacts.c.task_id == task["id"], artifacts.c.id == artifact["id"])
+            .values(archived=True)
+        )
+        conn.execute(
+            update(todos)
+            .where(todos.c.task_id == task["id"], todos.c.id == todo["id"])
+            .values(
+                status="obsolete",
+                status_reason="上一轮判断没有可利用路径",
+                archived=True,
+            )
+        )
+        conn.execute(
+            update(task_hints)
+            .where(task_hints.c.task_id == task["id"], task_hints.c.id == "h001")
+            .values(archived=True)
+        )
+        conn.execute(
+            update(project_knowledge)
+            .where(
+                project_knowledge.c.project_id == task["project_id"],
+                project_knowledge.c.id == knowledge["id"],
+            )
+            .values(archived=True)
+        )
+
+    reason_revision = client.post(
+        f"/api/v1/tasks/{task['id']}/context",
+        json={"phase": "reason"},
+    ).json()
+    plan_revision = client.post(
+        f"/api/v1/tasks/{task['id']}/context",
+        json={"phase": "plan"},
+    ).json()
+    reason_dir = Path(reason_revision["manifest_path"]).parent
+    plan_dir = Path(plan_revision["manifest_path"]).parent
+    reason_manifest = json.loads((reason_dir / "manifest.json").read_text(encoding="utf-8"))
+    plan_manifest = json.loads((plan_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    core_indexes = {
+        "graph",
+        "todos",
+        "artifacts",
+        "hints",
+        "knowledge",
+        "vulnerabilities",
+    }
+    assert core_indexes <= set(reason_manifest["indexes"])
+    assert set(plan_manifest["indexes"]) == core_indexes | {
+        "goal_evaluations",
+        "goal_cycles",
+    }
+    assert not {
+        "attack_surface.json",
+        "unresolved_leads.json",
+        "credentials_vault.json",
+        "todos_history.json",
+    } & {path.name for path in plan_dir.iterdir()}
+
+    assert json.loads((reason_dir / "todos.json").read_text(encoding="utf-8")) == []
+    plan_todos = json.loads((plan_dir / "todos.json").read_text(encoding="utf-8"))
+    plan_todo = next(item for item in plan_todos if item["id"] == todo["id"])
+    assert plan_todo["status"] == "obsolete"
+    assert plan_todo["status_reason"] == "上一轮判断没有可利用路径"
+    assert plan_todo["archived"] is True
+
+    plan_artifacts = json.loads((plan_dir / "artifacts.json").read_text(encoding="utf-8"))
+    plan_artifact = next(item for item in plan_artifacts if item["id"] == artifact["id"])
+    artifact_detail = json.loads(
+        (plan_dir / plan_artifact["detail"]).read_text(encoding="utf-8")
+    )
+    assert artifact_detail["archived"] is True
+    assert artifact_detail["content_path"].endswith("leads.md")
+    assert knowledge["id"] in {
+        item["id"]
+        for item in json.loads((plan_dir / "knowledge.json").read_text(encoding="utf-8"))
+    }
+    assert "h001" in {
+        item["id"]
+        for item in json.loads((plan_dir / "hints.json").read_text(encoding="utf-8"))
+    }

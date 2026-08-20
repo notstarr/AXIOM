@@ -42,6 +42,7 @@ class ReasonRunSnapshot(BaseModel):
     task_id: str
     id: str
     kind: Literal["reason"] = "reason"
+    trigger: str = ""
     status: Literal[
         "pending",
         "claimed",

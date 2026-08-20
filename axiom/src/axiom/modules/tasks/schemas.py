@@ -147,7 +147,7 @@ class Task(BaseModel):
     goal: str
     current_goal_cycle_id: str | None = None
     status: Literal["running", "stopped", "completed", "failed"]
-    phase: Literal["bootstrap", "reason", "explore", "waiting", "none"]
+    phase: Literal["bootstrap", "reason", "explore", "plan", "waiting", "none"]
     scope: TaskScope
     worker_pool: list[str]
     guard_enabled: bool
@@ -176,7 +176,10 @@ class Task(BaseModel):
     reason_activity_started_at: str | None = None
     reason_activity_updated_at: str | None = None
     active_reason_run: ActiveReasonRun | None = None
+    active_plan_run: ActiveReasonRun | None = None
     queued_reason_runs: list[ActiveReasonRun] = Field(default_factory=list)
+    plan_run_count: int = 0
+    last_plan_decision: dict[str, Any] | None = None
 
     def is_runnable_at(self, now: str) -> bool:
         return not self.archived and self.status == "running" and (

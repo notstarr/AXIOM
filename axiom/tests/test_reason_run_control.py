@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Barrier
 
 import pytest
@@ -11,6 +13,7 @@ from axiom.modules.execution.service import reason_prompt_profile_for_trigger
 from axiom.modules.graph.tables import facts, intents
 from axiom.modules.reason.tables import reason_runs, reason_workspaces
 from axiom.modules.tasks.tables import tasks
+from axiom.modules.vulnerabilities.tables import vulnerabilities
 from axiom.shared.clock import utcnow
 from axiom.shared.errors import ConflictError
 from protocol_helpers import (
@@ -32,6 +35,7 @@ from protocol_helpers import (
         ("manual", "human"),
         ("hint", "human"),
         ("continuation", "continuation"),
+        ("plan", "plan"),
         ("future_trigger", "default"),
     ],
 )
@@ -125,6 +129,15 @@ def _finish_reason_run(engine, task_id: str, reason_run_id: str) -> None:
             .where(tasks.c.id == task_id)
             .values(phase="waiting", updated_at=now)
         )
+
+
+def _reconcile_plan(client, task_id: str) -> str:
+    reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    assert reconciled.status_code == 200, reconciled.text
+    [run_id] = reconciled.json()["created_reason_run_ids"]
+    run = client.get(f"/api/v1/tasks/{task_id}/reason-runs/{run_id}").json()
+    assert run["trigger"] == "plan"
+    return run_id
 
 
 def _trigger_manual_reason(client, task_id: str, *, actor: str = "人工"):
@@ -536,11 +549,378 @@ def test_manual_reason_bypasses_automatic_interval_and_fingerprint_suppression(c
 
     automatic = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
     assert automatic.status_code == 200, automatic.text
-    assert automatic.json()["created_reason_run_ids"] == []
+    [plan_run_id] = automatic.json()["created_reason_run_ids"]
+    plan = client.get(
+        f"/api/v1/tasks/{task['id']}/reason-runs/{plan_run_id}"
+    ).json()
+    assert plan["trigger"] == "plan"
+    task_with_plan = client.get(f"/api/v1/tasks/{task['id']}").json()
+    assert task_with_plan["phase"] == "plan"
+    assert task_with_plan["active_plan_run"] is None
+    assert task_with_plan["active_reason_run"] is None
 
     manual = _trigger_manual_reason(client, task["id"])
     assert manual.status_code == 200, manual.text
     assert manual.json()["trigger"] == "manual"
+    task_with_manual = client.get(f"/api/v1/tasks/{task['id']}").json()
+    assert [run["id"] for run in task_with_manual["queued_reason_runs"]] == [
+        manual.json()["id"]
+    ]
+
+
+def test_plan_claim_uses_plan_context_and_no_work_enters_waiting(client) -> None:
+    task, completed = _bootstrap_to_reason(client)
+    engine = client.app.state.container.engine
+    _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
+    plan_run_id = _reconcile_plan(client, task["id"])
+
+    claim, execution = claim_reason_run(
+        client,
+        task_id=task["id"],
+        reason_run_id=plan_run_id,
+    )
+    assert execution["intent_kind"] == "reason"
+    assert execution["reason_prompt_profile"] == "plan"
+    manifest = json.loads(
+        Path(execution["context_manifest_path"]).read_text(encoding="utf-8")
+    )
+    assert manifest["phase"] == "plan"
+    assert {"goal_evaluations", "goal_cycles"} <= set(manifest["indexes"])
+
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    committed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/goal-assessment",
+        json={
+            "lease_id": claim["lease_id"],
+            "assessment": {
+                "achieved": False,
+                "reason": "四个维度均已复核，没有材料性新方向；confidence: high",
+                "evidence_refs": [],
+            },
+        },
+    )
+    assert committed.status_code == 200, committed.text
+    committed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        json={"lease_id": claim["lease_id"]},
+    )
+    assert committed.status_code == 200, committed.text
+
+    task_after = client.get(f"/api/v1/tasks/{task['id']}").json()
+    assert task_after["phase"] == "waiting"
+    assert task_after["active_plan_run"] is None
+    assert task_after["active_reason_run"] is None
+    assert task_after["plan_run_count"] == 1
+    assert task_after["last_plan_decision"] == {
+        "reason_run_id": plan_run_id,
+        "status": "completed",
+        "decision": "waiting",
+        "reviewed_dimensions": [
+            "coverage",
+            "weaponization",
+            "blocked_paths",
+            "goal_completion",
+        ],
+        "exhaustion_reason": "四个维度均已复核，没有材料性新方向；confidence: high",
+        "evidence_refs": [],
+        "confidence": "high",
+        "concluded_at": task_after["last_plan_decision"]["concluded_at"],
+    }
+    plan_after = client.get(
+        f"/api/v1/tasks/{task['id']}/reason-runs/{plan_run_id}"
+    ).json()
+    assert plan_after["trigger_payload"]["decision"] == "waiting"
+    assert plan_after["trigger_payload"]["confidence"] == "high"
+    assert client.post(
+        "/api/v1/dispatch/reason-runs/reconcile", json={}
+    ).json()["created_reason_run_ids"] == []
+
+
+def test_plan_cannot_mark_goal_achieved(client) -> None:
+    task, completed = _bootstrap_to_reason(client)
+    engine = client.app.state.container.engine
+    _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
+    plan_run_id = _reconcile_plan(client, task["id"])
+    claim, workspace = _active_workspace(client, task, plan_run_id)
+
+    response = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/goal-assessment",
+        json={
+            "lease_id": claim["lease_id"],
+            "assessment": {
+                "achieved": True,
+                "reason": "Plan 误判目标完成",
+                "evidence_refs": [f"fact:{completed['fact_id']}"],
+            },
+        },
+    )
+    assert response.status_code == 409, response.text
+    assert "不能直接将 Goal 标记为 achieved" in response.text
+
+    task_after = client.get(f"/api/v1/tasks/{task['id']}").json()
+    assert task_after["phase"] == "plan"
+    assert task_after["status"] == "running"
+
+
+def test_plan_commit_routes_new_intent_to_explore(client) -> None:
+    task, completed = _bootstrap_to_reason(client)
+    engine = client.app.state.container.engine
+    _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
+    plan_run_id = _reconcile_plan(client, task["id"])
+    claim, workspace = _active_workspace(client, task, plan_run_id)
+
+    assert _add_todo(
+        client,
+        workspace,
+        claim["lease_id"],
+        _todo(1, completed["fact_id"]),
+    ).status_code == 200
+    proposal = _proposal(1, completed["fact_id"])
+    proposal["description"] = (
+        "why_now: 历史覆盖存在缺口; endpoint: /api/orders/{id}; "
+        "test_vector: cross-org-id-swap; expected_signal: 返回他人订单; "
+        "stop_condition: 三个对象均拒绝访问"
+    )
+    assert _propose(
+        client,
+        workspace,
+        claim["lease_id"],
+        proposal,
+    ).status_code == 200
+    _assess_continue(client, workspace, claim["lease_id"], completed["fact_id"])
+    committed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        json={"lease_id": claim["lease_id"]},
+    )
+    assert committed.status_code == 200, committed.text
+    assert len(committed.json()["created_intent_ids"]) == 1
+    assert client.get(f"/api/v1/tasks/{task['id']}").json()["phase"] == "explore"
+    run = client.get(f"/api/v1/tasks/{task['id']}/reason-runs/{plan_run_id}").json()
+    assert run["trigger_payload"]["decision"] == "explore"
+
+
+def test_plan_input_arriving_during_execution_hands_off_to_reason(client) -> None:
+    task, completed = _bootstrap_to_reason(
+        client,
+        reason_min_interval_seconds=3_600,
+        reason_low_watermark=0,
+    )
+    engine = client.app.state.container.engine
+    _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
+    plan_run_id = _reconcile_plan(client, task["id"])
+    claim, _execution = claim_reason_run(
+        client,
+        task_id=task["id"],
+        reason_run_id=plan_run_id,
+    )
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+
+    with engine.begin() as conn:
+        conn.execute(
+            insert(facts).values(
+                id="f999",
+                task_id=task["id"],
+                description="Plan 执行期间到达的新 Fact",
+                created_at=utcnow(),
+                archived=False,
+            )
+        )
+    assessed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/goal-assessment",
+        json={
+            "lease_id": claim["lease_id"],
+            "assessment": {
+                "achieved": False,
+                "reason": "全景复盘完成，但有新输入需要增量 Reason；confidence: medium",
+                "evidence_refs": [],
+            },
+        },
+    )
+    assert assessed.status_code == 200, assessed.text
+    committed = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        json={"lease_id": claim["lease_id"]},
+    )
+    assert committed.status_code == 200, committed.text
+    assert client.get(f"/api/v1/tasks/{task['id']}").json()["phase"] == "reason"
+
+    reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={}).json()
+    [reason_run_id] = reconciled["created_reason_run_ids"]
+    run = client.get(
+        f"/api/v1/tasks/{task['id']}/reason-runs/{reason_run_id}"
+    ).json()
+    assert run["trigger"] == "fact_batch"
+    assert run["source_fact_ids"] == ["f999"]
+
+
+def test_pending_plan_does_not_cut_in_front_of_a_normal_reason_queue_entry(client) -> None:
+    task, completed = _bootstrap_to_reason(client)
+    engine = client.app.state.container.engine
+    _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
+    plan_run_id = _reconcile_plan(client, task["id"])
+    manual = _trigger_manual_reason(client, task["id"], actor="Plan 后到达的人工输入")
+    assert manual.status_code == 200, manual.text
+
+    direct_plan_claim = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/reason-runs/{plan_run_id}/claim",
+        json={"worker_name": "worker-a"},
+    )
+    assert direct_plan_claim.status_code == 409
+    assert "FIFO 队首" in direct_plan_claim.text
+
+    task_after = client.get(f"/api/v1/tasks/{task['id']}").json()
+    assert [item["id"] for item in task_after["queued_reason_runs"]] == [manual.json()["id"]]
+    assert task_after["active_plan_run"] is None
+
+
+def test_plan_rejects_same_vector_when_only_an_unreferenced_new_fact_exists(client) -> None:
+    task, completed = _bootstrap_to_reason(client)
+    engine = client.app.state.container.engine
+    _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
+    first_plan_id = _reconcile_plan(client, task["id"])
+    first_claim, first_workspace = _active_workspace(client, task, first_plan_id)
+    assert _add_todo(
+        client,
+        first_workspace,
+        first_claim["lease_id"],
+        _todo(1, completed["fact_id"]),
+    ).status_code == 200
+    first_proposal = _proposal(1, completed["fact_id"])
+    first_proposal["description"] = (
+        "why_now: 首次验证; endpoint: /api/orders/{id}; "
+        "test_vector: cross-org-id-swap; expected_signal: 200; stop_condition: 403"
+    )
+    assert _propose(
+        client,
+        first_workspace,
+        first_claim["lease_id"],
+        first_proposal,
+    ).status_code == 200
+    _assess_continue(
+        client,
+        first_workspace,
+        first_claim["lease_id"],
+        completed["fact_id"],
+    )
+    first_commit = client.post(
+        f"/api/v1/reason-workspaces/{first_workspace['id']}/commit",
+        json={"lease_id": first_claim["lease_id"]},
+    ).json()
+    [intent_id] = first_commit["created_intent_ids"]
+    [todo] = client.get(f"/api/v1/tasks/{task['id']}/todos").json()
+    concluded_at = utcnow()
+    with engine.begin() as conn:
+        conn.execute(
+            update(intents)
+            .where(intents.c.task_id == task["id"], intents.c.id == intent_id)
+            .values(
+                status="failed",
+                assessment_status="completed",
+                assessment_reason="已验证且失败",
+                assessed_at=concluded_at,
+                concluded_at=concluded_at,
+            )
+        )
+    closed = client.patch(
+        f"/api/v1/tasks/{task['id']}/todos/{todo['id']}",
+        json={"status": "completed", "status_reason": "该向量已验证失败"},
+    )
+    assert closed.status_code == 200, closed.text
+    manual = _trigger_manual_reason(client, task["id"], actor="Plan 去重间隔")
+    assert manual.status_code == 200, manual.text
+    _finish_reason_run(engine, task["id"], manual.json()["id"])
+
+    second_plan_id = _reconcile_plan(client, task["id"])
+    second_claim, second_workspace = _active_workspace(client, task, second_plan_id)
+    assert _add_todo(
+        client,
+        second_workspace,
+        second_claim["lease_id"],
+        _todo(2, completed["fact_id"]),
+    ).status_code == 200
+    with engine.begin() as conn:
+        conn.execute(
+            insert(facts).values(
+                id="f999",
+                task_id=task["id"],
+                description="与订单向量无关的新 Fact",
+                created_at=utcnow(),
+                archived=False,
+            )
+        )
+    repeated = _proposal(2, completed["fact_id"])
+    repeated["description"] = (
+        "why_now: 换一种表述重试; endpoint: /api/orders/{id}; "
+        "test_vector: cross-org-id-swap; expected_signal: 数据泄露; stop_condition: 403"
+    )
+    rejected = _propose(
+        client,
+        second_workspace,
+        second_claim["lease_id"],
+        repeated,
+    )
+    assert rejected.status_code == 409
+    assert "没有新 Fact" in rejected.text
+
+
+def test_plan_convergence_guard_stops_after_three_runs_and_resets_on_verified_vulnerability(
+    client,
+) -> None:
+    task, completed = _bootstrap_to_reason(client)
+    engine = client.app.state.container.engine
+    _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
+
+    for index in range(3):
+        plan_run_id = _reconcile_plan(client, task["id"])
+        _finish_reason_run(engine, task["id"], plan_run_id)
+        manual = _trigger_manual_reason(client, task["id"], actor=f"Plan 熔断测试 {index + 1}")
+        assert manual.status_code == 200, manual.text
+        _finish_reason_run(engine, task["id"], manual.json()["id"])
+
+    blocked = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    assert blocked.status_code == 200, blocked.text
+    assert blocked.json()["created_reason_run_ids"] == []
+    before_reset = client.get(f"/api/v1/tasks/{task['id']}").json()
+    assert before_reset["plan_run_count"] == 3
+    assert before_reset["phase"] == "waiting"
+
+    now = utcnow()
+    with engine.begin() as conn:
+        conn.execute(
+            insert(vulnerabilities).values(
+                id="v001",
+                task_id=task["id"],
+                intent_id=None,
+                title="已验证的回归漏洞",
+                type="越权",
+                severity="high",
+                description="验证新的漏洞成果会重置 Plan 熔断计数",
+                prerequisites="",
+                impact="高",
+                reproduction_steps_json="[]",
+                remediation="",
+                curl_command="",
+                evidence_json="[]",
+                affected_target="a.example.com",
+                status="已验证",
+                status_reason="测试用漏洞",
+                source="test",
+                reported_by="test",
+                created_at=now,
+                updated_at=now,
+                archived=False,
+                format_version=2,
+            )
+        )
+
+    reset = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    assert reset.status_code == 200, reset.text
+    [reset_plan_id] = reset.json()["created_reason_run_ids"]
+    reset_plan = client.get(
+        f"/api/v1/tasks/{task['id']}/reason-runs/{reset_plan_id}"
+    ).json()
+    assert reset_plan["trigger"] == "plan"
+    assert reset_plan["trigger_payload"]["plan_sequence"] == 1
 
 
 def test_concurrent_manual_reason_requests_create_only_one_active_run(client) -> None:

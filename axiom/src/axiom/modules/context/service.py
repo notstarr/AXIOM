@@ -2,22 +2,25 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from sqlalchemy import Engine, select
 
 from axiom.modules.artifacts.repository import ArtifactRepository
 from axiom.modules.artifacts.tables import artifacts
+from axiom.modules.audit.tables import audit_events
 from axiom.modules.context.repository import ContextRepository
 from axiom.modules.context.schemas import ContextRevision, ExpandedContext
 from axiom.modules.graph.repository import GraphRepository
 from axiom.modules.graph.tables import facts, intents
 from axiom.modules.goals.tables import goal_evaluations
 from axiom.modules.knowledge.tables import project_knowledge
-from axiom.modules.reason.tables import reason_runs
+from axiom.modules.reason.tables import reason_run_sources, reason_runs
 from axiom.modules.tasks.schemas import TaskScope
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.tasks.tables import task_hints
+from axiom.modules.todos.tables import todo_sources
 from axiom.modules.todos.repository import TodoRepository
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
@@ -112,10 +115,12 @@ class ContextService:
                 revision = allocate_sequence(conn, scope=task_id, kind="context_revision")
                 base_key = f"contexts/{task_id}/r{revision:06d}"
                 include_goal_history = phase not in {"reason", "review"}
+                include_archived = phase == "plan"
                 files = self._index_files(
                     conn,
                     task,
                     include_goal_history=include_goal_history,
+                    include_archived=include_archived,
                 )
                 manifest_key = f"{base_key}/manifest.json"
                 indexes = {
@@ -238,15 +243,20 @@ class ContextService:
         task,
         *,
         include_goal_history: bool,
+        include_archived: bool = False,
     ) -> dict[str, str]:
         files: dict[str, str] = {}
-        fact_rows = self.repository.facts(conn, task["id"])
-        intent_rows = self.repository.intents(conn, task["id"])
-        todo_rows = self.repository.todos(conn, task["id"])
-        artifact_rows = self.repository.artifacts(conn, task["id"])
-        hint_rows = self.repository.hints(conn, task["id"])
-        vulnerability_rows = self.repository.vulnerabilities(conn, task["id"])
-        knowledge_rows = self.repository.knowledge(conn, task["project_id"])
+        fact_rows = self.repository.facts(conn, task["id"], include_archived=include_archived)
+        intent_rows = self.repository.intents(conn, task["id"], include_archived=include_archived)
+        todo_rows = self.repository.todos(conn, task["id"], include_archived=include_archived)
+        artifact_rows = self.repository.artifacts(conn, task["id"], include_archived=include_archived)
+        hint_rows = self.repository.hints(conn, task["id"], include_archived=include_archived)
+        vulnerability_rows = self.repository.vulnerabilities(
+            conn, task["id"], include_archived=include_archived
+        )
+        knowledge_rows = self.repository.knowledge(
+            conn, task["project_id"], include_archived=include_archived
+        )
         goal_rows = (
             self.repository.goal_evaluations(conn, task["id"])
             if include_goal_history
@@ -259,12 +269,125 @@ class ContextService:
         )
         visible_fact_ids = {row["id"] for row in fact_rows}
         visible_intent_ids = {row["id"] for row in intent_rows}
+        source_intents_by_fact: dict[str, list[str]] = {}
+        intent_sources_by_id: dict[str, list[str]] = {}
+        intent_rows_by_id = {row["id"]: row for row in intent_rows}
+        for row in intent_rows:
+            intent = self.graph.get_intent(conn, task["id"], row["id"])
+            if intent is None:
+                continue
+            intent_sources_by_id[row["id"]] = list(intent.from_facts)
+            if intent.to_fact_id in visible_fact_ids:
+                source_intents_by_fact.setdefault(intent.to_fact_id, []).append(row["id"])
+        artifacts_by_intent: dict[str, list[str]] = {}
+        for row in artifact_rows:
+            if row.get("intent_id") in visible_intent_ids:
+                artifacts_by_intent.setdefault(row["intent_id"], []).append(row["id"])
+        fact_consumption: dict[str, list[dict[str, str]]] = {}
+        consumption_rows = conn.execute(
+            select(
+                reason_run_sources.c.fact_id,
+                reason_runs.c.id.label("reason_run_id"),
+                reason_runs.c.status,
+                reason_runs.c.trigger,
+            )
+            .join(
+                reason_runs,
+                (reason_runs.c.task_id == reason_run_sources.c.task_id)
+                & (reason_runs.c.id == reason_run_sources.c.reason_run_id),
+            )
+            .where(reason_run_sources.c.task_id == task["id"])
+            .order_by(reason_runs.c.created_at, reason_runs.c.id)
+        ).mappings()
+        for row in consumption_rows:
+            fact_consumption.setdefault(row["fact_id"], []).append(
+                {
+                    "reason_run_id": row["reason_run_id"],
+                    "status": row["status"],
+                    "trigger": row["trigger"],
+                }
+            )
+
+        def fact_provenance(fact_id: str) -> dict[str, Any]:
+            source_intent_ids = source_intents_by_fact.get(fact_id, [])
+            source_artifact_ids = list(
+                dict.fromkeys(
+                    artifact_id
+                    for intent_id in source_intent_ids
+                    for artifact_id in artifacts_by_intent.get(intent_id, [])
+                )
+            )
+            source_intent_assessments = [
+                {
+                    "intent_id": intent_id,
+                    "status": intent_rows_by_id[intent_id].get("assessment_status", "open")
+                    or "open",
+                    "reason": intent_rows_by_id[intent_id].get("assessment_reason", "") or "",
+                    "assessed_at": intent_rows_by_id[intent_id].get("assessed_at"),
+                }
+                for intent_id in source_intent_ids
+                if intent_id in intent_rows_by_id
+                and intent_rows_by_id[intent_id].get("kind") == "explore"
+            ]
+            if not source_intent_assessments:
+                assessment_status = "not_applicable"
+            elif any(item["status"] == "open" for item in source_intent_assessments):
+                assessment_status = "unassessed"
+            else:
+                assessment_status = "assessed"
+            consumption = fact_consumption.get(fact_id, [])
+            active_consumption = [
+                item
+                for item in consumption
+                if item["status"]
+                in {"pending", "claimed", "running", "concluding", "completed"}
+            ]
+            if not active_consumption:
+                consumption_status = "unconsumed"
+            elif any(item["status"] == "completed" for item in active_consumption):
+                consumption_status = "consumed"
+            else:
+                consumption_status = "reserved"
+            return {
+                "source_intent_ids": source_intent_ids,
+                "source_artifact_ids": source_artifact_ids,
+                "source_intent_assessments": source_intent_assessments,
+                "assessment_status": assessment_status,
+                "consumption_status": consumption_status,
+                "consumed_by_reason_runs": active_consumption,
+            }
         visible_goal_rows = [
-            row for row in goal_rows if self._goal_evaluation_visible(conn, task["id"], row)
+            row
+            for row in goal_rows
+            if self._goal_evaluation_visible(
+                conn,
+                task["id"],
+                row,
+                include_archived=include_archived,
+            )
         ]
+        todo_change_runs = self._todo_change_runs(conn, task["id"])
+        hint_relations = self._hint_relations(conn, task["id"])
+        knowledge_relations = self._knowledge_relations(conn, task["id"])
+        for relation in hint_relations.values():
+            todo_ids = set(relation.get("associated_todo_ids", []))
+            relation["associated_intent_ids"] = list(
+                dict.fromkeys(
+                    row["id"] for row in intent_rows if row.get("todo_id") in todo_ids
+                )
+            )
+        for relation in knowledge_relations.values():
+            todo_ids = set(relation.get("associated_todo_ids", []))
+            relation["associated_intent_ids"] = list(
+                dict.fromkeys(
+                    row["id"] for row in intent_rows if row.get("todo_id") in todo_ids
+                )
+            )
 
         for row in fact_rows:
-            self._add_detail(files, f"fact:{row['id']}", dict(row))
+            fact_detail = dict(row)
+            fact_detail.update(fact_provenance(row["id"]))
+            self._add_detail(files, f"fact:{row['id']}", fact_detail)
         for row in intent_rows:
             intent = self.graph.get_intent(conn, task["id"], row["id"])
             assert intent is not None
@@ -282,18 +405,25 @@ class ContextService:
         for row in todo_rows:
             todo = self.todos.get(conn, task["id"], row["id"])
             assert todo is not None
-            todo = todo.model_copy(
-                update={
-                    "sources": [
-                        source
-                        for source in todo.sources
-                        if self.todos.source_exists(conn, task_id=task["id"], source=source)
-                    ]
-                }
-            )
-            self._add_detail(files, f"todo:{row['id']}", todo.model_dump(mode="json"))
+            if not include_archived:
+                todo = todo.model_copy(
+                    update={
+                        "sources": [
+                            source
+                            for source in todo.sources
+                            if self.todos.source_exists(conn, task_id=task["id"], source=source)
+                        ]
+                    }
+                )
+            todo_detail = todo.model_dump(mode="json")
+            todo_detail["last_reason_run_id"] = todo_change_runs.get(row["id"])
+            self._add_detail(files, f"todo:{row['id']}", todo_detail)
         for row in artifact_rows:
-            artifact = self.artifacts.get(conn, task["id"], row["id"])
+            artifact = (
+                self.artifacts.get_any(conn, task["id"], row["id"])
+                if include_archived
+                else self.artifacts.get(conn, task["id"], row["id"])
+            )
             assert artifact is not None
             artifact = artifact.model_copy(
                 update={
@@ -307,11 +437,32 @@ class ContextService:
                 f"artifact:{row['id']}",
                 {
                     **artifact.model_dump(mode="json"),
+                    "source_fact_ids": intent_sources_by_id.get(artifact.intent_id, []),
+                    "associated_endpoint": _intent_marker(
+                        intent_rows_by_id.get(artifact.intent_id, {}).get("description", ""),
+                        "endpoint",
+                    ),
+                    "associated_targets": _json_list(
+                        intent_rows_by_id.get(artifact.intent_id, {}).get("targets_json")
+                    ),
                     "content_path": str(self.store.resolve(artifact.storage_key)),
                 },
             )
         for row in hint_rows:
-            self._add_detail(files, f"hint:{row['id']}", dict(row))
+            hint_detail = dict(row)
+            if include_archived:
+                hint_detail.update(
+                    hint_relations.get(
+                        row["id"],
+                        {
+                            "processed": False,
+                            "associated_todo_ids": [],
+                            "associated_intent_ids": [],
+                            "associated_reason_run_ids": [],
+                        },
+                    )
+                )
+            self._add_detail(files, f"hint:{row['id']}", hint_detail)
         for row in vulnerability_rows:
             vulnerability = self.vulnerabilities.get(conn, task["id"], row["id"])
             assert vulnerability is not None
@@ -330,7 +481,9 @@ class ContextService:
                 vulnerability.model_dump(mode="json"),
             )
         for row in knowledge_rows:
-            self._add_detail(files, f"knowledge:{row['id']}", dict(row))
+            knowledge_detail = dict(row)
+            knowledge_detail.update(knowledge_relations.get(row["id"], {}))
+            self._add_detail(files, f"knowledge:{row['id']}", knowledge_detail)
         for row in visible_goal_rows:
             self._add_detail(files, f"goal_evaluation:{row['id']}", dict(row))
 
@@ -338,6 +491,9 @@ class ContextService:
             "facts": [
                 {
                     "id": row["id"],
+                    "created_at": row["created_at"],
+                    "archived": bool(row.get("archived", False)),
+                    **fact_provenance(row["id"]),
                     "preview": _preview(row["description"]),
                     "ref": f"fact:{row['id']}",
                     "detail": _detail_path(f"fact:{row['id']}"),
@@ -351,9 +507,19 @@ class ContextService:
                     "kind": row["kind"],
                     "priority": 50 if row.get("priority") is None else int(row["priority"]),
                     "status": row["status"],
+                    "retry_count": int(row.get("retry_count") or 0),
+                    "infrastructure_retry_count": int(
+                        row.get("infrastructure_retry_count") or 0
+                    ),
+                    "last_failure_kind": row.get("last_failure_kind") or "",
+                    "failure_class": row.get("failure_class") or "",
                     "assessment_status": row.get("assessment_status", "open") or "open",
                     "assessment_reason": row.get("assessment_reason", "") or "",
                     "assessed_at": row.get("assessed_at"),
+                    "dedup_fingerprint": _intent_fingerprint(
+                        description=row["description"],
+                        targets=_json_list(row.get("targets_json")),
+                    ),
                     "preview": _preview(row["description"]),
                     "ref": f"intent:{row['id']}",
                     "detail": _detail_path(f"intent:{row['id']}"),
@@ -370,6 +536,11 @@ class ContextService:
                 "category": row["category"],
                 "theme": row["theme"],
                 "priority": row["priority"],
+                "created_by": row["created_by"],
+                "updated_at": row["updated_at"],
+                "completed_at": row["completed_at"],
+                "archived": bool(row.get("archived", False)),
+                "last_reason_run_id": todo_change_runs.get(row["id"]),
                 "ref": f"todo:{row['id']}",
                 "detail": _detail_path(f"todo:{row['id']}"),
             }
@@ -381,6 +552,18 @@ class ContextService:
                 "type": row["artifact_type"],
                 "summary": _preview(row["summary"] or row["storage_key"], 80),
                 "size": row["size"],
+                "intent_id": (
+                    row["intent_id"] if row["intent_id"] in visible_intent_ids else None
+                ),
+                "review_run_id": row.get("review_run_id"),
+                "source_fact_ids": intent_sources_by_id.get(row["intent_id"], []),
+                "associated_endpoint": _intent_marker(
+                    intent_rows_by_id.get(row["intent_id"], {}).get("description", ""),
+                    "endpoint",
+                ),
+                "associated_targets": _json_list(
+                    intent_rows_by_id.get(row["intent_id"], {}).get("targets_json")
+                ),
                 "ref": f"artifact:{row['id']}",
                 "detail": _detail_path(f"artifact:{row['id']}"),
             }
@@ -391,6 +574,19 @@ class ContextService:
                 "id": row["id"],
                 "content": row["content"],
                 "creator": row["creator"],
+                **(
+                    hint_relations.get(
+                        row["id"],
+                    {
+                        "processed": False,
+                        "associated_todo_ids": [],
+                        "associated_intent_ids": [],
+                        "associated_reason_run_ids": [],
+                    },
+                    )
+                    if include_archived
+                    else {}
+                ),
                 "ref": f"hint:{row['id']}",
                 "detail": _detail_path(f"hint:{row['id']}"),
             }
@@ -421,6 +617,7 @@ class ContextService:
                 "category": row["category"],
                 "content": row["content"],
                 "created_by": row["created_by"],
+                **knowledge_relations.get(row["id"], {}),
                 "ref": f"knowledge:{row['id']}",
                 "detail": _detail_path(f"knowledge:{row['id']}"),
             }
@@ -459,6 +656,114 @@ class ContextService:
     @staticmethod
     def _add_detail(files: dict[str, str], ref: str, value: Any) -> None:
         files[_detail_path(ref)] = _json(value)
+
+    @staticmethod
+    def _todo_change_runs(conn, task_id: str) -> dict[str, str]:
+        changes: dict[str, str] = {}
+        rows = conn.execute(
+            select(
+                audit_events.c.reason_run_id,
+                audit_events.c.payload_json,
+                audit_events.c.created_at,
+            )
+            .where(
+                audit_events.c.task_id == task_id,
+                audit_events.c.reason_run_id.is_not(None),
+                audit_events.c.event_type == "reason.committed",
+            )
+            .order_by(audit_events.c.created_at, audit_events.c.id)
+        ).mappings()
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                payload = {}
+            ids = [
+                *payload.get("created_todo_ids", []),
+                *payload.get("updated_todo_ids", []),
+                *payload.get("deleted_todo_ids", []),
+            ]
+            for todo_id in ids:
+                if isinstance(todo_id, str):
+                    changes[todo_id] = row["reason_run_id"]
+        return changes
+
+    @staticmethod
+    def _hint_relations(conn, task_id: str) -> dict[str, dict[str, Any]]:
+        relations: dict[str, dict[str, Any]] = {}
+        source_rows = conn.execute(
+            select(todo_sources.c.source_id, todo_sources.c.todo_id)
+            .where(
+                todo_sources.c.task_id == task_id,
+                todo_sources.c.source_type == "hint",
+            )
+        ).mappings()
+        for row in source_rows:
+            item = relations.setdefault(
+                row["source_id"],
+                {
+                    "processed": False,
+                    "associated_todo_ids": [],
+                    "associated_intent_ids": [],
+                    "associated_reason_run_ids": [],
+                },
+            )
+            item["associated_todo_ids"].append(row["todo_id"])
+        rows = conn.execute(
+            select(audit_events.c.reason_run_id, audit_events.c.payload_json)
+            .where(
+                audit_events.c.task_id == task_id,
+                audit_events.c.reason_run_id.is_not(None),
+                audit_events.c.event_type == "reason_run.created",
+            )
+        ).mappings()
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                payload = {}
+            hint_id = payload.get("hint_id")
+            if not isinstance(hint_id, str):
+                continue
+            item = relations.setdefault(
+                hint_id,
+                {
+                    "processed": False,
+                    "associated_todo_ids": [],
+                    "associated_intent_ids": [],
+                    "associated_reason_run_ids": [],
+                },
+            )
+            item["processed"] = True
+            item["associated_reason_run_ids"].append(row["reason_run_id"])
+        for item in relations.values():
+            item["associated_todo_ids"] = list(dict.fromkeys(item["associated_todo_ids"]))
+            item["associated_intent_ids"] = list(dict.fromkeys(item["associated_intent_ids"]))
+            item["associated_reason_run_ids"] = list(
+                dict.fromkeys(item["associated_reason_run_ids"])
+            )
+        return relations
+
+    @staticmethod
+    def _knowledge_relations(conn, task_id: str) -> dict[str, dict[str, Any]]:
+        relations: dict[str, dict[str, Any]] = {}
+        rows = conn.execute(
+            select(todo_sources.c.source_id, todo_sources.c.todo_id)
+            .where(
+                todo_sources.c.task_id == task_id,
+                todo_sources.c.source_type == "knowledge",
+            )
+        ).mappings()
+        for row in rows:
+            item = relations.setdefault(
+                row["source_id"],
+                {"associated_todo_ids": [], "associated_intent_ids": []},
+            )
+            item["associated_todo_ids"].append(row["todo_id"])
+        for item in relations.values():
+            item["associated_todo_ids"] = list(dict.fromkeys(item["associated_todo_ids"]))
+            item["associated_intent_ids"] = list(dict.fromkeys(item["associated_intent_ids"]))
+        return relations
 
     def _revision(self, row) -> ContextRevision:
         return ContextRevision(
@@ -617,7 +922,13 @@ class ContextService:
         ).scalar_one_or_none()
 
     @staticmethod
-    def _goal_evaluation_visible(conn, task_id: str, row) -> bool:
+    def _goal_evaluation_visible(
+        conn,
+        task_id: str,
+        row,
+        *,
+        include_archived: bool = False,
+    ) -> bool:
         table_map = {
             "fact": facts,
             "artifact": artifacts,
@@ -630,13 +941,13 @@ class ContextService:
             table = table_map.get(kind)
             if not separator or table is None:
                 continue
-            visible = conn.execute(
-                select(table.c.id).where(
-                    table.c.task_id == task_id,
-                    table.c.id == item_id,
-                    table.c.archived.is_(False),
-                )
-            ).scalar_one_or_none()
+            query = select(table.c.id).where(
+                table.c.task_id == task_id,
+                table.c.id == item_id,
+            )
+            if not include_archived:
+                query = query.where(table.c.archived.is_(False))
+            visible = conn.execute(query).scalar_one_or_none()
             if visible is None:
                 return False
         return True
@@ -649,6 +960,48 @@ def _preview(value: str, limit: int = PREVIEW_CHARS) -> str:
 
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+
+
+def _json_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, str)]
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return [item for item in parsed if isinstance(item, str)] if isinstance(parsed, list) else []
+
+
+def _intent_marker(description: str, marker: str) -> str:
+    for part in re.split(r"[;；\n]", description or ""):
+        key, separator, value = part.partition(":")
+        if separator and key.strip().casefold() == marker.casefold():
+            return " ".join(value.split())
+    return ""
+
+
+def _intent_fingerprint(*, description: str, targets: list[str]) -> str:
+    """Stable Plan dedup signature: target + endpoint + test vector.
+
+    Plan workers are asked to annotate these values in the human-readable
+    Intent description.  Older Intents do not have structured metadata, so
+    the normalized description remains the backwards-compatible fallback for
+    the missing endpoint/vector components.
+    """
+
+    markers = {
+        marker: _intent_marker(description, marker).casefold()
+        for marker in ("endpoint", "test_vector", "test vector", "target")
+    }
+    normalized_description = " ".join((description or "").split()).casefold()
+    payload = {
+        "target": sorted(set(targets or [])),
+        "endpoint": markers.get("endpoint") or normalized_description,
+        "test_vector": markers.get("test_vector") or normalized_description,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
 
 def _manifest_hash(files) -> str:

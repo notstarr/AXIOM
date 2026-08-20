@@ -3,7 +3,17 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 
-from sqlalchemy import Engine, delete as sql_delete, func, literal, select, union_all, update
+from sqlalchemy import (
+    Engine,
+    and_,
+    delete as sql_delete,
+    func,
+    literal,
+    or_,
+    select,
+    union_all,
+    update,
+)
 
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
@@ -684,7 +694,15 @@ class TaskService:
                 select(reason_runs)
                 .where(
                     reason_runs.c.task_id.in_(task_ids),
-                    reason_runs.c.status.in_(["pending", "claimed", "running", "concluding"]),
+                    or_(
+                        reason_runs.c.status.in_(
+                            ["pending", "claimed", "running", "concluding"]
+                        ),
+                        and_(
+                            reason_runs.c.trigger == "plan",
+                            reason_runs.c.status.in_(["completed", "failed"]),
+                        ),
+                    ),
                 )
                 .order_by(
                     reason_runs.c.task_id,
@@ -693,20 +711,57 @@ class TaskService:
                 )
             ).mappings()
             reasons: dict[str, object] = {}
+            plan_runs: dict[str, object] = {}
             queued_reasons: dict[str, list[object]] = {}
+            plan_counts: dict[str, int] = {}
+            latest_plan_decisions: dict[str, dict[str, object]] = {}
             for row in reason_rows:
                 task_id = str(row["task_id"])
+                if row["trigger"] == "plan" and row["status"] in {"completed", "failed"}:
+                    plan_counts[task_id] = plan_counts.get(task_id, 0) + 1
+                    payload = json.loads(row["trigger_payload_json"] or "{}")
+                    previous = latest_plan_decisions.get(task_id)
+                    if previous is None or (
+                        row["created_at"],
+                        row["id"],
+                    ) > (
+                        previous["_created_at"],
+                        previous["_id"],
+                    ):
+                        latest_plan_decisions[task_id] = {
+                            "_created_at": row["created_at"],
+                            "_id": row["id"],
+                            "reason_run_id": row["id"],
+                            "status": row["status"],
+                            "decision": payload.get("decision"),
+                            "reviewed_dimensions": payload.get("reviewed_dimensions", []),
+                            "exhaustion_reason": payload.get("exhaustion_reason", ""),
+                            "evidence_refs": payload.get("evidence_refs", []),
+                            "confidence": payload.get("confidence", "unspecified"),
+                            "concluded_at": row["concluded_at"],
+                        }
+                    continue
                 if row["status"] in {"claimed", "running", "concluding"}:
-                    reasons.setdefault(task_id, row)
+                    if row["trigger"] == "plan":
+                        plan_runs.setdefault(task_id, row)
+                    else:
+                        reasons.setdefault(task_id, row)
                 elif row["status"] == "pending":
-                    queued_reasons.setdefault(task_id, []).append(row)
+                    if row["trigger"] != "plan":
+                        queued_reasons.setdefault(task_id, []).append(row)
+
+            for decision in latest_plan_decisions.values():
+                decision.pop("_created_at", None)
+                decision.pop("_id", None)
 
         decorated: list[Task] = []
         for task in tasks_to_decorate:
             reason = reasons.get(task.id)
             reason_present = reason is not None
+            plan = plan_runs.get(task.id)
+            plan_present = plan is not None
             task_queued = queued_reasons.get(task.id, [])
-            legacy_reason = reason or (task_queued[0] if task_queued else None)
+            legacy_reason = reason or plan or (task_queued[0] if task_queued else None)
             legacy_reason_present = legacy_reason is not None
             decorated.append(
                 task.model_copy(
@@ -768,6 +823,28 @@ class TaskService:
                             if reason_present
                             else None
                         ),
+                        "active_plan_run": (
+                            ActiveReasonRun(
+                                id=plan["id"],
+                                status=plan["status"],
+                                trigger=plan["trigger"],
+                                trigger_payload=json.loads(plan["trigger_payload_json"] or "{}"),
+                                worker=plan["worker"],
+                                lease_id=plan["lease_id"],
+                                settings_version=plan["settings_version"],
+                                execute_timeout_seconds=plan["execute_timeout_seconds"],
+                                conclude_timeout_seconds=plan["conclude_timeout_seconds"],
+                                last_heartbeat_at=plan["last_heartbeat_at"],
+                                activity_kind=plan["activity_kind"] or "",
+                                activity_summary=plan["activity_summary"] or "",
+                                activity_tool=plan["activity_tool"] or "",
+                                activity_started_at=plan["activity_started_at"],
+                                activity_updated_at=plan["activity_updated_at"],
+                                created_at=plan["created_at"],
+                            )
+                            if plan_present
+                            else None
+                        ),
                         "queued_reason_runs": [
                             ActiveReasonRun(
                                 id=row["id"],
@@ -789,6 +866,8 @@ class TaskService:
                             )
                             for row in task_queued
                         ],
+                        "plan_run_count": plan_counts.get(task.id, 0),
+                        "last_plan_decision": latest_plan_decisions.get(task.id),
                     }
                 )
             )

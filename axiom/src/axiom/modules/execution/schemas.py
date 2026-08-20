@@ -98,7 +98,7 @@ class ExecutionInput(BaseModel):
     intent_kind: Literal["bootstrap", "reason", "explore", "review"] = "bootstrap"
     # Reason 场景策略由控制面按 ReasonRun.trigger 固定选择，模型不能自行切换。
     reason_prompt_profile: Literal[
-        "default", "bootstrap", "progress", "human", "continuation"
+        "default", "bootstrap", "progress", "human", "continuation", "plan"
     ] = "default"
     intent_description: str = ""
     intent_targets: list[str] = Field(default_factory=list)

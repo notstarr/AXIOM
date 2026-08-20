@@ -118,7 +118,9 @@
 
   function mapTask(task) {
     const activeReasonRun = task.active_reason_run || null;
-    const legacyReason = !activeReasonRun && task.reason_worker ? {
+    const activePlanRun = task.active_plan_run || null;
+    const displayRun = activeReasonRun || activePlanRun;
+    const legacyReason = !displayRun && task.reason_worker ? {
       id: '',
       status: 'running',
       worker: task.reason_worker,
@@ -143,7 +145,7 @@
       trigger_payload: qr.trigger_payload || {},
       created_at: qr.created_at,
     }));
-    const queuedReasonDisplay = !activeReasonRun && !legacyReason && queuedReasons[0] ? {
+    const queuedReasonDisplay = !displayRun && !legacyReason && queuedReasons[0] ? {
       id: queuedReasons[0].id,
       status: 'pending',
       worker: '排队中',
@@ -173,28 +175,32 @@
       archived: !!task.archived,
       // ReasonRun is an execution activity, not an Intent/graph node.  Keep a
       // narrow legacy fallback for historical payloads only.
-      reason: activeReasonRun ? {
-        id: activeReasonRun.id,
-        status: activeReasonRun.status,
-        worker: activeReasonRun.worker || '等待 Reason Worker',
-        trigger: activeReasonRun.trigger || 'scheduler',
-        trigger_payload: activeReasonRun.trigger_payload || {},
-        lease_id: activeReasonRun.lease_id || '',
-        settings_version: activeReasonRun.settings_version,
-        execute_timeout_seconds: activeReasonRun.execute_timeout_seconds,
-        conclude_timeout_seconds: activeReasonRun.conclude_timeout_seconds,
-        last_heartbeat_at: activeReasonRun.last_heartbeat_at,
-        activity_kind: activeReasonRun.activity_kind || activeReasonRun.status || 'pending',
+      reason: displayRun ? {
+        id: displayRun.id,
+        status: displayRun.status,
+        worker: displayRun.worker || '等待 Reason Worker',
+        trigger: displayRun.trigger || 'scheduler',
+        trigger_payload: displayRun.trigger_payload || {},
+        lease_id: displayRun.lease_id || '',
+        settings_version: displayRun.settings_version,
+        execute_timeout_seconds: displayRun.execute_timeout_seconds,
+        conclude_timeout_seconds: displayRun.conclude_timeout_seconds,
+        last_heartbeat_at: displayRun.last_heartbeat_at,
+        activity_kind: displayRun.activity_kind || displayRun.status || 'pending',
         activity_summary: reasonActivitySummary(
-          activeReasonRun.activity_kind,
-          activeReasonRun.status,
-          activeReasonRun.activity_summary,
+          displayRun.activity_kind,
+          displayRun.status,
+          displayRun.activity_summary,
         ),
-        activity_tool: activeReasonRun.activity_tool || '',
-        activity_started_at: activeReasonRun.activity_started_at || activeReasonRun.created_at,
-        activity_updated_at: activeReasonRun.activity_updated_at || activeReasonRun.last_heartbeat_at || activeReasonRun.created_at,
-        created_at: activeReasonRun.created_at,
+        activity_tool: displayRun.activity_tool || '',
+        activity_started_at: displayRun.activity_started_at || displayRun.created_at,
+        activity_updated_at: displayRun.activity_updated_at || displayRun.last_heartbeat_at || displayRun.created_at,
+        created_at: displayRun.created_at,
+        is_plan: displayRun.trigger === 'plan',
       } : legacyReason || queuedReasonDisplay,
+      active_plan_run: activePlanRun,
+      plan_run_count: Number(task.plan_run_count || 0),
+      last_plan_decision: task.last_plan_decision || null,
       queued_reasons: queuedReasons,
       created_at: task.created_at,
       updated_at: task.updated_at,

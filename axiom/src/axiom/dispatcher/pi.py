@@ -59,6 +59,7 @@ _REASON_PROMPT_PROFILE_FILES = {
     "progress": "reason_progress.md",
     "human": "reason_human.md",
     "continuation": "reason_continuation.md",
+    "plan": "plan.md",
 }
 CONTEXT_ATTENTION_SYSTEM_PROMPT = (
     "在开始规划或执行任何操作前，必须先读取 Context Manifest，并完整读取其中的 "

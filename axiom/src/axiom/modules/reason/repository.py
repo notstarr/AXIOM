@@ -166,6 +166,7 @@ class ReasonRepository:
         ).mappings().all()
         return [self._run(row, self.source_ids(conn, task_id, row["id"])) for row in rows]
 
+
     @staticmethod
     def update_pending_snapshot(
         conn: Connection,
@@ -252,6 +253,29 @@ class ReasonRepository:
                 ],
             )
         return True
+
+    @staticmethod
+    def update_trigger_payload(
+        conn: Connection,
+        *,
+        task_id: str,
+        run_id: str,
+        trigger_payload: dict,
+        now: str,
+    ) -> bool:
+        result = conn.execute(
+            update(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.id == run_id,
+                reason_runs.c.status.in_(["running", "concluding"]),
+            )
+            .values(
+                trigger_payload_json=json.dumps(trigger_payload, ensure_ascii=False),
+                updated_at=now,
+            )
+        )
+        return bool(result.rowcount)
 
     @staticmethod
     def latest_completed_row(conn: Connection, task_id: str):
@@ -565,6 +589,41 @@ class ReasonRepository:
             )
         )
         return int(result.rowcount or 0)
+
+    @staticmethod
+    def cancel_pending_plan_runs(
+        conn: Connection,
+        task_id: str,
+        *,
+        now: str,
+        failure_kind: str = "incremental_work_arrived",
+    ) -> int:
+        result = conn.execute(
+            update(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.trigger == "plan",
+                reason_runs.c.status == "pending",
+            )
+            .values(
+                status="cancelled",
+                worker=None,
+                lease_id=None,
+                claimed_at=None,
+                last_heartbeat_at=None,
+                next_retry_at=None,
+                last_failure_kind=failure_kind,
+                failure_class="",
+                activity_kind="cancelled",
+                activity_summary="增量 Reason 输入到达，Plan 已取消并重新排队",
+                activity_tool="",
+                activity_updated_at=now,
+                updated_at=now,
+                concluded_at=now,
+            )
+        )
+        return int(result.rowcount or 0)
+
 
     @staticmethod
     def stale_active(conn: Connection, *, cutoff: str):

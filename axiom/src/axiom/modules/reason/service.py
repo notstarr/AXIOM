@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from datetime import timedelta
 
 from sqlalchemy import Engine, exists, func, or_, select, update
@@ -45,6 +46,7 @@ from axiom.modules.todos.schemas import (
     TodoSource,
 )
 from axiom.modules.todos.tables import todos
+from axiom.modules.vulnerabilities.tables import vulnerabilities
 from axiom.modules.workers.tables import workers
 from axiom.shared.clock import format_utc, parse_utc, utcnow
 from axiom.shared.database import run_transaction, transaction
@@ -58,6 +60,7 @@ OPEN_EXPLORE_STATUSES = ("pending", "claimed", "running", "concluding")
 TERMINAL_EXPLORE_STATUSES = ("completed", "failed", "cancelled")
 INTENT_ASSESSMENT_STATUSES = ("open", "partial", "blocked", "completed")
 MAX_WORKSPACE_INTENTS = 256
+MAX_CONSECUTIVE_PLAN_RUNS = 3
 REASON_INPUT_KEYS = (
     "source_fact_ids",
     "failed_intent_ids",
@@ -66,6 +69,15 @@ REASON_INPUT_KEYS = (
     "open_explore_ids",
     "unassessed_intent_ids",
 )
+
+
+def _extract_plan_confidence(reason: str) -> str:
+    match = re.search(
+        r"(?:confidence|置信度)\s*[:：]\s*([^;；,，\s]+)",
+        reason or "",
+        flags=re.IGNORECASE,
+    )
+    return match.group(1).strip() if match else "unspecified"
 
 
 class ReasonService:
@@ -203,7 +215,11 @@ class ReasonService:
             select(tasks.c.id).where(tasks.c.id == task.id).with_for_update()
         ).scalar_one_or_none() is None:
             raise NotFoundError(f"Task not found: {task.id}")
-        pending = self.repository.pending_runs_for_task(conn, task.id)
+        pending = [
+            run
+            for run in self.repository.pending_runs_for_task(conn, task.id)
+            if run.trigger != "plan"
+        ]
         matched = next(
             (run for run in pending if run.input_fingerprint == input_fingerprint),
             None,
@@ -607,6 +623,8 @@ class ReasonService:
 
         in_flight = self.repository.in_flight_for_task(conn, task_id)
         pending = self.repository.pending_runs_for_task(conn, task_id)
+        regular_pending = [run for run in pending if run.trigger != "plan"]
+        pending_plans = [run for run in pending if run.trigger == "plan"]
 
         bootstrap_completed = conn.execute(
             select(intents.c.id)
@@ -630,11 +648,6 @@ class ReasonService:
         todo_review_ids = list(state["todo_review_ids"])
         unassessed_intent_ids = list(state["unassessed_intent_ids"])
         snapshot = self._snapshot_from_state(state)
-        open_runs = [run for run in [in_flight, *pending] if run is not None]
-        if open_runs and not self._has_uncovered_input(snapshot, open_runs):
-            self._set_phase(conn, task_id, "reason", now)
-            return (in_flight or pending[0]).id
-        # A terminal Explore without a follow-up is itself a planning signal.
         signals_present = bool(
             source_fact_ids
             or failed_intent_ids
@@ -642,8 +655,48 @@ class ReasonService:
             or todo_review_ids
             or unassessed_intent_ids
         )
+
+        # A pending Plan is conditional on the incremental queue being empty.
+        # If new input arrives before it is claimed, cancel only that pending
+        # Plan and let the ordinary Reason FIFO handle the signal.  An already
+        # claimed/running Plan remains valid and late-binds the new input at
+        # start/commit time.
+        if pending_plans and in_flight is None and (signals_present or open_explore_ids):
+            self.repository.cancel_pending_plan_runs(
+                conn,
+                task_id,
+                now=now,
+                failure_kind="incremental_work_arrived",
+            )
+            pending = regular_pending
+            pending_plans = []
+        open_runs = [run for run in [in_flight, *pending] if run is not None]
+        if open_runs and not self._has_uncovered_input(snapshot, open_runs):
+            current = in_flight or (regular_pending[0] if regular_pending else pending[0])
+            self._set_phase(
+                conn,
+                task_id,
+                "plan" if current.trigger == "plan" else "reason",
+                now,
+            )
+            return (in_flight or pending[0]).id
+        # A terminal Explore without a follow-up is itself a planning signal.
         if not signals_present:
-            self._set_phase(conn, task_id, "explore" if open_explore_ids else "waiting", now)
+            if open_explore_ids:
+                self._set_phase(conn, task_id, "explore", now)
+                return None
+            if pending_plans:
+                self._set_phase(conn, task_id, "plan", now)
+                return pending_plans[0].id
+            plan = self._create_plan_if_allowed_in(
+                conn,
+                task=task,
+                state=state,
+                now=now,
+            )
+            if plan is not None:
+                return plan.id
+            self._set_phase(conn, task_id, "waiting", now)
             return None
 
         config = load_runtime_config(conn)
@@ -673,13 +726,27 @@ class ReasonService:
         else:
             last_finished = latest["concluded_at"] or latest["updated_at"]
             elapsed = max(0.0, (parse_utc(now) - parse_utc(last_finished)).total_seconds())
+            after_plan_handoff = task.phase == "reason" and latest["trigger"] == "plan"
             # Unassessed terminal Intents are a correctness signal, not a
             # throughput hint.  Do not let the normal Reason debounce leave
             # them waiting (and potentially forgotten) after Explore ends.
-            if elapsed < config.reason_min_interval_seconds and not unassessed_intent_ids:
+            # The same rule applies to input which arrived during Plan: the
+            # Plan commit has explicitly handed that state to Reason, so a
+            # normal debounce/low-watermark setting must not strand it.
+            if (
+                elapsed < config.reason_min_interval_seconds
+                and not unassessed_intent_ids
+                and not after_plan_handoff
+            ):
                 self._set_phase(conn, task_id, "explore" if open_explore_ids else "waiting", now)
                 return None
-            if len(source_fact_ids) >= config.reason_batch_size:
+            if after_plan_handoff and unassessed_intent_ids and not open_explore_ids:
+                trigger = "intent_assessment"
+            elif after_plan_handoff and source_fact_ids:
+                trigger = "fact_batch"
+            elif after_plan_handoff and signals_present:
+                trigger = "low_watermark"
+            elif len(source_fact_ids) >= config.reason_batch_size:
                 trigger = "fact_batch"
             elif unassessed_intent_ids and not open_explore_ids:
                 # Every terminal Explore must receive exactly one Reason-side
@@ -727,6 +794,81 @@ class ReasonService:
         self._set_phase(conn, task_id, "reason", now)
         return run.id
 
+    def _create_plan_if_allowed_in(self, conn, *, task, state, now: str) -> ReasonRun | None:
+        """Create the one-off panorama review when the incremental queue is empty."""
+
+        in_flight = self.repository.in_flight_for_task(conn, task.id)
+        pending = self.repository.pending_runs_for_task(conn, task.id)
+        if in_flight is not None or pending:
+            return None
+
+        current_cycle = task.current_goal_cycle_id
+        verified_at = conn.execute(
+            select(func.max(vulnerabilities.c.updated_at)).where(
+                vulnerabilities.c.task_id == task.id,
+                vulnerabilities.c.status == "已验证",
+            )
+        ).scalar_one_or_none()
+        plan_query = select(reason_runs.c.id).where(
+            reason_runs.c.task_id == task.id,
+            reason_runs.c.trigger == "plan",
+            reason_runs.c.status.in_(["completed", "failed"]),
+        )
+        if current_cycle is not None:
+            plan_query = plan_query.where(reason_runs.c.goal_cycle_id == current_cycle)
+        if verified_at is not None:
+            plan_query = plan_query.where(reason_runs.c.created_at > verified_at)
+        plan_rows = list(
+            conn.execute(plan_query.order_by(reason_runs.c.created_at, reason_runs.c.id)).scalars()
+        )
+        if len(plan_rows) >= MAX_CONSECUTIVE_PLAN_RUNS:
+            return None
+
+        latest = self.repository.latest_deduplication_row(conn, task.id)
+        latest_is_same_plan_cycle = (
+            latest is not None
+            and latest["trigger"] == "plan"
+            and latest["goal_cycle_id"] == current_cycle
+            and (verified_at is None or latest["created_at"] > verified_at)
+        )
+        if latest_is_same_plan_cycle:
+            # A Plan that already concluded without new graph input must not
+            # immediately schedule another identical panorama pass. Manual,
+            # Hint and continuation triggers can still start a new ReasonRun.
+            return None
+
+        sequence = len(plan_rows) + 1
+        plan_snapshot = self._snapshot_from_state(state)
+        fingerprint = self._fingerprint(
+            source_fact_ids=plan_snapshot["source_fact_ids"],
+            failed_intent_ids=plan_snapshot["failed_intent_ids"],
+            actionable_todo_ids=plan_snapshot["actionable_todo_ids"],
+            todo_review_ids=plan_snapshot["todo_review_ids"],
+            open_explore_ids=plan_snapshot["open_explore_ids"],
+            unassessed_intent_ids=plan_snapshot["unassessed_intent_ids"],
+        )
+        run = self._create_run(
+            conn,
+            task=task,
+            source_fact_ids=plan_snapshot["source_fact_ids"],
+            trigger="plan",
+            trigger_payload={
+                "plan_sequence": sequence,
+                "reviewed_dimensions": [
+                    "coverage",
+                    "weaponization",
+                    "blocked_paths",
+                    "goal_completion",
+                ],
+                "context_scope": "full_task_history",
+                "artifact_mode": "index_summary_and_workspace_on_demand",
+            },
+            input_fingerprint=fingerprint,
+            now=now,
+        )
+        self._set_phase(conn, task.id, "plan", now)
+        return run
+
     def _create_run(
         self,
         conn,
@@ -770,7 +912,11 @@ class ReasonService:
                 reason_run_id=run.id,
                 event_type="reason_run.created",
                 message="已创建 ReasonRun，等待空闲 Worker 自动领取",
-                payload={"phase": "reason", "trigger": trigger, **trigger_payload},
+                payload={
+                    "phase": "plan" if trigger == "plan" else "reason",
+                    "trigger": trigger,
+                    **trigger_payload,
+                },
             ),
         )
         return run
@@ -813,19 +959,27 @@ class ReasonService:
                 .order_by(intents.c.created_at, intents.c.id)
             ).scalars()
         )
+        failed_conditions = [
+            intents.c.task_id == task_id,
+            intents.c.kind == "explore",
+            intents.c.status.in_(["failed", "cancelled"]),
+            ~(
+                (intents.c.status == "cancelled")
+                & (intents.c.last_failure_kind == "goal_achieved")
+            ),
+            intents.c.archived.is_(False),
+        ]
+        assessment_status = intents.c.get("assessment_status")
+        if assessment_status is not None:
+            # A terminal failure is an incremental Reason signal exactly until
+            # its one-time assessment is committed.  Keeping every historical
+            # failure here forever prevents the queue from ever becoming empty
+            # and therefore prevents Plan from running at all.
+            failed_conditions.append(assessment_status == "open")
         failed_intent_ids = list(
             conn.execute(
                 select(intents.c.id)
-                .where(
-                    intents.c.task_id == task_id,
-                    intents.c.kind == "explore",
-                    intents.c.status.in_(["failed", "cancelled"]),
-                    ~(
-                        (intents.c.status == "cancelled")
-                        & (intents.c.last_failure_kind == "goal_achieved")
-                    ),
-                    intents.c.archived.is_(False),
-                )
+                .where(*failed_conditions)
                 .order_by(intents.c.created_at, intents.c.id)
             ).scalars()
         )
@@ -982,7 +1136,10 @@ class ReasonService:
                     worker=run.worker or "",
                     event_type="reason_run.started",
                     message="ReasonRun 开始执行",
-                    payload={"phase": "reason", "lease_id": lease_id},
+                    payload={
+                        "phase": "plan" if run.trigger == "plan" else "reason",
+                        "lease_id": lease_id,
+                    },
                 ),
             )
             return StartedReasonRun(
@@ -1107,7 +1264,7 @@ class ReasonService:
                     level="warning" if failure_class == "transient" else "info",
                     message=f"ReasonRun 已释放：{failure_kind or '未指定原因'}",
                     payload={
-                        "phase": "reason",
+                        "phase": "plan" if run.trigger == "plan" else "reason",
                         "failure_kind": failure_kind,
                         "failure_class": failure_class,
                         "terminal": terminal,
@@ -1164,7 +1321,9 @@ class ReasonService:
                     context_revisions.c.revision == context_revision,
                     context_revisions.c.reason_run_id == reason_run_id,
                     context_revisions.c.lease_id == lease_id,
-                    context_revisions.c.phase == "reason",
+                    context_revisions.c.phase == (
+                        "plan" if run.trigger == "plan" else "reason"
+                    ),
                 )
             ).scalar_one_or_none()
             if context_exists is None:
@@ -1192,7 +1351,10 @@ class ReasonService:
                     worker=run.worker or "",
                     event_type="reason.workspace_opened",
                     message="Reason 已打开规划工作区",
-                    payload={"phase": "reason", "workspace_id": workspace.id},
+                    payload={
+                        "phase": "plan" if run.trigger == "plan" else "reason",
+                        "workspace_id": workspace.id,
+                    },
                 ),
             )
             return workspace
@@ -1224,7 +1386,11 @@ class ReasonService:
                     level="warning",
                     message=f"Reason 规划未提交：{failure_reason.strip() or '执行失败'}",
                     payload={
-                        "phase": "reason",
+                        "phase": (
+                            "plan"
+                            if self._workspace_run(conn, workspace).trigger == "plan"
+                            else "reason"
+                        ),
                         "workspace_id": workspace_id,
                         "failure_reason": failure_reason,
                     },
@@ -1346,6 +1512,22 @@ class ReasonService:
                 if existing == proposal:
                     return workspace
                 raise ConflictError("Intent proposal already exists with different parameters")
+            if run.trigger == "plan":
+                proposed_fingerprint = self._intent_fingerprint(
+                    description=proposal.description,
+                    targets=proposal.targets,
+                )
+                if any(
+                    self._intent_fingerprint(
+                        description=item.description,
+                        targets=item.targets,
+                    )
+                    == proposed_fingerprint
+                    for item in workspace.draft.intent_proposals
+                ):
+                    raise ConflictError(
+                        "Plan Workspace 中已经存在相同 target/endpoint/test_vector 的 Intent"
+                    )
             if len(workspace.draft.intent_proposals) >= MAX_WORKSPACE_INTENTS:
                 raise ConflictError(
                     f"Reason Workspace Intent infrastructure limit reached: {MAX_WORKSPACE_INTENTS}"
@@ -1412,6 +1594,8 @@ class ReasonService:
     ) -> ReasonWorkspace:
         with transaction(self.engine) as conn:
             workspace = self._require_active_open(conn, workspace_id, lease_id)
+            run = self._workspace_run(conn, workspace)
+            self._reject_plan_goal_completion(run, assessment)
             self._validate_goal_assessment(conn, workspace, assessment)
             if workspace.draft.goal_assessment == assessment:
                 return workspace
@@ -1476,11 +1660,14 @@ class ReasonService:
                 draft = workspace.draft
                 assessment = draft.goal_assessment
                 assert assessment is not None
+                self._reject_plan_goal_completion(run, assessment)
                 task = self.tasks.get(conn, workspace.task_id)
                 assert task is not None
                 now = utcnow()
                 todo_refs: dict[str, str] = {}
                 created_todo_ids: list[str] = []
+                updated_todo_ids: list[str] = []
+                deleted_todo_ids: list[str] = []
 
                 for todo in draft.todo_adds:
                     staged_update = next(
@@ -1562,7 +1749,14 @@ class ReasonService:
                     elif update_command.status is not None:
                         values["completed_at"] = None
                     values["updated_at"] = now
-                    self.todos.update(conn, workspace.task_id, update_command.todo_id, values)
+                    updated = self.todos.update(
+                        conn,
+                        workspace.task_id,
+                        update_command.todo_id,
+                        values,
+                    )
+                    if updated is not None:
+                        updated_todo_ids.append(update_command.todo_id)
                     self.todos.add_sources(
                         conn,
                         task_id=workspace.task_id,
@@ -1578,7 +1772,7 @@ class ReasonService:
                 for delete_command in draft.todo_deletions:
                     if delete_command.todo_id in todo_refs:
                         continue
-                    self.todos.update(
+                    deleted = self.todos.update(
                         conn,
                         workspace.task_id,
                         delete_command.todo_id,
@@ -1589,6 +1783,8 @@ class ReasonService:
                             "updated_at": now,
                         },
                     )
+                    if deleted is not None:
+                        deleted_todo_ids.append(delete_command.todo_id)
 
                 # Apply one-time evaluations to already-dispatched terminal
                 # Intents before creating new proposals.  Both operations are
@@ -1664,6 +1860,59 @@ class ReasonService:
                     )
                     created_intent_ids.append(intent_id)
 
+                plan_decision: str | None = None
+                plan_post_signals: dict[str, object] | None = None
+                if run.trigger == "plan":
+                    if created_intent_ids:
+                        plan_decision = "explore"
+                    else:
+                        plan_post_signals = self._input_state(conn, workspace.task_id)
+                        has_post_plan_signals = any(
+                            plan_post_signals[key]
+                            for key in (
+                                "unplanned_facts",
+                                "failed_intent_ids",
+                                "actionable_todo_ids",
+                                "todo_review_ids",
+                                "unassessed_intent_ids",
+                            )
+                        )
+                        plan_decision = "reason" if has_post_plan_signals else "waiting"
+                    plan_payload = {
+                        **run.trigger_payload,
+                        "decision": plan_decision,
+                        "reviewed_dimensions": run.trigger_payload.get(
+                            "reviewed_dimensions",
+                            [
+                                "coverage",
+                                "weaponization",
+                                "blocked_paths",
+                                "goal_completion",
+                            ],
+                        ),
+                        "evidence_refs": list(assessment.evidence_refs),
+                        "exhaustion_reason": (
+                            assessment.reason if plan_decision == "waiting" else ""
+                        ),
+                        "confidence": _extract_plan_confidence(assessment.reason),
+                    }
+                    if plan_post_signals is not None:
+                        plan_payload["post_plan_input_counts"] = {
+                            "facts": len(plan_post_signals["unplanned_facts"]),
+                            "failed_intents": len(plan_post_signals["failed_intent_ids"]),
+                            "actionable_todos": len(plan_post_signals["actionable_todo_ids"]),
+                            "todo_reviews": len(plan_post_signals["todo_review_ids"]),
+                            "unassessed_intents": len(plan_post_signals["unassessed_intent_ids"]),
+                        }
+                    if not self.repository.update_trigger_payload(
+                        conn,
+                        task_id=workspace.task_id,
+                        run_id=run.id,
+                        trigger_payload=plan_payload,
+                        now=now,
+                    ):
+                        raise ConflictError("Plan metadata update lost a concurrent race")
+
                 if not self.repository.complete(
                     conn,
                     task_id=workspace.task_id,
@@ -1692,13 +1941,33 @@ class ReasonService:
                     )
                 else:
                     open_count = self._open_explore_count(conn, workspace.task_id)
+                    if open_count:
+                        next_phase = "explore"
+                    elif run.trigger == "plan":
+                        # Inputs arriving while Plan was running must get a
+                        # normal Reason pass before the Task can wait. Plan's
+                        # own snapshot is already marked consumed; only new
+                        # state remains visible here.
+                        post_plan_state = plan_post_signals or self._input_state(
+                            conn, workspace.task_id
+                        )
+                        post_plan_signals = any(
+                            post_plan_state[key]
+                            for key in (
+                                "unplanned_facts",
+                                "failed_intent_ids",
+                                "actionable_todo_ids",
+                                "todo_review_ids",
+                                "unassessed_intent_ids",
+                            )
+                        )
+                        next_phase = "reason" if post_plan_signals else "waiting"
+                    else:
+                        next_phase = "waiting"
                     conn.execute(
                         update(tasks)
                         .where(tasks.c.id == workspace.task_id)
-                        .values(
-                            phase="explore" if open_count else "waiting",
-                            updated_at=now,
-                        )
+                        .values(phase=next_phase, updated_at=now)
                     )
                 committed = self.repository.mark_committed(
                     conn,
@@ -1721,8 +1990,10 @@ class ReasonService:
                             f"{len(created_todo_ids)} 个 Todo"
                         ),
                         payload={
-                            "phase": "reason",
+                            "phase": "plan" if run.trigger == "plan" else "reason",
                             "created_todo_ids": created_todo_ids,
+                            "updated_todo_ids": updated_todo_ids,
+                            "deleted_todo_ids": deleted_todo_ids,
                             "created_intent_ids": created_intent_ids,
                             "goal_achieved": assessment.achieved,
                         },
@@ -1881,6 +2152,8 @@ class ReasonService:
                 errors.append(str(exc))
             if assessment.achieved and draft.intent_proposals:
                 errors.append("Goal 已达成时不能继续派发 Intent")
+            if run.trigger == "plan" and assessment.achieved:
+                errors.append("Plan 阶段不能直接将 Goal 标记为已达成")
             open_count = self._open_explore_count(conn, workspace.task_id)
             if not assessment.achieved and not draft.intent_proposals and not open_count:
                 unresolved_todos = self._no_op_unresolved_todos(conn, workspace, run)
@@ -2058,6 +2331,14 @@ class ReasonService:
             persisted_refs,
             achieved=assessment.achieved,
         )
+
+    @staticmethod
+    def _reject_plan_goal_completion(run: ReasonRun, assessment: GoalAssessment) -> None:
+        if run.trigger == "plan" and assessment.achieved:
+            raise ConflictError(
+                "Plan 只能进行全景复盘和重新规划，不能直接将 Goal 标记为 achieved；"
+                "请使用 achieved=false 并提交可审计的复盘结论"
+            )
 
     def _write_plan_audit(self, result: CommitResult) -> None:
         if self.store is None:
@@ -2295,6 +2576,63 @@ class ReasonService:
         for target in proposal.targets:
             if not self._target_allowed(task, target):
                 raise ConflictError(f"Intent target outside Task Scope: {target}")
+        if run.trigger == "plan":
+            self._reject_repeated_plan_intent(
+                conn,
+                task_id=task_id,
+                proposal=proposal,
+            )
+
+    def _reject_repeated_plan_intent(self, conn, *, task_id: str, proposal: DraftIntent) -> None:
+        """Block a Plan from replaying a failed vector without new evidence."""
+
+        proposed_fingerprint = self._intent_fingerprint(
+            description=proposal.description,
+            targets=proposal.targets,
+        )
+        rows = conn.execute(
+            select(
+                intents.c.id,
+                intents.c.status,
+                intents.c.description,
+                intents.c.targets_json,
+                intents.c.concluded_at,
+            ).where(
+                intents.c.task_id == task_id,
+                intents.c.kind == "explore",
+            )
+        ).mappings()
+        for row in rows:
+            try:
+                targets = json.loads(row["targets_json"] or "[]")
+            except (TypeError, json.JSONDecodeError):
+                targets = []
+            if self._intent_fingerprint(
+                description=row["description"] or "",
+                targets=targets,
+            ) != proposed_fingerprint:
+                continue
+            if row["status"] in OPEN_EXPLORE_STATUSES:
+                raise ConflictError(
+                    f"Plan Intent 与正在执行的历史 Intent 重复：{row['id']}"
+                )
+            if row["status"] in TERMINAL_EXPLORE_STATUSES:
+                new_fact = None
+                if row["concluded_at"] and proposal.from_facts:
+                    new_fact = conn.execute(
+                        select(facts.c.id)
+                        .where(
+                            facts.c.task_id == task_id,
+                            facts.c.id.in_(proposal.from_facts),
+                            facts.c.archived.is_(False),
+                            facts.c.created_at > row["concluded_at"],
+                        )
+                        .limit(1)
+                    ).scalar_one_or_none()
+                if new_fact is None:
+                    raise ConflictError(
+                        f"Plan Intent 与历史失败/完成向量重复且没有新 Fact：{row['id']}"
+                    )
 
     @staticmethod
     def _intent_identity(proposal: DraftIntent) -> tuple:
@@ -2303,6 +2641,31 @@ class ReasonService:
             proposal.description,
             tuple(proposal.targets),
         )
+
+    @staticmethod
+    def _intent_fingerprint(*, description: str, targets: list[str]) -> str:
+        markers: dict[str, str] = {}
+        for part in re.split(r"[;；\n]", description or ""):
+            key, separator, value = part.partition(":")
+            if separator and key.strip().casefold() in {
+                "endpoint",
+                "test_vector",
+                "test vector",
+                "target",
+            }:
+                normalized_key = key.strip().casefold().replace(" ", "_")
+                markers[normalized_key] = " ".join(value.split()).casefold()
+        normalized_description = " ".join((description or "").split()).casefold()
+        payload = {
+            "target": sorted(
+                {" ".join((target or "").split()).casefold() for target in targets or []}
+            ),
+            "endpoint": markers.get("endpoint") or normalized_description,
+            "test_vector": markers.get("test_vector") or normalized_description,
+        }
+        return hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
 
     @staticmethod
     def _target_allowed(task, target: str) -> bool:

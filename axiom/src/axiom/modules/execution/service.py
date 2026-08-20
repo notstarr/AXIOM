@@ -74,6 +74,7 @@ _REASON_PROMPT_PROFILE_BY_TRIGGER = {
     "manual": "human",
     "hint": "human",
     "continuation": "continuation",
+    "plan": "plan",
 }
 
 
@@ -279,9 +280,10 @@ class ExecutionService:
                 else None
             )
 
+        context_phase = "plan" if run.trigger == "plan" else "reason"
         context = self.context.build(
             task_id=task_id,
-            phase="reason",
+            phase=context_phase,
             intent_id=None,
             reason_run_id=reason_run_id,
             lease_id=command.lease_id,
@@ -357,6 +359,16 @@ class ExecutionService:
                 "对每个 Intent 只调用一次 `axiom reason intent assess`，状态只能是 partial、blocked 或 completed，"
                 "并写明具体理由；若仍需继续测试，保留原评估并创建关联相关 Fact 的新 Intent。"
                 "评估本身不消费 Fact，仍需通过 Todo source、后续 Intent from_fact 或 Goal evidence 引用新 Fact。"
+            )
+        elif run.trigger == "plan":
+            payload = run.trigger_payload
+            trigger_summary = (
+                "任务的 Reason 与 Explore 增量队列已经耗尽，本轮进入 Plan 全景复盘。"
+                "请从全部历史 Todo、Intent、Fact、Hint、Knowledge、Artifact、漏洞和 Goal Cycle 中检查"
+                "覆盖完整性、证据武器化、阻断路径替代方案与目标完成度。"
+                "不要机械凑任务；只有存在可引用证据且与历史测试不重复时才恢复 Todo 或派发 Explore Intent。"
+                "若没有材料性新方向，保持 Goal 未达成并提交可审计的穷尽理由，让任务安全进入 waiting。"
+                f"本 Goal Cycle 的连续 Plan 序号：{payload.get('plan_sequence', 1)}。"
             )
         if goal_cycle_guidance:
             trigger_summary += goal_cycle_guidance
