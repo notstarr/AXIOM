@@ -5,9 +5,9 @@
     </div>
     <div class="flex-1"></div>
     <div class="flex items-center gap-3 text-[11px] text-slate-400">
-      <span class="inline-flex items-center gap-1.5 shrink-0" title="全部任务">
+      <span class="inline-flex items-center gap-1.5 shrink-0" title="全部未归档任务">
         <span class="font-medium uppercase tracking-[0.12em] text-slate-400">全部</span>
-        <span class="font-semibold text-slate-600 tabular-nums" x-text="projects.length"></span>
+        <span class="font-semibold text-slate-600 tabular-nums" x-text="activeProjectsCount()"></span>
       </span>
       <span class="inline-flex items-center gap-1.5 shrink-0" title="运行中任务">
         <span class="h-1.5 w-1.5 rounded-full bg-teal-500"></span>
@@ -39,9 +39,9 @@
       <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
       <input x-model="taskSearch" placeholder="搜索任务名称、ID、Origin、Goal 或所属项目" class="flex-1 h-8 text-sm text-slate-700 placeholder:text-slate-300 focus:outline-none">
       <select x-model="taskStatusFilter" class="h-8 px-2.5 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-100">
-        <option value="all">全部状态</option><option value="active">运行中</option><option value="stopped">已暂停</option><option value="completed">已完成</option><option value="failed">失败</option>
+        <option value="all">全部状态</option><option value="active">运行中</option><option value="stopped">已暂停</option><option value="completed">已完成</option><option value="failed">失败</option><option value="archived">已归档</option>
       </select>
-      <span class="text-[11px] text-slate-400 tabular-nums" x-text="`${filteredTasks().length} / ${projects.length}`"></span>
+      <span class="text-[11px] text-slate-400 tabular-nums" x-text="`${filteredTasks().length} / ${taskStatusFilter === 'archived' ? archivedProjectsCount() : activeProjectsCount()}`"></span>
     </div>
     <!-- New Task overlay -->
     <div x-show="showTaskComposer" x-cloak class="fixed inset-0 z-50 flex items-start justify-center overlay pt-10" @click.self="showTaskComposer = false">

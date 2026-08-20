@@ -5,8 +5,16 @@ window.AxiomModules.projects = {
       return !this.replay.active && !this.project?.project?.archived && this.project?.project?.status === 'active';
     },
 
+    activeProjectsCount() {
+      return (this.projects || []).filter(project => !project.archived).length;
+    },
+
+    archivedProjectsCount() {
+      return (this.projects || []).filter(project => !!project.archived).length;
+    },
+
     countProjectsByStatus(status) {
-      return this.projects.filter(project => project.status === status).length;
+      return (this.projects || []).filter(project => !project.archived && project.status === status).length;
     },
 
     projectCanWriteHints() {

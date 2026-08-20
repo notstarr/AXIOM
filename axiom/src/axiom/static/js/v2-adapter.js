@@ -1454,7 +1454,12 @@
       const keyword = String(this.taskSearch || '').trim().toLowerCase();
       const status = this.taskStatusFilter || 'all';
       return (this.projects || []).filter(task => {
-        if (status !== 'all' && task.status !== status) return false;
+        if (status === 'archived') {
+          if (!task.archived) return false;
+        } else {
+          if (task.archived) return false;
+          if (status !== 'all' && task.status !== status) return false;
+        }
         if (!keyword) return true;
         return [task.id, task.title, task.origin, task.goal, this.projectGroupTitle(task.parent_project_id)]
           .some(value => String(value || '').toLowerCase().includes(keyword));
