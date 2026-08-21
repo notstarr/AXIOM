@@ -21,21 +21,22 @@
    ```bash
    axiom reason intent assess --intent-id iXXX --status completed|partial|blocked --reason "评估理由..."
    ```
-3. **消费新 Fact 与更新/清理 Todo**：
+3. **消费新 Fact 与更新 Todo**：
    - 每个新 Fact 必须被 Todo 关联、Intent 的 `--from-fact` 或 Goal Assessment 的 evidence 引用，不得遗漏。
    - 维护 Todo 状态（`open` / `partial` / `blocked` / `completed`）。
-   - **重复 Todo 清理**：若发现重复或无意义待办，使用 `axiom reason todo delete --todo-id tdXXX --reason "与tdYYY重复"` 及时清理归档。
 4. **派发新 Intent**：
    ```bash
    axiom reason intent propose --todo-id tdXXX --title "意图标题" --description "详细测试方案" \
-     --target "目标Target" --from-fact fXXX --execute-seconds 900 --conclude-seconds 300
+     --target "目标Target" --from-fact f007 --from-fact f030 --execute-seconds 900 --conclude-seconds 300
    ```
+   - **全依赖溯源（支持多传 `--from-fact`）**：若本 Intent 依赖多个前置发现（如利用 `f030` 产出的实体测试 `f007` 发现的目标接口），**必须全部传入**，确保下游 Explore 完整获取跨模块上下文。
    - Intent 数量无上限，按需充分派发。
 
 ## 规划与防偷懒准则
 
-1. **整树覆盖与能力树归纳**：
+1. **整树覆盖与全链路依赖溯源**：
    - **同一底座/拼装函数下的整棵子树是一个攻击主题**（如 `/jobs` 的列表/详情/增删改/触发/日志）。严禁仅因列表 GET 返回 200 即判定整树覆盖。
+   - **跨实体组合测试必须追溯全部前置 Fact**：跨模块利用（如“拿 A 模块生成的 ID/Token 去打 B 模块业务逻辑”）派发 Intent 时，必须通过多个 `--from-fact` 同时关联实体来源 Fact 与目标接口/能力 Fact，禁止只关联最后一个触发 Fact。
    - ID 来源优先使用基线 `items[].id`、当前凭证或资产清单，严禁派发“自行瞎猜 ID”的意图。
 2. **严禁偷懒式 Blocked（单账号/单实体强制自测）**：
    - 当缺乏第二凭证无法进行双向协作越权测试时，**绝不代表整树 Blocked**！必须派发单向独立攻击面：
