@@ -9,6 +9,7 @@ from axiom.dispatcher.heartbeat import LeaseLostError
 from axiom.dispatcher.schemas import (
     ClaimAction,
     ClaimedIntent,
+    ClaimedPlanRun,
     ClaimedWork,
     DispatcherSnapshot,
 )
@@ -19,6 +20,7 @@ from axiom.modules.execution.schemas import (
     CompleteBootstrapCommand,
     CompleteExploreCommand,
     ExecutionInput,
+    PlanExecutionInput,
     ExploreCompleted,
     ReleaseIntentCommand,
     StartedIntent,
@@ -31,6 +33,14 @@ from axiom.modules.reason.schemas import (
     ReleasedReasonRun,
     StartedReasonRun,
     WorkspaceStatus,
+)
+from axiom.modules.plan.schemas import (
+    PlanCommitResult,
+    PlanReconcileReport,
+    PlanWorkspace,
+    PlanWorkspaceStatus,
+    ReleasedPlanRun,
+    StartedPlanRun,
 )
 from axiom.modules.settings.schemas import RuntimeSettings
 from axiom.modules.tasks.schemas import RunDeadlineReconcileReport
@@ -114,6 +124,11 @@ class HttpControlPlane:
             self._request("POST", "/dispatch/reason-runs/reconcile", {})
         )
 
+    def reconcile_plan_runs(self) -> PlanReconcileReport:
+        return PlanReconcileReport.model_validate(
+            self._request("POST", "/dispatch/plan-runs/reconcile", {})
+        )
+
     def reconcile_task_deadlines(self) -> RunDeadlineReconcileReport:
         return RunDeadlineReconcileReport.model_validate(
             self._request("POST", "/dispatch/task-deadlines/reconcile", {})
@@ -129,6 +144,12 @@ class HttpControlPlane:
                 f"{action.reason_run_id}/claim"
             )
             model = ClaimedReasonRun
+        elif action.plan_run_id:
+            path = (
+                f"/dispatch/tasks/{action.task_id}/plan-runs/"
+                f"{action.plan_run_id}/claim"
+            )
+            model = ClaimedPlanRun
         else:
             assert action.review_run_id is not None
             path = (
@@ -172,10 +193,12 @@ class HttpControlPlane:
 
     def start(
         self, work: ClaimedWork
-    ) -> StartedIntent | StartedReasonRun | StartedVulnerabilityReviewRun:
+    ) -> StartedIntent | StartedReasonRun | StartedPlanRun | StartedVulnerabilityReviewRun:
         payload = self._request("POST", self._work_path("start", work), self._lease(work))
         if isinstance(work, ClaimedReasonRun):
             return StartedReasonRun.model_validate(payload)
+        if isinstance(work, ClaimedPlanRun):
+            return StartedPlanRun.model_validate(payload)
         if isinstance(work, ClaimedVulnerabilityReviewRun):
             return StartedVulnerabilityReviewRun.model_validate(payload)
         return StartedIntent.model_validate(payload)
@@ -258,15 +281,16 @@ class HttpControlPlane:
         except ControlPlaneError:
             logger.warning("failed to expire Explore interventions for %s/%s", work.task_id, work.intent_id, exc_info=True)
 
-    def input(self, work: ClaimedWork) -> ExecutionInput:
-        return ExecutionInput.model_validate(
-            self._request(
-                "POST",
-                self._work_path("input", work),
-                self._lease(work),
-                timeout_seconds=CONTROL_PLANE_INPUT_TIMEOUT_SECONDS,
-            )
+    def input(self, work: ClaimedWork) -> ExecutionInput | PlanExecutionInput:
+        payload = self._request(
+            "POST",
+            self._work_path("input", work),
+            self._lease(work),
+            timeout_seconds=CONTROL_PLANE_INPUT_TIMEOUT_SECONDS,
         )
+        if isinstance(work, ClaimedPlanRun):
+            return PlanExecutionInput.model_validate(payload)
+        return ExecutionInput.model_validate(payload)
 
     def begin_conclude(self, work: ClaimedWork) -> None:
         self._request("POST", self._work_path("conclude", work), self._lease(work))
@@ -330,7 +354,7 @@ class HttpControlPlane:
         self,
         work: ClaimedWork,
         command: ReleaseIntentCommand,
-    ) -> ReleasedReasonRun | ReleasedVulnerabilityReviewRun | None:
+    ) -> ReleasedReasonRun | ReleasedPlanRun | ReleasedVulnerabilityReviewRun | None:
         try:
             payload = self._request(
                 "POST",
@@ -343,6 +367,8 @@ class HttpControlPlane:
             return None
         if isinstance(work, ClaimedReasonRun):
             return ReleasedReasonRun.model_validate(payload)
+        if isinstance(work, ClaimedPlanRun):
+            return ReleasedPlanRun.model_validate(payload)
         if isinstance(work, ClaimedVulnerabilityReviewRun):
             return ReleasedVulnerabilityReviewRun.model_validate(payload)
         return None
@@ -364,6 +390,78 @@ class HttpControlPlane:
                 },
             )
         )
+
+    def open_plan_workspace(
+        self,
+        work: ClaimedPlanRun,
+        *,
+        context_revision: int,
+    ) -> PlanWorkspace:
+        return PlanWorkspace.model_validate(
+            self._request(
+                "POST",
+                f"/tasks/{work.task_id}/plan/workspaces",
+                {
+                    "plan_run_id": work.plan_run_id,
+                    "lease_id": work.lease_id,
+                    "context_revision": context_revision,
+                },
+            )
+        )
+
+    def plan_workspace_status(
+        self,
+        work: ClaimedPlanRun,
+        *,
+        workspace_id: str,
+    ) -> PlanWorkspaceStatus:
+        try:
+            payload = self._request(
+                "POST",
+                f"/plan-workspaces/{workspace_id}/status",
+                self._lease(work),
+            )
+        except ControlPlaneError as exc:
+            if exc.code == "lease_inactive":
+                raise LeaseLostError(str(exc)) from exc
+            raise
+        return PlanWorkspaceStatus.model_validate(payload)
+
+    def commit_plan_workspace(
+        self,
+        work: ClaimedPlanRun,
+        *,
+        workspace_id: str,
+    ) -> PlanCommitResult:
+        try:
+            payload = self._request(
+                "POST",
+                f"/plan-workspaces/{workspace_id}/commit",
+                self._lease(work),
+            )
+        except ControlPlaneError as exc:
+            if exc.code == "lease_inactive":
+                raise LeaseLostError(str(exc)) from exc
+            raise
+        return PlanCommitResult.model_validate(payload)
+
+    def abandon_plan_workspace(
+        self,
+        work: ClaimedPlanRun,
+        *,
+        workspace_id: str,
+        failure_reason: str,
+    ) -> None:
+        try:
+            self._request(
+                "POST",
+                f"/plan-workspaces/{workspace_id}/abandon",
+                {"lease_id": work.lease_id, "failure_reason": failure_reason},
+            )
+        except ControlPlaneError as exc:
+            if exc.code == "lease_inactive":
+                raise LeaseLostError(str(exc)) from exc
+            raise
 
     def reason_workspace_status(
         self,
@@ -457,6 +555,11 @@ class HttpControlPlane:
             return (
                 f"/dispatch/tasks/{work.task_id}/reason-runs/"
                 f"{work.reason_run_id}/{action}"
+            )
+        if isinstance(work, ClaimedPlanRun):
+            return (
+                f"/dispatch/tasks/{work.task_id}/plan-runs/"
+                f"{work.plan_run_id}/{action}"
             )
         if isinstance(work, ClaimedVulnerabilityReviewRun):
             return (

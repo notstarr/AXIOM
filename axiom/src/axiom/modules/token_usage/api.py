@@ -45,6 +45,23 @@ def record_reason_token_usage(
 
 
 @router.post(
+    "/tasks/{task_id}/plan-runs/{plan_run_id}/token-usage",
+    response_model=TokenUsageBatchResult,
+)
+def record_plan_token_usage(
+    task_id: str,
+    plan_run_id: str,
+    body: TokenUsageBatchCommand,
+    container: Container = Depends(get_container),
+) -> TokenUsageBatchResult:
+    return container.token_usage.record_plan_batch(
+        task_id=task_id,
+        plan_run_id=plan_run_id,
+        command=body,
+    )
+
+
+@router.post(
     "/tasks/{task_id}/vulnerability-review-runs/{review_run_id}/token-usage",
     response_model=TokenUsageBatchResult,
 )

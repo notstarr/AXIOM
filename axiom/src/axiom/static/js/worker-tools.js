@@ -1,28 +1,28 @@
 /* AXIOM logical Worker and phase capability management.
  *
- * Four logical Workers (Bootstrap / Reason / Explore / Reviewer) own capability policy.
+ * Five logical Workers (Bootstrap / Reason / Explore / Plan / Reviewer) own capability policy.
  * Concrete `workers` rows are model execution backends and may participate in
  * one or more phase pools.  Skill, MCP Tool and extension Tool all share the same
- * common/bootstrap/reason/explore/review binding service.  Built-in Tools are a
+ * common/bootstrap/reason/explore/plan/review binding service.  Built-in Tools are a
  * read-only projection of the real Pi and AXIOM control-plane contracts.
  */
 window.AxiomModules = window.AxiomModules || {};
 window.AxiomModules.workerTools = {
   methods: {
     axiomPhases() {
-      return ['bootstrap', 'reason', 'explore', 'review'];
+      return ['bootstrap', 'reason', 'explore', 'plan', 'review'];
     },
 
     axiomPhaseLabel(phase) {
-      return ({ bootstrap: 'Bootstrap', reason: 'Reason', explore: 'Explore', review: 'Reviewer' }[phase] || phase || '未知阶段');
+      return ({ bootstrap: 'Bootstrap', reason: 'Reason', explore: 'Explore', plan: 'Plan', review: 'Reviewer' }[phase] || phase || '未知阶段');
     },
 
     axiomPhaseShortLabel(phase) {
-      return ({ bootstrap: 'B', reason: 'R', explore: 'E', review: 'V' }[phase] || '?');
+      return ({ bootstrap: 'B', reason: 'R', explore: 'E', plan: 'P', review: 'V' }[phase] || '?');
     },
 
     capabilityScopeLabel(scope) {
-      return ({ common: '全部阶段', bootstrap: 'Bootstrap', reason: 'Reason', explore: 'Explore', review: 'Reviewer' }[scope] || scope || '未知');
+      return ({ common: '全部阶段', bootstrap: 'Bootstrap', reason: 'Reason', explore: 'Explore', plan: 'Plan', review: 'Reviewer' }[scope] || scope || '未知');
     },
 
     capabilityKindLabel(kind) {
@@ -245,7 +245,7 @@ window.AxiomModules.workerTools = {
         return '该能力已由通用范围生效；如需改为阶段专属，请先取消通用';
       }
       if (!this.phaseCapabilitySupportsScope(item, scope)) return scope === 'common'
-        ? '通用能力必须支持四个阶段'
+        ? '通用能力必须支持五个阶段'
         : `该能力不支持 ${this.capabilityScopeLabel(scope)}`;
       if (!item.enabled) return '能力已全局停用；可保留旧绑定，但不能新增';
       if (!item.ready) return `能力状态为 ${item.status || 'not ready'}`;
@@ -431,9 +431,9 @@ window.AxiomModules.workerTools = {
     workerCapabilityAllHint(item) {
       if (!item) return '';
       if (Array.isArray(item.locked_scopes) && item.locked_scopes.length > 0) return '系统锁定为全部阶段';
-      if (!this.axiomPhases().every(phase => this.workerCapabilitySupportsPhase(item, phase))) return '该能力不支持全部四个阶段';
+      if (!this.axiomPhases().every(phase => this.workerCapabilitySupportsPhase(item, phase))) return '该能力不支持全部五个阶段';
       if (!item.enabled || !item.ready) return '能力当前不可新增分配';
-      return this.workerCapabilityAllSelected(item) ? '清空四个阶段的分配' : '分配给全部四个阶段';
+      return this.workerCapabilityAllSelected(item) ? '清空五个阶段的分配' : '分配给全部五个阶段';
     },
 
     toggleWorkerCapabilityAll(item) {
@@ -617,7 +617,7 @@ window.AxiomModules.workerTools = {
         const saved = await this.api('PUT', '/phase-capabilities', this.workerCapabilityMatrixPayload());
         this.applyPhaseCapabilities(saved);
         this.resetWorkerCapabilityDraft();
-        this.showToast('四阶段 Worker 能力已保存，将从新 Lease 开始生效');
+        this.showToast('五阶段 Worker 能力已保存，将从新 Lease 开始生效');
       } catch (error) {
         this.showToast(error?.message || '保存 Worker 能力失败', 'error');
       } finally {
@@ -743,7 +743,7 @@ window.AxiomModules.workerTools = {
         }
         return this.workerPhases;
       } catch (error) {
-        if (error?.name !== 'AbortError') this.showToast(error?.message || '加载四阶段 Worker 失败', 'error');
+        if (error?.name !== 'AbortError') this.showToast(error?.message || '加载五阶段 Worker 失败', 'error');
         return this.workerPhases;
       } finally {
         this.workerPhasesLoading = false;
@@ -907,6 +907,7 @@ window.AxiomModules.workerTools = {
         phase_bootstrap: phase === 'bootstrap',
         phase_reason: phase === 'reason',
         phase_explore: phase === 'explore',
+        phase_plan: phase === 'plan',
         phase_review: phase === 'review',
         max_running: 1,
         priority: 1,

@@ -30,6 +30,8 @@
     'bootstrap_conclude_seconds',
     'reason_execute_seconds',
     'reason_conclude_seconds',
+    'plan_execute_seconds',
+    'plan_conclude_seconds',
     'review_execute_seconds',
     'review_conclude_seconds',
     'reason_batch_size',
@@ -39,6 +41,7 @@
     'reason_target_open_intents',
     'reason_max_new_intents_per_run',
     'reason_queue_limit',
+    'plan_queue_limit',
     'explore_execute_min_seconds',
     'explore_execute_max_seconds',
     'explore_conclude_min_seconds',
@@ -116,11 +119,21 @@
     }[activityKind || status] || '正在分析任务上下文并规划下一批 Intent';
   }
 
+  function planActivitySummary(activityKind, status, summary = '') {
+    if (summary) return summary;
+    return {
+      pending: '等待可用的 Plan Worker 领取',
+      claimed: '正在启动 Plan 环境',
+      preparing_context: '正在准备 Plan 全景 Context 与能力快照',
+      analyzing: '正在复核全量历史图谱与攻击面覆盖',
+      concluding: '正在整理 Plan Workspace 并提交全景决策',
+    }[activityKind || status] || '正在进行全景复盘';
+  }
+
   function mapTask(task) {
     const activeReasonRun = task.active_reason_run || null;
     const activePlanRun = task.active_plan_run || null;
-    const displayRun = activeReasonRun || activePlanRun;
-    const legacyReason = !displayRun && task.reason_worker ? {
+    const legacyReason = !activeReasonRun && task.reason_worker ? {
       id: '',
       status: 'running',
       worker: task.reason_worker,
@@ -137,7 +150,7 @@
       activity_updated_at: task.reason_activity_updated_at || task.reason_heartbeat_at,
       created_at: task.reason_activity_started_at || task.reason_heartbeat_at,
     } : null;
-    const queuedReasons = (task.queued_reason_runs || []).map(qr => ({
+    const allQueuedReasons = (task.queued_reason_runs || []).map(qr => ({
       id: qr.id,
       status: qr.status,
       worker: qr.worker || '排队中',
@@ -145,17 +158,41 @@
       trigger_payload: qr.trigger_payload || {},
       created_at: qr.created_at,
     }));
-    const queuedReasonDisplay = !displayRun && !legacyReason && queuedReasons[0] ? {
-      id: queuedReasons[0].id,
+    const allQueuedPlans = (task.queued_plan_runs || []).map(run => ({
+      id: run.id,
+      status: run.status,
+      worker: run.worker || '排队中',
+      trigger: run.trigger || 'reconcile',
+      trigger_payload: run.trigger_payload || {},
+      settings_version: run.settings_version,
+      execute_timeout_seconds: run.execute_timeout_seconds,
+      conclude_timeout_seconds: run.conclude_timeout_seconds,
+      created_at: run.created_at,
+    }));
+    const isQueuedReasonPrimary = !activeReasonRun && !legacyReason && allQueuedReasons.length > 0;
+    const queuedReasonDisplay = isQueuedReasonPrimary ? {
+      id: allQueuedReasons[0].id,
       status: 'pending',
       worker: '排队中',
-      trigger: queuedReasons[0].trigger,
-      trigger_payload: queuedReasons[0].trigger_payload,
+      trigger: allQueuedReasons[0].trigger,
+      trigger_payload: allQueuedReasons[0].trigger_payload,
       activity_kind: 'pending',
       activity_summary: '等待前序 Reason 完成后按 FIFO 领取',
       activity_tool: '',
-      created_at: queuedReasons[0].created_at,
+      created_at: allQueuedReasons[0].created_at,
     } : null;
+    const isQueuedPlanPrimary = !activePlanRun && allQueuedPlans.length > 0;
+    const queuedPlanDisplay = isQueuedPlanPrimary ? {
+      ...allQueuedPlans[0],
+      status: 'pending',
+      worker: '等待 Plan Worker',
+      activity_kind: 'pending',
+      activity_summary: '等待可用的 Plan Worker 按 FIFO 领取',
+      activity_tool: '',
+    } : null;
+    // 当主卡片展示的是排队中的第一项时，下方的叠放排队列表应当从第 2 项开始展示，避免重影自等
+    const queuedReasons = isQueuedReasonPrimary ? allQueuedReasons.slice(1) : allQueuedReasons;
+    const queuedPlans = isQueuedPlanPrimary ? allQueuedPlans.slice(1) : allQueuedPlans;
     return {
       id: task.id,
       parent_project_id: task.project_id,
@@ -170,38 +207,82 @@
       kk_report_enabled: !!task.external_report_enabled,
       guard_enabled: !!task.guard_enabled,
       worker_pool: task.worker_pool || [],
+      plan_worker_pool: task.plan_worker_pool || [],
       task_scope: task.scope || { enabled: false, targets: [], exclude: [], notes: '' },
       legacy_readonly: !!task.legacy_readonly,
       archived: !!task.archived,
       // ReasonRun is an execution activity, not an Intent/graph node.  Keep a
       // narrow legacy fallback for historical payloads only.
-      reason: displayRun ? {
-        id: displayRun.id,
-        status: displayRun.status,
-        worker: displayRun.worker || '等待 Reason Worker',
-        trigger: displayRun.trigger || 'scheduler',
-        trigger_payload: displayRun.trigger_payload || {},
-        lease_id: displayRun.lease_id || '',
-        settings_version: displayRun.settings_version,
-        execute_timeout_seconds: displayRun.execute_timeout_seconds,
-        conclude_timeout_seconds: displayRun.conclude_timeout_seconds,
-        last_heartbeat_at: displayRun.last_heartbeat_at,
-        activity_kind: displayRun.activity_kind || displayRun.status || 'pending',
+      reason: activeReasonRun ? {
+        id: activeReasonRun.id,
+        status: activeReasonRun.status,
+        worker: activeReasonRun.worker || '等待 Reason Worker',
+        trigger: activeReasonRun.trigger || 'scheduler',
+        trigger_payload: activeReasonRun.trigger_payload || {},
+        lease_id: activeReasonRun.lease_id || '',
+        settings_version: activeReasonRun.settings_version,
+        execute_timeout_seconds: activeReasonRun.execute_timeout_seconds,
+        conclude_timeout_seconds: activeReasonRun.conclude_timeout_seconds,
+        last_heartbeat_at: activeReasonRun.last_heartbeat_at,
+        activity_kind: activeReasonRun.activity_kind || activeReasonRun.status || 'pending',
         activity_summary: reasonActivitySummary(
-          displayRun.activity_kind,
-          displayRun.status,
-          displayRun.activity_summary,
+          activeReasonRun.activity_kind,
+          activeReasonRun.status,
+          activeReasonRun.activity_summary,
         ),
-        activity_tool: displayRun.activity_tool || '',
-        activity_started_at: displayRun.activity_started_at || displayRun.created_at,
-        activity_updated_at: displayRun.activity_updated_at || displayRun.last_heartbeat_at || displayRun.created_at,
-        created_at: displayRun.created_at,
-        is_plan: displayRun.trigger === 'plan',
+        activity_tool: activeReasonRun.activity_tool || '',
+        activity_started_at: activeReasonRun.activity_started_at || activeReasonRun.created_at,
+        activity_updated_at: activeReasonRun.activity_updated_at || activeReasonRun.last_heartbeat_at || activeReasonRun.created_at,
+        created_at: activeReasonRun.created_at,
+        is_plan: false,
       } : legacyReason || queuedReasonDisplay,
+      plan: activePlanRun ? {
+        id: activePlanRun.id,
+        status: activePlanRun.status,
+        worker: activePlanRun.worker || '等待 Plan Worker',
+        trigger: activePlanRun.trigger || 'reconcile',
+        trigger_payload: activePlanRun.trigger_payload || {},
+        lease_id: activePlanRun.lease_id || '',
+        settings_version: activePlanRun.settings_version,
+        execute_timeout_seconds: activePlanRun.execute_timeout_seconds,
+        conclude_timeout_seconds: activePlanRun.conclude_timeout_seconds,
+        last_heartbeat_at: activePlanRun.last_heartbeat_at,
+        activity_kind: activePlanRun.activity_kind || activePlanRun.status || 'pending',
+        activity_summary: planActivitySummary(
+          activePlanRun.activity_kind,
+          activePlanRun.status,
+          activePlanRun.activity_summary,
+        ),
+        activity_tool: activePlanRun.activity_tool || '',
+        activity_started_at: activePlanRun.activity_started_at || activePlanRun.created_at,
+        activity_updated_at: activePlanRun.activity_updated_at || activePlanRun.last_heartbeat_at || activePlanRun.created_at,
+        created_at: activePlanRun.created_at,
+      } : (queuedPlanDisplay || (task.phase === 'plan' ? {
+        id: '',
+        status: 'pending',
+        worker: '等待 Plan Worker',
+        trigger: 'reconcile',
+        trigger_payload: {},
+        lease_id: '',
+        settings_version: 0,
+        execute_timeout_seconds: 0,
+        conclude_timeout_seconds: 0,
+        last_heartbeat_at: null,
+        activity_kind: 'pending',
+        activity_summary: 'Plan 队列等待可用后端',
+        activity_tool: '',
+        created_at: task.updated_at || task.created_at,
+      } : null)),
       active_plan_run: activePlanRun,
       plan_run_count: Number(task.plan_run_count || 0),
       last_plan_decision: task.last_plan_decision || null,
       queued_reasons: queuedReasons,
+      queued_plans: queuedPlans,
+      // The first pending item may be promoted into the primary Plan/Reason
+      // card when there is no active run. Preserve the true pending totals so
+      // badges and status copy do not under-count the queue.
+      queued_reason_count: allQueuedReasons.length,
+      queued_plan_count: allQueuedPlans.length,
       created_at: task.created_at,
       updated_at: task.updated_at,
       completed_at: task.completed_at,
@@ -656,7 +737,7 @@
     const targetName = String(body.name || '').trim();
     if (!targetName) throw new Error('Worker 名称不能为空');
     const capabilities = (body.task_types || [])
-      .filter(item => ['bootstrap', 'reason', 'explore', 'review'].includes(item));
+      .filter(item => ['bootstrap', 'reason', 'explore', 'plan', 'review'].includes(item));
     if (!capabilities.length) throw new Error(`Worker ${targetName} 至少要勾选一个参与阶段`);
 
     const existing = persistedName
@@ -836,6 +917,7 @@
         guard_enabled: !!body.guard_enabled,
         external_report_enabled: !!body.kk_report_enabled,
         worker_pool: body.worker_pool || [],
+        plan_worker_pool: body.plan_worker_pool || [],
         scope: body.task_scope || null,
         run_duration_seconds: body.run_duration_seconds ?? null,
       });
@@ -866,7 +948,10 @@
       return mapTask(await request('POST', `/tasks/${match[1]}/${endpoint}`, payload));
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/worker-pool$/)) && method === 'PUT') {
-      const result = await request('PATCH', `/tasks/${match[1]}`, { worker_pool: body.worker_pool || [] });
+      const result = await request('PATCH', `/tasks/${match[1]}`, {
+        worker_pool: body.worker_pool || [],
+        plan_worker_pool: body.plan_worker_pool || [],
+      });
       return { project: mapTask(result), updated_unclaimed_intents: 0 };
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/hints$/)) && method === 'POST') {
@@ -1920,9 +2005,9 @@
     artifactCenterPhases() { return [...new Set((this.artifactCenterItems || []).map(item => item.phase).filter(Boolean))].sort(); },
     artifactSourcePhase(item) {
       const type = String(item?.artifact_type || '').toLowerCase();
-      const typedPhase = ['bootstrap', 'reason', 'explore', 'review', 'asm'].find(phase => type.startsWith(`${phase}.`));
+      const typedPhase = ['bootstrap', 'reason', 'explore', 'plan', 'review', 'asm'].find(phase => type.startsWith(`${phase}.`));
       if (typedPhase) return typedPhase;
-      const match = String(item?.path || '').match(/(?:^|\/)(bootstrap|reason|explore|review|asm)(?:[-_\/]|$)/i);
+      const match = String(item?.path || '').match(/(?:^|\/)(bootstrap|reason|explore|plan|review|asm)(?:[-_\/]|$)/i);
       return match ? match[1].toLowerCase() : (type === 'upload' ? 'upload' : 'unknown');
     },
     artifactCenterFiltered() {

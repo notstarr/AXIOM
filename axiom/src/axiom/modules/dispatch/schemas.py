@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_serializer
 
 
 class ClaimIntent(BaseModel):
@@ -40,7 +40,24 @@ class RecoveredReviewRun(BaseModel):
     expired_lease_id: str
 
 
+class RecoveredPlanRun(BaseModel):
+    task_id: str
+    plan_run_id: str
+    worker_name: str
+    expired_lease_id: str
+
+
 class RecoveryReport(BaseModel):
     recovered: list[RecoveredIntent] = Field(default_factory=list)
     recovered_reason_runs: list[RecoveredReasonRun] = Field(default_factory=list)
     recovered_review_runs: list[RecoveredReviewRun] = Field(default_factory=list)
+    recovered_plan_runs: list[RecoveredPlanRun] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler):
+        """Keep the pre-Plan response shape when no Plan was recovered."""
+
+        payload = handler(self)
+        if not self.recovered_plan_runs:
+            payload.pop("recovered_plan_runs", None)
+        return payload

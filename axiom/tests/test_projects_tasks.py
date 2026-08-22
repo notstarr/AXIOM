@@ -69,6 +69,8 @@ def test_task_creation_is_atomic_and_seeds_graph(client) -> None:
             "worker": None,
             "worker_pool": ["worker-a"],
             "targets": [],
+            "dedup_fingerprint": "",
+            "plan_metadata": {},
             "execute_timeout_seconds": None,
             "conclude_timeout_seconds": None,
             "lease_id": None,

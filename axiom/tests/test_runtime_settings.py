@@ -34,12 +34,16 @@ def test_runtime_settings_expose_the_formal_scheduler_defaults(client) -> None:
             "bootstrap_conclude_seconds",
             "reason_execute_seconds",
             "reason_conclude_seconds",
+            "plan_execute_seconds",
+            "plan_conclude_seconds",
             "reason_batch_size",
             "reason_low_watermark",
             "reason_max_wait_seconds",
             "reason_min_interval_seconds",
             "reason_target_open_intents",
             "reason_max_new_intents_per_run",
+            "reason_queue_limit",
+            "plan_queue_limit",
             "explore_execute_min_seconds",
             "explore_execute_max_seconds",
             "explore_conclude_min_seconds",
@@ -58,12 +62,16 @@ def test_runtime_settings_expose_the_formal_scheduler_defaults(client) -> None:
             "bootstrap_conclude_seconds": 180,
             "reason_execute_seconds": 600,
             "reason_conclude_seconds": 300,
+            "plan_execute_seconds": 600,
+            "plan_conclude_seconds": 300,
             "reason_batch_size": 2,
             "reason_low_watermark": 1,
             "reason_max_wait_seconds": 180,
             "reason_min_interval_seconds": 60,
             "reason_target_open_intents": 4,
             "reason_max_new_intents_per_run": 4,
+            "reason_queue_limit": 3,
+            "plan_queue_limit": 3,
             "explore_execute_min_seconds": 300,
             "explore_execute_max_seconds": 3600,
             "explore_conclude_min_seconds": 180,
@@ -143,6 +151,34 @@ def test_runtime_settings_keep_zero_reject_stale_writes_and_survive_restart(
         persisted = restarted_client.get("/api/v1/settings/runtime").json()
         assert persisted["version"] == saved_version
         assert persisted["config"]["reason_low_watermark"] == 0
+
+
+def test_plan_queue_zero_is_normalized_to_one_and_plan_budgets_are_independent(client) -> None:
+    current = client.get("/api/v1/settings/runtime").json()
+    response = client.put(
+        "/api/v1/settings/runtime",
+        json={
+            "actor": "test",
+            "expected_version": current["version"],
+            "config": {
+                **current["config"],
+                "reason_execute_seconds": 1200,
+                "reason_conclude_seconds": 1800,
+                "reason_queue_limit": 8,
+                "plan_execute_seconds": 900,
+                "plan_conclude_seconds": 420,
+                "plan_queue_limit": 0,
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    config = response.json()["config"]
+    assert config["reason_execute_seconds"] == 1200
+    assert config["reason_conclude_seconds"] == 1800
+    assert config["reason_queue_limit"] == 8
+    assert config["plan_execute_seconds"] == 900
+    assert config["plan_conclude_seconds"] == 420
+    assert config["plan_queue_limit"] == 1
 
 
 def test_runner_acknowledges_the_runtime_version_it_actually_applied(client) -> None:

@@ -93,6 +93,7 @@ class ContextRepository:
         task_id: str,
         intent_id: str | None,
         reason_run_id: str | None,
+        plan_run_id: str | None,
         review_run_id: str | None,
         lease_id: str,
     ):
@@ -101,6 +102,7 @@ class ContextRepository:
                 context_revisions.c.task_id == task_id,
                 context_revisions.c.intent_id == intent_id,
                 context_revisions.c.reason_run_id == reason_run_id,
+                context_revisions.c.plan_run_id == plan_run_id,
                 context_revisions.c.review_run_id == review_run_id,
                 context_revisions.c.lease_id == lease_id,
             )

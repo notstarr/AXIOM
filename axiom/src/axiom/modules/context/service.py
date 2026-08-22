@@ -17,6 +17,7 @@ from axiom.modules.graph.tables import facts, intents
 from axiom.modules.goals.tables import goal_evaluations
 from axiom.modules.knowledge.tables import project_knowledge
 from axiom.modules.reason.tables import reason_run_sources, reason_runs
+from axiom.modules.plan.tables import plan_run_sources, plan_runs
 from axiom.modules.tasks.schemas import TaskScope
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.tasks.tables import task_hints
@@ -52,10 +53,23 @@ class ContextService:
         phase: str,
         intent_id: str | None,
         reason_run_id: str | None = None,
+        plan_run_id: str | None = None,
         review_run_id: str | None = None,
         lease_id: str | None = None,
     ) -> ContextRevision:
-        owners = [item for item in (intent_id, reason_run_id, review_run_id) if item]
+        # Unowned revisions are useful for human previews, but a leased
+        # worker revision must belong to the exact execution owner.  Keep Plan
+        # ownership explicit so a stale Reason/Plan revision can never be
+        # opened merely because it belongs to the same task.
+        if phase == "plan" and plan_run_id is None and lease_id is not None:
+            raise ConflictError("A leased Plan Context requires plan_run_id")
+        if phase != "plan" and plan_run_id is not None:
+            raise ConflictError("plan_run_id requires phase=plan")
+        owners = [
+            item
+            for item in (intent_id, reason_run_id, plan_run_id, review_run_id)
+            if item
+        ]
         if len(owners) > 1:
             raise ConflictError("Context cannot belong to multiple execution owners")
         if lease_id is not None and len(owners) != 1:
@@ -88,6 +102,26 @@ class ContextService:
                         raise NotFoundError(
                             f"ReasonRun not found: {task_id}/{reason_run_id}"
                         )
+                if plan_run_id is not None:
+                    plan_row = conn.execute(
+                        select(
+                            plan_runs.c.id,
+                            plan_runs.c.status,
+                            plan_runs.c.lease_id,
+                        ).where(
+                            plan_runs.c.task_id == task_id,
+                            plan_runs.c.id == plan_run_id,
+                        )
+                    ).mappings().one_or_none()
+                    if plan_row is None:
+                        raise NotFoundError(
+                            f"PlanRun not found: {task_id}/{plan_run_id}"
+                        )
+                    if lease_id is not None:
+                        if plan_row["lease_id"] != lease_id:
+                            raise ConflictError("PlanRun lease does not match Context lease")
+                        if plan_row["status"] not in {"claimed", "running", "concluding"}:
+                            raise ConflictError("PlanRun lease is not active")
                 if review_run_id is not None:
                     exists = conn.execute(
                         select(vulnerability_review_runs.c.id).where(
@@ -106,6 +140,7 @@ class ContextService:
                         task_id=task_id,
                         intent_id=intent_id,
                         reason_run_id=reason_run_id,
+                        plan_run_id=plan_run_id,
                         review_run_id=review_run_id,
                         lease_id=lease_id,
                     )
@@ -169,6 +204,7 @@ class ContextService:
                     "phase": phase,
                     "intent_id": intent_id,
                     "reason_run_id": reason_run_id,
+                    "plan_run_id": plan_run_id,
                     "review_run_id": review_run_id,
                     "lease_id": lease_id,
                     "goal": task["goal"],
@@ -196,6 +232,7 @@ class ContextService:
                         "phase": phase,
                         "intent_id": intent_id,
                         "reason_run_id": reason_run_id,
+                        "plan_run_id": plan_run_id,
                         "review_run_id": review_run_id,
                         "lease_id": lease_id,
                         "manifest_key": manifest_key,
@@ -210,6 +247,7 @@ class ContextService:
                 phase=phase,
                 intent_id=intent_id,
                 reason_run_id=reason_run_id,
+                plan_run_id=plan_run_id,
                 review_run_id=review_run_id,
                 lease_id=lease_id,
                 manifest_key=manifest_key,
@@ -222,7 +260,14 @@ class ContextService:
                 prepared.rollback()
             raise
 
-    def expand(self, task_id: str, refs: list[str]) -> ExpandedContext:
+    def expand(
+        self,
+        task_id: str,
+        refs: list[str],
+        *,
+        phase: str | None = None,
+    ) -> ExpandedContext:
+        include_archived = phase == "plan"
         entries: dict[str, Any] = {}
         with self.engine.connect() as conn:
             task = self.repository.task(conn, task_id)
@@ -234,7 +279,13 @@ class ContextService:
                 kind, separator, item_id = ref.partition(":")
                 if not separator or not item_id:
                     raise ConflictError(f"Invalid context ref: {ref}")
-                entries[ref] = self._expand_one(conn, task_id, kind, item_id)
+                entries[ref] = self._expand_one(
+                    conn,
+                    task_id,
+                    kind,
+                    item_id,
+                    include_archived=include_archived,
+                )
         return ExpandedContext(task_id=task_id, entries=entries)
 
     def _index_files(
@@ -302,7 +353,32 @@ class ContextService:
         for row in consumption_rows:
             fact_consumption.setdefault(row["fact_id"], []).append(
                 {
+                    "owner_kind": "reason",
                     "reason_run_id": row["reason_run_id"],
+                    "status": row["status"],
+                    "trigger": row["trigger"],
+                }
+            )
+        plan_consumption_rows = conn.execute(
+            select(
+                plan_run_sources.c.fact_id,
+                plan_runs.c.id.label("plan_run_id"),
+                plan_runs.c.status,
+                plan_runs.c.trigger,
+            )
+            .join(
+                plan_runs,
+                (plan_runs.c.task_id == plan_run_sources.c.task_id)
+                & (plan_runs.c.id == plan_run_sources.c.plan_run_id),
+            )
+            .where(plan_run_sources.c.task_id == task["id"])
+            .order_by(plan_runs.c.created_at, plan_runs.c.id)
+        ).mappings()
+        for row in plan_consumption_rows:
+            fact_consumption.setdefault(row["fact_id"], []).append(
+                {
+                    "owner_kind": "plan",
+                    "plan_run_id": row["plan_run_id"],
                     "status": row["status"],
                     "trigger": row["trigger"],
                 }
@@ -354,7 +430,12 @@ class ContextService:
                 "source_intent_assessments": source_intent_assessments,
                 "assessment_status": assessment_status,
                 "consumption_status": consumption_status,
-                "consumed_by_reason_runs": active_consumption,
+                "consumed_by_reason_runs": [
+                    item for item in active_consumption if item["owner_kind"] == "reason"
+                ],
+                "consumed_by_plan_runs": [
+                    item for item in active_consumption if item["owner_kind"] == "plan"
+                ],
             }
         visible_goal_rows = [
             row
@@ -416,7 +497,27 @@ class ContextService:
                     }
                 )
             todo_detail = todo.model_dump(mode="json")
-            todo_detail["last_reason_run_id"] = todo_change_runs.get(row["id"])
+            change = todo_change_runs.get(row["id"], {})
+            todo_detail.update(
+                {
+                    # Keep the historical Reason field for old consumers,
+                    # while exposing independent Plan provenance explicitly.
+                    "last_reason_run_id": (
+                        change.get("run_id")
+                        if change.get("run_kind") == "reason"
+                        else None
+                    ),
+                    "last_plan_run_id": (
+                        change.get("run_id")
+                        if change.get("run_kind") == "plan"
+                        else None
+                    ),
+                    "last_change_run_id": change.get("run_id"),
+                    "last_change_run_kind": change.get("run_kind"),
+                    "last_change_at": change.get("changed_at"),
+                    "last_change_reason": todo.status_reason,
+                }
+            )
             self._add_detail(files, f"todo:{row['id']}", todo_detail)
         for row in artifact_rows:
             artifact = (
@@ -459,6 +560,7 @@ class ContextService:
                             "associated_todo_ids": [],
                             "associated_intent_ids": [],
                             "associated_reason_run_ids": [],
+                            "associated_plan_run_ids": [],
                         },
                     )
                 )
@@ -516,10 +618,17 @@ class ContextService:
                     "assessment_status": row.get("assessment_status", "open") or "open",
                     "assessment_reason": row.get("assessment_reason", "") or "",
                     "assessed_at": row.get("assessed_at"),
-                    "dedup_fingerprint": _intent_fingerprint(
-                        description=row["description"],
-                        targets=_json_list(row.get("targets_json")),
+                    "dedup_fingerprint": (
+                        row.get("dedup_fingerprint")
+                        or _json_object(row.get("plan_metadata_json")).get(
+                            "dedup_fingerprint", ""
+                        )
+                        or _intent_fingerprint(
+                            description=row["description"],
+                            targets=_json_list(row.get("targets_json")),
+                        )
                     ),
+                    "plan_metadata": _json_object(row.get("plan_metadata_json")),
                     "preview": _preview(row["description"]),
                     "ref": f"intent:{row['id']}",
                     "detail": _detail_path(f"intent:{row['id']}"),
@@ -540,7 +649,20 @@ class ContextService:
                 "updated_at": row["updated_at"],
                 "completed_at": row["completed_at"],
                 "archived": bool(row.get("archived", False)),
-                "last_reason_run_id": todo_change_runs.get(row["id"]),
+                "last_reason_run_id": (
+                    todo_change_runs.get(row["id"], {}).get("run_id")
+                    if todo_change_runs.get(row["id"], {}).get("run_kind") == "reason"
+                    else None
+                ),
+                "last_plan_run_id": (
+                    todo_change_runs.get(row["id"], {}).get("run_id")
+                    if todo_change_runs.get(row["id"], {}).get("run_kind") == "plan"
+                    else None
+                ),
+                "last_change_run_id": todo_change_runs.get(row["id"], {}).get("run_id"),
+                "last_change_run_kind": todo_change_runs.get(row["id"], {}).get("run_kind"),
+                "last_change_at": todo_change_runs.get(row["id"], {}).get("changed_at"),
+                "last_change_reason": row["status_reason"],
                 "ref": f"todo:{row['id']}",
                 "detail": _detail_path(f"todo:{row['id']}"),
             }
@@ -582,6 +704,7 @@ class ContextService:
                         "associated_todo_ids": [],
                         "associated_intent_ids": [],
                         "associated_reason_run_ids": [],
+                        "associated_plan_run_ids": [],
                     },
                     )
                     if include_archived
@@ -658,18 +781,27 @@ class ContextService:
         files[_detail_path(ref)] = _json(value)
 
     @staticmethod
-    def _todo_change_runs(conn, task_id: str) -> dict[str, str]:
-        changes: dict[str, str] = {}
+    def _todo_change_runs(conn, task_id: str) -> dict[str, dict[str, Any]]:
+        changes: dict[str, dict[str, Any]] = {}
         rows = conn.execute(
             select(
                 audit_events.c.reason_run_id,
+                audit_events.c.plan_run_id,
                 audit_events.c.payload_json,
                 audit_events.c.created_at,
             )
             .where(
                 audit_events.c.task_id == task_id,
-                audit_events.c.reason_run_id.is_not(None),
-                audit_events.c.event_type == "reason.committed",
+                (
+                    (
+                        audit_events.c.reason_run_id.is_not(None)
+                        & (audit_events.c.event_type == "reason.committed")
+                    )
+                    | (
+                        audit_events.c.plan_run_id.is_not(None)
+                        & (audit_events.c.event_type == "plan.workspace_committed")
+                    )
+                ),
             )
             .order_by(audit_events.c.created_at, audit_events.c.id)
         ).mappings()
@@ -685,7 +817,12 @@ class ContextService:
             ]
             for todo_id in ids:
                 if isinstance(todo_id, str):
-                    changes[todo_id] = row["reason_run_id"]
+                    run_kind = "plan" if row.get("plan_run_id") else "reason"
+                    changes[todo_id] = {
+                        "run_id": row.get("plan_run_id") or row.get("reason_run_id"),
+                        "run_kind": run_kind,
+                        "changed_at": row.get("created_at"),
+                    }
         return changes
 
     @staticmethod
@@ -706,9 +843,13 @@ class ContextService:
                     "associated_todo_ids": [],
                     "associated_intent_ids": [],
                     "associated_reason_run_ids": [],
+                    "associated_plan_run_ids": [],
                 },
             )
             item["associated_todo_ids"].append(row["todo_id"])
+            # A Hint referenced by a durable Todo has already influenced the
+            # graph, regardless of whether Reason or Plan created that Todo.
+            item["processed"] = True
         rows = conn.execute(
             select(audit_events.c.reason_run_id, audit_events.c.payload_json)
             .where(
@@ -732,15 +873,47 @@ class ContextService:
                     "associated_todo_ids": [],
                     "associated_intent_ids": [],
                     "associated_reason_run_ids": [],
+                    "associated_plan_run_ids": [],
                 },
             )
             item["processed"] = True
             item["associated_reason_run_ids"].append(row["reason_run_id"])
+        plan_rows = conn.execute(
+            select(audit_events.c.plan_run_id, audit_events.c.payload_json)
+            .where(
+                audit_events.c.task_id == task_id,
+                audit_events.c.plan_run_id.is_not(None),
+                audit_events.c.event_type == "plan_run.created",
+            )
+        ).mappings()
+        for row in plan_rows:
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                payload = {}
+            hint_id = payload.get("hint_id")
+            if not isinstance(hint_id, str):
+                continue
+            item = relations.setdefault(
+                hint_id,
+                {
+                    "processed": False,
+                    "associated_todo_ids": [],
+                    "associated_intent_ids": [],
+                    "associated_reason_run_ids": [],
+                    "associated_plan_run_ids": [],
+                },
+            )
+            item["processed"] = True
+            item["associated_plan_run_ids"].append(row["plan_run_id"])
         for item in relations.values():
             item["associated_todo_ids"] = list(dict.fromkeys(item["associated_todo_ids"]))
             item["associated_intent_ids"] = list(dict.fromkeys(item["associated_intent_ids"]))
             item["associated_reason_run_ids"] = list(
                 dict.fromkeys(item["associated_reason_run_ids"])
+            )
+            item["associated_plan_run_ids"] = list(
+                dict.fromkeys(item["associated_plan_run_ids"])
             )
         return relations
 
@@ -772,6 +945,7 @@ class ContextService:
             phase=row["phase"],
             intent_id=row["intent_id"],
             reason_run_id=row.get("reason_run_id"),
+            plan_run_id=row.get("plan_run_id"),
             review_run_id=row.get("review_run_id"),
             lease_id=row["lease_id"],
             manifest_key=row["manifest_key"],
@@ -780,45 +954,48 @@ class ContextService:
             created_at=row["created_at"],
         )
 
-    def _expand_one(self, conn, task_id: str, kind: str, item_id: str) -> Any:
+    def _expand_one(
+        self,
+        conn,
+        task_id: str,
+        kind: str,
+        item_id: str,
+        *,
+        include_archived: bool = False,
+    ) -> Any:
         if kind == "fact":
-            row = conn.execute(
-                select(facts).where(
-                    facts.c.task_id == task_id,
-                    facts.c.id == item_id,
-                    facts.c.archived.is_(False),
-                )
-            ).mappings().one_or_none()
+            query = select(facts).where(facts.c.task_id == task_id, facts.c.id == item_id)
+            if not include_archived:
+                query = query.where(facts.c.archived.is_(False))
+            row = conn.execute(query).mappings().one_or_none()
             if row is not None:
                 return dict(row)
         elif kind == "intent":
-            visible = conn.execute(
-                select(intents.c.id).where(
-                    intents.c.task_id == task_id,
-                    intents.c.id == item_id,
-                    intents.c.archived.is_(False),
-                )
-            ).scalar_one_or_none()
+            intent_query = select(intents.c.id).where(
+                intents.c.task_id == task_id,
+                intents.c.id == item_id,
+            )
+            if not include_archived:
+                intent_query = intent_query.where(intents.c.archived.is_(False))
+            visible = conn.execute(intent_query).scalar_one_or_none()
             intent = self.graph.get_intent(conn, task_id, item_id) if visible else None
             if intent is not None:
-                visible_from_facts = set(
-                    conn.execute(
-                        select(facts.c.id).where(
-                            facts.c.task_id == task_id,
-                            facts.c.id.in_(intent.from_facts),
-                            facts.c.archived.is_(False),
-                        )
-                    ).scalars()
+                facts_query = select(facts.c.id).where(
+                    facts.c.task_id == task_id,
+                    facts.c.id.in_(intent.from_facts),
                 )
+                if not include_archived:
+                    facts_query = facts_query.where(facts.c.archived.is_(False))
+                visible_from_facts = set(conn.execute(facts_query).scalars())
                 visible_to_fact = None
                 if intent.to_fact_id is not None:
-                    visible_to_fact = conn.execute(
-                        select(facts.c.id).where(
-                            facts.c.task_id == task_id,
-                            facts.c.id == intent.to_fact_id,
-                            facts.c.archived.is_(False),
-                        )
-                    ).scalar_one_or_none()
+                    to_fact_query = select(facts.c.id).where(
+                        facts.c.task_id == task_id,
+                        facts.c.id == intent.to_fact_id,
+                    )
+                    if not include_archived:
+                        to_fact_query = to_fact_query.where(facts.c.archived.is_(False))
+                    visible_to_fact = conn.execute(to_fact_query).scalar_one_or_none()
                 return intent.model_copy(
                     update={
                         "from_facts": [
@@ -831,7 +1008,7 @@ class ContextService:
                 ).model_dump(mode="json")
         elif kind == "todo":
             todo = self.todos.get(conn, task_id, item_id)
-            if todo is not None and not todo.archived:
+            if todo is not None and (include_archived or not todo.archived):
                 return todo.model_copy(
                     update={
                         "sources": [
@@ -842,12 +1019,17 @@ class ContextService:
                     }
                 ).model_dump(mode="json")
         elif kind == "artifact":
-            artifact = self.artifacts.get(conn, task_id, item_id)
+            artifact = (
+                self.artifacts.get_any(conn, task_id, item_id)
+                if include_archived
+                else self.artifacts.get(conn, task_id, item_id)
+            )
             if artifact is not None:
                 visible_intent_id = self._visible_intent_id(
                     conn,
                     task_id,
                     artifact.intent_id,
+                    include_archived=include_archived,
                 )
                 return {
                     **artifact.model_copy(
@@ -856,23 +1038,23 @@ class ContextService:
                     "content": self.store.read_text(artifact.storage_key),
                 }
         elif kind == "hint":
-            row = conn.execute(
-                select(task_hints).where(
-                    task_hints.c.task_id == task_id,
-                    task_hints.c.id == item_id,
-                    task_hints.c.archived.is_(False),
-                )
-            ).mappings().one_or_none()
+            hint_query = select(task_hints).where(
+                task_hints.c.task_id == task_id,
+                task_hints.c.id == item_id,
+            )
+            if not include_archived:
+                hint_query = hint_query.where(task_hints.c.archived.is_(False))
+            row = conn.execute(hint_query).mappings().one_or_none()
             if row is not None:
                 return dict(row)
         elif kind == "vulnerability":
-            vulnerability = conn.execute(
-                select(vulnerabilities).where(
-                    vulnerabilities.c.task_id == task_id,
-                    vulnerabilities.c.id == item_id,
-                    vulnerabilities.c.archived.is_(False),
-                )
-            ).mappings().one_or_none()
+            vulnerability_query = select(vulnerabilities).where(
+                vulnerabilities.c.task_id == task_id,
+                vulnerabilities.c.id == item_id,
+            )
+            if not include_archived:
+                vulnerability_query = vulnerability_query.where(vulnerabilities.c.archived.is_(False))
+            vulnerability = conn.execute(vulnerability_query).mappings().one_or_none()
             if vulnerability is not None:
                 model = self.vulnerabilities.get(conn, task_id, item_id)
                 assert model is not None
@@ -882,20 +1064,21 @@ class ContextService:
                             conn,
                             task_id,
                             model.intent_id,
+                            include_archived=include_archived,
                         )
                     }
                 ).model_dump(mode="json")
         elif kind == "knowledge":
             task = self.repository.task(conn, task_id)
             assert task is not None
-            row = conn.execute(
-                select(project_knowledge).where(
-                    project_knowledge.c.project_id == task["project_id"],
-                    project_knowledge.c.id == item_id,
-                    project_knowledge.c.enabled.is_(True),
-                    project_knowledge.c.archived.is_(False),
-                )
-            ).mappings().one_or_none()
+            knowledge_query = select(project_knowledge).where(
+                project_knowledge.c.project_id == task["project_id"],
+                project_knowledge.c.id == item_id,
+                project_knowledge.c.enabled.is_(True),
+            )
+            if not include_archived:
+                knowledge_query = knowledge_query.where(project_knowledge.c.archived.is_(False))
+            row = conn.execute(knowledge_query).mappings().one_or_none()
             if row is not None:
                 return dict(row)
         elif kind == "goal_evaluation":
@@ -905,21 +1088,32 @@ class ContextService:
                     goal_evaluations.c.id == item_id,
                 )
             ).mappings().one_or_none()
-            if row is not None and self._goal_evaluation_visible(conn, task_id, row):
+            if row is not None and self._goal_evaluation_visible(
+                conn,
+                task_id,
+                row,
+                include_archived=include_archived,
+            ):
                 return dict(row)
         raise NotFoundError(f"Context entry not found: {kind}:{item_id}")
 
     @staticmethod
-    def _visible_intent_id(conn, task_id: str, intent_id: str | None) -> str | None:
+    def _visible_intent_id(
+        conn,
+        task_id: str,
+        intent_id: str | None,
+        *,
+        include_archived: bool = False,
+    ) -> str | None:
         if intent_id is None:
             return None
-        return conn.execute(
-            select(intents.c.id).where(
-                intents.c.task_id == task_id,
-                intents.c.id == intent_id,
-                intents.c.archived.is_(False),
-            )
-        ).scalar_one_or_none()
+        query = select(intents.c.id).where(
+            intents.c.task_id == task_id,
+            intents.c.id == intent_id,
+        )
+        if not include_archived:
+            query = query.where(intents.c.archived.is_(False))
+        return conn.execute(query).scalar_one_or_none()
 
     @staticmethod
     def _goal_evaluation_visible(
@@ -970,6 +1164,16 @@ def _json_list(value: Any) -> list[str]:
     except (TypeError, json.JSONDecodeError):
         return []
     return [item for item in parsed if isinstance(item, str)] if isinstance(parsed, list) else []
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
 
 
 def _intent_marker(description: str, marker: str) -> str:

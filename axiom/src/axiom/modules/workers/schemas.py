@@ -5,13 +5,16 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 
-WorkerCapability = Literal["bootstrap", "reason", "explore", "review"]
+WorkerCapability = Literal["bootstrap", "reason", "explore", "plan", "review"]
 
 
 class UpsertWorker(BaseModel):
     worker_type: str = "pi"
     capabilities: list[WorkerCapability] = Field(
-        default_factory=lambda: ["bootstrap", "reason", "explore", "review"]
+        # New Workers opt into Plan/Review explicitly.  The compatibility
+        # migration grants Plan to pre-existing Reason Workers once, without
+        # coupling those capabilities for future Worker creation.
+        default_factory=lambda: ["bootstrap", "reason", "explore"]
     )
     max_running: int = Field(default=1, ge=1, le=128)
     priority: int = Field(default=0, ge=-10_000, le=10_000)

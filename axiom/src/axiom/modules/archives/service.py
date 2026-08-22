@@ -24,6 +24,8 @@ from axiom.modules.audit.service import AuditService
 from axiom.modules.graph.tables import facts, intent_sources, intents
 from axiom.modules.reason.schemas import WorkspaceDraft
 from axiom.modules.reason.tables import reason_run_sources, reason_runs, reason_workspaces
+from axiom.modules.plan.schemas import PlanWorkspaceDraft
+from axiom.modules.plan.tables import plan_run_sources, plan_runs, plan_workspaces
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.tables import vulnerability_artifacts, vulnerabilities
@@ -40,6 +42,7 @@ if TYPE_CHECKING:
 
 ACTIVE_INTENT_STATUSES = {"claimed", "running", "concluding"}
 ACTIVE_REASON_STATUSES = {"pending", "claimed", "running", "concluding"}
+ACTIVE_PLAN_STATUSES = {"pending", "claimed", "running", "concluding"}
 RELATION_PRIORITY = {
     "related": 0,
     "descendant": 1,
@@ -141,6 +144,12 @@ class ArchiveService:
                 preview.members,
                 now=now,
             )
+            cancelled_plan_runs = self._cancel_affected_plan_runs(
+                conn,
+                task_id,
+                preview.members,
+                now=now,
+            )
             self.audit.record_in(
                 conn,
                 RecordAuditEvent(
@@ -156,6 +165,7 @@ class ArchiveService:
                         "counts": preview.counts,
                         "reason": reason.strip(),
                         "cancelled_reason_run_ids": cancelled_runs,
+                        "cancelled_plan_run_ids": cancelled_plan_runs,
                         "cancelled_review_run_ids": cancelled_reviews,
                     },
                 ),
@@ -718,6 +728,170 @@ class ArchiveService:
                 )
             )
         return affected
+
+    def _cancel_affected_plan_runs(
+        self,
+        conn,
+        task_id: str,
+        members: list[ArchiveMember],
+        *,
+        now: str,
+    ) -> list[str]:
+        """Cancel Plan attempts whose durable input graph was archived.
+
+        Plan has a global context.  Any non-empty archive closure therefore
+        changes the panorama snapshot, even when the archived Artifact or
+        Vulnerability was not one of the run's narrow source references.
+        Cancel every open Plan attempt for the Task, while still collecting
+        the recorded references for diagnostics and future compatibility.
+        """
+
+        archived = {(item.entity_type, item.entity_id) for item in members}
+        rows = conn.execute(
+            select(plan_runs).where(
+                plan_runs.c.task_id == task_id,
+                plan_runs.c.status.in_(ACTIVE_PLAN_STATUSES),
+            )
+        ).mappings().all()
+        affected: list[str] = []
+        for run in rows:
+            refs: set[tuple[str, str]] = set()
+            refs.update(
+                ("fact", str(fact_id))
+                for fact_id in conn.execute(
+                    select(plan_run_sources.c.fact_id).where(
+                        plan_run_sources.c.task_id == task_id,
+                        plan_run_sources.c.plan_run_id == run["id"],
+                    )
+                ).scalars()
+            )
+            refs.update(self._plan_payload_refs(run.get("trigger_payload_json")))
+
+            workspace_rows = conn.execute(
+                select(plan_workspaces.c.draft_json).where(
+                    plan_workspaces.c.task_id == task_id,
+                    plan_workspaces.c.plan_run_id == run["id"],
+                    plan_workspaces.c.status == "open",
+                )
+            ).scalars().all()
+            for raw in workspace_rows:
+                try:
+                    draft = PlanWorkspaceDraft.model_validate_json(raw or "{}")
+                except (TypeError, ValueError):
+                    continue
+                refs.update(self._plan_draft_refs(draft))
+
+            # A Plan snapshot is intentionally wider than a Reason snapshot;
+            # retaining it after *any* archive mutation could commit a stale
+            # full-history decision.  ``refs`` is still parsed above so old
+            # runs retain useful provenance in the cancellation path.
+            if not archived:
+                continue
+            affected.append(str(run["id"]))
+            conn.execute(
+                update(plan_runs)
+                .where(
+                    plan_runs.c.task_id == task_id,
+                    plan_runs.c.id == run["id"],
+                    plan_runs.c.status.in_(ACTIVE_PLAN_STATUSES),
+                )
+                .values(
+                    status="cancelled",
+                    worker=None,
+                    lease_id=None,
+                    claimed_at=None,
+                    last_heartbeat_at=None,
+                    next_retry_at=None,
+                    last_failure_kind="archive_context_invalidated",
+                    failure_class="",
+                    activity_kind="cancelled",
+                    activity_summary="归档操作使当前 Plan 全景上下文失效",
+                    activity_tool="",
+                    activity_updated_at=now,
+                    updated_at=now,
+                    concluded_at=now,
+                )
+            )
+            conn.execute(
+                update(plan_workspaces)
+                .where(
+                    plan_workspaces.c.task_id == task_id,
+                    plan_workspaces.c.plan_run_id == run["id"],
+                    plan_workspaces.c.status == "open",
+                )
+                .values(
+                    status="abandoned",
+                    failure_reason="archive_context_invalidated",
+                    updated_at=now,
+                )
+            )
+        return affected
+
+    @staticmethod
+    def _plan_payload_refs(raw_payload) -> set[tuple[str, str]]:
+        """Extract typed references from a Plan trigger snapshot.
+
+        The payload is intentionally a backwards-compatible JSON object, so
+        unknown keys are ignored and known list fields are handled explicitly.
+        """
+
+        if isinstance(raw_payload, str):
+            try:
+                raw_payload = json.loads(raw_payload or "{}")
+            except (TypeError, ValueError):
+                return set()
+        if not isinstance(raw_payload, dict):
+            return set()
+        refs: set[tuple[str, str]] = set()
+        fields = {
+            "source_fact_ids": "fact",
+            "failed_intent_ids": "intent",
+            "unassessed_intent_ids": "intent",
+            "actionable_todo_ids": "todo",
+            "todo_review_ids": "todo",
+        }
+        for field, kind in fields.items():
+            values = raw_payload.get(field, [])
+            if isinstance(values, list):
+                refs.update((kind, str(value)) for value in values if str(value).strip())
+        for field in ("source_refs", "evidence_refs"):
+            values = raw_payload.get(field, [])
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                kind, separator, item_id = str(value).partition(":")
+                if separator and item_id.strip():
+                    refs.add((kind.strip(), item_id.strip()))
+        return refs
+
+    @staticmethod
+    def _plan_draft_refs(draft: PlanWorkspaceDraft) -> set[tuple[str, str]]:
+        refs: set[tuple[str, str]] = set()
+        for item in draft.todo_adds:
+            refs.update((source.type, source.id) for source in item.sources)
+        for item in draft.todo_updates:
+            refs.add(("todo", item.todo_id))
+            refs.update((source.type, source.id) for source in item.source_adds)
+        for item in draft.todo_deletions:
+            refs.add(("todo", item.todo_id))
+        for item in draft.intent_proposals:
+            refs.update(("fact", fact_id) for fact_id in item.from_facts)
+            if item.todo_id:
+                refs.add(("todo", item.todo_id))
+            refs.update(
+                (kind, item_id)
+                for value in item.source_refs
+                for kind, separator, item_id in [value.partition(":")]
+                if separator and kind and item_id
+            )
+        if draft.decision is not None:
+            refs.update(
+                (kind, item_id)
+                for value in draft.decision.evidence_refs
+                for kind, separator, item_id in [value.partition(":")]
+                if separator and kind and item_id
+            )
+        return refs
 
     def _cancel_affected_review_runs(
         self,

@@ -1,22 +1,22 @@
 # Bootstrap 子提示词：Web／API
 
-本文件补充 Web／API 引导工作流，通用规则以 `bootstrap.md` 为准。
+本文件补充 Web／API 引导工作流，通用规则以 `bootstrap.md` 为准；主 `bootstrap.md` 为准。
 
 ## 目标绑定
-目标类型填 `Web`。严格锁定当前 URL、域名与 API 入口；资产必须来源于当前页面、JS、Source Map、OpenAPI、响应或显式 Scope。
+目标类型填写 `Web`。目标身份必须明确记录并严格锁定当前 URL、域名与 API 入口；资产必须来源于当前页面、JS、Source Map、OpenAPI、响应或显式 Scope。
 
 ## Web 核心工作流（JS-first & 能力树）
 
 ### 1. 入口与资源获取
 - 从入口收集 HTML、JS、动态 chunk、Source Map 及配置接口。SPA 统一 HTML 回退不得误记为 API。
-- 登录态可用时，访问认证后控制台/后台，补全登录后 JS 资源。
+- 登录态可用时，访问认证后资源（控制台/后台），补全登录后 JS 资源。
 
 ### 2. 抽取 API 能力树（核心产出）
 对业务主 JS Bundle（通常 > 200KB）进行深度分析，禁止仅靠简单正则扫零散 URL：
 1. **前缀域**：识别前缀常量（如 `["/api/v1", "/api/automation", "/api/console"]`），全部列出。
 2. **底座拼装函数**：定位 URL 构造函数（如 `const Foo=e=>'/prefix/'+e+'/resource'`），记录参数槽。
 3. **子树展开**：以拼装函数为锚搜索调用点，还原增删改查及触发子端点（`GET/POST/PUT/DELETE/copy/trigger`）。
-4. **隐藏/无登录入口**：搜索外部链接、`curl` 模板、`?token=`、`invite/join`、webhook 等。
+4. **隐藏/无登录入口**：搜索外部链接、相似域名、`curl` 模板、`?token=`、`invite/join`、webhook 等。
 5. **鉴权头最小集**：分析前端判登依据（Cookie / 自定义 Token 头）。
 
 *资产清单能力树标准格式示例：*
@@ -46,6 +46,6 @@
 - 响应中若含 `appSecret`/`token` 等明文直接进 `initial_leads.md`（“读即泄露”）。
 
 ## 产物要求
-- `asset_inventory.md`：必须含**API 前缀域列表**、**按域展开的能力树**、参数/ID 来源、本租户基线 ID、鉴权矩阵及 JS 收集状态。
-- `initial_leads.md`：整树对象级鉴权可疑点、响应密钥回显、无登录 webhook、短 ID 枚举点（同底座保持一条线索）。
-- `findings.md`：仅记录由可复现请求确认的漏洞；本阶段无漏洞时写“本阶段未确认漏洞”。
+- 能力树清单：必须含**API 前缀域列表**、**按域展开的能力树**、参数/ID 来源、本租户基线 ID、鉴权矩阵及 JS 收集状态,尽可能收集全；若未能收集全在要在文件中说明。
+- 初始线索清单：整树对象级鉴权可疑点、响应密钥回显、无登录 webhook、短 ID 枚举点（同底座保持一条线索）。
+- 漏洞清单：仅记录由可复现请求确认的漏洞；本阶段无漏洞时写“本阶段未确认漏洞”。

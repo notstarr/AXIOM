@@ -196,12 +196,18 @@
   .human-stage-waiting { color: #b7791f; background: #fef3c7; border-color: #fde68a; animation: humanStageBreathe 1.8s ease-in-out infinite; }
   .human-stage-completed { color: #047857; background: #d1fae5; border-color: #a7f3d0; }
   .human-stage-failed { color: #be123c; background: #ffe4e6; border-color: #fecdd3; }
+  /* Plan is a distinct planning stage, so its status marker remains
+     indigo even while it is waiting for a Plan-capable backend. */
+  .human-stage-plan.human-stage-running { color: #4f46e5; background: #eef2ff; border-color: #c7d2fe; }
+  .human-stage-plan.human-stage-waiting { color: #4f46e5; background: #eef2ff; border-color: #c7d2fe; }
   .human-cycle-history { max-height: 28rem; overflow-y: auto; scrollbar-width: thin; }
   .human-link-card { cursor: pointer; }
   .dark .human-stage-running { color: #93c5fd; background: rgba(37, 99, 235, 0.22); border-color: rgba(96, 165, 250, 0.38); }
   .dark .human-stage-waiting { color: #fcd34d; background: rgba(180, 83, 9, 0.22); border-color: rgba(251, 191, 36, 0.36); }
   .dark .human-stage-completed { color: #6ee7b7; background: rgba(5, 150, 105, 0.22); border-color: rgba(52, 211, 153, 0.36); }
   .dark .human-stage-failed { color: #fda4af; background: rgba(190, 24, 93, 0.22); border-color: rgba(251, 113, 133, 0.36); }
+  .dark .human-stage-plan.human-stage-running,
+  .dark .human-stage-plan.human-stage-waiting { color: #a5b4fc; background: rgba(79, 70, 229, 0.24); border-color: rgba(129, 140, 248, 0.46); }
   @keyframes humanStageSpin { to { transform: rotate(360deg); } }
   @keyframes humanStageBreathe { 0%, 100% { opacity: .72; transform: scale(.94); } 50% { opacity: 1; transform: scale(1.06); } }
   @media (prefers-reduced-motion: reduce) {
@@ -212,7 +218,7 @@
     position: absolute;
     inset: -6px;
     border-radius: 22px;
-    background: radial-gradient(circle, rgba(56, 189, 248, 0.14), rgba(56, 189, 248, 0));
+    background: radial-gradient(circle, rgba(245, 158, 11, 0.18), rgba(245, 158, 11, 0));
     animation: reasonPanelPulse 2.1s ease-out infinite;
     pointer-events: none;
   }
@@ -221,112 +227,32 @@
     width: 10px;
     height: 10px;
     border-radius: 9999px;
-    background: #0ea5e9;
-    box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.16);
+    background: #f59e0b;
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.2);
+  }
+  .plan-beacon {
+    position: relative;
+    width: 10px;
+    height: 10px;
+    border-radius: 9999px;
+    background: #6366f1;
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.16), 0 0 16px rgba(99, 102, 241, 0.45);
+  }
+  .plan-beacon::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+    border-radius: 9999px;
+    border: 1.5px solid rgba(99, 102, 241, 0.45);
+    animation: reasonBeaconPulse 1.8s ease-out infinite;
   }
   .reason-beacon::after {
     content: "";
     position: absolute;
     inset: -6px;
     border-radius: 9999px;
-    border: 1.5px solid rgba(14, 165, 233, 0.34);
+    border: 1.5px solid rgba(245, 158, 11, 0.45);
     animation: reasonBeaconPulse 1.8s ease-out infinite;
-  }
-  .reason-graph-scan {
-    position: absolute;
-    inset: 8px;
-    overflow: hidden;
-    pointer-events: none;
-    border-radius: 18px;
-  }
-  .reason-graph-scan::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    box-shadow:
-      inset 0 0 0 1px rgba(125, 211, 252, 0.32),
-      inset 0 0 30px rgba(125, 211, 252, 0.06),
-      inset 0 0 64px rgba(56, 189, 248, 0.03);
-    animation: reasonFramePulse 2.8s ease-in-out infinite;
-  }
-  .reason-graph-scan::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    inset: 12px;
-    border-radius: 12px;
-    background:
-      linear-gradient(90deg, rgba(125, 211, 252, 0.85), rgba(125, 211, 252, 0.18)),
-      linear-gradient(180deg, rgba(125, 211, 252, 0.85), rgba(125, 211, 252, 0.18)),
-      linear-gradient(270deg, rgba(125, 211, 252, 0.85), rgba(125, 211, 252, 0.18)),
-      linear-gradient(0deg, rgba(125, 211, 252, 0.85), rgba(125, 211, 252, 0.18));
-    background-size: 18px 2px, 2px 18px, 18px 2px, 2px 18px;
-    background-position: left top, left top, right bottom, right bottom;
-    background-repeat: no-repeat;
-    opacity: 0.6;
-  }
-  .reason-graph-scan > span {
-    position: absolute;
-    inset: 0;
-    display: block;
-  }
-  .reason-graph-grid {
-    inset: 12px;
-    border-radius: 12px;
-    background:
-      repeating-linear-gradient(
-        90deg,
-        rgba(186, 230, 253, 0) 0,
-        rgba(186, 230, 253, 0) 35px,
-        rgba(186, 230, 253, 0.045) 36px,
-        rgba(186, 230, 253, 0.045) 37px
-      ),
-      repeating-linear-gradient(
-        180deg,
-        rgba(186, 230, 253, 0) 0,
-        rgba(186, 230, 253, 0) 35px,
-        rgba(186, 230, 253, 0.04) 36px,
-        rgba(186, 230, 253, 0.04) 37px
-      );
-    opacity: 0.42;
-  }
-  .reason-graph-ambient {
-    inset: 0;
-    background:
-      radial-gradient(circle at 12% 18%, rgba(56, 189, 248, 0.11), rgba(56, 189, 248, 0) 30%),
-      radial-gradient(circle at 84% 16%, rgba(59, 130, 246, 0.08), rgba(59, 130, 246, 0) 24%),
-      linear-gradient(180deg, rgba(186, 230, 253, 0.055), rgba(255, 255, 255, 0) 46%);
-    animation: reasonAmbientPulse 2.4s ease-in-out infinite alternate;
-  }
-  .reason-graph-scanline {
-    inset: 0;
-  }
-  .reason-graph-scanline::before {
-    content: "";
-    position: absolute;
-    left: 10px;
-    right: 10px;
-    height: 2px;
-    top: 12%;
-    background: linear-gradient(90deg, rgba(56, 189, 248, 0), rgba(186, 230, 253, 0.96), rgba(56, 189, 248, 0));
-    box-shadow:
-      0 0 18px rgba(125, 211, 252, 0.42),
-      0 0 34px rgba(186, 230, 253, 0.16);
-    animation: reasonGraphScanline 4.2s linear infinite;
-  }
-  .reason-graph-sweep {
-    inset: -18%;
-    background: linear-gradient(
-      103deg,
-      rgba(14, 165, 233, 0) 40%,
-      rgba(56, 189, 248, 0.04) 47%,
-      rgba(255, 255, 255, 0.22) 50%,
-      rgba(125, 211, 252, 0.1) 53%,
-      rgba(14, 165, 233, 0) 60%
-    );
-    transform: translateX(-86%) skewX(-14deg);
-    animation: reasonGraphSweep 4.6s ease-in-out infinite;
   }
   .title-action-trigger {
     min-width: 0;
@@ -424,6 +350,56 @@
     pointer-events: none; user-select: none;
     font-family: -apple-system, BlinkMacSystemFont, Inter, sans-serif;
     box-sizing: border-box;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  }
+  .node-card__reason-beacon {
+    display: none;
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    z-index: 4;
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background: #f59e0b;
+  }
+  .node-card__human-dot ~ .node-card__reason-beacon {
+    right: 15px;
+  }
+  .node-card.is-reason-focused {
+    overflow: visible;
+    border-color: #f59e0b !important;
+    animation: factCardReasonBreathe 2s ease-in-out infinite;
+  }
+  .node-card.is-reason-focused .node-card__header {
+    background: linear-gradient(90deg, #fef3c7, #fde68a) !important;
+    color: #92400e !important;
+  }
+  .dark .node-card.is-reason-focused .node-card__header {
+    background: linear-gradient(90deg, rgba(245, 158, 11, 0.38), rgba(217, 119, 6, 0.25)) !important;
+    color: #fef08a !important;
+  }
+  .node-card.is-reason-focused .node-card__reason-beacon {
+    display: block;
+    animation: factBeaconBreathe 1.6s ease-in-out infinite;
+  }
+  @keyframes factCardReasonBreathe {
+    0%, 100% {
+      box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.4), 0 2px 8px -1px rgba(245, 158, 11, 0.25);
+    }
+    50% {
+      box-shadow: 0 0 0 2.5px rgba(245, 158, 11, 0.95), 0 0 16px 3px rgba(245, 158, 11, 0.55);
+    }
+  }
+  @keyframes factBeaconBreathe {
+    0%, 100% {
+      transform: scale(0.85);
+      box-shadow: 0 0 0 1.5px #ffffff, 0 0 4px rgba(245, 158, 11, 0.4);
+    }
+    50% {
+      transform: scale(1.3);
+      box-shadow: 0 0 0 1.5px #ffffff, 0 0 8px 3px rgba(245, 158, 11, 0.95);
+    }
   }
   .node-card__human-dot {
     position: absolute;

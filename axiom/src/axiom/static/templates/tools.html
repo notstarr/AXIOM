@@ -60,7 +60,7 @@
         <div class="grid grid-cols-2 gap-2">
           <select x-model="axiomToolStatusFilter" class="app-input rounded-lg px-2 py-1.5 text-[11px]"><option value="all">全部状态</option><option value="ready">就绪</option><option value="invalid">清单无效</option><option value="missing">包缺失</option></select>
           <select x-model="axiomToolSourceFilter" class="app-input rounded-lg px-2 py-1.5 text-[11px]"><option value="all">全部来源</option><option value="bundled">随系统发布</option><option value="managed">托管目录</option></select>
-          <select x-model="axiomToolPhaseFilter" class="app-input rounded-lg px-2 py-1.5 text-[11px]"><option value="all">全部阶段</option><option value="bootstrap">Bootstrap</option><option value="reason">Reason</option><option value="explore">Explore</option><option value="review">Reviewer</option></select>
+          <select x-model="axiomToolPhaseFilter" class="app-input rounded-lg px-2 py-1.5 text-[11px]"><option value="all">全部阶段</option><option value="bootstrap">Bootstrap</option><option value="reason">Reason</option><option value="explore">Explore</option><option value="plan">Plan</option><option value="review">Reviewer</option></select>
           <select x-model="axiomToolRiskFilter" class="app-input rounded-lg px-2 py-1.5 text-[11px]"><option value="all">全部风险</option><template x-for="tag in axiomToolRiskOptions()" :key="`risk-${tag}`"><option :value="tag" x-text="axiomToolRiskLabel(tag)"></option></template></select>
         </div>
       </div>

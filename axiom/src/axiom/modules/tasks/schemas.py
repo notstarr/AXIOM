@@ -59,6 +59,10 @@ class CreateTask(BaseModel):
     hints: list[str] = Field(default_factory=list)
     scope: TaskScope | None = None
     worker_pool: list[str] = Field(default_factory=list)
+    # Optional independent Plan backend pool.  An empty list deliberately
+    # means "inherit worker_pool" so old clients and old task payloads keep
+    # their scheduling behavior.
+    plan_worker_pool: list[str] = Field(default_factory=list)
     guard_enabled: bool = False
     external_report_enabled: bool = False
     run_duration_seconds: int | None = Field(
@@ -75,7 +79,7 @@ class CreateTask(BaseModel):
             raise ValueError("must not be empty")
         return value
 
-    @field_validator("hints", "worker_pool")
+    @field_validator("hints", "worker_pool", "plan_worker_pool")
     @classmethod
     def normalize_lists(cls, values: list[str]) -> list[str]:
         return list(dict.fromkeys(value.strip() for value in values if value.strip()))
@@ -139,6 +143,32 @@ class ActiveReasonRun(BaseModel):
     created_at: str
 
 
+class ActivePlanRun(BaseModel):
+    """Public representation of an in-flight or queued PlanRun.
+
+    This intentionally is a separate schema from :class:`ActiveReasonRun`.
+    Plan may share the same low-level lifecycle fields, but it is a distinct
+    work type and must not be inferred from ``trigger == 'plan'``.
+    """
+
+    id: str
+    status: Literal["pending", "claimed", "running", "concluding"]
+    trigger: str
+    trigger_payload: dict[str, Any] = Field(default_factory=dict)
+    worker: str | None = None
+    lease_id: str | None = None
+    settings_version: int
+    execute_timeout_seconds: int
+    conclude_timeout_seconds: int
+    last_heartbeat_at: str | None = None
+    activity_kind: str = ""
+    activity_summary: str = ""
+    activity_tool: str = ""
+    activity_started_at: str | None = None
+    activity_updated_at: str | None = None
+    created_at: str
+
+
 class Task(BaseModel):
     id: str
     project_id: str
@@ -150,6 +180,7 @@ class Task(BaseModel):
     phase: Literal["bootstrap", "reason", "explore", "plan", "waiting", "none"]
     scope: TaskScope
     worker_pool: list[str]
+    plan_worker_pool: list[str] = Field(default_factory=list)
     guard_enabled: bool
     external_report_enabled: bool
     legacy_readonly: bool
@@ -176,8 +207,9 @@ class Task(BaseModel):
     reason_activity_started_at: str | None = None
     reason_activity_updated_at: str | None = None
     active_reason_run: ActiveReasonRun | None = None
-    active_plan_run: ActiveReasonRun | None = None
+    active_plan_run: ActivePlanRun | None = None
     queued_reason_runs: list[ActiveReasonRun] = Field(default_factory=list)
+    queued_plan_runs: list[ActivePlanRun] = Field(default_factory=list)
     plan_run_count: int = 0
     last_plan_decision: dict[str, Any] | None = None
 
@@ -212,6 +244,7 @@ class UpdateTask(BaseModel):
     goal: str | None = None
     scope: TaskScope | None = None
     worker_pool: list[str] | None = None
+    plan_worker_pool: list[str] | None = None
     guard_enabled: bool | None = None
     external_report_enabled: bool | None = None
 
@@ -225,7 +258,7 @@ class UpdateTask(BaseModel):
             raise ValueError("must not be empty")
         return value
 
-    @field_validator("worker_pool")
+    @field_validator("worker_pool", "plan_worker_pool")
     @classmethod
     def normalize_workers(cls, values: list[str] | None) -> list[str] | None:
         return (

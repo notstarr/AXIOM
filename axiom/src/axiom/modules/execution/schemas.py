@@ -23,9 +23,10 @@ class LeaseCommand(BaseModel):
 class CredentialAccessCommand(LeaseCommand):
     intent_id: str | None = None
     reason_run_id: str | None = None
+    plan_run_id: str | None = None
     review_run_id: str | None = None
 
-    @field_validator("intent_id", "reason_run_id", "review_run_id")
+    @field_validator("intent_id", "reason_run_id", "plan_run_id", "review_run_id")
     @classmethod
     def normalize_owner_id(cls, value: str | None) -> str | None:
         normalized = (value or "").strip()
@@ -33,9 +34,9 @@ class CredentialAccessCommand(LeaseCommand):
 
     @model_validator(mode="after")
     def require_one_execution_owner(self) -> "CredentialAccessCommand":
-        if sum(bool(item) for item in (self.intent_id, self.reason_run_id, self.review_run_id)) != 1:
+        if sum(bool(item) for item in (self.intent_id, self.reason_run_id, self.plan_run_id, self.review_run_id)) != 1:
             raise ValueError(
-                "exactly one of intent_id, reason_run_id or review_run_id is required"
+                "exactly one of intent_id, reason_run_id, plan_run_id or review_run_id is required"
             )
         return self
 
@@ -98,7 +99,7 @@ class ExecutionInput(BaseModel):
     intent_kind: Literal["bootstrap", "reason", "explore", "review"] = "bootstrap"
     # Reason 场景策略由控制面按 ReasonRun.trigger 固定选择，模型不能自行切换。
     reason_prompt_profile: Literal[
-        "default", "bootstrap", "progress", "human", "continuation", "plan"
+        "default", "bootstrap", "progress", "human", "continuation"
     ] = "default"
     intent_description: str = ""
     intent_targets: list[str] = Field(default_factory=list)
@@ -135,6 +136,44 @@ class ExecutionInput(BaseModel):
         if self.intent_kind not in {"reason", "review"} and not self.intent_id:
             raise ValueError("Intent execution requires intent_id")
         return self
+
+
+class PlanExecutionInput(BaseModel):
+    """Execution contract owned by the independent Plan runtime.
+
+    Plan deliberately has no ``intent_kind`` or ``reason_prompt_profile``
+    field.  Keeping a separate model prevents a Plan lease from accidentally
+    entering the Reason execution path during rolling upgrades.
+    """
+
+    task_id: str
+    project_id: str = ""
+    plan_run_id: str
+    lease_id: str
+    worker_name: str
+    work_kind: Literal["plan"] = "plan"
+    phase: Literal["plan"] = "plan"
+    prompt_profile: Literal["plan"] = "plan"
+    trigger: str = "reconcile"
+    trigger_payload: dict[str, object] = Field(default_factory=dict)
+    source_fact_ids: list[str] = Field(default_factory=list)
+    origin: str
+    goal: str
+    hints: list[str] = Field(default_factory=list)
+    skill_directories: list[str] = Field(default_factory=list)
+    mcp_tool_names: list[str] = Field(default_factory=list)
+    capability_environment: dict[str, str] = Field(default_factory=dict)
+    capability_snapshot_path: str | None = None
+    guard_enabled: bool = False
+    scope: dict[str, object] = Field(default_factory=dict)
+    run_dir: str
+    execute_timeout_seconds: int | None = None
+    conclude_timeout_seconds: int | None = None
+    context_revision: int | None = None
+    context_manifest_path: str | None = None
+    axiom_tool_keys: list[str] = Field(default_factory=list)
+    axiom_tool_extensions: list[str] = Field(default_factory=list)
+    axiom_tool_snapshot_path: str | None = None
 
 
 class StartedIntent(BaseModel):

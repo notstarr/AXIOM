@@ -6,12 +6,13 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from axiom.modules.reason.schemas import ClaimedReasonRun
+from axiom.modules.plan.schemas import ClaimedPlanRun
 from axiom.modules.vulnerability_reviews.schemas import ClaimedVulnerabilityReviewRun
 
 
 IntentKind = Literal["bootstrap", "reason", "explore"]
 SchedulableIntentKind = Literal["bootstrap", "explore"]
-WorkKind = Literal["bootstrap", "reason", "explore", "review"]
+WorkKind = Literal["bootstrap", "reason", "explore", "plan", "review"]
 ACTIVE_WORK_STATUSES = frozenset({"claimed", "running", "concluding"})
 
 
@@ -58,6 +59,33 @@ class ReasonRunSnapshot(BaseModel):
     claimed_at: datetime | None = None
 
 
+class PlanRunSnapshot(BaseModel):
+    """Scheduler projection for an independent Plan run.
+
+    Plan is deliberately not represented as a Reason trigger.  Keeping a
+    separate projection also prevents a legacy ``reason_runs.trigger=plan``
+    row from being accidentally claimed by a Reason worker during rollout.
+    """
+
+    task_id: str
+    id: str
+    kind: Literal["plan"] = "plan"
+    trigger: str = ""
+    status: Literal[
+        "pending",
+        "claimed",
+        "running",
+        "concluding",
+        "completed",
+        "failed",
+        "cancelled",
+    ]
+    worker_pool: list[str] = Field(default_factory=list)
+    next_retry_at: datetime | None = None
+    created_at: datetime
+    claimed_at: datetime | None = None
+
+
 class ReviewRunSnapshot(BaseModel):
     task_id: str
     id: str
@@ -86,6 +114,7 @@ class TaskSnapshot(BaseModel):
     )
     intents: list[IntentSnapshot] = Field(default_factory=list)
     reason_runs: list[ReasonRunSnapshot] = Field(default_factory=list)
+    plan_runs: list[PlanRunSnapshot] = Field(default_factory=list)
     review_runs: list[ReviewRunSnapshot] = Field(default_factory=list)
     last_claimed_at: datetime | None = None
 
@@ -121,17 +150,20 @@ class ClaimAction(BaseModel):
     kind: WorkKind
     intent_id: str | None = None
     reason_run_id: str | None = None
+    plan_run_id: str | None = None
     review_run_id: str | None = None
 
     @model_validator(mode="after")
     def require_one_owner(self) -> "ClaimAction":
-        if sum(bool(item) for item in (self.intent_id, self.reason_run_id, self.review_run_id)) != 1:
-            raise ValueError("claim requires exactly one Intent, ReasonRun or ReviewRun")
+        if sum(bool(item) for item in (self.intent_id, self.reason_run_id, self.plan_run_id, self.review_run_id)) != 1:
+            raise ValueError("claim requires exactly one Intent, ReasonRun, PlanRun or ReviewRun")
         if self.kind == "reason" and not self.reason_run_id:
             raise ValueError("Reason claims require reason_run_id")
+        if self.kind == "plan" and not self.plan_run_id:
+            raise ValueError("Plan claims require plan_run_id")
         if self.kind == "review" and not self.review_run_id:
             raise ValueError("Review claims require review_run_id")
-        if self.kind not in {"reason", "review"} and not self.intent_id:
+        if self.kind not in {"reason", "plan", "review"} and not self.intent_id:
             raise ValueError("Intent claims require intent_id")
         return self
 
@@ -151,7 +183,7 @@ class ClaimedIntent(BaseModel):
     lease_id: str
 
 
-ClaimedWork = ClaimedIntent | ClaimedReasonRun | ClaimedVulnerabilityReviewRun
+ClaimedWork = ClaimedIntent | ClaimedReasonRun | ClaimedPlanRun | ClaimedVulnerabilityReviewRun
 
 
 class DispatchReport(BaseModel):

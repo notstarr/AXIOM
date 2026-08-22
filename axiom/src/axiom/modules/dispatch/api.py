@@ -6,6 +6,7 @@ from axiom.api.dependencies import get_container
 from axiom.composition import Container
 from axiom.dispatcher.schemas import ClaimedIntent, DispatcherSnapshot
 from axiom.modules.reason.schemas import ClaimedReasonRun
+from axiom.modules.plan.schemas import ClaimedPlanRun
 from axiom.modules.vulnerability_reviews.schemas import ClaimedVulnerabilityReviewRun
 from axiom.modules.dispatch.schemas import ClaimIntent, RecoverStaleIntents, RecoveryReport
 from axiom.modules.tasks.schemas import RunDeadlineReconcileReport
@@ -58,6 +59,23 @@ def claim_reason_run(
     return container.dispatch.claim_reason_run(
         task_id=task_id,
         reason_run_id=reason_run_id,
+        worker_name=body.worker_name,
+    )
+
+
+@router.post(
+    "/tasks/{task_id}/plan-runs/{plan_run_id}/claim",
+    response_model=ClaimedPlanRun,
+)
+def claim_plan_run(
+    task_id: str,
+    plan_run_id: str,
+    body: ClaimIntent,
+    container: Container = Depends(get_container),
+) -> ClaimedPlanRun:
+    return container.dispatch.claim_plan_run(
+        task_id=task_id,
+        plan_run_id=plan_run_id,
         worker_name=body.worker_name,
     )
 

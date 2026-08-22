@@ -181,6 +181,9 @@ window.AxiomModules.projects = {
         this.newProject.parent_project_id = this.projectGroups[0].id;
       }
       this.newProject.worker_pool = defaults;
+      this.newProject.plan_worker_pool = workers
+        .filter(w => w && w.name && !w.disabled && Array.isArray(w.task_types) && w.task_types.includes('plan'))
+        .map(w => w.name);
       if (!String(this.newProject.goal || '').trim()) {
         this.newProject.goal = '对该系统进行渗透测试，并挖掘10个高置信度的漏洞';
       }
@@ -395,6 +398,8 @@ window.AxiomModules.projects = {
         bootstrap: 'Bootstrap 榜',
         explore: 'Explore 榜',
         reason: 'Reason 榜',
+        plan: 'Plan 榜',
+        review: 'Review 榜',
       };
       return labels[phase] || phase || '未知阶段';
     },
@@ -480,12 +485,13 @@ window.AxiomModules.projects = {
     syncTaskWorkerPoolEditor(task = null) {
       const selected = task || this.selectedTaskSummary();
       if (!selected) {
-        this.taskWorkerPoolEditor = { projectId: '', worker_pool: [], saving: false };
+        this.taskWorkerPoolEditor = { projectId: '', worker_pool: [], plan_worker_pool: [], saving: false };
         return;
       }
       this.taskWorkerPoolEditor = {
         projectId: selected.id,
         worker_pool: Array.isArray(selected.worker_pool) ? [...selected.worker_pool] : [],
+        plan_worker_pool: Array.isArray(selected.plan_worker_pool) ? [...selected.plan_worker_pool] : [],
         saving: false,
       };
     },
@@ -500,12 +506,29 @@ window.AxiomModules.projects = {
       }
     },
 
+    setTaskPlanWorkerPool(mode) {
+      if (mode === 'all') {
+        this.taskWorkerPoolEditor.plan_worker_pool = this.enabledDispatchWorkers()
+          .filter(worker => Array.isArray(worker.task_types) && worker.task_types.includes('plan'))
+          .map(worker => worker.name);
+      } else if (mode === 'plan') {
+        this.taskWorkerPoolEditor.plan_worker_pool = this.enabledDispatchWorkers()
+          .filter(worker => Array.isArray(worker.task_types) && worker.task_types.includes('plan'))
+          .map(worker => worker.name);
+      } else if (mode === 'clear') {
+        this.taskWorkerPoolEditor.plan_worker_pool = [];
+      }
+    },
+
     taskWorkerPoolChanged(task = null) {
       const selected = task || this.selectedTaskSummary();
       if (!selected || this.taskWorkerPoolEditor.projectId !== selected.id) return false;
       const original = Array.isArray(selected.worker_pool) ? selected.worker_pool : [];
       const edited = Array.isArray(this.taskWorkerPoolEditor.worker_pool) ? this.taskWorkerPoolEditor.worker_pool : [];
-      return original.join('\u0000') !== edited.join('\u0000');
+      const originalPlan = Array.isArray(selected.plan_worker_pool) ? selected.plan_worker_pool : [];
+      const editedPlan = Array.isArray(this.taskWorkerPoolEditor.plan_worker_pool) ? this.taskWorkerPoolEditor.plan_worker_pool : [];
+      return original.join('\u0000') !== edited.join('\u0000')
+        || originalPlan.join('\u0000') !== editedPlan.join('\u0000');
     },
 
     async saveTaskWorkerPool() {
@@ -516,8 +539,12 @@ window.AxiomModules.projects = {
         const workerPool = Array.isArray(this.taskWorkerPoolEditor.worker_pool)
           ? this.taskWorkerPoolEditor.worker_pool
           : [];
+        const planWorkerPool = Array.isArray(this.taskWorkerPoolEditor.plan_worker_pool)
+          ? this.taskWorkerPoolEditor.plan_worker_pool
+          : [];
         const response = await this.api('PUT', `/projects/${selected.id}/worker-pool`, {
           worker_pool: workerPool,
+          plan_worker_pool: planWorkerPool,
         });
         const idx = this.projects.findIndex(project => project.id === selected.id);
         if (idx >= 0) this.projects.splice(idx, 1, { ...this.projects[idx], ...response.project });
@@ -1063,6 +1090,7 @@ window.AxiomModules.projects = {
             ? [{ content: this.newProject.hints.trim(), creator: actor }]
             : [],
           worker_pool: Array.isArray(this.newProject.worker_pool) ? this.newProject.worker_pool : [],
+          plan_worker_pool: Array.isArray(this.newProject.plan_worker_pool) ? this.newProject.plan_worker_pool : [],
           task_scope: {
             enabled: taskScopeTargets.length > 0 || taskScopeExclude.length > 0,
             targets: taskScopeTargets,
@@ -1080,7 +1108,7 @@ window.AxiomModules.projects = {
           title:'', origin:'', goal:'对该系统进行渗透测试，并挖掘10个高置信度的漏洞',
           bootstrap: true, kk_report_enabled: false, depth_mode: false, guard_enabled: !!this.judgeSettings?.enabled_default, hints: '',
           task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '',
-          depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false,
+          depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], plan_worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false,
         };
         await this.loadProjectGroups();
         await this.loadProjects();
@@ -1414,10 +1442,16 @@ window.AxiomModules.projects = {
     },
 
     async openTaskOverview(id, fromRoute = false) {
+      if (!fromRoute && location.hash !== `#/tasks/${id}?view=human`) {
+        history.pushState(null, '', `#/tasks/${encodeURIComponent(id)}?view=human`);
+      }
       return this.openProject(id, fromRoute, 'human');
     },
 
     async openTaskGraph(id, fromRoute = false) {
+      if (!fromRoute && location.hash !== `#/tasks/${id}?view=graph`) {
+        history.pushState(null, '', `#/tasks/${encodeURIComponent(id)}?view=graph`);
+      }
       return this.openProject(id, fromRoute, 'graph');
     },
 
@@ -1455,8 +1489,12 @@ window.AxiomModules.projects = {
       const summarySignal = this._pageAbortController?.signal;
       await this.loadTaskSummary(id, { signal: summarySignal });
       if (generation !== this._projectOpenGeneration || this.selectedProjectId !== id) return;
-      if (!fromRoute && location.hash !== `#/tasks/${id}`) {
-        history.pushState(null, '', `#/tasks/${encodeURIComponent(id)}`);
+      const targetHash = `#/tasks/${encodeURIComponent(id)}${this.view === 'graph' ? '?view=graph' : (this.view === 'archive' ? '?view=archive' : '?view=human')}`;
+      if (!fromRoute && location.hash !== targetHash) {
+        history.pushState(null, '', targetHash);
+      } else if (fromRoute && location.hash !== targetHash) {
+        const replaceState = history.replaceState || history.pushState;
+        if (typeof replaceState === 'function') replaceState.call(history, null, '', targetHash);
       }
       await this.mountCurrentPage();
       if (generation !== this._projectOpenGeneration || this.selectedProjectId !== id) return;

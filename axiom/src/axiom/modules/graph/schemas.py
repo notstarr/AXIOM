@@ -34,6 +34,8 @@ class Intent(BaseModel):
     worker: str | None = None
     worker_pool: list[str]
     targets: list[str]
+    dedup_fingerprint: str = ""
+    plan_metadata: dict[str, object] = Field(default_factory=dict)
     execute_timeout_seconds: int | None = None
     conclude_timeout_seconds: int | None = None
     lease_id: str | None = None

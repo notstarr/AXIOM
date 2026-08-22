@@ -1,1 +1,1 @@
-"""Stage-level capability assignment for the four logical AXIOM Workers."""
+"""Stage-level capability assignment for the five logical AXIOM Workers."""

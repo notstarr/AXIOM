@@ -1274,7 +1274,7 @@ pre {
 .phase-bootstrap { background: var(--accent-light);   color: var(--accent); }
 .phase-reason    { background: var(--purple-light);   color: var(--purple); }
 .phase-explore   { background: var(--teal-light);     color: var(--teal); }
-.phase-plan      { background: var(--amber-light);    color: var(--amber); }
+.phase-plan      { background: var(--status-purple-bg); color: var(--status-purple-fg); }
 
 /* ── Responsive ── */
 @media (max-width: 768px) {

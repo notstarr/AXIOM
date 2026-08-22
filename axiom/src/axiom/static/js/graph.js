@@ -56,9 +56,6 @@ window.AxiomModules.graph = {
             if (this.project.project.depth_mode && src === 'goal') continue;
             edges.push({ data: { id: `${intent.id}_${src}`, source: src, target: phId, intentId: intent.id, label: lbl, status: nodeType, archived: intent.archived || false }});
           }
-          if (this.isBootstrapIntent(intent) && !this.project.project.depth_mode) {
-            edges.push({ data: { id: `${intent.id}_goal`, source: phId, target: 'goal', intentId: intent.id, label: '', status: nodeType, edgeType: 'bootstrap_scope' }});
-          }
         }
       }
       if (!this.project.project.depth_mode) {
@@ -142,8 +139,9 @@ window.AxiomModules.graph = {
       const interventionDot = data.humanInterventionRequired
         ? `<span class="node-card__human-dot" title="${interventionLabel}" aria-label="${interventionLabel}"></span>`
         : '';
-      return `<div class="node-card node-card--${data.nodeType}${archivedClass}" style="width:${w}px;height:${h}px">`
+      return `<div id="node-card-${data.id}" class="node-card node-card--${data.nodeType}${archivedClass}" style="width:${w}px;height:${h}px">`
         + interventionDot
+        + `<span class="node-card__reason-beacon"></span>`
         + `<div class="node-card__header">${icon}<span class="node-card__title">${title}</span></div>`
         + `<div class="node-card__body">${body}</div>`
         + `</div>`;
@@ -254,9 +252,9 @@ window.AxiomModules.graph = {
 
         // ── Intent nodes (small circles, keep native label) ──
         { selector: 'node[nodeType="in_progress"]', style: {
-          shape:'ellipse', 'background-color':'#f59e0b', 'background-opacity':0.85,
-          label:'data(label)', color:'#fff', 'font-size':'11px', 'font-weight':'bold',
-          width:26, height:26, 'border-width':2.5, 'border-color':'#fbbf24',
+          shape:'ellipse', 'background-color':'#e2e8f0', 'background-opacity':0.96,
+          label:'data(label)', color:'#334155', 'font-size':'11px', 'font-weight':'bold',
+          width:26, height:26, 'border-width':2.5, 'border-color':'#94a3b8',
           'text-valign':'center', 'text-halign':'center', 'font-family':font,
         }},
         { selector: 'node[nodeType="unclaimed"]', style: {
@@ -322,13 +320,13 @@ window.AxiomModules.graph = {
           'text-background-padding':'2px', 'arrow-scale':0.85,
         }},
         { selector: 'edge[status="in_progress"]', style: {
-          width:2, 'line-color':'#f59e0b', 'line-style':'dashed', 'line-dash-pattern':[8,4],
-          'target-arrow-color':'#f59e0b', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:'#b45309',
+          width:1.5, 'line-color':'#94a3b8', 'line-style':'dashed', 'line-dash-pattern':[5,4],
+          'target-arrow-color':'#94a3b8', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          label:'data(label)', 'font-size':'7px', color:theme.dark ? '#e2e8f0' : '#475569',
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
-          'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.9,
+          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.92,
+          'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.85,
         }},
         { selector: 'edge[status="unclaimed"]', style: {
           width:1.5, 'line-color':theme.mutedBorder, 'line-style':'dashed', 'line-dash-pattern':[5,5],
@@ -407,7 +405,7 @@ window.AxiomModules.graph = {
         { selector: '.fresh', style: { opacity:0 }},
         // ── Pulse animation via CSS class (overlay glow, not border) ──
         { selector: 'node.node-pulse', style: {
-          'overlay-color':'#f59e0b', 'overlay-opacity':0.3, 'overlay-padding':4,
+          'overlay-color':'#cbd5e1', 'overlay-opacity':0.35, 'overlay-padding':5,
         }},
       ];
     },
@@ -587,6 +585,23 @@ window.AxiomModules.graph = {
           node.removeClass('node-pulse');
         }
       });
+
+      // 针对当前活跃 ReasonRun 关联的 Fact/Todo 进行局部柔和光晕聚焦
+      const reasonObj = this.project?.project?.reason;
+      const isReasonRunning = reasonObj && ['claimed', 'running', 'concluding'].includes(reasonObj.status);
+      const sourceFactIds = new Set(reasonObj?.trigger_payload?.source_fact_ids || []);
+
+      this.cy.nodes().forEach(node => {
+        const id = node.id();
+        const shouldFocus = isReasonRunning && (sourceFactIds.has(id) || (sourceFactIds.size === 0 && (node.data('nodeType') === 'fact' || node.data('nodeType') === 'depth_fact')));
+        const cardEl = document.getElementById(`node-card-${id}`);
+        if (shouldFocus) {
+          if (cardEl && !cardEl.classList.contains('is-reason-focused')) cardEl.classList.add('is-reason-focused');
+        } else {
+          if (cardEl && cardEl.classList.contains('is-reason-focused')) cardEl.classList.remove('is-reason-focused');
+        }
+      });
+
       this.startGraphActivityAnimation();
     },
 
@@ -629,7 +644,7 @@ window.AxiomModules.graph = {
         goal: '#f43f5e', fact: '#94a3b8',
         depth_plan: '#6366f1', depth_fact: '#f59e0b',
         bootstrap_pending: '#fb923c', bootstrap_running: '#ea580c',
-        in_progress: '#f59e0b', unclaimed: '#cbd5e1',
+        in_progress: '#94a3b8', unclaimed: '#cbd5e1',
         intent_completed: '#10b981', intent_cancelled: '#94a3b8', intent_failed: '#ef4444',
       };
       return colors[nodeType] || '#94a3b8';

@@ -37,8 +37,9 @@ from axiom.dispatcher.tool_path import (
     discover_tool_environment,
     prepare_runtime_bin,
 )
-from axiom.modules.execution.schemas import ActivityCommand, ExecutionInput
+from axiom.modules.execution.schemas import ActivityCommand, ExecutionInput, PlanExecutionInput
 from axiom.modules.phase_capabilities.builtins import native_tool_names
+from axiom.modules.plan.schemas import PlanWorkspace
 from axiom.modules.reason.schemas import ReasonWorkspace
 from axiom.modules.token_usage.schemas import TokenUsageBatchCommand
 from axiom.modules.workers.pi_config import PiWorkerConfig
@@ -59,7 +60,6 @@ _REASON_PROMPT_PROFILE_FILES = {
     "progress": "reason_progress.md",
     "human": "reason_human.md",
     "continuation": "reason_continuation.md",
-    "plan": "plan.md",
 }
 CONTEXT_ATTENTION_SYSTEM_PROMPT = (
     "在开始规划或执行任何操作前，必须先读取 Context Manifest，并完整读取其中的 "
@@ -68,7 +68,7 @@ CONTEXT_ATTENTION_SYSTEM_PROMPT = (
     "Project Knowledge 是业务背景，Skill 是执行方法，已有漏洞及 status_reason 必须用于避免"
     "重复规划、测试和上报。冲突时遵循：系统规则/Scope/阶段合同 > Task Hint > Project "
     "Knowledge > Skill 方法论 > 已有漏洞及状态原因 > 普通 Context 与工具输出。"
-    "whatisvul 是 Bootstrap、Reason、Explore、Reviewer 全阶段的强制前置 Skill，不属于按需读取项："
+    "whatisvul 是 Bootstrap、Reason、Explore、Plan、Reviewer 全阶段的强制前置 Skill，不属于按需读取项："
     "读取高价值 Context 后、进行任何探测、规划、漏洞判断或产物整理前，必须运行 "
     "axiom skill path whatisvul 并完整读取返回目录中的 SKILL.md。读取失败时先运行 "
     "axiom skill doctor whatisvul 排障并重试；不得用记忆、常识或其它 Skill 替代。"
@@ -210,13 +210,16 @@ class PiBootstrapExecutor:
         agent_dir = session_dir.parent
         self._write_models_file(agent_dir)
         environment = dict(self.settings.environment)
+        phase = getattr(execution_input, "intent_kind", None) or getattr(
+            execution_input, "phase", ""
+        )
         environment.update(
             {
                 "AXIOM_RUN_DIR": execution_input.run_dir,
                 "AXIOM_TASK_ID": execution_input.task_id,
                 "AXIOM_PROJECT_ID": execution_input.project_id,
                 "AXIOM_LEASE_ID": execution_input.lease_id,
-                "AXIOM_PHASE": execution_input.intent_kind,
+                "AXIOM_PHASE": phase,
                 "AXIOM_WORKER": execution_input.worker_name,
                 "AXIOM_GUARD_ENABLED": "1" if execution_input.guard_enabled else "0",
                 "PI_CODING_AGENT_DIR": str(agent_dir),
@@ -246,14 +249,21 @@ class PiBootstrapExecutor:
         # environment after the persisted model-backend config so stale legacy
         # Worker MCP settings cannot leak tools into a new Lease.
         environment.update(execution_input.capability_environment)
-        if execution_input.intent_id:
-            environment["AXIOM_INTENT_ID"] = execution_input.intent_id
-        if execution_input.reason_run_id:
-            environment["AXIOM_REASON_RUN_ID"] = execution_input.reason_run_id
-        if execution_input.review_run_id:
-            environment["AXIOM_REVIEW_RUN_ID"] = execution_input.review_run_id
-        if execution_input.vulnerability_id:
-            environment["AXIOM_VULNERABILITY_ID"] = execution_input.vulnerability_id
+        intent_id = getattr(execution_input, "intent_id", None)
+        reason_run_id = getattr(execution_input, "reason_run_id", None)
+        review_run_id = getattr(execution_input, "review_run_id", None)
+        vulnerability_id = getattr(execution_input, "vulnerability_id", None)
+        if intent_id:
+            environment["AXIOM_INTENT_ID"] = intent_id
+        if reason_run_id:
+            environment["AXIOM_REASON_RUN_ID"] = reason_run_id
+        if review_run_id:
+            environment["AXIOM_REVIEW_RUN_ID"] = review_run_id
+        plan_run_id = getattr(execution_input, "plan_run_id", None)
+        if plan_run_id:
+            environment["AXIOM_PLAN_RUN_ID"] = plan_run_id
+        if vulnerability_id:
+            environment["AXIOM_VULNERABILITY_ID"] = vulnerability_id
         if self.service_token:
             environment["AXIOM_SERVICE_TOKEN"] = self.service_token
         if extra_environment:
@@ -283,7 +293,7 @@ class PiBootstrapExecutor:
         for name, value in discovered_environment.items():
             environment.setdefault(name, value)
         browser_enabled = False
-        if enable_browser and execution_input.intent_kind in {"bootstrap", "explore"}:
+        if enable_browser and phase in {"bootstrap", "explore"}:
             browser_skill = browser_skill_directory(execution_input.skill_directories)
             if browser_skill is not None and self.browser_broker is not None:
                 browser_enabled = True
@@ -349,8 +359,8 @@ class PiBootstrapExecutor:
                         steer_message=steer_message,
                         stream_idle_timeout_seconds=stream_idle_timeout_seconds,
                         stream_recovery_prompt=stream_recovery_prompt,
-                        intervention_poller=self.intervention_poller if execution_input.intent_kind == "explore" else None,
-                        intervention_result_reporter=self.intervention_result_reporter if execution_input.intent_kind == "explore" else None,
+                        intervention_poller=self.intervention_poller if phase == "explore" else None,
+                        intervention_result_reporter=self.intervention_result_reporter if phase == "explore" else None,
                     ),
                     should_cancel=should_cancel,
                     on_steer=lambda: self._report_soft_reminder(execution_input),
@@ -680,6 +690,101 @@ class PiReasonExecutor(PiBootstrapExecutor):
             raise LeaseLostError(result.cancel_reason or "worker cancelled")
         if result.timed_out:
             raise ReasonExecutionTimeout("Reason conclude budget exhausted")
+        self._raise_on_process_failure(result)
+        return self._last_assistant_text(result)
+
+
+class PiPlanExecutor(PiBootstrapExecutor):
+    """Independent Pi adapter for the Plan phase.
+
+    The process/lease transport is shared with the low-level Pi adapter, but
+    Plan has its own input type, workspace identity, prompt files, tool scope,
+    and environment contract.  It never renders or dispatches a Reason
+    prompt and never exposes a Reason workspace to the worker.
+    """
+
+    def execute(
+        self,
+        execution_input: PlanExecutionInput,
+        *,
+        workspace: PlanWorkspace,
+        lease_active,
+    ) -> str:
+        if not execution_input.context_manifest_path:
+            raise TransientWorkerError("Plan Context manifest is unavailable")
+        if workspace.plan_run_id != execution_input.plan_run_id:
+            raise TransientWorkerError("Plan Workspace identity does not match PlanRun")
+        self._session_id = self._session_id or uuid.uuid4().hex
+        result = self._run(
+            execution_input,
+            self._build_plan_prompt(execution_input),
+            lease_active=lease_active,
+            timeout_seconds=execution_input.execute_timeout_seconds or 900,
+            tool_names=native_tool_names("plan", "execute"),
+            extra_environment={"AXIOM_PLAN_WORKSPACE_ID": workspace.id},
+            enable_browser=False,
+        )
+        if result.cancelled:
+            raise LeaseLostError(result.cancel_reason or "worker cancelled")
+        if result.timed_out:
+            from axiom.dispatcher.plan import PlanExecutionTimeout
+
+            raise PlanExecutionTimeout("Plan execute budget exhausted")
+        self._raise_on_process_failure(result)
+        return self._last_assistant_text(result)
+
+    def _build_plan_prompt(self, execution_input: PlanExecutionInput) -> str:
+        return self.prompts.render(
+            "plan.md",
+            {
+                "task_id": execution_input.task_id,
+                "plan_run_id": execution_input.plan_run_id,
+                "origin": execution_input.origin,
+                "goal": execution_input.goal,
+                "context_manifest_path": execution_input.context_manifest_path or "",
+                "run_dir": execution_input.run_dir,
+                "skill_directories": _format_skill_directories(
+                    execution_input.skill_directories
+                ),
+            },
+        )
+
+    def conclude(
+        self,
+        execution_input: PlanExecutionInput,
+        *,
+        workspace: PlanWorkspace,
+        reason: str,
+        lease_active,
+    ) -> str:
+        if not self._session_id:
+            raise TransientWorkerError("Plan session is unavailable for conclude")
+        if workspace.plan_run_id != execution_input.plan_run_id:
+            raise TransientWorkerError("Plan Workspace identity does not match PlanRun")
+        result = self._run(
+            execution_input,
+            self.prompts.render(
+                "plan_conclude.md",
+                {
+                    "task_id": execution_input.task_id,
+                    "plan_run_id": execution_input.plan_run_id,
+                    "workspace_id": workspace.id,
+                    "run_dir": execution_input.run_dir,
+                },
+            )
+            + f"\n收口原因：{reason}\n",
+            lease_active=lease_active,
+            timeout_seconds=execution_input.conclude_timeout_seconds or 180,
+            tool_names=native_tool_names("plan", "conclude"),
+            extra_environment={"AXIOM_PLAN_WORKSPACE_ID": workspace.id},
+            enable_browser=False,
+        )
+        if result.cancelled:
+            raise LeaseLostError(result.cancel_reason or "worker cancelled")
+        if result.timed_out:
+            from axiom.dispatcher.plan import PlanExecutionTimeout
+
+            raise PlanExecutionTimeout("Plan conclude budget exhausted")
         self._raise_on_process_failure(result)
         return self._last_assistant_text(result)
 

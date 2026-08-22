@@ -10,6 +10,7 @@ from axiom.modules.graph.tables import facts, intent_sources, intents
 from axiom.modules.knowledge.tables import project_knowledge
 from axiom.modules.goals.tables import goal_evaluations, task_goal_cycles
 from axiom.modules.external_reports.tables import external_report_attempts
+from axiom.modules.plan.tables import plan_run_sources, plan_runs, plan_workspaces
 from axiom.modules.projects.tables import projects
 from axiom.modules.reason.tables import reason_run_sources, reason_runs, reason_workspaces
 from axiom.modules.mcp.tables import mcp_servers, mcp_tools
@@ -45,6 +46,9 @@ ALL_TABLES = (
     reason_runs,
     reason_run_sources,
     reason_workspaces,
+    plan_runs,
+    plan_run_sources,
+    plan_workspaces,
     context_revisions,
     runtime_settings,
     audit_events,

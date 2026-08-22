@@ -17,6 +17,31 @@ from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.shared.ids import allocate_id, initialize_counter
 
 
+def _json_list(value) -> list[str]:
+    """Decode JSON list columns across legacy Text and PostgreSQL JSONB rows.
+
+    Older migrations used Text columns while the current metadata maps JSON
+    columns to JSONB.  A Text column read through the JSONText decorator can
+    therefore arrive double-encoded (``'"[]"'``); accept both wire forms
+    during the transition.
+    """
+
+    current = value
+    for _ in range(3):
+        if isinstance(current, list):
+            return [str(item) for item in current if isinstance(item, str)]
+        if not isinstance(current, str):
+            return []
+        try:
+            decoded = json.loads(current)
+        except (TypeError, ValueError):
+            return []
+        if decoded == current:
+            return []
+        current = decoded
+    return []
+
+
 class TaskRepository:
     def create(
         self,
@@ -28,6 +53,7 @@ class TaskRepository:
         goal: str,
         scope: TaskScope,
         worker_pool: list[str],
+        plan_worker_pool: list[str] | None = None,
         guard_enabled: bool,
         external_report_enabled: bool,
         run_duration_seconds: int | None,
@@ -56,6 +82,7 @@ class TaskRepository:
             "phase": "bootstrap",
             "scope_json": scope.model_dump_json(),
             "worker_pool_json": json.dumps(worker_pool, ensure_ascii=False),
+            "plan_worker_pool_json": json.dumps(plan_worker_pool or [], ensure_ascii=False),
             "guard_enabled": guard_enabled,
             "external_report_enabled": external_report_enabled,
             "legacy_readonly": False,
@@ -216,6 +243,12 @@ class TaskRepository:
         if command.worker_pool is not None:
             values.pop("worker_pool", None)
             values["worker_pool_json"] = json.dumps(command.worker_pool, ensure_ascii=False)
+        if command.plan_worker_pool is not None:
+            values.pop("plan_worker_pool", None)
+            values["plan_worker_pool_json"] = json.dumps(
+                command.plan_worker_pool,
+                ensure_ascii=False,
+            )
         if values:
             values["updated_at"] = now
             result = conn.execute(update(tasks).where(tasks.c.id == task_id).values(**values))
@@ -293,7 +326,8 @@ class TaskRepository:
             status=row["status"],
             phase=row["phase"],
             scope=TaskScope.model_validate_json(row["scope_json"]),
-            worker_pool=json.loads(row["worker_pool_json"] or "[]"),
+            worker_pool=_json_list(row["worker_pool_json"]),
+            plan_worker_pool=_json_list(row.get("plan_worker_pool_json")),
             guard_enabled=bool(row["guard_enabled"]),
             external_report_enabled=bool(row["external_report_enabled"]),
             legacy_readonly=bool(row["legacy_readonly"]),

@@ -23,6 +23,7 @@ from axiom.modules.graph.api import router as graph_router
 from axiom.modules.projects.api import router as projects_router
 from axiom.modules.mcp.api import router as mcp_router
 from axiom.modules.phase_capabilities.api import router as phase_capabilities_router
+from axiom.modules.plan.api import router as plan_router
 from axiom.modules.reason.api import router as reason_router
 from axiom.modules.settings.api import router as settings_router
 from axiom.modules.tasks.api import router as tasks_router
@@ -40,6 +41,7 @@ router = APIRouter(prefix="/api/v1")
 router.include_router(projects_router)
 router.include_router(dashboard_router)
 router.include_router(reason_router)
+router.include_router(plan_router)
 router.include_router(tasks_router)
 router.include_router(graph_router)
 router.include_router(axiom_tools_router)

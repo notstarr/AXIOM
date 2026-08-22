@@ -433,13 +433,26 @@ window.AxiomModules.core = {
       const hash = location.hash || '#/';
       const routeText = hash.replace(/^#\/?/, '') || 'dashboard';
       const [routePath, routeQuery = ''] = routeText.split('?', 2);
+      const currentTargetHash = location.hash || '#/dashboard';
+
+      const recordHistory = (target) => {
+        if (!this._navigatingBack && this._lastNavigatedHash && this._lastNavigatedHash !== target) {
+          this.pageHistory.push(this._lastNavigatedHash);
+          if (this.pageHistory.length > 50) this.pageHistory.shift();
+        }
+      };
+
       const taskMatch = routePath.match(/^tasks\/(.+)$/);
       const legacyProjectMatch = routePath.match(/^projects\/(.+)$/);
       if (taskMatch || legacyProjectMatch) {
         const id = decodeURIComponent((taskMatch || legacyProjectMatch)[1]);
+        const queryParams = new URLSearchParams(routeQuery);
+        const requestedView = queryParams.get('view') === 'graph' ? 'graph' : (queryParams.get('view') === 'archive' ? 'archive' : 'human');
+        recordHistory(currentTargetHash);
+        this._lastNavigatedHash = currentTargetHash;
+        this._navigatingBack = false;
         this.activePage = 'task-detail';
-        if (this.selectedProjectId !== id || !this.project) this.openTaskOverview(id, true);
-        else this.mountCurrentPage();
+        this.openProject(id, true, requestedView);
         return;
       }
       const page = routePath.split('/')[0];
@@ -448,9 +461,9 @@ window.AxiomModules.core = {
       const sameMountedFilesPage = newPage === 'files'
         && this.activePage === 'files'
         && this.mountedPageTemplate === 'files';
-      if (this.activePage !== newPage && !this._navigatingBack) {
-        this.pageHistory.push(this.activePage);
-      }
+
+      recordHistory(currentTargetHash);
+      this._lastNavigatedHash = currentTargetHash;
       this._navigatingBack = false;
       this.activePage = newPage;
       this.mobileSidebarOpen = false;
@@ -496,17 +509,11 @@ window.AxiomModules.core = {
 
     goBack() {
       if (this.pageHistory.length === 0) return;
-      const prev = this.pageHistory.pop();
+      const targetHash = this.pageHistory.pop();
+      if (!targetHash) return;
       this._navigatingBack = true;
-      const routes = {
-        dashboard: '#/dashboard', tasks: '#/tasks', vulnerabilities: '#/vulnerabilities',
-        projects: '#/projects', 'guard-audit': '#/guard-audit', skills: '#/skills', files: '#/files', mcp: '#/mcp',
-        settings: '#/settings',
-        prompts: '#/prompts', workers: '#/workers', tools: '#/tools', 'task-detail': '#/task-detail',
-      };
-      const target = routes[prev] || '#/dashboard';
-      if (location.hash === target) this.handleRoute();
-      else location.hash = target;
+      if (location.hash === targetHash) this.handleRoute();
+      else location.hash = targetHash;
     },
 
     async api(method, path, body) {

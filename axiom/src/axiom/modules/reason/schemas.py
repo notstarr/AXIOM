@@ -327,6 +327,9 @@ class ReasonRun(BaseModel):
     goal_cycle_id: str | None = None
     status: ReasonRunStatus
     trigger: str
+    # Read-only compatibility marker for rows created by the retired
+    # Reason-based Plan implementation.  New Plan runs live in plan_runs.
+    legacy_plan: bool = False
     trigger_payload: dict[str, Any] = Field(default_factory=dict)
     input_fingerprint: str
     source_fact_ids: list[str] = Field(default_factory=list)

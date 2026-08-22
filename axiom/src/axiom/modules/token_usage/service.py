@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
 from axiom.modules.graph.tables import intents
+from axiom.modules.plan.tables import plan_runs
 from axiom.modules.reason.tables import reason_runs
 from axiom.modules.tasks.tables import tasks
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
@@ -73,6 +74,7 @@ class TokenUsageService:
                 task_id=task_id,
                 intent_id=intent_id,
                 reason_run_id=None,
+                plan_run_id=None,
                 review_run_id=None,
                 lease_id=command.lease_id,
                 phase=str(row["kind"] or "unknown"),
@@ -94,7 +96,11 @@ class TokenUsageService:
                     reason_runs.c.lease_id,
                     reason_runs.c.status,
                     reason_runs.c.worker,
-                ).where(reason_runs.c.task_id == task_id, reason_runs.c.id == reason_run_id)
+                ).where(
+                    reason_runs.c.task_id == task_id,
+                    reason_runs.c.id == reason_run_id,
+                    reason_runs.c.trigger != "plan",
+                )
             ).mappings().one_or_none()
             if row is None:
                 raise NotFoundError(f"ReasonRun not found: {task_id}/{reason_run_id}")
@@ -109,9 +115,47 @@ class TokenUsageService:
                 task_id=task_id,
                 intent_id=None,
                 reason_run_id=reason_run_id,
+                plan_run_id=None,
                 review_run_id=None,
                 lease_id=command.lease_id,
                 phase="reason",
+                worker=str(row["worker"] or ""),
+                command=command,
+                source="live",
+            )
+
+    def record_plan_batch(
+        self,
+        *,
+        task_id: str,
+        plan_run_id: str,
+        command: TokenUsageBatchCommand,
+    ) -> TokenUsageBatchResult:
+        with self.engine.begin() as conn:
+            row = conn.execute(
+                select(
+                    plan_runs.c.lease_id,
+                    plan_runs.c.status,
+                    plan_runs.c.worker,
+                ).where(plan_runs.c.task_id == task_id, plan_runs.c.id == plan_run_id)
+            ).mappings().one_or_none()
+            if row is None:
+                raise NotFoundError(f"PlanRun not found: {task_id}/{plan_run_id}")
+            if row["lease_id"] != command.lease_id or row["status"] not in {
+                "claimed",
+                "running",
+                "concluding",
+            }:
+                raise LeaseInactiveError("PlanRun lease is not active")
+            return self._record_batch(
+                conn,
+                task_id=task_id,
+                intent_id=None,
+                reason_run_id=None,
+                plan_run_id=plan_run_id,
+                review_run_id=None,
+                lease_id=command.lease_id,
+                phase="plan",
                 worker=str(row["worker"] or ""),
                 command=command,
                 source="live",
@@ -150,6 +194,7 @@ class TokenUsageService:
                 task_id=task_id,
                 intent_id=None,
                 reason_run_id=None,
+                plan_run_id=None,
                 review_run_id=review_run_id,
                 lease_id=command.lease_id,
                 phase="review",
@@ -164,6 +209,7 @@ class TokenUsageService:
         task_id: str,
         intent_id: str | None,
         reason_run_id: str | None,
+        plan_run_id: str | None = None,
         review_run_id: str | None = None,
         lease_id: str,
         phase: str,
@@ -188,11 +234,12 @@ class TokenUsageService:
                 task_id=task_id,
                 intent_id=intent_id,
                 reason_run_id=reason_run_id,
+                plan_run_id=plan_run_id,
                 review_run_id=review_run_id,
                 lease_id=lease_id,
                 phase=(
                     phase
-                    if phase in {"bootstrap", "explore", "reason", "review"}
+                    if phase in {"bootstrap", "explore", "reason", "plan", "review"}
                     else "unknown"
                 ),
                 worker=worker,
@@ -207,6 +254,7 @@ class TokenUsageService:
         task_id: str,
         intent_id: str | None,
         reason_run_id: str | None,
+        plan_run_id: str | None,
         review_run_id: str | None,
         lease_id: str,
         phase: str,
@@ -221,6 +269,7 @@ class TokenUsageService:
                 task_id=task_id,
                 intent_id=intent_id,
                 reason_run_id=reason_run_id,
+                plan_run_id=plan_run_id,
                 review_run_id=review_run_id,
                 lease_id=lease_id,
                 record=record,
@@ -231,6 +280,7 @@ class TokenUsageService:
                     task_id=task_id,
                     intent_id=intent_id,
                     reason_run_id=reason_run_id,
+                    plan_run_id=plan_run_id,
                     review_run_id=review_run_id,
                     lease_id=lease_id,
                     phase=phase,
@@ -276,6 +326,9 @@ class TokenUsageService:
                         llm_token_usage_sources.c.reason_run_id == reason_run_id
                         if reason_run_id is not None
                         else llm_token_usage_sources.c.reason_run_id.is_(None),
+                        llm_token_usage_sources.c.plan_run_id == plan_run_id
+                        if plan_run_id is not None
+                        else llm_token_usage_sources.c.plan_run_id.is_(None),
                         llm_token_usage_sources.c.review_run_id == review_run_id
                         if review_run_id is not None
                         else llm_token_usage_sources.c.review_run_id.is_(None),
@@ -287,6 +340,7 @@ class TokenUsageService:
                 task_id=task_id,
                 intent_id=intent_id,
                 reason_run_id=reason_run_id,
+                plan_run_id=plan_run_id,
                 review_run_id=review_run_id,
                 lease_id=lease_id,
                 session_file=source_record.session_file,
@@ -296,6 +350,7 @@ class TokenUsageService:
                 task_id=task_id,
                 intent_id=intent_id,
                 reason_run_id=reason_run_id,
+                plan_run_id=plan_run_id,
                 review_run_id=review_run_id,
                 lease_id=lease_id,
                 session_file=source_record.session_file,
@@ -562,6 +617,7 @@ def usage_source_key(
     task_id: str,
     intent_id: str | None,
     reason_run_id: str | None,
+    plan_run_id: str | None = None,
     lease_id: str,
     record: TokenUsageRecordInput,
     review_run_id: str | None = None,
@@ -579,7 +635,7 @@ def usage_source_key(
     pre-persistence helper and for readability at call sites, but are not
     included in the deduplication identity.
     """
-    del task_id, intent_id, reason_run_id, review_run_id, lease_id
+    del task_id, intent_id, reason_run_id, plan_run_id, review_run_id, lease_id
     raw = "|".join(
         (
             record.session_file,
@@ -596,12 +652,26 @@ def source_status_key(
     task_id: str,
     intent_id: str | None,
     reason_run_id: str | None,
+    plan_run_id: str | None = None,
     lease_id: str,
     session_file: str,
     review_run_id: str | None = None,
 ) -> str:
-    owner = intent_id or reason_run_id or review_run_id or "unknown"
-    raw = "|".join((task_id, owner, lease_id, session_file))
+    # Include the owner kind in the source identity.  A PlanRun and a
+    # ReasonRun can legitimately use the same lease/session path during
+    # recovery, but their source status must remain independently tracked.
+    owner = (
+        ("intent", intent_id)
+        if intent_id is not None
+        else ("reason", reason_run_id)
+        if reason_run_id is not None
+        else ("plan", plan_run_id)
+        if plan_run_id is not None
+        else ("review", review_run_id)
+        if review_run_id is not None
+        else ("unknown", "unknown")
+    )
+    raw = "|".join((task_id, owner[0], owner[1], lease_id, session_file))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

@@ -250,7 +250,7 @@ def test_reason_rejects_commit_when_a_source_fact_is_not_consumed(client) -> Non
     assert completed["fact_id"] in committed.text
 
 
-def test_reason_allows_a_non_achieved_no_op_and_reconciles_to_plan(client) -> None:
+def test_reason_allows_a_non_achieved_no_op_and_reconciles_to_independent_plan(client) -> None:
     update_runtime_settings(client, reason_min_interval_seconds=0)
     task, reason_claim, completed = active_reason(client)
     workspace = open_reason_workspace(client, task_id=task["id"], claim=reason_claim)
@@ -274,13 +274,16 @@ def test_reason_allows_a_non_achieved_no_op_and_reconciles_to_plan(client) -> No
     assert task_after["phase"] == "waiting"
     evaluations = client.get(f"/api/v1/tasks/{task['id']}/goal-evaluations").json()
     assert evaluations[-1]["achieved"] is False
-    reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    # Plan is an independent runtime.  Reconciliation therefore uses the
+    # Plan queue/API instead of creating a legacy reason_runs(trigger=plan)
+    # record.
+    reconciled = client.post("/api/v1/dispatch/plan-runs/reconcile", json={})
     assert reconciled.status_code == 200, reconciled.text
-    [plan_run_id] = reconciled.json()["created_reason_run_ids"]
+    [plan_run_id] = reconciled.json()["created_plan_run_ids"]
     plan = client.get(
-        f"/api/v1/tasks/{task['id']}/reason-runs/{plan_run_id}"
+        f"/api/v1/tasks/{task['id']}/plan-runs/{plan_run_id}"
     ).json()
-    assert plan["trigger"] == "plan"
+    assert plan["trigger"] == "reconcile"
     task_after_plan = client.get(f"/api/v1/tasks/{task['id']}").json()
     assert task_after_plan["phase"] == "plan"
     assert task_after_plan["active_plan_run"] is None

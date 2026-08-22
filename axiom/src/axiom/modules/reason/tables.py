@@ -67,6 +67,9 @@ Index(
     "uq_reason_runs_one_in_flight_per_task",
     reason_runs.c.task_id,
     unique=True,
+    sqlite_where=reason_runs.c.status.in_(
+        ["claimed", "running", "concluding"]
+    ),
     postgresql_where=reason_runs.c.status.in_(["claimed", "running", "concluding"]),
 )
 

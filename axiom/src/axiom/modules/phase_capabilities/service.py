@@ -28,7 +28,7 @@ from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, NotFoundError
 
 
-PHASES = ("bootstrap", "reason", "explore", "review")
+PHASES = ("bootstrap", "reason", "explore", "plan", "review")
 SCOPES = ("common", *PHASES)
 KINDS = ("skill", "mcp_tool", "axiom_tool")
 _DEFAULTS_MARKER = ".phase-capabilities-v1-initialized"
@@ -52,7 +52,7 @@ class LeaseCapabilitySnapshot:
 
 
 class PhaseCapabilityService:
-    """One capability matrix shared by the four logical stage Workers."""
+    """One capability matrix shared by the logical stage Workers."""
 
     def __init__(
         self,
@@ -686,7 +686,7 @@ class PhaseCapabilityService:
             missing = [phase for phase in PHASES if phase not in supported]
             if missing:
                 raise ConflictError(
-                    f"AXIOM Tool {key} 不能设为通用能力；通用能力必须支持四个阶段，"
+                    f"AXIOM Tool {key} 不能设为通用能力；通用能力必须支持五个阶段，"
                     f"当前缺少：{', '.join(missing)}"
                 )
         for phase in phases:

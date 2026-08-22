@@ -33,6 +33,8 @@ from axiom.modules.reason.schemas import (
     WorkspaceStatus,
 )
 from axiom.modules.reason.tables import reason_run_sources, reason_runs
+from axiom.modules.plan.repository import PlanRepository
+from axiom.modules.plan.tables import plan_run_sources, plan_runs
 from axiom.modules.settings.service import load_runtime_config
 from axiom.modules.settings.tables import runtime_settings
 from axiom.modules.tasks.origin import parse_intent_network_target, scope_entry_matches_host
@@ -46,7 +48,6 @@ from axiom.modules.todos.schemas import (
     TodoSource,
 )
 from axiom.modules.todos.tables import todos
-from axiom.modules.vulnerabilities.tables import vulnerabilities
 from axiom.modules.workers.tables import workers
 from axiom.shared.clock import format_utc, parse_utc, utcnow
 from axiom.shared.database import run_transaction, transaction
@@ -85,6 +86,7 @@ class ReasonService:
         self.engine = engine
         self.store = store
         self.repository = ReasonRepository()
+        self.plans = PlanRepository()
         self.tasks = TaskRepository()
         self.todos = TodoRepository()
         self.goals = GoalRepository()
@@ -626,6 +628,34 @@ class ReasonService:
         regular_pending = [run for run in pending if run.trigger != "plan"]
         pending_plans = [run for run in pending if run.trigger == "plan"]
 
+        # Plan is an independent runtime.  Reason reconciliation still needs
+        # to observe its ownership so a runner tick cannot overwrite the
+        # visible phase while the Plan lease is active, or route an idle Task
+        # to waiting while a Plan is queued for the next planning pass.  Do
+        # not claim or mutate PlanRun rows here; PlanService owns that
+        # lifecycle.  This is only a task-lock-protected phase handoff guard.
+        independent_plan_active = conn.execute(
+            select(plan_runs.c.id)
+            .where(
+                plan_runs.c.task_id == task_id,
+                plan_runs.c.status.in_(("claimed", "running", "concluding")),
+            )
+            .order_by(plan_runs.c.created_at, plan_runs.c.id)
+            .limit(1)
+        ).scalar_one_or_none()
+        independent_plan_pending = conn.execute(
+            select(plan_runs.c.id)
+            .where(
+                plan_runs.c.task_id == task_id,
+                plan_runs.c.status == "pending",
+            )
+            .order_by(plan_runs.c.created_at, plan_runs.c.id)
+            .limit(1)
+        ).scalar_one_or_none()
+        independent_plan_present = bool(
+            independent_plan_active or independent_plan_pending
+        )
+
         bootstrap_completed = conn.execute(
             select(intents.c.id)
             .where(
@@ -656,51 +686,152 @@ class ReasonService:
             or unassessed_intent_ids
         )
 
+        # An independent Plan can explicitly hand the task back to Reason
+        # even when its snapshot contains no newly-unconsumed Fact (the
+        # ``needs_reason`` decision is itself a durable planning signal).
+        # Do not rely on ``task.phase == 'reason'`` alone: a normal debounce
+        # would otherwise send the task straight to waiting, and the handoff
+        # would be lost.  The completed PlanRun timestamp makes this a
+        # one-shot edge; once the handoff ReasonRun is completed, the latest
+        # Reason timestamp is newer and this branch no longer fires.
+        latest = self.repository.latest_completed_row(conn, task_id)
+        latest_finalized = self.repository.latest_finalized_row(conn, task_id)
+        latest_plan = conn.execute(
+            select(
+                plan_runs.c.id,
+                plan_runs.c.concluded_at,
+                plan_runs.c.updated_at,
+                plan_runs.c.decision_json,
+            )
+            .where(
+                plan_runs.c.task_id == task_id,
+                plan_runs.c.status == "completed",
+            )
+            .order_by(
+                plan_runs.c.concluded_at.desc().nulls_last(),
+                plan_runs.c.id.desc(),
+            )
+            .limit(1)
+        ).mappings().one_or_none()
+        plan_handoff_pending = False
+        if task.phase == "reason" and latest_plan is not None:
+            plan_finished_at = latest_plan.get("concluded_at") or latest_plan.get(
+                "updated_at"
+            )
+            # Include failed/cancelled terminal ReasonRuns here.  A Plan
+            # handoff is consumed even when its Reason attempt fails; using
+            # only the latest completed row would recreate the same handoff
+            # forever and bypass the normal retry budget.
+            reason_finished_at = (
+                latest_finalized.get("concluded_at")
+                if latest_finalized is not None
+                else None
+            )
+            try:
+                plan_handoff_pending = reason_finished_at is None or (
+                    plan_finished_at is not None
+                    and parse_utc(str(plan_finished_at)) > parse_utc(str(reason_finished_at))
+                )
+            except (TypeError, ValueError):
+                # A malformed historical timestamp must not prevent normal
+                # reconciliation; the explicit phase still provides a safe
+                # fallback for a subsequent manual trigger.
+                plan_handoff_pending = False
+
+        if plan_handoff_pending and not in_flight and not pending:
+            try:
+                plan_decision = json.loads(latest_plan.get("decision_json") or "{}")
+            except (TypeError, ValueError):
+                plan_decision = {}
+            handoff_payload = {
+                "plan_handoff": True,
+                "plan_run_id": latest_plan["id"],
+                "plan_decision": plan_decision.get("decision", "needs_reason"),
+                "handoff_reason": "independent_plan_completed",
+                "source_fact_ids": list(snapshot["source_fact_ids"]),
+                "failed_intent_ids": list(snapshot["failed_intent_ids"]),
+                "actionable_todo_ids": list(snapshot["actionable_todo_ids"]),
+                "todo_review_ids": list(snapshot["todo_review_ids"]),
+                "open_explore_ids": list(snapshot["open_explore_ids"]),
+                "unassessed_intent_ids": list(snapshot["unassessed_intent_ids"]),
+            }
+            handoff = self._enqueue_or_coalesce_in(
+                conn,
+                task=task,
+                trigger="plan_handoff",
+                trigger_payload=handoff_payload,
+                snapshot=snapshot,
+                input_fingerprint=self._snapshot_fingerprint(snapshot),
+                now=now,
+            )
+            self._set_phase(conn, task_id, "reason", now)
+            return handoff.id
+
         # A pending Plan is conditional on the incremental queue being empty.
         # If new input arrives before it is claimed, cancel only that pending
         # Plan and let the ordinary Reason FIFO handle the signal.  An already
         # claimed/running Plan remains valid and late-binds the new input at
         # start/commit time.
-        if pending_plans and in_flight is None and (signals_present or open_explore_ids):
-            self.repository.cancel_pending_plan_runs(
-                conn,
-                task_id,
-                now=now,
-                failure_kind="incremental_work_arrived",
-            )
+        if (
+            (pending_plans or independent_plan_pending)
+            and in_flight is None
+            and (signals_present or open_explore_ids)
+        ):
+            if pending_plans:
+                self.repository.cancel_pending_plan_runs(
+                    conn,
+                    task_id,
+                    now=now,
+                    failure_kind="incremental_work_arrived",
+                )
+            if independent_plan_pending:
+                self.plans.cancel_pending_for_task(
+                    conn,
+                    task_id,
+                    now=now,
+                    failure_kind="incremental_work_arrived",
+                )
             pending = regular_pending
             pending_plans = []
+            independent_plan_pending = None
+            independent_plan_present = bool(independent_plan_active)
         open_runs = [run for run in [in_flight, *pending] if run is not None]
         if open_runs and not self._has_uncovered_input(snapshot, open_runs):
             current = in_flight or (regular_pending[0] if regular_pending else pending[0])
             self._set_phase(
                 conn,
                 task_id,
-                "plan" if current.trigger == "plan" else "reason",
+                "plan"
+                if independent_plan_present
+                else ("plan" if current.trigger == "plan" else "reason"),
                 now,
             )
             return (in_flight or pending[0]).id
         # A terminal Explore without a follow-up is itself a planning signal.
         if not signals_present:
             if open_explore_ids:
-                self._set_phase(conn, task_id, "explore", now)
+                self._set_phase(
+                    conn,
+                    task_id,
+                    "plan" if independent_plan_present else "explore",
+                    now,
+                )
                 return None
             if pending_plans:
                 self._set_phase(conn, task_id, "plan", now)
                 return pending_plans[0].id
-            plan = self._create_plan_if_allowed_in(
-                conn,
-                task=task,
-                state=state,
-                now=now,
-            )
-            if plan is not None:
-                return plan.id
+            if independent_plan_present:
+                self._set_phase(conn, task_id, "plan", now)
+                return None
+            # Plan is an independent runtime.  Reason only reports that its
+            # incremental work is exhausted; the dispatcher invokes
+            # PlanService.reconcile_task() in the same tick.  Keeping Plan
+            # creation out of this service is important: a new panorama pass
+            # must never be persisted as reason_runs(trigger="plan").
             self._set_phase(conn, task_id, "waiting", now)
             return None
 
         config = load_runtime_config(conn)
-        latest = self.repository.latest_completed_row(conn, task_id)
         oldest_age = (
             max(
                 0.0,
@@ -738,7 +869,14 @@ class ReasonService:
                 and not unassessed_intent_ids
                 and not after_plan_handoff
             ):
-                self._set_phase(conn, task_id, "explore" if open_explore_ids else "waiting", now)
+                self._set_phase(
+                    conn,
+                    task_id,
+                    "plan"
+                    if independent_plan_present
+                    else ("explore" if open_explore_ids else "waiting"),
+                    now,
+                )
                 return None
             if after_plan_handoff and unassessed_intent_ids and not open_explore_ids:
                 trigger = "intent_assessment"
@@ -758,7 +896,14 @@ class ReasonService:
             elif source_fact_ids and oldest_age >= config.reason_max_wait_seconds:
                 trigger = "max_wait"
             else:
-                self._set_phase(conn, task_id, "explore" if open_explore_ids else "waiting", now)
+                self._set_phase(
+                    conn,
+                    task_id,
+                    "plan"
+                    if independent_plan_present
+                    else ("explore" if open_explore_ids else "waiting"),
+                    now,
+                )
                 return None
 
         fingerprint = self._snapshot_fingerprint(snapshot)
@@ -771,7 +916,14 @@ class ReasonService:
             latest_deduplication is not None
             and latest_deduplication["input_fingerprint"] == fingerprint
         ):
-            self._set_phase(conn, task_id, "explore" if open_explore_ids else "waiting", now)
+            self._set_phase(
+                conn,
+                task_id,
+                "plan"
+                if independent_plan_present
+                else ("explore" if open_explore_ids else "waiting"),
+                now,
+            )
             return None
 
         run = self._enqueue_or_coalesce_in(
@@ -791,83 +943,21 @@ class ReasonService:
             input_fingerprint=fingerprint,
             now=now,
         )
-        self._set_phase(conn, task_id, "reason", now)
+        # If a Plan lease is already active, the newly queued Reason input is
+        # deliberately held behind it.  Plan commit will hand the Task back
+        # to Reason once the Plan closes; exposing phase=reason here would let
+        # the next UI/runner tick misreport the current owner.
+        self._set_phase(conn, task_id, "plan" if independent_plan_present else "reason", now)
         return run.id
 
     def _create_plan_if_allowed_in(self, conn, *, task, state, now: str) -> ReasonRun | None:
-        """Create the one-off panorama review when the incremental queue is empty."""
+        """Deprecated compatibility hook; PlanService owns Plan creation.
 
-        in_flight = self.repository.in_flight_for_task(conn, task.id)
-        pending = self.repository.pending_runs_for_task(conn, task.id)
-        if in_flight is not None or pending:
-            return None
-
-        current_cycle = task.current_goal_cycle_id
-        verified_at = conn.execute(
-            select(func.max(vulnerabilities.c.updated_at)).where(
-                vulnerabilities.c.task_id == task.id,
-                vulnerabilities.c.status == "已验证",
-            )
-        ).scalar_one_or_none()
-        plan_query = select(reason_runs.c.id).where(
-            reason_runs.c.task_id == task.id,
-            reason_runs.c.trigger == "plan",
-            reason_runs.c.status.in_(["completed", "failed"]),
-        )
-        if current_cycle is not None:
-            plan_query = plan_query.where(reason_runs.c.goal_cycle_id == current_cycle)
-        if verified_at is not None:
-            plan_query = plan_query.where(reason_runs.c.created_at > verified_at)
-        plan_rows = list(
-            conn.execute(plan_query.order_by(reason_runs.c.created_at, reason_runs.c.id)).scalars()
-        )
-        if len(plan_rows) >= MAX_CONSECUTIVE_PLAN_RUNS:
-            return None
-
-        latest = self.repository.latest_deduplication_row(conn, task.id)
-        latest_is_same_plan_cycle = (
-            latest is not None
-            and latest["trigger"] == "plan"
-            and latest["goal_cycle_id"] == current_cycle
-            and (verified_at is None or latest["created_at"] > verified_at)
-        )
-        if latest_is_same_plan_cycle:
-            # A Plan that already concluded without new graph input must not
-            # immediately schedule another identical panorama pass. Manual,
-            # Hint and continuation triggers can still start a new ReasonRun.
-            return None
-
-        sequence = len(plan_rows) + 1
-        plan_snapshot = self._snapshot_from_state(state)
-        fingerprint = self._fingerprint(
-            source_fact_ids=plan_snapshot["source_fact_ids"],
-            failed_intent_ids=plan_snapshot["failed_intent_ids"],
-            actionable_todo_ids=plan_snapshot["actionable_todo_ids"],
-            todo_review_ids=plan_snapshot["todo_review_ids"],
-            open_explore_ids=plan_snapshot["open_explore_ids"],
-            unassessed_intent_ids=plan_snapshot["unassessed_intent_ids"],
-        )
-        run = self._create_run(
-            conn,
-            task=task,
-            source_fact_ids=plan_snapshot["source_fact_ids"],
-            trigger="plan",
-            trigger_payload={
-                "plan_sequence": sequence,
-                "reviewed_dimensions": [
-                    "coverage",
-                    "weaponization",
-                    "blocked_paths",
-                    "goal_completion",
-                ],
-                "context_scope": "full_task_history",
-                "artifact_mode": "index_summary_and_workspace_on_demand",
-            },
-            input_fingerprint=fingerprint,
-            now=now,
-        )
-        self._set_phase(conn, task.id, "plan", now)
-        return run
+        This method intentionally never writes a ReasonRun.  It remains as a
+        small no-op for callers from older integrations while the independent
+        Plan runtime is rolled out.
+        """
+        return None
 
     def _create_run(
         self,
@@ -922,7 +1012,7 @@ class ReasonService:
         return run
 
     def _input_state(self, conn, task_id: str) -> dict[str, object]:
-        planned_fact_exists = exists(
+        planned_by_reason = exists(
             select(reason_run_sources.c.fact_id)
             .join(
                 reason_runs,
@@ -935,6 +1025,28 @@ class ReasonService:
                 reason_runs.c.status.in_(["pending", "claimed", "running", "concluding", "completed"]),
             )
         )
+        # Plan owns the same Fact queue through a separate table.  A Fact
+        # captured by a pending/active/completed PlanRun must not be offered
+        # again to Reason after Plan concludes; otherwise an exhausted Plan
+        # would immediately create a duplicate Reason pass for its baseline
+        # inputs.  Failed/cancelled PlanRuns intentionally release ownership
+        # so reconciliation can retry the input.
+        planned_by_plan = exists(
+            select(plan_run_sources.c.fact_id)
+            .join(
+                plan_runs,
+                (plan_runs.c.task_id == plan_run_sources.c.task_id)
+                & (plan_runs.c.id == plan_run_sources.c.plan_run_id),
+            )
+            .where(
+                plan_run_sources.c.task_id == task_id,
+                plan_run_sources.c.fact_id == facts.c.id,
+                plan_runs.c.status.in_(
+                    ["pending", "claimed", "running", "concluding", "completed"]
+                ),
+            )
+        )
+        planned_fact_exists = or_(planned_by_reason, planned_by_plan)
         unplanned = list(
             conn.execute(
                 select(facts.c.id, facts.c.created_at)
@@ -1151,6 +1263,9 @@ class ReasonService:
 
     def heartbeat_run(self, task_id: str, reason_run_id: str, *, lease_id: str) -> None:
         with transaction(self.engine) as conn:
+            # Legacy panorama rows are retained for history only.  Do not let
+            # a stale lease revive them through the Reason heartbeat path.
+            self._require_run_lease(conn, task_id, reason_run_id, lease_id)
             if not self.repository.heartbeat(
                 conn,
                 task_id=task_id,
@@ -1296,6 +1411,10 @@ class ReasonService:
         run = self.repository.get_run(conn, task_id, reason_run_id)
         if run is None:
             raise NotFoundError(f"ReasonRun not found: {task_id}/{reason_run_id}")
+        if run.trigger == "plan":
+            raise ConflictError(
+                "Legacy ReasonRun(trigger=plan) is read-only; use the independent PlanRun API"
+            )
         if run.lease_id != lease_id:
             raise LeaseInactiveError("ReasonRun lease does not match")
         return run
@@ -2043,6 +2162,10 @@ class ReasonService:
             raise NotFoundError(
                 f"ReasonRun not found: {workspace.task_id}/{workspace.reason_run_id}"
             )
+        if run.trigger == "plan":
+            raise ConflictError(
+                "Legacy Reason Workspace for Plan is read-only; use Plan Workspace"
+            )
         if run.lease_id != lease_id:
             raise LeaseInactiveError("ReasonRun lease does not match")
 
@@ -2053,6 +2176,10 @@ class ReasonService:
         if run is None:
             raise NotFoundError(
                 f"ReasonRun not found: {workspace.task_id}/{workspace.reason_run_id}"
+            )
+        if run.trigger == "plan":
+            raise ConflictError(
+                "Legacy Reason Workspace for Plan is read-only; use Plan Workspace"
             )
         return run
 

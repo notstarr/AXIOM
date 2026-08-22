@@ -10,6 +10,7 @@ from axiom.dispatcher.schemas import (
     DispatchLimits,
     DispatcherSnapshot,
     IntentSnapshot,
+    PlanRunSnapshot,
     ReasonRunSnapshot,
     ReviewRunSnapshot,
     TaskSnapshot,
@@ -17,6 +18,7 @@ from axiom.dispatcher.schemas import (
 )
 from axiom.modules.graph.tables import intents
 from axiom.modules.reason.tables import reason_runs
+from axiom.modules.plan.tables import plan_runs
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.settings.schemas import RuntimeConfig
 from axiom.modules.tasks.tables import tasks
@@ -52,6 +54,7 @@ class DispatchRepository:
                 created_at=parse_utc(row["created_at"]),
                 intents=[],
                 reason_runs=[],
+                plan_runs=[],
                 review_runs=[],
             )
             for row in task_rows
@@ -112,7 +115,10 @@ class DispatchRepository:
                 reason_runs.c.created_at,
                 reason_runs.c.claimed_at,
             )
-            .where(reason_runs.c.status.in_(OPEN_STATUSES))
+            .where(
+                reason_runs.c.status.in_(OPEN_STATUSES),
+                reason_runs.c.trigger != "plan",
+            )
             .order_by(reason_runs.c.created_at, reason_runs.c.id)
         ).mappings()
         for row in reason_rows:
@@ -121,6 +127,39 @@ class DispatchRepository:
                 continue
             task.reason_runs.append(
                 ReasonRunSnapshot(
+                    task_id=row["task_id"],
+                    id=row["id"],
+                    status=row["status"],
+                    trigger=row["trigger"],
+                    worker_pool=json.loads(row["worker_pool_json"] or "[]"),
+                    next_retry_at=(
+                        parse_utc(row["next_retry_at"]) if row["next_retry_at"] else None
+                    ),
+                    created_at=parse_utc(row["created_at"]),
+                    claimed_at=parse_utc(row["claimed_at"]) if row["claimed_at"] else None,
+                )
+            )
+
+        plan_rows = conn.execute(
+            select(
+                plan_runs.c.task_id,
+                plan_runs.c.id,
+                plan_runs.c.status,
+                plan_runs.c.trigger,
+                plan_runs.c.worker_pool_json,
+                plan_runs.c.next_retry_at,
+                plan_runs.c.created_at,
+                plan_runs.c.claimed_at,
+            )
+            .where(plan_runs.c.status.in_(OPEN_STATUSES))
+            .order_by(plan_runs.c.created_at, plan_runs.c.id)
+        ).mappings()
+        for row in plan_rows:
+            task = tasks_by_id.get(row["task_id"])
+            if task is None:
+                continue
+            task.plan_runs.append(
+                PlanRunSnapshot(
                     task_id=row["task_id"],
                     id=row["id"],
                     status=row["status"],
@@ -168,10 +207,17 @@ class DispatchRepository:
             )
 
         last_claimed_by_task: dict[str, datetime] = {}
-        for table in (intents, reason_runs, vulnerability_review_runs):
+        for table in (intents, reason_runs, plan_runs, vulnerability_review_runs):
+            conditions = [table.c.claimed_at.is_not(None)]
+            # Legacy Plan rows lived in reason_runs before the independent
+            # Plan runtime existed.  They remain queryable for history but
+            # must not influence dispatcher fairness/recency for ordinary
+            # Reason work.
+            if table is reason_runs:
+                conditions.append(reason_runs.c.trigger != "plan")
             for row in conn.execute(
                 select(table.c.task_id, func.max(table.c.claimed_at).label("claimed_at"))
-                .where(table.c.claimed_at.is_not(None))
+                .where(*conditions)
                 .group_by(table.c.task_id)
             ).mappings():
                 claimed_at = parse_utc(row["claimed_at"])
@@ -205,8 +251,18 @@ class DispatchRepository:
             .where(
                 reason_runs.c.worker.is_not(None),
                 reason_runs.c.status.in_(ACTIVE_STATUSES),
+                reason_runs.c.trigger != "plan",
             )
             .group_by(reason_runs.c.worker)
+        ).mappings():
+            running[row["worker"]] += row["count"]
+        for row in conn.execute(
+            select(plan_runs.c.worker, func.count().label("count"))
+            .where(
+                plan_runs.c.worker.is_not(None),
+                plan_runs.c.status.in_(ACTIVE_STATUSES),
+            )
+            .group_by(plan_runs.c.worker)
         ).mappings():
             running[row["worker"]] += row["count"]
 
@@ -281,6 +337,15 @@ class DispatchRepository:
         ).mappings().one_or_none()
 
     @staticmethod
+    def plan_run_row(conn: Connection, task_id: str, plan_run_id: str):
+        return conn.execute(
+            select(plan_runs, tasks.c.project_id.label("project_id"))
+            .join(tasks, tasks.c.id == plan_runs.c.task_id)
+            .where(plan_runs.c.task_id == task_id, plan_runs.c.id == plan_run_id)
+            .with_for_update(of=plan_runs, skip_locked=True)
+        ).mappings().one_or_none()
+
+    @staticmethod
     def review_run_row(conn: Connection, task_id: str, review_run_id: str):
         return conn.execute(
             select(vulnerability_review_runs, tasks.c.project_id.label("project_id"))
@@ -311,6 +376,15 @@ class DispatchRepository:
             .where(
                 reason_runs.c.worker == worker_name,
                 reason_runs.c.status.in_(ACTIVE_STATUSES),
+                reason_runs.c.trigger != "plan",
+            )
+        ).scalar_one()
+        plan_count = conn.execute(
+            select(func.count())
+            .select_from(plan_runs)
+            .where(
+                plan_runs.c.worker == worker_name,
+                plan_runs.c.status.in_(ACTIVE_STATUSES),
             )
         ).scalar_one()
         review_count = conn.execute(
@@ -321,7 +395,7 @@ class DispatchRepository:
                 vulnerability_review_runs.c.status.in_(ACTIVE_STATUSES),
             )
         ).scalar_one()
-        return int(intent_count + reason_count + review_count)
+        return int(intent_count + reason_count + plan_count + review_count)
 
     @staticmethod
     def global_active_count(conn: Connection) -> int:
@@ -331,14 +405,22 @@ class DispatchRepository:
         reason_count = conn.execute(
             select(func.count())
             .select_from(reason_runs)
-            .where(reason_runs.c.status.in_(ACTIVE_STATUSES))
+            .where(
+                reason_runs.c.status.in_(ACTIVE_STATUSES),
+                reason_runs.c.trigger != "plan",
+            )
+        ).scalar_one()
+        plan_count = conn.execute(
+            select(func.count())
+            .select_from(plan_runs)
+            .where(plan_runs.c.status.in_(ACTIVE_STATUSES))
         ).scalar_one()
         review_count = conn.execute(
             select(func.count())
             .select_from(vulnerability_review_runs)
             .where(vulnerability_review_runs.c.status.in_(ACTIVE_STATUSES))
         ).scalar_one()
-        return int(intent_count + reason_count + review_count)
+        return int(intent_count + reason_count + plan_count + review_count)
 
     @staticmethod
     def active_task_ids(conn: Connection) -> set[str]:
@@ -347,7 +429,15 @@ class DispatchRepository:
         ).scalars()
         reason_task_ids = conn.execute(
             select(reason_runs.c.task_id)
-            .where(reason_runs.c.status.in_(ACTIVE_STATUSES))
+            .where(
+                reason_runs.c.status.in_(ACTIVE_STATUSES),
+                reason_runs.c.trigger != "plan",
+            )
+            .distinct()
+        ).scalars()
+        plan_task_ids = conn.execute(
+            select(plan_runs.c.task_id)
+            .where(plan_runs.c.status.in_(ACTIVE_STATUSES))
             .distinct()
         ).scalars()
         review_task_ids = conn.execute(
@@ -355,7 +445,7 @@ class DispatchRepository:
             .where(vulnerability_review_runs.c.status.in_(ACTIVE_STATUSES))
             .distinct()
         ).scalars()
-        return set(intent_task_ids) | set(reason_task_ids) | set(review_task_ids)
+        return set(intent_task_ids) | set(reason_task_ids) | set(plan_task_ids) | set(review_task_ids)
 
     @staticmethod
     def task_active_count(conn: Connection, task_id: str) -> int:
@@ -367,7 +457,16 @@ class DispatchRepository:
         reason_count = conn.execute(
             select(func.count())
             .select_from(reason_runs)
-            .where(reason_runs.c.task_id == task_id, reason_runs.c.status.in_(ACTIVE_STATUSES))
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.status.in_(ACTIVE_STATUSES),
+                reason_runs.c.trigger != "plan",
+            )
+        ).scalar_one()
+        plan_count = conn.execute(
+            select(func.count())
+            .select_from(plan_runs)
+            .where(plan_runs.c.task_id == task_id, plan_runs.c.status.in_(ACTIVE_STATUSES))
         ).scalar_one()
         review_count = conn.execute(
             select(func.count())
@@ -377,7 +476,7 @@ class DispatchRepository:
                 vulnerability_review_runs.c.status.in_(ACTIVE_STATUSES),
             )
         ).scalar_one()
-        return int(intent_count + reason_count + review_count)
+        return int(intent_count + reason_count + plan_count + review_count)
 
     @staticmethod
     def task_kind_active_count(conn: Connection, task_id: str, kind: str) -> int:
@@ -389,6 +488,7 @@ class DispatchRepository:
                     .where(
                         reason_runs.c.task_id == task_id,
                         reason_runs.c.status.in_(ACTIVE_STATUSES),
+                        reason_runs.c.trigger != "plan",
                     )
                 ).scalar_one()
             )
@@ -400,6 +500,17 @@ class DispatchRepository:
                     .where(
                         vulnerability_review_runs.c.task_id == task_id,
                         vulnerability_review_runs.c.status.in_(ACTIVE_STATUSES),
+                    )
+                ).scalar_one()
+            )
+        if kind == "plan":
+            return int(
+                conn.execute(
+                    select(func.count())
+                    .select_from(plan_runs)
+                    .where(
+                        plan_runs.c.task_id == task_id,
+                        plan_runs.c.status.in_(ACTIVE_STATUSES),
                     )
                 ).scalar_one()
             )
@@ -491,6 +602,7 @@ class DispatchRepository:
                 tasks.c.status == "running",
                 tasks.c.archived.is_(False),
                 reason_runs.c.status.in_(ACTIVE_STATUSES),
+                reason_runs.c.trigger != "plan",
                 reason_runs.c.lease_id.is_not(None),
                 reason_runs.c.last_heartbeat_at.is_not(None),
                 reason_runs.c.last_heartbeat_at <= cutoff,
@@ -499,6 +611,26 @@ class DispatchRepository:
                 reason_runs.c.last_heartbeat_at,
                 reason_runs.c.task_id,
                 reason_runs.c.id,
+            )
+        ).mappings().all()
+
+    @staticmethod
+    def stale_active_plan_runs(conn: Connection, *, cutoff: str):
+        return conn.execute(
+            select(plan_runs, tasks.c.project_id.label("project_id"))
+            .join(tasks, tasks.c.id == plan_runs.c.task_id)
+            .where(
+                tasks.c.status == "running",
+                tasks.c.archived.is_(False),
+                plan_runs.c.status.in_(ACTIVE_STATUSES),
+                plan_runs.c.lease_id.is_not(None),
+                plan_runs.c.last_heartbeat_at.is_not(None),
+                plan_runs.c.last_heartbeat_at <= cutoff,
+            )
+            .order_by(
+                plan_runs.c.last_heartbeat_at,
+                plan_runs.c.task_id,
+                plan_runs.c.id,
             )
         ).mappings().all()
 

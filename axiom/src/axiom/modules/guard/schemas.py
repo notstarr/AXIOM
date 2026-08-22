@@ -10,6 +10,7 @@ class GuardRequest(BaseModel):
     task_id: str | None = None
     intent_id: str | None = None
     reason_run_id: str | None = None
+    plan_run_id: str | None = None
     review_run_id: str | None = None
     phase: str = ""
     worker: str = ""
@@ -25,6 +26,12 @@ class GuardRequest(BaseModel):
         if not value:
             raise ValueError("tool_name must not be empty")
         return value
+
+    @field_validator("project_id", "task_id", "intent_id", "reason_run_id", "plan_run_id", "review_run_id")
+    @classmethod
+    def normalize_owner_ids(cls, value: str | None) -> str | None:
+        normalized = (value or "").strip()
+        return normalized or None
 
 
 class GuardDecision(BaseModel):

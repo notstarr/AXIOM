@@ -6,6 +6,7 @@ from sqlalchemy import Engine, func, select
 
 from axiom.modules.graph.tables import intents
 from axiom.modules.reason.tables import reason_runs
+from axiom.modules.plan.tables import plan_runs
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.phase_capabilities.schemas import PhaseBackend, WorkerPhase
 from axiom.modules.workers.pi_config import PiWorkerConfig, canonicalize_pi_worker_config
@@ -52,7 +53,7 @@ class WorkerService:
             return [self._normalize_worker(worker) for worker in self.repository.list(conn)]
 
     def phase_overview(self, phase: str | None = None) -> list[WorkerPhase]:
-        phases = [self._phase(phase)] if phase else ["bootstrap", "reason", "explore", "review"]
+        phases = [self._phase(phase)] if phase else ["bootstrap", "reason", "explore", "plan", "review"]
         with self.engine.connect() as conn:
             workers = [self._normalize_worker(item) for item in self.repository.list(conn)]
             running_by_worker: dict[str, int] = defaultdict(int)
@@ -74,6 +75,11 @@ class WorkerService:
                 .where(
                     reason_runs.c.worker.is_not(None),
                     reason_runs.c.status.in_(["claimed", "running", "concluding"]),
+                    # Historical Plan rows were once stored in reason_runs
+                    # with trigger='plan'.  They are read-only legacy data
+                    # and must not inflate Reason phase capacity or running
+                    # counters now that Plan has its own runtime.
+                    reason_runs.c.trigger != "plan",
                 )
                 .group_by(reason_runs.c.worker)
             ).mappings():
@@ -81,6 +87,18 @@ class WorkerService:
                 count = int(row["count"])
                 running_by_worker[worker_name] += count
                 running_by_worker_phase[(worker_name, "reason")] += count
+            for row in conn.execute(
+                select(plan_runs.c.worker, func.count().label("count"))
+                .where(
+                    plan_runs.c.worker.is_not(None),
+                    plan_runs.c.status.in_(["claimed", "running", "concluding"]),
+                )
+                .group_by(plan_runs.c.worker)
+            ).mappings():
+                worker_name = str(row["worker"])
+                count = int(row["count"])
+                running_by_worker[worker_name] += count
+                running_by_worker_phase[(worker_name, "plan")] += count
             for row in conn.execute(
                 select(vulnerability_review_runs.c.worker, func.count().label("count"))
                 .where(
@@ -99,6 +117,7 @@ class WorkerService:
             "bootstrap": "Bootstrap Worker",
             "reason": "Reason Worker",
             "explore": "Explore Worker",
+            "plan": "Plan Worker",
             "review": "Reviewer Worker",
         }
         for item_phase in phases:
@@ -220,10 +239,21 @@ class WorkerService:
                 .where(
                     reason_runs.c.worker == name,
                     reason_runs.c.status.in_(["claimed", "running", "concluding"]),
+                    reason_runs.c.trigger != "plan",
                 )
             ).scalar_one()
             if active_reason_runs:
                 raise ConflictError("Worker with active ReasonRuns cannot be deleted")
+            active_plan_runs = conn.execute(
+                select(func.count())
+                .select_from(plan_runs)
+                .where(
+                    plan_runs.c.worker == name,
+                    plan_runs.c.status.in_(["claimed", "running", "concluding"]),
+                )
+            ).scalar_one()
+            if active_plan_runs:
+                raise ConflictError("Worker with active PlanRuns cannot be deleted")
             active_review_runs = conn.execute(
                 select(func.count())
                 .select_from(vulnerability_review_runs)
@@ -369,7 +399,7 @@ class WorkerService:
     @staticmethod
     def _phase(value: str | None) -> str:
         phase = str(value or "").strip().lower()
-        if phase not in {"bootstrap", "reason", "explore", "review"}:
+        if phase not in {"bootstrap", "reason", "explore", "plan", "review"}:
             raise ConflictError(f"Invalid Worker phase: {phase}")
         return phase
 

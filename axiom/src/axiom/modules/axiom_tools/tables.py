@@ -61,7 +61,7 @@ worker_axiom_tool_bindings = Table(
     Column("created_at", UTCDateTimeText, nullable=False),
     Column("updated_at", UTCDateTimeText, nullable=False),
     PrimaryKeyConstraint("worker_name", "phase", "tool_key"),
-    CheckConstraint("phase IN ('bootstrap','reason','explore','review')", name="phase"),
+    CheckConstraint("phase IN ('bootstrap','reason','explore','plan','review')", name="phase"),
 )
 
 Index(

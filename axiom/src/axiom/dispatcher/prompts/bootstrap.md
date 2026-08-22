@@ -5,7 +5,7 @@
 ## 输入与边界
 - 入口：`{origin}` | 目标：`{goal}`
 {scope_guidance}
-- Context Manifest：`{context_manifest_path}` | 运行目录：`{run_dir}`
+- 上下文清单（Context Manifest）：`{context_manifest_path}` | 运行目录：`{run_dir}`
 - 技能目录（按需读取）：
 {skill_directories}
 - 若技能目录包含 `browser-control`，执行阶段可使用原生 `browser_*` 工具完成真实页面交互、读取渲染结果并获取网络基线；Bootstrap 收口阶段不可用，不能在收口时重新探测。
@@ -13,16 +13,17 @@
 ## 执行步骤
 
 1. **上下文读取与类型锁定**：
-   - 读取 Context Manifest 中的 `hints.json`（任务约束）、`knowledge.json`（背景）与 `vulnerabilities.json`。
-   - 运行 `axiom skill path whatisvul` 并阅读 `SKILL.md`（判定标准，失败时用 `axiom skill doctor whatisvul`）。
-   - 根据入口与目标判断类型（`小程序` / `App` / `Web`），读取对应的唯一子提示词：
+   - 完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`，避免重复测试和上报。
+   - 运行 `axiom skill path whatisvul` 并完整读取 `whatisvul/SKILL.md` 中的 `SKILL.md`（判定标准，失败时用 `axiom skill doctor whatisvul`）。
+   - 根据入口与目标判断类型（`小程序` / `App` / `Web`），读取对应的唯一子提示词；WebView/H5 仍属于该小程序，不要默认按 Web 处理，不得因为发现其它缓存应用就切换目标；每轮最多读取一份类型子提示词，不得读取任何类型子提示词（除已选中的这一份）：
    ```bash
    PROMPT_DIR="$("$AXIOM_PYTHON" -c 'from pathlib import Path; import axiom; print(Path(axiom.__file__).resolve().parent / "dispatcher" / "prompts")')"
    # 仅按类型读取一份：$PROMPT_DIR/bootstrap_web.md | bootstrap_miniapp.md | bootstrap_app.md
    ```
 2. **JS-first 与资产建模**：
-   - 递归收集 JS、chunk、Source Map，提取 API 能力树、参数来源与鉴权矩阵。
-   - 登录态可用时补充认证后资源。严禁在 URL 或产物中明文输出凭证。
+   - 递归收集 JS、chunk、Source Map，完成 JS 资源收集，提取 API 能力树、参数来源与鉴权矩阵。
+   - 登录态可用时补充认证前后资源（包括认证后资源）。严禁在 URL 或产物中明文输出凭证；credential-refresh 只用于刷新测试会话。
+   - 将结果整理为业务全景图，覆盖身份、能力树、入口和阻塞。
    - 严格禁止副作用操作（支付/删除/修改他人数据）。
 
 ## 核心产物与结束协议

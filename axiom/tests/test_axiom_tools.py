@@ -5,7 +5,9 @@ from pathlib import Path
 import shutil
 
 import pytest
+from sqlalchemy import update
 
+from axiom.modules.graph.tables import intents
 from axiom.modules.projects.tables import projects
 from axiom.modules.reason.tables import reason_runs
 from axiom.modules.tasks.tables import tasks
@@ -25,7 +27,7 @@ def _write_tool(root: Path, key: str, *, phases=None, schema=None) -> Path:
                 "description": "test tool",
                 "entrypoint": "index.ts",
                 "supported_phases": phases
-                or ["bootstrap", "reason", "explore", "review"],
+                or ["bootstrap", "reason", "explore", "plan", "review"],
                 "risk_tags": ["test"],
                 "parameters": schema
                 if schema is not None
@@ -196,6 +198,7 @@ def test_binding_is_validated_and_global_disable_keeps_effective_state(
         "bootstrap": 0,
         "reason": 0,
         "explore": 1,
+        "plan": 0,
         "review": 0,
     }
     enabled = client.patch("/api/v1/axiom-tools/shared_probe", json={"enabled": True})
@@ -223,6 +226,55 @@ def test_worker_overview_redacts_pi_secrets(client) -> None:
     assert worker["model"] == "private-model"
     assert "api_key" not in worker["config"]
     assert "PRIVATE_TOKEN" not in json.dumps(worker["config"])
+
+
+def test_worker_overview_counts_active_plan_run(client, engine) -> None:
+    project = client.post("/api/v1/projects", json={"title": "Plan worker overview"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "Plan worker overview",
+            "origin": "a.example.com",
+            "goal": "exercise the Plan worker overview",
+            "worker_pool": ["overview-plan-worker"],
+        },
+    ).json()
+    worker = client.put(
+        "/api/v1/workers/overview-plan-worker",
+        json={"capabilities": ["plan"], "max_running": 1, "config": {"model": "m"}},
+    )
+    assert worker.status_code == 200, worker.text
+    now = utcnow()
+    with engine.begin() as conn:
+        conn.execute(
+            update(intents)
+            .where(intents.c.task_id == task["id"], intents.c.id == "i001")
+            .values(status="completed", concluded_at=now)
+        )
+        conn.execute(
+            update(tasks)
+            .where(tasks.c.id == task["id"])
+            .values(phase="waiting", updated_at=now)
+        )
+    triggered = client.post(
+        f"/api/v1/tasks/{task['id']}/plan-runs/trigger",
+        json={"trigger": "manual"},
+    )
+    assert triggered.status_code == 200, triggered.text
+    plan_run_id = triggered.json()["id"]
+    claim = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/plan-runs/{plan_run_id}/claim",
+        json={"worker_name": "overview-plan-worker"},
+    )
+    assert claim.status_code == 200, claim.text
+
+    overview = client.get("/api/v1/workers/overview")
+    assert overview.status_code == 200, overview.text
+    overview_worker = next(
+        item for item in overview.json() if item["name"] == "overview-plan-worker"
+    )
+    assert overview_worker["running"] == 1
 
 
 def test_effective_tools_are_snapshotted_per_worker_and_phase(

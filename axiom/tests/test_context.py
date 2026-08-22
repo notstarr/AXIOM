@@ -462,3 +462,16 @@ def test_plan_context_reuses_existing_indexes_and_includes_archived_history(
         item["id"]
         for item in json.loads((plan_dir / "hints.json").read_text(encoding="utf-8"))
     }
+
+    expanded_plan = client.post(
+        f"/api/v1/tasks/{task['id']}/context/expand",
+        json={
+            "phase": "plan",
+            "refs": [f"todo:{todo['id']}", f"artifact:{artifact['id']}"],
+        },
+    )
+    assert expanded_plan.status_code == 200, expanded_plan.text
+    assert expanded_plan.json()["entries"][f"todo:{todo['id']}"]["archived"] is True
+    assert "archived-plan-lead" in expanded_plan.json()["entries"][
+        f"artifact:{artifact['id']}"
+    ]["content"]

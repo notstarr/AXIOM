@@ -463,6 +463,24 @@ def test_credential_cli_uses_reason_run_identity_when_reason_is_active(monkeypat
     assert calls[0][2] == {"lease_id": "lease-1", "reason_run_id": "rr000001"}
 
 
+def test_credential_cli_uses_plan_run_identity_when_plan_is_active(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return []
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+    environment = _env()
+    environment.pop("AXIOM_INTENT_ID")
+    environment.pop("AXIOM_REASON_RUN_ID")
+    environment["AXIOM_PLAN_RUN_ID"] = "pr000001"
+    result = CliRunner().invoke(main, ["credential", "list"], env=environment)
+
+    assert result.exit_code == 0, result.output
+    assert calls[0][2] == {"lease_id": "lease-1", "plan_run_id": "pr000001"}
+
+
 def test_credential_cli_writes_material_privately_without_echoing_it(
     monkeypatch,
     tmp_path: Path,

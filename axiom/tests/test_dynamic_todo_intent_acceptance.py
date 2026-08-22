@@ -238,7 +238,8 @@ def _create_fanout_task(client) -> tuple[dict, str, list[str]]:
                     "description": f"验证 fan-out 方向 {number + 1}",
                     "targets": ["fanout.example.com"],
                     "priority": number,
-                    "execute_seconds": 60,
+                    # Explore budgets are bounded by the runtime minimum.
+                    "execute_seconds": 300,
                     "conclude_seconds": 180,
                 },
             },

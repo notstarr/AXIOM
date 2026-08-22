@@ -47,7 +47,7 @@ def _write_extension_tool(
                 "description": "phase capability test tool",
                 "entrypoint": "index.ts",
                 "supported_phases": phases
-                or ["bootstrap", "reason", "explore", "review"],
+                or ["bootstrap", "reason", "explore", "plan", "review"],
                 "risk_tags": ["test"],
                 "parameters": {
                     "type": "object",
@@ -77,7 +77,7 @@ def _scan_extension_tool(
     assert response.status_code == 200, response.text
 
 
-def test_four_logical_worker_phases_share_model_backends(client) -> None:
+def test_five_logical_worker_phases_share_model_backends(client) -> None:
     _put_worker(client, "shared-backend", ["bootstrap", "reason"])
 
     phases = client.get("/api/v1/worker-phases")
@@ -87,12 +87,14 @@ def test_four_logical_worker_phases_share_model_backends(client) -> None:
         "bootstrap",
         "reason",
         "explore",
+        "plan",
         "review",
     ]
     assert [item["title"] for item in body] == [
         "Bootstrap Worker",
         "Reason Worker",
         "Explore Worker",
+        "Plan Worker",
         "Reviewer Worker",
     ]
     assert [item["name"] for item in body[0]["backends"]] == ["shared-backend"]
@@ -186,14 +188,14 @@ def test_common_and_phase_specific_capabilities_do_not_leak(client, data_dir) ->
     )
 
 
-def test_common_axiom_tool_must_support_all_four_phases(client, data_dir) -> None:
+def test_common_axiom_tool_must_support_all_five_phases(client, data_dir) -> None:
     _scan_extension_tool(client, data_dir, "bootstrap_probe", phases=["bootstrap"])
     response = client.put(
         "/api/v1/phase-capabilities/axiom_tool/bootstrap_probe",
         json={"scopes": ["common"]},
     )
     assert response.status_code == 409, response.text
-    assert "四个阶段" in response.text or "bootstrap" in response.text
+    assert "五个阶段" in response.text or "bootstrap" in response.text
 
 
 def test_common_scope_canonicalizes_redundant_phase_assignments(
@@ -231,6 +233,13 @@ def test_builtin_tool_catalog_matches_fixed_stage_contracts_and_is_read_only(
         "axiom.reason.todo.update",
         "axiom.reason.intent.propose",
         "axiom.reason.goal.assess",
+        "axiom.plan.status",
+        "axiom.plan.todo.add",
+        "axiom.plan.todo.update",
+        "axiom.plan.todo.delete",
+        "axiom.plan.intent.propose",
+        "axiom.plan.decision.submit",
+        "axiom.plan.exhaustion.submit",
         "axiom.explore.vulnerability.report",
         "axiom.explore.human_intervention.mark",
     }.issubset(tools)
@@ -238,9 +247,11 @@ def test_builtin_tool_catalog_matches_fixed_stage_contracts_and_is_read_only(
         "bootstrap": ["execute"],
         "reason": ["execute", "conclude"],
         "explore": ["execute", "conclude"],
+        "plan": ["execute", "conclude"],
         "review": ["execute", "conclude"],
     }
     assert tools["axiom.reason.status"]["phases"] == ["reason"]
+    assert tools["axiom.plan.status"]["phases"] == ["plan"]
     assert tools["axiom.explore.vulnerability.report"]["phases"] == ["explore"]
     assert tools["axiom.explore.human_intervention.mark"]["phases"] == ["explore"]
     assert tools["axiom.explore.human_intervention.mark"]["availability"] == {
@@ -271,7 +282,10 @@ def test_builtin_tool_catalog_matches_fixed_stage_contracts_and_is_read_only(
     }
     assert browser_tools <= set(tools)
     assert all(tools[name]["source"] == "axiom_browser" for name in browser_tools)
-    assert all(tools[name]["phases"] == ["explore"] for name in browser_tools)
+    assert all(
+        tools[name]["phases"] == ["bootstrap", "explore"]
+        for name in browser_tools
+    )
     assert all(tools[name]["locked"] is True for name in browser_tools)
     assert not (browser_tools & {item["capability_key"] for item in body["items"]})
     assert all(item["locked"] is True for item in tools.values())
@@ -287,6 +301,29 @@ def test_builtin_tool_catalog_matches_fixed_stage_contracts_and_is_read_only(
     )
     assert rejected.status_code == 409, rejected.text
     assert "Invalid capability kind" in rejected.text
+
+
+def test_plan_builtin_tools_are_independent_from_reason(client) -> None:
+    body = client.get("/api/v1/phase-capabilities").json()
+    tools = {item["key"]: item for item in body["builtin_tools"]}
+    plan_tools = {
+        "axiom.plan.status",
+        "axiom.plan.todo.add",
+        "axiom.plan.todo.update",
+        "axiom.plan.todo.delete",
+        "axiom.plan.intent.propose",
+        "axiom.plan.decision.submit",
+        "axiom.plan.exhaustion.submit",
+    }
+
+    assert plan_tools.issubset(tools)
+    assert all(tools[key]["phases"] == ["plan"] for key in plan_tools)
+    assert all(
+        tools[key]["availability"] == {"plan": ["execute", "conclude"]}
+        for key in plan_tools
+    )
+    assert tools["axiom.reason.status"]["phases"] == ["reason"]
+    assert tools["axiom.plan.status"]["invocation"] == "axiom plan status"
 
 
 def test_locked_whatisvul_is_common_and_cannot_be_removed(client) -> None:

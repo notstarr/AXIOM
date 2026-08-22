@@ -117,6 +117,30 @@ def test_guard_audit_preserves_review_run_owner(client) -> None:
     assert events[0]["payload"]["phase"] == "review"
 
 
+def test_guard_audit_preserves_plan_run_owner(client) -> None:
+    task = _task(client, enabled=False)
+    response = client.post(
+        "/api/v1/internal/guard/pre",
+        json={
+            "project_id": task["project_id"],
+            "task_id": task["id"],
+            "plan_run_id": "pr000001",
+            "phase": "plan",
+            "worker": "plan-worker",
+            "tool_name": "read",
+            "input": {"path": "manifest.json"},
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    events = client.get(
+        "/api/v1/audit-events",
+        params={"task_id": task["id"], "event_type": "guard.decision"},
+    ).json()
+    assert events[0]["plan_run_id"] == "pr000001"
+    assert events[0]["payload"]["phase"] == "plan"
+
+
 def test_guard_fails_open_for_normal_external_operation_without_model_config(client) -> None:
     task = _task(client, enabled=True)
     decision = _decide(client, task, "curl https://a.example.com/health")

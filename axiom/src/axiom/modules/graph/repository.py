@@ -13,6 +13,16 @@ from axiom.modules.tasks.tables import tasks
 from axiom.shared.ids import initialize_counter
 
 
+def _json_object(value) -> dict:
+    if isinstance(value, dict):
+        return dict(value)
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
+
+
 class GraphRepository:
     def seed_task(self, conn: Connection, *, task: Task, now: str) -> None:
         initialize_counter(conn, scope=task.id, kind="fact", next_value=1)
@@ -345,6 +355,8 @@ class GraphRepository:
             worker=row["worker"],
             worker_pool=json.loads(row["worker_pool_json"] or "[]"),
             targets=json.loads(row["targets_json"] or "[]"),
+            dedup_fingerprint=row.get("dedup_fingerprint") or "",
+            plan_metadata=_json_object(row.get("plan_metadata_json")),
             execute_timeout_seconds=row["execute_timeout_seconds"],
             conclude_timeout_seconds=row["conclude_timeout_seconds"],
             lease_id=row["lease_id"],

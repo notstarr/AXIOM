@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from axiom.modules.phase_capabilities.schemas import CapabilityScope
 
 
-AxiomToolPhase = Literal["bootstrap", "reason", "explore", "review"]
+AxiomToolPhase = Literal["bootstrap", "reason", "explore", "plan", "review"]
 AxiomToolStatus = Literal["ready", "invalid", "missing"]
 AxiomToolSource = Literal["bundled", "managed"]
 
@@ -28,6 +28,7 @@ class AxiomToolBinding(BaseModel):
             "bootstrap",
             "reason",
             "explore",
+            "plan",
             "review",
         }:
             self.scope = self.phase
@@ -76,9 +77,10 @@ class WorkerAxiomToolBindings(BaseModel):
     bootstrap: list[str] = Field(default_factory=list)
     reason: list[str] = Field(default_factory=list)
     explore: list[str] = Field(default_factory=list)
+    plan: list[str] = Field(default_factory=list)
     review: list[str] = Field(default_factory=list)
 
-    @field_validator("bootstrap", "reason", "explore", "review")
+    @field_validator("bootstrap", "reason", "explore", "plan", "review")
     @classmethod
     def normalize_keys(cls, values: list[str]) -> list[str]:
         return list(dict.fromkeys(value.strip() for value in values if value.strip()))
@@ -117,6 +119,7 @@ class AxiomToolAuditCommand(BaseModel):
     task_id: str
     intent_id: str = ""
     reason_run_id: str = ""
+    plan_run_id: str = ""
     review_run_id: str = ""
     lease_id: str
     worker: str
@@ -140,15 +143,15 @@ class AxiomToolAuditCommand(BaseModel):
             raise ValueError("must not be empty")
         return value
 
-    @field_validator("intent_id", "reason_run_id", "review_run_id", "error")
+    @field_validator("intent_id", "reason_run_id", "plan_run_id", "review_run_id", "error")
     @classmethod
     def normalize_optional_text(cls, value: str) -> str:
         return value.strip()
 
     @model_validator(mode="after")
     def require_one_execution_owner(self) -> "AxiomToolAuditCommand":
-        if sum(bool(item) for item in (self.intent_id, self.reason_run_id, self.review_run_id)) != 1:
+        if sum(bool(item) for item in (self.intent_id, self.reason_run_id, self.plan_run_id, self.review_run_id)) != 1:
             raise ValueError(
-                "exactly one of intent_id, reason_run_id or review_run_id is required"
+                "exactly one of intent_id, reason_run_id, plan_run_id or review_run_id is required"
             )
         return self

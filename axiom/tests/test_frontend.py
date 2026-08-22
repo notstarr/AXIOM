@@ -1694,7 +1694,10 @@ def test_frontend_and_static_assets_are_served(client):
         )
         assert match is not None
         worker_asset_versions.add(match.group(1))
-    assert worker_asset_versions == {"20260807-manual-reason-v1"}
+    # Worker/capability assets are versioned together with the current
+    # five-stage Plan runtime bundle.  Keep this assertion tied to the
+    # manifest served by the app rather than the pre-Plan cache marker.
+    assert worker_asset_versions == {"20260821-clean-bootstrap-edge-v1"}
 
     asset = client.get("/static/js/v2-adapter.js")
     assert asset.status_code == 200
@@ -1756,8 +1759,9 @@ def test_frontend_and_static_assets_are_served(client):
 
     workers = client.get("/static/templates/workers.html")
     assert workers.status_code == 200
-    assert "四阶段 Worker" in workers.text
-    assert "系统有四个逻辑 Worker" in workers.text
+    assert "五阶段 Worker" in workers.text
+    assert "系统有五个逻辑 Worker" in workers.text
+    assert "Bootstrap、Reason、Explore、Plan 或 Reviewer" in workers.text
     assert "模型执行后端" in workers.text
     assert "workerPhases" in workers.text
     assert "能力管理" in workers.text
@@ -1780,6 +1784,7 @@ def test_frontend_and_static_assets_are_served(client):
     assert "axiomWorkerEditor?.test_result?.ok" in workers.text
     assert "axiomWorkerEditor.test_result.ok" not in workers.text
     assert "saveWorkerPhaseBackends" in workers.text
+    assert "Plan 队列等待可用后端" in workers.text
     assert "saveWorkerAxiomToolBindings" not in workers.text
     assert "saveMcpWorkerBinding" not in workers.text
     assert "思考模式" in workers.text
@@ -1801,7 +1806,7 @@ def test_frontend_and_static_assets_are_served(client):
 
     mcp = client.get("/static/templates/mcp.html")
     assert mcp.status_code == 200
-    assert "四阶段 MCP 可见性" in mcp.text
+    assert "五阶段 MCP 可见性" in mcp.text
     assert "阶段分配由 Worker 统一管理" in mcp.text
     assert "Worker 可见性" in mcp.text
     assert "navigateToWorkerCapability('mcp_tool'" in mcp.text
@@ -1852,6 +1857,8 @@ def test_frontend_and_static_assets_are_served(client):
 
     human = client.get("/static/templates/human-view.html")
     assert human.status_code == 200
+    assert "最近 Plan 决策" in human.text
+    assert "planDecisionLabel(project.project.last_plan_decision)" in human.text
     assert 'x-if="humanTab === \'workspace\'"' in human.text
     assert 'x-if="humanTab === \'artifacts\'"' in human.text
     assert 'x-if="humanTab === \'conversation\'"' in human.text
@@ -1907,6 +1914,7 @@ def test_frontend_and_static_assets_are_served(client):
     assert "`/tasks/${taskId}/reason-runs/trigger`" in adapter
     assert "`/tasks/${form.projectId}/continuations`" in adapter
     assert "goal_history: graph.goal_history || []" in adapter
+    assert "queued_plan_count: allQueuedPlans.length" in adapter
     assert "applyVulnerabilityRouteParams" in adapter
     assert "openVulnerabilityLocation" in adapter
     assert "applyWorkerRouteParams" in core
@@ -1933,12 +1941,16 @@ def test_frontend_and_static_assets_are_served(client):
     assert "stopAllActiveProjects" not in task_list.text
     assert "showLocalPrefs" not in task_list.text
     assert "查看漏洞报告" not in task_list.text
+    assert "Bootstrap、Explore、Reason、Plan、Reviewer" in task_list.text
+    assert "['bootstrap', 'explore', 'reason', 'plan', 'review']" in task_list.text
 
     apple_css = client.get("/static/apple.css")
     assert apple_css.status_code == 200
     assert "factDescriptionSegments" in graph_js
     assert "openFactReference" in graph_js
     assert "x-html" not in graph.text
+    assert "Plan 排队列表（FIFO）" in graph.text
+    assert "planDecisionLabel(project.project.last_plan_decision)" in graph.text
     assert "selectedVulnerability().prerequisites || '未填写'" in vulnerabilities.text
     assert "selectedVulnerability().remediation || '未填写'" in vulnerabilities.text
     assert "按列表查看证据、影响和修复建议" in vulnerabilities.text
@@ -1949,6 +1961,7 @@ def test_frontend_and_static_assets_are_served(client):
     assert "#cy {\n  background: #f8fafc" not in css
     assert "background-color: var(--surface-graph)" in css
     assert ".task-view-switcher button.is-active" in css
+    assert ".phase-plan" in css
     assert "@media (max-width: 640px)" in css
     custom_css = client.get("/static/custom.css").text
     assert ".worker-capability-drawer" in custom_css

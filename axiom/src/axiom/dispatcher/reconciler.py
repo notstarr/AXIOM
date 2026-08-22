@@ -10,6 +10,7 @@ from axiom.dispatcher.schemas import (
     DispatchAction,
     DispatcherSnapshot,
     IntentSnapshot,
+    PlanRunSnapshot,
     ReasonRunSnapshot,
     ReviewRunSnapshot,
     TaskSnapshot,
@@ -62,6 +63,12 @@ class Reconciler:
             )
             for task in snapshot.tasks
         }
+        active_plan_by_task = {
+            task.id: sum(
+                1 for item in task.plan_runs if item.status in ACTIVE_WORK_STATUSES
+            )
+            for task in snapshot.tasks
+        }
         active_review_by_task = {
             task.id: sum(
                 1 for item in task.review_runs if item.status in ACTIVE_WORK_STATUSES
@@ -76,6 +83,7 @@ class Reconciler:
                 for task in snapshot.tasks
                 if task.status == "running"
                 or any(item.status == "pending" for item in task.review_runs)
+                or any(item.status == "pending" for item in task.plan_runs)
             ),
             key=lambda item: (
                 not self._has_ready_main_work(item, now),
@@ -106,6 +114,7 @@ class Reconciler:
                     reserved_workers=reserved_workers,
                     active_bootstrap=active_bootstrap_by_task[task.id],
                     active_reason=active_reason_by_task[task.id],
+                    active_plan=active_plan_by_task[task.id],
                     active_review=active_review_by_task[task.id],
                     active_explore=active_explore_by_task[task.id],
                     explore_limit=limits.per_task_explore_concurrency,
@@ -122,6 +131,8 @@ class Reconciler:
                     active_bootstrap_by_task[task.id] += 1
                 elif work.kind == "reason":
                     active_reason_by_task[task.id] += 1
+                elif work.kind == "plan":
+                    active_plan_by_task[task.id] += 1
                 elif work.kind == "review":
                     active_review_by_task[task.id] += 1
                 else:
@@ -136,6 +147,9 @@ class Reconciler:
                             intent_id=work.id if isinstance(work, IntentSnapshot) else None,
                             reason_run_id=(
                                 work.id if isinstance(work, ReasonRunSnapshot) else None
+                            ),
+                            plan_run_id=(
+                                work.id if isinstance(work, PlanRunSnapshot) else None
                             ),
                             review_run_id=(
                                 work.id if isinstance(work, ReviewRunSnapshot) else None
@@ -162,13 +176,19 @@ class Reconciler:
             item.status == "pending"
             and (item.next_retry_at is None or item.next_retry_at <= now)
             for item in task.reason_runs
+        ) or any(
+            item.status == "pending"
+            and (item.next_retry_at is None or item.next_retry_at <= now)
+            for item in task.plan_runs
         )
 
     @staticmethod
     def _active_count(task: TaskSnapshot) -> int:
         return sum(item.status in ACTIVE_WORK_STATUSES for item in task.intents) + sum(
             item.status in ACTIVE_WORK_STATUSES for item in task.reason_runs
-        ) + sum(item.status in ACTIVE_WORK_STATUSES for item in task.review_runs)
+        ) + sum(item.status in ACTIVE_WORK_STATUSES for item in task.plan_runs) + sum(
+            item.status in ACTIVE_WORK_STATUSES for item in task.review_runs
+        )
 
     def _select_candidate(
         self,
@@ -179,11 +199,12 @@ class Reconciler:
         reserved_workers: dict[str, int],
         active_bootstrap: int,
         active_reason: int,
+        active_plan: int,
         active_review: int,
         active_explore: int,
         explore_limit: int,
         review_limit: int,
-    ) -> tuple[IntentSnapshot | ReasonRunSnapshot | ReviewRunSnapshot, WorkerSnapshot] | None:
+    ) -> tuple[IntentSnapshot | ReasonRunSnapshot | PlanRunSnapshot | ReviewRunSnapshot, WorkerSnapshot] | None:
         pending_reasons = sorted(
             (
                 item
@@ -196,7 +217,7 @@ class Reconciler:
         selected_reason_queue = (
             regular_pending_reasons[:1] if regular_pending_reasons else pending_reasons[:1]
         )
-        candidates: list[IntentSnapshot | ReasonRunSnapshot | ReviewRunSnapshot] = [
+        candidates: list[IntentSnapshot | ReasonRunSnapshot | PlanRunSnapshot | ReviewRunSnapshot] = [
             *(
                 item
                 for item in task.intents
@@ -205,6 +226,7 @@ class Reconciler:
                 and item.kind in {"bootstrap", "explore"}
             ),
             *selected_reason_queue,
+            *self._selected_plan_queue(task),
             *(item for item in task.review_runs if item.status == "pending"),
         ]
         candidates.sort(
@@ -212,7 +234,7 @@ class Reconciler:
                 # Reviewer is independent post-processing.  Keep all main-chain
                 # work ahead of it so a newly reported vulnerability cannot
                 # consume the Task's last slot before its Explore work.
-                {"bootstrap": 0, "reason": 1, "explore": 2, "review": 3}[item.kind],
+                {"bootstrap": 0, "reason": 1, "explore": 2, "plan": 3, "review": 4}[item.kind],
                 # Intent priority is owned by Reason and is only meaningful
                 # within a work kind.  Higher values run first; old snapshots
                 # without the field retain the neutral default.
@@ -224,10 +246,18 @@ class Reconciler:
         for work in candidates:
             if work.next_retry_at is not None and work.next_retry_at > now:
                 continue
+            if active_plan >= 1 and work.kind in {"bootstrap", "reason", "explore"}:
+                continue
             if work.kind == "bootstrap" and active_bootstrap >= 1:
                 continue
             if work.kind == "reason" and active_reason >= 1:
                 continue
+            if work.kind == "plan":
+                # A Plan is a separate planning phase.  It must never run in
+                # parallel with an active Reason/Explore/Bootstrap attempt,
+                # even if a reconciliation race leaves both rows pending.
+                if active_plan >= 1 or active_reason >= 1 or active_explore >= 1 or active_bootstrap >= 1:
+                    continue
             if work.kind == "review" and active_review >= review_limit:
                 continue
             if work.kind == "explore" and active_explore >= explore_limit:
@@ -238,8 +268,27 @@ class Reconciler:
         return None
 
     @staticmethod
+    def _selected_plan_queue(task: TaskSnapshot) -> list[PlanRunSnapshot]:
+        """Return only the FIFO Plan head for this Task.
+
+        A later Plan must remain pending until its predecessor has completed;
+        selecting one head here mirrors Reason FIFO while keeping the queues
+        independent.
+        """
+
+        pending = sorted(
+            (
+                item
+                for item in task.plan_runs
+                if task.status == "running" and item.status == "pending"
+            ),
+            key=lambda item: (item.created_at, item.id),
+        )
+        return pending[:1]
+
+    @staticmethod
     def _work_priority(
-        work: IntentSnapshot | ReasonRunSnapshot | ReviewRunSnapshot,
+        work: IntentSnapshot | ReasonRunSnapshot | PlanRunSnapshot | ReviewRunSnapshot,
     ) -> int:
         """Return the scheduler priority for a pending work item.
 
@@ -255,12 +304,14 @@ class Reconciler:
     @staticmethod
     def _remove_pending(
         task: TaskSnapshot,
-        work: IntentSnapshot | ReasonRunSnapshot | ReviewRunSnapshot,
+        work: IntentSnapshot | ReasonRunSnapshot | PlanRunSnapshot | ReviewRunSnapshot,
     ) -> None:
         if isinstance(work, IntentSnapshot):
             collection = task.intents
         elif isinstance(work, ReasonRunSnapshot):
             collection = task.reason_runs
+        elif isinstance(work, PlanRunSnapshot):
+            collection = task.plan_runs
         else:
             collection = task.review_runs
         collection.remove(work)
@@ -275,7 +326,7 @@ class Reconciler:
 
     @staticmethod
     def _select_worker(
-        work: IntentSnapshot | ReasonRunSnapshot | ReviewRunSnapshot,
+        work: IntentSnapshot | ReasonRunSnapshot | PlanRunSnapshot | ReviewRunSnapshot,
         workers: dict[str, WorkerSnapshot],
         reserved: dict[str, int],
     ) -> WorkerSnapshot | None:

@@ -11,12 +11,16 @@ from axiom.modules.audit.service import AuditService
 from axiom.modules.dispatch.repository import DispatchRepository
 from axiom.modules.dispatch.schemas import (
     RecoveredIntent,
+    RecoveredPlanRun,
     RecoveredReasonRun,
     RecoveredReviewRun,
     RecoveryReport,
 )
 from axiom.modules.reason.repository import ReasonRepository
 from axiom.modules.reason.schemas import ClaimedReasonRun
+from axiom.modules.plan.repository import PlanRepository
+from axiom.modules.plan.schemas import ClaimedPlanRun
+from axiom.modules.graph.tables import intents
 from axiom.modules.vulnerability_reviews.schemas import ClaimedVulnerabilityReviewRun
 from axiom.modules.vulnerability_reviews.service import VulnerabilityReviewService
 from axiom.modules.settings.service import load_runtime_config
@@ -32,6 +36,7 @@ class DispatchService:
         self.engine = engine
         self.repository = DispatchRepository()
         self.reason = ReasonRepository()
+        self.plan = PlanRepository()
         self.reviews = reviews
         self.audit = AuditService(engine)
 
@@ -54,6 +59,12 @@ class DispatchService:
             return self.claim_reason_run(
                 task_id=action.task_id,
                 reason_run_id=action.reason_run_id,
+                worker_name=action.worker_name,
+            )
+        if action.plan_run_id:
+            return self.claim_plan_run(
+                task_id=action.task_id,
+                plan_run_id=action.plan_run_id,
                 worker_name=action.worker_name,
             )
         assert action.review_run_id is not None
@@ -83,6 +94,11 @@ class DispatchService:
                 raise NotFoundError(f"Intent not found: {task_id}/{intent_id}")
             if intent["kind"] == "reason":
                 raise ConflictError("Legacy Reason Intent is read-only and cannot be scheduled")
+            if (
+                intent["kind"] in {"bootstrap", "explore"}
+                and self.plan.in_flight_for_task(conn, task_id) is not None
+            ):
+                raise ConflictError("Task 已有正在执行的 PlanRun，增量 Intent 需等待前序结束")
             config = self._validate_claim(
                 conn,
                 task_id=task_id,
@@ -158,8 +174,18 @@ class DispatchService:
             run = self.repository.reason_run_row(conn, task_id, reason_run_id)
             if run is None:
                 raise NotFoundError(f"ReasonRun not found: {task_id}/{reason_run_id}")
+            if run["trigger"] == "plan":
+                raise ConflictError(
+                    "Legacy ReasonRun(trigger=plan) is read-only; claim the independent PlanRun"
+                )
+            if self.plan.in_flight_for_task(conn, task_id) is not None:
+                raise ConflictError("Task 已有正在执行的 PlanRun，Reason 需等待前序结束")
             in_flight = self.reason.in_flight_for_task(conn, task_id)
-            if in_flight is not None and in_flight.id != reason_run_id:
+            if (
+                in_flight is not None
+                and in_flight.trigger != "plan"
+                and in_flight.id != reason_run_id
+            ):
                 raise ConflictError(
                     f"Task 已有正在执行的 ReasonRun {in_flight.id}，"
                     f"排队的 {reason_run_id} 需等待前序结束"
@@ -235,6 +261,133 @@ class DispatchService:
         return ClaimedReasonRun(
             task_id=task_id,
             reason_run_id=reason_run_id,
+            worker_name=worker_name,
+            claimed_at=now,
+            lease_id=lease_id,
+        )
+
+    def claim_plan_run(
+        self,
+        *,
+        task_id: str,
+        plan_run_id: str,
+        worker_name: str,
+    ) -> ClaimedPlanRun:
+        """Claim the FIFO head of the independent Plan queue.
+
+        Plan is intentionally validated and persisted through PlanRepository;
+        no ``reason_runs.trigger`` row is eligible here.  The Task lock and
+        the active Reason check keep the two planning phases mutually
+        exclusive during reconciliation races.
+        """
+
+        now = utcnow()
+        lease_id = new_lease_id()
+
+        def claim(conn):
+            if self.repository.lock_task(conn, task_id) is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if self.repository.lock_worker(conn, worker_name) is None:
+                raise NotFoundError(f"Worker not found: {worker_name}")
+            run = self.repository.plan_run_row(conn, task_id, plan_run_id)
+            if run is None:
+                raise NotFoundError(f"PlanRun not found: {task_id}/{plan_run_id}")
+            if self.plan.in_flight_for_task(conn, task_id) is not None:
+                raise ConflictError(
+                    f"Task 已有正在执行的 PlanRun，排队的 {plan_run_id} 需等待前序结束"
+                )
+            reason_in_flight = self.reason.in_flight_for_task(conn, task_id)
+            if reason_in_flight is not None:
+                raise ConflictError(
+                    f"Task 已有正在执行的 ReasonRun {reason_in_flight.id}，Plan 需等待前序结束"
+                )
+            incremental_owner = conn.execute(
+                select(intents.c.id)
+                .where(
+                    intents.c.task_id == task_id,
+                    intents.c.kind.in_({"bootstrap", "explore"}),
+                    intents.c.status.in_({"pending", "claimed", "running", "concluding"}),
+                    intents.c.archived.is_(False),
+                )
+                .order_by(intents.c.created_at, intents.c.id)
+                .limit(1)
+            ).scalar_one_or_none()
+            if incremental_owner is not None:
+                raise ConflictError(
+                    f"Task has pending or active Explore/Bootstrap Intent {incremental_owner}; Plan must wait"
+                )
+            pending_reason = next(
+                (
+                    item
+                    for item in self.reason.pending_runs_for_task(conn, task_id)
+                    if item.trigger != "plan"
+                ),
+                None,
+            )
+            if pending_reason is not None:
+                raise ConflictError(
+                    f"Task 已有排队中的 ReasonRun {pending_reason.id}，Plan 需等待前序结束"
+                )
+            pending = self.plan.pending_runs_for_task(conn, task_id)
+            expected = pending[0] if pending else None
+            if run["status"] == "pending" and (
+                expected is None or expected.id != plan_run_id
+            ):
+                raise ConflictError(
+                    f"PlanRun {plan_run_id} 不是 Task 的 FIFO 队首，"
+                    f"当前队首为 {expected.id if expected else 'none'}"
+                )
+            config = self._validate_claim(
+                conn,
+                task_id=task_id,
+                worker_name=worker_name,
+                kind="plan",
+                status=run["status"],
+                archived=False,
+                next_retry_at=run["next_retry_at"],
+                worker_pool=json.loads(run["worker_pool_json"] or "[]"),
+                now=now,
+                owner_label="PlanRun",
+            )
+            settings_version = conn.execute(
+                select(runtime_settings.c.version).where(runtime_settings.c.id == "runtime")
+            ).scalar_one_or_none() or 1
+            if not self.plan.claim(
+                conn,
+                task_id=task_id,
+                run_id=plan_run_id,
+                worker_name=worker_name,
+                lease_id=lease_id,
+                settings_version=settings_version,
+                # Stage budgets are snapshotted when the lease is claimed.
+                # Plan has its own settings; never fall back to Reason's
+                # budget or preserve a stale pre-claim value here.
+                execute_timeout_seconds=getattr(config, "plan_execute_seconds", 600),
+                conclude_timeout_seconds=getattr(config, "plan_conclude_seconds", 300),
+                now=now,
+            ):
+                raise ConflictError("PlanRun claim lost a concurrent race")
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=run["project_id"],
+                    task_id=task_id,
+                    plan_run_id=plan_run_id,
+                    worker=worker_name,
+                    event_type="plan_run.claimed",
+                    message=f"PlanRun 已由 Plan Worker {worker_name} 领取",
+                    payload={
+                        "phase": "plan",
+                        "lease_id": lease_id,
+                    },
+                ),
+            )
+            return run
+
+        run_transaction(self.engine, claim)
+        return ClaimedPlanRun(
+            task_id=task_id,
+            plan_run_id=plan_run_id,
             worker_name=worker_name,
             claimed_at=now,
             lease_id=lease_id,
@@ -393,6 +546,7 @@ class DispatchService:
         cutoff = format_utc(now_dt - timedelta(seconds=stale_after_seconds))
         recovered: list[RecoveredIntent] = []
         recovered_reason_runs: list[RecoveredReasonRun] = []
+        recovered_plan_runs: list[RecoveredPlanRun] = []
         recovered_review_runs: list[RecoveredReviewRun] = []
         with transaction(self.engine) as conn:
             config = load_runtime_config(conn)
@@ -484,6 +638,54 @@ class DispatchService:
                             expired_lease_id=row["lease_id"],
                         )
                     )
+            for row in self.repository.stale_active_plan_runs(conn, cutoff=cutoff):
+                attempt = row["infrastructure_retry_count"] + 1
+                terminal, next_retry_at = self._retry_outcome(config, attempt, now_dt)
+                if self.plan.release(
+                    conn,
+                    task_id=row["task_id"],
+                    run_id=row["id"],
+                    lease_id=row["lease_id"],
+                    failure_kind="lease_expired",
+                    failure_class="transient",
+                    next_retry_at=next_retry_at,
+                    terminal=terminal,
+                    now=now,
+                ):
+                    self.plan.abandon_open(
+                        conn,
+                        task_id=row["task_id"],
+                        plan_run_id=row["id"],
+                        lease_id=row["lease_id"],
+                        failure_reason="lease_expired",
+                        now=now,
+                    )
+                    self.audit.record_in(
+                        conn,
+                        RecordAuditEvent(
+                            project_id=row["project_id"],
+                            task_id=row["task_id"],
+                            plan_run_id=row["id"],
+                            worker=row["worker"] or "",
+                            event_type="plan_run.lease_expired",
+                            level="warning",
+                            message="PlanRun 租约已过期，已释放并进入重试队列",
+                            payload={
+                                "phase": "plan",
+                                "expired_lease_id": row["lease_id"],
+                                "next_retry_at": next_retry_at,
+                                "terminal": terminal,
+                            },
+                        ),
+                    )
+                    recovered_plan_runs.append(
+                        RecoveredPlanRun(
+                            task_id=row["task_id"],
+                            plan_run_id=row["id"],
+                            worker_name=row["worker"] or "",
+                            expired_lease_id=row["lease_id"],
+                        )
+                    )
             for row in self.repository.stale_active_review_runs(conn, cutoff=cutoff):
                 attempt = row["infrastructure_retry_count"] + 1
                 terminal, next_retry_at = self._retry_outcome(config, attempt, now_dt)
@@ -527,6 +729,7 @@ class DispatchService:
         return RecoveryReport(
             recovered=recovered,
             recovered_reason_runs=recovered_reason_runs,
+            recovered_plan_runs=recovered_plan_runs,
             recovered_review_runs=recovered_review_runs,
         )
 

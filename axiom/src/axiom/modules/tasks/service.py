@@ -5,11 +5,10 @@ from datetime import timedelta
 
 from sqlalchemy import (
     Engine,
-    and_,
+    cast,
     delete as sql_delete,
     func,
     literal,
-    or_,
     select,
     union_all,
     update,
@@ -22,12 +21,15 @@ from axiom.modules.graph.repository import GraphRepository
 from axiom.modules.graph.tables import facts, intents
 from axiom.modules.goals.repository import GoalRepository
 from axiom.modules.goals.tables import task_goal_cycles
+from axiom.modules.plan.tables import plan_runs
+from axiom.modules.plan.repository import PlanRepository
 from axiom.modules.projects.repository import ProjectRepository
 from axiom.modules.reason.repository import ReasonRepository
 from axiom.modules.reason.service import ReasonService
 from axiom.modules.reason.tables import reason_runs
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.tasks.schemas import (
+    ActivePlanRun,
     ActiveReasonRun,
     ContinueTask,
     ContinueTaskResult,
@@ -54,6 +56,20 @@ from axiom.shared.ids import id_counters
 from axiom.shared.storage import FileStore, PreparedTaskDeletion
 
 
+def _json_object(value: object) -> dict[str, object]:
+    """Decode a JSON object column without letting malformed history break Task API."""
+
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value:
+        return {}
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
 class TaskService:
     def __init__(self, engine: Engine, store: FileStore):
         self.engine = engine
@@ -63,6 +79,7 @@ class TaskService:
         self.graph = GraphRepository()
         self.goals = GoalRepository()
         self.reason = ReasonRepository()
+        self.plan = PlanRepository()
         self.reason_service = ReasonService(engine)
         self.audit = AuditService(engine)
 
@@ -85,6 +102,7 @@ class TaskService:
                 goal=command.goal,
                 scope=scope,
                 worker_pool=command.worker_pool,
+                plan_worker_pool=command.plan_worker_pool,
                 guard_enabled=command.guard_enabled,
                 external_report_enabled=command.external_report_enabled,
                 run_duration_seconds=command.run_duration_seconds,
@@ -179,9 +197,38 @@ class TaskService:
                 )
                 conn.execute(
                     update(reason_runs)
-                    .where(reason_runs.c.task_id == task_id, reason_runs.c.status == "pending")
+                    .where(
+                        reason_runs.c.task_id == task_id,
+                        reason_runs.c.status == "pending",
+                        reason_runs.c.trigger != "plan",
+                    )
                     .values(
                         worker_pool_json=json.dumps(command.worker_pool, ensure_ascii=False),
+                        updated_at=now,
+                    )
+                )
+            if command.worker_pool is not None or command.plan_worker_pool is not None:
+                # A blank Plan pool is the compatibility value meaning
+                # "inherit the task pool".  Pending PlanRuns snapshot their
+                # pool at creation time, so update only future claims.
+                requested_plan_pool = (
+                    command.plan_worker_pool
+                    if command.plan_worker_pool is not None
+                    else task.plan_worker_pool
+                )
+                effective_plan_pool = requested_plan_pool or (
+                    command.worker_pool
+                    if command.worker_pool is not None
+                    else task.worker_pool
+                )
+                conn.execute(
+                    update(plan_runs)
+                    .where(plan_runs.c.task_id == task_id, plan_runs.c.status == "pending")
+                    .values(
+                        worker_pool_json=json.dumps(
+                            effective_plan_pool,
+                            ensure_ascii=False,
+                        ),
                         updated_at=now,
                     )
                 )
@@ -403,7 +450,7 @@ class TaskService:
                             table.c.status.in_(("claimed", "running", "concluding")),
                         )
                     ).scalar_one()
-                    for table in (intents, reason_runs, vulnerability_review_runs)
+                    for table in (intents, reason_runs, plan_runs, vulnerability_review_runs)
                 )
                 if active_count:
                     raise ConflictError("任务仍有活动 Worker Lease，暂时不能永久删除")
@@ -447,7 +494,7 @@ class TaskService:
                         table.c.status.in_(("claimed", "running", "concluding")),
                     )
                 ).scalar_one()
-                for table in (intents, reason_runs, vulnerability_review_runs)
+                for table in (intents, reason_runs, plan_runs, vulnerability_review_runs)
             )
             if active_count:
                 raise ConflictError("任务仍有活动 Worker Lease，暂时不能归档")
@@ -593,6 +640,18 @@ class TaskService:
             now=now,
             failure_kind=failure_kind,
         )
+        self.plan.cancel_open_for_task(
+            conn,
+            task.id,
+            now=now,
+            failure_kind=failure_kind,
+        )
+        self.plan.abandon_open(
+            conn,
+            task_id=task.id,
+            failure_reason=failure_kind,
+            now=now,
+        )
         self.audit.record_in(
             conn,
             RecordAuditEvent(
@@ -690,36 +749,105 @@ class TaskService:
                 counts.setdefault(str(row["metric"]), {})[str(row["task_id"])] = int(
                     row["count"] or 0
                 )
-            reason_rows = conn.execute(
-                select(reason_runs)
-                .where(
-                    reason_runs.c.task_id.in_(task_ids),
-                    or_(
-                        reason_runs.c.status.in_(
-                            ["pending", "claimed", "running", "concluding"]
-                        ),
-                        and_(
-                            reason_runs.c.trigger == "plan",
-                            reason_runs.c.status.in_(["completed", "failed"]),
-                        ),
-                    ),
+            # Reason and Plan are separate work types.  Legacy Plan records
+            # written to ``reason_runs(trigger='plan')`` remain readable by
+            # their old endpoints, but must never be surfaced as Reason work
+            # or mixed into the new Plan queue.
+            # Reason and Plan have separate tables, but the Task read model
+            # only needs their shared lifecycle fields. Fetch both branches in
+            # one UNION so list/detail decoration keeps a fixed query count.
+            reason_run_select = select(
+                reason_runs.c.id,
+                reason_runs.c.task_id,
+                reason_runs.c.status,
+                reason_runs.c.trigger,
+                reason_runs.c.trigger_payload_json,
+                reason_runs.c.worker,
+                reason_runs.c.lease_id,
+                reason_runs.c.settings_version,
+                reason_runs.c.execute_timeout_seconds,
+                reason_runs.c.conclude_timeout_seconds,
+                reason_runs.c.last_heartbeat_at,
+                reason_runs.c.activity_kind,
+                reason_runs.c.activity_summary,
+                reason_runs.c.activity_tool,
+                reason_runs.c.activity_started_at,
+                reason_runs.c.activity_updated_at,
+                reason_runs.c.created_at,
+                reason_runs.c.concluded_at,
+                cast(literal("{}"), plan_runs.c.decision_json.type).label("decision_json"),
+                literal("reason").label("run_kind"),
+            ).where(
+                reason_runs.c.task_id.in_(task_ids),
+                reason_runs.c.trigger != "plan",
+                reason_runs.c.status.in_(
+                    ["pending", "claimed", "running", "concluding"]
+                ),
+            )
+            plan_run_select = select(
+                plan_runs.c.id,
+                plan_runs.c.task_id,
+                plan_runs.c.status,
+                plan_runs.c.trigger,
+                plan_runs.c.trigger_payload_json,
+                plan_runs.c.worker,
+                plan_runs.c.lease_id,
+                plan_runs.c.settings_version,
+                plan_runs.c.execute_timeout_seconds,
+                plan_runs.c.conclude_timeout_seconds,
+                plan_runs.c.last_heartbeat_at,
+                plan_runs.c.activity_kind,
+                plan_runs.c.activity_summary,
+                plan_runs.c.activity_tool,
+                plan_runs.c.activity_started_at,
+                plan_runs.c.activity_updated_at,
+                plan_runs.c.created_at,
+                plan_runs.c.concluded_at,
+                plan_runs.c.decision_json,
+                literal("plan").label("run_kind"),
+            ).where(
+                plan_runs.c.task_id.in_(task_ids),
+                plan_runs.c.status.in_(
+                    [
+                        "pending",
+                        "claimed",
+                        "running",
+                        "concluding",
+                        "completed",
+                        "failed",
+                    ]
+                ),
+            )
+            run_rows = conn.execute(
+                union_all(reason_run_select, plan_run_select).order_by(
+                    "task_id", "created_at", "id"
                 )
-                .order_by(
-                    reason_runs.c.task_id,
-                    reason_runs.c.created_at,
-                    reason_runs.c.id,
-                )
-            ).mappings()
+            ).mappings().all()
             reasons: dict[str, object] = {}
-            plan_runs: dict[str, object] = {}
             queued_reasons: dict[str, list[object]] = {}
+            active_plans: dict[str, object] = {}
+            queued_plans: dict[str, list[object]] = {}
             plan_counts: dict[str, int] = {}
             latest_plan_decisions: dict[str, dict[str, object]] = {}
-            for row in reason_rows:
+            for row in run_rows:
                 task_id = str(row["task_id"])
-                if row["trigger"] == "plan" and row["status"] in {"completed", "failed"}:
+                if row["run_kind"] == "reason":
+                    if row["status"] in {"claimed", "running", "concluding"}:
+                        reasons.setdefault(task_id, row)
+                    elif row["status"] == "pending":
+                        queued_reasons.setdefault(task_id, []).append(row)
+                    continue
+                status = row["status"]
+                if status in {"completed", "failed"}:
                     plan_counts[task_id] = plan_counts.get(task_id, 0) + 1
-                    payload = json.loads(row["trigger_payload_json"] or "{}")
+                    decision = _json_object(row["decision_json"])
+                    payload = _json_object(row["trigger_payload_json"])
+                    # Older Plan implementations may have persisted the
+                    # decision in trigger_payload_json.  This fallback is
+                    # read-only compatibility and does not change the new
+                    # PlanRun storage contract.
+                    if not decision:
+                        decision = payload
                     previous = latest_plan_decisions.get(task_id)
                     if previous is None or (
                         row["created_at"],
@@ -731,24 +859,19 @@ class TaskService:
                         latest_plan_decisions[task_id] = {
                             "_created_at": row["created_at"],
                             "_id": row["id"],
-                            "reason_run_id": row["id"],
-                            "status": row["status"],
-                            "decision": payload.get("decision"),
-                            "reviewed_dimensions": payload.get("reviewed_dimensions", []),
-                            "exhaustion_reason": payload.get("exhaustion_reason", ""),
-                            "evidence_refs": payload.get("evidence_refs", []),
-                            "confidence": payload.get("confidence", "unspecified"),
+                            "plan_run_id": row["id"],
+                            "status": status,
+                            "decision": decision.get("decision"),
+                            "reviewed_dimensions": decision.get("reviewed_dimensions", []),
+                            "exhaustion_reason": decision.get("exhaustion_reason", ""),
+                            "evidence_refs": decision.get("evidence_refs", []),
+                            "confidence": decision.get("confidence", "unspecified"),
                             "concluded_at": row["concluded_at"],
                         }
-                    continue
-                if row["status"] in {"claimed", "running", "concluding"}:
-                    if row["trigger"] == "plan":
-                        plan_runs.setdefault(task_id, row)
-                    else:
-                        reasons.setdefault(task_id, row)
-                elif row["status"] == "pending":
-                    if row["trigger"] != "plan":
-                        queued_reasons.setdefault(task_id, []).append(row)
+                elif status in {"claimed", "running", "concluding"}:
+                    active_plans.setdefault(task_id, row)
+                elif status == "pending":
+                    queued_plans.setdefault(task_id, []).append(row)
 
             for decision in latest_plan_decisions.values():
                 decision.pop("_created_at", None)
@@ -758,11 +881,15 @@ class TaskService:
         for task in tasks_to_decorate:
             reason = reasons.get(task.id)
             reason_present = reason is not None
-            plan = plan_runs.get(task.id)
+            plan = active_plans.get(task.id)
             plan_present = plan is not None
             task_queued = queued_reasons.get(task.id, [])
-            legacy_reason = reason or plan or (task_queued[0] if task_queued else None)
-            legacy_reason_present = legacy_reason is not None
+            task_plan_queued = queued_plans.get(task.id, [])
+            # Keep the legacy Reason activity fields Reason-only.  A PlanRun
+            # has its own API field and must not make a Task look as though a
+            # Reason Worker is running.
+            legacy_reason = reason
+            legacy_reason_present = reason_present
             decorated.append(
                 task.model_copy(
                     update={
@@ -824,11 +951,11 @@ class TaskService:
                             else None
                         ),
                         "active_plan_run": (
-                            ActiveReasonRun(
+                            ActivePlanRun(
                                 id=plan["id"],
                                 status=plan["status"],
                                 trigger=plan["trigger"],
-                                trigger_payload=json.loads(plan["trigger_payload_json"] or "{}"),
+                                trigger_payload=_json_object(plan["trigger_payload_json"]),
                                 worker=plan["worker"],
                                 lease_id=plan["lease_id"],
                                 settings_version=plan["settings_version"],
@@ -865,6 +992,27 @@ class TaskService:
                                 created_at=row["created_at"],
                             )
                             for row in task_queued
+                        ],
+                        "queued_plan_runs": [
+                            ActivePlanRun(
+                                id=row["id"],
+                                status=row["status"],
+                                trigger=row["trigger"],
+                                trigger_payload=_json_object(row["trigger_payload_json"]),
+                                worker=row["worker"],
+                                lease_id=row["lease_id"],
+                                settings_version=row["settings_version"],
+                                execute_timeout_seconds=row["execute_timeout_seconds"],
+                                conclude_timeout_seconds=row["conclude_timeout_seconds"],
+                                last_heartbeat_at=row["last_heartbeat_at"],
+                                activity_kind=row["activity_kind"] or "",
+                                activity_summary=row["activity_summary"] or "",
+                                activity_tool=row["activity_tool"] or "",
+                                activity_started_at=row["activity_started_at"],
+                                activity_updated_at=row["activity_updated_at"],
+                                created_at=row["created_at"],
+                            )
+                            for row in task_plan_queued
                         ],
                         "plan_run_count": plan_counts.get(task.id, 0),
                         "last_plan_decision": latest_plan_decisions.get(task.id),

@@ -29,6 +29,7 @@ from axiom.modules.axiom_tools.schemas import (
 from axiom.modules.graph.tables import intents
 from axiom.modules.phase_capabilities.service import PhaseCapabilityService
 from axiom.modules.reason.tables import reason_runs
+from axiom.modules.plan.tables import plan_runs
 from axiom.modules.tasks.tables import tasks
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.workers.pi_config import (
@@ -41,7 +42,7 @@ from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, LeaseInactiveError, NotFoundError
 
 
-PHASES = ("bootstrap", "reason", "explore", "review")
+PHASES = ("bootstrap", "reason", "explore", "plan", "review")
 _KEY = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _RESERVED_TOOL_NAMES = frozenset({"read", "write", "edit", "bash", "grep", "find", "ls"})
 
@@ -454,9 +455,20 @@ class AxiomToolService:
                     select(reason_runs.c.id).where(
                         reason_runs.c.task_id == command.task_id,
                         reason_runs.c.id == command.reason_run_id,
+                        reason_runs.c.trigger != "plan",
                         reason_runs.c.lease_id == command.lease_id,
                         reason_runs.c.worker == command.worker,
                         reason_runs.c.status.in_(["claimed", "running", "concluding"]),
+                    )
+                ).scalar_one_or_none()
+            elif command.plan_run_id:
+                active = conn.execute(
+                    select(plan_runs.c.id).where(
+                        plan_runs.c.task_id == command.task_id,
+                        plan_runs.c.id == command.plan_run_id,
+                        plan_runs.c.lease_id == command.lease_id,
+                        plan_runs.c.worker == command.worker,
+                        plan_runs.c.status.in_(["claimed", "running", "concluding"]),
                     )
                 ).scalar_one_or_none()
             elif command.review_run_id:
@@ -473,7 +485,7 @@ class AxiomToolService:
                 ).scalar_one_or_none()
             else:
                 raise LeaseInactiveError(
-                    "AXIOM Tool audit requires an Intent, ReasonRun or ReviewRun"
+                    "AXIOM Tool audit requires an Intent, ReasonRun, PlanRun or ReviewRun"
                 )
             if active is None:
                 raise LeaseInactiveError("AXIOM Tool audit lease is no longer active")
@@ -485,6 +497,7 @@ class AxiomToolService:
                     task_id=command.task_id,
                     intent_id=command.intent_id or None,
                     reason_run_id=command.reason_run_id or None,
+                    plan_run_id=command.plan_run_id or None,
                     review_run_id=command.review_run_id or None,
                     worker=command.worker,
                     event_type=(
@@ -556,7 +569,7 @@ class AxiomToolService:
             phases = list(dict.fromkeys(str(item).strip() for item in phases))
             if any(phase not in PHASES for phase in phases):
                 raise ValueError(
-                    "supported_phases 只能包含 bootstrap、reason、explore、review"
+                    "supported_phases 只能包含 bootstrap、reason、explore、plan、review"
                 )
             risk_tags = manifest.get("risk_tags", [])
             guidelines = manifest.get("prompt_guidelines", [])
@@ -732,10 +745,24 @@ class AxiomToolService:
     def _active_counts(conn) -> dict[str, int]:
         result: dict[str, int] = defaultdict(int)
         statuses = ["claimed", "running", "concluding"]
-        for table in (intents, reason_runs, vulnerability_review_runs):
+        # PlanRun is an independent execution owner.  Keep its active lease
+        # in the shared Worker overview as well; omitting it makes a Plan
+        # Worker appear idle while it is consuming a capacity slot.
+        for table in (intents, reason_runs, plan_runs, vulnerability_review_runs):
+            conditions = [
+                table.c.worker.is_not(None),
+                table.c.status.in_(statuses),
+            ]
+            # Before Plan had its own runtime, legacy rows were stored in
+            # reason_runs with trigger="plan".  They are historical records,
+            # not Reason work, and must not consume or inflate the shared
+            # Worker overview.  Keep them queryable elsewhere while excluding
+            # them from active capacity accounting.
+            if table is reason_runs:
+                conditions.append(reason_runs.c.trigger != "plan")
             for row in conn.execute(
                 select(table.c.worker, func.count().label("count"))
-                .where(table.c.worker.is_not(None), table.c.status.in_(statuses))
+                .where(*conditions)
                 .group_by(table.c.worker)
             ).mappings():
                 result[row["worker"]] += int(row["count"])

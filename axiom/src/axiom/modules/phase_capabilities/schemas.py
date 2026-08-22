@@ -5,8 +5,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 
-Phase = Literal["bootstrap", "reason", "explore", "review"]
-CapabilityScope = Literal["common", "bootstrap", "reason", "explore", "review"]
+Phase = Literal["bootstrap", "reason", "explore", "plan", "review"]
+CapabilityScope = Literal["common", "bootstrap", "reason", "explore", "plan", "review"]
 CapabilityKind = Literal["skill", "mcp_tool", "axiom_tool"]
 BuiltinToolSource = Literal["pi_native", "axiom_internal", "axiom_browser"]
 BuiltinToolMode = Literal["execute", "conclude"]
@@ -28,6 +28,7 @@ class PhaseCapabilitiesUpdate(BaseModel):
     bootstrap: CapabilityScopeValues = Field(default_factory=CapabilityScopeValues)
     reason: CapabilityScopeValues = Field(default_factory=CapabilityScopeValues)
     explore: CapabilityScopeValues = Field(default_factory=CapabilityScopeValues)
+    plan: CapabilityScopeValues = Field(default_factory=CapabilityScopeValues)
     review: CapabilityScopeValues = Field(default_factory=CapabilityScopeValues)
 
 
@@ -50,7 +51,7 @@ class PhaseCapabilityRecord(BaseModel):
     ready: bool = True
     status: str = "ready"
     supported_phases: list[Phase] = Field(
-        default_factory=lambda: ["bootstrap", "reason", "explore", "review"]
+        default_factory=lambda: ["bootstrap", "reason", "explore", "plan", "review"]
     )
     server_id: str = ""
     server_name: str = ""

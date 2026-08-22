@@ -29,10 +29,29 @@ LEGACY_SQLITE_REVISION = "20260805_0035"
 # this aligned with the latest migration whenever a schema change is added;
 # otherwise a database that has successfully upgraded cannot accept a legacy
 # SQLite import.
-POSTGRESQL_TARGET_REVISION = "20260820_pg0006"
+POSTGRESQL_TARGET_REVISION = "20260821_pg0012"
 DEFAULT_BATCH_SIZE = 1_000
 
+# A 20260805 SQLite export predates the independent Plan runtime.  These
+# tables are represented as empty target tables during import; all other
+# historical rows remain byte-for-byte migratable.
+LEGACY_SQLITE_OMIT_TABLES = frozenset(
+    {"plan_runs", "plan_run_sources", "plan_workspaces"}
+)
+
 LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
+    "audit_events": {"plan_run_id": None},
+    "context_revisions": {"plan_run_id": None},
+    # The legacy 20260805 SQLite export already contains the Review owner,
+    # but predates the independent Plan runtime.  Treat Plan ownership as a
+    # target-only nullable column during import, just like the other newly
+    # introduced owner references.
+    "llm_token_usage": {"plan_run_id": None},
+    "llm_token_usage_sources": {"plan_run_id": None},
+    # The source SQLite export may predate the independent Plan pool.  The
+    # target schema backfills it to the compatibility value (inherit the
+    # ordinary Task Worker pool).
+    "tasks": {"plan_worker_pool_json": "[]"},
     "intents": {
         "human_intervention_required": False,
         "human_intervention_reason": "",
@@ -41,13 +60,19 @@ LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
         "assessment_status": "open",
         "assessment_reason": "",
         "assessed_at": None,
+        "dedup_fingerprint": "",
+        "plan_metadata_json": "{}",
     },
 }
 
 
 def _migration_tables():
     registered_names = {table.name for table in ALL_TABLES}
-    return tuple(table for table in metadata.sorted_tables if table.name in registered_names)
+    return tuple(
+        table
+        for table in metadata.sorted_tables
+        if table.name in registered_names
+    )
 
 
 @dataclass(slots=True)
@@ -339,6 +364,8 @@ def _validate_source_table(
     table,
 ) -> None:
     table_name = table.name
+    if table_name in LEGACY_SQLITE_OMIT_TABLES:
+        return
     target_only_columns = set(LEGACY_SQLITE_COLUMN_DEFAULTS.get(table_name, {}))
     expected_columns = [
         column.name for column in table.columns if column.name not in target_only_columns
@@ -369,15 +396,21 @@ def _validate_source_table(
     expected_indexes: set[tuple[bool, tuple[str, ...]]] = set()
     for constraint in table.constraints:
         if isinstance(constraint, UniqueConstraint):
-            expected_indexes.add((True, tuple(column.name for column in constraint.columns)))
+            columns = tuple(column.name for column in constraint.columns)
+            if not any(column in target_only_columns for column in columns):
+                expected_indexes.add((True, columns))
     for index in table.indexes:
-        expected_indexes.add((bool(index.unique), tuple(column.name for column in index.columns)))
+        columns = tuple(column.name for column in index.columns)
+        if not any(column in target_only_columns for column in columns):
+            expected_indexes.add((bool(index.unique), columns))
     missing = sorted(expected_indexes - actual_indexes, key=repr)
     if missing:
         raise ValueError(f"SQLite table index mismatch for {table_name}: missing {missing}")
 
 
 def _read_source_rows(conn: sqlite3.Connection, table) -> list[dict[str, Any]]:
+    if table.name in LEGACY_SQLITE_OMIT_TABLES:
+        return []
     order = [column.name for column in table.primary_key.columns] or [
         column.name for column in table.columns
     ]

@@ -126,7 +126,7 @@ class SkillService:
             and name in MANDATORY_COMMON_SKILLS
         ):
             raise ConflictError(
-                f"Skill {name} 是四阶段锁定的通用 Skill，不能停用"
+                f"Skill {name} 是五阶段锁定的通用 Skill，不能停用"
             )
         directory = self.managed_root / name
         existing_content = self._existing_content(name)
@@ -153,7 +153,7 @@ class SkillService:
     def set_enabled(self, name: str, command: SetSkillEnabled) -> SkillContent:
         skill = self.get(name)
         if skill.name in MANDATORY_COMMON_SKILLS and not command.enabled:
-            raise ConflictError(f"Skill {skill.name} 是四阶段锁定的通用 Skill，不能停用")
+            raise ConflictError(f"Skill {skill.name} 是五阶段锁定的通用 Skill，不能停用")
         self._set_enabled(skill.name, command.enabled)
         return self.get(skill.name)
 
@@ -272,7 +272,7 @@ class SkillService:
     def delete(self, name: str) -> None:
         name = self._name(name)
         if name in MANDATORY_COMMON_SKILLS:
-            raise ConflictError(f"Skill {name} 是四阶段锁定的通用 Skill，不能删除")
+            raise ConflictError(f"Skill {name} 是五阶段锁定的通用 Skill，不能删除")
         directory = self.managed_root / name
         path = directory / "SKILL.md"
         if not path.is_file():

@@ -45,6 +45,11 @@ intents = Table(
     Column("worker", String),
     Column("worker_pool_json", JSONText, nullable=False, default="[]"),
     Column("targets_json", JSONText, nullable=False, default="[]"),
+    # Plan-created Explore proposals keep their provenance and stable
+    # (target, endpoint, test-vector) identity on the durable Intent row.
+    # Reason/legacy rows use the empty defaults and remain fully compatible.
+    Column("dedup_fingerprint", String, nullable=False, default="", server_default=""),
+    Column("plan_metadata_json", JSONText, nullable=False, default="{}", server_default="{}"),
     Column("execute_timeout_seconds", Integer),
     Column("conclude_timeout_seconds", Integer),
     Column("lease_id", String),

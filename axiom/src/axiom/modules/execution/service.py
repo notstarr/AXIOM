@@ -5,7 +5,7 @@ import logging
 
 from datetime import timedelta
 
-from sqlalchemy import Engine, update
+from sqlalchemy import Engine, select, update
 
 from axiom.modules.artifacts.repository import ArtifactRepository
 from axiom.modules.audit.schemas import RecordAuditEvent
@@ -25,6 +25,7 @@ from axiom.modules.execution.schemas import (
     CompleteExploreCommand,
     CredentialAccessCommand,
     ExecutionInput,
+    PlanExecutionInput,
     ExploreCompleted,
     ExploreVulnerabilityRecorded,
     HumanInterventionMarker,
@@ -47,6 +48,7 @@ from axiom.modules.execution.stage_outputs import (
 )
 from axiom.modules.graph.tables import facts
 from axiom.modules.axiom_tools.service import AxiomToolService
+from axiom.modules.plan.repository import PlanRepository
 from axiom.modules.reason.service import ReasonService
 from axiom.modules.settings.service import load_runtime_config
 from axiom.modules.tasks.schemas import TaskScope
@@ -74,7 +76,6 @@ _REASON_PROMPT_PROFILE_BY_TRIGGER = {
     "manual": "human",
     "hint": "human",
     "continuation": "continuation",
-    "plan": "plan",
 }
 
 
@@ -105,6 +106,7 @@ class ExecutionService:
         self.artifacts = ArtifactRepository()
         self.context = context
         self.reason = reason
+        self.plan = PlanRepository()
         self.skills = skills
         self.axiom_tools = axiom_tools
         self.phase_capabilities = axiom_tools.phase_capabilities
@@ -264,6 +266,10 @@ class ExecutionService:
             run = self.reason.repository.get_run(conn, task_id, reason_run_id)
             if run is None:
                 raise NotFoundError(f"ReasonRun not found: {task_id}/{reason_run_id}")
+            if run.trigger == "plan":
+                raise ConflictError(
+                    "Legacy ReasonRun(trigger=plan) is read-only; use Plan execution input"
+                )
             if run.lease_id != command.lease_id:
                 raise LeaseInactiveError("ReasonRun lease does not match")
             if run.status not in {"claimed", "running", "concluding"}:
@@ -280,10 +286,9 @@ class ExecutionService:
                 else None
             )
 
-        context_phase = "plan" if run.trigger == "plan" else "reason"
         context = self.context.build(
             task_id=task_id,
-            phase=context_phase,
+            phase="reason",
             intent_id=None,
             reason_run_id=reason_run_id,
             lease_id=command.lease_id,
@@ -360,16 +365,6 @@ class ExecutionService:
                 "并写明具体理由；若仍需继续测试，保留原评估并创建关联相关 Fact 的新 Intent。"
                 "评估本身不消费 Fact，仍需通过 Todo source、后续 Intent from_fact 或 Goal evidence 引用新 Fact。"
             )
-        elif run.trigger == "plan":
-            payload = run.trigger_payload
-            trigger_summary = (
-                "任务的 Reason 与 Explore 增量队列已经耗尽，本轮进入 Plan 全景复盘。"
-                "请从全部历史 Todo、Intent、Fact、Hint、Knowledge、Artifact、漏洞和 Goal Cycle 中检查"
-                "覆盖完整性、证据武器化、阻断路径替代方案与目标完成度。"
-                "不要机械凑任务；只有存在可引用证据且与历史测试不重复时才恢复 Todo 或派发 Explore Intent。"
-                "若没有材料性新方向，保持 Goal 未达成并提交可审计的穷尽理由，让任务安全进入 waiting。"
-                f"本 Goal Cycle 的连续 Plan 序号：{payload.get('plan_sequence', 1)}。"
-            )
         if goal_cycle_guidance:
             trigger_summary += goal_cycle_guidance
         run_dir = str(
@@ -397,6 +392,86 @@ class ExecutionService:
             intent_targets=[],
             intent_source_facts=run.source_fact_ids,
             todo_id=None,
+            origin=task.origin.original_input,
+            goal=task.goal,
+            hints=hints,
+            skill_directories=capabilities.skill_directories,
+            mcp_tool_names=capabilities.mcp_tool_names,
+            capability_environment=capabilities.mcp_environment,
+            capability_snapshot_path=capabilities.capability_snapshot_path,
+            guard_enabled=task.guard_enabled,
+            scope=_scope_payload(task.scope),
+            run_dir=run_dir,
+            execute_timeout_seconds=run.execute_timeout_seconds,
+            conclude_timeout_seconds=run.conclude_timeout_seconds,
+            context_revision=context.revision,
+            context_manifest_path=context.manifest_path,
+            axiom_tool_keys=capabilities.axiom_tool_keys,
+            axiom_tool_extensions=capabilities.axiom_tool_extensions,
+            axiom_tool_snapshot_path=capabilities.axiom_tool_snapshot_path,
+        )
+
+    def plan_input(
+        self,
+        *,
+        task_id: str,
+        plan_run_id: str,
+        command: LeaseCommand,
+    ) -> PlanExecutionInput:
+        """Build the independent Plan execution contract for one lease."""
+
+        with self.engine.connect() as conn:
+            run = self.plan.get_run(conn, task_id, plan_run_id)
+            if run is None:
+                raise NotFoundError(f"PlanRun not found: {task_id}/{plan_run_id}")
+            if run.lease_id != command.lease_id:
+                raise LeaseInactiveError("PlanRun lease does not match")
+            if run.status not in {"claimed", "running", "concluding"}:
+                raise LeaseInactiveError("PlanRun lease is not active")
+            task = self.reason.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.status != "running" or task.legacy_readonly or task.archived:
+                raise LeaseInactiveError("Task is not running")
+            hints = self.repository.hints(conn, task_id)
+            # ``PlanService.start_run`` refreshes and persists the late-bound
+            # snapshot under the Task lock.  Do not rebuild it here from all
+            # current Facts: that would re-claim inputs reserved by another
+            # pending Run and would also leak the synthetic ``origin``/``goal``
+            # Facts into the Plan source list.  The Context generated below
+            # remains a full historical view; this list is only the ownership
+            # snapshot passed to the Plan worker.
+            source_fact_ids = list(run.source_fact_ids)
+
+        context = self.context.build(
+            task_id=task_id,
+            phase="plan",
+            intent_id=None,
+            plan_run_id=plan_run_id,
+            lease_id=command.lease_id,
+        )
+        run_dir = str(
+            self.store.run_directory(
+                task_id=task_id,
+                plan_run_id=plan_run_id,
+                lease_id=command.lease_id,
+            )
+        )
+        capabilities = self.phase_capabilities.snapshot_for_lease(
+            worker_name=run.worker or "",
+            phase="plan",
+            run_dir=run_dir,
+        )
+        return PlanExecutionInput(
+            task_id=task_id,
+            project_id=task.project_id,
+            plan_run_id=plan_run_id,
+            lease_id=command.lease_id,
+            worker_name=run.worker or "",
+            trigger=run.trigger,
+            prompt_profile="plan",
+            trigger_payload=run.trigger_payload,
+            source_fact_ids=source_fact_ids,
             origin=task.origin.original_input,
             goal=task.goal,
             hints=hints,
@@ -1236,10 +1311,33 @@ class ExecutionService:
                 raise LeaseInactiveError("Legacy Task is read-only")
             return task.project_id
 
+        if command.plan_run_id:
+            run = self.plan.get_run(conn, task_id, command.plan_run_id)
+            if run is None:
+                raise NotFoundError(
+                    f"PlanRun not found: {task_id}/{command.plan_run_id}"
+                )
+            if run.lease_id != command.lease_id:
+                raise LeaseInactiveError("PlanRun lease does not match")
+            if run.status not in {"claimed", "running", "concluding"}:
+                raise LeaseInactiveError("PlanRun lease is not active")
+            task = self.reason.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.status != "running":
+                raise LeaseInactiveError("Task is not running")
+            if task.legacy_readonly:
+                raise LeaseInactiveError("Legacy Task is read-only")
+            return task.project_id
+
         reason_run_id = command.reason_run_id or ""
         run = self.reason.repository.get_run(conn, task_id, reason_run_id)
         if run is None:
             raise NotFoundError(f"ReasonRun not found: {task_id}/{reason_run_id}")
+        if run.trigger == "plan":
+            raise ConflictError(
+                "Legacy ReasonRun(trigger=plan) is read-only; use the independent PlanRun API"
+            )
         if run.lease_id != command.lease_id:
             raise LeaseInactiveError("ReasonRun lease does not match")
         if run.status not in {"claimed", "running", "concluding"}:

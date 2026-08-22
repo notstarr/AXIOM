@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-PHASES = ("bootstrap", "reason", "explore", "review")
+PHASES = ("bootstrap", "reason", "explore", "plan", "review")
 RUN_MODES = ("execute", "conclude")
 
 
@@ -54,6 +54,7 @@ def _bootstrap_execute_else_all() -> tuple[tuple[str, tuple[str, ...]], ...]:
         ("bootstrap", ("execute",)),
         ("reason", RUN_MODES),
         ("explore", RUN_MODES),
+        ("plan", RUN_MODES),
         ("review", RUN_MODES),
     )
 
@@ -188,6 +189,62 @@ _CORE_BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = (
         availability=_all_modes("reason"),
     ),
     BuiltinToolDefinition(
+        key="axiom.plan.status",
+        title="读取 Plan 工作空间",
+        description="读取本轮独立 Plan Workspace、全景输入快照和提交就绪状态。",
+        source="axiom_internal",
+        invocation="axiom plan status",
+        availability=_all_modes("plan"),
+    ),
+    BuiltinToolDefinition(
+        key="axiom.plan.todo.add",
+        title="Plan 新增 Todo",
+        description="在当前 Plan Workspace 中新增一个有全局证据来源的待办。",
+        source="axiom_internal",
+        invocation="axiom plan todo add ...",
+        availability=_all_modes("plan"),
+    ),
+    BuiltinToolDefinition(
+        key="axiom.plan.todo.update",
+        title="Plan 更新 Todo",
+        description="复核并更新历史 Todo 的状态、理由和来源。",
+        source="axiom_internal",
+        invocation="axiom plan todo update ...",
+        availability=_all_modes("plan"),
+    ),
+    BuiltinToolDefinition(
+        key="axiom.plan.todo.delete",
+        title="Plan 归档 Todo",
+        description="删除 Plan 草稿 Todo，或以 obsolete 语义归档既有 Todo。",
+        source="axiom_internal",
+        invocation="axiom plan todo delete --todo-id ... --reason ...",
+        availability=_all_modes("plan"),
+    ),
+    BuiltinToolDefinition(
+        key="axiom.plan.intent.propose",
+        title="Plan 派发 Explore Intent",
+        description="从全景复盘结果提出带来源、去重签名和停止条件的新 Explore Intent。",
+        source="axiom_internal",
+        invocation="axiom plan intent propose ...",
+        availability=_all_modes("plan"),
+    ),
+    BuiltinToolDefinition(
+        key="axiom.plan.decision.submit",
+        title="提交 Plan 决策",
+        description="提交 continue、needs_reason、dispatch_explore 或 exhausted 决策。",
+        source="axiom_internal",
+        invocation="axiom plan decision submit ...",
+        availability=_all_modes("plan"),
+    ),
+    BuiltinToolDefinition(
+        key="axiom.plan.exhaustion.submit",
+        title="提交 Plan 穷尽证明",
+        description="提交审查维度、穷尽理由、证据引用和置信度。",
+        source="axiom_internal",
+        invocation="axiom plan exhaustion submit --reason ...",
+        availability=_all_modes("plan"),
+    ),
+    BuiltinToolDefinition(
         key="axiom.explore.vulnerability.report",
         title="上报漏洞",
         description="在活动 Explore Lease 中上报已确认漏洞及其证据。",
@@ -288,6 +345,7 @@ BROWSER_BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = tuple(
             ("bootstrap", ("execute",)),
             ("reason", ()),
             ("explore", RUN_MODES),
+            ("plan", ()),
             ("review", ()),
         ),
     )

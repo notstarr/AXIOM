@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from axiom.dispatcher.loop import Dispatcher
 from axiom.dispatcher.reconciler import Reconciler
 from axiom.dispatcher.schemas import (
     ClaimedIntent,
+    ClaimAction,
     DispatchLimits,
     DispatcherSnapshot,
     IntentSnapshot,
+    PlanRunSnapshot,
     ReasonRunSnapshot,
     ReviewRunSnapshot,
     TaskSnapshot,
@@ -125,6 +129,71 @@ def review_run(task_id: str, number: int, *, status="pending", pool=None):
         created_at=NOW + timedelta(seconds=number),
         claimed_at=NOW if status in {"claimed", "running", "concluding"} else None,
     )
+
+
+def plan_run(task_id: str, number: int, *, status="pending", pool=None):
+    return PlanRunSnapshot(
+        task_id=task_id,
+        id=f"pr{number:06d}",
+        status=status,
+        worker_pool=pool or [],
+        created_at=NOW + timedelta(seconds=number),
+        claimed_at=NOW if status in {"claimed", "running", "concluding"} else None,
+    )
+
+
+def test_reconciler_routes_plan_runs_only_to_plan_capability_workers():
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                plan_runs=[plan_run("t_001", 1)],
+            )
+        ],
+        workers=[
+            worker("reason-only", capabilities=("reason",)),
+            worker("plan-only", capabilities=("plan",)),
+        ],
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert len(actions) == 1
+    assert actions[0].claim.kind == "plan"
+    assert actions[0].claim.plan_run_id == "pr000001"
+    assert actions[0].claim.worker_name == "plan-only"
+
+
+def test_reconciler_keeps_plan_fifo_and_does_not_run_with_active_reason():
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                reason_runs=[reason_run("t_001", 1, status="running")],
+                plan_runs=[plan_run("t_001", 2), plan_run("t_001", 3)],
+            )
+        ],
+        workers=[worker("plan-only", capabilities=("plan",), max_running=2)],
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert actions == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"kind": "plan", "reason_run_id": "rr1"},
+        {"kind": "reason", "plan_run_id": "pr1"},
+        {"kind": "plan"},
+    ],
+)
+def test_claim_action_requires_the_matching_plan_owner(payload):
+    with pytest.raises(ValueError):
+        ClaimAction(task_id="t_001", worker_name="w", **payload)
 
 
 def test_reconciler_assigns_pending_intents_to_idle_workers_without_reason_assignment():

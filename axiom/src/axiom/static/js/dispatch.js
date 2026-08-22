@@ -243,6 +243,8 @@ window.AxiomModules.dispatch = {
         bootstrap_conclude_seconds: data.bootstrap_conclude_seconds ?? 120,
         reason_execute_seconds: data.reason_execute_seconds ?? 300,
         reason_conclude_seconds: data.reason_conclude_seconds ?? 120,
+        plan_execute_seconds: data.plan_execute_seconds ?? 600,
+        plan_conclude_seconds: data.plan_conclude_seconds ?? 300,
         review_execute_seconds: data.review_execute_seconds ?? 300,
         review_conclude_seconds: data.review_conclude_seconds ?? 120,
         reason_batch_size: data.reason_batch_size ?? 2,
@@ -252,6 +254,7 @@ window.AxiomModules.dispatch = {
         reason_target_open_intents: data.reason_target_open_intents ?? 4,
         reason_max_new_intents_per_run: data.reason_max_new_intents_per_run ?? 4,
         reason_queue_limit: data.reason_queue_limit ?? 3,
+        plan_queue_limit: data.plan_queue_limit ?? 3,
         explore_execute_min_seconds: data.explore_execute_min_seconds ?? 60,
         explore_execute_max_seconds: data.explore_execute_max_seconds ?? 3600,
         explore_conclude_min_seconds: data.explore_conclude_min_seconds ?? 180,
@@ -296,8 +299,8 @@ window.AxiomModules.dispatch = {
         phase_bootstrap: taskTypes.includes('bootstrap'),
         phase_reason: taskTypes.includes('reason'),
         phase_explore: taskTypes.includes('explore'),
-        phase_review: taskTypes.includes('review'),
         phase_plan: taskTypes.includes('plan'),
+        phase_review: taskTypes.includes('review'),
         phase_maintainer: taskTypes.includes('maintainer'),
         pi_api_key: '',
         pi_thinking_enabled: typeof worker.pi_thinking_enabled === 'boolean'
@@ -554,8 +557,8 @@ window.AxiomModules.dispatch = {
       if (worker.phase_bootstrap) taskTypes.push('bootstrap');
       if (worker.phase_reason) taskTypes.push('reason');
       if (worker.phase_explore) taskTypes.push('explore');
-      if (worker.phase_review) taskTypes.push('review');
       if (worker.phase_plan) taskTypes.push('plan');
+      if (worker.phase_review) taskTypes.push('review');
       if (worker.phase_maintainer) taskTypes.push('maintainer');
       if (taskTypes.length === 0) {
         throw new Error(`Worker ${worker.name || '未命名'} 至少要勾选一个参与阶段`);
@@ -604,6 +607,8 @@ window.AxiomModules.dispatch = {
         bootstrap_conclude_seconds: Number(this.dispatchSettings.bootstrap_conclude_seconds ?? 120),
         reason_execute_seconds: Number(this.dispatchSettings.reason_execute_seconds ?? 300),
         reason_conclude_seconds: Number(this.dispatchSettings.reason_conclude_seconds ?? 120),
+        plan_execute_seconds: Number(this.dispatchSettings.plan_execute_seconds ?? 600),
+        plan_conclude_seconds: Number(this.dispatchSettings.plan_conclude_seconds ?? 300),
         review_execute_seconds: Number(this.dispatchSettings.review_execute_seconds ?? 300),
         review_conclude_seconds: Number(this.dispatchSettings.review_conclude_seconds ?? 120),
         reason_batch_size: Number(this.dispatchSettings.reason_batch_size ?? 2),
@@ -613,6 +618,7 @@ window.AxiomModules.dispatch = {
         reason_target_open_intents: Number(this.dispatchSettings.reason_target_open_intents ?? 4),
         reason_max_new_intents_per_run: Number(this.dispatchSettings.reason_max_new_intents_per_run ?? 4),
         reason_queue_limit: Number(this.dispatchSettings.reason_queue_limit ?? 3),
+        plan_queue_limit: Number(this.dispatchSettings.plan_queue_limit ?? 3),
         explore_execute_min_seconds: Number(this.dispatchSettings.explore_execute_min_seconds ?? 60),
         explore_execute_max_seconds: Number(this.dispatchSettings.explore_execute_max_seconds ?? 3600),
         explore_conclude_min_seconds: Number(this.dispatchSettings.explore_conclude_min_seconds ?? 180),
@@ -632,12 +638,12 @@ window.AxiomModules.dispatch = {
       this.dispatchSettings.workers.push({
         _draftId: this.nextWorkerDraftId(),
         name: `pi-worker-${index}`,
-        task_types: ['bootstrap', 'reason', 'explore', 'review'],
+        task_types: ['bootstrap', 'reason', 'explore'],
         phase_bootstrap: true,
         phase_reason: true,
         phase_explore: true,
-        phase_review: true,
         phase_plan: false,
+        phase_review: false,
         max_running: 1,
         priority: 1,
         pi_model: '',

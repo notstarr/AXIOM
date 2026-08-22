@@ -12,6 +12,7 @@ from sqlalchemy import func, insert, select, update
 from axiom.modules.execution.service import reason_prompt_profile_for_trigger
 from axiom.modules.graph.tables import facts, intents
 from axiom.modules.reason.tables import reason_runs, reason_workspaces
+from axiom.modules.plan.tables import plan_runs
 from axiom.modules.tasks.tables import tasks
 from axiom.modules.vulnerabilities.tables import vulnerabilities
 from axiom.shared.clock import utcnow
@@ -35,7 +36,6 @@ from protocol_helpers import (
         ("manual", "human"),
         ("hint", "human"),
         ("continuation", "continuation"),
-        ("plan", "plan"),
         ("future_trigger", "default"),
     ],
 )
@@ -66,7 +66,7 @@ def _bootstrap_to_reason(client, **runtime_changes) -> tuple[dict, dict]:
     ).json()
     client.put(
         "/api/v1/workers/worker-a",
-        json={"capabilities": ["bootstrap", "reason", "explore"], "max_running": 8},
+        json={"capabilities": ["bootstrap", "reason", "explore", "plan"], "max_running": 8},
     )
     claim = client.post(
         f"/api/v1/dispatch/tasks/{task['id']}/intents/i001/claim",
@@ -109,7 +109,11 @@ def _proposal(number: int, fact_id: str) -> dict:
     return {
         "todo_ref": f"todo-{number}",
         "from_facts": [fact_id],
+        "source_refs": [f"fact:{fact_id}"],
         "description": f"验证接口方向 {number} 的授权边界",
+        "why_now": f"Plan 识别到接口方向 {number} 尚未覆盖",
+        "expected_signal": "出现越权或敏感数据返回",
+        "stop_condition": "确认边界后停止该向量",
         "targets": ["a.example.com"],
         "execute_seconds": 300,
         "conclude_seconds": 180,
@@ -131,13 +135,59 @@ def _finish_reason_run(engine, task_id: str, reason_run_id: str) -> None:
         )
 
 
+def _finish_plan_run(engine, task_id: str, plan_run_id: str) -> None:
+    now = utcnow()
+    with engine.begin() as conn:
+        conn.execute(
+            update(plan_runs)
+            .where(plan_runs.c.task_id == task_id, plan_runs.c.id == plan_run_id)
+            .values(status="completed", concluded_at=now, updated_at=now)
+        )
+        conn.execute(
+            update(tasks)
+            .where(tasks.c.id == task_id)
+            .values(phase="waiting", updated_at=now)
+        )
+
+
 def _reconcile_plan(client, task_id: str) -> str:
-    reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    reconciled = client.post("/api/v1/dispatch/plan-runs/reconcile", json={})
     assert reconciled.status_code == 200, reconciled.text
-    [run_id] = reconciled.json()["created_reason_run_ids"]
-    run = client.get(f"/api/v1/tasks/{task_id}/reason-runs/{run_id}").json()
-    assert run["trigger"] == "plan"
+    created = reconciled.json()["created_plan_run_ids"]
+    assert created, (reconciled.json(), client.get(f"/api/v1/tasks/{task_id}").json())
+    [run_id] = created
+    run = client.get(f"/api/v1/tasks/{task_id}/plan-runs/{run_id}").json()
     return run_id
+
+
+def _trigger_plan(client, task_id: str, *, trigger: str = "manual") -> str:
+    response = client.post(
+        f"/api/v1/tasks/{task_id}/plan-runs/trigger",
+        json={"actor": "test", "trigger": trigger},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["id"]
+
+
+def _active_plan_workspace(client, task: dict, plan_run_id: str) -> tuple[dict, dict, dict]:
+    base = f"/api/v1/dispatch/tasks/{task['id']}/plan-runs/{plan_run_id}"
+    claim = client.post(f"{base}/claim", json={"worker_name": "worker-a"})
+    assert claim.status_code == 200, claim.text
+    claimed = claim.json()
+    started = client.post(f"{base}/start", json={"lease_id": claimed["lease_id"]})
+    assert started.status_code == 200, started.text
+    execution = client.post(f"{base}/input", json={"lease_id": claimed["lease_id"]})
+    assert execution.status_code == 200, execution.text
+    workspace = client.post(
+        f"/api/v1/tasks/{task['id']}/plan/workspaces",
+        json={
+            "plan_run_id": plan_run_id,
+            "lease_id": claimed["lease_id"],
+            "context_revision": execution.json()["context_revision"],
+        },
+    )
+    assert workspace.status_code == 200, workspace.text
+    return claimed, execution.json(), workspace.json()
 
 
 def _trigger_manual_reason(client, task_id: str, *, actor: str = "人工"):
@@ -157,6 +207,20 @@ def _add_todo(client, workspace: dict, lease_id: str, todo: dict):
 def _propose(client, workspace: dict, lease_id: str, proposal: dict):
     return client.post(
         f"/api/v1/reason-workspaces/{workspace['id']}/intents",
+        json={"lease_id": lease_id, "intent": proposal},
+    )
+
+
+def _add_plan_todo(client, workspace: dict, lease_id: str, todo: dict):
+    return client.post(
+        f"/api/v1/plan-workspaces/{workspace['id']}/todos",
+        json={"lease_id": lease_id, "todo": todo},
+    )
+
+
+def _propose_plan(client, workspace: dict, lease_id: str, proposal: dict):
+    return client.post(
+        f"/api/v1/plan-workspaces/{workspace['id']}/intents",
         json={"lease_id": lease_id, "intent": proposal},
     )
 
@@ -547,13 +611,12 @@ def test_manual_reason_bypasses_automatic_interval_and_fingerprint_suppression(c
     engine = client.app.state.container.engine
     _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
 
-    automatic = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    automatic = client.post("/api/v1/dispatch/plan-runs/reconcile", json={})
     assert automatic.status_code == 200, automatic.text
-    [plan_run_id] = automatic.json()["created_reason_run_ids"]
+    [plan_run_id] = automatic.json()["created_plan_run_ids"]
     plan = client.get(
-        f"/api/v1/tasks/{task['id']}/reason-runs/{plan_run_id}"
+        f"/api/v1/tasks/{task['id']}/plan-runs/{plan_run_id}"
     ).json()
-    assert plan["trigger"] == "plan"
     task_with_plan = client.get(f"/api/v1/tasks/{task['id']}").json()
     assert task_with_plan["phase"] == "plan"
     assert task_with_plan["active_plan_run"] is None
@@ -574,34 +637,27 @@ def test_plan_claim_uses_plan_context_and_no_work_enters_waiting(client) -> None
     _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
     plan_run_id = _reconcile_plan(client, task["id"])
 
-    claim, execution = claim_reason_run(
-        client,
-        task_id=task["id"],
-        reason_run_id=plan_run_id,
-    )
-    assert execution["intent_kind"] == "reason"
-    assert execution["reason_prompt_profile"] == "plan"
-    manifest = json.loads(
-        Path(execution["context_manifest_path"]).read_text(encoding="utf-8")
-    )
+    claim, execution, workspace = _active_plan_workspace(client, task, plan_run_id)
+    manifest = json.loads(Path(execution["context_manifest_path"]).read_text(encoding="utf-8"))
     assert manifest["phase"] == "plan"
     assert {"goal_evaluations", "goal_cycles"} <= set(manifest["indexes"])
 
-    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    workspace_id = workspace["id"]
     committed = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/goal-assessment",
+        f"/api/v1/plan-workspaces/{workspace_id}/decision",
         json={
             "lease_id": claim["lease_id"],
-            "assessment": {
-                "achieved": False,
-                "reason": "四个维度均已复核，没有材料性新方向；confidence: high",
-                "evidence_refs": [],
+            "decision": {
+                "decision": "exhausted",
+                "reviewed_dimensions": ["coverage", "weaponization", "blocked_paths", "goal_completion"],
+                "exhaustion_reason": "四个维度均已复核，没有材料性新方向",
+                "confidence": "high",
             },
         },
     )
     assert committed.status_code == 200, committed.text
     committed = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        f"/api/v1/plan-workspaces/{workspace_id}/commit",
         json={"lease_id": claim["lease_id"]},
     )
     assert committed.status_code == 200, committed.text
@@ -611,29 +667,15 @@ def test_plan_claim_uses_plan_context_and_no_work_enters_waiting(client) -> None
     assert task_after["active_plan_run"] is None
     assert task_after["active_reason_run"] is None
     assert task_after["plan_run_count"] == 1
-    assert task_after["last_plan_decision"] == {
-        "reason_run_id": plan_run_id,
-        "status": "completed",
-        "decision": "waiting",
-        "reviewed_dimensions": [
-            "coverage",
-            "weaponization",
-            "blocked_paths",
-            "goal_completion",
-        ],
-        "exhaustion_reason": "四个维度均已复核，没有材料性新方向；confidence: high",
-        "evidence_refs": [],
-        "confidence": "high",
-        "concluded_at": task_after["last_plan_decision"]["concluded_at"],
-    }
+    assert task_after["last_plan_decision"]["plan_run_id"] == plan_run_id
+    assert task_after["last_plan_decision"]["decision"] == "exhausted"
     plan_after = client.get(
-        f"/api/v1/tasks/{task['id']}/reason-runs/{plan_run_id}"
+        f"/api/v1/tasks/{task['id']}/plan-runs/{plan_run_id}"
     ).json()
-    assert plan_after["trigger_payload"]["decision"] == "waiting"
-    assert plan_after["trigger_payload"]["confidence"] == "high"
+    assert plan_after["decision"]["decision"] == "exhausted"
     assert client.post(
-        "/api/v1/dispatch/reason-runs/reconcile", json={}
-    ).json()["created_reason_run_ids"] == []
+        "/api/v1/dispatch/plan-runs/reconcile", json={}
+    ).json()["created_plan_run_ids"] == []
 
 
 def test_plan_cannot_mark_goal_achieved(client) -> None:
@@ -641,21 +683,16 @@ def test_plan_cannot_mark_goal_achieved(client) -> None:
     engine = client.app.state.container.engine
     _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
     plan_run_id = _reconcile_plan(client, task["id"])
-    claim, workspace = _active_workspace(client, task, plan_run_id)
+    claim, _execution, workspace = _active_plan_workspace(client, task, plan_run_id)
 
     response = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/goal-assessment",
+        f"/api/v1/plan-workspaces/{workspace['id']}/decision",
         json={
             "lease_id": claim["lease_id"],
-            "assessment": {
-                "achieved": True,
-                "reason": "Plan 误判目标完成",
-                "evidence_refs": [f"fact:{completed['fact_id']}"],
-            },
+            "decision": {"decision": "achieved"},
         },
     )
-    assert response.status_code == 409, response.text
-    assert "不能直接将 Goal 标记为 achieved" in response.text
+    assert response.status_code == 422, response.text
 
     task_after = client.get(f"/api/v1/tasks/{task['id']}").json()
     assert task_after["phase"] == "plan"
@@ -667,13 +704,10 @@ def test_plan_commit_routes_new_intent_to_explore(client) -> None:
     engine = client.app.state.container.engine
     _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
     plan_run_id = _reconcile_plan(client, task["id"])
-    claim, workspace = _active_workspace(client, task, plan_run_id)
+    claim, _execution, workspace = _active_plan_workspace(client, task, plan_run_id)
 
-    assert _add_todo(
-        client,
-        workspace,
-        claim["lease_id"],
-        _todo(1, completed["fact_id"]),
+    assert _add_plan_todo(
+        client, workspace, claim["lease_id"], _todo(1, completed["fact_id"])
     ).status_code == 200
     proposal = _proposal(1, completed["fact_id"])
     proposal["description"] = (
@@ -681,22 +715,28 @@ def test_plan_commit_routes_new_intent_to_explore(client) -> None:
         "test_vector: cross-org-id-swap; expected_signal: 返回他人订单; "
         "stop_condition: 三个对象均拒绝访问"
     )
-    assert _propose(
-        client,
-        workspace,
-        claim["lease_id"],
-        proposal,
-    ).status_code == 200
-    _assess_continue(client, workspace, claim["lease_id"], completed["fact_id"])
+    proposed = _propose_plan(client, workspace, claim["lease_id"], proposal)
+    assert proposed.status_code == 200, proposed.text
+    decision = client.post(
+        f"/api/v1/plan-workspaces/{workspace['id']}/decision",
+        json={
+            "lease_id": claim["lease_id"],
+            "decision": {
+                "decision": "dispatch_explore",
+                "reviewed_dimensions": ["coverage"],
+            },
+        },
+    )
+    assert decision.status_code == 200, decision.text
     committed = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        f"/api/v1/plan-workspaces/{workspace['id']}/commit",
         json={"lease_id": claim["lease_id"]},
     )
     assert committed.status_code == 200, committed.text
     assert len(committed.json()["created_intent_ids"]) == 1
     assert client.get(f"/api/v1/tasks/{task['id']}").json()["phase"] == "explore"
-    run = client.get(f"/api/v1/tasks/{task['id']}/reason-runs/{plan_run_id}").json()
-    assert run["trigger_payload"]["decision"] == "explore"
+    run = client.get(f"/api/v1/tasks/{task['id']}/plan-runs/{plan_run_id}").json()
+    assert run["decision"]["decision"] == "dispatch_explore"
 
 
 def test_plan_input_arriving_during_execution_hands_off_to_reason(client) -> None:
@@ -708,12 +748,7 @@ def test_plan_input_arriving_during_execution_hands_off_to_reason(client) -> Non
     engine = client.app.state.container.engine
     _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
     plan_run_id = _reconcile_plan(client, task["id"])
-    claim, _execution = claim_reason_run(
-        client,
-        task_id=task["id"],
-        reason_run_id=plan_run_id,
-    )
-    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    claim, _execution, workspace = _active_plan_workspace(client, task, plan_run_id)
 
     with engine.begin() as conn:
         conn.execute(
@@ -726,19 +761,20 @@ def test_plan_input_arriving_during_execution_hands_off_to_reason(client) -> Non
             )
         )
     assessed = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/goal-assessment",
+        f"/api/v1/plan-workspaces/{workspace['id']}/decision",
         json={
             "lease_id": claim["lease_id"],
-            "assessment": {
-                "achieved": False,
-                "reason": "全景复盘完成，但有新输入需要增量 Reason；confidence: medium",
-                "evidence_refs": [],
+            "decision": {
+                "decision": "needs_reason",
+                "reviewed_dimensions": ["coverage"],
+                "exhaustion_reason": "Plan 期间出现新 Fact",
+                "confidence": "medium",
             },
         },
     )
     assert assessed.status_code == 200, assessed.text
     committed = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/commit",
+        f"/api/v1/plan-workspaces/{workspace['id']}/commit",
         json={"lease_id": claim["lease_id"]},
     )
     assert committed.status_code == 200, committed.text
@@ -749,7 +785,7 @@ def test_plan_input_arriving_during_execution_hands_off_to_reason(client) -> Non
     run = client.get(
         f"/api/v1/tasks/{task['id']}/reason-runs/{reason_run_id}"
     ).json()
-    assert run["trigger"] == "fact_batch"
+    assert run["trigger"] == "plan_handoff"
     assert run["source_fact_ids"] == ["f999"]
 
 
@@ -762,11 +798,11 @@ def test_pending_plan_does_not_cut_in_front_of_a_normal_reason_queue_entry(clien
     assert manual.status_code == 200, manual.text
 
     direct_plan_claim = client.post(
-        f"/api/v1/dispatch/tasks/{task['id']}/reason-runs/{plan_run_id}/claim",
+        f"/api/v1/dispatch/tasks/{task['id']}/plan-runs/{plan_run_id}/claim",
         json={"worker_name": "worker-a"},
     )
     assert direct_plan_claim.status_code == 409
-    assert "FIFO 队首" in direct_plan_claim.text
+    assert "Reason" in direct_plan_claim.text
 
     task_after = client.get(f"/api/v1/tasks/{task['id']}").json()
     assert [item["id"] for item in task_after["queued_reason_runs"]] == [manual.json()["id"]]
@@ -778,32 +814,28 @@ def test_plan_rejects_same_vector_when_only_an_unreferenced_new_fact_exists(clie
     engine = client.app.state.container.engine
     _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
     first_plan_id = _reconcile_plan(client, task["id"])
-    first_claim, first_workspace = _active_workspace(client, task, first_plan_id)
-    assert _add_todo(
-        client,
-        first_workspace,
-        first_claim["lease_id"],
-        _todo(1, completed["fact_id"]),
-    ).status_code == 200
+    first_claim, _execution, first_workspace = _active_plan_workspace(client, task, first_plan_id)
+    assert _add_plan_todo(client, first_workspace, first_claim["lease_id"], _todo(1, completed["fact_id"])).status_code == 200
     first_proposal = _proposal(1, completed["fact_id"])
     first_proposal["description"] = (
         "why_now: 首次验证; endpoint: /api/orders/{id}; "
         "test_vector: cross-org-id-swap; expected_signal: 200; stop_condition: 403"
     )
-    assert _propose(
-        client,
-        first_workspace,
-        first_claim["lease_id"],
-        first_proposal,
-    ).status_code == 200
-    _assess_continue(
-        client,
-        first_workspace,
-        first_claim["lease_id"],
-        completed["fact_id"],
+    first_proposal.update(
+        endpoint="/api/orders/{id}",
+        test_vector="cross-org-id-swap",
+        expected_signal="200",
+        stop_condition="403",
     )
+    proposed = _propose_plan(client, first_workspace, first_claim["lease_id"], first_proposal)
+    assert proposed.status_code == 200, proposed.text
+    decision = client.post(
+        f"/api/v1/plan-workspaces/{first_workspace['id']}/decision",
+        json={"lease_id": first_claim["lease_id"], "decision": {"decision": "dispatch_explore", "reviewed_dimensions": ["coverage"]}},
+    )
+    assert decision.status_code == 200, decision.text
     first_commit = client.post(
-        f"/api/v1/reason-workspaces/{first_workspace['id']}/commit",
+        f"/api/v1/plan-workspaces/{first_workspace['id']}/commit",
         json={"lease_id": first_claim["lease_id"]},
     ).json()
     [intent_id] = first_commit["created_intent_ids"]
@@ -830,14 +862,9 @@ def test_plan_rejects_same_vector_when_only_an_unreferenced_new_fact_exists(clie
     assert manual.status_code == 200, manual.text
     _finish_reason_run(engine, task["id"], manual.json()["id"])
 
-    second_plan_id = _reconcile_plan(client, task["id"])
-    second_claim, second_workspace = _active_workspace(client, task, second_plan_id)
-    assert _add_todo(
-        client,
-        second_workspace,
-        second_claim["lease_id"],
-        _todo(2, completed["fact_id"]),
-    ).status_code == 200
+    second_plan_id = _trigger_plan(client, task["id"], trigger="manual_retry")
+    second_claim, _execution, second_workspace = _active_plan_workspace(client, task, second_plan_id)
+    assert _add_plan_todo(client, second_workspace, second_claim["lease_id"], _todo(2, completed["fact_id"])).status_code == 200
     with engine.begin() as conn:
         conn.execute(
             insert(facts).values(
@@ -853,12 +880,13 @@ def test_plan_rejects_same_vector_when_only_an_unreferenced_new_fact_exists(clie
         "why_now: 换一种表述重试; endpoint: /api/orders/{id}; "
         "test_vector: cross-org-id-swap; expected_signal: 数据泄露; stop_condition: 403"
     )
-    rejected = _propose(
-        client,
-        second_workspace,
-        second_claim["lease_id"],
-        repeated,
+    repeated.update(
+        endpoint="/api/orders/{id}",
+        test_vector="cross-org-id-swap",
+        expected_signal="数据泄露",
+        stop_condition="403",
     )
+    rejected = _propose_plan(client, second_workspace, second_claim["lease_id"], repeated)
     assert rejected.status_code == 409
     assert "没有新 Fact" in rejected.text
 
@@ -871,15 +899,21 @@ def test_plan_convergence_guard_stops_after_three_runs_and_resets_on_verified_vu
     _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
 
     for index in range(3):
-        plan_run_id = _reconcile_plan(client, task["id"])
-        _finish_reason_run(engine, task["id"], plan_run_id)
+        plan_run_id = _trigger_plan(client, task["id"], trigger=f"manual_cycle_{index + 1}")
+        _finish_plan_run(engine, task["id"], plan_run_id)
         manual = _trigger_manual_reason(client, task["id"], actor=f"Plan 熔断测试 {index + 1}")
         assert manual.status_code == 200, manual.text
         _finish_reason_run(engine, task["id"], manual.json()["id"])
 
-    blocked = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    with engine.begin() as conn:
+        conn.execute(
+            update(tasks)
+            .where(tasks.c.id == task["id"])
+            .values(phase="plan", updated_at=utcnow())
+        )
+    blocked = client.post("/api/v1/dispatch/plan-runs/reconcile", json={})
     assert blocked.status_code == 200, blocked.text
-    assert blocked.json()["created_reason_run_ids"] == []
+    assert blocked.json()["created_plan_run_ids"] == []
     before_reset = client.get(f"/api/v1/tasks/{task['id']}").json()
     assert before_reset["plan_run_count"] == 3
     assert before_reset["phase"] == "waiting"
@@ -913,14 +947,13 @@ def test_plan_convergence_guard_stops_after_three_runs_and_resets_on_verified_vu
             )
         )
 
-    reset = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    reset = client.post("/api/v1/dispatch/plan-runs/reconcile", json={})
     assert reset.status_code == 200, reset.text
-    [reset_plan_id] = reset.json()["created_reason_run_ids"]
+    [reset_plan_id] = reset.json()["created_plan_run_ids"]
     reset_plan = client.get(
-        f"/api/v1/tasks/{task['id']}/reason-runs/{reset_plan_id}"
+        f"/api/v1/tasks/{task['id']}/plan-runs/{reset_plan_id}"
     ).json()
-    assert reset_plan["trigger"] == "plan"
-    assert reset_plan["trigger_payload"]["plan_sequence"] == 1
+    assert reset_plan["trigger"] == "reconcile"
 
 
 def test_concurrent_manual_reason_requests_create_only_one_active_run(client) -> None:

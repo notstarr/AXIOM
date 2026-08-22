@@ -13,10 +13,12 @@ from axiom.dispatcher.heartbeat import LeaseLostError
 from axiom.dispatcher.http import ControlPlaneError
 from axiom.dispatcher.loop import Dispatcher
 from axiom.dispatcher.reason import ReasonRunner
+from axiom.dispatcher.plan import PlanRunner
 from axiom.dispatcher.review import ReviewRunner
 from axiom.dispatcher.schemas import ClaimedWork, DispatchReport
 from axiom.modules.execution.schemas import ActivityCommand, ReleaseIntentCommand
 from axiom.modules.reason.schemas import ClaimedReasonRun
+from axiom.modules.plan.schemas import ClaimedPlanRun
 from axiom.modules.vulnerability_reviews.schemas import ClaimedVulnerabilityReviewRun
 from axiom.modules.workers.schemas import Worker
 from axiom.modules.token_usage.schemas import TokenUsageBatchCommand
@@ -76,6 +78,9 @@ class AxiomRunner:
         reconcile = getattr(self.control_plane, "reconcile_reason_runs", None)
         if reconcile is not None:
             reconcile()
+        reconcile_plan = getattr(self.control_plane, "reconcile_plan_runs", None)
+        if reconcile_plan is not None:
+            reconcile_plan()
         recover = getattr(self.control_plane, "recover_stale", None)
         if recover is not None:
             recover(stale_after_seconds=self.lease_timeout_seconds)
@@ -171,6 +176,12 @@ class AxiomRunner:
                     heartbeat_interval_seconds=self.heartbeat_interval_seconds,
                     cancellation=cancellation,
                 ).run(work, executor)
+            elif work.kind == "plan":
+                PlanRunner(
+                    self.control_plane,
+                    heartbeat_interval_seconds=self.heartbeat_interval_seconds,
+                    cancellation=cancellation,
+                ).run(work, executor)
             elif work.kind == "explore":
                 ExploreRunner(
                     self.control_plane,
@@ -219,6 +230,7 @@ class AxiomRunner:
         from axiom.dispatcher.pi import (
             PiBootstrapExecutor,
             PiExploreExecutor,
+            PiPlanExecutor,
             PiReasonExecutor,
             PiReviewExecutor,
         )
@@ -246,6 +258,8 @@ class AxiomRunner:
             return PiBootstrapExecutor(worker, **common)
         if work.kind == "reason":
             return PiReasonExecutor(worker, **common)
+        if work.kind == "plan":
+            return PiPlanExecutor(worker, **common)
         if work.kind == "explore":
             claim_interventions = getattr(self.control_plane, "claim_interventions", None)
             resolve_intervention = getattr(self.control_plane, "resolve_intervention", None)
@@ -312,6 +326,8 @@ class AxiomRunner:
     def _work_label(work: ClaimedWork) -> str:
         if isinstance(work, ClaimedReasonRun):
             return f"{work.task_id}/{work.reason_run_id}"
+        if isinstance(work, ClaimedPlanRun):
+            return f"{work.task_id}/{work.plan_run_id}"
         if isinstance(work, ClaimedVulnerabilityReviewRun):
             return f"{work.task_id}/{work.review_run_id}"
         return f"{work.task_id}/{work.intent_id}"

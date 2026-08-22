@@ -44,6 +44,7 @@ class GuardService:
                 task_id=request.task_id,
                 intent_id=request.intent_id,
                 reason_run_id=request.reason_run_id,
+                plan_run_id=request.plan_run_id,
                 review_run_id=request.review_run_id,
                 worker=request.worker,
                 event_type="guard.decision",

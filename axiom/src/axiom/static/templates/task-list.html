@@ -145,6 +145,26 @@
               <p class="mt-1 text-[10px] text-slate-400">默认选择全部启用的 Worker；清空表示不限制 Worker。</p>
             </div>
 
+            <div class="mt-4">
+              <div class="flex items-center justify-between mb-1">
+                <label class="text-xs font-semibold text-indigo-600">Plan 专属 Worker（可选）</label>
+                <div class="flex items-center gap-2 text-[10px]">
+                  <button type="button" @click="newProject.plan_worker_pool = ((dispatchSettings && dispatchSettings.workers) || []).filter(w => w && w.name && !w.disabled && (w.task_types || []).includes('plan')).map(w => w.name)" class="text-indigo-600 hover:underline">选择 Plan Worker</button>
+                  <button type="button" @click="newProject.plan_worker_pool = []" class="text-slate-400 hover:underline">跟随任务池</button>
+                </div>
+              </div>
+              <div class="space-y-1.5 max-h-32 overflow-y-auto border border-indigo-100 rounded-xl p-2 bg-indigo-50/30">
+                <template x-for="worker in (dispatchSettings && dispatchSettings.workers) || []" :key="`new-plan-worker-${worker.name}`">
+                  <label class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white cursor-pointer" :class="worker.disabled || !(worker.task_types || []).includes('plan') ? 'opacity-40' : ''">
+                    <input type="checkbox" :value="worker.name" x-model="newProject.plan_worker_pool" :disabled="worker.disabled || !(worker.task_types || []).includes('plan')" class="rounded border-indigo-300 text-indigo-500 focus:ring-indigo-200">
+                    <span class="text-xs font-medium text-slate-700" x-text="worker.name"></span>
+                    <span x-show="!(worker.task_types || []).includes('plan')" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-200 text-slate-500">非 Plan Worker</span>
+                  </label>
+                </template>
+              </div>
+              <p class="mt-1 text-[10px] text-slate-400">留空时 Plan 继承上面的任务 Worker 池；选择后仅指定 Plan Worker 可领取 PlanRun。</p>
+            </div>
+
             <div>
               <label class="text-xs font-semibold text-slate-500 mb-1 block">网络范围（可选）</label>
               <p class="mb-2 text-[11px] text-slate-400">填写任一名单即启用 Scope；两者都为空时不设置网络范围，也不会从测试入口自动补充。</p>
@@ -267,7 +287,7 @@
                 const cur = activeDiagnosticPhase;
                 const curBoard = val.worker_rankings && val.worker_rankings.boards ? val.worker_rankings.boards[cur] : null;
                 if (curBoard && (curBoard.total || 0) > 0) return;
-                const order = ['bootstrap', 'explore', 'reason'];
+                const order = ['bootstrap', 'explore', 'reason', 'plan', 'review'];
                 for (const p of order) {
                   const b = val.worker_rankings && val.worker_rankings.boards ? val.worker_rankings.boards[p] : null;
                   if (b && (b.total || 0) > 0) { activeDiagnosticPhase = p; break; }
@@ -280,7 +300,7 @@
                 <div>
                   <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">任务诊断</p>
                   <h4 class="mt-1 text-sm font-semibold text-slate-800">Worker 完成率 / 失败超时排行榜</h4>
-                  <p class="mt-0.5 text-[11px] text-slate-400">只读检查，不会改变任务派发；按 Bootstrap、Explore、Reason 分阶段统计表现。</p>
+                  <p class="mt-0.5 text-[11px] text-slate-400">只读检查，不会改变任务派发；按 Bootstrap、Explore、Reason、Plan、Reviewer 分阶段统计表现。</p>
                 </div>
                 <button type="button" @click="loadTaskDiagnostics(selectedTaskSummary().id)" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 transition">刷新诊断</button>
               </div>
@@ -316,7 +336,7 @@
                   <div class="space-y-3">
                     <div class="rounded-xl border border-slate-100 p-3 bg-white">
                       <div class="flex flex-wrap gap-1.5 mb-3 rounded-xl bg-slate-50 p-1">
-                        <template x-for="phase in ['bootstrap', 'explore', 'reason']" :key="`diag-phase-tab-${phase}`">
+                        <template x-for="phase in ['bootstrap', 'explore', 'reason', 'plan', 'review']" :key="`diag-phase-tab-${phase}`">
                           <button type="button" @click="activeDiagnosticPhase = phase" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition" :class="activeDiagnosticPhase === phase ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'">
                             <span x-text="diagnosticPhaseLabel(phase)"></span>
                             <span class="ml-1 text-[10px] tabular-nums" :class="activeDiagnosticPhase === phase ? 'text-brand-400' : 'text-slate-400'" x-text="diagnosticPhaseBoard(phase).total || 0"></span>
@@ -468,12 +488,36 @@
                 </template>
               </div>
               <div class="mt-3 flex flex-wrap items-center justify-between gap-3">
-                <p class="text-[10px] text-slate-400">当前选择为空 = 不限制 worker；选择后只有这些 worker 可领取后续意图。</p>
+                <p class="text-[10px] text-slate-400">上方为空 = 不限制普通 Worker；Plan 池为空 = 继承普通池。</p>
                 <div class="flex items-center gap-2">
                   <button type="button" @click="syncTaskWorkerPoolEditor(selectedTaskSummary())" :disabled="!taskWorkerPoolChanged(selectedTaskSummary()) || taskWorkerPoolEditor.saving" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-white transition disabled:opacity-40">撤销</button>
                   <button type="button" @click="saveTaskWorkerPool()" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().archived || selectedTaskSummary().status === 'completed' || !taskWorkerPoolChanged(selectedTaskSummary()) || taskWorkerPoolEditor.saving" class="px-3 py-1.5 text-xs rounded-lg bg-brand-500 text-white hover:bg-brand-600 transition disabled:opacity-40" x-text="taskWorkerPoolEditor.saving ? '保存中...' : '保存并应用'"></button>
                 </div>
               </div>
+            </div>
+            <div class="rounded-xl border border-indigo-100 p-4 bg-indigo-50/30">
+              <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
+                <div>
+                  <p class="text-xs font-semibold text-indigo-600 uppercase tracking-wider">Plan 阶段</p>
+                  <h4 class="mt-1 text-sm font-semibold text-slate-800">Plan Worker 池</h4>
+                  <p class="mt-0.5 text-[11px] text-slate-400">Plan 使用独立模型、Skill/MCP 能力快照；留空时兼容继承普通任务池。</p>
+                </div>
+                <div class="flex items-center gap-2 text-[10px]">
+                  <button type="button" @click="setTaskPlanWorkerPool('plan')" class="text-indigo-600 hover:underline">仅 Plan Worker</button>
+                  <button type="button" @click="setTaskPlanWorkerPool('all')" class="text-indigo-600 hover:underline">全部</button>
+                  <button type="button" @click="setTaskPlanWorkerPool('clear')" class="text-slate-400 hover:underline">跟随任务池</button>
+                </div>
+              </div>
+              <div class="space-y-1.5 max-h-40 overflow-y-auto border border-indigo-100 rounded-xl p-2 bg-white">
+                <template x-for="worker in (dispatchSettings && dispatchSettings.workers) || []" :key="`plan-worker-pool-${selectedTaskSummary().id}-${worker.name}`">
+                  <label class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-indigo-50 cursor-pointer" :class="worker.disabled || !(worker.task_types || []).includes('plan') ? 'opacity-40' : ''">
+                    <input type="checkbox" :value="worker.name" x-model="taskWorkerPoolEditor.plan_worker_pool" :disabled="worker.disabled || !(worker.task_types || []).includes('plan') || selectedTaskSummary().legacy_readonly || selectedTaskSummary().archived || selectedTaskSummary().status === 'completed'" class="rounded border-indigo-300 text-indigo-500 focus:ring-indigo-200">
+                    <span class="text-xs font-medium text-slate-700" x-text="worker.name"></span>
+                    <span x-show="!(worker.task_types || []).includes('plan')" class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-200 text-slate-500">非 Plan Worker</span>
+                  </label>
+                </template>
+              </div>
+              <p class="mt-2 text-[10px] text-slate-400">留空表示兼容模式：PlanRun 使用普通任务池。指定后 Plan 与 Reason/Explore 池完全隔离。</p>
             </div>
             <div class="rounded-xl border border-slate-200 p-4 bg-white">
               <div class="flex flex-wrap items-start justify-between gap-3">

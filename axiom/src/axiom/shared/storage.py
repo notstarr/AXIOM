@@ -214,14 +214,15 @@ class FileStore:
         lease_id: str,
         intent_id: str | None = None,
         reason_run_id: str | None = None,
+        plan_run_id: str | None = None,
         review_run_id: str | None = None,
     ) -> Path:
         _validate_segment(task_id, "task_id")
         _validate_segment(lease_id, "lease_id")
-        owners = [item for item in (intent_id, reason_run_id, review_run_id) if item]
+        owners = [item for item in (intent_id, reason_run_id, plan_run_id, review_run_id) if item]
         if len(owners) != 1:
             raise ConflictError(
-                "Run directory requires exactly one Intent, ReasonRun or ReviewRun owner"
+                "Run directory requires exactly one Intent, ReasonRun, PlanRun or ReviewRun owner"
             )
         owner_id = owners[0]
         assert owner_id is not None

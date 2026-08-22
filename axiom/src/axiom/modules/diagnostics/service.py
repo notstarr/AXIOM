@@ -14,7 +14,7 @@ from axiom.modules.token_usage.service import TokenUsageService
 from axiom.modules.workers.service import WorkerService
 
 
-PHASES = ("bootstrap", "explore", "reason")
+PHASES = ("bootstrap", "explore", "reason", "plan", "review")
 REASON_LABELS = {
     "timeout": ("执行超时", "high"),
     "lease_expired": ("租约过期", "high"),
@@ -132,9 +132,23 @@ class DiagnosticsService:
             phase = str(payload.get("phase") or "")
             if phase not in boards:
                 continue
-            if event.event_type in {"intent.completed", "reason.committed"}:
+            if event.event_type in {
+                "intent.completed",
+                "reason.committed",
+                "plan.workspace_committed",
+                "plan.committed",
+                "review.committed",
+            }:
                 outcome = "success"
-            elif event.event_type in {"intent.released", "intent.lease_expired"}:
+            elif event.event_type in {
+                "intent.released",
+                "intent.lease_expired",
+                "plan.released",
+                "plan.lease_expired",
+                "plan.workspace_abandoned",
+                "review.released",
+                "review.lease_expired",
+            }:
                 failure = str(payload.get("failure_kind") or event.event_type).lower()
                 outcome = "timed_out" if any(
                     token in failure for token in ("timeout", "timed_out", "lease", "heartbeat")

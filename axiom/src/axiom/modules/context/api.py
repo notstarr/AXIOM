@@ -26,6 +26,7 @@ def build_context(
         phase=body.phase,
         intent_id=body.intent_id,
         reason_run_id=body.reason_run_id,
+        plan_run_id=body.plan_run_id,
         review_run_id=body.review_run_id,
         lease_id=body.lease_id,
     )
@@ -37,4 +38,4 @@ def expand_context(
     body: ExpandContext,
     container: Container = Depends(get_container),
 ) -> ExpandedContext:
-    return container.context.expand(task_id, body.refs)
+    return container.context.expand(task_id, body.refs, phase=body.phase)

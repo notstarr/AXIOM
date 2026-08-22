@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from axiom.dispatcher.schemas import ClaimedIntent
+from axiom.dispatcher.schemas import ClaimAction, ClaimedIntent
 from axiom.dispatcher.heartbeat import LeaseLostError
 from axiom.dispatcher.http import (
     CONTROL_PLANE_INPUT_TIMEOUT_SECONDS,
@@ -17,6 +17,47 @@ from axiom.modules.execution.schemas import (
     ExecutionInput,
     ReleaseIntentCommand,
 )
+from axiom.modules.plan.schemas import ClaimedPlanRun
+
+
+def test_http_control_plane_claims_plan_through_the_plan_endpoint() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "task_id": "t_001",
+                "plan_run_id": "pr000001",
+                "worker_name": "plan-worker",
+                "kind": "plan",
+                "lease_id": "lease-plan",
+                "claimed_at": "2026-08-21T00:00:00Z",
+                "status": "claimed",
+            },
+        )
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="http://axiom.test/api/v1",
+    )
+    control = HttpControlPlane("http://axiom.test", client=client)
+
+    claimed = control.claim_work(
+        ClaimAction(
+            task_id="t_001",
+            plan_run_id="pr000001",
+            worker_name="plan-worker",
+            kind="plan",
+        )
+    )
+
+    assert isinstance(claimed, ClaimedPlanRun)
+    assert requests[0].url.path == (
+        "/api/v1/dispatch/tasks/t_001/plan-runs/pr000001/claim"
+    )
+    assert json.loads(requests[0].content) == {"worker_name": "plan-worker"}
 
 
 def test_http_control_plane_uses_api_only_and_maps_claim_conflict() -> None:

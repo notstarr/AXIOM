@@ -21,17 +21,18 @@
 ## 执行规则
 
 1. **上下文与判定标准加载**：
-   - 优先读取清单中的 `hints.json`（任务约束）、`knowledge.json`（业务背景）与 `vulnerabilities.json`（避免重复测试与重复上报）；
-   - 执行 `axiom skill path whatisvul` 并完整阅读其 `SKILL.md`（漏洞定级与判定标准，失败时运行 `axiom skill doctor whatisvul`）；
+   - 优先完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`（避免重复测试和上报）；重点检查 Todo 的 `status_reason`；再按需读取相关事实、执行意图、待办、产物、证据；
+   - 执行 `axiom skill path whatisvul` 并完整阅读其 `whatisvul/SKILL.md`（漏洞定级与判定标准，失败时运行 `axiom skill doctor whatisvul`）；
    - 按需读取当前所需的其他 Skill（`axiom skill path <name>`）或上游资产（`asset_inventory.md`、上游 Intent 的 `findings.md`），严禁无脑全盘读取历史。
 2. **目标与对象取值规则**：
-   - 严格围绕当前 Intent 目标展开；测试所需对象 ID 优先从基线或自身列表响应（`items[].id`）获取，严禁凭空臆造长随机 ID；未显式披露 Scope 时以当前目标及关联业务为界。
+   - 严格围绕当前 Intent 目标展开；测试所需对象 ID 优先从基线或自身列表响应（`items[].id`）获取，必要时展开联想；未显式披露 Scope 时以当前目标及关联业务为界。
+   - 当前intent被某些前置条件阻塞时，在`上下文清单`中读取其他已完成intent的`findings`，寻找、复用其中的有效信息以完成本次intent
 3. **核心产物约定**：
    - 将本轮已确认的绝对事实与漏洞发现写入 `{run_dir}/artifacts/findings.md`；
    - 将本次发现但尚未完成或留待后续跟进的方向写入 `{run_dir}/artifacts/leads.md`；
    - 两个文件必须存在且非空（无内容时写“本轮无新增确认事实”/“本轮无遗留待验证线索”）。
 4. **证据与审计材料**：
-   - 请求(curl)、响应、原始工具输出与证明截图可写入 `{run_dir}/artifacts/evidence/`；证据是审计材料而非结束卡点，无需为了补证据而重跑已完成的测试；遇网络/参数拦截不得宣称“方向穷尽”，积极寻求替代利用路径。
+   - 请求(curl)、响应、原始工具输出与证明截图可写入 `{run_dir}/artifacts/evidence/`；证据是可选审计材料，不是阶段完成条件；没有可用证据时直接省略，不要为了补齐证据重新运行 Nuclei、SQLMap、浏览器、爬虫；遇网络/参数拦截不得宣称“方向穷尽”，积极寻求替代利用路径。
 5. **协议探测与状态判定准则**：
    - **严禁用单一空 GET 测写接口**：写操作/动作型接口（`/create`, `/generate`, `/submit` 等）若返回 400/404/405，仅代表方法或 Body 不匹配，绝不代表服务未上线；必须构造对应 POST/PUT 及有效 JSON 请求体重新验证；
    - **业务报错（400/422/500）即为存活铁证**：说明已穿透网关触达业务层，必须根据参数报错信息修正入参，继续深挖逻辑/越权/注入；
@@ -48,7 +49,7 @@
    ```
    - 记忆口诀：`已确认漏洞/事实 -> findings.md`；`未完成线索 -> leads.md`；`有效漏洞 -> CLI 上报`。
 7. **人工干预标记**：
-   - 仅当必须人类真实支付、提供短信/MFA/扫码等外部物理动作时，调用 `axiom explore human-intervention mark --reason "..."`；随后继续测试可自动化的其他分支并正常收口。
+   - 仅当必须人类真实支付、提供短信/MFA/扫码等外部物理动作时，调用 `axiom explore human-intervention mark --reason "..."`；验证码、真实设备和工具失败都应记录为可恢复阻塞，不会暂停任务，也不会自动触发 Reason；不要因为工具暂时失败就宣称方向穷尽，原因不得包含凭证、验证码、支付信息或敏感响应正文；当前 Intent 仍必须正常生成两个产物并以 FINISH 收口，随后继续测试可自动化的其他分支并正常收口。
 8. **收口控制与节奏**：
    - 形成结论后立即收口，禁止为了耗尽预算而重复发包；
    - 收到“预算已使用约 70%”提醒时，立即停止扩展新方向，整理产物并收口，未测完部分直接沉淀至 `leads.md`。

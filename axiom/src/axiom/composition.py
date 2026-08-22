@@ -19,6 +19,7 @@ from axiom.modules.execution.service import ExecutionService
 from axiom.modules.exports.service import ExportService
 from axiom.modules.graph.service import GraphService
 from axiom.modules.projects.service import ProjectService
+from axiom.modules.plan.service import PlanService
 from axiom.modules.reason.service import ReasonService
 from axiom.modules.mcp.service import MCPService
 from axiom.modules.phase_capabilities.service import PhaseCapabilityService
@@ -54,6 +55,7 @@ class Container:
     execution: ExecutionService
     todos: TodoService
     reason: ReasonService
+    plan: PlanService
     context: ContextService
     settings: RuntimeSettingsService
     credentials: CredentialService
@@ -86,6 +88,7 @@ class Container:
         archives = ArchiveService(engine, store, reviews=vulnerability_reviews)
         context = ContextService(engine, store)
         reason = ReasonService(engine, store=store)
+        plan = PlanService(engine)
         skills = SkillService(data_dir, engine=engine)
         phase_capabilities = PhaseCapabilityService(
             engine,
@@ -128,6 +131,7 @@ class Container:
             ),
             todos=TodoService(engine),
             reason=reason,
+            plan=plan,
             context=context,
             settings=settings,
             credentials=CredentialService(engine),

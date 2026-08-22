@@ -129,6 +129,9 @@ class ReasonRepository:
             .where(
                 reason_runs.c.task_id == task_id,
                 reason_runs.c.status.in_(LEASED_REASON_STATUSES),
+                # Legacy Plan rows remain readable through get_run(), but
+                # must never participate in the Reason scheduler.
+                reason_runs.c.trigger != "plan",
             )
             .order_by(reason_runs.c.created_at, reason_runs.c.id)
             .limit(1)
@@ -145,6 +148,7 @@ class ReasonRepository:
             .where(
                 reason_runs.c.task_id == task_id,
                 reason_runs.c.status.in_(["claimed", "running", "concluding"]),
+                reason_runs.c.trigger != "plan",
             )
             .order_by(reason_runs.c.created_at, reason_runs.c.id)
             .limit(1)
@@ -161,6 +165,7 @@ class ReasonRepository:
             .where(
                 reason_runs.c.task_id == task_id,
                 reason_runs.c.status == "pending",
+                reason_runs.c.trigger != "plan",
             )
             .order_by(reason_runs.c.created_at, reason_runs.c.id)
         ).mappings().all()
@@ -184,6 +189,7 @@ class ReasonRepository:
                 reason_runs.c.task_id == task_id,
                 reason_runs.c.id == run_id,
                 reason_runs.c.status == "pending",
+                reason_runs.c.trigger != "plan",
             )
             .values(
                 trigger_payload_json=json.dumps(trigger_payload, ensure_ascii=False),
@@ -228,6 +234,7 @@ class ReasonRepository:
                 reason_runs.c.task_id == task_id,
                 reason_runs.c.id == run_id,
                 reason_runs.c.status.in_(["claimed", "running", "concluding"]),
+                reason_runs.c.trigger != "plan",
             )
             .values(
                 trigger_payload_json=json.dumps(trigger_payload, ensure_ascii=False),
@@ -269,6 +276,7 @@ class ReasonRepository:
                 reason_runs.c.task_id == task_id,
                 reason_runs.c.id == run_id,
                 reason_runs.c.status.in_(["running", "concluding"]),
+                reason_runs.c.trigger != "plan",
             )
             .values(
                 trigger_payload_json=json.dumps(trigger_payload, ensure_ascii=False),
@@ -284,9 +292,35 @@ class ReasonRepository:
             .where(
                 reason_runs.c.task_id == task_id,
                 reason_runs.c.status == "completed",
+                reason_runs.c.trigger != "plan",
             )
             .order_by(
                 reason_runs.c.concluded_at.desc().nulls_last(),
+                reason_runs.c.id.desc(),
+            )
+            .limit(1)
+        ).mappings().one_or_none()
+
+    @staticmethod
+    def latest_finalized_row(conn: Connection, task_id: str):
+        """Return the latest terminal regular ReasonRun, including failures.
+
+        Plan handoff is a one-shot edge.  Looking only at completed ReasonRuns
+        makes a terminal failed handoff appear to have never been consumed,
+        so every reconciliation tick can create another fresh handoff and
+        bypass the Reason retry budget.
+        """
+
+        return conn.execute(
+            select(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.status.in_(("completed", "failed", "cancelled")),
+                reason_runs.c.trigger != "plan",
+            )
+            .order_by(
+                reason_runs.c.concluded_at.desc().nulls_last(),
+                reason_runs.c.updated_at.desc(),
                 reason_runs.c.id.desc(),
             )
             .limit(1)
@@ -301,6 +335,7 @@ class ReasonRepository:
             .where(
                 reason_runs.c.task_id == task_id,
                 reason_runs.c.status.in_(["completed", "failed"]),
+                reason_runs.c.trigger != "plan",
             )
             .order_by(
                 reason_runs.c.concluded_at.desc().nulls_last(),
@@ -334,6 +369,7 @@ class ReasonRepository:
                 reason_runs.c.task_id == task_id,
                 reason_runs.c.id == run_id,
                 reason_runs.c.status == "pending",
+                reason_runs.c.trigger != "plan",
             )
             .values(
                 status="claimed",
@@ -379,6 +415,7 @@ class ReasonRepository:
                 reason_runs.c.id == run_id,
                 reason_runs.c.status == "claimed",
                 reason_runs.c.lease_id == lease_id,
+                reason_runs.c.trigger != "plan",
             )
             .values(
                 status="running",
@@ -409,6 +446,7 @@ class ReasonRepository:
                 reason_runs.c.id == run_id,
                 reason_runs.c.lease_id == lease_id,
                 reason_runs.c.status.in_(LEASED_REASON_STATUSES),
+                reason_runs.c.trigger != "plan",
             )
             .values(last_heartbeat_at=now, activity_updated_at=now, updated_at=now)
         )
@@ -433,6 +471,7 @@ class ReasonRepository:
                 reason_runs.c.id == run_id,
                 reason_runs.c.lease_id == lease_id,
                 reason_runs.c.status.in_(LEASED_REASON_STATUSES),
+                reason_runs.c.trigger != "plan",
             )
             .values(
                 activity_kind=activity_kind,
@@ -460,6 +499,7 @@ class ReasonRepository:
                 reason_runs.c.id == run_id,
                 reason_runs.c.lease_id == lease_id,
                 reason_runs.c.status == "running",
+                reason_runs.c.trigger != "plan",
             )
             .values(
                 status="concluding",
@@ -493,6 +533,7 @@ class ReasonRepository:
                 reason_runs.c.id == run_id,
                 reason_runs.c.lease_id == lease_id,
                 reason_runs.c.status.in_(LEASED_REASON_STATUSES),
+                reason_runs.c.trigger != "plan",
             )
             .values(
                 status="failed" if terminal else "pending",
@@ -536,6 +577,7 @@ class ReasonRepository:
                 reason_runs.c.id == run_id,
                 reason_runs.c.lease_id == lease_id,
                 reason_runs.c.status.in_(["running", "concluding"]),
+                reason_runs.c.trigger != "plan",
             )
             .values(
                 status="completed",
@@ -566,6 +608,7 @@ class ReasonRepository:
             .where(
                 reason_runs.c.task_id == task_id,
                 reason_runs.c.status.in_(ACTIVE_REASON_STATUSES),
+                reason_runs.c.trigger != "plan",
             )
             .values(
                 status="cancelled",
@@ -633,6 +676,7 @@ class ReasonRepository:
                 reason_runs.c.lease_id.is_not(None),
                 reason_runs.c.last_heartbeat_at.is_not(None),
                 reason_runs.c.last_heartbeat_at <= cutoff,
+                reason_runs.c.trigger != "plan",
             )
         ).mappings().all()
 
@@ -838,6 +882,7 @@ class ReasonRepository:
             goal_cycle_id=row.get("goal_cycle_id"),
             status=row["status"],
             trigger=row["trigger"],
+            legacy_plan=row["trigger"] == "plan",
             trigger_payload=json.loads(row["trigger_payload_json"] or "{}"),
             input_fingerprint=row["input_fingerprint"],
             source_fact_ids=source_fact_ids,

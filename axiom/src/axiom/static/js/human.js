@@ -6,6 +6,14 @@ window.AxiomModules.human = {
       const generation = this._projectOpenGeneration;
       const previousHydration = this._taskDetailHydrationPromise;
       this.view = ['graph', 'archive'].includes(mode) ? mode : 'human';
+      if (taskId) {
+        const targetHash = `#/tasks/${encodeURIComponent(taskId)}${this.view === 'graph' ? '?view=graph' : (this.view === 'archive' ? '?view=archive' : '')}`;
+        if (typeof location !== 'undefined' && location.hash !== targetHash) {
+          const historyApi = typeof history !== 'undefined' ? history : null;
+          const replaceState = historyApi && (historyApi.replaceState || historyApi.pushState);
+          if (typeof replaceState === 'function') replaceState.call(historyApi, null, '', targetHash);
+        }
+      }
       this.showPageSkeleton();
       await this.mountCurrentPage();
       if (previousHydration) await previousHydration;
@@ -627,11 +635,28 @@ window.AxiomModules.human = {
 
     humanStageStateClass(stage) {
       const state = this.humanStageState(stage)?.state || 'waiting';
-      return `human-stage-icon human-stage-${state}`;
+      // Keep the phase identity on the status icon as well as on the label.
+      // Plan uses an indigo palette even when it is waiting for a dedicated
+      // backend, instead of inheriting Reason's generic blue/amber state
+      // colors.
+      return `human-stage-icon human-stage-${state} human-stage-${stage}`;
     },
 
     humanStageLabel(stage) {
       return this.humanStageState(stage)?.label || '等待中';
+    },
+
+    planDecisionLabel(decision) {
+      const value = typeof decision === 'string' ? decision : decision?.decision;
+      return ({
+        dispatch_explore: '派发 Explore',
+        explore: '回到 Explore',
+        continue: '继续运行',
+        needs_reason: '回到 Reason',
+        reason: '回到 Reason',
+        exhausted: '确认穷尽',
+        waiting: '进入等待',
+      }[value] || value || '尚未收口');
     },
 
     humanCycleCounts() {
@@ -652,7 +677,13 @@ window.AxiomModules.human = {
       const active = this.humanCurrentIntents();
       if (active.length) return `等待 ${active.length} 个 Intent 返回结果，之后进入下一轮 Reason。`;
       const planDecision = this.project?.project?.last_plan_decision;
-      if (planDecision?.decision === 'waiting') {
+      if (['dispatch_explore', 'explore', 'continue'].includes(planDecision?.decision)) {
+        return 'Plan 已完成全景复盘并派发新的 Explore，等待探测结果。';
+      }
+      if (['needs_reason', 'reason'].includes(planDecision?.decision)) {
+        return 'Plan 已发现新的待评估输入，等待 Reason 增量结算。';
+      }
+      if (['waiting', 'exhausted'].includes(planDecision?.decision)) {
         return planDecision.exhaustion_reason || 'Plan 已完成全景复盘，当前没有材料性的新方向。';
       }
       return '等待调度器进入下一轮 Reason。';

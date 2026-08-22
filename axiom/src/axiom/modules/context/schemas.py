@@ -9,6 +9,7 @@ class BuildContext(BaseModel):
     phase: Literal["bootstrap", "reason", "explore", "plan", "review"]
     intent_id: str | None = None
     reason_run_id: str | None = None
+    plan_run_id: str | None = None
     review_run_id: str | None = None
     lease_id: str | None = None
 
@@ -19,6 +20,7 @@ class ContextRevision(BaseModel):
     phase: str
     intent_id: str | None = None
     reason_run_id: str | None = None
+    plan_run_id: str | None = None
     review_run_id: str | None = None
     lease_id: str | None = None
     manifest_key: str
@@ -28,6 +30,10 @@ class ContextRevision(BaseModel):
 
 
 class ExpandContext(BaseModel):
+    # Plan receives a full historical index, including archived artifacts and
+    # Todos.  Keep the existing request shape compatible while allowing the
+    # caller to explicitly opt into that read-only historical view.
+    phase: Literal["bootstrap", "reason", "explore", "plan", "review"] | None = None
     refs: list[str] = Field(min_length=1, max_length=100)
 
     @field_validator("refs")

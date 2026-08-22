@@ -34,6 +34,21 @@ tasks = Table(
     Column("phase", String, nullable=False),
     Column("scope_json", JSONText, nullable=False),
     Column("worker_pool_json", JSONText, nullable=False),
+    # Plan owns a separate backend pool.  Empty/NULL values are interpreted
+    # by the service layer as the legacy shared task pool for compatibility
+    # with tasks created before independent Plan scheduling was introduced.
+    # Keep a database-side default as well as the Python default.  The
+    # PostgreSQL baseline is generated from current metadata, while older
+    # callers may still issue INSERTs that do not know about this optional
+    # Plan pool column.  A server default lets those legacy INSERTs inherit
+    # the shared worker pool mode instead of failing the NOT NULL constraint.
+    Column(
+        "plan_worker_pool_json",
+        JSONText,
+        nullable=False,
+        default="[]",
+        server_default="[]",
+    ),
     Column("guard_enabled", Boolean, nullable=False, default=False),
     Column("external_report_enabled", Boolean, nullable=False, default=False),
     Column("legacy_readonly", Boolean, nullable=False, default=False),

@@ -61,6 +61,7 @@ window.AxiomModules.state = {
     projectDetailsError: '',
     selectedProjectId: '',
     reasonStackExpanded: false,
+    planStackExpanded: false,
     _projectOpenGeneration: 0,
     taskDetailLoad: {
       taskId: '',
@@ -146,8 +147,8 @@ window.AxiomModules.state = {
     showDeleteModal: false,
     resumeTaskDialog: { open: false, taskId: '', title: '', limited: false, hours: 0, minutes: 0, submitting: false },
 
-    newProject: { parent_project_id: '', title: '', origin: '', goal: '对该系统进行渗透测试，并挖掘10个高置信度的漏洞', bootstrap: true, kk_report_enabled: false, depth_mode: false, guard_enabled: false, hints: '', task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '', depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false },
-    taskWorkerPoolEditor: { projectId: '', worker_pool: [], saving: false },
+    newProject: { parent_project_id: '', title: '', origin: '', goal: '对该系统进行渗透测试，并挖掘10个高置信度的漏洞', bootstrap: true, kk_report_enabled: false, depth_mode: false, guard_enabled: false, hints: '', task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '', depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], plan_worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false },
+    taskWorkerPoolEditor: { projectId: '', worker_pool: [], plan_worker_pool: [], saving: false },
     projectGroupForm: { title: '', description: '' },
     projectGroupSettingsForm: { title: '', description: '', notes: '', status: 'active' },
     intentForm: { description: '', targets: '' },
@@ -226,6 +227,8 @@ window.AxiomModules.state = {
       bootstrap_conclude_seconds: 180,
       reason_execute_seconds: 600,
       reason_conclude_seconds: 300,
+      plan_execute_seconds: 600,
+      plan_conclude_seconds: 300,
       review_execute_seconds: 400,
       review_conclude_seconds: 180,
       reason_batch_size: 2,
@@ -235,6 +238,7 @@ window.AxiomModules.state = {
       reason_target_open_intents: 4,
       reason_max_new_intents_per_run: 4,
       reason_queue_limit: 3,
+      plan_queue_limit: 3,
       explore_execute_min_seconds: 300,
       explore_execute_max_seconds: 3600,
       explore_conclude_min_seconds: 180,
@@ -366,7 +370,7 @@ window.AxiomModules.state = {
     axiomWorkers: [],
     axiomWorkersLoading: false,
     selectedAxiomWorker: '',
-    // The four logical Workers own phase policy.  Entries in axiomWorkers
+    // The five logical Workers own phase policy.  Entries in axiomWorkers
     // are concrete model execution backends and may participate in more than
     // one phase pool.
     workerPhases: [],
