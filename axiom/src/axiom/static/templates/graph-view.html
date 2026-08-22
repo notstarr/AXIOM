@@ -208,7 +208,10 @@
         </div>
       </template>
 
-      <template x-if="project.project.reason">
+      <!-- Plan is a separate planning phase.  Legacy API payloads may still
+           expose the same Plan row through project.reason; keep the UI
+           Plan-only while the task is in that phase. -->
+      <template x-if="project.project.reason && project.project.phase !== 'plan'">
         <div class="absolute right-3 z-10 w-80 max-w-[calc(100vw-1.5rem)] select-none" :style="{ top: project.project.plan ? '23rem' : '3.5rem' }">
           <div class="relative cursor-pointer" @click="reasonStackExpanded = !reasonStackExpanded">
             <template x-if="!reasonStackExpanded && (project.project.queued_reasons || []).length > 0">

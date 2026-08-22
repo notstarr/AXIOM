@@ -1121,6 +1121,47 @@ eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
     return json.loads(result.stdout)
 
 
+def _run_plan_only_legacy_projection_fixture() -> dict[str, object]:
+    """Ensure a legacy Plan row cannot become a duplicate Reason card."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{
+  state: {{ state: {{}} }}, core: {{ methods: {{}} }}, projects: {{ methods: {{}} }},
+  graph: {{ methods: {{}} }}, files: {{ methods: {{}} }},
+}} }};
+global.location = {{ origin: 'http://testserver' }};
+global.fetch = async () => {{
+  const task = {{
+    id:'t_179', project_id:'prj_1', title:'Plan only',
+    origin:{{host:'target.example', original_input:'target.example'}},
+    goal:'全景复盘', status:'running', phase:'plan', scope:{{enabled:false,targets:[],exclude:[]}},
+    worker_pool:[], plan_worker_pool:[], guard_enabled:false,
+    external_report_enabled:false, legacy_readonly:false,
+    reason_worker:'legacy-reason-worker', reason_activity_kind:'analyzing',
+    reason_activity_summary:'正在准备 Reason Context 与能力快照',
+    active_reason_run:{{id:'rr001284', status:'running', trigger:'plan', worker:'legacy-reason-worker'}},
+    active_plan_run:{{id:'pr000001', status:'running', trigger:'reconcile', worker:'plan-worker'}},
+    queued_reason_runs:[], queued_plan_runs:[], plan_run_count:3,
+    created_at:'2026-08-22T00:00:00Z', updated_at:'2026-08-22T00:00:00Z',
+  }};
+  return {{ status:200, ok:true, text:async () => JSON.stringify([task]) }};
+}};
+eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
+(async () => {{
+  const mapped = await window.AxiomModules.core.methods.api('GET', '/projects');
+  const project = mapped[0];
+  process.stdout.write(JSON.stringify({{ reason: project.reason, plan: project.plan }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
 def _run_graph_visual_update_fixture() -> dict[str, object]:
     node = shutil.which("node")
     if not node:
@@ -1951,6 +1992,7 @@ def test_frontend_and_static_assets_are_served(client):
     assert "x-html" not in graph.text
     assert "Plan 排队列表（FIFO）" in graph.text
     assert "planDecisionLabel(project.project.last_plan_decision)" in graph.text
+    assert "project.project.reason && project.project.phase !== 'plan'" in graph.text
     assert "selectedVulnerability().prerequisites || '未填写'" in vulnerabilities.text
     assert "selectedVulnerability().remediation || '未填写'" in vulnerabilities.text
     assert "按列表查看证据、影响和修复建议" in vulnerabilities.text
@@ -3090,3 +3132,10 @@ def test_task_view_switch_restarts_incomplete_hydration_with_new_page_signal() -
         "mount",
         {"id": "t_164", "signal": "new", "sections": ["graph", "todos"]},
     ]
+
+
+def test_legacy_plan_projection_is_plan_only() -> None:
+    result = _run_plan_only_legacy_projection_fixture()
+
+    assert result["plan"]["id"] == "pr000001"
+    assert result["reason"] is None

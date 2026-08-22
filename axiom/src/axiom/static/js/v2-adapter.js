@@ -131,9 +131,31 @@
   }
 
   function mapTask(task) {
-    const activeReasonRun = task.active_reason_run || null;
+    // A legacy Plan was persisted as reason_runs(trigger="plan") and older
+    // APIs exposed that row through both active_plan_run and the compatibility
+    // reason_worker fields.  Once the task is in the Plan phase, the Plan card
+    // is the sole planning activity shown to users; never let that legacy
+    // projection resurrect a duplicate Reason card.  A real ReasonRun must
+    // always carry a non-Plan trigger.
+    const rawActiveReasonRun = task.active_reason_run || null;
+    const activeReasonRun = rawActiveReasonRun && rawActiveReasonRun.trigger !== 'plan'
+      ? rawActiveReasonRun
+      : null;
     const activePlanRun = task.active_plan_run || null;
-    const legacyReason = !activeReasonRun && task.reason_worker ? {
+    const allQueuedPlans = (task.queued_plan_runs || []).map(run => ({
+      id: run.id,
+      status: run.status,
+      worker: run.worker || '排队中',
+      trigger: run.trigger || 'reconcile',
+      trigger_payload: run.trigger_payload || {},
+      settings_version: run.settings_version,
+      execute_timeout_seconds: run.execute_timeout_seconds,
+      conclude_timeout_seconds: run.conclude_timeout_seconds,
+      created_at: run.created_at,
+    }));
+    const planPhase = String(task.phase || '').toLowerCase() === 'plan';
+    const planContextPresent = Boolean(activePlanRun || allQueuedPlans.length || planPhase);
+    const legacyReason = !activeReasonRun && !planContextPresent && task.reason_worker ? {
       id: '',
       status: 'running',
       worker: task.reason_worker,
@@ -157,17 +179,6 @@
       trigger: qr.trigger || 'scheduler',
       trigger_payload: qr.trigger_payload || {},
       created_at: qr.created_at,
-    }));
-    const allQueuedPlans = (task.queued_plan_runs || []).map(run => ({
-      id: run.id,
-      status: run.status,
-      worker: run.worker || '排队中',
-      trigger: run.trigger || 'reconcile',
-      trigger_payload: run.trigger_payload || {},
-      settings_version: run.settings_version,
-      execute_timeout_seconds: run.execute_timeout_seconds,
-      conclude_timeout_seconds: run.conclude_timeout_seconds,
-      created_at: run.created_at,
     }));
     const isQueuedReasonPrimary = !activeReasonRun && !legacyReason && allQueuedReasons.length > 0;
     const queuedReasonDisplay = isQueuedReasonPrimary ? {
