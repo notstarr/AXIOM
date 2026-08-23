@@ -1598,6 +1598,7 @@ class PlanService:
             if readiness_errors:
                 raise ConflictError("；".join(readiness_errors))
             now = utcnow()
+            self._align_todo_counter(conn, workspace.task_id)
             todo_refs: dict[str, str] = {}
             created_todo_ids: list[str] = []
             updated_todo_ids: list[str] = []
@@ -1738,6 +1739,22 @@ class PlanService:
                 },
             )
             return PlanCommitResult(workspace=committed, created_todo_ids=created_todo_ids, updated_todo_ids=updated_todo_ids, deleted_todo_ids=deleted_todo_ids, created_intent_ids=created_intent_ids)
+
+    @staticmethod
+    def _align_todo_counter(conn, task_id: str) -> None:
+        rows = conn.execute(select(todos.c.id).where(todos.c.task_id == task_id)).scalars().all()
+        max_num = max((int(value[2:]) for value in rows if value.startswith("td") and value[2:].isdigit()), default=0)
+        current = conn.execute(
+            select(id_counters.c.next_value).where(
+                id_counters.c.scope == task_id, id_counters.c.kind == "todo"
+            )
+        ).scalar_one_or_none()
+        if current is not None and current < max_num + 1:
+            conn.execute(
+                update(id_counters)
+                .where(id_counters.c.scope == task_id, id_counters.c.kind == "todo")
+                .values(next_value=max_num + 1)
+            )
 
     @staticmethod
     def _align_intent_counter(conn, task_id: str) -> None:

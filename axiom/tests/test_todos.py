@@ -77,3 +77,61 @@ def test_todo_requires_a_category_and_source() -> None:
         assert "source" in str(exc).lower()
     else:
         raise AssertionError("expected source validation failure")
+
+
+def test_todo_counter_auto_aligns_when_counter_falls_behind(client) -> None:
+    from axiom.modules.todos.tables import todos
+    from axiom.shared.ids import id_counters
+    from sqlalchemy import update
+
+    task = task_with_sources(client)
+    task_id = task["id"]
+
+    # 正常创建 td001
+    created1 = client.post(
+        f"/api/v1/tasks/{task_id}/todos",
+        json={
+            "title": "第一个 Todo",
+            "category": "authorization",
+            "sources": [{"type": "fact", "id": "origin"}],
+        },
+    )
+    assert created1.status_code == 201
+    assert created1.json()["id"] == "td001"
+
+    # 模拟外部/前序直接插入了 td015，而 id_counters 仍然停留在 2 (即下一次要分配 td002)
+    container = client.app.state.container
+    with container.engine.begin() as conn:
+        conn.execute(
+            todos.insert().values(
+                id="td015",
+                task_id=task_id,
+                title="遗留 Todo 15",
+                category="other",
+                theme="legacy",
+                priority=10,
+                status="open",
+                created_by="system",
+                created_at="2026-08-23T00:00:00Z",
+                updated_at="2026-08-23T00:00:00Z",
+                archived=False,
+            )
+        )
+        # 将计数器故意重设/倒退为 2
+        conn.execute(
+            update(id_counters)
+            .where(id_counters.c.scope == task_id, id_counters.c.kind == "todo")
+            .values(next_value=2)
+        )
+
+    # 再次创建 Todo，验证 _align_todo_counter 自动跳过冲突，分配出 td016
+    created2 = client.post(
+        f"/api/v1/tasks/{task_id}/todos",
+        json={
+            "title": "自愈后的新 Todo",
+            "category": "authorization",
+            "sources": [{"type": "fact", "id": "origin"}],
+        },
+    )
+    assert created2.status_code == 201, created2.text
+    assert created2.json()["id"] == "td016"

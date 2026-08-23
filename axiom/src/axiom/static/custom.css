@@ -31,23 +31,31 @@
   }
   .worker-capability-row-grid {
     display: grid;
-    grid-template-columns: minmax(220px, 1fr) repeat(5, minmax(78px, 100px));
-    gap: 8px;
+    grid-template-columns: minmax(200px, 1fr) auto;
+    gap: 12px;
     align-items: center;
   }
-  .worker-capability-scope-button {
-    min-height: 38px;
+  .worker-capability-button-group {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
     gap: 6px;
-    padding: 7px 9px;
+  }
+  .worker-capability-scope-button {
+    min-height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 6px 10px;
     border: 1px solid var(--border-default, #e2e8f0);
-    border-radius: 10px;
+    border-radius: 8px;
     color: var(--text-secondary, #475569);
     background: var(--surface-inset, #f8fafc);
-    font-size: 10px;
-    transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+    font-size: 11px;
+    font-weight: 500;
+    transition: all 140ms ease;
+    white-space: nowrap;
   }
   .worker-capability-scope-button:hover:not(:disabled) {
     border-color: #93c5fd;
@@ -57,9 +65,10 @@
     border-color: #86efac;
     color: #047857;
     background: #ecfdf5;
+    font-weight: 600;
   }
   .worker-capability-scope-button.is-current {
-    box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.2);
+    box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.25);
   }
   .worker-capability-scope-button:disabled {
     cursor: not-allowed;
@@ -75,8 +84,8 @@
   }
   @media (max-width: 760px) {
     .worker-capability-drawer { width: 100vw; }
-    .worker-capability-row-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .worker-capability-row-grid > :first-child { grid-column: 1 / -1; }
+    .worker-capability-row-grid { grid-template-columns: 1fr; gap: 10px; }
+    .worker-capability-button-group { width: 100%; justify-content: flex-start; }
   }
   .token-usage-panel { background: var(--surface-card); border-color: var(--border); }
   .token-usage-icon { color: #7c3aed; background: rgba(124, 58, 237, 0.10); }

@@ -4,8 +4,8 @@
 
 收口前必须确认：
 
-- 是否已通过 `axiom plan todo add` 恢复或新建了未覆盖/可深入的攻击面 Todo；
-- 是否已通过 `axiom plan intent propose` 成功派发了全新可执行的 Explore Intent；
+- 是否已通过 `axiom plan todo update` 重新激活了有价值的已有 Todo，或通过 `axiom plan todo add` 新建了未覆盖的攻击面 Todo；
+- 是否已通过 `axiom plan intent propose` 成功派发了全新可执行的 Explore Intent（可关联已有 `--todo-id` 或新建 `--todo-ref`，鼓励跨 Fact 聚合线索）；
 - 每个新 Intent 均有真实来源 Fact 绑定与清晰的测试方案；
 - 已调用 `axiom plan decision submit dispatch_explore` 提交了推进决策。
 

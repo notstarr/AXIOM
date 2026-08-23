@@ -1783,6 +1783,7 @@ class ReasonService:
                 task = self.tasks.get(conn, workspace.task_id)
                 assert task is not None
                 now = utcnow()
+                self._align_todo_counter(conn, workspace.task_id)
                 todo_refs: dict[str, str] = {}
                 created_todo_ids: list[str] = []
                 updated_todo_ids: list[str] = []
@@ -2567,6 +2568,25 @@ class ReasonService:
             raise ConflictError(
                 "Intent assessment already exists with different parameters"
             )
+
+    @staticmethod
+    def _align_todo_counter(conn, task_id: str) -> None:
+        """Bring the task todo counter at least past the highest existing id."""
+        rows = conn.execute(
+            select(todos.c.id).where(todos.c.task_id == task_id)
+        ).scalars().all()
+        max_num = 0
+        for rid in rows:
+            if rid.startswith("td") and rid[2:].isdigit():
+                max_num = max(max_num, int(rid[2:]))
+        conn.execute(
+            update(id_counters)
+            .where(
+                id_counters.c.scope == task_id,
+                id_counters.c.kind == "todo",
+            )
+            .values(next_value=func.greatest(id_counters.c.next_value, max_num + 1))
+        )
 
     @staticmethod
     def _align_intent_counter(conn, task_id: str) -> None:

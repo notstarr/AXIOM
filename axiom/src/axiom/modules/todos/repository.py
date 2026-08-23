@@ -10,10 +10,29 @@ from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.modules.todos.schemas import CreateTodo, Todo, TodoSource
 from axiom.modules.todos.tables import todo_sources, todos
 from axiom.modules.vulnerabilities.tables import vulnerabilities
-from axiom.shared.ids import allocate_id
+from axiom.shared.ids import allocate_id, id_counters
 
 
 class TodoRepository:
+    @staticmethod
+    def _align_todo_counter(conn: Connection, task_id: str) -> None:
+        """Align id_counters for todo to be strictly greater than max existing tdXXX."""
+        rows = conn.execute(
+            select(todos.c.id).where(todos.c.task_id == task_id)
+        ).scalars().all()
+        max_num = max(
+            (int(value[2:]) for value in rows if value.startswith("td") and value[2:].isdigit()),
+            default=0,
+        )
+        conn.execute(
+            update(id_counters)
+            .where(
+                id_counters.c.scope == task_id,
+                id_counters.c.kind == "todo",
+            )
+            .values(next_value=func.greatest(id_counters.c.next_value, max_num + 1))
+        )
+
     def create(
         self,
         conn: Connection,
@@ -22,6 +41,7 @@ class TodoRepository:
         command: CreateTodo,
         now: str,
     ) -> Todo:
+        self._align_todo_counter(conn, task_id)
         todo_id = allocate_id(conn, scope=task_id, kind="todo", prefix="td")
         values = {
             "id": todo_id,
