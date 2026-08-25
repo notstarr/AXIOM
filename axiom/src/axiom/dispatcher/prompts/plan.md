@@ -45,7 +45,7 @@ axiom plan todo update --todo-id td005 --status open \
 axiom plan todo add --ref plan-gap-1 --title "新的攻击面待办" \
   --category recon --source fact:f001 --status open
 
-# 3. 派发新 Explore Intent（既可关联已有 --todo-id，也可关联新建的 --todo-ref；鼓励跨 Fact 聚合组合利用）
+# 3. 派发新 Explore Intent（既可关联已有 --todo-id，也可关联新建的 --todo-ref；鼓励跨 Fact 聚合组合利用; Intent 数量无上限，按需充分派发）
 axiom plan intent propose --todo-ref plan-gap-1 \
   --from-fact f001 --from-fact f007 \
   --title "详细测试意图标题" \

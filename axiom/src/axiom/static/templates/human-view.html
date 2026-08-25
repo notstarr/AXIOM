@@ -446,13 +446,25 @@
                       <div x-show="getIntentsForTodo(todo.id).length > 0" class="mt-2.5">
                         <div class="space-y-1.5 pl-2 border-l-2 border-slate-100">
                           <template x-for="intent in getIntentsForTodo(todo.id)" :key="intent.id">
-                            <div class="rounded-md border border-slate-100 bg-slate-50/80 px-2 py-1.5 text-xs flex items-center justify-between gap-1.5">
-                              <div class="flex items-center gap-1.5 min-w-0">
+                            <div class="relative group/intent rounded-md border border-slate-100 bg-slate-50/80 px-2 py-1.5 text-xs flex items-center justify-between gap-1.5 hover:border-slate-300 hover:bg-white transition cursor-default">
+                              <div class="flex items-center gap-1.5 min-w-0 flex-1">
                                 <span class="h-1.5 w-1.5 rounded-full shrink-0" :class="intentDotClass(intent)"></span>
-                                <span class="font-mono text-[10px] font-bold text-slate-600" x-text="intent.id"></span>
+                                <span class="font-mono text-[10px] font-bold text-slate-600 shrink-0" x-text="intent.id"></span>
                                 <p class="text-[11px] text-slate-700 truncate" x-text="intent.description"></p>
                               </div>
                               <span class="shrink-0 text-[9px] font-medium" :class="intentStatusClass(intent)" x-text="intentStatusLabel(intent)"></span>
+
+                              <!-- Hover Floating Full Description Tooltip -->
+                              <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/intent:block z-[999] w-80 max-w-[90vw] p-3 rounded-xl border border-slate-700/80 bg-slate-900/95 text-slate-100 text-[11px] leading-relaxed shadow-2xl backdrop-blur-sm pointer-events-none transition-all">
+                                <div class="flex items-center justify-between gap-2 border-b border-slate-700 pb-1.5 mb-1.5">
+                                  <span class="font-mono font-bold text-amber-400 text-[10px]" x-text="intent.id"></span>
+                                  <span class="text-[9px] px-1.5 py-0.5 rounded" :class="intentStatusClass(intent)" x-text="intentStatusLabel(intent)"></span>
+                                </div>
+                                <div class="max-h-60 overflow-y-auto whitespace-pre-wrap font-sans break-words text-slate-200" x-text="intent.description || '暂无详细描述'"></div>
+                                <div x-show="intent.targets?.length" class="mt-1.5 pt-1.5 border-t border-slate-800 text-[9px] text-slate-400 truncate">
+                                  <span>目标：</span><span class="font-mono text-slate-300" x-text="intent.targets.join(', ')"></span>
+                                </div>
+                              </div>
                             </div>
                           </template>
                         </div>

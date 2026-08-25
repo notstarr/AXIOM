@@ -244,16 +244,70 @@
     width: 10px;
     height: 10px;
     border-radius: 9999px;
-    background: #6366f1;
-    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.16), 0 0 16px rgba(99, 102, 241, 0.45);
+    background: #0ea5e9;
+    box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.22), 0 0 16px rgba(14, 165, 233, 0.55);
   }
   .plan-beacon::after {
     content: "";
     position: absolute;
     inset: -6px;
     border-radius: 9999px;
-    border: 1.5px solid rgba(99, 102, 241, 0.45);
+    border: 1.5px solid rgba(14, 165, 233, 0.55);
     animation: reasonBeaconPulse 1.8s ease-out infinite;
+  }
+  .plan-panel-running::before {
+    content: "";
+    position: absolute;
+    inset: -6px;
+    border-radius: 22px;
+    background: radial-gradient(circle, rgba(14, 165, 233, 0.22), rgba(14, 165, 233, 0));
+    animation: reasonPanelPulse 2.1s ease-out infinite;
+    pointer-events: none;
+  }
+
+  /* Plan 阶段图谱全景天蓝色声呐扩散扫描波纹动效 */
+  .graph-plan-sonar {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 1;
+  }
+  .graph-plan-sonar-wave {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.05);
+    border-radius: 9999px;
+    border: 1.5px solid rgba(14, 165, 233, 0.45);
+    background: radial-gradient(circle, rgba(14, 165, 233, 0.05) 0%, rgba(14, 165, 233, 0.01) 60%, transparent 100%);
+    box-shadow: 0 0 25px rgba(14, 165, 233, 0.15), inset 0 0 15px rgba(14, 165, 233, 0.1);
+    opacity: 0;
+    animation: graphPlanSonarPulse 5.5s cubic-bezier(0.1, 0.4, 0.2, 1) infinite;
+  }
+  .graph-plan-sonar-wave-1 { animation-delay: 0s; }
+  .graph-plan-sonar-wave-2 { animation-delay: 1.8s; }
+  .graph-plan-sonar-wave-3 { animation-delay: 3.6s; }
+
+  @keyframes graphPlanSonarPulse {
+    0% {
+      width: 80px;
+      height: 80px;
+      opacity: 0.85;
+      transform: translate(-50%, -50%) scale(0.05);
+      border-color: rgba(14, 165, 233, 0.75);
+    }
+    50% {
+      opacity: 0.45;
+      border-color: rgba(14, 165, 233, 0.4);
+    }
+    100% {
+      width: 2200px;
+      height: 2200px;
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(1);
+      border-color: rgba(14, 165, 233, 0);
+    }
   }
   .reason-beacon::after {
     content: "";

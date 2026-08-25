@@ -314,7 +314,7 @@ class PlanService:
                 select(todos.c.id)
                 .where(
                     todos.c.task_id == task_id,
-                    todos.c.status.in_(["open", "partial", "blocked"]),
+                    todos.c.status.in_(["open", "partial"]),
                     todos.c.archived.is_(False),
                     ~has_open_explore,
                 )
@@ -326,7 +326,7 @@ class PlanService:
                 select(todos.c.id)
                 .where(
                     todos.c.task_id == task_id,
-                    todos.c.status.in_(["open", "partial", "blocked"]),
+                    todos.c.status.in_(["open", "partial"]),
                     todos.c.archived.is_(False),
                     has_terminal_explore,
                     ~has_open_explore,
