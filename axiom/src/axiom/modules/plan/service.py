@@ -560,16 +560,29 @@ class PlanService:
             .where(*conditions)
             .order_by(plan_runs.c.created_at, plan_runs.c.id)
         ).mappings().all()
+        # 若最近一次 PlanRun 提交了 exhausted 决策（确认全盘穷尽，没有新材料方向），
+        # 则不再自动产生下一轮 Plan，直接保持 waiting；
+        # 若前序 Plan 派发了 explore（dispatch_explore）并在 Explore/Reason 评估后再次进入死局，
+        # 则允许继续进行最多 3 轮连续 Plan 递进深挖。
+        last_decision = conn.execute(
+            select(plan_runs.c.decision_json)
+            .where(plan_runs.c.task_id == task.id, plan_runs.c.status == "completed")
+            .order_by(plan_runs.c.concluded_at.desc().nulls_last(), plan_runs.c.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if last_decision:
+            try:
+                dec_data = json.loads(last_decision)
+                if dec_data.get("decision") == "exhausted":
+                    return False
+            except Exception:
+                pass
+
         # Infrastructure failures are retryable and do not count as a
         # convergence pass; execution failures do, because they represent an
         # exhausted/blocked Plan decision.
         effective = [row for row in rows if row["status"] == "completed" or row["failure_class"] != "transient"]
         if len(effective) >= 3:
-            return False
-        if task.phase == "waiting" and effective:
-            # A waiting task has already completed its latest Plan.  New
-            # incremental signals are checked by _planning_blocked above, so
-            # another automatic pass here would only oscillate Plan↔waiting.
             return False
         return True
 
