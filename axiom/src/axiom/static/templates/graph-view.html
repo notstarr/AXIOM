@@ -185,7 +185,7 @@
                   <p class="mt-2 text-sm font-medium leading-relaxed text-slate-700" x-text="project.project.plan.activity_summary || '正在进行全景深水区复盘' "></p>
                   <div class="mt-2 text-[11px] text-slate-500"><span class="text-slate-400">正在使用</span><span class="ml-2 font-mono font-medium text-slate-600" x-text="project.project.plan.activity_tool || '—'"></span></div>
                   <div class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] text-slate-500">
-                    <div><span class="block text-slate-400">Plan 轮次</span><span class="mt-0.5 block font-medium text-sky-600" x-text="`第 ${project.project.plan.trigger_payload?.plan_sequence || project.project.plan_run_count || 1} 次`"></span></div>
+                    <div><span class="block text-slate-400">Plan 轮次</span><span class="mt-0.5 block font-medium text-sky-600" x-text="`第 ${(project.project.plan_run_count || 0) + 1} 次`"></span></div>
                     <div><span class="block text-slate-400">最后更新</span><span class="mt-0.5 block font-medium text-slate-600" x-text="formatTime(project.project.plan.activity_updated_at || project.project.plan.last_heartbeat_at)"></span></div>
                     <div><span class="block text-slate-400">触发器</span><span class="mt-0.5 block font-medium text-slate-600" x-text="project.project.plan.trigger || 'reconcile'"></span></div>
                     <div><span class="block text-slate-400">配置快照</span><span class="mt-0.5 block font-medium text-slate-600" x-text="project.project.plan.settings_version ? `v${project.project.plan.settings_version}` : '历史运行'"></span></div>
