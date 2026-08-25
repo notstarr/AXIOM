@@ -16,13 +16,15 @@
 
 1. 先运行 `axiom plan status`，确认 Plan Workspace、输入快照和当前 PlanRun 状态。
 2. 读取 Context Manifest，以及其中的 `graph.json`、`todos.json`、`artifacts.json`、`hints.json`、`knowledge.json`、`vulnerabilities.json`、`goal_evaluations.json` 和 `goal_cycles.json`（存在时）。
-3. 重点核验所有高价值 `artifact:*` 中的 Findings、Leads 和失败 Evidence，提取被前序轮次遗漏或草率标记为 blocked/completed 的端点。
-4. 读取 `whatisvul` Skill。所有新规划必须以已有事实、产物和漏洞证据为依据。
+3. **关键必读**：彻底读取 `todos.json` 中当前所有处于 `open`、`blocked` 以及刚被激活的 Todo，查看其下挂载的最新 Intent 探索进展与未尽线索；严禁脱离当前已有 Todo 体系盲目规划！
+4. 重点核验所有高价值 `artifact:*` 中的 Findings、Leads 和失败 Evidence，提取被前序轮次遗漏或草率标记为 blocked/completed 的端点。
+5. 读取 `whatisvul` Skill。所有新规划必须以已有事实、产物和漏洞证据为依据。
 
 ## 必须深挖的四大进攻维度（严禁直接放弃）
 
 1. **未覆盖端点与深水区激活**：
    - 彻底审查所有历史 Findings 与 Leads 中暴露的 API 路径、内部端点和子域名；
+   - 优先检查已有 Todo（如画布节点批量操作、团队角色提权、记忆库提示词注入、沙箱令牌提权等）中尚未充分测试的子端点，为这些核心 Todo 继续派发深入验证 Intent；
    - 严禁仅因某个主接口返回 403/404 就认定整棵子树不存在，必须寻找同前缀下的未测子路径或替代方法。
 2. **战果武器化与跨模块组合利用（强烈鼓励跨 Fact 聚合）**：
    - 检查已获取的所有凭证（Token、Key、账号、Session）以及已发现的漏洞（如 CSRF、未授权上传、IDOR）；
@@ -32,7 +34,7 @@
    - 必须严厉质疑前序 Todo 的关闭理由：真的是“目标不可行”，还是“当时测试参数不全 / WAF 拦截 / 缺少特定 Header”？
    - 重新设计绕过方案（如子 Agent 绕过、参数 Fuzzing、隐藏字段注入）重新派发。
 4. **目标差距对齐**：
-   - 当前已验证漏洞数若未达 Goal 目标，**绝对禁止盲目提交 exhaustion**。必须至少恢复或新建 Todo 并派发可落地的 Explore Intent。
+   - 当前已验证漏洞数若未达 Goal 目标，**绝对禁止盲目提交 exhaustion**。必须至少为已有开放 Todo 或新建 Todo 派发 ≥1 个具体可落地的 Explore Intent。
 
 ## 规划执行与命令行操作
 
