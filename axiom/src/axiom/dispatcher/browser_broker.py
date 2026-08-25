@@ -780,6 +780,24 @@ class BrowserBrokerServer:
             if platform.system() == "Darwin" and platform.machine() == "arm64"
             else []
         )
+        # 自动探测并永久强制加载当前 profile 中的所有已安装扩展（如 SwitchyOmega、ModHeader 等）
+        # 彻底解决 Chromium 安全校验导致的插件丢失问题，一劳永逸无需每次手动配置
+        ext_dir = profile / "Default" / "Extensions"
+        loaded_ext_paths = []
+        if ext_dir.is_dir():
+            for item in ext_dir.iterdir():
+                if item.is_dir() and not item.name.startswith("."):
+                    for ver in item.iterdir():
+                        if ver.is_dir() and (ver / "manifest.json").is_file():
+                            loaded_ext_paths.append(str(ver))
+        
+        ext_args = []
+        if loaded_ext_paths:
+            ext_args = [
+                f"--load-extension={','.join(loaded_ext_paths)}",
+                f"--disable-extensions-except={','.join(loaded_ext_paths)}",
+            ]
+
         args = [
             *launcher,
             binary,
@@ -798,6 +816,7 @@ class BrowserBrokerServer:
             "--window-size=1280,800",
             "--ignore-certificate-errors",
             "--allow-insecure-localhost",
+            *ext_args,
         ]
         headless_mode = os.environ.get("CHROME_HEADLESS", "1")
         if headless_mode in {"1", "new"}:
