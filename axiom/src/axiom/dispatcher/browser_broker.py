@@ -506,6 +506,21 @@ class BrowserBrokerServer:
                 await page_state.page.close()
             await self._clear_refs(page_state)
         lease.pages.clear()
+        # 当所有活跃 Lease 均已关闭（空闲期/任务暂停）且 Chrome 归 Broker 所有时，
+        # 自动断开并平滑退出无头 Chrome 实例，释放 SingletonLock 文件锁，
+        # 方便操作者随时点击系统中的 Chrome-SecTest 浏览器进行手动登录与凭证维护。
+        if not self.leases and self._chrome_pid is not None:
+            async with self._connect_lock:
+                if self._browser is not None:
+                    with contextlib.suppress(Exception):
+                        await self._browser.close()
+                    self._browser = None
+                    self._context = None
+                if self._playwright is not None:
+                    with contextlib.suppress(Exception):
+                        await self._playwright.stop()
+                    self._playwright = None
+                self._stop_owned_chrome()
 
     async def _tool(
         self, lease: LeaseState, operation: str, params: dict[str, Any]
@@ -781,8 +796,13 @@ class BrowserBrokerServer:
             "--no-first-run",
             "--no-default-browser-check",
             "--window-size=1280,800",
+            "--ignore-certificate-errors",
+            "--allow-insecure-localhost",
         ]
-        if os.environ.get("CHROME_HEADLESS") == "1":
+        headless_mode = os.environ.get("CHROME_HEADLESS", "1")
+        if headless_mode in {"1", "new"}:
+            args.append("--headless=new")
+        elif headless_mode in {"old", "legacy"}:
             args.append("--headless")
         elif os.environ.get("CHROME_WINDOW") == "minimized":
             args.append("--start-minimized")

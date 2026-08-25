@@ -133,6 +133,7 @@ def test_browser_launcher_uses_an_isolated_profile_and_expected_flags(
     )
     lease = _lease_for_chrome(tmp_path)
     monkeypatch.setenv("AXIOM_CHROME_PROFILE_DIR", str(tmp_path / "Chrome-SecTest"))
+    monkeypatch.setenv("CHROME_HEADLESS", "0")
     monkeypatch.setenv("CHROME_WINDOW", "minimized")
     monkeypatch.setattr(BrowserBrokerServer, "_cdp_alive", classmethod(lambda _cls, _url: next(alive)))
     monkeypatch.setattr(BrowserBrokerServer, "_port_is_open", staticmethod(lambda _host, _port: False))
@@ -205,7 +206,7 @@ def test_browser_launcher_uses_headless_without_offscreen_window(
     asyncio.run(server._launch_chrome(lease))
 
     args = list(seen["args"])
-    assert "--headless" in args
+    assert any(a in args for a in ("--headless=new", "--headless"))
     assert "--window-position=-32000,-32000" not in args
     if server._chrome_pid_file is not None:
         server._chrome_pid_file.unlink(missing_ok=True)
