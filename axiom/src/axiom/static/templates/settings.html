@@ -82,6 +82,7 @@
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">单轮最多新增 Intent</label><input type="number" min="1" max="8" x-model.number="dispatchSettings.reason_max_new_intents_per_run" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 最大排队数</label><input type="number" min="1" max="10" x-model.number="dispatchSettings.reason_queue_limit" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
           <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Plan 最大排队数</label><input type="number" min="1" max="10" x-model.number="dispatchSettings.plan_queue_limit" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+          <div class="md:col-span-2"><label class="text-[11px] text-slate-400 mb-1 block font-medium">Plan 连续复盘上限（无新漏洞自动收敛阈值）</label><input type="number" min="1" max="20" x-model.number="dispatchSettings.plan_max_consecutive_runs" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" placeholder="默认 5 次"></div>
         </div>
       </div>
 

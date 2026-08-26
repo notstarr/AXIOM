@@ -563,7 +563,7 @@ class PlanService:
         # 若最近一次 PlanRun 提交了 exhausted 决策（确认全盘穷尽，没有新材料方向），
         # 则不再自动产生下一轮 Plan，直接保持 waiting；
         # 若前序 Plan 派发了 explore（dispatch_explore）并在 Explore/Reason 评估后再次进入死局，
-        # 则允许继续进行最多 3 轮连续 Plan 递进深挖。
+        # 则允许继续进行最多 plan_max_consecutive_runs 轮连续 Plan 递进深挖。
         last_decision = conn.execute(
             select(plan_runs.c.decision_json)
             .where(plan_runs.c.task_id == task.id, plan_runs.c.status == "completed")
@@ -582,7 +582,9 @@ class PlanService:
         # convergence pass; execution failures do, because they represent an
         # exhausted/blocked Plan decision.
         effective = [row for row in rows if row["status"] == "completed" or row["failure_class"] != "transient"]
-        if len(effective) >= 3:
+        config = load_runtime_config(conn)
+        max_consecutive = max(1, int(getattr(config, "plan_max_consecutive_runs", 5)))
+        if len(effective) >= max_consecutive:
             return False
         return True
 
