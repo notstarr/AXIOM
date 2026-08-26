@@ -14,17 +14,19 @@
 
 ## 核心规划流程
 
-1. **状态检查与上下文读取**：
+1. **状态检查与上下文读取（关键）**：
    - 运行 `axiom reason status` 确认当前工作区、新 Fact 与待审 Todo/Intent。
    - 读取 Context Manifest 中的 `hints.json`、`knowledge.json`、`todos.json` 与新 Fact 详情。
+   - **必读前置线索**：对于本轮需要消费的每个新 Fact（`source_fact_ids`），必须通过 `graph.json` 或 `artifacts.json` 找到其关联的前置产物 `leads.md`（或 `artifact:*` 中的线索文件）并完整读取，**提取前序 Explore 探测留下的具体待验证方向与未决参数**！
    - 运行 `axiom skill path whatisvul` 并完整读取返回目录中的 `whatisvul/SKILL.md`（定级基准，失败则用 `axiom skill doctor whatisvul`）。
 2. **评估已结束的 Intent（必须完成）**：
    - 对每个 `assessment_status=open` 的已结束 Explore Intent，结合其产物与 Fact 进行一次性评估：
    ```bash
    axiom reason intent assess --intent-id iXXX --status completed|partial|blocked --reason "评估理由..."
    ```
-3. **消费新 Fact 与更新 Todo**：
-   - 每个新 Fact 必须被 Todo 关联、Intent 的 `--from-fact` 或 Goal Assessment 的 evidence 引用，不得遗漏。
+3. **消费新 Fact 与更新 Todo（线索必须闭环）**：
+   - 每个新 Fact 及其 `leads.md` 中提出的高价值未验证线索，必须被转化为具体可落地的新 Intent 或更新至对应 Todo，严禁直接丢弃线索！
+   - 每个新 Fact 必须被 Todo 关联、Intent 的 `--from-fact` 或 Goal Assessment 的 evidence 引用。
    - 维护 Todo 状态（`open` / `partial` / `blocked` / `completed`）。
 4. **派发新 Intent**：
    ```bash
