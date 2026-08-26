@@ -16,25 +16,24 @@
 
 1. 先运行 `axiom plan status`，确认 Plan Workspace、输入快照和当前 PlanRun 状态。
 2. 读取 Context Manifest，以及其中的 `graph.json`、`todos.json`、`artifacts.json`、`hints.json`、`knowledge.json`、`vulnerabilities.json`、`goal_evaluations.json` 和 `goal_cycles.json`（存在时）。
-3. **关键必读**：彻底读取 `todos.json` 中当前所有处于 `open`、`blocked` 以及刚被激活的 Todo，查看其下挂载的最新 Intent 探索进展与未尽线索；严禁脱离当前已有 Todo 体系盲目规划！
-4. 重点核验所有高价值 `artifact:*` 中的 Findings、Leads 和失败 Evidence，提取被前序轮次遗漏或草率标记为 blocked/completed 的端点。
-5. 读取 `whatisvul` Skill。所有新规划必须以已有事实、产物和漏洞证据为依据。
+3. 重点核验所有高价值 `artifact:*` 中的 Findings、Leads 和失败 Evidence，提取被前序轮次遗漏或草率标记为 blocked/completed 的端点。
+4. 读取 `whatisvul` Skill。所有新规划必须以已有事实、产物和漏洞证据为依据。
 
-## 必须深挖的四大进攻维度（严禁直接放弃）
+## 必须深挖的四大进攻维度（全图复盘核心铁律，严禁直接放弃）
 
-1. **未覆盖端点与深水区激活**：
-   - 彻底审查所有历史 Findings 与 Leads 中暴露的 API 路径、内部端点和子域名；
-   - 优先检查已有 Todo（如画布节点批量操作、团队角色提权、记忆库提示词注入、沙箱令牌提权等）中尚未充分测试的子端点，为这些核心 Todo 继续派发深入验证 Intent；
-   - 严禁仅因某个主接口返回 403/404 就认定整棵子树不存在，必须寻找同前缀下的未测子路径或替代方法。
-2. **战果武器化与跨模块组合利用（强烈鼓励跨 Fact 聚合）**：
-   - 检查已获取的所有凭证（Token、Key、账号、Session）以及已发现的漏洞（如 CSRF、未授权上传、IDOR）；
-   - **强烈鼓励将多个分散 Fact 跨源聚合派发单个 Intent**：如果 Fact A 的线索（如发现了敏感未授权上传端点）与 Fact B 的线索（如发现的前端 CSRF 或 Session 机制）能够相互印证、共同组成一条完整的攻击链，应在派发时使用多个 `--from-fact fXXX --from-fact fYYY` 共同作为起源；
+1. **全图未覆盖端点与能测未测深水区激活**：
+   - 彻底审查全图所有历史 Findings、Leads、以及 JS Bundle 提取资产中**暴露但从未被派发过探测的端点、未测子路径与子域名**；
+   - 严禁仅因某个主接口返回 403/404 就认定整棵子树不存在，必须寻找同前缀下的未测子路径、不同 HTTP 方法或替代调用方式。
+2. **推翻“偷懒式 Blocked”与受阻路径重测**：
+   - 逐一审查全图中所有被标记为 `blocked` 或草率 `completed` 的 Todo / Intent 的关闭理由：
+     - 当时是“目标物理不可行”，还是“因测试参数不全 / 缺少特定 Header / 遇到 WAF 拦截 / 缺少特定登录凭证”而暂时阻塞？
+   - 对因参数、WAF、鉴权缺失而阻塞的路径，**必须重新激活并设计绕过方案重测**（如调整绕过 Payload、伪造请求头、使用子 Agent/真实浏览器交互绕过）。
+3. **战果武器化与跨模块组合利用（强烈鼓励跨 Fact 聚合）**：
+   - 检查全图已获取的所有凭证（Token、Key、账号、Session）以及已发现的漏洞（如 CSRF、未授权上传、IDOR、信息泄露）；
+   - **强烈鼓励将多个分散 Fact 跨源聚合派发单个 Intent**：如果 Fact A 的线索（如敏感接口/凭证泄露）与 Fact B 的线索（如前端 CSRF 或 Session 机制）能够相互印证、共同组成一条完整的攻击链，应在派发时使用多个 `--from-fact fXXX --from-fact fYYY` 共同作为起源；
    - **将前置战果作为后置武器**：测试凭据复用、跨租户权限越权、CSRF 与敏感操作的组合链。
-3. **推翻“偷懒式 Blocked”与绕过尝试**：
-   - 必须严厉质疑前序 Todo 的关闭理由：真的是“目标不可行”，还是“当时测试参数不全 / WAF 拦截 / 缺少特定 Header”？
-   - 重新设计绕过方案（如子 Agent 绕过、参数 Fuzzing、隐藏字段注入）重新派发。
 4. **目标差距对齐**：
-   - 当前已验证漏洞数若未达 Goal 目标，**绝对禁止盲目提交 exhaustion**。必须至少为已有开放 Todo 或新建 Todo 派发 ≥1 个具体可落地的 Explore Intent。
+   - 当前已验证漏洞数若未达 Goal 目标，**绝对禁止盲目提交 exhaustion**。必须至少恢复或新建 Todo 并派发可落地的 Explore Intent。
 
 ## 规划执行与命令行操作
 
