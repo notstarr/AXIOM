@@ -42,6 +42,7 @@
     'reason_max_new_intents_per_run',
     'reason_queue_limit',
     'plan_queue_limit',
+    'plan_max_consecutive_runs',
     'explore_execute_min_seconds',
     'explore_execute_max_seconds',
     'explore_conclude_min_seconds',

@@ -255,6 +255,7 @@ window.AxiomModules.dispatch = {
         reason_max_new_intents_per_run: data.reason_max_new_intents_per_run ?? 4,
         reason_queue_limit: data.reason_queue_limit ?? 3,
         plan_queue_limit: data.plan_queue_limit ?? 3,
+        plan_max_consecutive_runs: data.plan_max_consecutive_runs ?? 5,
         explore_execute_min_seconds: data.explore_execute_min_seconds ?? 60,
         explore_execute_max_seconds: data.explore_execute_max_seconds ?? 3600,
         explore_conclude_min_seconds: data.explore_conclude_min_seconds ?? 180,
