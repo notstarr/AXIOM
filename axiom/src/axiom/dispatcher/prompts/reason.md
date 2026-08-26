@@ -17,18 +17,29 @@
    - 读取 Context Manifest 中的 `todos.json` 与新 Fact。
    - **必读附件**：通过 `graph.json` 找到新 Fact 对应的 `findings.md`（已测事实）与 `leads.md`（未决线索）并完整阅读。
    - 运行 `axiom skill path whatisvul` 读取判定标准（失败用 `axiom skill doctor whatisvul`）。
-2. **评估前序 Intent**：
+2. **评估前序 Intent（必须完成）**：
    - 对 `assessment_status=open` 的已结束 Intent 进行评估：
    ```bash
    axiom reason intent assess --intent-id iXXX --status completed|partial|blocked --reason "评估理由..."
    ```
 3. **线索转化与 Todo 维护**：
    - 对 `leads.md` 中提出的未覆盖子路径、未测写操作、参数变体或绕过建议，必须继续派发 Intent 深入验证。
-   - 严禁仅因接口返回 200/403 即判定整条业务线安全；只有子路径与操作均已验证完毕且无漏洞时，Todo 才可标记为 `completed`。
+   - 维护已有 Todo 或新建 Todo（严禁仅因接口返回 200/403 即判定安全，子路径与操作均已验证完毕且无漏洞时才可标记 `completed`）：
+   ```bash
+   # 新增 Todo（发现全新业务线时）
+   axiom reason todo add --ref todo-branch-1 --title "待办标题" --category authorization --source fact:f001 --status open
+
+   # 更新已有 Todo 状态或追加来源
+   axiom reason todo update --todo-id td005 --status open --status-reason "跟进 leads 线索继续深挖" --source-add fact:f012
+
+   # 归档/软删除确已无价值的 Todo
+   axiom reason todo delete --todo-id td001 --reason "全量路径已完成验证且无衍生价值"
+   ```
 4. **派发新 Intent**：
    ```bash
-   axiom reason intent propose --todo-id tdXXX --title "意图标题" --description "详细测试方案" \
-     --target "目标Target" --from-fact f007 --execute-seconds 900 --conclude-seconds 300
+   # 既可关联已有的 --todo-id，也可关联新建的 --todo-ref
+   axiom reason intent propose --todo-id td005 --title "意图标题" --description "详细测试方案与断言" \
+     --target "目标Target" --from-fact f007 --from-fact f030 --execute-seconds 900 --conclude-seconds 300
    ```
    - 跨模块利用时，通过多个 `--from-fact` 传入所有前置依赖 Fact。按需充分派发，数量无上限。
 
