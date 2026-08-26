@@ -24,8 +24,8 @@
    ```bash
    axiom reason intent assess --intent-id iXXX --status completed|partial|blocked --reason "评估理由..."
    ```
-3. **消费新 Fact 与更新 Todo（线索必须闭环）**：
-   - 每个新 Fact 及其 `leads.md` 中提出的高价值未验证线索，必须被转化为具体可落地的新 Intent 或更新至对应 Todo，严禁直接丢弃线索！
+3. **消费新 Fact 与更新 Todo（综合评估 Findings 与 Leads）**：
+   - 综合权衡 `findings.md` 的确凿事实与 `leads.md` 提出的后续线索：有实质价值的事实和线索由你独立决定是否派发 Intent，低价值的可自主忽略。
    - 每个新 Fact 必须被 Todo 关联、Intent 的 `--from-fact` 或 Goal Assessment 的 evidence 引用。
    - 维护 Todo 状态（`open` / `partial` / `blocked` / `completed`）。
 4. **派发新 Intent**：
