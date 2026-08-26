@@ -79,6 +79,10 @@
                 <div class="mt-2 flex gap-2">
                   <button @click="editVuln(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">编辑</button>
                   <button @click="deleteVuln(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-rose-200 text-rose-500 hover:bg-rose-50">删除</button>
+                  <button @click="exportSingleVulnerability(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-emerald-200 text-emerald-700 bg-emerald-50/50 hover:bg-emerald-100 flex items-center gap-1 font-medium" title="一键导出包含漏洞原文、Findings与证据文件的完整Zip包">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                    导出漏洞包
+                  </button>
                   <button @click="previewExternalVulnerability(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-violet-200 text-violet-600 hover:bg-violet-50">外部预览</button>
                   <button @click="reportExternalVulnerability(selectedVulnerability())" :disabled="selectedVulnerability().status !== '已验证'" :title="selectedVulnerability().status === '已验证' ? '将已验证漏洞上报到外部系统' : '只有已验证漏洞可以外部上报'" class="text-[10px] px-2 py-0.5 rounded border border-brand-200 text-brand-600 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40">外部上报</button>
                   <button @click="triggerVulnerabilityReview(selectedVulnerability())" :disabled="!vulnerabilityReviewCanRetry()" :title="vulnerabilityReviewCanRetry() ? '创建一次新的 Reviewer 审核' : '已有审核正在排队或运行'" class="text-[10px] px-2 py-0.5 rounded border border-cyan-200 text-cyan-700 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-40" x-text="vulnerabilityReviewSubmitting ? '正在排队…' : '重新审核'"></button>

@@ -148,7 +148,7 @@ class Container:
             skills=skills,
             guard=GuardService(engine, settings),
             goals=GoalService(engine),
-            exports=ExportService(engine),
+            exports=ExportService(engine, store=store),
             diagnostics=DiagnosticsService(engine, token_usage=token_usage),
             dashboard=DashboardService(engine, token_usage=token_usage),
             token_usage=token_usage,

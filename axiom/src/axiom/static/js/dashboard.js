@@ -578,5 +578,33 @@ window.AxiomModules.dashboard = {
       if (!v?.project_id || !artifact?.id) return;
       await this.openArtifactLocation(v.project_id, artifact);
     },
+
+    async exportSingleVulnerability(v) {
+      if (!v?.task_id || !v?.id) return;
+      try {
+        const token = localStorage.getItem('axiom_token');
+        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+        const res = await fetch(`/api/v1/tasks/${v.task_id}/vulnerabilities/${v.id}/export?format=zip`, {
+          method: 'GET',
+          headers
+        });
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(errText || `导出失败 (HTTP ${res.status})`);
+        }
+        const blob = await res.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = `${v.task_id}_${v.id}_export.zip`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(downloadUrl);
+        this.showToast(`已成功导出 ${v.id} 漏洞完整证据包`, 'success');
+      } catch (e) {
+        this.showToast(`导出失败: ${e.message}`, 'error');
+      }
+    },
   }
 };

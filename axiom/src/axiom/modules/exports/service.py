@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
+import zipfile
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -16,13 +19,15 @@ from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.todos.repository import TodoRepository
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
 from axiom.shared.errors import NotFoundError
+from axiom.shared.storage import FileStore
 
 
 class ExportService:
     """Build stable human exports without exposing credentials or audit noise."""
 
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, store: FileStore | None = None):
         self.engine = engine
+        self.store = store or FileStore(Path.home() / ".local/share/axiom-v3")
         self.tasks = TaskRepository()
         self.projects = ProjectRepository()
         self.graph = GraphRepository()
@@ -31,6 +36,51 @@ class ExportService:
         self.vulnerabilities = VulnerabilityRepository()
         self.goals = GoalRepository()
         self.audit = AuditService(engine)
+
+    def export_vulnerability_zip(self, task_id: str, vulnerability_id: str) -> tuple[bytes, str]:
+        """打包导出单漏洞原文 (vulnerability.md)、原始 Findings (findings.md) 以及所有关联 Evidence 附件。"""
+        self._require_task(task_id)
+        with self.engine.connect() as conn:
+            vuln = self.vulnerabilities.get(conn, task_id, vulnerability_id)
+            if vuln is None:
+                raise NotFoundError(f"Vulnerability not found: {vulnerability_id}")
+
+            intent_id = vuln.intent_id
+            artifacts_list = self.artifacts.list(conn, task_id)
+
+        vuln_md = _vulnerability_markdown(vuln.model_dump(mode="json"))
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            # 1. 写入漏洞原文
+            zip_file.writestr("vulnerability.md", vuln_md)
+
+            # 2. 查找并写入原始 findings.md 与 evidence 附件
+            intent_artifacts = [a for a in artifacts_list if a.intent_id == intent_id] if intent_id else []
+            
+            findings_written = False
+            for art in intent_artifacts:
+                art_path = self.store.resolve(art.storage_key)
+                if not art_path.is_file():
+                    continue
+
+                storage_key = art.storage_key.replace("\\", "/")
+                # 写入 findings.md
+                if storage_key.endswith("findings.md") and not findings_written:
+                    zip_file.writestr("findings.md", art_path.read_bytes())
+                    findings_written = True
+                # 写入 evidence/ 下的附件
+                elif "/evidence/" in storage_key:
+                    rel_name = storage_key.split("/evidence/")[-1]
+                    zip_file.writestr(f"evidence/{rel_name}", art_path.read_bytes())
+                elif art.artifact_type.startswith("explore.evidence"):
+                    zip_file.writestr(f"evidence/{art_path.name}", art_path.read_bytes())
+
+            if not findings_written:
+                zip_file.writestr("findings.md", "# Findings\n\n暂无关联的原始 Findings 记录。\n")
+
+        zip_filename = f"{task_id}_{vulnerability_id}_export.zip"
+        return zip_buffer.getvalue(), zip_filename
 
     def overview_yaml(self, task_id: str) -> str:
         data = self._overview(task_id)

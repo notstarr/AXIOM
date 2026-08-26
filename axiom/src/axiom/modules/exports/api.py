@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import PlainTextResponse
 
 from axiom.api.dependencies import get_container
@@ -41,6 +41,15 @@ def export_task_vulnerabilities(
 def export_vulnerability(
     task_id: str,
     vulnerability_id: str,
+    format: str = Query(default="zip"),
     container: Container = Depends(get_container),
-) -> PlainTextResponse:
-    return PlainTextResponse(container.exports.vulnerability_markdown(task_id, vulnerability_id))
+) -> Response:
+    if format == "markdown" or format == "md":
+        return PlainTextResponse(container.exports.vulnerability_markdown(task_id, vulnerability_id))
+    
+    zip_bytes, zip_filename = container.exports.export_vulnerability_zip(task_id, vulnerability_id)
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_filename}"'},
+    )
