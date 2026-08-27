@@ -17,6 +17,7 @@ function cairnApp() {
     M.actions.methods,
     M.dispatch.methods,
     M.prompts.methods,
-    M.workerTools.methods
+    M.workerTools.methods,
+    M.storage.methods
   );
 }

@@ -35,6 +35,7 @@ from axiom.modules.interventions.service import InterventionService
 from axiom.modules.vulnerabilities.service import VulnerabilityService
 from axiom.modules.vulnerability_reviews.service import VulnerabilityReviewService
 from axiom.modules.workers.service import WorkerService
+from axiom.modules.storage_admin.service import StorageAdminService
 from axiom.shared.storage import FileStore
 
 
@@ -69,6 +70,7 @@ class Container:
     exports: ExportService
     diagnostics: DiagnosticsService
     dashboard: DashboardService
+    storage_admin: StorageAdminService
     token_usage: TokenUsageService
     interventions: InterventionService
     auth: AuthService
@@ -148,6 +150,7 @@ class Container:
             exports=ExportService(engine, store=store),
             diagnostics=DiagnosticsService(engine, token_usage=token_usage),
             dashboard=DashboardService(engine, token_usage=token_usage),
+            storage_admin=StorageAdminService(engine, store),
             token_usage=token_usage,
             interventions=interventions,
             auth=AuthService(data_dir),

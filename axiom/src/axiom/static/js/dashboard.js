@@ -176,6 +176,7 @@ window.AxiomModules.dashboard = {
         { id: 'config', title: '配置管理', description: '并发、超时、心跳与租约' },
         { id: 'judge', title: 'Guard 管理', description: '监管模型、密钥与规则' },
         { id: 'dingtalk', title: '钉钉告警', description: '漏洞实时推送与群指令交互' },
+        { id: 'storage', title: '存储治理', description: '磁盘占用总览与日志轮转' },
       ];
     },
 

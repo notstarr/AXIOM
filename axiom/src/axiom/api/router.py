@@ -25,6 +25,7 @@ from axiom.modules.phase_capabilities.api import router as phase_capabilities_ro
 from axiom.modules.plan.api import router as plan_router
 from axiom.modules.reason.api import router as reason_router
 from axiom.modules.settings.api import router as settings_router
+from axiom.modules.storage_admin.api import router as storage_router
 from axiom.modules.tasks.api import router as tasks_router
 from axiom.modules.todos.api import router as todos_router
 from axiom.modules.token_usage.api import router as token_usage_router
@@ -58,6 +59,7 @@ router.include_router(execution_router)
 router.include_router(exports_router)
 router.include_router(todos_router)
 router.include_router(settings_router)
+router.include_router(storage_router)
 router.include_router(vulnerabilities_router)
 router.include_router(vulnerability_reviews_router)
 router.include_router(mcp_router)
