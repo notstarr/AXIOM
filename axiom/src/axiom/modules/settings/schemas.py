@@ -80,10 +80,6 @@ class RuntimeConfig(BaseModel):
     explore_conclude_max_seconds: int = Field(default=600, ge=10, le=7_200)
     network_proxy_mode: Literal["off", "http", "vpn"] = "off"
     network_proxy_url: str = "http://127.0.0.1:7890"
-    external_report_base_url: str = ""
-    external_report_token: str = ""
-    external_report_timeout_seconds: int = Field(default=15, ge=1, le=120)
-    external_report_max_attempts: int = Field(default=3, ge=1, le=10)
     guard_mode: Literal["off", "audit", "enforce"] = "enforce"
     guard_enabled_default: bool = False
     guard_model_base_url: str = "https://api.siliconflow.cn/v1"

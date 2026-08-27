@@ -64,7 +64,6 @@ class CreateTask(BaseModel):
     # their scheduling behavior.
     plan_worker_pool: list[str] = Field(default_factory=list)
     guard_enabled: bool = False
-    external_report_enabled: bool = False
     run_duration_seconds: int | None = Field(
         default=None,
         ge=MIN_RUN_DURATION_SECONDS,
@@ -182,7 +181,6 @@ class Task(BaseModel):
     worker_pool: list[str]
     plan_worker_pool: list[str] = Field(default_factory=list)
     guard_enabled: bool
-    external_report_enabled: bool
     legacy_readonly: bool
     archived: bool = False
     created_at: str
@@ -246,7 +244,6 @@ class UpdateTask(BaseModel):
     worker_pool: list[str] | None = None
     plan_worker_pool: list[str] | None = None
     guard_enabled: bool | None = None
-    external_report_enabled: bool | None = None
 
     @field_validator("title", "goal")
     @classmethod

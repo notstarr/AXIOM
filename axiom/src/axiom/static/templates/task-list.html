@@ -180,14 +180,7 @@
                 class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
             </div>
 
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <button type="button" @click="newProject.kk_report_enabled = !newProject.kk_report_enabled"
-                class="h-11 px-3 rounded-xl border text-sm font-medium transition flex items-center justify-between"
-                :class="newProject.kk_report_enabled ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-300 bg-slate-100 text-slate-500'"
-                title="关闭时仅上报到 AXIOM；开启时同时上报 KK 外部系统">
-                <span>外部上报</span>
-                <span class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-white/90 border border-current/20" x-text="newProject.kk_report_enabled ? '开启' : '关闭'"></span>
-              </button>
+            <div>
               <button type="button" @click="newProject.guard_enabled = !newProject.guard_enabled; newProject._guardTouched = true"
                 class="h-11 px-3 rounded-xl border text-sm font-medium transition flex items-center justify-between"
                 :class="newProject.guard_enabled ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-slate-300 bg-slate-100 text-slate-500'"
@@ -228,7 +221,6 @@
             <div class="flex items-center justify-between gap-2">
               <span class="font-mono text-[11px] text-slate-400" x-text="p.id"></span>
               <div class="flex items-center gap-1.5">
-                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="p.kk_report_enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'" x-text="p.kk_report_enabled ? 'KK开' : 'KK关'"></span>
                 <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="p.guard_enabled ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-500'" x-text="p.guard_enabled ? '监管开' : '监管关'"></span>
                 <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="projectStatusBadgeClass(p.status)" x-text="projectStatusLabel(p.status)"></span>
                 <span x-show="p.archived" class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-slate-200 text-slate-600">已归档</span>
@@ -254,7 +246,6 @@
               <div>
                 <div class="flex items-center gap-2">
                   <span class="font-mono text-xs text-slate-400" x-text="selectedTaskSummary().id"></span>
-                  <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="selectedTaskSummary().kk_report_enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'" x-text="selectedTaskSummary().kk_report_enabled ? 'KK上报开启' : 'KK上报关闭'"></span>
                   <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="selectedTaskSummary().guard_enabled ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-500'" x-text="selectedTaskSummary().guard_enabled ? '监管开启' : '监管关闭'"></span>
                   <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="projectStatusBadgeClass(selectedTaskSummary().status)" x-text="projectStatusLabel(selectedTaskSummary().status)"></span>
                   <span x-show="selectedTaskSummary().archived" class="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-200 text-slate-600">已归档</span>

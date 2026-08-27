@@ -104,7 +104,6 @@ class TaskService:
                 worker_pool=command.worker_pool,
                 plan_worker_pool=command.plan_worker_pool,
                 guard_enabled=command.guard_enabled,
-                external_report_enabled=command.external_report_enabled,
                 run_duration_seconds=command.run_duration_seconds,
                 run_started_at=now,
                 run_deadline_at=deadline_at,

@@ -50,7 +50,18 @@ tasks = Table(
         server_default="[]",
     ),
     Column("guard_enabled", Boolean, nullable=False, default=False),
-    Column("external_report_enabled", Boolean, nullable=False, default=False),
+    # The external-report feature is retired, but deployed databases created
+    # before that still carry this NOT NULL column without a server default.
+    # Keep the ORM definition so legacy SQLite imports match the source shape
+    # and INSERTs emitted after the retirement fall back to False instead of
+    # failing the constraint on those databases.
+    Column(
+        "external_report_enabled",
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    ),
     Column("legacy_readonly", Boolean, nullable=False, default=False),
     Column("archived", Boolean, nullable=False, server_default=false()),
     Column("created_at", UTCDateTimeText, nullable=False),

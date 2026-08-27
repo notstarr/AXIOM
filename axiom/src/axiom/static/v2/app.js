@@ -223,12 +223,12 @@
   }
 
   function renderVulnerabilities() {
-    return `${header('evidence first', 'Vulnerabilities', '内部使用通用漏洞模型；Mozzie/KK 的 project 只在外部上报 Attempt 中解析。', '<button class="button primary" data-action="new-vulnerability">手动记录</button>')}
-      <section class="panel flush"><div class="panel-header"><h2>漏洞记录</h2><span class="mono muted">${state.vulnerabilities.length}</span></div>${state.vulnerabilities.length ? `<div class="table-wrap"><table><thead><tr><th>ID</th><th>标题</th><th>严重度</th><th>Task</th><th>状态</th><th>外部上报</th></tr></thead><tbody>${state.vulnerabilities.map(v => `<tr><td class="mono">${v.id}</td><td><strong>${escapeHtml(v.title)}</strong><div class="muted truncate">${escapeHtml(v.affected_target || v.description)}</div></td><td><span class="severity ${v.severity}">${escapeHtml(v.severity)}</span></td><td class="mono">${escapeHtml(v.task_id)}</td><td>${badge(v.status)}</td><td><button class="button small" data-action="external-preview" data-task="${v.task_id}" data-id="${v.id}">预览</button> <button class="button small primary" data-action="external-report" data-task="${v.task_id}" data-id="${v.id}">上报</button></td></tr>`).join('')}</tbody></table></div>` : empty('没有漏洞','Explore 或人工表单可以写入确认漏洞。')}</section>`;
+    return `${header('evidence first', 'Vulnerabilities', '内部使用通用漏洞模型，证据优先记录与审核。', '<button class="button primary" data-action="new-vulnerability">手动记录</button>')}
+      <section class="panel flush"><div class="panel-header"><h2>漏洞记录</h2><span class="mono muted">${state.vulnerabilities.length}</span></div>${state.vulnerabilities.length ? `<div class="table-wrap"><table><thead><tr><th>ID</th><th>标题</th><th>严重度</th><th>Task</th><th>状态</th></tr></thead><tbody>${state.vulnerabilities.map(v => `<tr><td class="mono">${v.id}</td><td><strong>${escapeHtml(v.title)}</strong><div class="muted truncate">${escapeHtml(v.affected_target || v.description)}</div></td><td><span class="severity ${v.severity}">${escapeHtml(v.severity)}</span></td><td class="mono">${escapeHtml(v.task_id)}</td><td>${badge(v.status)}</td></tr>`).join('')}</tbody></table></div>` : empty('没有漏洞','Explore 或人工表单可以写入确认漏洞。')}</section>`;
   }
 
   function renderSettings() {
-    const tabs = [['runtime','运行时'],['workers','Worker'],['guard','Guard'],['dingtalk','钉钉告警'],['external','外部上报']];
+    const tabs = [['runtime','运行时'],['workers','Worker'],['guard','Guard'],['dingtalk','钉钉告警']];
     return `${header('database backed', 'Settings', '所有新运行配置以数据库为唯一来源；Worker 自定义 MCP 继续保存在 Worker config 中。')}
       <section class="settings-grid"><nav class="settings-nav">${tabs.map(([id,label]) => `<button class="${state.settingsTab===id?'active':''}" data-action="settings-tab" data-tab="${id}">${label}</button>`).join('')}</nav><div>${renderSettingsContent()}</div></section>`;
   }
@@ -244,9 +244,6 @@
       <div class="field full"><label>Webhook URL</label><input name="dingtalk_webhook_url" type="text" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." value="${escapeHtml(cfg.dingtalk_webhook_url || '')}"></div>
       <div class="field full"><label>加签 Secret (可选)</label><input name="dingtalk_secret" type="password" placeholder="SEC..." value="${escapeHtml(cfg.dingtalk_secret || '')}"></div>
     </div><div class="form-actions" style="display:flex;gap:0.75rem"><button class="button primary" type="submit">保存配置</button><button class="button" type="button" data-action="test-dingtalk">发送测试通知</button></div></form></article>`;
-    if (state.settingsTab === 'external') return settingsForm('external-settings-form','Mozzie / KK', [
-      ['mozzie_base_url','Base URL'],['mozzie_token','Token','password'],['mozzie_timeout_seconds','超时秒数','number'],['external_report_max_attempts','最大尝试次数','number']
-    ], cfg, '外部 project 通过 ingress 域名搜索解析，失败时使用 others。');
     return settingsForm('runtime-settings-form','Dispatcher runtime', [
       ['interval_seconds','调度间隔（秒）','number'],['max_workers','全局 Worker 槽位','number'],['max_running_tasks','并行 Task 数','number'],['max_task_workers','单 Task Worker 数','number'],['bootstrap_limit','Bootstrap 并发','number'],['reason_limit','Reason 并发','number'],['explore_limit','Explore 并发','number'],['heartbeat_interval_seconds','心跳间隔','number'],['lease_timeout_seconds','租约超时','number'],['retry_base_seconds','重试基准秒数','number'],['bootstrap_execute_seconds','Bootstrap 探索预算','number'],['reason_execute_seconds','Reason 规划预算','number'],['reason_conclude_seconds','Reason 收口预算','number'],['plan_execute_seconds','Plan 全景预算','number'],['plan_conclude_seconds','Plan 收口预算','number'],['reason_batch_size','Reason 结果批量数','number'],['reason_low_watermark','Reason 队列低水位','number'],['reason_max_wait_seconds','Reason 最大等待秒数','number'],['reason_min_interval_seconds','Reason 最短间隔秒数','number'],['reason_target_open_intents','目标未完成 Intent','number'],['reason_queue_limit','Reason 最大排队数','number'],['plan_queue_limit','Plan 最大排队数','number']
     ], cfg, '并发槽位从 Task/Intent 租约推导；每个 Explore Intent 的时间预算由 Reason 派发时单独指定。');
@@ -286,7 +283,7 @@
       <div class="field full"><label>Task Scope 黑名单（可选；黑名单优先）</label><textarea name="scope_exclude"></textarea></div>
       <div class="field full"><label>Scope 备注</label><input name="scope_notes"></div>
       <div class="field full"><label>Worker pool</label><div class="check-row">${workerChecks || '<span class="help">未配置 Worker 时留空</span>'}</div></div>
-      <div class="field full"><div class="check-row"><label class="check"><input type="checkbox" name="guard_enabled">启用 Guard</label><label class="check"><input type="checkbox" name="external_report_enabled">自动外部上报</label></div></div>
+      <div class="field full"><div class="check-row"><label class="check"><input type="checkbox" name="guard_enabled">启用 Guard</label></div></div>
     </div><div class="form-actions"><button class="button" type="button" data-action="close-modal">取消</button><button class="button primary">创建并运行</button></div></form>`);
   }
 
@@ -316,7 +313,7 @@
   async function submitForm(form) {
     const data = new FormData(form);
     if (form.id === 'project-form') { await api('/projects',{method:'POST',body:{title:data.get('title'),description:data.get('description')}}); closeModal(); await loadCore({quiet:true}); toast('Project 已创建'); }
-    else if (form.id === 'task-form') { const origin = data.get('origin'); const targets=lines(data.get('scope_targets')); const exclude=lines(data.get('scope_exclude')); await api('/tasks',{method:'POST',body:{project_id:data.get('project_id'),title:data.get('title'),origin,goal:data.get('goal'),hints:lines(data.get('hints')),guard_enabled:data.has('guard_enabled'),external_report_enabled:data.has('external_report_enabled'),worker_pool:data.getAll('worker_pool'),scope:{enabled:targets.length>0||exclude.length>0,targets,exclude,notes:data.get('scope_notes')}}}); closeModal(); await loadCore({quiet:true}); toast('Task 已创建并进入 Bootstrap'); }
+    else if (form.id === 'task-form') { const origin = data.get('origin'); const targets=lines(data.get('scope_targets')); const exclude=lines(data.get('scope_exclude')); await api('/tasks',{method:'POST',body:{project_id:data.get('project_id'),title:data.get('title'),origin,goal:data.get('goal'),hints:lines(data.get('hints')),guard_enabled:data.has('guard_enabled'),worker_pool:data.getAll('worker_pool'),scope:{enabled:targets.length>0||exclude.length>0,targets,exclude,notes:data.get('scope_notes')}}}); closeModal(); await loadCore({quiet:true}); toast('Task 已创建并进入 Bootstrap'); }
     else if (form.id === 'todo-form') { await api(`/tasks/${state.selectedTask.id}/todos`,{method:'POST',body:{title:data.get('title'),category:data.get('category'),theme:data.get('theme'),priority:Number(data.get('priority')),sources:[{type:'origin',id:'origin'}],actor:'human'}}); closeModal(); await openTask(state.selectedTask.id); toast('Todo 已添加'); }
     else if (form.id === 'scope-form') { const targets=lines(data.get('targets')); const exclude=lines(data.get('exclude')); const updated=await api(`/tasks/${state.selectedTask.id}/scope`,{method:'PATCH',body:{enabled:targets.length>0||exclude.length>0,targets,exclude,notes:data.get('notes')}}); state.selectedTask=updated; state.tasks=state.tasks.map(t=>t.id===updated.id?updated:t); closeModal(); render(); toast('Task Scope 已保存'); }
     else if (form.id === 'knowledge-form') { await api(`/projects/${state.selectedProject.id}/knowledge`,{method:'POST',body:{title:data.get('title'),content:data.get('content'),hint:data.get('hint'),actor:'human'}}); closeModal(); await openProject(state.selectedProject.id); toast('Project Knowledge 已保存'); }
@@ -368,8 +365,6 @@
       }
       else if (action === 'stop-task') { await api(`/tasks/${state.selectedTask.id}/stop`,{method:'POST'}); await loadCore({quiet:true}); await openTask(state.selectedTask.id); toast('Task 已停止'); }
       else if (action === 'resume-task') { await api(`/tasks/${state.selectedTask.id}/resume`,{method:'POST'}); await loadCore({quiet:true}); await openTask(state.selectedTask.id); toast('Task 已恢复'); }
-      else if (action === 'external-preview') { const payload=await api(`/tasks/${target.dataset.task}/vulnerabilities/${target.dataset.id}/external-preview`,{method:'POST',body:{}}); showModal('外部上报预览',`<pre class="mono" style="white-space:pre-wrap;font-size:.75rem">${escapeHtml(JSON.stringify(payload,null,2))}</pre>`); }
-      else if (action === 'external-report') { if (!confirm('确认向外部漏洞平台上报？')) return; const result=await api(`/tasks/${target.dataset.task}/vulnerabilities/${target.dataset.id}/external-report`,{method:'POST',body:{}}); toast(result.status==='success'?'外部上报成功':`上报失败：${result.last_error}`,result.status==='success'?'':'error'); }
     } catch (error) { toast(error.message,'error'); }
   });
 

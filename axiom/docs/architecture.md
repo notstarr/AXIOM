@@ -54,7 +54,6 @@ API Router
  ├─ archives       Fact/Intent 下游链路的批次归档与恢复
  ├─ vulnerabilities 漏洞对象、状态、导出
  ├─ vulnerability_reviews 独立 ReviewRun、审核裁决与重审
- ├─ external_reports 外部上报与重试记录
  ├─ credentials    项目凭证
  ├─ dashboard      Dashboard 聚合只读模型
  ├─ workers        Worker 能力、并发和 Pi 配置

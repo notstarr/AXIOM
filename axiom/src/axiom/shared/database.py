@@ -61,7 +61,6 @@ REQUIRED_TABLES = frozenset(
         "vulnerability_review_runs",
         "mcp_servers",
         "mcp_tools",
-        "external_report_attempts",
         "project_knowledge",
         "goal_evaluations",
         "todo_sources",

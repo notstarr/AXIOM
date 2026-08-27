@@ -362,7 +362,6 @@ def test_worker_delete_is_blocked_by_active_reason_run(client, engine) -> None:
                 scope_json="{}",
                 worker_pool_json="[]",
                 guard_enabled=False,
-                external_report_enabled=False,
                 legacy_readonly=False,
                 created_at=now,
                 updated_at=now,

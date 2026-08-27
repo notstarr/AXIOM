@@ -368,7 +368,6 @@ def test_task_settings_and_hints_can_be_edited_without_stale_graph_state(client)
             "scope": {"enabled": True, "targets": [], "exclude": ["blocked.example.com"]},
             "worker_pool": ["worker-b", "worker-b"],
             "guard_enabled": True,
-            "external_report_enabled": True,
         },
     )
     assert updated.status_code == 200, updated.text
@@ -381,7 +380,6 @@ def test_task_settings_and_hints_can_be_edited_without_stale_graph_state(client)
     }
     assert body["worker_pool"] == ["worker-b"]
     assert body["guard_enabled"] is True
-    assert body["external_report_enabled"] is True
 
     graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
     goal = next(item for item in graph["facts"] if item["id"] == "goal")

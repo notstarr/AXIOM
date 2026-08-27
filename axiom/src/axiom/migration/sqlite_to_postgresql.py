@@ -480,7 +480,6 @@ _GLOBAL_COUNTERS = {
 
 _TASK_COUNTERS = {
     "artifact": ("artifacts", "id", "a"),
-    "external_report": ("external_report_attempts", "id", "er"),
     "fact": ("facts", "id", "f"),
     "hint": ("task_hints", "id", "h"),
     "intent": ("intents", "id", "i"),

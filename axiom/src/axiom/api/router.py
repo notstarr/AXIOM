@@ -14,7 +14,6 @@ from axiom.modules.dispatch.api import router as dispatch_router
 from axiom.modules.diagnostics.api import router as diagnostics_router
 from axiom.modules.execution.api import router as execution_router
 from axiom.modules.exports.api import router as exports_router
-from axiom.modules.external_reports.api import router as external_reports_router
 from axiom.modules.knowledge.api import router as knowledge_router
 from axiom.modules.skills.api import router as skills_router
 from axiom.modules.guard.api import router as guard_router
@@ -62,7 +61,6 @@ router.include_router(settings_router)
 router.include_router(vulnerabilities_router)
 router.include_router(vulnerability_reviews_router)
 router.include_router(mcp_router)
-router.include_router(external_reports_router)
 router.include_router(knowledge_router)
 router.include_router(skills_router)
 router.include_router(guard_router)

@@ -515,8 +515,6 @@ global.fetch = async (url, init = {{}}) => {{
   }} else if (method === 'POST' && url === '/api/v1/tasks/t_153/vulnerabilities/v002/reviews') {{
     queued = true;
     payload = pending;
-  }} else if (method === 'POST' && url === '/api/v1/tasks/t_153/vulnerabilities/v002/external-report') {{
-    payload = {{ attempt: {{ status:'succeeded' }} }};
   }} else {{
     throw new Error(`unexpected request: ${{method}} ${{url}}`);
   }}
@@ -560,14 +558,8 @@ const ctx = Object.assign({{}}, methods, {{
     retry:ctx.vulnerabilityReviewCanRetry(),
     submitting:ctx.vulnerabilityReviewSubmitting,
   }};
-  await ctx.reportExternalVulnerability(vulnerability);
-  const blockedExternalPosts = calls.filter(item => item.url?.endsWith('/external-report')).length;
-  vulnerability.status = '已验证';
-  await ctx.reportExternalVulnerability(vulnerability);
-  const successfulExternalPosts = calls.filter(item => item.url?.endsWith('/external-report')).length;
   process.stdout.write(JSON.stringify({{
-    loaded, duplicateHash, artifactHash, afterTrigger, blockedExternalPosts,
-    successfulExternalPosts, calls, toasts,
+    loaded, duplicateHash, artifactHash, afterTrigger, calls, toasts,
   }}));
 }})();
 """
@@ -1094,7 +1086,7 @@ global.fetch = async (url, init = {{}}) => {{
   const task = {{
     id:'t_150', project_id:'prj_1', title:'测试', origin:{{host:'a.example.com',original_input:'a.example.com'}},
     goal:'测试', status:'running', phase:'bootstrap', scope:{{enabled:true,targets:['a.example.com'],exclude:[]}},
-    worker_pool:[], guard_enabled:false, external_report_enabled:false, legacy_readonly:false,
+    worker_pool:[], guard_enabled:false, legacy_readonly:false,
     created_at:'2026-07-28T00:00:00Z', updated_at:'2026-07-28T00:00:00Z',
     run_duration_seconds:7200, run_started_at:'2026-07-28T00:00:00Z', run_deadline_at:'2026-07-28T02:00:00Z', last_pause_reason:null,
   }};
@@ -1141,7 +1133,7 @@ global.fetch = async () => {{
     origin:{{host:'target.example', original_input:'target.example'}},
     goal:'全景复盘', status:'running', phase:'plan', scope:{{enabled:false,targets:[],exclude:[]}},
     worker_pool:[], plan_worker_pool:[], guard_enabled:false,
-    external_report_enabled:false, legacy_readonly:false,
+    legacy_readonly:false,
     reason_worker:'legacy-reason-worker', reason_activity_kind:'analyzing',
     reason_activity_summary:'正在准备 Reason Context 与能力快照',
     active_reason_run:{{id:'rr001284', status:'running', trigger:'plan', worker:'legacy-reason-worker'}},
@@ -1769,7 +1761,8 @@ def test_frontend_and_static_assets_are_served(client):
     assert "Reviewer 审核" in vulnerabilities.text
     assert "重新审核" in vulnerabilities.text
     assert "vulnerabilityReviewDecisionLabel" in vulnerabilities.text
-    assert "只有已验证漏洞可以外部上报" in vulnerabilities.text
+    assert "外部上报" not in vulnerabilities.text
+    assert "previewExternalVulnerability" not in vulnerabilities.text
     assert "duplicate_of_vulnerability_id" in vulnerabilities.text
     assert "看板视图" not in vulnerabilities.text
     assert "vulnerabilityBoard" not in vulnerabilities.text
@@ -2205,7 +2198,7 @@ def test_artifact_center_routes_task_folder_and_selected_file() -> None:
     }
 
 
-def test_vulnerability_review_history_retry_deep_links_and_external_gate() -> None:
+def test_vulnerability_review_history_retry_and_deep_links() -> None:
     result = _run_vulnerability_review_ui_fixture()
 
     assert result["loaded"] == {
@@ -2222,8 +2215,6 @@ def test_vulnerability_review_history_retry_deep_links_and_external_gate() -> No
         "retry": False,
         "submitting": False,
     }
-    assert result["blockedExternalPosts"] == 0
-    assert result["successfulExternalPosts"] == 1
     review_posts = [
         item
         for item in result["calls"]
@@ -2238,8 +2229,6 @@ def test_vulnerability_review_history_retry_deep_links_and_external_gate() -> No
     ]
     assert {item["message"] for item in result["toasts"]} >= {
         "已创建 Reviewer 审核任务",
-        "只有 Reviewer 或人工裁决为已验证的漏洞才能外部上报",
-        "外部上报成功",
     }
 
 

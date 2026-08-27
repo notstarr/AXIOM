@@ -1084,7 +1084,6 @@ window.AxiomModules.projects = {
           title: this.newProject.title,
           origin: this.newProject.origin,
           goal: this.newProject.goal,
-          kk_report_enabled: !!this.newProject.kk_report_enabled,
           guard_enabled: !!this.newProject.guard_enabled,
           hints: this.newProject.hints.trim()
             ? [{ content: this.newProject.hints.trim(), creator: actor }]
@@ -1106,7 +1105,7 @@ window.AxiomModules.projects = {
         this.newProject = {
           parent_project_id: parentProjectId || this.projectGroups[0]?.id || '',
           title:'', origin:'', goal:'对该系统进行渗透测试，并挖掘10个高置信度的漏洞',
-          bootstrap: true, kk_report_enabled: false, depth_mode: false, guard_enabled: !!this.judgeSettings?.enabled_default, hints: '',
+          bootstrap: true, depth_mode: false, guard_enabled: !!this.judgeSettings?.enabled_default, hints: '',
           task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '',
           depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], plan_worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false,
         };

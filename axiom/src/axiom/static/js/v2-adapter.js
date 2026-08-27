@@ -216,7 +216,6 @@
       phase: task.phase,
       bootstrap_enabled: true,
       bootstrap_status: task.phase === 'bootstrap' ? 'running' : (task.status === 'completed' ? 'completed' : ''),
-      kk_report_enabled: !!task.external_report_enabled,
       guard_enabled: !!task.guard_enabled,
       worker_pool: task.worker_pool || [],
       plan_worker_pool: task.plan_worker_pool || [],
@@ -927,7 +926,6 @@
         goal: body.goal,
         hints: (body.hints || []).map(item => item.content || item).filter(Boolean),
         guard_enabled: !!body.guard_enabled,
-        external_report_enabled: !!body.kk_report_enabled,
         worker_pool: body.worker_pool || [],
         plan_worker_pool: body.plan_worker_pool || [],
         scope: body.task_scope || null,
@@ -1769,29 +1767,6 @@
         await request('PATCH', `/tasks/${this.selectedProjectId}/todos/${todoId}`, { status, actor: this.actorName(), status_reason: statusReason });
         await this.loadProject(this.selectedProjectId);
         this.sideTab = 'todo';
-      } catch (error) { this.showToast(error.message, 'error'); }
-    },
-    async previewExternalVulnerability(vulnerability) {
-      if (!vulnerability) return;
-      try {
-        const payload = await request('POST', `/tasks/${vulnerability.project_id}/vulnerabilities/${vulnerability.id}/external-preview`, {});
-        this.yamlPreviewTitle = `${vulnerability.id} · 外部上报预览`;
-        this.yamlPreviewText = JSON.stringify(payload, null, 2);
-        this.yamlPreviewHtml = `<pre class="whitespace-pre-wrap break-words">${this.escapeHtml(this.yamlPreviewText)}</pre>`;
-        this.showYamlModal = true;
-      } catch (error) { this.showToast(error.message, 'error'); }
-    },
-    async reportExternalVulnerability(vulnerability) {
-      if (!vulnerability) return;
-      if (vulnerability.status !== '已验证') {
-        this.showToast('只有 Reviewer 或人工裁决为已验证的漏洞才能外部上报', 'error');
-        return;
-      }
-      if (!confirm(`确认外部上报 ${vulnerability.id}？`)) return;
-      try {
-        const result = await request('POST', `/tasks/${vulnerability.project_id}/vulnerabilities/${vulnerability.id}/external-report`, {});
-        const status = result.attempt?.status || 'failed';
-        this.showToast(status === 'succeeded' ? '外部上报成功' : `外部上报失败：${result.attempt?.error || status}`, status === 'succeeded' ? 'success' : 'error');
       } catch (error) { this.showToast(error.message, 'error'); }
     },
     canActOnSelectedFacts() { return false; },

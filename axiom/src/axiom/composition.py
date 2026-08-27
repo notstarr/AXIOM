@@ -23,7 +23,6 @@ from axiom.modules.plan.service import PlanService
 from axiom.modules.reason.service import ReasonService
 from axiom.modules.mcp.service import MCPService
 from axiom.modules.phase_capabilities.service import PhaseCapabilityService
-from axiom.modules.external_reports.service import ExternalReportService
 from axiom.modules.knowledge.service import KnowledgeService
 from axiom.modules.skills.service import SkillService
 from axiom.modules.guard.service import GuardService
@@ -63,7 +62,6 @@ class Container:
     vulnerability_reviews: VulnerabilityReviewService
     mcp: MCPService
     phase_capabilities: PhaseCapabilityService
-    external_reports: ExternalReportService
     knowledge: KnowledgeService
     skills: SkillService
     guard: GuardService
@@ -143,7 +141,6 @@ class Container:
             vulnerability_reviews=vulnerability_reviews,
             mcp=mcp,
             phase_capabilities=phase_capabilities,
-            external_reports=ExternalReportService(engine, settings, store),
             knowledge=KnowledgeService(engine),
             skills=skills,
             guard=GuardService(engine, settings),
