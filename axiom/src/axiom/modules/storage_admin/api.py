@@ -18,6 +18,15 @@ def get_storage_overview(
     return container.storage_admin.overview()
 
 
+@router.post("/refresh", response_model=StorageOverview)
+def refresh_storage_overview(
+    actor: str = AUTO_ROTATE_ACTOR,
+    container: Container = Depends(get_container),
+) -> StorageOverview:
+    """同步重建统计（含到期轮转）。大目录遍历可能耗时数十秒。"""
+    return container.storage_admin.refresh(actor=actor.strip() or "human.frontend")
+
+
 @router.post("/logs/rotate", response_model=LogRotateResult)
 def rotate_storage_logs(
     actor: str = AUTO_ROTATE_ACTOR,

@@ -47,6 +47,7 @@ class StorageOverview(BaseModel):
     categories: list[StorageCategory]
     database: DatabaseStats
     logs: LogStats
+    refreshing: bool = False
 
 
 class LogRotateItem(BaseModel):
