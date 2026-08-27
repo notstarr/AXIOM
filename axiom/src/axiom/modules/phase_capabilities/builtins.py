@@ -93,6 +93,22 @@ _CORE_BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = (
         availability=_bootstrap_execute_else_all(),
     ),
     BuiltinToolDefinition(
+        key="web_search",
+        title="互联网检索",
+        description="通过 DuckDuckGo / Exa 搜索引擎检索公开漏洞库、CVE 细节与最新利用方案。",
+        source="pi_native",
+        invocation="web_search",
+        availability=_all_modes("reason", "explore", "plan"),
+    ),
+    BuiltinToolDefinition(
+        key="fetch_web_content",
+        title="提取网页正文",
+        description="抓取外部网页/文档并将 HTML 自动转换为 Markdown 正文。",
+        source="pi_native",
+        invocation="fetch_web_content",
+        availability=_all_modes("reason", "explore", "plan"),
+    ),
+    BuiltinToolDefinition(
         key="axiom.skill.path",
         title="定位 Skill",
         description="解析本 Lease 已启用 Skill 的受控绝对目录。",

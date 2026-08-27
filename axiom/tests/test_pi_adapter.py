@@ -535,10 +535,54 @@ def test_native_tool_contracts_are_fixed_by_phase_and_run_mode() -> None:
         "bash",
     ]
     assert native_tool_names("bootstrap", "conclude") == ["read", "write", "edit"]
-    assert native_tool_names("reason", "execute") == ["read", "write", "edit", "bash"]
-    assert native_tool_names("reason", "conclude") == ["read", "write", "edit", "bash"]
-    assert native_tool_names("explore", "execute") == ["read", "write", "edit", "bash"]
-    assert native_tool_names("explore", "conclude") == ["read", "write", "edit", "bash"]
+    assert native_tool_names("reason", "execute") == [
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "web_search",
+        "fetch_web_content",
+    ]
+    assert native_tool_names("reason", "conclude") == [
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "web_search",
+        "fetch_web_content",
+    ]
+    assert native_tool_names("explore", "execute") == [
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "web_search",
+        "fetch_web_content",
+    ]
+    assert native_tool_names("explore", "conclude") == [
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "web_search",
+        "fetch_web_content",
+    ]
+    assert native_tool_names("plan", "execute") == [
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "web_search",
+        "fetch_web_content",
+    ]
+    assert native_tool_names("plan", "conclude") == [
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "web_search",
+        "fetch_web_content",
+    ]
     assert native_tool_names("review", "execute") == ["read", "write", "edit", "bash"]
     assert native_tool_names("review", "conclude") == ["read", "write", "edit", "bash"]
 
