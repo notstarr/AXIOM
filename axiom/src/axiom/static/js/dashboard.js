@@ -180,6 +180,15 @@ window.AxiomModules.dashboard = {
       ];
     },
 
+    // tab 切换时显式触发对应面板的数据加载（模板动态挂载，x-effect 时机不可靠）。
+    selectSettingsTab(id) {
+      this.activeSettingsTab = id;
+      if (id === 'storage') {
+        this.queueStorageOverview();
+        this.queueCleanupPlan();
+      }
+    },
+
     allVulnerabilities() {
       return this.vulnerabilityItems || [];
     },

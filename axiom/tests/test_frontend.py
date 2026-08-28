@@ -1732,7 +1732,7 @@ def test_frontend_and_static_assets_are_served(client):
     # Worker/capability assets are versioned together with the current
     # five-stage Plan runtime bundle.  Keep this assertion tied to the
     # manifest served by the app rather than the pre-Plan cache marker.
-    assert worker_asset_versions == {"20260828-storage-cleanup-v5"}
+    assert worker_asset_versions == {"20260828-storage-cleanup-v7"}
 
     asset = client.get("/static/js/v2-adapter.js")
     assert asset.status_code == 200

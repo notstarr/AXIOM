@@ -52,7 +52,7 @@ SNAPSHOT_FILE = "usage.json"
 
 # ── 清理中心 ──
 CLEANUP_PLAN_FILE = "cleanup-plan.json"
-CLEANUP_PLAN_TTL = timedelta(minutes=10)
+CLEANUP_PLAN_TTL = timedelta(minutes=30)
 LEASE_HOT_WINDOW = timedelta(minutes=30)
 SQLITE_BACKUP_KEEP_DAYS = 30
 PG_BACKUP_KEEP_COUNT = 3
@@ -471,8 +471,8 @@ class StorageAdminService:
 
     def _safe_cleanup_refresh(self) -> None:
         try:
-            plan = self._compute_cleanup_plan()
-            self._atomic_json(CLEANUP_PLAN_FILE, plan.model_dump(mode="json"))
+            plan, index = self._compute_cleanup_plan()
+            self._write_cleanup_snapshot(plan, index)
         except Exception:
             LOGGER.warning("background cleanup plan failed", exc_info=True)
         finally:
@@ -480,9 +480,28 @@ class StorageAdminService:
                 self._cleanup_refreshing = False
 
     def refresh_cleanup_plan(self) -> CleanupPlan:
-        plan = self._compute_cleanup_plan()
-        self._atomic_json(CLEANUP_PLAN_FILE, plan.model_dump(mode="json"))
+        plan, _index = self._compute_cleanup_plan()
+        self._write_cleanup_snapshot(plan, _index)
         return plan
+
+    def _write_cleanup_snapshot(self, plan: CleanupPlan, index: dict) -> None:
+        payload = plan.model_dump(mode="json")
+        payload.update(index)
+        self._atomic_json(CLEANUP_PLAN_FILE, payload)
+
+    def _cleanup_snapshot(self) -> dict:
+        return self._read_json_file(Path(STORAGE_DIR_NAME) / CLEANUP_PLAN_FILE) or {}
+
+    def _cleanup_context(self) -> dict:
+        """preview/execute 共用的批量上下文：DB 状态只查一次，尺寸索引来自计划快照。"""
+        snapshot = self._cleanup_snapshot()
+        return {
+            "task_states": self._task_states(),
+            "active_leases": self._active_lease_ids(),
+            "lease_index": snapshot.get("lease_index") or {},
+            "context_sizes": snapshot.get("context_sizes") or {},
+            "artifact_sizes": snapshot.get("artifact_sizes") or {},
+        }
 
     # ---------- 数据采集 ----------
 
@@ -638,25 +657,60 @@ class StorageAdminService:
 
     # ---------- 目标解析（preview / execute 共用单一事实源） ----------
 
-    def _resolve_cleanup_targets(self, key: str) -> tuple[list[CleanupPreviewTarget], int, str]:
-        """解析一个清理 key 的具体删除目标。返回 (targets, protected_count, warning)。"""
-        task_states = self._task_states()
-        active_leases = self._active_lease_ids()
+    def _resolve_cleanup_targets(
+        self, key: str, ctx: dict | None = None,
+    ) -> tuple[list[CleanupPreviewTarget], int, str]:
+        """解析一个清理 key 的具体删除目标。返回 (targets, protected_count, warning)。
+
+        ctx 为批量上下文（_cleanup_context 产物）：DB 状态只查一次，尺寸索引来自
+        计划快照（lease_index/context_sizes/artifact_sizes），避免逐 key 全量重扫。
+        索引缺失时回退到慢路径（现场扫描）。
+        """
+        context = ctx or self._cleanup_context()
+        task_states = context["task_states"]
+        active_leases = context["active_leases"]
+        lease_index = context["lease_index"]
 
         if key == "t1_lease_process":
             targets: list[CleanupPreviewTarget] = []
             protected = 0
-            for _task_id, _unit, lease_id, lease_dir in self._iter_task_leases():
-                _total, process_bytes, process_mtime = self._lease_stats(lease_dir)
-                if lease_id in active_leases or self._is_lease_hot(process_mtime):
-                    protected += 1
-                    continue
-                if process_bytes <= 0:
-                    continue
-                rel = lease_dir.relative_to(self._root) / "process"
-                targets.append(CleanupPreviewTarget(
-                    path=rel.as_posix(), bytes=process_bytes, kind="lease_process",
-                ))
+            cached_leases = [
+                entry
+                for leases in lease_index.values()
+                for entry in leases
+            ]
+            if cached_leases:
+                for entry in cached_leases:
+                    rel_lease = entry["path"]
+                    lease_dir = self._root / rel_lease
+                    process_dir = lease_dir / "process"
+                    if not process_dir.is_dir():
+                        continue
+                    try:
+                        mtime = process_dir.stat().st_mtime
+                    except OSError:
+                        continue
+                    lease_id = Path(rel_lease).name[len(LEASE_DIR_PREFIX):]
+                    if lease_id in active_leases or self._is_lease_hot(mtime):
+                        protected += 1
+                        continue
+                    if entry.get("process", 0) <= 0:
+                        continue
+                    targets.append(CleanupPreviewTarget(
+                        path=f"{rel_lease}/process", bytes=entry["process"], kind="lease_process",
+                    ))
+            else:
+                for _task_id, _unit, lease_id, lease_dir in self._iter_task_leases():
+                    _total, process_bytes, process_mtime = self._lease_stats(lease_dir)
+                    if lease_id in active_leases or self._is_lease_hot(process_mtime):
+                        protected += 1
+                        continue
+                    if process_bytes <= 0:
+                        continue
+                    targets.append(CleanupPreviewTarget(
+                        path=(lease_dir / "process").relative_to(self._root).as_posix(),
+                        bytes=process_bytes, kind="lease_process",
+                    ))
             return targets, protected, ""
 
         if key == "t1_log_archives":
@@ -688,15 +742,35 @@ class StorageAdminService:
             targets = []
             protected = 0
             task_dir = self._root / "runs" / task_id
-            for _t, _u, lease_id, lease_dir in self._iter_task_leases(task_id):
-                total, _process_bytes, process_mtime = self._lease_stats(lease_dir)
-                if lease_id in active_leases or self._is_lease_hot(process_mtime):
-                    protected += 1
-                    continue
-                targets.append(CleanupPreviewTarget(
-                    path=lease_dir.relative_to(self._root).as_posix(),
-                    bytes=total, kind="lease",
-                ))
+            cached_entries = lease_index.get(task_id) or []
+            if cached_entries:
+                for entry in cached_entries:
+                    rel_lease = entry["path"]
+                    lease_dir = self._root / rel_lease
+                    if not lease_dir.is_dir():
+                        continue
+                    process_dir = lease_dir / "process"
+                    try:
+                        mtime = process_dir.stat().st_mtime if process_dir.is_dir() else 0.0
+                    except OSError:
+                        mtime = 0.0
+                    lease_id = Path(rel_lease).name[len(LEASE_DIR_PREFIX):]
+                    if lease_id in active_leases or self._is_lease_hot(mtime):
+                        protected += 1
+                        continue
+                    targets.append(CleanupPreviewTarget(
+                        path=rel_lease, bytes=entry.get("total", 0), kind="lease",
+                    ))
+            else:
+                for _t, _u, lease_id, lease_dir in self._iter_task_leases(task_id):
+                    total, _process_bytes, process_mtime = self._lease_stats(lease_dir)
+                    if lease_id in active_leases or self._is_lease_hot(process_mtime):
+                        protected += 1
+                        continue
+                    targets.append(CleanupPreviewTarget(
+                        path=lease_dir.relative_to(self._root).as_posix(),
+                        bytes=total, kind="lease",
+                    ))
             if task_dir.is_dir():
                 for entry in task_dir.iterdir():
                     if entry.is_file() and not entry.is_symlink():
@@ -714,9 +788,11 @@ class StorageAdminService:
             path = self._root / "contexts" / task_id
             if not path.is_dir():
                 return [], 0, ""
+            cached_bytes = context["context_sizes"].get(task_id)
+            size = int(cached_bytes) if cached_bytes is not None else _tree_stats(path)[0]
             return [CleanupPreviewTarget(
                 path=path.relative_to(self._root).as_posix(),
-                bytes=_tree_stats(path)[0], kind="dir",
+                bytes=size, kind="dir",
             )], 0, ""
 
         if key.startswith("t2_task_artifacts:"):
@@ -786,9 +862,10 @@ class StorageAdminService:
 
     def cleanup_preview(self, keys: list[str]) -> list[CleanupPreviewItem]:
         titles = self._cleanup_titles()
+        context = self._cleanup_context()
         items: list[CleanupPreviewItem] = []
         for key in keys:
-            targets, protected, warning = self._resolve_cleanup_targets(key)
+            targets, protected, warning = self._resolve_cleanup_targets(key, context)
             items.append(CleanupPreviewItem(
                 key=key,
                 title=titles.get(key, key),
@@ -801,12 +878,13 @@ class StorageAdminService:
 
     def cleanup_execute(self, keys: list[str], excluded: list[str], actor: str) -> CleanupExecuteResult:
         excluded_set = {item.strip() for item in excluded if item and item.strip()}
+        context = self._cleanup_context()
         removed: list[dict] = []
         skipped: list[dict] = []
         freed_total = 0
         for key in keys:
             try:
-                targets, _protected, _warning = self._resolve_cleanup_targets(key)
+                targets, _protected, _warning = self._resolve_cleanup_targets(key, context)
             except DomainError as exc:
                 skipped.append({"key": key, "path": "", "reason": str(exc)})
                 continue
@@ -881,12 +959,13 @@ class StorageAdminService:
                 titles[item.get("key", "")] = item.get("title", "")
         return titles
 
-    def _compute_cleanup_plan(self) -> CleanupPlan:
+    def _compute_cleanup_plan(self) -> tuple[CleanupPlan, dict]:
         task_states = self._task_states()
         active_leases = self._active_lease_ids()
 
-        # ── runs/ 按任务聚合 ──
+        # ── runs/ 按任务聚合（同时记录逐租约索引，供 preview/execute 免重扫） ──
         run_tasks: dict[str, dict] = {}
+        lease_index: dict[str, list[dict]] = {}
         t1_process_bytes = 0
         t1_process_count = 0
         for task_id, _unit, lease_id, lease_dir in self._iter_task_leases():
@@ -896,6 +975,13 @@ class StorageAdminService:
             })
             bucket["total"] += total
             is_protected = lease_id in active_leases or self._is_lease_hot(process_mtime)
+            lease_index.setdefault(task_id, []).append({
+                "path": lease_dir.relative_to(self._root).as_posix(),
+                "total": total,
+                "process": process_bytes,
+                "mtime": process_mtime,
+                "protected": is_protected,
+            })
             if is_protected:
                 bucket["protected"] += 1
                 continue
@@ -1061,12 +1147,18 @@ class StorageAdminService:
             ),
         ])
 
-        return CleanupPlan(
+        plan = CleanupPlan(
             generated_at=utcnow(),
             data_dir=str(self._root),
             refreshing=False,
             tier1=tier1, tier2=tier2, tier3=tier3,
         )
+        index = {
+            "lease_index": lease_index,
+            "context_sizes": context_tasks,
+            "artifact_sizes": artifact_tasks,
+        }
+        return plan, index
 
     def _read_json_file(self, rel_path: Path) -> dict | None:
         try:

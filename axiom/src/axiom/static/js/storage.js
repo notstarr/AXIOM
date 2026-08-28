@@ -160,6 +160,60 @@ window.AxiomModules.storage = {
         .reduce((acc, item) => acc + (item.bytes || 0), 0);
     },
 
+    // ── 二档：分组折叠 + 勾选 ──
+
+    TIER2_GROUP_META: {
+      runs: { prefix: 't2_task_runs', title: '任务执行产物', desc: 'runs/ 下已完结租约的产物文件（findings、资产清单等）与会话记录。' },
+      contexts: { prefix: 't2_task_contexts', title: '上下文快照', desc: 'contexts/ 下各任务的会话上下文快照，删除后无法回放该任务历史上下文。' },
+      artifacts: { prefix: 't2_task_artifacts', title: '归档任务产物文件', desc: 'tasks/ 下归档任务的 artifacts 文件本体，删除后文件中心对应产物无法下载（数据库记录保留）。' },
+      sqlite: { prefix: 't2_sqlite_backups', title: '旧 SQLite 备份', desc: 'backups/ 与根目录下超过保留期的旧库备份。' },
+      maintenance: { prefix: 't2_maintenance', title: '维护快照', desc: 'maintenance/ 下的人工维护快照，确认不再需要后可删。' },
+      pg: { prefix: 't2_pg_backups', title: '旧 PostgreSQL 备份', desc: 'postgresql-backups/ 中超出最新保留份数的更旧备份。' },
+    },
+
+    tier2Groups() {
+      const plan = this.cleanupPlan;
+      const groups = [];
+      for (const [key, meta] of Object.entries(this.TIER2_GROUP_META)) {
+        const items = (plan?.tier2 || []).filter(item => item.key.startsWith(meta.prefix));
+        const selectedItems = items.filter(item => this.cleanupTier2Selection[item.key] && item.bytes > 0);
+        const allSelected = items.length > 0 && selectedItems.length === items.length;
+        groups.push({
+          key,
+          title: meta.title,
+          desc: meta.desc,
+          items,
+          bytes: items.reduce((acc, item) => acc + (item.bytes || 0), 0),
+          selectedCount: selectedItems.length,
+          selectedBytes: selectedItems.reduce((acc, item) => acc + (item.bytes || 0), 0),
+          allSelected,
+        });
+      }
+      return groups.filter(group => group.items.length > 0);
+    },
+
+    toggleTier2Group(groupKey, checked) {
+      const meta = this.TIER2_GROUP_META[groupKey];
+      if (!meta) return;
+      for (const item of (this.cleanupPlan?.tier2 || [])) {
+        if (item.key.startsWith(meta.prefix) && item.bytes > 0) {
+          this.cleanupTier2Selection[item.key] = checked;
+        }
+      }
+    },
+
+    selectedTier2Keys() {
+      return (this.cleanupPlan?.tier2 || [])
+        .filter(item => item.bytes > 0 && this.cleanupTier2Selection[item.key])
+        .map(item => item.key);
+    },
+
+    selectedTier2Bytes() {
+      return (this.cleanupPlan?.tier2 || [])
+        .filter(item => item.bytes > 0 && this.cleanupTier2Selection[item.key])
+        .reduce((acc, item) => acc + (item.bytes || 0), 0);
+    },
+
     async executeTier1Cleanup() {
       const keys = this.selectedTier1Keys();
       if (keys.length === 0) { this.showToast('请先勾选要清理的项目', 'error'); return; }
@@ -180,15 +234,18 @@ window.AxiomModules.storage = {
       }
     },
 
-    async openCleanupPreview(key) {
+    async openCleanupPreview(keys) {
+      const keyList = Array.isArray(keys) ? keys : [keys];
+      if (keyList.length === 0) { this.showToast('请先勾选要清理的项目', 'error'); return; }
       this.cleanupPreviewBusy = true;
       try {
-        const data = await this._requestJson('POST', '/api/v1/storage/cleanup/preview', { keys: [key] });
-        const item = (data?.items || [])[0] || null;
-        this.cleanupPreview = item;
+        const data = await this._requestJson('POST', '/api/v1/storage/cleanup/preview', { keys: keyList });
+        this.cleanupPreviewItems = data?.items || [];
         this.cleanupPreviewChecked = {};
-        for (const target of (item?.targets || [])) {
-          this.cleanupPreviewChecked[target.path] = true;
+        for (const item of this.cleanupPreviewItems) {
+          for (const target of (item.targets || [])) {
+            this.cleanupPreviewChecked[target.path] = true;
+          }
         }
       } catch (e) {
         this.showToast(e.message || '生成预览失败', 'error');
@@ -197,34 +254,48 @@ window.AxiomModules.storage = {
       }
     },
 
+    cleanupPreviewAllTargets() {
+      return this.cleanupPreviewItems.flatMap(item => item.targets || []);
+    },
+
+    cleanupPreviewCheckedCount() {
+      return this.cleanupPreviewAllTargets().filter(target => this.cleanupPreviewChecked[target.path]).length;
+    },
+
+    cleanupPreviewTotalCount() {
+      return this.cleanupPreviewAllTargets().length;
+    },
+
+    cleanupPreviewProtectedCount() {
+      return this.cleanupPreviewItems.reduce((acc, item) => acc + (item.protected_count || 0), 0);
+    },
+
     cleanupPreviewSelectedBytes() {
-      const item = this.cleanupPreview;
-      if (!item) return 0;
-      return (item.targets || [])
+      return this.cleanupPreviewAllTargets()
         .filter(target => this.cleanupPreviewChecked[target.path])
         .reduce((acc, target) => acc + (target.bytes || 0), 0);
     },
 
     async confirmCleanupExecute() {
-      const item = this.cleanupPreview;
-      if (!item) return;
-      const selectedCount = (item.targets || []).filter(t => this.cleanupPreviewChecked[t.path]).length;
-      if (selectedCount === 0) { this.showToast('请至少勾选一项', 'error'); return; }
-      const excluded = (item.targets || [])
+      if (this.cleanupPreviewItems.length === 0) return;
+      const checkedCount = this.cleanupPreviewCheckedCount();
+      if (checkedCount === 0) { this.showToast('请至少勾选一项', 'error'); return; }
+      const excluded = this.cleanupPreviewAllTargets()
         .filter(target => !this.cleanupPreviewChecked[target.path])
         .map(target => target.path);
       const freed = this.humanBytes(this.cleanupPreviewSelectedBytes());
       // eslint-disable-next-line no-alert
-      if (!confirm(`确认删除选中的 ${selectedCount} 项？预计释放 ${freed}。该操作不可撤销。`)) return;
+      if (!confirm(`确认删除选中的 ${checkedCount} 项？预计释放 ${freed}。该操作不可撤销。`)) return;
       this.cleanupExecuteBusy = true;
       const actor = this.actorName ? this.actorName() : 'human.frontend';
       try {
+        const keys = this.cleanupPreviewItems.map(item => item.key);
         const result = await this._requestJson('POST', '/api/v1/storage/cleanup/execute', {
-          keys: [item.key], excluded, actor,
+          keys, excluded, actor,
         });
         const skipped = (result.skipped || []).filter(entry => entry.reason !== 'excluded by operator');
         this.showToast(`已删除 ${result.removed.length} 项，释放 ${this.humanBytes(result.freed_bytes)}${skipped.length ? `（${skipped.length} 项跳过）` : ''}`);
-        this.cleanupPreview = null;
+        this.cleanupPreviewItems = [];
         await this.loadCleanupPlan(true);
         await this.loadStorageOverview(true);
       } catch (e) {
