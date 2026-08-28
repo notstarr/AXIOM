@@ -118,8 +118,8 @@ window.AxiomModules.storage = {
             this.cleanupTier1Selection[item.key] = !!item.default_selected && item.bytes > 0;
           }
         }
-        if (data.refreshing && attempt < 40) {
-          setTimeout(() => { this._fetchCleanupPlan(attempt + 1); }, 4000);
+        if (data.refreshing && attempt < 200) {
+          setTimeout(() => { this._fetchCleanupPlan(attempt + 1); }, 3000);
         }
         return data;
       } catch (e) {

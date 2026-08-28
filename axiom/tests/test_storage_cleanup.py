@@ -52,6 +52,7 @@ def _make_lease(
     (lease_dir / "findings.md").write_bytes(b"# findings\n" * (product_bytes // 11 or 1))
     if age_hours is not None:
         _age_path(stdout, age_hours / 24)
+        _age_path(process_dir, age_hours / 24)
     return lease_dir
 
 

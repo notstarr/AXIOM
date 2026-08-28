@@ -564,6 +564,24 @@ class StorageAdminService:
             return False
         return time.time() - process_mtime < LEASE_HOT_WINDOW.total_seconds()
 
+    def _lease_process_mtime(self, process_dir: Path) -> float:
+        """process 活跃度：目录与 stdout/stderr 文件 mtime 取最新。
+
+        只看目录 mtime 不够——持续写入 stdout.log 不会更新父目录 mtime，
+        会把活跃租约误判为可清理。
+        """
+        mtimes: list[float] = []
+        try:
+            mtimes.append(process_dir.stat().st_mtime)
+        except OSError:
+            return 0.0
+        for name in ("stdout.log", "stderr.log"):
+            try:
+                mtimes.append((process_dir / name).stat().st_mtime)
+            except OSError:
+                continue
+        return max(mtimes) if mtimes else 0.0
+
     def _iter_task_leases(self, task_id: str | None = None):
         """遍历 runs/ 下的租约目录，产出 (task_id, unit_id, lease_id, lease_dir)。"""
         runs_root = self._root / "runs"
@@ -687,7 +705,7 @@ class StorageAdminService:
                     if not process_dir.is_dir():
                         continue
                     try:
-                        mtime = process_dir.stat().st_mtime
+                        mtime = self._lease_process_mtime(process_dir)
                     except OSError:
                         continue
                     lease_id = Path(rel_lease).name[len(LEASE_DIR_PREFIX):]
@@ -751,7 +769,7 @@ class StorageAdminService:
                         continue
                     process_dir = lease_dir / "process"
                     try:
-                        mtime = process_dir.stat().st_mtime if process_dir.is_dir() else 0.0
+                        mtime = self._lease_process_mtime(process_dir) if process_dir.is_dir() else 0.0
                     except OSError:
                         mtime = 0.0
                     lease_id = Path(rel_lease).name[len(LEASE_DIR_PREFIX):]
@@ -962,6 +980,13 @@ class StorageAdminService:
     def _compute_cleanup_plan(self) -> tuple[CleanupPlan, dict]:
         task_states = self._task_states()
         active_leases = self._active_lease_ids()
+        # 增量复用：contexts/ 有数百万小文件，全量 stat 需要 4 分钟级。
+        # 上一份快照里已有的任务尺寸直接沿用（已完结任务不可变；活跃任务
+        # 仅用于三档展示，允许滞后），只对新增任务现场统计。
+        previous = self._cleanup_snapshot()
+        prev_context_sizes = previous.get("context_sizes") or {}
+        prev_artifact_sizes = previous.get("artifact_sizes") or {}
+        prev_leases = previous.get("lease_index") or {}
 
         # ── runs/ 按任务聚合（同时记录逐租约索引，供 preview/execute 免重扫） ──
         run_tasks: dict[str, dict] = {}
@@ -969,17 +994,35 @@ class StorageAdminService:
         t1_process_bytes = 0
         t1_process_count = 0
         for task_id, _unit, lease_id, lease_dir in self._iter_task_leases():
-            total, process_bytes, process_mtime = self._lease_stats(lease_dir)
+            process_dir = lease_dir / "process"
+            try:
+                fresh_mtime = self._lease_process_mtime(process_dir) if process_dir.is_dir() else 0.0
+            except OSError:
+                fresh_mtime = 0.0
+            cached_entry = next(
+                (item for item in prev_leases.get(task_id, []) if item["path"] == lease_dir.relative_to(self._root).as_posix()),
+                None,
+            )
+            is_protected = lease_id in active_leases or self._is_lease_hot(fresh_mtime)
+            if (
+                cached_entry is not None
+                and abs(cached_entry.get("mtime", -1) - fresh_mtime) < 1
+                and not is_protected
+            ):
+                # process 目录 mtime 未变 → 尺寸沿用缓存，跳过全量遍历
+                total = cached_entry.get("total", 0)
+                process_bytes = cached_entry.get("process", 0)
+            else:
+                total, process_bytes, _ = self._lease_stats(lease_dir)
             bucket = run_tasks.setdefault(task_id, {
                 "total": 0, "protected": 0, "clean_lease_count": 0, "clean_lease_bytes": 0,
             })
             bucket["total"] += total
-            is_protected = lease_id in active_leases or self._is_lease_hot(process_mtime)
             lease_index.setdefault(task_id, []).append({
                 "path": lease_dir.relative_to(self._root).as_posix(),
                 "total": total,
                 "process": process_bytes,
-                "mtime": process_mtime,
+                "mtime": fresh_mtime,
                 "protected": is_protected,
             })
             if is_protected:
@@ -991,19 +1034,25 @@ class StorageAdminService:
                 t1_process_bytes += process_bytes
                 t1_process_count += 1
 
-        # ── contexts/ 与 tasks/ 按任务 ──
+        # ── contexts/ 与 tasks/ 按任务（优先沿用快照，只统计新增） ──
         context_tasks: dict[str, int] = {}
         contexts_root = self._root / "contexts"
         if contexts_root.is_dir():
             for entry in contexts_root.iterdir():
                 if entry.is_dir() and not entry.is_symlink():
-                    context_tasks[entry.name] = _tree_stats(entry)[0]
+                    if entry.name in prev_context_sizes:
+                        context_tasks[entry.name] = prev_context_sizes[entry.name]
+                    else:
+                        context_tasks[entry.name] = _tree_stats(entry)[0]
         artifact_tasks: dict[str, int] = {}
         tasks_root = self._root / "tasks"
         if tasks_root.is_dir():
             for entry in tasks_root.iterdir():
                 if entry.is_dir() and not entry.is_symlink():
-                    artifact_tasks[entry.name] = _tree_stats(entry)[0]
+                    if entry.name in prev_artifact_sizes:
+                        artifact_tasks[entry.name] = prev_artifact_sizes[entry.name]
+                    else:
+                        artifact_tasks[entry.name] = _tree_stats(entry)[0]
 
         # ── 一档 ──
         tier1: list[CleanupItem] = [
