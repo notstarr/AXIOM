@@ -1674,7 +1674,11 @@ window.AxiomModules.projects = {
           { signal: this._pageAbortController?.signal },
         );
         const index = (this.project?.intents || []).findIndex(item => item.id === intentId);
-        if (index >= 0) this.project.intents.splice(index, 1, latest);
+        if (index >= 0) {
+          this.project.intents.splice(index, 1, latest);
+          // intents 数组引用未变，需显式递增版本号让 intentIndex 重建。
+          this._intentIndexVersion = (this._intentIndexVersion || 0) + 1;
+        }
       } catch (error) {
         // Full-page polling remains the fallback. A transient activity refresh
         // must not distract the operator with repeated toast errors.

@@ -28,7 +28,7 @@ window.AxiomModules.graph = {
         }});
       }
       for (const intent of this.project.intents) {
-        const lbl = intent.description;
+        const lbl = this.shortEdgeLabel(intent.description);
         if (intent.to) {
           if (this.project.project.depth_mode && (intent.to === 'goal' || intent.from.includes('goal'))) continue;
           for (const src of intent.from) {
@@ -110,6 +110,13 @@ window.AxiomModules.graph = {
       return { nodes, edges };
     },
 
+    shortEdgeLabel(text) {
+      const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+      const chars = Array.from(normalized);
+      if (chars.length <= 100) return normalized;
+      return `${chars.slice(0, 100).join('')}…`;
+    },
+
     nodeIconSvg(iconType) {
       const paths = {
         flag: '<path d="M4 22V4.5C4 4.2 4.2 4 4.5 4L14 3c4-0.5 6 1.5 6 4s-2 4.5-6 4L8 11.5V22" stroke-linejoin="round"/>',
@@ -169,6 +176,72 @@ window.AxiomModules.graph = {
       }]);
     },
 
+    // ── 节点卡片视口裁剪 ──
+    // html-label 会为每个节点常驻一个 DOM 卡片；大图（千级节点）下逐帧重排全部
+    // 卡片是交互卡顿的主因。这里只保留视口内（含缓冲区）卡片的可见性，
+    // 视口外的 display:none，信息不丢失（移回视口即恢复）。
+    setupCardCulling() {
+      this._cardEls = new Map();
+      this._cardIndexDirty = true;
+      const self = this;
+      const schedule = () => {
+        if (self._cardCullRaf) return;
+        self._cardCullRaf = requestAnimationFrame(() => {
+          self._cardCullRaf = null;
+          self.cullNodeCards();
+        });
+      };
+      this.cy.on('pan zoom layoutstop add remove', schedule);
+      this.cullNodeCards();
+      // html-label 的卡片 DOM 首次渲染可能晚于本调用，兜底再刷一次。
+      setTimeout(() => { if (this.cy) this.cullNodeCards(); }, 150);
+    },
+
+    rebuildCardIndex() {
+      const map = new Map();
+      const container = document.getElementById('cy');
+      if (container) {
+        const prefix = 'node-card-';
+        for (const el of container.querySelectorAll(`[id^="${prefix}"]`)) {
+          map.set(el.id.slice(prefix.length), el);
+        }
+      }
+      this._cardEls = map;
+      this._cardIndexDirty = false;
+    },
+
+    cullNodeCards() {
+      if (!this.cy || !this._cardEls) return;
+      if (this._cardIndexDirty) this.rebuildCardIndex();
+      const extent = this.cy.extent();
+      const margin = Math.max(extent.w, extent.h) * 0.25;
+      const x1 = extent.x1 - margin, x2 = extent.x2 + margin;
+      const y1 = extent.y1 - margin, y2 = extent.y2 + margin;
+      let missing = false;
+      this.cy.nodes().forEach(node => {
+        const el = this._cardEls.get(node.id());
+        if (!el || !el.isConnected) { missing = true; return; }
+        const p = node.position();
+        const w = node.data('width') || 60;
+        const h = node.data('height') || 40;
+        const visible = p.x + w / 2 >= x1 && p.x - w / 2 <= x2
+          && p.y + h / 2 >= y1 && p.y - h / 2 <= y2;
+        const isHidden = el.style.display === 'none';
+        if (visible === isHidden) {
+          el.style.display = visible ? '' : 'none';
+        }
+      });
+      if (missing) {
+        this._cardIndexDirty = true;
+        if (!this._cardCullRetryTimer) {
+          this._cardCullRetryTimer = setTimeout(() => {
+            this._cardCullRetryTimer = null;
+            if (this.cy) this.cullNodeCards();
+          }, 300);
+        }
+      }
+    },
+
     initGraph() {
       const container = document.getElementById('cy');
       if (!container) return;
@@ -183,6 +256,8 @@ window.AxiomModules.graph = {
       });
       this.cy = rawCy;
       this.setupHtmlLabels();
+      this.setupCardCulling();
+      this._hasEverLaidOut = true;
       const self = this;
       rawCy.on('tap', 'node', e => self.onNodeTap(e));
       rawCy.on('dbltap', 'node', e => self.onNodeDblTap(e));
@@ -296,11 +371,7 @@ window.AxiomModules.graph = {
         { selector: 'edge[status="concluded"]', style: {
           width:2, 'line-color':'#22c55e', 'target-arrow-color':'#22c55e',
           'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:theme.edgeLabelText,
-          'text-rotation':'autorotate', 'text-margin-y':-9,
-          'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
-          'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.9,
+          'arrow-scale':0.9,
         }},
         { selector: 'edge[status="goal_evidence"]', style: {
           width:3, 'line-color':theme.goalGold, 'target-arrow-color':theme.goalGold,
@@ -322,65 +393,37 @@ window.AxiomModules.graph = {
         { selector: 'edge[status="in_progress"]', style: {
           width:1.5, 'line-color':'#94a3b8', 'line-style':'dashed', 'line-dash-pattern':[5,4],
           'target-arrow-color':'#94a3b8', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:theme.dark ? '#e2e8f0' : '#475569',
-          'text-rotation':'autorotate', 'text-margin-y':-9,
-          'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.92,
-          'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.85,
+          'arrow-scale':0.85,
         }},
         { selector: 'edge[status="unclaimed"]', style: {
           width:1.5, 'line-color':theme.mutedBorder, 'line-style':'dashed', 'line-dash-pattern':[5,5],
           'target-arrow-color':theme.mutedBorder, 'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:theme.mutedText,
-          'text-rotation':'autorotate', 'text-margin-y':-9,
-          'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
-          'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.7,
+          'arrow-scale':0.7,
         }},
         { selector: 'edge[status="intent_completed"]', style: {
           width:2, 'line-color':'#34d399', 'target-arrow-color':'#34d399',
           'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:'#047857',
-          'text-rotation':'autorotate', 'text-margin-y':-9,
-          'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
-          'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.8,
+          'arrow-scale':0.8,
         }},
         { selector: 'edge[status="intent_cancelled"]', style: {
           width:1.5, 'line-color':'#94a3b8', 'line-style':'dashed', 'line-dash-pattern':[4,5],
           'target-arrow-color':theme.mutedBorder, 'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:theme.edgeLabelText,
-          'text-rotation':'autorotate', 'text-margin-y':-9,
-          'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
-          'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.7,
+          'arrow-scale':0.7,
         }},
         { selector: 'edge[status="intent_failed"]', style: {
           width:1.8, 'line-color':'#f87171', 'line-style':'dashed', 'line-dash-pattern':[6,4],
           'target-arrow-color':'#f87171', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:'#b91c1c',
-          'text-rotation':'autorotate', 'text-margin-y':-9,
-          'text-max-width':'80px', 'text-wrap':'ellipsis',
-          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
-          'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.75,
+          'arrow-scale':0.75,
         }},
         { selector: 'edge[status="bootstrap_pending"]', style: {
           width:2, 'line-color':'#fdba74', 'line-style':'dashed', 'line-dash-pattern':[8,4],
           'target-arrow-color':'#fdba74', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:'#c2410c',
-          'text-rotation':'autorotate', 'text-margin-y':-9,
-          'text-max-width':'88px', 'text-wrap':'ellipsis',
-          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
-          'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.85,
+          'arrow-scale':0.85,
         }},
         { selector: 'edge[status="bootstrap_running"]', style: {
           width:2.5, 'line-color':'#fb923c', 'line-style':'dashed', 'line-dash-pattern':[10,4],
           'target-arrow-color':'#fb923c', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
-          label:'data(label)', 'font-size':'7px', color:'#c2410c',
-          'text-rotation':'autorotate', 'text-margin-y':-9,
-          'text-max-width':'88px', 'text-wrap':'ellipsis',
-          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
-          'text-background-padding':'2px', 'text-events':'yes', 'arrow-scale':0.95,
+          'arrow-scale':0.95,
         }},
         { selector: 'edge[edgeType="bootstrap_scope"]', style: {
           label:'', width:1.8, 'curve-style':'bezier',
@@ -391,12 +434,24 @@ window.AxiomModules.graph = {
 
         // ── Interaction states (overlay glow, not border — card owns border) ──
         { selector: '.highlight', style: { 'z-index':999 }},
-        { selector: 'edge.highlight', style: { 'z-index':999, width:3 }},
+        { selector: 'edge.highlight', style: {
+          'z-index':999, width:3,
+          label:'data(label)', 'font-size':'7px', color:theme.edgeLabelText,
+          'text-rotation':'autorotate', 'text-margin-y':-9,
+          'text-max-width':'80px', 'text-wrap':'ellipsis',
+          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.92,
+          'text-background-padding':'2px', 'text-events':'yes',
+        }},
         { selector: 'node.focus', style: {
           'overlay-color':'#3b82f6', 'overlay-opacity':0.18, 'overlay-padding':4, 'z-index':1000,
         }},
         { selector: 'edge.focus', style: {
           'z-index':1000, 'overlay-color':'#3b82f6', 'overlay-opacity':0.22, 'overlay-padding':5,
+          label:'data(label)', 'font-size':'7px', color:theme.edgeLabelText,
+          'text-rotation':'autorotate', 'text-margin-y':-9,
+          'text-max-width':'80px', 'text-wrap':'ellipsis',
+          'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.92,
+          'text-background-padding':'2px', 'text-events':'yes',
         }},
         { selector: 'node.selected-fact', style: {
           'overlay-color':'#3b82f6', 'overlay-opacity':0.25, 'overlay-padding':6, 'z-index':1001,
@@ -484,14 +539,15 @@ window.AxiomModules.graph = {
 
     initialPositionForNode(nodeData, previousPositions) {
       if (!this.project) return null;
+      const { intentsById, intentsByProduced } = this.graphEntityIndex();
       if (nodeData.intentId) {
         const previousPlaceholder = previousPositions.get(nodeData.id);
         if (previousPlaceholder) return previousPlaceholder;
-        const intent = this.project.intents.find(item => item.id === nodeData.intentId);
+        const intent = intentsById.get(nodeData.intentId);
         return intent ? this.anchorPositionFromIds(intent.from, previousPositions, 32) : null;
       }
 
-      const producingIntent = this.project.intents.find(item => item.to === nodeData.id);
+      const producingIntent = intentsByProduced.get(nodeData.id);
       if (!producingIntent) return null;
       const placeholderPosition = previousPositions.get(`_ph_${producingIntent.id}`);
       if (placeholderPosition) return placeholderPosition;
@@ -526,52 +582,71 @@ window.AxiomModules.graph = {
       let topologyChanged = false;
       let geometryChanged = false;
       let visualChanged = false;
+      let addedNodes = 0;
 
-      this.cy.nodes().forEach(n => { if (!wantNodes.has(n.id())) { n.remove(); topologyChanged = true; } });
-      this.cy.edges().forEach(e => { if (!wantEdges.has(e.id())) { e.remove(); topologyChanged = true; } });
+      this.cy.batch(() => {
+        this.cy.nodes().forEach(n => { if (!wantNodes.has(n.id())) { n.remove(); topologyChanged = true; } });
+        this.cy.edges().forEach(e => { if (!wantEdges.has(e.id())) { e.remove(); topologyChanged = true; } });
 
-      for (const n of nodes) {
-        const ex = this.cy.getElementById(n.data.id);
-        if (ex.length === 0) {
-          const initialPosition = this.initialPositionForNode(n.data, previousPositions);
-          const a = this.cy.add(initialPosition ? { ...n, position: initialPosition } : n);
-          this.fadeInFreshElement(a);
-          topologyChanged = true;
-        } else {
-          const nextData = n.data;
-          const sizeChanged = ex.data('width') !== nextData.width || ex.data('height') !== nextData.height;
-          const dataChanged = Object.entries(nextData).some(([key, value]) => ex.data(key) !== value);
-          if (dataChanged) {
-            ex.data(nextData);
-            visualChanged = true;
-            geometryChanged ||= sizeChanged;
+        for (const n of nodes) {
+          const ex = this.cy.getElementById(n.data.id);
+          if (ex.length === 0) {
+            const initialPosition = this.initialPositionForNode(n.data, previousPositions);
+            this.cy.add(initialPosition ? { ...n, position: initialPosition } : n);
+            this.fadeInFreshElement(this.cy.getElementById(n.data.id));
+            addedNodes += 1;
+            topologyChanged = true;
+          } else {
+            const nextData = n.data;
+            const sizeChanged = ex.data('width') !== nextData.width || ex.data('height') !== nextData.height;
+            const dataChanged = Object.entries(nextData).some(([key, value]) => ex.data(key) !== value);
+            if (dataChanged) {
+              ex.data(nextData);
+              visualChanged = true;
+              geometryChanged ||= sizeChanged;
+            }
           }
         }
-      }
-      for (const e of edges) {
-        const ex = this.cy.getElementById(e.data.id);
-        if (ex.length === 0) {
-          const a = this.cy.add(e);
-          this.fadeInFreshElement(a);
-          topologyChanged = true;
-        } else if (ex.source().id() !== e.data.source || ex.target().id() !== e.data.target) {
-          ex.remove();
-          this.cy.add(e);
-          topologyChanged = true;
-        } else if (Object.entries(e.data).some(([key, value]) => ex.data(key) !== value)) {
-          ex.data(e.data);
-          visualChanged = true;
+        for (const e of edges) {
+          const ex = this.cy.getElementById(e.data.id);
+          if (ex.length === 0) {
+            this.cy.add(e);
+            this.fadeInFreshElement(this.cy.getElementById(e.data.id));
+            topologyChanged = true;
+          } else if (ex.source().id() !== e.data.source || ex.target().id() !== e.data.target) {
+            ex.remove();
+            this.cy.add(e);
+            topologyChanged = true;
+          } else if (Object.entries(e.data).some(([key, value]) => ex.data(key) !== value)) {
+            ex.data(e.data);
+            visualChanged = true;
+          }
+        }
+      });
+      if (topologyChanged) {
+        // 新节点已就近落位（initialPositionForNode）；只有大批量新增或强制时才全图重排，
+        // 避免任务运行期间反复触发秒级 ELK 布局冻结主线程。
+        if (this._forceFullLayout || addedNodes > 30) {
+          this._forceFullLayout = false;
+          this.scheduleFullLayout();
         }
       }
-      if (topologyChanged || geometryChanged) {
+      this.cullNodeCards();
+      this.pulseActive();
+      if (topologyChanged || geometryChanged || visualChanged) this.refreshGraphDecorations();
+    },
+
+    scheduleFullLayout(delay = 800) {
+      if (this._layoutDebounceTimer) clearTimeout(this._layoutDebounceTimer);
+      this._layoutDebounceTimer = setTimeout(() => {
+        this._layoutDebounceTimer = null;
+        if (!this.cy) return;
         this.cy.layout(this.layoutOpts()).run();
         setTimeout(() => {
           if (this.cy && this.cy.zoom() < 0.5) this.cy.zoom(0.5);
           this.drawMinimap();
         }, 450);
-      }
-      this.pulseActive();
-      if (topologyChanged || geometryChanged || visualChanged) this.refreshGraphDecorations();
+      }, delay);
     },
 
     pulseActive() {
@@ -586,21 +661,50 @@ window.AxiomModules.graph = {
         }
       });
 
-      // 针对当前活跃 ReasonRun 关联的 Fact/Todo 进行局部柔和光晕聚焦
+      // 针对当前活跃 ReasonRun 关联的 Fact 进行局部柔和光晕聚焦。
+      // 全量聚焦场景走容器级 class（一次 DOM 写），定向聚焦只遍历命中的少量 Fact。
       const reasonObj = this.project?.project?.reason;
-      const isReasonRunning = reasonObj && ['claimed', 'running', 'concluding'].includes(reasonObj.status);
-      const sourceFactIds = new Set(reasonObj?.trigger_payload?.source_fact_ids || []);
+      const isReasonRunning = !!reasonObj && ['claimed', 'running', 'concluding'].includes(reasonObj.status);
+      const sourceFactIds = reasonObj?.trigger_payload?.source_fact_ids || [];
+      const containerEl = document.getElementById('cy');
+      const prevIds = this._reasonFocusedIds || [];
+      const cardElFor = id => this._cardEls?.get(id) || document.getElementById(`node-card-${id}`);
+      const clearFocused = ids => {
+        for (const id of ids) cardElFor(id)?.classList.remove('is-reason-focused');
+      };
 
-      this.cy.nodes().forEach(node => {
-        const id = node.id();
-        const shouldFocus = isReasonRunning && (sourceFactIds.has(id) || (sourceFactIds.size === 0 && (node.data('nodeType') === 'fact' || node.data('nodeType') === 'depth_fact')));
-        const cardEl = document.getElementById(`node-card-${id}`);
-        if (shouldFocus) {
-          if (cardEl && !cardEl.classList.contains('is-reason-focused')) cardEl.classList.add('is-reason-focused');
-        } else {
-          if (cardEl && cardEl.classList.contains('is-reason-focused')) cardEl.classList.remove('is-reason-focused');
+      if (!isReasonRunning) {
+        if (this._reasonFocusAll) {
+          this._reasonFocusAll = false;
+          containerEl?.classList.remove('reason-focus-all');
         }
-      });
+        clearFocused(prevIds);
+        this._reasonFocusedIds = [];
+        this.startGraphActivityAnimation();
+        return;
+      }
+
+      if (sourceFactIds.length === 0) {
+        clearFocused(prevIds);
+        this._reasonFocusedIds = [];
+        if (!this._reasonFocusAll) {
+          this._reasonFocusAll = true;
+          containerEl?.classList.add('reason-focus-all');
+        }
+      } else {
+        if (this._reasonFocusAll) {
+          this._reasonFocusAll = false;
+          containerEl?.classList.remove('reason-focus-all');
+        }
+        const nextIds = sourceFactIds.filter(id => this.cy.getElementById(id).length > 0);
+        const prevSet = new Set(prevIds);
+        const nextSet = new Set(nextIds);
+        clearFocused(prevIds.filter(id => !nextSet.has(id)));
+        for (const id of nextIds) {
+          if (!prevSet.has(id)) cardElFor(id)?.classList.add('is-reason-focused');
+        }
+        this._reasonFocusedIds = nextIds;
+      }
 
       this.startGraphActivityAnimation();
     },
@@ -654,11 +758,15 @@ window.AxiomModules.graph = {
       if (!this.cy) return;
       const self = this;
       const schedule = () => {
-        if (self._minimapRaf) return;
-        self._minimapRaf = requestAnimationFrame(() => {
-          self._minimapRaf = null;
+        if (self._minimapThrottleTimer) return;
+        const elapsed = performance.now() - (self._minimapLastDraw || 0);
+        const run = () => {
+          self._minimapThrottleTimer = null;
+          self._minimapLastDraw = performance.now();
           self.drawMinimap();
-        });
+        };
+        if (elapsed >= 100) requestAnimationFrame(run);
+        else self._minimapThrottleTimer = setTimeout(run, 100 - elapsed);
       };
       this.cy.on('pan zoom layoutstop add remove', schedule);
       this._minimapSchedule = schedule;
@@ -752,6 +860,14 @@ window.AxiomModules.graph = {
     },
 
     searchGraphNodes() {
+      if (this._searchDebounceTimer) clearTimeout(this._searchDebounceTimer);
+      this._searchDebounceTimer = setTimeout(() => {
+        this._searchDebounceTimer = null;
+        this.applyGraphSearch();
+      }, 200);
+    },
+
+    applyGraphSearch() {
       if (!this.cy) return;
       const q = this.graphSearch.trim().toLowerCase();
       if (!q) {
@@ -1126,22 +1242,46 @@ window.AxiomModules.graph = {
       }
     },
 
+    // ── 图实体索引 ──
+    // intents/facts 引用变化或 _intentIndexVersion 递增时重建，供血缘遍历、
+    // 产出查询、详情查询等 O(n) 扫描降为 O(1)。
+    graphEntityIndex() {
+      const intents = this.project?.intents;
+      const facts = this.project?.facts;
+      const version = this._intentIndexVersion || 0;
+      const cache = this._graphEntityIndexCache;
+      if (cache && cache.intentsRef === intents && cache.factsRef === facts && cache.version === version) {
+        return cache;
+      }
+      const intentsById = new Map();
+      const intentsByProduced = new Map();
+      for (const item of intents || []) {
+        intentsById.set(item.id, item);
+        if (item.to && !intentsByProduced.has(item.to)) intentsByProduced.set(item.to, item);
+      }
+      const factsById = new Map();
+      for (const item of facts || []) factsById.set(item.id, item);
+      const next = { intentsRef: intents, factsRef: facts, version, intentsById, intentsByProduced, factsById };
+      this._graphEntityIndexCache = next;
+      return next;
+    },
+
     collectFactLineage(fid) {
+      const { intentsById, intentsByProduced } = this.graphEntityIndex();
       const upstreamFacts = new Set();
       const upstreamIntents = new Set();
 
       const walkFactUpstream = (factId) => {
         if (upstreamFacts.has(factId) || !this.project) return;
         upstreamFacts.add(factId);
-        for (const intent of this.project.intents) {
-          if (intent.to === factId) walkIntentUpstream(intent.id);
-        }
+        const producer = intentsByProduced.get(factId);
+        if (producer) walkIntentUpstream(producer.id);
       };
 
       const walkIntentUpstream = (iid) => {
         if (upstreamIntents.has(iid) || !this.project) return;
         upstreamIntents.add(iid);
-        const intent = this.project.intents.find(i => i.id === iid);
+        const intent = intentsById.get(iid);
         if (!intent) return;
         for (const sourceId of intent.from) walkFactUpstream(sourceId);
       };
@@ -1165,46 +1305,51 @@ window.AxiomModules.graph = {
 
     applyLineageHighlightForIntent(intentId) {
       if (!this.cy || !this.project) return;
-      const intent = this.project.intents.find(i => i.id === intentId);
+      const intent = this.graphEntityIndex().intentsById.get(intentId);
       if (!intent) return;
-      this.cy.elements().removeClass('highlight focus faded');
+      this.cy.batch(() => {
+        this.cy.elements().removeClass('highlight focus faded');
 
-      const nodeIds = new Set();
-      const edgeIds = new Set();
-      this.collectIntentElements(intent, nodeIds, edgeIds);
-      const highlightNodes = this.cy.nodes().filter(n => nodeIds.has(n.id()));
-      const focusEdges = this.cy.edges().filter(e => edgeIds.has(e.id()));
+        const nodeIds = new Set();
+        const edgeIds = new Set();
+        this.collectIntentElements(intent, nodeIds, edgeIds);
+        const highlightNodes = this.cy.nodes().filter(n => nodeIds.has(n.id()));
+        const focusEdges = this.cy.edges().filter(e => edgeIds.has(e.id()));
 
-      highlightNodes.addClass('highlight');
-      focusEdges.addClass('focus');
+        highlightNodes.addClass('highlight');
+        focusEdges.addClass('focus');
 
-      const visible = highlightNodes.add(focusEdges);
-      this.cy.elements().not(visible).addClass('faded');
+        const visible = highlightNodes.add(focusEdges);
+        this.cy.elements().not(visible).addClass('faded');
+      });
       this.syncFactSelections();
     },
 
     applyLineageHighlightForFact(factId) {
       if (!this.cy || !this.project) return;
       const { upstreamFacts, upstreamIntents } = this.collectFactLineage(factId);
+      const { intentsById } = this.graphEntityIndex();
       const nodeIds = new Set(upstreamFacts);
       const edgeIds = new Set();
 
       for (const iid of upstreamIntents) {
-        const intent = this.project.intents.find(i => i.id === iid);
+        const intent = intentsById.get(iid);
         if (intent) this.collectIntentElements(intent, nodeIds, edgeIds);
       }
 
-      this.cy.elements().removeClass('highlight focus faded');
-      const highlightNodes = this.cy.nodes().filter(n => nodeIds.has(n.id()));
-      const highlightEdges = this.cy.edges().filter(e => edgeIds.has(e.id()));
-      const focusNode = this.cy.getElementById(factId);
+      this.cy.batch(() => {
+        this.cy.elements().removeClass('highlight focus faded');
+        const highlightNodes = this.cy.nodes().filter(n => nodeIds.has(n.id()));
+        const highlightEdges = this.cy.edges().filter(e => edgeIds.has(e.id()));
+        const focusNode = this.cy.getElementById(factId);
 
-      highlightNodes.addClass('highlight');
-      highlightEdges.addClass('highlight');
-      focusNode.addClass('focus');
+        highlightNodes.addClass('highlight');
+        highlightEdges.addClass('highlight');
+        focusNode.addClass('focus');
 
-      const visible = highlightNodes.add(highlightEdges).add(focusNode);
-      this.cy.elements().not(visible).addClass('faded');
+        const visible = highlightNodes.add(highlightEdges).add(focusNode);
+        this.cy.elements().not(visible).addClass('faded');
+      });
       this.syncFactSelections();
     },
 
@@ -1238,7 +1383,7 @@ window.AxiomModules.graph = {
     },
 
     getProducingIntent(fid) {
-      return this.project ? this.project.intents.find(i => i.to === fid) || null : null;
+      return this.graphEntityIndex().intentsByProduced.get(fid) || null;
     },
 
     humanInterventionForFact(factId) {
@@ -1254,7 +1399,7 @@ window.AxiomModules.graph = {
     selectedFactRecord() {
       const factId = this.selectedFactId();
       if (!this.project || !factId) return null;
-      return this.project.facts.find(f => f.id === factId) || null;
+      return this.graphEntityIndex().factsById.get(factId) || null;
     },
 
     selectedFactProducingIntent() {
@@ -1264,7 +1409,7 @@ window.AxiomModules.graph = {
 
     selectedFactRecords() {
       if (!this.project || this.selectedFacts.length === 0) return [];
-      const factsById = new Map(this.project.facts.map(f => [f.id, f]));
+      const { factsById } = this.graphEntityIndex();
       return this.selectedFacts.map(fid => factsById.get(fid)).filter(Boolean);
     },
 
@@ -1272,6 +1417,10 @@ window.AxiomModules.graph = {
       const description = typeof factOrDescription === 'string'
         ? factOrDescription
         : String(factOrDescription?.description || '');
+      // 描述不可变，按原文缓存切分结果，避免模板重渲染时反复正则扫描长文本。
+      if (!this._factSegmentsCache) this._factSegmentsCache = new Map();
+      const cache = this._factSegmentsCache;
+      if (cache.has(description)) return cache.get(description);
       const pattern = /\b(?:artifact:a[0-9A-Za-z_-]+|vulnerability:v[0-9A-Za-z_-]+)\b/g;
       const segments = [];
       let cursor = 0;
@@ -1285,6 +1434,8 @@ window.AxiomModules.graph = {
       }
       if (cursor < description.length) segments.push({ kind:'text', text:description.slice(cursor) });
       if (segments.length === 0) segments.push({ kind:'text', text:description });
+      if (cache.size >= 300) cache.clear();
+      cache.set(description, segments);
       return segments;
     },
 
@@ -1305,7 +1456,7 @@ window.AxiomModules.graph = {
     selectedIntentRecord() {
       const intentId = this.selectedIntentId();
       if (!this.project || !intentId) return null;
-      return this.project.intents.find(i => i.id === intentId) || null;
+      return this.graphEntityIndex().intentsById.get(intentId) || null;
     },
 
     selectedGoalHistoryId() {
@@ -1334,7 +1485,7 @@ window.AxiomModules.graph = {
     selectedGoalEvidenceFacts() {
       const history = this.selectedGoalHistoryRecord();
       if (!this.project || !history) return [];
-      const factsById = new Map((this.project.facts || []).map(fact => [fact.id, fact]));
+      const { factsById } = this.graphEntityIndex();
       return (history.evidence_fact_ids || []).map(factId => factsById.get(factId)).filter(Boolean);
     },
 
@@ -1542,7 +1693,7 @@ window.AxiomModules.graph = {
     },
 
     getFactRecord(fid) {
-      return this.project ? this.project.facts.find(f => f.id === fid) || null : null;
+      return this.graphEntityIndex().factsById.get(fid) || null;
     },
   }
 };

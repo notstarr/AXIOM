@@ -1189,6 +1189,8 @@ const ctx = Object.assign({{}}, methods, {{
     getElementById: id => id === 'f001' ? nodeElement : edgeElement,
     add: () => {{ throw new Error('unexpected add'); }},
     layout: () => ({{ run: () => {{ layouts += 1; }} }}),
+    batch: fn => fn(),
+    extent: () => ({{ x1: 0, y1: 0, x2: 100, y2: 100, w: 100, h: 100 }}),
   }},
   buildElements: () => ({{
     nodes: [{{ data: {{ id:'f001', label:'新状态', width:120, height:54, nodeType:'fact' }} }}],
@@ -1730,7 +1732,7 @@ def test_frontend_and_static_assets_are_served(client):
     # Worker/capability assets are versioned together with the current
     # five-stage Plan runtime bundle.  Keep this assertion tied to the
     # manifest served by the app rather than the pre-Plan cache marker.
-    assert worker_asset_versions == {"20260821-clean-bootstrap-edge-v1"}
+    assert worker_asset_versions == {"20260828-graph-perf-v3"}
 
     asset = client.get("/static/js/v2-adapter.js")
     assert asset.status_code == 200

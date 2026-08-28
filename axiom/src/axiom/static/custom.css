@@ -429,6 +429,29 @@
   .node-card__human-dot ~ .node-card__reason-beacon {
     right: 15px;
   }
+  /* 容器级全量聚焦：Reason 运行且无定向 source_facts 时，用一次容器 class
+     替代逐卡片 classList 写入（千级节点下的响应式开销优化）。 */
+  #cy.reason-focus-all .node-card--fact,
+  #cy.reason-focus-all .node-card--depth_fact {
+    overflow: visible;
+    border-color: #f59e0b !important;
+    animation: factCardReasonBreathe 2s ease-in-out infinite;
+  }
+  #cy.reason-focus-all .node-card--fact .node-card__header,
+  #cy.reason-focus-all .node-card--depth_fact .node-card__header {
+    background: linear-gradient(90deg, #fef3c7, #fde68a) !important;
+    color: #92400e !important;
+  }
+  .dark #cy.reason-focus-all .node-card--fact .node-card__header,
+  .dark #cy.reason-focus-all .node-card--depth_fact .node-card__header {
+    background: linear-gradient(90deg, rgba(245, 158, 11, 0.38), rgba(217, 119, 6, 0.25)) !important;
+    color: #fef08a !important;
+  }
+  #cy.reason-focus-all .node-card--fact .node-card__reason-beacon,
+  #cy.reason-focus-all .node-card--depth_fact .node-card__reason-beacon {
+    display: block;
+    animation: factBeaconBreathe 1.6s ease-in-out infinite;
+  }
   .node-card.is-reason-focused {
     overflow: visible;
     border-color: #f59e0b !important;

@@ -455,16 +455,41 @@ window.AxiomModules.helpers = {
       }[type] || 'bg-slate-100 text-slate-400';
     },
 
+    // Intent 按 Todo 的分组索引。project.intents / todos 引用变化或显式版本号
+    // (_intentIndexVersion) 递增时重建一次，避免模板每次重渲染都全量扫描。
+    intentIndex() {
+      const intents = this.project?.intents;
+      const todos = this.project?.todos;
+      const version = this._intentIndexVersion || 0;
+      const cache = this._intentIndexCache;
+      if (cache && cache.ref === intents && cache.todosRef === todos && cache.version === version) {
+        return cache;
+      }
+      const todoIds = new Set((todos || []).map(t => t.id));
+      const byTodo = new Map();
+      const unlinked = [];
+      for (const item of intents || []) {
+        if (item.archived || this.isBootstrapIntent(item)) continue;
+        if (item.todo_id && todoIds.has(item.todo_id)) {
+          const list = byTodo.get(item.todo_id);
+          if (list) list.push(item);
+          else byTodo.set(item.todo_id, [item]);
+        } else {
+          unlinked.push(item);
+        }
+      }
+      const next = { ref: intents, todosRef: todos, version, byTodo, unlinked };
+      this._intentIndexCache = next;
+      return next;
+    },
+
     getIntentsForTodo(todoId) {
       if (!todoId) return [];
-      const intents = (this.project?.intents || []).filter(item => !item.archived && !this.isBootstrapIntent(item));
-      return intents.filter(item => item.todo_id === todoId);
+      return this.intentIndex().byTodo.get(todoId) || [];
     },
 
     getUnlinkedIntents() {
-      const allTodos = new Set((this.project?.todos || []).map(t => t.id));
-      const intents = (this.project?.intents || []).filter(item => !item.archived && !this.isBootstrapIntent(item));
-      return intents.filter(item => !item.todo_id || !allTodos.has(item.todo_id));
+      return this.intentIndex().unlinked;
     },
 
     todoIntentProgress(todoId) {
