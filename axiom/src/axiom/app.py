@@ -245,9 +245,12 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
 
     def _serve_index(request: Request) -> HTMLResponse:
         """按登录态返回 index.html：未登录精简版（仅 login.js）or 已登录完整版。"""
+        # index 引用带版本号的静态资源：本体必须 no-cache，
+        # 否则浏览器启发式缓存旧 index，发版后用户拿不到新 JS。
+        headers = {"Cache-Control": "no-cache, must-revalidate"}
         # 鉴权关闭模式（AXIOM_AUTH_DISABLED=1）直接返回已登录版，方便本地开发
         if os.environ.get("AXIOM_AUTH_DISABLED") == "1":
-            return HTMLResponse(content=app.state.index_authed, status_code=200)
+            return HTMLResponse(content=app.state.index_authed, status_code=200, headers=headers)
         token = _extract_user_token(request)
         container: Container = request.app.state.container
         authed = False
@@ -259,7 +262,7 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
             ):
                 authed = True
         body = app.state.index_authed if authed else app.state.index_unauth
-        return HTMLResponse(content=body, status_code=200)
+        return HTMLResponse(content=body, status_code=200, headers=headers)
 
     @app.exception_handler(DomainError)
     async def handle_domain_error(_request: Request, exc: DomainError) -> JSONResponse:
