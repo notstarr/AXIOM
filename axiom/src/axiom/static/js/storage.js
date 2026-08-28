@@ -93,5 +93,145 @@ window.AxiomModules.storage = {
       while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
       return `${i === 0 || v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
     },
+
+    // ── 清理中心（三档） ──
+
+    queueCleanupPlan() {
+      setTimeout(() => { this.loadCleanupPlan(); }, 0);
+    },
+
+    async loadCleanupPlan(force = false) {
+      if (!force && this._cleanupPlanInflight) return this._cleanupPlanInflight;
+      if (!force && this.cleanupPlan && !this.cleanupPlan.refreshing) return this.cleanupPlan;
+      const task = this._fetchCleanupPlan().finally(() => { this._cleanupPlanInflight = null; });
+      if (!force) this._cleanupPlanInflight = task;
+      return task;
+    },
+
+    async _fetchCleanupPlan(attempt = 0) {
+      this.cleanupPlanLoading = attempt === 0;
+      try {
+        const data = await this._requestJson('GET', '/api/v1/storage/cleanup/plan');
+        this.cleanupPlan = data;
+        for (const item of (data.tier1 || [])) {
+          if (this.cleanupTier1Selection[item.key] === undefined) {
+            this.cleanupTier1Selection[item.key] = !!item.default_selected && item.bytes > 0;
+          }
+        }
+        if (data.refreshing && attempt < 40) {
+          setTimeout(() => { this._fetchCleanupPlan(attempt + 1); }, 4000);
+        }
+        return data;
+      } catch (e) {
+        this.showToast(e.message || '加载清理计划失败', 'error');
+        return null;
+      } finally {
+        this.cleanupPlanLoading = false;
+      }
+    },
+
+    async refreshCleanupPlan() {
+      if (this.cleanupExecuteBusy) return;
+      this.cleanupExecuteBusy = true;
+      try {
+        await this._requestJson('POST', '/api/v1/storage/cleanup/plan/refresh', {});
+        this.showToast('清理计划已重建');
+        await this.loadCleanupPlan(true);
+      } catch (e) {
+        this.showToast(e.message || '重建失败', 'error');
+      } finally {
+        this.cleanupExecuteBusy = false;
+      }
+    },
+
+    selectedTier1Keys() {
+      const plan = this.cleanupPlan;
+      if (!plan) return [];
+      return (plan.tier1 || [])
+        .filter(item => item.bytes > 0 && this.cleanupTier1Selection[item.key])
+        .map(item => item.key);
+    },
+
+    selectedTier1Bytes() {
+      const plan = this.cleanupPlan;
+      if (!plan) return 0;
+      return (plan.tier1 || [])
+        .filter(item => item.bytes > 0 && this.cleanupTier1Selection[item.key])
+        .reduce((acc, item) => acc + (item.bytes || 0), 0);
+    },
+
+    async executeTier1Cleanup() {
+      const keys = this.selectedTier1Keys();
+      if (keys.length === 0) { this.showToast('请先勾选要清理的项目', 'error'); return; }
+      const freed = this.humanBytes(this.selectedTier1Bytes());
+      // eslint-disable-next-line no-alert
+      if (!confirm(`确认清理一档项目？预计释放 ${freed}。一档为可再生数据/纯流水日志，不影响系统运行。`)) return;
+      this.cleanupExecuteBusy = true;
+      const actor = this.actorName ? this.actorName() : 'human.frontend';
+      try {
+        const result = await this._requestJson('POST', '/api/v1/storage/cleanup/execute', { keys, excluded: [], actor });
+        this.showToast(`已清理 ${result.removed.length} 项，释放 ${this.humanBytes(result.freed_bytes)}`);
+        await this.loadCleanupPlan(true);
+        await this.loadStorageOverview(true);
+      } catch (e) {
+        this.showToast(e.message || '清理失败', 'error');
+      } finally {
+        this.cleanupExecuteBusy = false;
+      }
+    },
+
+    async openCleanupPreview(key) {
+      this.cleanupPreviewBusy = true;
+      try {
+        const data = await this._requestJson('POST', '/api/v1/storage/cleanup/preview', { keys: [key] });
+        const item = (data?.items || [])[0] || null;
+        this.cleanupPreview = item;
+        this.cleanupPreviewChecked = {};
+        for (const target of (item?.targets || [])) {
+          this.cleanupPreviewChecked[target.path] = true;
+        }
+      } catch (e) {
+        this.showToast(e.message || '生成预览失败', 'error');
+      } finally {
+        this.cleanupPreviewBusy = false;
+      }
+    },
+
+    cleanupPreviewSelectedBytes() {
+      const item = this.cleanupPreview;
+      if (!item) return 0;
+      return (item.targets || [])
+        .filter(target => this.cleanupPreviewChecked[target.path])
+        .reduce((acc, target) => acc + (target.bytes || 0), 0);
+    },
+
+    async confirmCleanupExecute() {
+      const item = this.cleanupPreview;
+      if (!item) return;
+      const selectedCount = (item.targets || []).filter(t => this.cleanupPreviewChecked[t.path]).length;
+      if (selectedCount === 0) { this.showToast('请至少勾选一项', 'error'); return; }
+      const excluded = (item.targets || [])
+        .filter(target => !this.cleanupPreviewChecked[target.path])
+        .map(target => target.path);
+      const freed = this.humanBytes(this.cleanupPreviewSelectedBytes());
+      // eslint-disable-next-line no-alert
+      if (!confirm(`确认删除选中的 ${selectedCount} 项？预计释放 ${freed}。该操作不可撤销。`)) return;
+      this.cleanupExecuteBusy = true;
+      const actor = this.actorName ? this.actorName() : 'human.frontend';
+      try {
+        const result = await this._requestJson('POST', '/api/v1/storage/cleanup/execute', {
+          keys: [item.key], excluded, actor,
+        });
+        const skipped = (result.skipped || []).filter(entry => entry.reason !== 'excluded by operator');
+        this.showToast(`已删除 ${result.removed.length} 项，释放 ${this.humanBytes(result.freed_bytes)}${skipped.length ? `（${skipped.length} 项跳过）` : ''}`);
+        this.cleanupPreview = null;
+        await this.loadCleanupPlan(true);
+        await this.loadStorageOverview(true);
+      } catch (e) {
+        this.showToast(e.message || '清理失败', 'error');
+      } finally {
+        this.cleanupExecuteBusy = false;
+      }
+    },
   },
 };

@@ -16,9 +16,17 @@ from sqlalchemy import Engine, text
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
 from axiom.shared.clock import utcnow
+from axiom.shared.errors import ConflictError, DomainError
 from axiom.shared.storage import FileStore
 
 from .schemas import (
+    CleanupExecuteResult,
+    CleanupItem,
+    CleanupPlan,
+    CleanupPreviewItem,
+    CleanupPreviewTarget,
+    CleanupRemovedItem,
+    CleanupSkippedItem,
     DatabaseStats,
     DatabaseTableStat,
     DiskStats,
@@ -41,6 +49,25 @@ AUTO_ROTATE_ACTOR = "system.storage-auto"
 STORAGE_DIR_NAME = "storage"
 STATE_FILE = "state.json"
 SNAPSHOT_FILE = "usage.json"
+
+# ── 清理中心 ──
+CLEANUP_PLAN_FILE = "cleanup-plan.json"
+CLEANUP_PLAN_TTL = timedelta(minutes=10)
+LEASE_HOT_WINDOW = timedelta(minutes=30)
+SQLITE_BACKUP_KEEP_DAYS = 30
+PG_BACKUP_KEEP_COUNT = 3
+ACTIVE_LEASE_STATUSES = ("claimed", "running", "concluding")
+CLEANUP_ALLOWED_PREFIXES = (
+    "runs/",
+    "contexts/",
+    "tasks/",
+    "backups/",
+    "maintenance/",
+    "postgresql-backups/",
+    "logs/",
+    "storage/usage.json",
+)
+LEASE_DIR_PREFIX = "lease_"
 
 # 计入分类盘点的业务目录。`.staging` 等内部临时目录不单列，
 # 它们的体积已包含在 total_bytes 与各分类差值中。
@@ -99,18 +126,18 @@ class StorageAdminService:
         self._rotate_lock = threading.Lock()
         self._refresh_lock = threading.Lock()
         self._refreshing = False
+        self._cleanup_refresh_lock = threading.Lock()
+        self._cleanup_refreshing = False
 
     # ---------- 请求路径（毫秒级） ----------
 
     def overview(self) -> StorageOverview:
         snapshot = self._read_snapshot()
-        refreshing = False
-        if snapshot is None:
-            refreshing = True
+        stale = snapshot is None or self._snapshot_age(snapshot) >= SNAPSHOT_REFRESH_INTERVAL
+        if stale:
             self.ensure_refresh_scheduled()
-        elif self._snapshot_age(snapshot) >= SNAPSHOT_REFRESH_INTERVAL:
-            refreshing = True
-            self.ensure_refresh_scheduled()
+        # 线程在跑或快照缺失/过期都视为 refreshing，前端据此持续轮询。
+        refreshing = stale or self._refreshing
         base = snapshot or self._empty_overview()
         base["refreshing"] = refreshing
         base["disk"] = self._disk_stats()
@@ -398,3 +425,661 @@ class StorageAdminService:
         tmp = target.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, target)
+
+    # ══════════════ 清理中心（三档） ══════════════
+    #
+    # 一档：可再生/纯流水（lease process 日志、超期日志归档、usage 快照），默认全选一键清。
+    # 二档：人工预览勾选后删除（已完结任务的 run 产物 / contexts / 已归档任务 artifacts /
+    #       超期 sqlite 备份 / maintenance 快照 / 第 4 份及更旧的 PG 备份）。
+    # 三档：锁定展示（活跃任务、迁移证据、运行时依赖、最新 PG 备份）。
+    #
+    # 安全护栏：preview 与 execute 共用 _resolve_cleanup_targets 单一事实源，
+    # execute 时重新解析（重新查活跃租约、重新检查热文件 mtime），路径经
+    # _validated_delete 白名单校验；全部动作写审计。
+
+    def cleanup_plan(self) -> CleanupPlan:
+        snapshot = self._read_json_file(Path(STORAGE_DIR_NAME) / CLEANUP_PLAN_FILE)
+        stale = snapshot is None or self._json_age(snapshot.get("generated_at")) >= CLEANUP_PLAN_TTL
+        if stale:
+            self.ensure_cleanup_plan_scheduled()
+        if snapshot is None:
+            snapshot = {"generated_at": utcnow(), "tier1": [], "tier2": [], "tier3": []}
+        return CleanupPlan(
+            generated_at=snapshot.get("generated_at") or utcnow(),
+            data_dir=str(self._root),
+            refreshing=stale or self._cleanup_refreshing,
+            tier1=[CleanupItem(**item) for item in snapshot.get("tier1", [])],
+            tier2=[CleanupItem(**item) for item in snapshot.get("tier2", [])],
+            tier3=[CleanupItem(**item) for item in snapshot.get("tier3", [])],
+        )
+
+    def ensure_cleanup_plan_scheduled(self) -> bool:
+        with self._cleanup_refresh_lock:
+            if self._cleanup_refreshing:
+                return False
+            snapshot = self._read_json_file(Path(STORAGE_DIR_NAME) / CLEANUP_PLAN_FILE)
+            if snapshot is not None and self._json_age(snapshot.get("generated_at")) < CLEANUP_PLAN_TTL:
+                return False
+            self._cleanup_refreshing = True
+        thread = threading.Thread(
+            target=self._safe_cleanup_refresh,
+            name="axiom-cleanup-plan",
+            daemon=True,
+        )
+        thread.start()
+        return True
+
+    def _safe_cleanup_refresh(self) -> None:
+        try:
+            plan = self._compute_cleanup_plan()
+            self._atomic_json(CLEANUP_PLAN_FILE, plan.model_dump(mode="json"))
+        except Exception:
+            LOGGER.warning("background cleanup plan failed", exc_info=True)
+        finally:
+            with self._cleanup_refresh_lock:
+                self._cleanup_refreshing = False
+
+    def refresh_cleanup_plan(self) -> CleanupPlan:
+        plan = self._compute_cleanup_plan()
+        self._atomic_json(CLEANUP_PLAN_FILE, plan.model_dump(mode="json"))
+        return plan
+
+    # ---------- 数据采集 ----------
+
+    def _active_lease_ids(self) -> set[str]:
+        status_list = ", ".join(f"'{s}'" for s in ACTIVE_LEASE_STATUSES)
+        query = " UNION ".join(
+            f"SELECT lease_id FROM axiom.{table} WHERE lease_id IS NOT NULL AND status IN ({status_list})"
+            for table in ("intents", "reason_runs", "plan_runs", "vulnerability_review_runs")
+        )
+        try:
+            with self.engine.connect() as conn:
+                rows = conn.execute(text(query)).scalars().all()
+        except Exception:
+            LOGGER.warning("active lease query failed; treating all leases as protected", exc_info=True)
+            return set()
+        return {str(row) for row in rows if row}
+
+    def _task_states(self) -> dict[str, dict]:
+        try:
+            with self.engine.connect() as conn:
+                rows = conn.execute(
+                    text("SELECT id, status, archived FROM axiom.tasks")
+                ).mappings().all()
+        except Exception:
+            LOGGER.warning("task state query failed; treating all tasks as protected", exc_info=True)
+            return {}
+        return {
+            str(row["id"]): {"status": str(row["status"]), "archived": bool(row["archived"])}
+            for row in rows
+        }
+
+    def _lease_stats(self, lease_dir: Path) -> tuple[int, int, float]:
+        """返回 (租约总体积, process 子目录体积, process 最新 mtime)。"""
+        total = 0
+        process_bytes = 0
+        process_mtime = 0.0
+        stack: list[tuple[str, bool]] = [(str(lease_dir), False)]
+        while stack:
+            current, in_process = stack.pop()
+            try:
+                entries = list(os.scandir(current))
+            except OSError:
+                continue
+            for entry in entries:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append((entry.path, in_process or entry.name == "process"))
+                    elif entry.is_file(follow_symlinks=False):
+                        stat = entry.stat(follow_symlinks=False)
+                        total += stat.st_size
+                        if in_process:
+                            process_bytes += stat.st_size
+                            process_mtime = max(process_mtime, stat.st_mtime)
+                except OSError:
+                    continue
+        return total, process_bytes, process_mtime
+
+    def _is_lease_hot(self, process_mtime: float) -> bool:
+        if process_mtime <= 0:
+            return False
+        return time.time() - process_mtime < LEASE_HOT_WINDOW.total_seconds()
+
+    def _iter_task_leases(self, task_id: str | None = None):
+        """遍历 runs/ 下的租约目录，产出 (task_id, unit_id, lease_id, lease_dir)。"""
+        runs_root = self._root / "runs"
+        if not runs_root.is_dir():
+            return
+        try:
+            task_entries = sorted(os.scandir(runs_root), key=lambda e: e.name)
+        except OSError:
+            return
+        for task_entry in task_entries:
+            if task_id and task_entry.name != task_id:
+                continue
+            if not task_entry.is_dir(follow_symlinks=False):
+                continue
+            try:
+                unit_entries = sorted(os.scandir(task_entry.path), key=lambda e: e.name)
+            except OSError:
+                continue
+            for unit_entry in unit_entries:
+                if not unit_entry.is_dir(follow_symlinks=False):
+                    continue
+                try:
+                    lease_entries = sorted(os.scandir(unit_entry.path), key=lambda e: e.name)
+                except OSError:
+                    continue
+                for lease_entry in lease_entries:
+                    if not lease_entry.name.startswith(LEASE_DIR_PREFIX):
+                        continue
+                    if not lease_entry.is_dir(follow_symlinks=False):
+                        continue
+                    yield (
+                        task_entry.name,
+                        unit_entry.name,
+                        lease_entry.name[len(LEASE_DIR_PREFIX):],
+                        Path(lease_entry.path),
+                    )
+
+    def _dir_size(self, path: Path) -> int:
+        if not path.exists():
+            return 0
+        return _tree_stats(path)[0]
+
+    def _entry_mtime(self, path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def _expired_sqlite_backups(self) -> list[Path]:
+        cutoff = time.time() - SQLITE_BACKUP_KEEP_DAYS * 86_400
+        found: list[Path] = []
+        backups_dir = self._root / "backups"
+        if backups_dir.is_dir():
+            for entry in backups_dir.iterdir():
+                if entry.is_symlink():
+                    continue
+                if self._entry_mtime(entry) < cutoff:
+                    found.append(entry)
+        for entry in self._root.glob("axiom.db.*"):
+            if entry.is_file() and not entry.is_symlink() and self._entry_mtime(entry) < cutoff:
+                found.append(entry)
+        return sorted(found, key=lambda p: p.name)
+
+    def _pg_backup_buckets(self) -> tuple[list[Path], list[Path]]:
+        """返回 (保留的最新 N 份, 可清理的更旧份)。"""
+        backups_dir = self._root / "postgresql-backups"
+        if not backups_dir.is_dir():
+            return [], []
+        files = [
+            entry for entry in backups_dir.iterdir()
+            if entry.is_file() and not entry.is_symlink()
+        ]
+        files.sort(key=lambda p: self._entry_mtime(p), reverse=True)
+        return files[:PG_BACKUP_KEEP_COUNT], files[PG_BACKUP_KEEP_COUNT:]
+
+    def _expired_log_archives(self) -> tuple[list[Path], int]:
+        cutoff = time.time() - LOG_ARCHIVE_KEEP_DAYS * 86_400
+        logs_dir = self._root / "logs"
+        found: list[Path] = []
+        total = 0
+        if logs_dir.is_dir():
+            for archive in sorted(logs_dir.glob(f"*{ARCHIVE_SUFFIX}")):
+                try:
+                    stat = archive.stat()
+                except OSError:
+                    continue
+                if stat.st_mtime < cutoff:
+                    found.append(archive)
+                    total += stat.st_size
+        return found, total
+
+    # ---------- 目标解析（preview / execute 共用单一事实源） ----------
+
+    def _resolve_cleanup_targets(self, key: str) -> tuple[list[CleanupPreviewTarget], int, str]:
+        """解析一个清理 key 的具体删除目标。返回 (targets, protected_count, warning)。"""
+        task_states = self._task_states()
+        active_leases = self._active_lease_ids()
+
+        if key == "t1_lease_process":
+            targets: list[CleanupPreviewTarget] = []
+            protected = 0
+            for _task_id, _unit, lease_id, lease_dir in self._iter_task_leases():
+                _total, process_bytes, process_mtime = self._lease_stats(lease_dir)
+                if lease_id in active_leases or self._is_lease_hot(process_mtime):
+                    protected += 1
+                    continue
+                if process_bytes <= 0:
+                    continue
+                rel = lease_dir.relative_to(self._root) / "process"
+                targets.append(CleanupPreviewTarget(
+                    path=rel.as_posix(), bytes=process_bytes, kind="lease_process",
+                ))
+            return targets, protected, ""
+
+        if key == "t1_log_archives":
+            expired, _total = self._expired_log_archives()
+            targets = [
+                CleanupPreviewTarget(
+                    path=archive.relative_to(self._root).as_posix(),
+                    bytes=archive.stat().st_size, kind="log_archive",
+                )
+                for archive in expired
+            ]
+            return targets, 0, ""
+
+        if key == "t1_usage_snapshot":
+            path = self._root / STORAGE_DIR_NAME / SNAPSHOT_FILE
+            if path.is_file():
+                return [CleanupPreviewTarget(
+                    path=path.relative_to(self._root).as_posix(),
+                    bytes=path.stat().st_size, kind="snapshot",
+                )], 0, ""
+            return [], 0, ""
+
+        if key.startswith("t2_task_runs:"):
+            task_id = key.split(":", 1)[1]
+            # DB 无记录 = 任务已被清除的孤儿目录，无任何引用，按已完结处理。
+            state = task_states.get(task_id) or {"status": "stopped", "archived": True}
+            if state["status"] == "running":
+                raise ConflictError(f"task {task_id} is running; cleanup is locked")
+            targets = []
+            protected = 0
+            task_dir = self._root / "runs" / task_id
+            for _t, _u, lease_id, lease_dir in self._iter_task_leases(task_id):
+                total, _process_bytes, process_mtime = self._lease_stats(lease_dir)
+                if lease_id in active_leases or self._is_lease_hot(process_mtime):
+                    protected += 1
+                    continue
+                targets.append(CleanupPreviewTarget(
+                    path=lease_dir.relative_to(self._root).as_posix(),
+                    bytes=total, kind="lease",
+                ))
+            if task_dir.is_dir():
+                for entry in task_dir.iterdir():
+                    if entry.is_file() and not entry.is_symlink():
+                        targets.append(CleanupPreviewTarget(
+                            path=entry.relative_to(self._root).as_posix(),
+                            bytes=entry.stat().st_size, kind="file",
+                        ))
+            return targets, protected, ""
+
+        if key.startswith("t2_task_contexts:"):
+            task_id = key.split(":", 1)[1]
+            state = task_states.get(task_id) or {"status": "stopped", "archived": True}
+            if state["status"] == "running":
+                raise ConflictError(f"task {task_id} is running; cleanup is locked")
+            path = self._root / "contexts" / task_id
+            if not path.is_dir():
+                return [], 0, ""
+            return [CleanupPreviewTarget(
+                path=path.relative_to(self._root).as_posix(),
+                bytes=_tree_stats(path)[0], kind="dir",
+            )], 0, ""
+
+        if key.startswith("t2_task_artifacts:"):
+            task_id = key.split(":", 1)[1]
+            state = task_states.get(task_id) or {"status": "stopped", "archived": True}
+            if state["status"] == "running":
+                raise ConflictError(f"task {task_id} is running; cleanup is locked")
+            if not state["archived"]:
+                raise ConflictError(
+                    f"task {task_id} is not archived; artifacts cleanup requires archive first"
+                )
+            task_dir = self._root / "tasks" / task_id
+            if not task_dir.is_dir():
+                return [], 0, ""
+            targets = []
+            for current, _dirs, files in os.walk(task_dir):
+                for name in files:
+                    file_path = Path(current) / name
+                    try:
+                        if file_path.is_symlink():
+                            continue
+                        size = file_path.stat().st_size
+                    except OSError:
+                        continue
+                    targets.append(CleanupPreviewTarget(
+                        path=file_path.relative_to(self._root).as_posix(),
+                        bytes=size, kind="artifact",
+                    ))
+            return targets, 0, "删除后文件中心对应产物将无法下载（数据库记录保留）。"
+
+        if key == "t2_sqlite_backups":
+            targets = [
+                CleanupPreviewTarget(
+                    path=entry.relative_to(self._root).as_posix(),
+                    bytes=_tree_stats(entry)[0] if entry.is_dir() else entry.stat().st_size,
+                    kind="sqlite_backup",
+                )
+                for entry in self._expired_sqlite_backups()
+            ]
+            return targets, 0, ""
+
+        if key.startswith("t2_maintenance:"):
+            name = key.split(":", 1)[1]
+            if not name or "/" in name or "\\" in name or name.startswith("."):
+                raise DomainError(f"invalid maintenance entry: {name}")
+            entry = self._root / "maintenance" / name
+            if not entry.exists() or entry.is_symlink():
+                raise DomainError(f"unknown maintenance entry: {name}")
+            size = _tree_stats(entry)[0] if entry.is_dir() else entry.stat().st_size
+            return [CleanupPreviewTarget(
+                path=entry.relative_to(self._root).as_posix(), bytes=size, kind="maintenance",
+            )], 0, ""
+
+        if key == "t2_pg_backups":
+            _kept, purgeable = self._pg_backup_buckets()
+            return [
+                CleanupPreviewTarget(
+                    path=entry.relative_to(self._root).as_posix(),
+                    bytes=entry.stat().st_size, kind="pg_backup",
+                )
+                for entry in purgeable
+            ], 0, ""
+
+        raise DomainError(f"unknown cleanup key: {key}")
+
+    # ---------- API 入口 ----------
+
+    def cleanup_preview(self, keys: list[str]) -> list[CleanupPreviewItem]:
+        titles = self._cleanup_titles()
+        items: list[CleanupPreviewItem] = []
+        for key in keys:
+            targets, protected, warning = self._resolve_cleanup_targets(key)
+            items.append(CleanupPreviewItem(
+                key=key,
+                title=titles.get(key, key),
+                targets=targets,
+                total_bytes=sum(target.bytes for target in targets),
+                protected_count=protected,
+                warning=warning,
+            ))
+        return items
+
+    def cleanup_execute(self, keys: list[str], excluded: list[str], actor: str) -> CleanupExecuteResult:
+        excluded_set = {item.strip() for item in excluded if item and item.strip()}
+        removed: list[dict] = []
+        skipped: list[dict] = []
+        freed_total = 0
+        for key in keys:
+            try:
+                targets, _protected, _warning = self._resolve_cleanup_targets(key)
+            except DomainError as exc:
+                skipped.append({"key": key, "path": "", "reason": str(exc)})
+                continue
+            for target in targets:
+                if target.path in excluded_set:
+                    skipped.append({"key": key, "path": target.path, "reason": "excluded by operator"})
+                    continue
+                try:
+                    freed = self._validated_delete(target.path)
+                except DomainError as exc:
+                    skipped.append({"key": key, "path": target.path, "reason": str(exc)})
+                    continue
+                except FileNotFoundError:
+                    skipped.append({"key": key, "path": target.path, "reason": "already gone"})
+                    continue
+                freed_total += freed
+                removed.append({"key": key, "path": target.path, "bytes": freed})
+        result = CleanupExecuteResult(
+            freed_bytes=freed_total,
+            removed=[CleanupRemovedItem(**item) for item in removed],
+            skipped=[CleanupSkippedItem(**item) for item in skipped],
+            actor=actor,
+        )
+        self._audit.record(
+            RecordAuditEvent(
+                event_type="storage.cleanup.executed",
+                level="info",
+                message=(
+                    f"keys={len(keys)} removed={len(removed)} skipped={len(skipped)} "
+                    f"freed={freed_total} actor={actor}"
+                ),
+                payload=json.loads(result.model_dump_json()),
+            )
+        )
+        # 清理改变了体积分布：作废两份缓存，下次读取时后台重建。
+        for name in (SNAPSHOT_FILE, CLEANUP_PLAN_FILE):
+            try:
+                (self._root / STORAGE_DIR_NAME / name).unlink(missing_ok=True)
+            except OSError:
+                pass
+        return result
+
+    def _validated_delete(self, rel_path: str) -> int:
+        root = self._root.resolve()
+        target = (self._root / rel_path).resolve()
+        if target == root or root not in target.parents:
+            raise DomainError(f"path outside data dir: {rel_path}")
+        if not any(rel_path == prefix.rstrip("/") or rel_path.startswith(prefix) for prefix in CLEANUP_ALLOWED_PREFIXES):
+            raise DomainError(f"path not allowed for cleanup: {rel_path}")
+        if not target.exists():
+            raise DomainError(f"path not found: {rel_path}")
+        # PG 备份底线：无论来源，最新 N 份永不删除。
+        if rel_path.startswith("postgresql-backups/"):
+            kept, _purgeable = self._pg_backup_buckets()
+            kept_names = {entry.name for entry in kept}
+            if Path(rel_path).name in kept_names:
+                raise ConflictError(f"pg backup is within keep window: {rel_path}")
+        size = _tree_stats(target)[0] if target.is_dir() else target.stat().st_size
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        return size
+
+    # ---------- 计划构建 ----------
+
+    def _cleanup_titles(self) -> dict[str, str]:
+        plan = self._read_json_file(Path(STORAGE_DIR_NAME) / CLEANUP_PLAN_FILE) or {}
+        titles: dict[str, str] = {}
+        for tier in ("tier1", "tier2", "tier3"):
+            for item in plan.get(tier, []):
+                titles[item.get("key", "")] = item.get("title", "")
+        return titles
+
+    def _compute_cleanup_plan(self) -> CleanupPlan:
+        task_states = self._task_states()
+        active_leases = self._active_lease_ids()
+
+        # ── runs/ 按任务聚合 ──
+        run_tasks: dict[str, dict] = {}
+        t1_process_bytes = 0
+        t1_process_count = 0
+        for task_id, _unit, lease_id, lease_dir in self._iter_task_leases():
+            total, process_bytes, process_mtime = self._lease_stats(lease_dir)
+            bucket = run_tasks.setdefault(task_id, {
+                "total": 0, "protected": 0, "clean_lease_count": 0, "clean_lease_bytes": 0,
+            })
+            bucket["total"] += total
+            is_protected = lease_id in active_leases or self._is_lease_hot(process_mtime)
+            if is_protected:
+                bucket["protected"] += 1
+                continue
+            bucket["clean_lease_count"] += 1
+            bucket["clean_lease_bytes"] += total
+            if process_bytes > 0:
+                t1_process_bytes += process_bytes
+                t1_process_count += 1
+
+        # ── contexts/ 与 tasks/ 按任务 ──
+        context_tasks: dict[str, int] = {}
+        contexts_root = self._root / "contexts"
+        if contexts_root.is_dir():
+            for entry in contexts_root.iterdir():
+                if entry.is_dir() and not entry.is_symlink():
+                    context_tasks[entry.name] = _tree_stats(entry)[0]
+        artifact_tasks: dict[str, int] = {}
+        tasks_root = self._root / "tasks"
+        if tasks_root.is_dir():
+            for entry in tasks_root.iterdir():
+                if entry.is_dir() and not entry.is_symlink():
+                    artifact_tasks[entry.name] = _tree_stats(entry)[0]
+
+        # ── 一档 ──
+        tier1: list[CleanupItem] = [
+            CleanupItem(
+                key="t1_lease_process",
+                title="租约执行流水日志",
+                description="已完结租约 process/ 下的 stdout/stderr RPC 全量流水，删除不影响任何产物文件与系统运行。",
+                bytes=t1_process_bytes, count=t1_process_count, default_selected=True,
+            ),
+        ]
+        expired_logs, expired_log_bytes = self._expired_log_archives()
+        tier1.append(CleanupItem(
+            key="t1_log_archives",
+            title="超期日志归档",
+            description=f"logs/ 下超过 {LOG_ARCHIVE_KEEP_DAYS} 天的压缩归档（到期后本会自动清理）。",
+            bytes=expired_log_bytes, count=len(expired_logs), default_selected=True,
+        ))
+        usage_path = self._root / STORAGE_DIR_NAME / SNAPSHOT_FILE
+        if usage_path.is_file():
+            tier1.append(CleanupItem(
+                key="t1_usage_snapshot",
+                title="存储统计快照",
+                description="storage/usage.json 可随时重建，删除后打开本页会自动重新统计。",
+                bytes=usage_path.stat().st_size, count=1, default_selected=True,
+            ))
+
+        # ── 二档 ──
+        tier2: list[CleanupItem] = []
+        for task_id in sorted(set(run_tasks) | set(context_tasks)):
+            state = task_states.get(task_id) or {"status": "stopped", "archived": True}
+            if state["status"] == "running":
+                continue
+            bucket = run_tasks.get(task_id)
+            if bucket and bucket["clean_lease_count"] > 0:
+                tier2.append(CleanupItem(
+                    key=f"t2_task_runs:{task_id}",
+                    title=f"任务 {task_id} 执行产物",
+                    description="runs/ 下已完结租约的产物文件（findings、资产清单等）与会话记录。",
+                    bytes=bucket["clean_lease_bytes"], count=bucket["clean_lease_count"],
+                ))
+            if context_tasks.get(task_id, 0) > 0:
+                tier2.append(CleanupItem(
+                    key=f"t2_task_contexts:{task_id}",
+                    title=f"任务 {task_id} 上下文快照",
+                    description="contexts/ 下该任务的会话上下文快照，删除后无法回放该任务历史上下文。",
+                    bytes=context_tasks[task_id], count=1,
+                ))
+        for task_id in sorted(artifact_tasks):
+            state = task_states.get(task_id) or {"status": "stopped", "archived": True}
+            if state["status"] == "running" or not state["archived"]:
+                continue
+            if artifact_tasks[task_id] <= 0:
+                continue
+            tier2.append(CleanupItem(
+                key=f"t2_task_artifacts:{task_id}",
+                title=f"任务 {task_id} 产物文件（已归档）",
+                description="tasks/ 下该归档任务的 artifacts 文件本体。",
+                bytes=artifact_tasks[task_id], count=1,
+                warning="删除后文件中心对应产物将无法下载（数据库记录保留）。",
+            ))
+        expired_backups = self._expired_sqlite_backups()
+        if expired_backups:
+            tier2.append(CleanupItem(
+                key="t2_sqlite_backups",
+                title="超期 SQLite 备份",
+                description=f"backups/ 与根目录下超过 {SQLITE_BACKUP_KEEP_DAYS} 天的旧库备份。",
+                bytes=sum(
+                    (_tree_stats(p)[0] if p.is_dir() else p.stat().st_size) for p in expired_backups
+                ),
+                count=len(expired_backups),
+            ))
+        maintenance_root = self._root / "maintenance"
+        if maintenance_root.is_dir():
+            for entry in sorted(maintenance_root.iterdir(), key=lambda p: p.name):
+                if entry.is_symlink():
+                    continue
+                if entry.is_dir():
+                    size = _tree_stats(entry)[0]
+                elif entry.is_file():
+                    size = entry.stat().st_size
+                else:
+                    size = 0
+                if size <= 0:
+                    continue
+                tier2.append(CleanupItem(
+                    key=f"t2_maintenance:{entry.name}",
+                    title=f"维护快照 {entry.name}",
+                    description="maintenance/ 下的人工维护快照，确认不再需要后可删。",
+                    bytes=size, count=1,
+                ))
+        _kept, purgeable_pg = self._pg_backup_buckets()
+        if purgeable_pg:
+            tier2.append(CleanupItem(
+                key="t2_pg_backups",
+                title="旧 PostgreSQL 备份",
+                description=f"postgresql-backups/ 中超出最新 {PG_BACKUP_KEEP_COUNT} 份的更旧备份。",
+                bytes=sum(entry.stat().st_size for entry in purgeable_pg),
+                count=len(purgeable_pg),
+            ))
+
+        # ── 三档 ──
+        tier3: list[CleanupItem] = []
+        for task_id, state in sorted(task_states.items()):
+            if state["status"] != "running":
+                continue
+            total = (
+                run_tasks.get(task_id, {}).get("total", 0)
+                + context_tasks.get(task_id, 0)
+                + artifact_tasks.get(task_id, 0)
+            )
+            tier3.append(CleanupItem(
+                key=f"t3_task_active:{task_id}",
+                title=f"活跃任务 {task_id}",
+                description="任务正在运行，Worker 正在读写其 runs/contexts/artifacts，禁止清理。",
+                bytes=total, count=1,
+            ))
+        kept_pg, _ = self._pg_backup_buckets()
+        tier3.extend([
+            CleanupItem(
+                key="t3_pg_backups_recent",
+                title=f"PostgreSQL 备份（最新 {max(len(kept_pg), 1)} 份）",
+                description="灾难恢复底线，始终保留最新备份。",
+                bytes=sum(entry.stat().st_size for entry in kept_pg), count=len(kept_pg),
+            ),
+            CleanupItem(
+                key="t3_pg_migration",
+                title="PostgreSQL 迁移证据",
+                description="postgresql-migration/ 为数据库迁移 gate 证据，删除将破坏迁移审计链。",
+                bytes=self._dir_size(self._root / "postgresql-migration"), count=1,
+            ),
+            CleanupItem(
+                key="t3_runtime_files",
+                title="运行时文件",
+                description="axiom.db、postgresql.env、storage/state.json、skills/、projects/ 为系统运行依赖。",
+                bytes=(
+                    ((self._root / "axiom.db").stat().st_size if (self._root / "axiom.db").is_file() else 0)
+                    + self._dir_size(self._root / "skills")
+                    + self._dir_size(self._root / "projects")
+                ),
+                count=1,
+            ),
+        ])
+
+        return CleanupPlan(
+            generated_at=utcnow(),
+            data_dir=str(self._root),
+            refreshing=False,
+            tier1=tier1, tier2=tier2, tier3=tier3,
+        )
+
+    def _read_json_file(self, rel_path: Path) -> dict | None:
+        try:
+            payload = json.loads((self._root / rel_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _json_age(self, generated_at: object) -> timedelta:
+        try:
+            parsed = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return CLEANUP_PLAN_TTL + timedelta(days=1)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) - parsed

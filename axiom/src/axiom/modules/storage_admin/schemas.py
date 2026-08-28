@@ -62,3 +62,73 @@ class LogRotateResult(BaseModel):
     purged_archives_bytes: int
     bytes_freed_total: int
     actor: str
+
+
+# ── 清理中心（三档） ──
+
+class CleanupItem(BaseModel):
+    key: str
+    title: str
+    description: str
+    bytes: int = 0
+    count: int = 0
+    warning: str = ""
+    default_selected: bool = False
+
+
+class CleanupPlan(BaseModel):
+    generated_at: str
+    data_dir: str
+    refreshing: bool = False
+    tier1: list[CleanupItem]
+    tier2: list[CleanupItem]
+    tier3: list[CleanupItem]
+
+
+class CleanupPreviewTarget(BaseModel):
+    path: str
+    bytes: int
+    kind: str
+
+
+class CleanupPreviewItem(BaseModel):
+    key: str
+    title: str
+    targets: list[CleanupPreviewTarget]
+    total_bytes: int
+    protected_count: int = 0
+    warning: str = ""
+
+
+class CleanupPreviewRequest(BaseModel):
+    keys: list[str]
+
+
+class CleanupPreviewResponse(BaseModel):
+    generated_at: str
+    items: list[CleanupPreviewItem]
+
+
+class CleanupExecuteRequest(BaseModel):
+    keys: list[str]
+    excluded: list[str] = []
+    actor: str = "human.frontend"
+
+
+class CleanupRemovedItem(BaseModel):
+    key: str
+    path: str
+    bytes: int
+
+
+class CleanupSkippedItem(BaseModel):
+    key: str
+    path: str
+    reason: str
+
+
+class CleanupExecuteResult(BaseModel):
+    freed_bytes: int
+    removed: list[CleanupRemovedItem]
+    skipped: list[CleanupSkippedItem]
+    actor: str
