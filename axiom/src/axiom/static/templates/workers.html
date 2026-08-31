@@ -56,6 +56,7 @@
 
     <!-- ═══ 右侧详情 ═══ -->
     <section class="overflow-y-auto" style="padding:18px 20px; background:var(--sto-inset);">
+      <p class="sto-muted" style="display:flex; align-items:flex-start; gap:6px; margin-bottom:14px;"><span style="color:var(--sto-accent); flex-shrink:0;">ⓘ</span><span><strong style="color:var(--sto-fg-2);">能力关系：</strong>系统有五个逻辑 Worker。点击 Bootstrap、Reason、Explore、Plan 或 Reviewer 卡片，在右侧集中查看与调整全部能力；五阶段全选自动保存为 common，新 Lease 生效。</span></p>
 
       <!-- 阶段详情：能力分配 / 后端池 -->
       <div x-show="workerSide === 'phase' && selectedWorkerPhaseRecord()">
@@ -69,7 +70,7 @@
               </div>
             </div>
             <div class="sto-seg" style="background:var(--sto-panel);">
-              <button :class="workerPhaseDetailTab === 'capability' ? 'on' : ''" @click="workerPhaseDetailTab='capability'">能力分配</button>
+              <button :class="workerPhaseDetailTab === 'capability' ? 'on' : ''" @click="workerPhaseDetailTab='capability'">能力管理</button>
               <button :class="workerPhaseDetailTab === 'pool' ? 'on' : ''" @click="workerPhaseDetailTab='pool'">后端池</button>
             </div>
           </div>

@@ -1087,3 +1087,22 @@
   .sto-phero .pmeta { font-size: 11.5px; color: var(--sto-fg-2); font-variant-numeric: tabular-nums; }
   .sto-phero .pprog { height: 6px; border-radius: 3px; background: var(--sto-line); overflow: hidden; max-width: 320px; margin-top: 10px; }
   .sto-phero .pprog > i { display: block; height: 100%; border-radius: 3px; background: var(--pc); transition: width 0.5s ease; }
+
+  /* ═══════════ 守门审计（复用 sto-* 体系） ═══════════ */
+  .sto-eventrow {
+    position: relative; background: var(--sto-panel);
+    border-bottom: 1px solid var(--sto-line); padding: 13px 16px 13px 19px;
+    transition: background 0.15s ease;
+  }
+  .sto-eventrow:hover { background: var(--sto-inset); }
+  .sto-eventrow::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  }
+  .sto-eventrow.block::before { background: var(--sto-danger); }
+  .sto-eventrow.allow::before { background: var(--sto-ok); }
+  .sto-eventrow .etool { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; font-weight: 650; color: var(--sto-fg); }
+  .sto-eventrow .emeta { font-size: 10.5px; color: var(--sto-fg-3); }
+  .sto-eventrow .ecmd { margin-top: 6px; font-size: 12.5px; font-weight: 550; color: var(--sto-fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sto-eventrow .ereason { margin-top: 6px; font-size: 11.5px; line-height: 1.5; }
+  .sto-eventrow.block .ereason { color: var(--sto-danger); }
+  .sto-eventrow.allow .ereason { color: var(--sto-fg-2); }
