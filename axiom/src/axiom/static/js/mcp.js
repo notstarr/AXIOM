@@ -82,6 +82,7 @@ window.AxiomModules.mcp = {
         url: server?.url || '', args: JSON.stringify(server?.args || [], null, 2),
         env: JSON.stringify(server?.env || {}, null, 2), disabled: !!server?.disabled,
       };
+      this.mcpEditorTab = 'manual';
       this.showMcpEditor = true;
     },
     async saveMcpEditor() {
@@ -107,7 +108,7 @@ window.AxiomModules.mcp = {
       this.mcpImportBusy = true;
       try {
         const result = await this.api('POST', '/mcp/import', { format: this.mcpImportFormat, content: this.mcpImportContent, replace: false });
-        this.mcpImportContent = ''; this.showMcpImport = false; await this.loadMcpPage();
+        this.mcpImportContent = ''; this.showMcpEditor = false; await this.loadMcpPage();
         const ready = result.filter(item => item.discovery_status === 'ready').length;
         const failed = result.filter(item => item.discovery_status === 'error').length;
         this.showToast(`已导入 ${result.length} 个 Server；${ready} 个发现成功${failed ? `，${failed} 个发现失败` : ''}`, failed ? 'error' : 'success');

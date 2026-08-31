@@ -394,7 +394,7 @@ window.AxiomModules.state = {
     mcpImportFormat: 'auto',
     mcpImportContent: '',
     mcpImportBusy: false,
-    showMcpImport: false,
+    mcpEditorTab: 'manual',
     showMcpEditor: false,
     mcpServerEditor: { id: '', name: '', command: '', url: '', args: '[]', env: '{}', disabled: false },
     axiomWorkers: [],
