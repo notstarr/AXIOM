@@ -1034,3 +1034,56 @@
   .sto-status.warn > i { background: var(--sto-warn); }
   .sto-status.err > i { background: var(--sto-danger); }
   .sto-status.off > i { background: var(--sto-fg-3); }
+
+  /* ═══════════ Worker 阵容卡 · 阶段身份色 ═══════════ */
+  .sto-ph-bootstrap { --pc: #f59e0b; --pc-soft: rgba(245, 158, 11, 0.12); }
+  .sto-ph-reason   { --pc: #0a84ff; --pc-soft: rgba(10, 132, 255, 0.12); }
+  .sto-ph-explore  { --pc: #10b981; --pc-soft: rgba(16, 185, 129, 0.12); }
+  .sto-ph-plan     { --pc: #8b5cf6; --pc-soft: rgba(139, 92, 246, 0.12); }
+  .sto-ph-review   { --pc: #f43f5e; --pc-soft: rgba(244, 63, 94, 0.12); }
+
+  /* 侧栏阵容卡 */
+  .sto-pcard {
+    position: relative; display: block; width: 100%; text-align: left; cursor: pointer;
+    background: transparent; border: 1px solid transparent; border-radius: 11px;
+    padding: 10px 11px; transition: background 0.15s ease, box-shadow 0.2s ease, border-color 0.15s ease;
+  }
+  .sto-pcard:hover { background: var(--sto-panel); }
+  .sto-pcard.active {
+    background: var(--sto-panel); border-color: color-mix(in srgb, var(--pc) 45%, var(--sto-line));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--pc) 12%, transparent), var(--sto-shadow);
+  }
+  .sto-pcard .psq {
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 32px; height: 32px; border-radius: 10px;
+    background: var(--pc); color: #fff; font-size: 13px; font-weight: 700;
+  }
+  .sto-pcard .pname { font-size: 12.5px; font-weight: 650; color: var(--sto-fg); }
+  .sto-pcard .pprog { height: 4px; border-radius: 2px; background: var(--sto-line); overflow: hidden; margin-top: 7px; }
+  .sto-pcard .pprog > i { display: block; height: 100%; border-radius: 2px; background: var(--pc); transition: width 0.5s ease; }
+  .sto-pcard .pline { display: flex; gap: 10px; margin-top: 7px; font-size: 9.5px; color: var(--sto-fg-3); font-variant-numeric: tabular-nums; }
+  .sto-pcard .pline b { color: var(--sto-fg-2); font-weight: 650; }
+  .sto-pcard .pissue {
+    display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;
+    font-size: 9.5px; color: var(--sto-warn);
+  }
+  .sto-pcard .pissue::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--sto-warn); }
+
+  /* 详情页 hero 横带 */
+  .sto-phero {
+    position: relative; border-radius: 14px; padding: 18px 20px;
+    border: 1px solid color-mix(in srgb, var(--pc) 30%, var(--sto-line));
+    background: linear-gradient(120deg, color-mix(in srgb, var(--pc) 10%, var(--sto-panel)) 0%, var(--sto-panel) 55%);
+    overflow: hidden;
+  }
+  .sto-phero::after {
+    content: ""; position: absolute; right: -40px; top: -40px; width: 160px; height: 160px;
+    border-radius: 50%; background: color-mix(in srgb, var(--pc) 8%, transparent); pointer-events: none;
+  }
+  .sto-phero .psq { width: 42px; height: 42px; border-radius: 13px; font-size: 16px;
+    display: flex; align-items: center; justify-content: center; background: var(--pc); color: #fff; font-weight: 700;
+    box-shadow: 0 4px 14px color-mix(in srgb, var(--pc) 40%, transparent); }
+  .sto-phero h3 { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; color: var(--sto-fg); }
+  .sto-phero .pmeta { font-size: 11.5px; color: var(--sto-fg-2); font-variant-numeric: tabular-nums; }
+  .sto-phero .pprog { height: 6px; border-radius: 3px; background: var(--sto-line); overflow: hidden; max-width: 320px; margin-top: 10px; }
+  .sto-phero .pprog > i { display: block; height: 100%; border-radius: 3px; background: var(--pc); transition: width 0.5s ease; }

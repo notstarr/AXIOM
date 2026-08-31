@@ -15,19 +15,24 @@
       <p class="sto-label" style="margin-bottom:8px;">Phases · 五阶段 Worker</p>
       <div style="display:flex; flex-direction:column; gap:6px;">
         <template x-for="phase in (workerPhases || [])" :key="`side-phase-${phase.phase}`">
-          <button type="button" @click="selectWorkerSidePhase(phase.phase)" class="sto-navitem" :class="workerSide === 'phase' && selectedWorkerPhase === phase.phase ? 'active' : ''">
-            <div class="flex items-center" style="gap:9px;">
-              <span class="flex shrink-0 items-center justify-center" style="width:30px; height:30px; border-radius:9px; background:#0f172a; color:#fff; font-size:12px; font-weight:700;" x-text="axiomPhaseShortLabel(phase.phase)"></span>
+          <button type="button" @click="selectWorkerSidePhase(phase.phase)" class="sto-pcard" :class="[`sto-ph-${phase.phase}`, workerSide === 'phase' && selectedWorkerPhase === phase.phase ? 'active' : '']">
+            <div class="flex items-center" style="gap:10px;">
+              <span class="psq" x-text="axiomPhaseShortLabel(phase.phase)"></span>
               <div style="min-width:0; flex:1;">
                 <div class="flex items-center justify-between" style="gap:6px;">
-                  <strong style="font-size:12.5px; color:var(--sto-fg);" x-text="phase.title"></strong>
+                  <span class="pname" x-text="phase.title"></span>
                   <span class="sto-num" style="font-size:10px; color:var(--sto-fg-3);" x-text="`${phase.running}/${phase.capacity}`"></span>
                 </div>
-                <p class="sto-num" style="margin-top:2px; font-size:9.5px; color:var(--sto-fg-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-                  x-text="`内置 ${builtinToolCount(phase.phase)} · Skill ${phaseCapabilityCount(phase.phase, 'skill')} · MCP ${phaseCapabilityCount(phase.phase, 'mcp_tool')} · 扩展 ${phaseCapabilityCount(phase.phase, 'axiom_tool')}`"></p>
+                <div class="pprog"><i :style="`width:${phase.capacity ? Math.round(phase.running / phase.capacity * 100) : 0}%`"></i></div>
               </div>
             </div>
-            <p x-show="workerCapabilityIssueCount(phase.phase) > 0" class="sto-warnline" style="font-size:9.5px; margin-top:4px;" x-text="`${workerCapabilityIssueCount(phase.phase)} 个能力不可用`"></p>
+            <div class="pline">
+              <span>内置 <b x-text="builtinToolCount(phase.phase)"></b></span>
+              <span>Skill <b x-text="phaseCapabilityCount(phase.phase, 'skill')"></b></span>
+              <span>MCP <b x-text="phaseCapabilityCount(phase.phase, 'mcp_tool')"></b></span>
+              <span>扩展 <b x-text="phaseCapabilityCount(phase.phase, 'axiom_tool')"></b></span>
+            </div>
+            <span class="pissue" x-show="workerCapabilityIssueCount(phase.phase) > 0" x-text="`${workerCapabilityIssueCount(phase.phase)} 个能力不可用`"></span>
           </button>
         </template>
       </div>
@@ -42,7 +47,7 @@
           <button type="button" @click="selectWorkerSideBackend(worker)" class="sto-navitem" :class="workerSide === 'backend' && selectedAxiomWorker === worker.name ? 'active' : ''">
             <div class="flex items-center justify-between" style="gap:6px;">
               <strong style="font-size:12px; color:var(--sto-fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="worker.name"></strong>
-              <span class="sto-status" :class="(axiomWorkerConnectionClass(worker) || '').includes('emerald') ? 'ok' : 'warn'"><i></i></span>
+              <span class="sto-status" :class="(axiomWorkerConnectionClass(worker) || '').includes('emerald') ? 'ok' : 'warn'" :title="axiomWorkerConnectionLabel(worker)"><i></i></span>
             </div>
             <p class="sto-muted sto-num" style="margin-top:2px; font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="worker.model || '未配置模型'"></p>
           </button>
@@ -55,18 +60,21 @@
 
       <!-- 阶段详情：能力分配 / 后端池 -->
       <div x-show="workerSide === 'phase' && selectedWorkerPhaseRecord()">
-        <div class="flex flex-wrap items-center justify-between" style="gap:12px; margin-bottom:14px;">
-          <div class="flex items-center" style="gap:12px;">
-            <span class="flex shrink-0 items-center justify-center" style="width:38px; height:38px; border-radius:11px; background:#0f172a; color:#fff; font-size:14px; font-weight:700;" x-text="axiomPhaseShortLabel(selectedWorkerPhase)"></span>
-            <div>
-              <h3 style="font-size:15px; font-weight:650; color:var(--sto-fg);" x-text="`${axiomPhaseLabel(selectedWorkerPhase)} Worker`"></h3>
-              <p class="sto-muted sto-num" style="margin-top:2px;" x-text="`${selectedWorkerPhaseRecord()?.running || 0}/${selectedWorkerPhaseRecord()?.capacity || 0} 运行中 · ${(selectedWorkerPhaseRecord()?.backends || []).length} 个后端 · ${selectedWorkerPhaseRecord()?.available || 0} 可用槽位`"></p>
+        <div class="sto-phero" :class="`sto-ph-${selectedWorkerPhase}`" style="margin-bottom:14px;">
+          <div class="flex flex-wrap items-center justify-between" style="gap:12px;">
+            <div class="flex items-center" style="gap:13px;">
+              <span class="psq" x-text="axiomPhaseShortLabel(selectedWorkerPhase)"></span>
+              <div>
+                <h3 x-text="`${axiomPhaseLabel(selectedWorkerPhase)} Worker`"></h3>
+                <p class="pmeta" style="margin-top:3px;" x-text="`${selectedWorkerPhaseRecord()?.running || 0}/${selectedWorkerPhaseRecord()?.capacity || 0} 运行中 · ${(selectedWorkerPhaseRecord()?.backends || []).length} 个后端 · ${selectedWorkerPhaseRecord()?.available || 0} 可用槽位`"></p>
+              </div>
+            </div>
+            <div class="sto-seg" style="background:var(--sto-panel);">
+              <button :class="workerPhaseDetailTab === 'capability' ? 'on' : ''" @click="workerPhaseDetailTab='capability'">能力分配</button>
+              <button :class="workerPhaseDetailTab === 'pool' ? 'on' : ''" @click="workerPhaseDetailTab='pool'">后端池</button>
             </div>
           </div>
-          <div class="sto-seg">
-            <button :class="workerPhaseDetailTab === 'capability' ? 'on' : ''" @click="workerPhaseDetailTab='capability'">能力分配</button>
-            <button :class="workerPhaseDetailTab === 'pool' ? 'on' : ''" @click="workerPhaseDetailTab='pool'">后端池</button>
-          </div>
+          <div class="pprog"><i :style="`width:${selectedWorkerPhaseRecord()?.capacity ? Math.round((selectedWorkerPhaseRecord()?.running || 0) / selectedWorkerPhaseRecord().capacity * 100) : 0}%`"></i></div>
         </div>
 
         <!-- 后端池 tab -->
@@ -107,11 +115,11 @@
           </div>
 
           <div x-show="workerCapabilityDrawerTab === 'overview'">
-            <div class="sto-statflat sto-panel" style="padding:13px 8px; grid-template-columns:repeat(4, 1fr); margin-bottom:13px;">
-              <div><div class="k">内置 Tool</div><b x-text="builtinToolCount(workerCapabilityDrawerPhase)"></b><p class="sto-muted" style="font-size:9.5px;">阶段合同固定</p></div>
-              <div><div class="k">Skill</div><b x-text="workerCapabilityDraftCount(workerCapabilityDrawerPhase, 'skill')"></b><p class="sto-muted" style="font-size:9.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:0 6px;" x-text="workerCapabilitySummaryNames(workerCapabilityDrawerPhase, 'skill')"></p></div>
-              <div><div class="k">MCP Tool</div><b x-text="workerCapabilityDraftCount(workerCapabilityDrawerPhase, 'mcp_tool')"></b><p class="sto-muted" style="font-size:9.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:0 6px;" x-text="`${workerCapabilityMcpServerCount(workerCapabilityDrawerPhase)} 个 Server`"></p></div>
-              <div><div class="k">扩展 Tool</div><b x-text="workerCapabilityDraftCount(workerCapabilityDrawerPhase, 'axiom_tool')"></b><p class="sto-muted" style="font-size:9.5px;">按 Lease 加载</p></div>
+            <div class="sto-grid2" style="grid-template-columns:repeat(2, 1fr); gap:10px; margin-bottom:13px;">
+              <div class="sto-statcell"><span class="sto-label">内置 Tool</span><b class="sto-num" x-text="builtinToolCount(workerCapabilityDrawerPhase)"></b><p class="sto-desc">阶段合同固定</p></div>
+              <div class="sto-statcell"><span class="sto-label">Skill</span><b class="sto-num" x-text="workerCapabilityDraftCount(workerCapabilityDrawerPhase, 'skill')"></b><p class="sto-desc" x-text="workerCapabilitySummaryNames(workerCapabilityDrawerPhase, 'skill')"></p></div>
+              <div class="sto-statcell"><span class="sto-label">MCP Tool</span><b class="sto-num" x-text="workerCapabilityDraftCount(workerCapabilityDrawerPhase, 'mcp_tool')"></b><p class="sto-desc" x-text="`${workerCapabilityMcpServerCount(workerCapabilityDrawerPhase)} 个 Server`"></p></div>
+              <div class="sto-statcell"><span class="sto-label">扩展 Tool</span><b class="sto-num" x-text="workerCapabilityDraftCount(workerCapabilityDrawerPhase, 'axiom_tool')"></b><p class="sto-desc">按 Lease 加载</p></div>
             </div>
             <div class="grid grid-cols-1 lg:grid-cols-2" style="gap:13px;">
               <div class="sto-panel" style="padding:15px 17px;">
@@ -282,9 +290,19 @@
               <button @click="saveAxiomWorkerEditor()" :disabled="axiomWorkerEditorSaving" class="sto-btn" x-text="axiomWorkerEditorSaving ? '保存中…' : '保存配置'"></button>
             </div>
           </div>
-          <div class="sto-grid2">
-            <div class="sto-field"><label>后端名称</label><input x-model="axiomWorkerEditor.name" :disabled="!!axiomWorkerEditor.persisted_name" class="sto-input" placeholder="pi-backend-main"></div>
-            <div class="sto-field"><label>模型</label>
+          <div class="sto-field" style="margin-bottom:14px;"><label>后端名称</label><input x-model="axiomWorkerEditor.name" :disabled="!!axiomWorkerEditor.persisted_name" class="sto-input" placeholder="pi-backend-main"></div>
+          <p class="sto-label" style="margin-bottom:10px;">连接</p>
+          <div class="sto-grid2" style="margin-bottom:16px;">
+            <div class="sto-field span2"><label>Base URL</label><input x-model="axiomWorkerEditor.pi_base_url" class="sto-input mono" placeholder="https://api.example.com/v1"></div>
+            <div class="sto-field span2"><label>API Key</label><input type="password" x-model="axiomWorkerEditor.pi_api_key" class="sto-input mono" :placeholder="axiomWorkerEditor.pi_api_key_masked ? `已保存：${axiomWorkerEditor.pi_api_key_masked}（留空不改）` : '输入密钥'"></div>
+            <div class="sto-foot" style="justify-content:flex-start; padding:0;">
+              <button @click="testAxiomWorkerEditor()" :disabled="axiomWorkerEditorTesting || !axiomWorkerEditor?.pi_base_url || !axiomWorkerEditor?.pi_model" class="sto-minibtn" style="padding:7px 12px;" x-text="axiomWorkerEditorTesting ? '测试中…' : '测试连接'"></button>
+              <span x-show="axiomWorkerEditor?.test_result?.message" style="font-size:12px;" :class="axiomWorkerEditor?.test_result?.ok ? 'sto-muted' : 'sto-warnline'" :style="axiomWorkerEditor?.test_result?.ok ? 'color:var(--sto-ok);' : ''" x-text="axiomWorkerEditor?.test_result?.message || ''"></span>
+            </div>
+          </div>
+          <p class="sto-label" style="margin-bottom:10px;">模型</p>
+          <div class="sto-grid2" style="margin-bottom:16px;">
+            <div class="sto-field span2"><label>模型 ID</label>
               <div style="display:flex; gap:7px;">
                 <input x-model="axiomWorkerEditor.pi_model" class="sto-input" style="min-width:0; flex:1;" placeholder="输入或从下拉选择模型 ID">
                 <button type="button" @click="fetchPiModels(axiomWorkerEditor)" :disabled="axiomWorkerEditor.models_loading || !axiomWorkerEditor.pi_base_url" class="sto-minibtn" style="flex-shrink:0;" x-text="axiomWorkerEditor.models_loading ? '获取中…' : '获取模型'"></button>
@@ -303,21 +321,18 @@
                 </template>
               </div>
             </div>
-            <div class="sto-field span2"><label>Base URL</label><input x-model="axiomWorkerEditor.pi_base_url" class="sto-input mono" placeholder="https://api.example.com/v1"></div>
-            <div class="sto-field span2"><label>API Key</label><input type="password" x-model="axiomWorkerEditor.pi_api_key" class="sto-input mono" :placeholder="axiomWorkerEditor.pi_api_key_masked ? `已保存：${axiomWorkerEditor.pi_api_key_masked}（留空不改）` : '输入密钥'"></div>
             <div class="sto-field"><label>上下文窗口</label><input x-model="axiomWorkerEditor.pi_model_context_window" class="sto-input sto-num" placeholder="200000 / 500k / 1m"></div>
             <div class="sto-field"><label>思考强度</label><select x-model="axiomWorkerEditor.pi_thinking_level" :disabled="!axiomWorkerEditor.pi_thinking_enabled" class="sto-input"><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select></div>
             <div class="sto-field"><label>思考模式</label><div style="display:flex; align-items:center; gap:9px; height:37px;"><button type="button" class="sto-switch" :class="axiomWorkerEditor.pi_thinking_enabled ? 'on' : ''" @click="axiomWorkerEditor.pi_thinking_enabled = !axiomWorkerEditor.pi_thinking_enabled"></button><span class="sto-muted" x-text="axiomWorkerEditor.pi_thinking_enabled ? '已开启' : '已关闭'"></span></div></div>
+          </div>
+          <p class="sto-label" style="margin-bottom:10px;">运行</p>
+          <div class="sto-grid2" style="margin-bottom:14px;">
             <div class="sto-field"><label>最大并发</label><input type="number" min="1" x-model.number="axiomWorkerEditor.max_running" class="sto-input sto-num"></div>
             <div class="sto-field"><label>优先级</label><input type="number" x-model.number="axiomWorkerEditor.priority" class="sto-input sto-num"></div>
             <label class="sto-item span2" style="border:0; padding:4px 0; border-radius:0;">
               <input type="checkbox" class="sto-check" x-model="axiomWorkerEditor.disabled">
               <span class="nm">停用此模型后端</span>
             </label>
-            <div class="sto-foot span2" style="justify-content:flex-start;">
-              <button @click="testAxiomWorkerEditor()" :disabled="axiomWorkerEditorTesting || !axiomWorkerEditor?.pi_base_url || !axiomWorkerEditor?.pi_model" class="sto-minibtn" style="padding:7px 12px;" x-text="axiomWorkerEditorTesting ? '测试中…' : '测试连接'"></button>
-              <span x-show="axiomWorkerEditor?.test_result?.message" style="font-size:12px;" :class="axiomWorkerEditor?.test_result?.ok ? 'sto-muted' : 'sto-warnline'" :style="axiomWorkerEditor?.test_result?.ok ? 'color:var(--sto-ok);' : ''" x-text="axiomWorkerEditor?.test_result?.message || ''"></span>
-            </div>
           </div>
         </div>
       </div>
