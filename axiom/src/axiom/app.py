@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -239,14 +240,44 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
     # 启动时一次性构建未登录/已登录两份 HTML 缓存
     if index_file.is_file():
         app.state.index_authed, app.state.index_unauth = _build_index_variants(index_file)
+        app.state.index_source_mtime = index_file.stat().st_mtime_ns
     else:
         app.state.index_authed = b""
         app.state.index_unauth = b""
+        app.state.index_source_mtime = None
+
+    _index_rebuild_lock = threading.Lock()
+
+    def _refresh_index_cache_if_stale() -> None:
+        """index.html 变更后热重建内存缓存（前端发版零重启）。
+
+        每请求一次 stat（纳秒精度）；源文件 mtime 变化才重建，
+        重建全程持锁并做双重校验，读盘失败沿用当前缓存。
+        """
+        try:
+            mtime = index_file.stat().st_mtime_ns
+        except OSError:
+            return
+        if mtime == getattr(app.state, "index_source_mtime", None):
+            return
+        with _index_rebuild_lock:
+            try:
+                mtime = index_file.stat().st_mtime_ns
+            except OSError:
+                return
+            if mtime == getattr(app.state, "index_source_mtime", None):
+                return
+            try:
+                app.state.index_authed, app.state.index_unauth = _build_index_variants(index_file)
+                app.state.index_source_mtime = mtime
+            except (OSError, UnicodeDecodeError):
+                LOGGER.warning("index.html 热重建失败，沿用当前缓存", exc_info=True)
 
     def _serve_index(request: Request) -> HTMLResponse:
         """按登录态返回 index.html：未登录精简版（仅 login.js）or 已登录完整版。"""
         # index 引用带版本号的静态资源：本体必须 no-cache，
         # 否则浏览器启发式缓存旧 index，发版后用户拿不到新 JS。
+        _refresh_index_cache_if_stale()
         headers = {"Cache-Control": "no-cache, must-revalidate"}
         # 鉴权关闭模式（AXIOM_AUTH_DISABLED=1）直接返回已登录版，方便本地开发
         if os.environ.get("AXIOM_AUTH_DISABLED") == "1":

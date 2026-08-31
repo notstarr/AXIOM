@@ -1729,10 +1729,11 @@ def test_frontend_and_static_assets_are_served(client):
         )
         assert match is not None
         worker_asset_versions.add(match.group(1))
-    # Worker/capability assets are versioned together with the current
-    # five-stage Plan runtime bundle.  Keep this assertion tied to the
-    # manifest served by the app rather than the pre-Plan cache marker.
-    assert worker_asset_versions == {"20260828-storage-cleanup-v9"}
+    # 版本一致性断言（而非钉死字面值）：所有脚本必须共用同一个缓存版本，
+    # 且与样式表版本一致——字面值随每次发版变化，钉死只会反复误报。
+    css_match = re.search(r'/static/custom\.css\?v=([a-zA-Z0-9._-]+)', response.text)
+    assert css_match is not None
+    assert worker_asset_versions == {css_match.group(1)}
 
     asset = client.get("/static/js/v2-adapter.js")
     assert asset.status_code == 200
@@ -1801,12 +1802,12 @@ def test_frontend_and_static_assets_are_served(client):
     assert "模型执行后端" in workers.text
     assert "workerPhases" in workers.text
     assert "能力管理" in workers.text
-    assert "后端配置" in workers.text
+    assert "模型后端" in workers.text
     assert "内置 Tool" in workers.text
     assert "Skill" in workers.text
     assert "MCP Tool" in workers.text
     assert "扩展 Tool" in workers.text
-    assert "worker-capability-drawer" in workers.text
+    assert "worker-capability-row" in workers.text
     assert "全部阶段" in workers.text
     assert "saveWorkerCapabilityDraft()" in workers.text
     assert "toggleWorkerCapabilityAll(item)" in workers.text

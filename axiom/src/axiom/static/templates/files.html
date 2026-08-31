@@ -136,11 +136,15 @@
                 :class="isArtifactCenterSelected(item) ? 'selected' : ''"
               >
                 <div class="flex items-start" style="gap:11px;">
-                  <div class="shrink-0 flex items-center justify-center text-base" style="width:36px; height:36px; border-radius:11px; border:1px solid var(--sto-line); background:var(--sto-inset);" :class="artifactKindClass(item)" x-text="artifactTypeIcon(item.artifact_type)"></div>
+                  <div class="shrink-0 flex items-center justify-center text-base" style="width:36px; height:36px; border-radius:11px; border:1px solid var(--sto-line); background:var(--sto-inset);"
+                    :style="item.artifact_type === 'explore.findings' ? 'color:#059669; border-color:color-mix(in srgb, #059669 40%, var(--sto-line)); background:rgba(16,185,129,0.08);' : item.artifact_type === 'explore.leads' ? 'color:#b45309; border-color:color-mix(in srgb, #b45309 40%, var(--sto-line)); background:rgba(180,83,9,0.08);' : item.artifact_type === 'explore.evidence' ? 'color:#0071e3; border-color:color-mix(in srgb, #0071e3 40%, var(--sto-line)); background:rgba(0,113,227,0.08);' : ''"
+                    x-text="artifactTypeIcon(item.artifact_type)"></div>
                   <div style="min-width:0; flex:1;">
                     <div class="flex items-center" style="gap:7px;">
                       <span class="sto-row-name" style="font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;" x-text="artifactFileName(item)"></span>
-                      <span class="sto-badge neutral" style="padding:1px 7px; font-size:9.5px;" x-text="artifactKindLabel(item)"></span>
+                      <span class="sto-badge" style="padding:1px 7px; font-size:9.5px;"
+                        :style="item.artifact_type === 'explore.findings' ? 'color:#059669; border-color:color-mix(in srgb, #059669 40%, var(--sto-line)); background:rgba(16,185,129,0.08);' : item.artifact_type === 'explore.leads' ? 'color:#b45309; border-color:color-mix(in srgb, #b45309 40%, var(--sto-line)); background:rgba(180,83,9,0.08);' : item.artifact_type === 'explore.evidence' ? 'color:#0071e3; border-color:color-mix(in srgb, #0071e3 40%, var(--sto-line)); background:rgba(0,113,227,0.08);' : ''"
+                        x-text="artifactKindLabel(item)"></span>
                     </div>
                     <p class="sto-muted" style="margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" x-text="item.summary || '无摘要'"></p>
                   </div>
