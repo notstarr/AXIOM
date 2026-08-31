@@ -609,3 +609,181 @@
     content: ' 📦';
     font-size: 9px;
   }
+
+  /* ═══════════ 存储治理 · Ops Console（sto-*） ═══════════ */
+  .sto {
+    --sto-accent: #0071e3;
+    --sto-accent-soft: rgba(0, 113, 227, 0.10);
+    --sto-fg: #1e293b;
+    --sto-fg-2: #64748b;
+    --sto-fg-3: #94a3b8;
+    --sto-line: #e2e8f0;
+    --sto-panel: #ffffff;
+    --sto-inset: #f6f8fa;
+    --sto-ok: #059669;
+    --sto-warn: #b45309;
+    --sto-danger: #dc2626;
+    --sto-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -12px rgba(15, 23, 42, 0.12);
+  }
+  .dark .sto {
+    --sto-accent: #3b9eff;
+    --sto-accent-soft: rgba(59, 158, 255, 0.14);
+    --sto-fg: #e2e8f0;
+    --sto-fg-2: #94a3b8;
+    --sto-fg-3: #64748b;
+    --sto-line: #2d3540;
+    --sto-panel: #23282f;
+    --sto-inset: #1b2026;
+    --sto-ok: #34d399;
+    --sto-warn: #fbbf24;
+    --sto-danger: #f87171;
+    --sto-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+  }
+  .sto { color: var(--sto-fg); }
+  .sto-num {
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .sto :focus-visible { outline: 2px solid var(--sto-accent); outline-offset: 2px; border-radius: 6px; }
+
+  /* —— 面板 —— */
+  .sto-panel {
+    background: var(--sto-panel);
+    border: 1px solid var(--sto-line);
+    border-radius: 14px;
+    box-shadow: var(--sto-shadow);
+  }
+  .sto-label {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--sto-fg-3);
+  }
+
+  /* —— Hero：大数字 + 容量计 —— */
+  .sto-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: end; }
+  @media (max-width: 860px) { .sto-hero { grid-template-columns: 1fr; } }
+  .sto-big {
+    font-size: clamp(30px, 3vw, 42px); line-height: 1; font-weight: 700;
+    letter-spacing: -0.025em; color: var(--sto-fg);
+    font-variant-numeric: tabular-nums;
+  }
+  .sto-big small { font-size: 0.42em; font-weight: 600; color: var(--sto-fg-2); margin-left: 2px; letter-spacing: 0; }
+  .sto-cap { height: 10px; display: flex; gap: 2px; border-radius: 6px; overflow: hidden; background: var(--sto-inset); }
+  .sto-cap > i { display: block; height: 100%; }
+  .sto-cap > i.used { background: var(--sto-accent); transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+  .sto-cap > i.free { background: var(--sto-line); }
+  .sto-stat { display: flex; flex-direction: column; gap: 2px; min-width: 108px; }
+  .sto-stat b { font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .sto-stat.ok b { color: var(--sto-ok); }
+  .sto-stat.warn b { color: var(--sto-warn); }
+
+  /* —— 按钮 —— */
+  .sto-btn, .sto-ghost {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 600; line-height: 1;
+    padding: 8px 14px; border-radius: 9px; border: 1px solid transparent;
+    cursor: pointer; transition: background 0.2s ease, transform 0.12s ease, border-color 0.2s ease, opacity 0.2s ease;
+    user-select: none;
+  }
+  .sto-btn { background: var(--sto-accent); color: #fff; }
+  .sto-btn:hover { filter: brightness(1.08); }
+  .sto-btn:active { transform: scale(0.97); }
+  .sto-ghost { background: transparent; color: var(--sto-fg-2); border-color: var(--sto-line); }
+  .sto-ghost:hover { color: var(--sto-fg); border-color: var(--sto-fg-3); background: var(--sto-inset); }
+  .sto-ghost:active { transform: scale(0.97); }
+  .sto-btn:disabled, .sto-ghost:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+  .sto-pulse {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 600; color: var(--sto-accent);
+  }
+  .sto-pulse::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--sto-accent); animation: sto-blink 1.2s ease-in-out infinite;
+  }
+  @keyframes sto-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+  /* —— 分类：堆叠总条 + 排名列表 —— */
+  .sto-stack { display: flex; height: 12px; border-radius: 7px; overflow: hidden; gap: 2px; }
+  .sto-stack > i { display: block; height: 100%; min-width: 3px; transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+  .sto-row {
+    display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 10px; align-items: center;
+    padding: 7px 10px; margin: 0 -10px; border-radius: 9px;
+    transition: background 0.15s ease;
+  }
+  .sto-row:hover { background: var(--sto-inset); }
+  .sto-rank { font-size: 11px; font-weight: 650; color: var(--sto-fg-3); }
+  .sto-row-name { font-size: 12.5px; font-weight: 600; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .sto-row-meta { font-size: 10.5px; color: var(--sto-fg-3); margin-top: 1px; }
+  .sto-row-val { text-align: right; }
+  .sto-row-val b { font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .sto-row-val span { display: block; font-size: 10.5px; color: var(--sto-fg-3); }
+  .sto-meter { height: 3px; border-radius: 2px; background: var(--sto-inset); overflow: hidden; margin-top: 5px; }
+  .sto-meter > i { display: block; height: 100%; border-radius: 2px; transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+
+  /* —— 数据库表 —— */
+  .sto-db { width: 100%; border-collapse: collapse; }
+  .sto-db th { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--sto-fg-3); text-align: right; padding: 0 0 6px; }
+  .sto-db th:first-child { text-align: left; }
+  .sto-db td { padding: 6px 0; border-top: 1px solid var(--sto-line); font-size: 12px; vertical-align: middle; }
+  .sto-db td:first-child { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; }
+  .sto-db .r { text-align: right; font-variant-numeric: tabular-nums; color: var(--sto-fg-2); }
+
+  .sto-db td.cellbar { position: relative; }
+  .sto-db td.cellbar > i { position: absolute; left: 0; bottom: 2px; height: 2px; border-radius: 1px; background: var(--sto-accent); opacity: 0.55; }
+
+  /* —— 日志 —— */
+  .sto-chip {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 7px 11px; border-radius: 9px; background: var(--sto-inset);
+    border: 1px solid var(--sto-line);
+  }
+  .sto-chip span { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; color: var(--sto-fg-2); }
+  .sto-chip b { font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--sto-fg-2); }
+
+  /* —— 清理中心：三档 —— */
+  .sto-tiercard {
+    position: relative; background: var(--sto-inset);
+    border: 1px solid var(--sto-line); border-radius: 12px;
+    padding: 12px 14px 12px 17px; overflow: hidden;
+  }
+  .sto-tiercard::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  }
+  .sto-tiercard.t1::before { background: var(--sto-ok); }
+  .sto-tiercard.t2::before { background: var(--sto-warn); }
+  .sto-tiercard.t3::before { background: var(--sto-fg-3); }
+  .sto-tier-tag {
+    display: inline-flex; align-items: center; justify-content: center;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+    padding: 2px 7px; border-radius: 6px; border: 1px solid;
+  }
+  .sto-tier-tag.t1 { color: var(--sto-ok); border-color: color-mix(in srgb, var(--sto-ok) 45%, transparent); }
+  .sto-tier-tag.t2 { color: var(--sto-warn); border-color: color-mix(in srgb, var(--sto-warn) 45%, transparent); }
+  .sto-tier-tag.t3 { color: var(--sto-fg-3); border-color: var(--sto-line); }
+  .sto-group {
+    background: var(--sto-panel); border: 1px solid var(--sto-line); border-radius: 10px; overflow: hidden;
+  }
+  .sto-group-head {
+    display: flex; align-items: center; gap: 9px; padding: 8px 12px; cursor: pointer;
+    transition: background 0.15s ease; user-select: none;
+  }
+  .sto-group-head:hover { background: var(--sto-accent-soft); }
+  .sto-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 12px; border-top: 1px solid var(--sto-line);
+    cursor: pointer; transition: background 0.15s ease;
+  }
+  .sto-item:hover { background: var(--sto-accent-soft); }
+  .sto-item input, .sto-check { accent-color: var(--sto-accent); width: 14px; height: 14px; }
+  .sto-item .nm { font-size: 12px; color: var(--sto-fg); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sto-item .sz { font-size: 11.5px; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--sto-fg-2); }
+  .sto-lock { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 12px; border-top: 1px solid var(--sto-line); }
+  .sto-lock:first-of-type { border-top: 0; }
+  .sto-lock .nm { font-size: 12px; color: var(--sto-fg-2); }
+  .sto-lock .sz { font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--sto-fg-3); }
+  .sto-muted { font-size: 11px; color: var(--sto-fg-3); line-height: 1.55; }
+  .sto-desc { font-size: 10.5px; color: var(--sto-fg-3); line-height: 1.5; margin-top: 1px; }
+  .sto-warnline { font-size: 10.5px; color: var(--sto-danger); }
+  .sto-chevron { transition: transform 0.2s ease; color: var(--sto-fg-3); }
+  .sto-chevron.open { transform: rotate(90deg); }
