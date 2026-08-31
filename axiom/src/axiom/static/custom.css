@@ -533,6 +533,16 @@
   .node-card--goal { border: 1.5px solid #fecaca; background: #fef2f2; }
   .node-card--goal .node-card__header { background: #ffe4e6; color: #be123c; }
   .node-card--goal .node-card__body { color: #9f1239; }
+  .node-card--goal-completed { border-color: #86efac; background: #f0fdf4; }
+  .node-card--goal-completed .node-card__header { background: #dcfce7; color: #047857; }
+  .node-card--goal-completed .node-card__body { color: #166534; }
+  .node-card__status {
+    margin-left: auto;
+    flex-shrink: 0;
+    font-size: 8px;
+    font-weight: 800;
+    color: #047857;
+  }
   .node-card--goal_history { border: 1.5px dashed #d5b56a; background: #fffbeb; opacity: 0.88; }
   .node-card--goal_history .node-card__header { background: #fef3c7; color: #8a6100; }
   .node-card--goal_history .node-card__body { color: #7c5a0b; }
@@ -569,6 +579,15 @@
     color: var(--status-danger-fg);
   }
   .dark .node-card--goal .node-card__body { color: var(--status-danger-fg); }
+  .dark .node-card--goal-completed {
+    border-color: var(--status-success-border); background: var(--status-success-bg);
+  }
+  .dark .node-card--goal-completed .node-card__header {
+    background: color-mix(in srgb, var(--status-success-bg) 72%, var(--surface-card));
+    color: var(--status-success-fg);
+  }
+  .dark .node-card--goal-completed .node-card__body { color: var(--status-success-fg); }
+  .dark .node-card__status { color: var(--status-success-fg); }
   .dark .node-card--goal_history { border-color: #b9913f; background: color-mix(in srgb, #6b531f 28%, var(--surface-card)); }
   .dark .node-card--goal_history .node-card__header { background: color-mix(in srgb, #6b531f 42%, var(--surface-card)); color: #f6c85f; }
   .dark .node-card--goal_history .node-card__body { color: #ffe09a; }
@@ -931,7 +950,7 @@
   .sto-taskrow:hover { background: var(--sto-panel); color: var(--sto-fg); }
   .sto-taskrow.active { background: var(--sto-accent-soft); color: var(--sto-accent); font-weight: 600; }
   .sto-folder {
-    display: block; width: 100%; text-align: left; cursor: pointer;
+    display: block; width: 100%; min-width: 0; text-align: left; cursor: pointer;
     background: var(--sto-panel); border: 1px solid var(--sto-line); border-radius: 12px;
     padding: 14px 15px; transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
   }
@@ -940,7 +959,7 @@
   .sto-folder .fmeta { display: flex; gap: 12px; margin-top: 12px; font-size: 11px; color: var(--sto-fg-3); font-variant-numeric: tabular-nums; }
   .sto-folder .fmeta .right { margin-left: auto; }
   .sto-artcard {
-    cursor: pointer; background: var(--sto-panel); border: 1px solid var(--sto-line);
+    cursor: pointer; min-width: 0; background: var(--sto-panel); border: 1px solid var(--sto-line);
     border-radius: 12px; padding: 14px 15px; outline: none;
     transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
   }
@@ -948,6 +967,16 @@
   .sto-artcard:active { transform: scale(0.995); }
   .sto-artcard.selected { border-color: var(--sto-accent); box-shadow: 0 0 0 3px var(--sto-accent-soft), var(--sto-shadow); }
   .sto-artcard .ameta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 10px; font-size: 11px; color: var(--sto-fg-3); font-variant-numeric: tabular-nums; }
+  .sto-artcard .artname {
+    font-size: 12.5px; font-weight: 650; color: var(--sto-fg);
+    min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sto-artcard .kindbadge { flex-shrink: 0; margin-left: auto; }
+  .sto-folder .fname {
+    font-size: 12.5px; font-weight: 650; color: var(--sto-fg); font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sto-folder .fbadge { flex-shrink: 0; }
   .sto-artcard .apath { margin-top: 7px; font-size: 10px; color: var(--sto-fg-3); font-family: ui-monospace, "SF Mono", Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sto-pager { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; font-size: 12px; color: var(--sto-fg-3); }
   .sto-pager .pgbtns { display: flex; align-items: center; gap: 8px; }
