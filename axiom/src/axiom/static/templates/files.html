@@ -1,4 +1,4 @@
-<div x-show="activePage === 'files'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
+<div x-show="activePage === 'files'" x-cloak class="sto flex-1 flex flex-col overflow-hidden min-w-0">
   <header class="app-page-header bg-white/90 border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
     <div>
       <h2 class="text-base font-semibold text-slate-800">任务产物中心</h2>
@@ -6,68 +6,73 @@
     </div>
     <div class="flex-1"></div>
     <label
-      class="px-3 py-1.5 rounded-lg text-xs transition"
-      :class="artifactCenterSelectedTask ? 'bg-brand-500 text-white cursor-pointer hover:bg-brand-600' : 'bg-slate-100 text-slate-400 cursor-not-allowed'"
+      class="sto-btn"
+      :class="artifactCenterSelectedTask ? '' : 'sto-ghost'"
+      :style="artifactCenterSelectedTask ? '' : 'cursor:not-allowed;'"
       @click="if (!artifactCenterSelectedTask) { $event.preventDefault(); showToast('请先选择一个任务', 'error'); }"
     >
       上传到任务文件
       <input type="file" @change="uploadArtifactCenter($event)" class="hidden" :disabled="!artifactCenterSelectedTask">
     </label>
-    <button @click="loadArtifactCenter()" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600">刷新</button>
+    <button @click="loadArtifactCenter()" class="sto-ghost" style="padding:7px 12px;">刷新</button>
   </header>
 
   <main class="flex-1 min-h-0 flex overflow-hidden">
-    <aside class="w-64 shrink-0 border-r border-slate-200 bg-slate-50/50 p-3 overflow-y-auto">
-      <div class="text-[11px] font-semibold text-slate-500 mb-2">任务</div>
+    <!-- 任务侧栏 -->
+    <aside class="w-64 shrink-0 overflow-y-auto" style="border-right:1px solid var(--sto-line); background:var(--sto-inset); padding:12px;">
+      <p class="sto-label" style="margin-bottom:8px;">Tasks · 任务</p>
       <button
         @click="selectArtifactCenterTask('')"
-        class="w-full text-left px-3 py-2 rounded-lg text-xs mb-1"
-        :class="!artifactCenterSelectedTask ? 'bg-brand-50 text-brand-700' : 'text-slate-600 hover:bg-white'"
+        class="sto-taskrow"
+        :class="!artifactCenterSelectedTask ? 'active' : ''"
       >全部任务</button>
       <template x-for="task in (artifactCenterTasks || [])" :key="task.id">
         <button
           @click="selectArtifactCenterTask(task.id)"
-          class="w-full text-left px-3 py-2 rounded-lg text-xs mb-1 truncate"
-          :class="artifactCenterSelectedTask === task.id ? 'bg-brand-50 text-brand-700' : 'text-slate-600 hover:bg-white'"
+          class="sto-taskrow"
+          :class="artifactCenterSelectedTask === task.id ? 'active' : ''"
           x-text="task.title || task.id"
         ></button>
       </template>
     </aside>
 
-    <section class="flex-1 min-w-0 overflow-y-auto p-5">
-      <div x-show="artifactCenterSelectedTask" class="mb-4 flex items-center gap-2 text-xs">
+    <!-- 内容区 -->
+    <section class="flex-1 min-w-0 overflow-y-auto" style="padding:18px 20px;">
+      <div x-show="artifactCenterSelectedTask" class="mb-3 flex items-center flex-wrap" style="gap:10px;">
         <button
           x-show="artifactCenterFolderKey"
           @click="backArtifactCenterTask()"
-          class="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-600"
+          class="sto-ghost"
+          style="padding:7px 12px;"
         >
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
           返回任务
         </button>
-        <span class="font-medium text-slate-700" x-text="artifactCenterCurrentTask()?.title || artifactCenterSelectedTask"></span>
+        <span style="font-size:13px; font-weight:650; color:var(--sto-fg);" x-text="artifactCenterCurrentTask()?.title || artifactCenterSelectedTask"></span>
         <template x-if="artifactCenterFolderKey">
-          <div class="flex items-center gap-2 min-w-0"><span class="text-slate-300">/</span><span class="font-mono font-semibold text-brand-600 truncate" x-text="artifactCenterFolderKey === 'task' ? '任务文件' : artifactCenterFolderKey"></span></div>
+          <div class="flex items-center gap-2 min-w-0"><span style="color:var(--sto-fg-3);">/</span><span class="sto-num" style="font-weight:650; color:var(--sto-accent);" x-text="artifactCenterFolderKey === 'task' ? '任务文件' : artifactCenterFolderKey"></span></div>
         </template>
       </div>
 
-      <div class="flex flex-wrap gap-2 mb-4">
+      <div class="flex flex-wrap items-center" style="gap:8px; margin-bottom:14px;">
         <input
           x-model="artifactCenterSearch"
           @input="scheduleArtifactCenterSearch()"
-          class="h-9 flex-1 min-w-48 rounded-lg border border-slate-200 px-3 text-xs"
+          class="sto-input"
+          style="flex:1; min-width:200px; padding:8px 12px; font-size:12px;"
           :placeholder="artifactCenterMode() === 'task-root' ? '搜索 Intent ID 或描述…' : '搜索名称、摘要、Intent…'"
         >
         <template x-if="artifactCenterMode() !== 'task-root'">
-          <div class="flex flex-wrap gap-2">
-            <select x-model="artifactCenterType" @change="artifactCenterPage=0; loadArtifactCenter()" class="h-9 rounded-lg border border-slate-200 px-2 text-xs">
+          <div class="flex flex-wrap items-center" style="gap:8px;">
+            <select x-model="artifactCenterType" @change="artifactCenterPage=0; loadArtifactCenter()" class="sto-input" style="width:auto; padding:8px 10px; font-size:12px;">
               <option value="all">全部类型</option>
               <template x-for="type in artifactCenterTypes()" :key="type"><option :value="type" x-text="type"></option></template>
             </select>
-            <select x-model="artifactCenterPhase" @change="artifactCenterPage=0; loadArtifactCenter()" class="h-9 rounded-lg border border-slate-200 px-2 text-xs">
+            <select x-model="artifactCenterPhase" @change="artifactCenterPage=0; loadArtifactCenter()" class="sto-input" style="width:auto; padding:8px 10px; font-size:12px;">
               <option value="all">全部阶段</option>
               <template x-for="phase in artifactCenterPhases()" :key="phase"><option :value="phase" x-text="phase"></option></template>
             </select>
-            <select x-model="artifactCenterSource" @change="artifactCenterPage=0; loadArtifactCenter()" class="h-9 rounded-lg border border-slate-200 px-2 text-xs">
+            <select x-model="artifactCenterSource" @change="artifactCenterPage=0; loadArtifactCenter()" class="sto-input" style="width:auto; padding:8px 10px; font-size:12px;">
               <option value="all">全部来源</option>
               <option value="upload">人工上传</option>
               <option value="worker">Worker / 阶段</option>
@@ -78,42 +83,38 @@
 
       <template x-if="artifactCenterMode() === 'task-root'">
         <div>
-          <div class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
+          <div class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3" style="gap:12px;">
             <template x-for="folder in (artifactCenterFolders || [])" :key="folder.folder_key">
-              <button
-                type="button"
-                @click="openArtifactFolder(folder)"
-                class="text-left rounded-2xl border border-slate-200 bg-white p-4 hover:border-brand-300 hover:shadow-sm transition"
-              >
-                <div class="flex items-start gap-3">
-                  <div class="h-10 w-10 shrink-0 rounded-xl border flex items-center justify-center" :class="folder.folder_key === 'task' ? 'border-violet-200 bg-violet-50 text-violet-600' : 'border-brand-200 bg-brand-50 text-brand-600'">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 7V5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v2"/></svg>
+              <button type="button" @click="openArtifactFolder(folder)" class="sto-folder">
+                <div class="flex items-start" style="gap:11px;">
+                  <div class="shrink-0 flex items-center justify-center" style="width:38px; height:38px; border-radius:11px; border:1px solid var(--sto-line); background:var(--sto-inset); color:var(--sto-accent);">
+                    <svg style="width:18px; height:18px;" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 7V5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v2"/></svg>
                   </div>
-                  <div class="min-w-0 flex-1">
-                    <div class="flex items-center gap-2">
-                      <h3 class="font-mono text-sm font-semibold text-slate-800" x-text="artifactFolderLabel(folder)"></h3>
-                      <span class="px-1.5 py-0.5 rounded border border-slate-200 bg-slate-50 text-[10px] text-slate-500" x-text="artifactFolderPhase(folder)"></span>
-                      <span x-show="folder.intent_status" class="px-1.5 py-0.5 rounded border border-brand-100 bg-brand-50 text-[10px] text-brand-600" x-text="folder.intent_status"></span>
+                  <div style="min-width:0; flex:1;">
+                    <div class="flex items-center flex-wrap" style="gap:7px;">
+                      <span class="sto-row-name" x-text="artifactFolderLabel(folder)"></span>
+                      <span class="sto-badge neutral" style="padding:1px 7px; font-size:9.5px;" x-text="artifactFolderPhase(folder)"></span>
+                      <span x-show="folder.intent_status" class="sto-badge" style="padding:1px 7px; font-size:9.5px;" :class="folder.intent_status === 'completed' ? 'ok' : 'warn'" x-text="folder.intent_status"></span>
                     </div>
-                    <p class="mt-1.5 text-xs leading-5 text-slate-500 line-clamp-2" x-text="artifactFolderDescription(folder)"></p>
+                    <p class="sto-muted" style="margin-top:5px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" x-text="artifactFolderDescription(folder)"></p>
                   </div>
                 </div>
-                <div class="mt-4 flex items-center gap-3 text-[11px] text-slate-400">
+                <div class="fmeta">
                   <span x-text="`${folder.artifact_count} 个产物`"></span>
-                  <span x-text="formatBytes(folder.total_size)"></span>
-                  <span class="ml-auto" x-text="formatTime(folder.latest_created_at)"></span>
+                  <span class="sto-num" x-text="formatBytes(folder.total_size)"></span>
+                  <span class="right" x-text="formatTime(folder.latest_created_at)"></span>
                 </div>
               </button>
             </template>
-            <div x-show="!artifactCenterLoading && artifactCenterFolders.length === 0" class="col-span-full py-16 text-center text-sm text-slate-400">该任务暂无正式产物</div>
-            <div x-show="artifactCenterLoading" class="col-span-full py-16 text-center text-sm text-slate-400">加载中…</div>
+            <div x-show="!artifactCenterLoading && artifactCenterFolders.length === 0" class="sto-empty" style="grid-column:1/-1;">该任务暂无正式产物</div>
+            <div x-show="artifactCenterLoading" class="sto-empty" style="grid-column:1/-1; border-style:solid;">加载中…</div>
           </div>
-          <div class="mt-4 flex items-center justify-between text-xs text-slate-400">
-            <span x-text="`共 ${artifactCenterFolderTotal} 个文件夹`"></span>
-            <div class="flex items-center gap-2">
-              <button @click="setArtifactCenterFolderPage(artifactCenterFolderPage - 1)" :disabled="artifactCenterFolderPage <= 0" class="h-8 px-3 rounded-lg border border-slate-200 disabled:opacity-30">上一页</button>
-              <span class="tabular-nums" x-text="`${artifactCenterFolderPage + 1} / ${artifactCenterFolderPageCount()}`"></span>
-              <button @click="setArtifactCenterFolderPage(artifactCenterFolderPage + 1)" :disabled="artifactCenterFolderPage + 1 >= artifactCenterFolderPageCount()" class="h-8 px-3 rounded-lg border border-slate-200 disabled:opacity-30">下一页</button>
+          <div class="sto-pager">
+            <span class="sto-num" x-text="`共 ${artifactCenterFolderTotal} 个文件夹`"></span>
+            <div class="pgbtns">
+              <button @click="setArtifactCenterFolderPage(artifactCenterFolderPage - 1)" :disabled="artifactCenterFolderPage <= 0" class="sto-minibtn">上一页</button>
+              <span class="sto-num" x-text="`${artifactCenterFolderPage + 1} / ${artifactCenterFolderPageCount()}`"></span>
+              <button @click="setArtifactCenterFolderPage(artifactCenterFolderPage + 1)" :disabled="artifactCenterFolderPage + 1 >= artifactCenterFolderPageCount()" class="sto-minibtn">下一页</button>
             </div>
           </div>
         </div>
@@ -121,7 +122,7 @@
 
       <template x-if="artifactCenterMode() !== 'task-root'">
         <div>
-          <div class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
+          <div class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3" style="gap:12px;">
             <template x-for="item in artifactCenterFiltered()" :key="item.id">
               <article
                 role="button"
@@ -131,72 +132,70 @@
                 @click="selectArtifactCenterItem(item)"
                 @keydown.enter.prevent="selectArtifactCenterItem(item)"
                 @keydown.space.prevent="selectArtifactCenterItem(item)"
-                class="cursor-pointer rounded-2xl border bg-white p-4 hover:shadow-sm transition outline-none"
-                :class="[
-                  item.artifact_type === 'explore.findings' ? 'border-emerald-200 hover:border-emerald-400' : item.artifact_type === 'explore.leads' ? 'border-amber-200 hover:border-amber-400' : item.artifact_type === 'explore.evidence' ? 'border-blue-200 hover:border-blue-400' : 'border-slate-200 hover:border-brand-300',
-                  isArtifactCenterSelected(item) ? 'ring-2 ring-brand-300 border-brand-500 bg-brand-50/60 shadow-sm' : ''
-                ]"
+                class="sto-artcard"
+                :class="isArtifactCenterSelected(item) ? 'selected' : ''"
               >
-                <div class="flex items-start gap-3">
-                  <div class="h-9 w-9 rounded-xl flex items-center justify-center text-base border" :class="artifactKindClass(item)" x-text="artifactTypeIcon(item.artifact_type)"></div>
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2">
-                      <h3 class="text-sm font-semibold text-slate-800 truncate" x-text="artifactFileName(item)"></h3>
-                      <span class="px-1.5 py-0.5 rounded border text-[10px]" :class="artifactKindClass(item)" x-text="artifactKindLabel(item)"></span>
+                <div class="flex items-start" style="gap:11px;">
+                  <div class="shrink-0 flex items-center justify-center text-base" style="width:36px; height:36px; border-radius:11px; border:1px solid var(--sto-line); background:var(--sto-inset);" :class="artifactKindClass(item)" x-text="artifactTypeIcon(item.artifact_type)"></div>
+                  <div style="min-width:0; flex:1;">
+                    <div class="flex items-center" style="gap:7px;">
+                      <span class="sto-row-name" style="font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;" x-text="artifactFileName(item)"></span>
+                      <span class="sto-badge neutral" style="padding:1px 7px; font-size:9.5px;" x-text="artifactKindLabel(item)"></span>
                     </div>
-                    <p class="mt-1 text-xs text-slate-400 truncate" x-text="item.summary || '无摘要'"></p>
+                    <p class="sto-muted" style="margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" x-text="item.summary || '无摘要'"></p>
                   </div>
                 </div>
-                <div class="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-400">
+                <div class="ameta">
                   <span x-show="artifactCenterMode() === 'global'" x-text="item.task_title"></span>
                   <span x-text="item.phase || '阶段未知'"></span>
-                  <span x-text="formatBytes(item.size)"></span>
+                  <span class="sto-num" x-text="formatBytes(item.size)"></span>
                   <span x-text="formatTime(item.created_at)"></span>
                 </div>
-                <div class="mt-2 text-[10px] text-slate-400 font-mono truncate" x-text="artifactDisplayPath(item)"></div>
+                <div class="apath" x-text="artifactDisplayPath(item)"></div>
               </article>
             </template>
-            <div x-show="!artifactCenterLoading && artifactCenterFiltered().length === 0" class="col-span-full py-16 text-center text-sm text-slate-400">暂无匹配产物</div>
-            <div x-show="artifactCenterLoading" class="col-span-full py-16 text-center text-sm text-slate-400">加载中…</div>
+            <div x-show="!artifactCenterLoading && artifactCenterFiltered().length === 0" class="sto-empty" style="grid-column:1/-1;">暂无匹配产物</div>
+            <div x-show="artifactCenterLoading" class="sto-empty" style="grid-column:1/-1; border-style:solid;">加载中…</div>
           </div>
-          <div class="mt-4 flex items-center justify-between text-xs text-slate-400">
-            <span x-text="`共 ${artifactCenterTotal} 个产物`"></span>
-            <div class="flex items-center gap-2">
-              <button @click="setArtifactCenterPage(artifactCenterPage - 1)" :disabled="artifactCenterPage <= 0" class="h-8 px-3 rounded-lg border border-slate-200 disabled:opacity-30">上一页</button>
-              <span class="tabular-nums" x-text="`${artifactCenterPage + 1} / ${artifactCenterPageCount()}`"></span>
-              <button @click="setArtifactCenterPage(artifactCenterPage + 1)" :disabled="artifactCenterPage + 1 >= artifactCenterPageCount()" class="h-8 px-3 rounded-lg border border-slate-200 disabled:opacity-30">下一页</button>
+          <div class="sto-pager">
+            <span class="sto-num" x-text="`共 ${artifactCenterTotal} 个产物`"></span>
+            <div class="pgbtns">
+              <button @click="setArtifactCenterPage(artifactCenterPage - 1)" :disabled="artifactCenterPage <= 0" class="sto-minibtn">上一页</button>
+              <span class="sto-num" x-text="`${artifactCenterPage + 1} / ${artifactCenterPageCount()}`"></span>
+              <button @click="setArtifactCenterPage(artifactCenterPage + 1)" :disabled="artifactCenterPage + 1 >= artifactCenterPageCount()" class="sto-minibtn">下一页</button>
             </div>
           </div>
         </div>
       </template>
     </section>
 
-    <aside x-show="artifactCenterSelected" x-cloak class="w-[min(42vw,560px)] shrink-0 border-l border-slate-200 bg-white flex flex-col">
+    <!-- 预览抽屉 -->
+    <aside x-show="artifactCenterSelected" x-cloak class="sto-preview w-[min(42vw,560px)] shrink-0 flex flex-col">
       <template x-if="artifactCenterSelected">
         <div class="flex flex-col h-full">
-          <header class="p-4 border-b border-slate-100 flex items-start gap-3">
-            <div class="flex-1 min-w-0">
-              <h3 class="text-sm font-semibold text-slate-800 truncate" x-text="artifactFileName(artifactCenterSelected)"></h3>
-              <p class="text-xs text-slate-400 mt-1" x-text="artifactCenterSelected.summary || '无摘要'"></p>
+          <header class="sto-preview-head flex items-start" style="gap:10px;">
+            <div style="flex:1; min-width:0;">
+              <h3 style="font-size:13.5px; font-weight:650; color:var(--sto-fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="artifactFileName(artifactCenterSelected)"></h3>
+              <p class="sto-muted" style="margin-top:4px;" x-text="artifactCenterSelected.summary || '无摘要'"></p>
             </div>
-            <button @click="closeArtifactCenterPreview()" class="text-slate-400" aria-label="关闭预览">×</button>
+            <button @click="closeArtifactCenterPreview()" class="sto-ghost" style="padding:4px 10px;" aria-label="关闭预览">×</button>
           </header>
-          <div class="px-4 py-3 border-b border-slate-100 space-y-1 text-[11px] text-slate-500">
-            <div><span class="text-slate-400">任务：</span><span x-text="artifactCenterSelected.task_title"></span></div>
-            <div><span class="text-slate-400">来源：</span><span x-text="artifactCenterSelected.created_by"></span><span class="ml-3 text-slate-400">阶段：</span><span x-text="artifactCenterSelected.phase || '未知'"></span></div>
-            <div><span class="text-slate-400">路径：</span><span class="font-mono" x-text="artifactCenterSelected.path"></span></div>
+          <div class="sto-preview-meta">
+            <div><span class="k">任务</span><span x-text="artifactCenterSelected.task_title"></span></div>
+            <div><span class="k">来源</span><span x-text="artifactCenterSelected.created_by"></span><span class="k" style="margin-left:12px;">阶段</span><span x-text="artifactCenterSelected.phase || '未知'"></span></div>
+            <div><span class="k">路径</span><span class="sto-num" x-text="artifactCenterSelected.path"></span></div>
           </div>
-          <div class="flex-1 overflow-auto p-4">
-            <template x-if="artifactCenterSelected._previewKind === 'image'"><img :src="artifactDownloadUrl(artifactCenterSelected)" class="max-w-full rounded-lg"></template>
-            <template x-if="artifactCenterSelected._loading"><div class="py-12 text-center text-xs text-slate-400">读取中…</div></template>
-            <template x-if="artifactCenterSelected._error"><div class="rounded-lg border border-rose-100 bg-rose-50 p-3 text-xs text-rose-600" x-text="artifactCenterSelected._error"></div></template>
-            <template x-if="artifactCenterSelected._notice"><div class="rounded-lg border border-amber-100 bg-amber-50 p-3 text-xs text-amber-700" x-text="artifactCenterSelected._notice"></div></template>
-            <template x-if="artifactCenterSelected._previewKind === 'markdown' && !artifactCenterSelected._loading && !artifactCenterSelected._error && !artifactCenterSelected._notice"><div><div x-show="artifactCenterSelected._rendered" class="md-preview text-sm" x-html="artifactCenterSelected._rendered"></div><div x-show="!artifactCenterSelected._rendered" class="py-12 text-center text-xs text-slate-400">文件为空</div></div></template>
-            <template x-if="(artifactCenterSelected._previewKind === 'text' || artifactCenterSelected._previewKind === 'json') && !artifactCenterSelected._loading && !artifactCenterSelected._error && !artifactCenterSelected._notice"><div class="space-y-3"><div x-show="artifactCenterSelected._warning" class="rounded-lg border border-amber-100 bg-amber-50 p-3 text-xs text-amber-700" x-text="artifactCenterSelected._warning"></div><pre data-testid="artifact-preview-text" x-show="artifactCenterSelected._content.length > 0" class="text-xs whitespace-pre-wrap break-words font-mono text-slate-700" x-text="artifactCenterSelected._content"></pre><div x-show="artifactCenterSelected._content.length === 0" class="py-12 text-center text-xs text-slate-400">文件为空</div></div></template>
+          <div class="flex-1 overflow-auto" style="padding:16px;">
+            <template x-if="artifactCenterSelected._previewKind === 'image'"><img :src="artifactDownloadUrl(artifactCenterSelected)" style="max-width:100%; border-radius:10px; border:1px solid var(--sto-line);"></template>
+            <template x-if="artifactCenterSelected._loading"><div class="sto-empty" style="border-style:solid;">读取中…</div></template>
+            <template x-if="artifactCenterSelected._error"><div class="sto-errbox" x-text="artifactCenterSelected._error"></div></template>
+            <template x-if="artifactCenterSelected._notice"><div class="sto-errbox" style="border-color:color-mix(in srgb, var(--sto-warn) 30%, transparent); background:color-mix(in srgb, var(--sto-warn) 6%, transparent); color:var(--sto-warn);" x-text="artifactCenterSelected._notice"></div></template>
+            <template x-if="artifactCenterSelected._previewKind === 'markdown' && !artifactCenterSelected._loading && !artifactCenterSelected._error && !artifactCenterSelected._notice"><div><div x-show="artifactCenterSelected._rendered" class="md-preview text-sm" x-html="artifactCenterSelected._rendered"></div><div x-show="!artifactCenterSelected._rendered" class="sto-empty" style="border-style:solid;">文件为空</div></div></template>
+            <template x-if="(artifactCenterSelected._previewKind === 'text' || artifactCenterSelected._previewKind === 'json') && !artifactCenterSelected._loading && !artifactCenterSelected._error && !artifactCenterSelected._notice"><div class="space-y-3"><div x-show="artifactCenterSelected._warning" class="sto-errbox" style="border-color:color-mix(in srgb, var(--sto-warn) 30%, transparent); background:color-mix(in srgb, var(--sto-warn) 6%, transparent); color:var(--sto-warn);" x-text="artifactCenterSelected._warning"></div><pre data-testid="artifact-preview-text" x-show="artifactCenterSelected._content.length > 0" style="font-size:12px; white-space:pre-wrap; word-break:break-word; font-family:ui-monospace,'SF Mono',Menlo,monospace; color:var(--sto-fg); line-height:1.6;" x-text="artifactCenterSelected._content"></pre><div x-show="artifactCenterSelected._content.length === 0" class="sto-empty" style="border-style:solid;">文件为空</div></div></template>
           </div>
-          <footer class="p-3 border-t border-slate-100 flex justify-end gap-2">
-            <a :href="artifactDownloadUrl(artifactCenterSelected)" download class="px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-600">下载</a>
-            <button @click="archiveArtifactCenter(artifactCenterSelected)" class="px-3 py-1.5 rounded-lg border border-rose-100 text-xs text-rose-500">归档</button>
+          <footer class="sto-foot" style="padding:12px 16px; border-top:1px solid var(--sto-line);">
+            <a :href="artifactDownloadUrl(artifactCenterSelected)" download class="sto-ghost">下载</a>
+            <button @click="archiveArtifactCenter(artifactCenterSelected)" class="sto-minibtn danger" style="padding:7px 12px;">归档</button>
           </footer>
         </div>
       </template>

@@ -920,3 +920,38 @@
     border: 1px dashed var(--sto-line); border-radius: 10px;
     padding: 22px 0; text-align: center; font-size: 12px; color: var(--sto-fg-3);
   }
+
+  /* ═══════════ 任务产物中心（复用 sto-* 体系） ═══════════ */
+  .sto-taskrow {
+    display: block; width: 100%; text-align: left; padding: 7px 11px;
+    border-radius: 8px; font-size: 12px; color: var(--sto-fg-2);
+    transition: background 0.15s ease, color 0.15s ease; margin-bottom: 2px;
+    cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sto-taskrow:hover { background: var(--sto-panel); color: var(--sto-fg); }
+  .sto-taskrow.active { background: var(--sto-accent-soft); color: var(--sto-accent); font-weight: 600; }
+  .sto-folder {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    background: var(--sto-panel); border: 1px solid var(--sto-line); border-radius: 12px;
+    padding: 14px 15px; transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+  }
+  .sto-folder:hover { border-color: var(--sto-accent); box-shadow: var(--sto-shadow); transform: translateY(-1px); }
+  .sto-folder:active { transform: translateY(0); }
+  .sto-folder .fmeta { display: flex; gap: 12px; margin-top: 12px; font-size: 11px; color: var(--sto-fg-3); font-variant-numeric: tabular-nums; }
+  .sto-folder .fmeta .right { margin-left: auto; }
+  .sto-artcard {
+    cursor: pointer; background: var(--sto-panel); border: 1px solid var(--sto-line);
+    border-radius: 12px; padding: 14px 15px; outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+  }
+  .sto-artcard:hover { border-color: var(--sto-accent); box-shadow: var(--sto-shadow); }
+  .sto-artcard:active { transform: scale(0.995); }
+  .sto-artcard.selected { border-color: var(--sto-accent); box-shadow: 0 0 0 3px var(--sto-accent-soft), var(--sto-shadow); }
+  .sto-artcard .ameta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 10px; font-size: 11px; color: var(--sto-fg-3); font-variant-numeric: tabular-nums; }
+  .sto-artcard .apath { margin-top: 7px; font-size: 10px; color: var(--sto-fg-3); font-family: ui-monospace, "SF Mono", Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sto-pager { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; font-size: 12px; color: var(--sto-fg-3); }
+  .sto-pager .pgbtns { display: flex; align-items: center; gap: 8px; }
+  .sto-preview { background: var(--sto-panel); border-left: 1px solid var(--sto-line); }
+  .sto-preview-head { padding: 14px 16px; border-bottom: 1px solid var(--sto-line); }
+  .sto-preview-meta { padding: 9px 16px; border-bottom: 1px solid var(--sto-line); font-size: 11px; color: var(--sto-fg-2); display: flex; flex-direction: column; gap: 3px; }
+  .sto-preview-meta .k { color: var(--sto-fg-3); margin-right: 4px; }
