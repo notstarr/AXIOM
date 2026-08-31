@@ -760,6 +760,22 @@ window.AxiomModules.workerTools = {
       this.selectedWorkerPhase = phase;
     },
 
+    selectWorkerSideTab(tab) {
+      if (tab === 'backend') {
+        this.workerSide = 'backend';
+        if (!this.selectedAxiomWorker) {
+          const first = (this.axiomWorkers || [])[0];
+          if (first) this.selectAxiomWorker(first);
+        }
+        return;
+      }
+      this.workerSide = 'phase';
+      if (!this.selectedWorkerPhase) {
+        const first = (this.workerPhases || [])[0]?.phase;
+        if (first) this.openWorkerCapabilityDrawer(first);
+      }
+    },
+
     selectWorkerSidePhase(phase) {
       this.workerSide = 'phase';
       this.openWorkerCapabilityDrawer(phase);

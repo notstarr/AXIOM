@@ -12,8 +12,11 @@
   <main class="flex-1 min-h-0 grid grid-cols-[300px_minmax(0,1fr)] overflow-hidden">
     <!-- ═══ 侧栏：五阶段 + 模型后端 ═══ -->
     <aside class="overflow-y-auto" style="border-right:1px solid var(--sto-line); background:var(--sto-inset); padding:12px;">
-      <p class="sto-label" style="margin-bottom:8px;">Phases · 五阶段 Worker</p>
-      <div style="display:flex; flex-direction:column; gap:6px;">
+      <div class="sto-seg" style="width:100%; margin-bottom:12px;">
+        <button style="flex:1;" :class="workerSide === 'phase' ? 'on' : ''" @click="selectWorkerSideTab('phase')">Worker 阵容</button>
+        <button style="flex:1;" :class="workerSide === 'backend' ? 'on' : ''" @click="selectWorkerSideTab('backend')">模型后端</button>
+      </div>
+      <div x-show="workerSide === 'phase'" style="display:flex; flex-direction:column; gap:6px;">
         <template x-for="phase in (workerPhases || [])" :key="`side-phase-${phase.phase}`">
           <button type="button" @click="selectWorkerSidePhase(phase.phase)" class="sto-pcard" :class="[`sto-ph-${phase.phase}`, workerSide === 'phase' && selectedWorkerPhase === phase.phase ? 'active' : '']">
             <div class="flex items-center" style="gap:10px;">
@@ -37,12 +40,8 @@
         </template>
       </div>
 
-      <div style="border-top:1px solid var(--sto-line); margin:14px 0 10px;"></div>
-      <div class="flex items-center justify-between" style="margin-bottom:8px;">
-        <p class="sto-label">Backends · 模型后端</p>
-        <button @click="newAxiomWorker()" class="sto-minibtn acc" style="padding:2px 8px; font-size:10px;">+ 新增</button>
-      </div>
-      <div style="display:flex; flex-direction:column; gap:6px;">
+      <div x-show="workerSide === 'backend'" style="display:flex; flex-direction:column; gap:6px;">
+        <button @click="newAxiomWorker()" class="sto-btn" style="width:100%; justify-content:center; padding:7px 0; font-size:11.5px; margin-bottom:4px;">+ 新增模型后端</button>
         <template x-for="worker in (axiomWorkers || [])" :key="`side-backend-${worker.name}`">
           <button type="button" @click="selectWorkerSideBackend(worker)" class="sto-navitem" :class="workerSide === 'backend' && selectedAxiomWorker === worker.name ? 'active' : ''">
             <div class="flex items-center justify-between" style="gap:6px;">
@@ -56,7 +55,7 @@
     </aside>
 
     <!-- ═══ 右侧详情 ═══ -->
-    <section class="overflow-y-auto" style="padding:18px 20px;">
+    <section class="overflow-y-auto" style="padding:18px 20px; background:var(--sto-inset);">
 
       <!-- 阶段详情：能力分配 / 后端池 -->
       <div x-show="workerSide === 'phase' && selectedWorkerPhaseRecord()">
@@ -278,21 +277,26 @@
 
       <!-- 后端编辑 -->
       <div x-show="workerSide === 'backend' && axiomWorkerEditor">
-        <div class="sto-panel" style="padding:18px 20px; max-width:860px;">
-          <div class="sto-hero" style="align-items:start; margin-bottom:16px;">
-            <div>
-              <p class="sto-label">Model Backend · 模型后端</p>
-              <h3 style="font-size:15px; font-weight:650; margin-top:6px; color:var(--sto-fg);" x-text="axiomWorkerEditor?.persisted_name ? '编辑模型后端' : '新增模型后端'"></h3>
-              <p class="sto-muted" style="margin-top:4px;">这里只保存模型执行配置，不会修改能力绑定。</p>
+        <div class="sto-panel" style="overflow:hidden;">
+          <div style="padding:16px 20px; border-bottom:1px solid var(--sto-line); background:var(--sto-inset); display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px;">
+            <div style="min-width:0;">
+              <div class="flex items-center" style="gap:9px;">
+                <h3 style="font-size:15px; font-weight:650; color:var(--sto-fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="axiomWorkerEditor?.name || (axiomWorkerEditor?.persisted_name ? '编辑模型后端' : '新增模型后端')"></h3>
+                <span class="sto-badge neutral" x-text="axiomWorkerEditor?.persisted_name ? '已有后端' : '新建草稿'"></span>
+                <span x-show="axiomWorkerEditor?.disabled" class="sto-badge warn" style="padding:1px 8px; font-size:10px;">已停用</span>
+              </div>
+              <p class="sto-muted sto-num" style="margin-top:3px; font-size:11px;" x-text="axiomWorkerEditor?.pi_model || '未配置模型'"></p>
             </div>
             <div class="flex items-center" style="gap:8px;">
-              <button x-show="axiomWorkerEditor?.persisted_name" @click="deleteAxiomWorkerEditor()" class="sto-minibtn danger" style="padding:7px 12px;">删除</button>
+              <button @click="testAxiomWorkerEditor()" :disabled="axiomWorkerEditorTesting || !axiomWorkerEditor?.pi_base_url || !axiomWorkerEditor?.pi_model" class="sto-ghost" style="padding:8px 13px;" x-text="axiomWorkerEditorTesting ? '测试中…' : '测试连接'"></button>
+              <button x-show="axiomWorkerEditor?.persisted_name" @click="deleteAxiomWorkerEditor()" class="sto-minibtn danger" style="padding:8px 13px;">删除</button>
               <button @click="saveAxiomWorkerEditor()" :disabled="axiomWorkerEditorSaving" class="sto-btn" x-text="axiomWorkerEditorSaving ? '保存中…' : '保存配置'"></button>
             </div>
           </div>
-          <div class="sto-field" style="margin-bottom:14px;"><label>后端名称</label><input x-model="axiomWorkerEditor.name" :disabled="!!axiomWorkerEditor.persisted_name" class="sto-input" placeholder="pi-backend-main"></div>
-          <p class="sto-label" style="margin-bottom:10px;">连接</p>
-          <div class="sto-grid2" style="margin-bottom:16px;">
+          <div style="padding:18px 20px;">
+          <div class="sto-field"><label>后端名称</label><input x-model="axiomWorkerEditor.name" :disabled="!!axiomWorkerEditor.persisted_name" class="sto-input" placeholder="pi-backend-main"></div>
+          <p class="sto-label" style="margin:16px 0 10px;">连接</p>
+          <div class="sto-grid2" style="margin-bottom:4px;">
             <div class="sto-field span2"><label>Base URL</label><input x-model="axiomWorkerEditor.pi_base_url" class="sto-input mono" placeholder="https://api.example.com/v1"></div>
             <div class="sto-field span2"><label>API Key</label><input type="password" x-model="axiomWorkerEditor.pi_api_key" class="sto-input mono" :placeholder="axiomWorkerEditor.pi_api_key_masked ? `已保存：${axiomWorkerEditor.pi_api_key_masked}（留空不改）` : '输入密钥'"></div>
             <div class="sto-foot" style="justify-content:flex-start; padding:0;">
@@ -300,8 +304,8 @@
               <span x-show="axiomWorkerEditor?.test_result?.message" style="font-size:12px;" :class="axiomWorkerEditor?.test_result?.ok ? 'sto-muted' : 'sto-warnline'" :style="axiomWorkerEditor?.test_result?.ok ? 'color:var(--sto-ok);' : ''" x-text="axiomWorkerEditor?.test_result?.message || ''"></span>
             </div>
           </div>
-          <p class="sto-label" style="margin-bottom:10px;">模型</p>
-          <div class="sto-grid2" style="margin-bottom:16px;">
+          <p class="sto-label" style="margin:16px 0 10px;">模型与推理</p>
+          <div class="sto-grid2" style="margin-bottom:4px;">
             <div class="sto-field span2"><label>模型 ID</label>
               <div style="display:flex; gap:7px;">
                 <input x-model="axiomWorkerEditor.pi_model" class="sto-input" style="min-width:0; flex:1;" placeholder="输入或从下拉选择模型 ID">
@@ -321,18 +325,20 @@
                 </template>
               </div>
             </div>
-            <div class="sto-field"><label>上下文窗口</label><input x-model="axiomWorkerEditor.pi_model_context_window" class="sto-input sto-num" placeholder="200000 / 500k / 1m"></div>
-            <div class="sto-field"><label>思考强度</label><select x-model="axiomWorkerEditor.pi_thinking_level" :disabled="!axiomWorkerEditor.pi_thinking_enabled" class="sto-input"><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select></div>
-            <div class="sto-field"><label>思考模式</label><div style="display:flex; align-items:center; gap:9px; height:37px;"><button type="button" class="sto-switch" :class="axiomWorkerEditor.pi_thinking_enabled ? 'on' : ''" @click="axiomWorkerEditor.pi_thinking_enabled = !axiomWorkerEditor.pi_thinking_enabled"></button><span class="sto-muted" x-text="axiomWorkerEditor.pi_thinking_enabled ? '已开启' : '已关闭'"></span></div></div>
-          </div>
-          <p class="sto-label" style="margin-bottom:10px;">运行</p>
-          <div class="sto-grid2" style="margin-bottom:14px;">
-            <div class="sto-field"><label>最大并发</label><input type="number" min="1" x-model.number="axiomWorkerEditor.max_running" class="sto-input sto-num"></div>
-            <div class="sto-field"><label>优先级</label><input type="number" x-model.number="axiomWorkerEditor.priority" class="sto-input sto-num"></div>
-            <label class="sto-item span2" style="border:0; padding:4px 0; border-radius:0;">
+            <div class="sto-grid2" style="grid-template-columns:repeat(3, 1fr); gap:12px;">
+              <div class="sto-field"><label>上下文窗口</label><input x-model="axiomWorkerEditor.pi_model_context_window" class="sto-input sto-num" placeholder="200000 / 500k / 1m"></div>
+              <div class="sto-field"><label>最大并发</label><input type="number" min="1" x-model.number="axiomWorkerEditor.max_running" class="sto-input sto-num"></div>
+              <div class="sto-field"><label>优先级</label><input type="number" x-model.number="axiomWorkerEditor.priority" class="sto-input sto-num"></div>
+            </div>
+            <div class="sto-grid2" style="margin-top:12px;">
+              <div class="sto-field"><label>思考模式</label><div style="display:flex; align-items:center; gap:9px; height:37px;"><button type="button" class="sto-switch" :class="axiomWorkerEditor.pi_thinking_enabled ? 'on' : ''" @click="axiomWorkerEditor.pi_thinking_enabled = !axiomWorkerEditor.pi_thinking_enabled"></button><span class="sto-muted" x-text="axiomWorkerEditor.pi_thinking_enabled ? '已开启' : '已关闭'"></span></div></div>
+              <div class="sto-field"><label>思考强度</label><select x-model="axiomWorkerEditor.pi_thinking_level" :disabled="!axiomWorkerEditor.pi_thinking_enabled" class="sto-input"><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select></div>
+            </div>
+            <label class="sto-item" style="border:0; padding:10px 0 0; border-radius:0;">
               <input type="checkbox" class="sto-check" x-model="axiomWorkerEditor.disabled">
               <span class="nm">停用此模型后端</span>
             </label>
+          </div>
           </div>
         </div>
       </div>
