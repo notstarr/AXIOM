@@ -22,255 +22,236 @@
         </div>
       </aside>
       <section class="overflow-y-auto space-y-5 pr-1">
-    <section x-show="activeSettingsTab === 'config'" x-cloak class="grid grid-cols-1 xl:grid-cols-2 gap-5">
-      <div class="xl:col-span-2 rounded-2xl border border-slate-200 bg-white shadow-sm px-5 py-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h3 class="text-sm font-semibold text-slate-700">运行配置</h3>
-          <p class="mt-1 text-[11px] text-slate-400">保存后持久化；Runner 会在下一次 tick 读取新版本。降低并发只停止新领取，不强杀已运行阶段。</p>
+    <section x-show="activeSettingsTab === 'config'" x-cloak class="sto space-y-4">
+      <div class="sto-panel sto-hero" style="padding:18px 20px;">
+        <div style="min-width:0;">
+          <p class="sto-label">Runtime Config · 运行配置</p>
+          <div class="flex flex-wrap items-center" style="gap:9px; margin-top:9px;">
+            <span class="sto-badge neutral" x-text="`已保存 ${dispatchVersionLabel()}`"></span>
+            <span class="sto-badge" :class="runtimeSettingsApplied() ? 'ok' : 'warn'" x-text="runtimeSettingsApplied() ? 'Runner 已应用' : '等待 Runner 应用'"></span>
+            <span class="sto-muted" x-text="dispatcherAppliedLabel()"></span>
+          </div>
+          <p class="sto-muted" style="margin-top:9px;">保存后持久化；Runner 会在下一次 tick 读取新版本。降低并发只停止新领取，不强杀已运行阶段。</p>
         </div>
-        <div class="flex flex-wrap items-center gap-2 text-[11px]">
-          <span class="px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 text-slate-500" x-text="`已保存 ${dispatchVersionLabel()}`"></span>
-          <span class="px-2.5 py-1 rounded-lg border" :class="runtimeSettingsApplied() ? 'border-emerald-200 bg-emerald-50 text-emerald-600' : 'border-amber-200 bg-amber-50 text-amber-600'" x-text="`${runtimeSettingsApplied() ? 'Runner 已应用' : '等待 Runner 应用'} ${dispatcherAppliedLabel()}`"></span>
-        </div>
+        <button @click="saveServerSettings()" class="sto-btn">保存系统设置</button>
       </div>
 
-      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-        <h3 class="text-sm font-semibold text-slate-700">调度并发</h3>
-        <p class="mt-1 text-[11px] text-slate-400">所有限制会同时在调度计算和数据库 claim 事务中校验。</p>
-        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Runner tick（秒）</label><input type="number" min="0.1" max="60" step="0.1" x-model.number="dispatchSettings.runner_interval_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">全局活动 Run 上限</label><input type="number" min="1" x-model.number="dispatchSettings.global_max_active_runs" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">全局活动 Task 上限</label><input type="number" min="1" x-model.number="dispatchSettings.global_max_active_tasks" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">单 Task 活动 Run 上限</label><input type="number" min="1" x-model.number="dispatchSettings.per_task_max_active_runs" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">单 Task Explore 并发</label><input type="number" min="1" x-model.number="dispatchSettings.per_task_explore_concurrency" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">单 Task Reviewer 并发</label><input type="number" min="1" x-model.number="dispatchSettings.per_task_review_concurrency" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div class="grid grid-cols-2 gap-2">
-            <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Bootstrap 并发</label><div class="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-500">1（固定）</div></div>
-            <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 并发</label><div class="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-500">1（固定）</div></div>
+      <div class="sto-panel" style="padding:16px 18px;">
+        <div class="sto-cardhead">
+          <h3>调度并发</h3>
+          <p>所有限制会同时在调度计算和数据库 claim 事务中校验。</p>
+        </div>
+        <div class="sto-grid2">
+          <div class="sto-field"><label>Runner tick（秒）</label><input type="number" min="0.1" max="60" step="0.1" x-model.number="dispatchSettings.runner_interval_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>全局活动 Run 上限</label><input type="number" min="1" x-model.number="dispatchSettings.global_max_active_runs" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>全局活动 Task 上限</label><input type="number" min="1" x-model.number="dispatchSettings.global_max_active_tasks" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>单 Task 活动 Run 上限</label><input type="number" min="1" x-model.number="dispatchSettings.per_task_max_active_runs" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>单 Task Explore 并发</label><input type="number" min="1" x-model.number="dispatchSettings.per_task_explore_concurrency" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>单 Task Reviewer 并发</label><input type="number" min="1" x-model.number="dispatchSettings.per_task_review_concurrency" class="sto-input sto-num"></div>
+          <div class="sto-grid2 span2" style="gap:10px 14px;">
+            <div class="sto-field"><label>Bootstrap 并发</label><div class="sto-input" style="background:var(--sto-inset); color:var(--sto-fg-3);">1（固定）</div></div>
+            <div class="sto-field"><label>Reason 并发</label><div class="sto-input" style="background:var(--sto-inset); color:var(--sto-fg-3);">1（固定）</div></div>
           </div>
         </div>
       </div>
 
-      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-        <h3 class="text-sm font-semibold text-slate-700">阶段预算</h3>
-        <p class="mt-1 text-[11px] text-slate-400">Bootstrap、Reason、Plan 在领取时分别快照各自预算；Explore 由 Reason 逐 Intent 分配，必须落在下限与上限之间。</p>
-        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Bootstrap 执行（秒）</label><input type="number" min="60" x-model.number="dispatchSettings.bootstrap_execute_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Bootstrap 收口（秒）</label><input type="number" min="30" x-model.number="dispatchSettings.bootstrap_conclude_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 执行（秒）</label><input type="number" min="60" x-model.number="dispatchSettings.reason_execute_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 收口（秒）</label><input type="number" min="30" x-model.number="dispatchSettings.reason_conclude_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Plan 执行（秒）</label><input type="number" min="60" x-model.number="dispatchSettings.plan_execute_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Plan 收口（秒）</label><input type="number" min="30" x-model.number="dispatchSettings.plan_conclude_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reviewer 执行（秒）</label><input type="number" min="60" x-model.number="dispatchSettings.review_execute_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reviewer 收口（秒）</label><input type="number" min="30" x-model.number="dispatchSettings.review_conclude_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Explore 执行下限（秒）</label><input type="number" min="10" x-model.number="dispatchSettings.explore_execute_min_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Explore 执行上限（秒）</label><input type="number" min="10" x-model.number="dispatchSettings.explore_execute_max_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Explore 收口下限（秒）</label><input type="number" min="180" x-model.number="dispatchSettings.explore_conclude_min_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Explore 收口上限（秒）</label><input type="number" min="10" x-model.number="dispatchSettings.explore_conclude_max_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+      <div class="sto-panel" style="padding:16px 18px;">
+        <div class="sto-cardhead">
+          <h3>阶段预算</h3>
+          <p>Bootstrap、Reason、Plan 在领取时分别快照各自预算；Explore 由 Reason 逐 Intent 分配，必须落在下限与上限之间。</p>
+        </div>
+        <div class="sto-grid2">
+          <div class="sto-field"><label>Bootstrap 执行（秒）</label><input type="number" min="60" x-model.number="dispatchSettings.bootstrap_execute_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Bootstrap 收口（秒）</label><input type="number" min="30" x-model.number="dispatchSettings.bootstrap_conclude_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Reason 执行（秒）</label><input type="number" min="60" x-model.number="dispatchSettings.reason_execute_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Reason 收口（秒）</label><input type="number" min="30" x-model.number="dispatchSettings.reason_conclude_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Plan 执行（秒）</label><input type="number" min="60" x-model.number="dispatchSettings.plan_execute_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Plan 收口（秒）</label><input type="number" min="30" x-model.number="dispatchSettings.plan_conclude_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Reviewer 执行（秒）</label><input type="number" min="60" x-model.number="dispatchSettings.review_execute_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Reviewer 收口（秒）</label><input type="number" min="30" x-model.number="dispatchSettings.review_conclude_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Explore 执行下限（秒）</label><input type="number" min="10" x-model.number="dispatchSettings.explore_execute_min_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Explore 执行上限（秒）</label><input type="number" min="10" x-model.number="dispatchSettings.explore_execute_max_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Explore 收口下限（秒）</label><input type="number" min="180" x-model.number="dispatchSettings.explore_conclude_min_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Explore 收口上限（秒）</label><input type="number" min="10" x-model.number="dispatchSettings.explore_conclude_max_seconds" class="sto-input sto-num"></div>
         </div>
       </div>
 
-      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-        <h3 class="text-sm font-semibold text-slate-700">Reason 触发与派发</h3>
-        <p class="mt-1 text-[11px] text-slate-400">Todo 不限量；Explore Intent 同时受开放目标数和单轮新增上限约束。</p>
-        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">未规划 Fact 批量数</label><input type="number" min="1" max="20" x-model.number="dispatchSettings.reason_batch_size" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">开放 Explore 低水位</label><input type="number" min="0" max="20" x-model.number="dispatchSettings.reason_low_watermark" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Fact 最大等待（秒）</label><input type="number" min="10" max="3600" x-model.number="dispatchSettings.reason_max_wait_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 最短间隔（秒）</label><input type="number" min="0" max="3600" x-model.number="dispatchSettings.reason_min_interval_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">目标开放 Explore 数</label><input type="number" min="1" max="8" x-model.number="dispatchSettings.reason_target_open_intents" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">单轮最多新增 Intent</label><input type="number" min="1" max="8" x-model.number="dispatchSettings.reason_max_new_intents_per_run" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 最大排队数</label><input type="number" min="1" max="10" x-model.number="dispatchSettings.reason_queue_limit" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">Plan 最大排队数</label><input type="number" min="1" max="10" x-model.number="dispatchSettings.plan_queue_limit" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div class="md:col-span-2"><label class="text-[11px] text-slate-400 mb-1 block font-medium">Plan 连续复盘上限（无新漏洞自动收敛阈值）</label><input type="number" min="1" max="20" x-model.number="dispatchSettings.plan_max_consecutive_runs" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" placeholder="默认 5 次"></div>
+      <div class="sto-panel" style="padding:16px 18px;">
+        <div class="sto-cardhead">
+          <h3>Reason 触发与派发</h3>
+          <p>Todo 不限量；Explore Intent 同时受开放目标数和单轮新增上限约束。</p>
+        </div>
+        <div class="sto-grid2">
+          <div class="sto-field"><label>未规划 Fact 批量数</label><input type="number" min="1" max="20" x-model.number="dispatchSettings.reason_batch_size" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>开放 Explore 低水位</label><input type="number" min="0" max="20" x-model.number="dispatchSettings.reason_low_watermark" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Fact 最大等待（秒）</label><input type="number" min="10" max="3600" x-model.number="dispatchSettings.reason_max_wait_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Reason 最短间隔（秒）</label><input type="number" min="0" max="3600" x-model.number="dispatchSettings.reason_min_interval_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>目标开放 Explore 数</label><input type="number" min="1" max="8" x-model.number="dispatchSettings.reason_target_open_intents" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>单轮最多新增 Intent</label><input type="number" min="1" max="8" x-model.number="dispatchSettings.reason_max_new_intents_per_run" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Reason 最大排队数</label><input type="number" min="1" max="10" x-model.number="dispatchSettings.reason_queue_limit" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Plan 最大排队数</label><input type="number" min="1" max="10" x-model.number="dispatchSettings.plan_queue_limit" class="sto-input sto-num"></div>
+          <div class="sto-field span2"><label>Plan 连续复盘上限（无新漏洞自动收敛阈值）</label><input type="number" min="1" max="20" x-model.number="dispatchSettings.plan_max_consecutive_runs" class="sto-input sto-num" placeholder="默认 5 次"></div>
         </div>
       </div>
 
-      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5">
-        <h3 class="text-sm font-semibold text-slate-700">高级可靠性</h3>
-        <p class="mt-1 text-[11px] text-slate-400">租约至少要容纳三个心跳；重试退避上限不能小于基准值。</p>
-        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">心跳间隔（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.heartbeat_interval_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">租约超时（秒）</label><input type="number" min="20" x-model.number="dispatchSettings.lease_timeout_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">执行失败重试上限</label><input type="number" min="1" x-model.number="dispatchSettings.execution_retry_limit" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">基础设施重试上限</label><input type="number" min="1" x-model.number="dispatchSettings.infrastructure_retry_limit" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">重试基准（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.retry_base_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div><label class="text-[11px] text-slate-400 mb-1 block font-medium">重试退避上限（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.retry_max_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
-          <div class="md:col-span-2"><label class="text-[11px] text-slate-400 mb-1 block font-medium">Worker 失败冷却（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.worker_failure_cooldown_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></div>
+      <div class="sto-panel" style="padding:16px 18px;">
+        <div class="sto-cardhead">
+          <h3>高级可靠性</h3>
+          <p>租约至少要容纳三个心跳；重试退避上限不能小于基准值。</p>
+        </div>
+        <div class="sto-grid2">
+          <div class="sto-field"><label>心跳间隔（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.heartbeat_interval_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>租约超时（秒）</label><input type="number" min="20" x-model.number="dispatchSettings.lease_timeout_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>执行失败重试上限</label><input type="number" min="1" x-model.number="dispatchSettings.execution_retry_limit" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>基础设施重试上限</label><input type="number" min="1" x-model.number="dispatchSettings.infrastructure_retry_limit" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>重试基准（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.retry_base_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>重试退避上限（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.retry_max_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field span2"><label>Worker 失败冷却（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.worker_failure_cooldown_seconds" class="sto-input sto-num"></div>
         </div>
       </div>
     </section>
 
     <!-- 裁判管理 -->
-    <section x-show="activeSettingsTab === 'judge'" x-cloak x-init="loadJudgeSettings()" class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-5">
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <h3 class="text-sm font-semibold text-slate-700">裁判管理</h3>
-          <p class="text-xs text-slate-400 mt-0.5">任务开启监管后，bootstrap / explore 的工具调用会先经过白名单、硬规则和裁判模型。</p>
-        </div>
-        <span class="px-2 py-1 rounded-lg text-[11px] font-semibold border"
-          :class="judgeSettings.has_key ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-600 border-amber-100'"
-          x-text="judgeSettings.has_key ? ('Key 已配置 ' + (judgeSettings.masked_key || '')) : 'Key 未配置'"></span>
-      </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div class="space-y-1 md:col-span-2">
-          <label class="text-[11px] font-medium text-slate-500">API Base URL</label>
-          <input x-model="judgeSettings.base_url" placeholder="https://api.siliconflow.cn/v1" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-        </div>
-        <div class="space-y-1">
-          <label class="text-[11px] font-medium text-slate-500">Model</label>
-          <input x-model="judgeSettings.model" placeholder="Qwen/Qwen3.5-9B" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-        </div>
-        <div class="space-y-1">
-          <label class="text-[11px] font-medium text-slate-500">Timeout（秒）</label>
-          <input type="number" min="1" max="60" x-model.number="judgeSettings.timeout_seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-          <p class="text-[11px] text-slate-400">建议 3 秒；超时 fail-open，不阻断任务。</p>
-        </div>
-        <div class="space-y-1">
-          <label class="text-[11px] font-medium text-slate-500">API Key（留空保持不变）</label>
-          <div class="flex gap-2">
-            <input x-model="judgeKeyForm.api_key" type="password" placeholder="sk-..." class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-            <button @click="saveJudgeKey()" class="px-3 py-2 text-xs border border-slate-200 rounded-xl hover:bg-slate-50 transition">保存 Key</button>
+    <section x-show="activeSettingsTab === 'judge'" x-cloak x-init="loadJudgeSettings()" class="sto space-y-4">
+      <!-- 头部：状态 + 连接配置 -->
+      <div class="sto-panel" style="padding:18px 20px;">
+        <div class="sto-hero" style="align-items:start;">
+          <div style="min-width:0;">
+            <p class="sto-label">Judge · 裁判管理</p>
+            <div class="flex flex-wrap items-center" style="gap:9px; margin-top:9px;">
+              <span class="sto-badge" :class="judgeSettings.has_key ? 'ok' : 'warn'"
+                x-text="judgeSettings.has_key ? ('Key 已配置 ' + (judgeSettings.masked_key || '')) : 'Key 未配置'"></span>
+              <span class="sto-badge neutral" x-text="`模式 ${judgeSettings.mode || '—'}`"></span>
+            </div>
+            <p class="sto-muted" style="margin-top:9px;">任务开启监管后，bootstrap / explore 的工具调用会先经过白名单、硬规则和裁判模型。</p>
           </div>
         </div>
-        <div class="space-y-1">
-          <label class="text-[11px] font-medium text-slate-500">默认新建任务监管</label>
-          <button type="button" @click="judgeSettings.enabled_default = !judgeSettings.enabled_default" class="w-full h-10 px-3 rounded-xl border text-sm font-medium transition flex items-center justify-between"
-            :class="judgeSettings.enabled_default ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-slate-300 bg-slate-100 text-slate-500'">
-            <span>新建任务默认开启</span>
-            <span class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-white/90 border border-current/20" x-text="judgeSettings.enabled_default ? '开启' : '关闭'"></span>
-          </button>
-        </div>
-        <div class="space-y-1">
-          <label class="text-[11px] font-medium text-slate-500">模式</label>
-          <select x-model="judgeSettings.mode" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-            <option value="enforce">enforce：硬规则和模型 BLOCK 都阻断</option>
-            <option value="audit">audit：执行判断并记录，但不阻断</option>
-            <option value="off">off：关闭</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div class="space-y-1">
-          <label class="text-[11px] font-medium text-slate-500">白名单工具（每行一个）</label>
-          <textarea :value="(judgeSettings.whitelist_tools || []).join('\n')" @input="judgeSettings.whitelist_tools = normalizeJudgeList($event.target.value)" rows="6" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
-        </div>
-        <div class="space-y-1">
-          <label class="text-[11px] font-medium text-slate-500">白名单 bash 命令 verb（每行一个）</label>
-          <textarea :value="(judgeSettings.whitelist_bash_verbs || []).join('\n')" @input="judgeSettings.whitelist_bash_verbs = normalizeJudgeList($event.target.value)" rows="6" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
-        </div>
-      </div>
-
-      <div class="space-y-2">
-        <div class="flex items-center justify-between gap-3">
-          <div>
-            <label class="text-[11px] font-medium text-slate-500">裁判提示词</label>
-            <p class="text-[11px] text-slate-400 mt-0.5">用于非白名单、非硬规则工具调用的模型裁判。输出协议必须保持 ALLOW / BLOCK:&lt;原因&gt;。</p>
+        <div class="sto-grid2" style="margin-top:16px;">
+          <div class="sto-field span2"><label>API Base URL</label><input x-model="judgeSettings.base_url" placeholder="https://api.siliconflow.cn/v1" class="sto-input mono"></div>
+          <div class="sto-field"><label>Model</label><input x-model="judgeSettings.model" placeholder="Qwen/Qwen3.5-9B" class="sto-input mono"></div>
+          <div class="sto-field"><label>Timeout（秒）</label><input type="number" min="1" max="60" x-model.number="judgeSettings.timeout_seconds" class="sto-input sto-num"><p class="sto-desc">建议 3 秒；超时 fail-open，不阻断任务。</p></div>
+          <div class="sto-field span2"><label>API Key（留空保持不变）</label>
+            <div style="display:flex; gap:8px;">
+              <input x-model="judgeKeyForm.api_key" type="password" placeholder="sk-..." class="sto-input mono" style="flex:1;">
+              <button @click="saveJudgeKey()" class="sto-ghost" style="flex-shrink:0;">保存 Key</button>
+            </div>
           </div>
-          <button type="button" @click="resetJudgePrompt()" class="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 transition">恢复默认提示词</button>
+          <div class="sto-field"><label>模式</label>
+            <select x-model="judgeSettings.mode" class="sto-input">
+              <option value="enforce">enforce：硬规则和模型 BLOCK 都阻断</option>
+              <option value="audit">audit：执行判断并记录，但不阻断</option>
+              <option value="off">off：关闭</option>
+            </select>
+          </div>
+          <div class="sto-field"><label>默认新建任务监管</label>
+            <div style="display:flex; align-items:center; gap:10px; height:37px;">
+              <button type="button" class="sto-switch" :class="judgeSettings.enabled_default ? 'on' : ''" @click="judgeSettings.enabled_default = !judgeSettings.enabled_default" :aria-label="judgeSettings.enabled_default ? '关闭默认监管' : '开启默认监管'"></button>
+              <span class="sto-muted" x-text="judgeSettings.enabled_default ? '新建任务默认开启监管' : '新建任务默认不开启'"></span>
+            </div>
+          </div>
         </div>
-        <textarea x-model="judgeSettings.system_prompt" rows="16" maxlength="20000" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono leading-5 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
-        <div class="flex justify-between text-[11px] text-slate-400">
+      </div>
+
+      <!-- 白名单 -->
+      <div class="sto-panel" style="padding:16px 18px;">
+        <div class="sto-cardhead">
+          <h3>白名单</h3>
+          <p>命中白名单的工具调用与 bash 命令直接放行，不进入裁判模型。</p>
+        </div>
+        <div class="sto-grid2">
+          <div class="sto-field"><label>白名单工具（每行一个）</label><textarea :value="(judgeSettings.whitelist_tools || []).join('\n')" @input="judgeSettings.whitelist_tools = normalizeJudgeList($event.target.value)" rows="7" class="sto-input"></textarea></div>
+          <div class="sto-field"><label>白名单 bash 命令 verb（每行一个）</label><textarea :value="(judgeSettings.whitelist_bash_verbs || []).join('\n')" @input="judgeSettings.whitelist_bash_verbs = normalizeJudgeList($event.target.value)" rows="7" class="sto-input"></textarea></div>
+        </div>
+      </div>
+
+      <!-- 裁判提示词 -->
+      <div class="sto-panel" style="padding:16px 18px;">
+        <div class="sto-cardhead">
+          <div class="flex items-center justify-between" style="gap:10px;">
+            <div>
+              <h3>裁判提示词</h3>
+              <p>用于非白名单、非硬规则工具调用的模型裁判。输出协议必须保持 ALLOW / BLOCK:&lt;原因&gt;。</p>
+            </div>
+            <button type="button" @click="resetJudgePrompt()" class="sto-ghost" style="flex-shrink:0;">恢复默认提示词</button>
+          </div>
+        </div>
+        <textarea x-model="judgeSettings.system_prompt" rows="14" maxlength="20000" class="sto-input"></textarea>
+        <div class="flex justify-between sto-muted" style="margin-top:7px;">
           <span>保存后立即影响后续裁判模型判断，不影响白名单和硬规则。</span>
-          <span x-text="`${(judgeSettings.system_prompt || '').length}/20000`"></span>
+          <span class="sto-num" x-text="`${(judgeSettings.system_prompt || '').length}/20000`"></span>
         </div>
       </div>
 
-      <div class="space-y-2 rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
-        <div class="flex items-center justify-between gap-3">
-          <div>
-            <label class="text-[11px] font-medium text-slate-500">硬规则 BLOCK（每行：原因 + Tab + 正则）</label>
-            <p class="text-[11px] text-slate-400 mt-0.5">命中后直接阻断，不进入裁判模型；行首加 # 可临时禁用该规则。</p>
+      <!-- 硬规则 -->
+      <div class="sto-panel inset" style="padding:16px 18px;">
+        <div class="sto-cardhead">
+          <div class="flex items-center justify-between" style="gap:10px;">
+            <div>
+              <h3>硬规则 BLOCK</h3>
+              <p>每行：原因 + Tab + 正则。命中后直接阻断，不进入裁判模型；行首加 # 可临时禁用该规则。</p>
+            </div>
+            <button type="button" @click="resetJudgeHardRules()" class="sto-ghost" style="flex-shrink:0;">恢复默认硬规则</button>
           </div>
-          <button type="button" @click="resetJudgeHardRules()" class="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-500 hover:bg-white transition">恢复默认硬规则</button>
         </div>
-        <textarea :value="hardRulesText()" @input="parseHardRulesText($event.target.value)" rows="10" spellcheck="false" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono leading-5 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
-        <div class="flex justify-between text-[11px] text-slate-400">
+        <textarea :value="hardRulesText()" @input="parseHardRulesText($event.target.value)" rows="9" spellcheck="false" class="sto-input" style="background:var(--sto-panel);"></textarea>
+        <div class="flex justify-between sto-muted" style="margin-top:7px;">
           <span>建议只放确定性强的规则；正则保存前会由后端校验。</span>
-          <span x-text="`${(judgeSettings.hard_block_rules || []).filter(r => r.enabled !== false).length}/${(judgeSettings.hard_block_rules || []).length} 启用`"></span>
+          <span class="sto-num" x-text="`${(judgeSettings.hard_block_rules || []).filter(r => r.enabled !== false).length}/${(judgeSettings.hard_block_rules || []).length} 启用`"></span>
         </div>
       </div>
 
-      <div class="flex items-center justify-between gap-3">
-        <div class="text-xs" x-show="judgeTestResult" :class="judgeTestResult && judgeTestResult.ok ? 'text-emerald-600' : 'text-rose-600'">
+      <div class="sto-foot">
+        <div class="msg" x-show="judgeTestResult" :class="judgeTestResult && judgeTestResult.ok ? 'ok' : 'err'">
           <span x-text="judgeTestResult ? (judgeTestResult.message + (judgeTestResult.latency_ms ? ' · ' + judgeTestResult.latency_ms + 'ms' : '')) : ''"></span>
         </div>
-        <div class="flex gap-2 ml-auto">
-          <button @click="testJudgeSettings()" :disabled="judgeTesting" class="px-4 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition disabled:opacity-40" x-text="judgeTesting ? '测试中...' : '测试裁判'"></button>
-          <button @click="saveJudgeSettings()" class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition">保存裁判配置</button>
-        </div>
+        <button @click="testJudgeSettings()" :disabled="judgeTesting" class="sto-ghost" x-text="judgeTesting ? '测试中...' : '测试裁判'"></button>
+        <button @click="saveJudgeSettings()" class="sto-btn">保存裁判配置</button>
       </div>
     </section>
 
     <!-- 钉钉告警设置 -->
-    <section x-show="activeSettingsTab === 'dingtalk'" x-cloak class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-5">
-      <div class="flex items-center justify-between">
-        <div>
-          <h3 class="text-sm font-semibold text-slate-700">钉钉告警与指令交互</h3>
-          <p class="mt-1 text-[11px] text-slate-400">配置钉钉自定义机器人 Webhook 与加签 Secret。漏洞发现时将实时推送初报，评审完毕时推送裁决理由；支持在钉钉群发送 /help 进行状态查询与启停控制。</p>
+    <section x-show="activeSettingsTab === 'dingtalk'" x-cloak class="sto space-y-4">
+      <!-- 头部：开关 + 状态 -->
+      <div class="sto-panel" style="padding:18px 20px;">
+        <div class="sto-hero" style="align-items:start;">
+          <div style="min-width:0;">
+            <p class="sto-label">DingTalk · 钉钉告警与指令交互</p>
+            <div class="flex items-center" style="gap:12px; margin-top:10px;">
+              <button type="button" class="sto-switch" :class="dispatchSettings.dingtalk_enabled ? 'on' : ''" @click="dispatchSettings.dingtalk_enabled = !dispatchSettings.dingtalk_enabled" :aria-label="dispatchSettings.dingtalk_enabled ? '关闭钉钉通知' : '开启钉钉通知'"></button>
+              <strong style="font-size:13px; font-weight:650;" x-text="dispatchSettings.dingtalk_enabled ? '已开启通知与群指令' : '已关闭通知与群指令'"></strong>
+              <span class="sto-badge" :class="dispatchSettings.dingtalk_enabled ? 'ok' : 'neutral'" x-text="dispatchSettings.dingtalk_enabled ? '运行中' : '停用'"></span>
+            </div>
+            <p class="sto-muted" style="margin-top:9px;">开启后，探针上报和评审漏洞将实时推送到钉钉群，并响应群内指令。</p>
+          </div>
+        </div>
+        <div class="sto-grid2" style="margin-top:16px;">
+          <div class="sto-field span2"><label>Webhook URL</label><input type="text" x-model="dispatchSettings.dingtalk_webhook_url" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." class="sto-input mono"></div>
+          <div class="sto-field span2"><label>加签 Secret（可选）</label><input type="password" x-model="dispatchSettings.dingtalk_secret" placeholder="SEC..." class="sto-input mono"></div>
         </div>
       </div>
 
-      <div class="space-y-4">
-        <!-- 卡片式开关 -->
-        <div class="rounded-xl border p-4 transition flex items-center justify-between"
-          :class="dispatchSettings.dingtalk_enabled ? 'border-brand-200 bg-brand-50/40' : 'border-slate-200 bg-slate-50/50'">
-          <div>
-            <div class="flex items-center gap-2">
-              <span class="inline-block w-2.5 h-2.5 rounded-full" :class="dispatchSettings.dingtalk_enabled ? 'bg-emerald-500' : 'bg-slate-300'"></span>
-              <strong class="text-sm font-semibold text-slate-800" x-text="dispatchSettings.dingtalk_enabled ? '已开启钉钉通知与群指令' : '已关闭钉钉通知与群指令'"></strong>
-            </div>
-            <p class="mt-1 text-xs text-slate-500">开启后，探针上报和评审漏洞将实时推送到钉钉群，并响应群内指令。</p>
+      <!-- Stream 模式 -->
+      <div class="sto-panel inset" style="padding:16px 18px;">
+        <div class="sto-cardhead">
+          <div class="flex items-center" style="gap:10px;">
+            <span class="sto-badge" :class="dingtalkStreamReady ? 'ok' : 'neutral'" x-text="dingtalkStreamReady ? 'Stream 已配置' : 'Stream 未配置'"></span>
+            <h3>Stream 模式群指令交互（可选）</h3>
           </div>
-          <button type="button" @click="dispatchSettings.dingtalk_enabled = !dispatchSettings.dingtalk_enabled"
-            class="px-4 py-1.5 text-xs font-semibold rounded-lg transition shadow-sm"
-            :class="dispatchSettings.dingtalk_enabled ? 'bg-rose-50 border border-rose-200 text-rose-600 hover:bg-rose-100' : 'bg-brand-500 text-white hover:bg-brand-600'">
-            <span x-text="dispatchSettings.dingtalk_enabled ? '关闭通知' : '立即开启'"></span>
-          </button>
+          <p>填写钉钉开放平台「企业内部应用」的 AppKey/AppSecret 后，即可在群里发 <code>/help</code>、<code>/status 172</code>、<code>/pause 172</code> 等指令由 AXIOM 响应（无需公网回调地址）。</p>
         </div>
-
-        <div>
-          <label class="text-[11px] text-slate-400 mb-1 block font-medium">Webhook URL</label>
-          <input type="text" x-model="dispatchSettings.dingtalk_webhook_url" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+        <div class="sto-grid2">
+          <div class="sto-field"><label>AppKey</label><input type="text" x-model="dispatchSettings.dingtalk_app_key" placeholder="ding..." class="sto-input mono"></div>
+          <div class="sto-field"><label>AppSecret</label><input type="password" x-model="dispatchSettings.dingtalk_app_secret" placeholder="..." class="sto-input mono"></div>
         </div>
-
-        <div>
-          <label class="text-[11px] text-slate-400 mb-1 block font-medium">加签 Secret（可选）</label>
-          <input type="password" x-model="dispatchSettings.dingtalk_secret" placeholder="SEC..." class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-        </div>
-
-        <div class="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-3">
-          <div>
-            <div class="flex items-center gap-2">
-              <span class="inline-block w-2 h-2 rounded-full" :class="dingtalkStreamReady ? 'bg-emerald-500' : 'bg-slate-300'"></span>
-              <strong class="text-sm font-semibold text-slate-700">Stream 模式群指令交互（可选）</strong>
-            </div>
-            <p class="mt-1 text-xs text-slate-500">填写钉钉开放平台「企业内部应用」的 AppKey/AppSecret 后，即可在群里发 <code class="text-[11px] font-mono bg-slate-100 px-1 py-0.5 rounded">/help</code>、<code class="text-[11px] font-mono bg-slate-100 px-1 py-0.5 rounded">/status 172</code>、<code class="text-[11px] font-mono bg-slate-100 px-1 py-0.5 rounded">/pause 172</code> 等指令由 AXIOM 响应（无需公网回调地址）。</p>
-          </div>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label class="text-[11px] text-slate-400 mb-1 block font-medium">AppKey</label>
-              <input type="text" x-model="dispatchSettings.dingtalk_app_key" placeholder="ding..." class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-            </div>
-            <div>
-              <label class="text-[11px] text-slate-400 mb-1 block font-medium">AppSecret</label>
-              <input type="password" x-model="dispatchSettings.dingtalk_app_secret" placeholder="..." class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-            </div>
-          </div>
-          <p class="text-[11px] text-slate-400" x-show="dingtalkStreamReady">✅ Stream 机器人已配置，保存并重启服务后自动生效。</p>
-        </div>
+        <p class="sto-muted" style="margin-top:10px;" x-show="dingtalkStreamReady">Stream 机器人已配置，保存并重启服务后自动生效。</p>
       </div>
 
-      <div class="flex items-center justify-between gap-3 pt-2">
-        <div class="text-xs" x-show="dingtalkTestResult" :class="dingtalkTestResult && dingtalkTestResult.ok ? 'text-emerald-600' : 'text-rose-600'">
+      <div class="sto-foot">
+        <div class="msg" x-show="dingtalkTestResult" :class="dingtalkTestResult && dingtalkTestResult.ok ? 'ok' : 'err'">
           <span x-text="dingtalkTestResult ? dingtalkTestResult.message : ''"></span>
         </div>
-        <div class="flex gap-2 ml-auto">
-          <button @click="testDingTalkSettings()" :disabled="dingtalkTesting" class="px-4 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition disabled:opacity-40" x-text="dingtalkTesting ? '发送中...' : '发送测试通知'"></button>
-          <button @click="saveServerSettings()" class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition">保存钉钉配置</button>
-        </div>
+        <button @click="testDingTalkSettings()" :disabled="dingtalkTesting" class="sto-ghost" x-text="dingtalkTesting ? '发送中...' : '发送测试通知'"></button>
+        <button @click="saveServerSettings()" class="sto-btn">保存钉钉配置</button>
       </div>
     </section>
 
@@ -530,9 +511,6 @@
       </div>
     </section>
 
-    <div x-show="activeSettingsTab === 'config'" x-cloak class="flex justify-end">
-      <button @click="saveServerSettings()" class="px-5 py-2.5 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200">保存系统设置</button>
-    </div>
       </section>
     </div>
   </main>
