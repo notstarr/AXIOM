@@ -18,18 +18,12 @@
         <p class="sto-muted" style="text-align:center; padding:36px 0;">暂无 Skill</p>
       </template>
       <template x-for="sk in (skills || [])" :key="sk.name">
-        <button type="button" @click="selectSkill(sk)" class="sto-listbtn" :class="skillEditor.name === sk.name ? 'active' : ''">
-          <div class="flex items-center w-full" style="gap:6px;">
+        <button type="button" @click="selectSkill(sk)" class="sto-navitem" :class="skillEditor.name === sk.name ? 'active' : ''">
+          <div class="flex items-center justify-between" style="gap:6px;">
             <span style="font-size:12.5px; font-weight:650; color:var(--sto-fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="sk.name"></span>
-            <span x-show="sk.builtin" class="sto-badge" style="padding:0 6px; font-size:8.5px; flex-shrink:0;">内置</span>
+            <span class="sto-status" :class="sk.enabled ? 'ok' : 'off'" :title="sk.enabled ? '启用' : '禁用'"><i></i></span>
           </div>
           <p class="sto-muted" style="margin-top:3px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" x-text="sk.description || ''"></p>
-          <div class="flex items-center flex-wrap" style="gap:5px; margin-top:6px;">
-            <span class="sto-badge" style="padding:0 6px; font-size:8.5px;" :class="sk.enabled ? 'ok' : 'neutral'" x-text="sk.enabled ? '启用' : '禁用'"></span>
-            <span x-show="sk.sync_status === 'bundled_update_available'" class="sto-badge warn" style="padding:0 6px; font-size:8.5px;">有内置更新</span>
-            <span x-show="sk.sync_status === 'custom'" class="sto-badge neutral" style="padding:0 6px; font-size:8.5px;">定制版</span>
-            <span class="sto-muted" style="font-size:8.5px;" x-text="capabilityPhaseSummary(skillCapabilityRecord(sk))"></span>
-          </div>
         </button>
       </template>
     </aside>

@@ -990,3 +990,47 @@
     font-size: 9.5px; padding: 2px 7px; border-radius: 6px;
     background: var(--sto-inset); border: 1px solid var(--sto-line); color: var(--sto-fg-2);
   }
+
+  /* ═══════════ 二轮精修：导航左轨 + 阶段色点 + 画布层次 ═══════════ */
+  /* 页面画布：面板浮在 inset 底色上，建立层次 */
+  .sto-canvas { background: var(--sto-inset); }
+
+  /* 主列表项：左轨选中态（3px 品牌色竖轨 + 白底浮起） */
+  .sto-navitem {
+    position: relative; display: block; width: 100%; text-align: left; cursor: pointer;
+    background: transparent; border: 1px solid transparent; border-radius: 10px;
+    padding: 10px 12px; transition: background 0.15s ease, box-shadow 0.2s ease, border-color 0.15s ease;
+  }
+  .sto-navitem:hover { background: var(--sto-panel); }
+  .sto-navitem.active {
+    background: var(--sto-panel); border-color: var(--sto-line);
+    box-shadow: var(--sto-shadow);
+  }
+  .sto-navitem.active::before {
+    content: ""; position: absolute; left: -1px; top: 10px; bottom: 10px; width: 3px;
+    border-radius: 2px; background: var(--sto-accent);
+  }
+
+  /* 阶段色点：5 个点表示阶段覆盖，比文字 chip 好扫读 */
+  .sto-dots { display: inline-flex; gap: 4px; align-items: center; }
+  .sto-dots > i {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--sto-accent); display: inline-block;
+  }
+  .sto-dots > i.off { background: var(--sto-line); }
+  .sto-dots > i.warn { background: var(--sto-warn); }
+
+  /* 无边框统计（卡片内使用，避免盒子套盒子） */
+  .sto-statflat { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; }
+  .sto-statflat > div { text-align: center; padding: 2px 4px; }
+  .sto-statflat > div + div { border-left: 1px solid var(--sto-line); }
+  .sto-statflat .k { font-size: 9.5px; color: var(--sto-fg-3); }
+  .sto-statflat b { display: block; margin-top: 2px; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--sto-fg); }
+
+  /* 状态点 + 文本（替代状态徽章） */
+  .sto-status { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--sto-fg-2); }
+  .sto-status > i { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .sto-status.ok > i { background: var(--sto-ok); }
+  .sto-status.warn > i { background: var(--sto-warn); }
+  .sto-status.err > i { background: var(--sto-danger); }
+  .sto-status.off > i { background: var(--sto-fg-3); }
