@@ -199,14 +199,18 @@ class StorageAdminService:
 
     def _compute_full_overview(self) -> StorageOverview:
         """全量盘点。contexts/ 含数百万小文件，逐文件 stat 需 4 分钟级——
-        该分类复用清理计划快照的增量缓存（bytes+items），其余目录照常遍历。"""
+        该分类优先复用清理计划快照（bytes+items）；快照尚未迁移到新格式时
+        沿用上一次概览数值，绝不现场全量遍历（迁移由清理计划后台重算完成）。"""
         snapshot = self._cleanup_snapshot()
         context_sizes = snapshot.get("context_sizes") or {}
-        # 缓存齐全（全部任务都是带 items 的 dict）才走快照，否则现场统计一次
         contexts_cached = (
             bool(context_sizes)
             and all(isinstance(v, dict) and v.get("items") is not None for v in context_sizes.values())
         )
+        prev_categories = {
+            item.get("key"): item
+            for item in (self._read_snapshot() or {}).get("categories", [])
+        }
 
         categories: list[StorageCategory] = []
         total_bytes = 0
@@ -217,6 +221,10 @@ class StorageAdminService:
             if rel == "contexts" and contexts_cached:
                 size_bytes = sum(int(v["bytes"]) for v in context_sizes.values())
                 items = sum(int(v.get("items", 0)) for v in context_sizes.values())
+            elif rel == "contexts" and "contexts" in prev_categories:
+                prev = prev_categories["contexts"]
+                size_bytes = int(prev.get("bytes", 0))
+                items = int(prev.get("items", 0))
             else:
                 size_bytes, items = _tree_stats(path)
             total_bytes += size_bytes
