@@ -73,7 +73,7 @@ class RuntimeConfig(BaseModel):
     # persisted values of 0 are normalized by the pre-validator below.
     reason_queue_limit: int = Field(default=3, ge=1, le=10)
     plan_queue_limit: int = Field(default=3, ge=1, le=10)
-    plan_max_consecutive_runs: int = Field(default=5, ge=1, le=20)
+    plan_max_consecutive_runs: int = Field(default=3, ge=1, le=20)
     explore_execute_min_seconds: int = Field(default=300, ge=10, le=86_400)
     explore_execute_max_seconds: int = Field(default=3_600, ge=10, le=86_400)
     explore_conclude_min_seconds: int = Field(default=180, ge=180, le=7_200)

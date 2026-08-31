@@ -5,7 +5,7 @@ import logging
 
 from datetime import timedelta
 
-from sqlalchemy import Engine, select, update
+from sqlalchemy import Engine, update
 
 from axiom.modules.artifacts.repository import ArtifactRepository
 from axiom.modules.audit.schemas import RecordAuditEvent
@@ -305,7 +305,7 @@ class ExecutionService:
                 f"当前 Goal Cycle 的人工续跑原因：{goal_cycle.continuation_reason or '未说明'}。"
                 f"本轮重点：{goal_cycle.focus or '全面复盘'}。"
                 "该人工说明是有效的规划依据，可以结合已有 findings/leads 恢复仍有材料性工作的终态 Todo，"
-                "即使本轮没有新 Fact；但它不是 Fact，不能伪造为 Todo source、Intent from_fact 或 Goal evidence。"
+                "即使本轮没有新 Fact；但它不是 Fact，不能伪造为 Todo source 或 Intent from_fact。"
                 "请依据当前 Goal 和原始 Fact、Todo、Intent、Artifact、漏洞独立判断，不要寻找或继承历史 Goal Evaluation。"
             )
         if run.trigger == "manual":
@@ -328,7 +328,7 @@ class ExecutionService:
                 f"{payload.get('hint_content') or '未提供内容'}。"
                 "请优先围绕这条提示复盘现有 Fact、Todo、Intent、Artifact、漏洞和开放 Explore，"
                 "据此调整规划；Hint 是人工规划依据而不是已验证 Fact，不得伪造为 Todo source、"
-                "Intent from_fact 或 Goal evidence。"
+                "Intent from_fact。"
                 f"触发快照：新 Fact {payload.get('unplanned_fact_count', 0)} 个，"
                 f"开放 Explore {payload.get('open_explore_count', 0)} 个，"
                 f"失败/取消 Explore {len(payload.get('failed_intent_ids') or [])} 个，"
@@ -363,7 +363,7 @@ class ExecutionService:
                 "请先逐项读取这些 Intent 的 findings、leads、输出 Fact 和执行结果，"
                 "对每个 Intent 只调用一次 `axiom reason intent assess`，状态只能是 partial、blocked 或 completed，"
                 "并写明具体理由；若仍需继续测试，保留原评估并创建关联相关 Fact 的新 Intent。"
-                "评估本身不消费 Fact，仍需通过 Todo source、后续 Intent from_fact 或 Goal evidence 引用新 Fact。"
+                "评估本身不消费 Fact，仍需通过 Todo source 或后续 Intent from_fact 处理新 Fact。"
             )
         if goal_cycle_guidance:
             trigger_summary += goal_cycle_guidance

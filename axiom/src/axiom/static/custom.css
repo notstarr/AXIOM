@@ -1135,6 +1135,7 @@
   .sto-eventrow .ereason { margin-top: 6px; font-size: 11.5px; line-height: 1.5; }
   .sto-eventrow.block .ereason { color: var(--sto-danger); }
   .sto-eventrow.allow .ereason { color: var(--sto-fg-2); }
+
   /* ═══════════ 漏洞管理（严重度色彩体系） ═══════════ */
   .sto-sev-critical { --sev: #dc2626; --sev-soft: rgba(220, 38, 38, 0.10); }
   .sto-sev-high     { --sev: #ea580c; --sev-soft: rgba(234, 88, 12, 0.10); }

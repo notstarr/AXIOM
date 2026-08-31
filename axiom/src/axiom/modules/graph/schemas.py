@@ -67,6 +67,15 @@ class TaskGraph(BaseModel):
     facts: list[Fact]
     intents: list[Intent]
     current_goal_cycle_id: str | None = None
+    # Goal completion is a Reason decision, not a Fact relationship.  Keep
+    # these fields on the graph payload so the UI can render the decision on
+    # the Goal node without inventing a synthetic Fact -> Goal edge.
+    goal_status: Literal["active", "completed"] = "active"
+    goal_completed_at: str | None = None
+    goal_completion_reason: str = ""
+    goal_completion_evaluator: str = ""
+    goal_completion_evaluation_id: str | None = None
+    goal_completion_reason_run_id: str | None = None
     goal_from_fact_ids: list[str] = Field(default_factory=list)
     goal_history: list["GoalHistory"] = Field(default_factory=list)
 
@@ -76,6 +85,10 @@ class GoalHistory(BaseModel):
     sequence: int
     goal: str
     completed_at: str | None = None
+    completion_reason: str = ""
+    completion_evaluator: str = ""
+    completion_evaluation_id: str | None = None
+    completion_reason_run_id: str | None = None
     evidence_fact_ids: list[str] = Field(default_factory=list)
 
 

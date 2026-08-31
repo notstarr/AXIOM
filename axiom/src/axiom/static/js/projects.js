@@ -632,6 +632,12 @@ window.AxiomModules.projects = {
       if (name === 'graph') {
         next.facts = section.data?.facts || [];
         next.intents = (section.data?.intents || []).map(intent => intent?.from ? intent : intent);
+        next.goal_status = section.data?.goal_status || 'active';
+        next.goal_completed_at = section.data?.goal_completed_at || null;
+        next.goal_completion_reason = section.data?.goal_completion_reason || '';
+        next.goal_completion_evaluator = section.data?.goal_completion_evaluator || '';
+        next.goal_completion_evaluation_id = section.data?.goal_completion_evaluation_id || null;
+        next.goal_completion_reason_run_id = section.data?.goal_completion_reason_run_id || null;
         next.goal_from_fact_ids = section.data?.goal_from_fact_ids || [];
         next.goal_history = section.data?.goal_history || [];
         next.project = { ...next.project, fact_count: next.facts.length, intent_count: next.intents.length };

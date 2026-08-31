@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from typing import ClassVar, Literal
+from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class GoalAssessment(BaseModel):
-    require_evidence_when_achieved: ClassVar[bool] = True
-
     achieved: bool = False
     reason: str
     evidence_refs: list[str] = Field(default_factory=list, max_length=100)
@@ -25,12 +23,6 @@ class GoalAssessment(BaseModel):
     def normalize_refs(cls, values: list[str]) -> list[str]:
         return list(dict.fromkeys(value.strip() for value in values if value.strip()))
 
-    @model_validator(mode="after")
-    def achieved_requires_evidence(self) -> "GoalAssessment":
-        if self.require_evidence_when_achieved and self.achieved and not self.evidence_refs:
-            raise ValueError("An achieved Goal requires evidence refs")
-        return self
-
 
 class AssessGoal(GoalAssessment):
     evaluator: str = "human"
@@ -45,11 +37,6 @@ class AssessGoal(GoalAssessment):
 
 
 class GoalEvaluation(GoalAssessment):
-    # Legacy completed Tasks truthfully record that their old runtime did not
-    # persist evidence.  New input models remain strict; only the historical
-    # read model permits an empty evidence list.
-    require_evidence_when_achieved: ClassVar[bool] = False
-
     id: str
     task_id: str
     goal_cycle_id: str | None = None

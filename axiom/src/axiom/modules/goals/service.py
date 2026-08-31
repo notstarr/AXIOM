@@ -8,6 +8,7 @@ from axiom.modules.goals.schemas import AssessGoal, GoalCycle, GoalEvaluation
 from axiom.modules.graph.tables import facts, intents
 from axiom.modules.reason.repository import ReasonRepository
 from axiom.modules.reason.tables import reason_runs
+from axiom.modules.plan.repository import PlanRepository
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.modules.todos.tables import todos
@@ -133,6 +134,21 @@ class GoalService:
             now=now,
             exclude_workspace_id=exclude_workspace_id,
         )
+        # Plan is an independent planning runtime.  Completing the Goal must
+        # invalidate its queued/leased runs as well, otherwise a manual Goal
+        # decision could leave a Plan Worker running after the Task is done.
+        PlanRepository.cancel_open_for_task(
+            conn,
+            task_id,
+            now=now,
+            failure_kind="goal_achieved",
+        )
+        PlanRepository.abandon_open(
+            conn,
+            task_id=task_id,
+            failure_reason="goal_achieved",
+            now=now,
+        )
         if goal_cycle_id is None:
             goal_cycle_id = conn.execute(
                 select(tasks.c.current_goal_cycle_id).where(tasks.c.id == task_id)
@@ -164,7 +180,6 @@ class GoalService:
             "todo": (todos, todos.c.id, todos.c.archived),
             "hint": (task_hints, task_hints.c.id, task_hints.c.archived),
         }
-        completion_fact_refs = 0
         for ref in refs:
             kind, separator, item_id = ref.partition(":")
             if not separator or kind not in tables:
@@ -181,7 +196,3 @@ class GoalService:
             ).scalar_one_or_none()
             if exists is None:
                 raise ConflictError(f"Goal evidence not found: {ref}")
-            if kind == "fact":
-                completion_fact_refs += 1
-        if achieved and completion_fact_refs == 0:
-            raise ConflictError("An achieved Goal requires at least one Fact evidence ref")

@@ -44,6 +44,10 @@ const ctx = Object.assign({{}}, methods, {{
   project: {{
     project: {{ depth_mode:false }},
     goal_from_fact_ids: ['f001'],
+    goal_status: 'completed',
+    goal_completed_at: '2026-07-24T00:01:00Z',
+    goal_completion_reason: 'Reason 判断目标已达成',
+    goal_completion_evaluator: 'reason-worker',
     facts: [
       {{ id:'origin', description:'origin' }},
       {{ id:'f001', description:'bootstrap complete' }},
@@ -61,6 +65,7 @@ const elements = ctx.buildElements();
 rows.completed.graphNode = elements.nodes.find(node => node.data.intentId === 'i002')?.data || null;
 rows.completed.graphEdge = elements.edges.find(edge => edge.data.intentId === 'i002')?.data || null;
 rows.__goalEdge = elements.edges.find(edge => edge.data.edgeType === 'goal_evidence')?.data || null;
+rows.__goalCard = ctx.nodeCardTpl(elements.nodes.find(node => node.data.id === 'goal')?.data || {{}});
 process.stdout.write(JSON.stringify(rows));
 """
     result = subprocess.run(
@@ -1888,7 +1893,8 @@ def test_frontend_and_static_assets_are_served(client):
     assert "showGoalHistory" in graph.text
     assert "selectedNode.type === 'goal_history'" in graph.text
     assert "selectedGoalEvaluationRecord()" in graph.text
-    assert "达成证据 Fact" in graph.text
+    assert "完成判定" in graph.text
+    assert "Reason 已判定完成" in graph.text
     assert "v.prerequisites || '未填写'" in graph.text
     assert "v.remediation || '未填写'" in graph.text
 
@@ -2342,14 +2348,9 @@ def test_credential_editor_progressively_loads_and_uses_free_text_protocol() -> 
 def test_intent_lifecycle_uses_status_instead_of_retained_worker():
     rows = _run_intent_lifecycle_fixture()
 
-    assert rows["__goalEdge"] == {
-        "id": "_goal_evidence_f001",
-        "source": "f001",
-        "target": "goal",
-        "label": "Goal 达成证据",
-        "status": "goal_evidence",
-        "edgeType": "goal_evidence",
-    }
+    assert rows["__goalEdge"] is None
+    assert "node-card--goal-completed" in rows["__goalCard"]
+    assert "✓ 已完成" in rows["__goalCard"]
 
     assert rows["completed"]["state"] == "completed"
     assert rows["completed"]["type"] == "intent_completed"

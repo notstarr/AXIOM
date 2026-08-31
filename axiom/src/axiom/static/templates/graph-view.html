@@ -489,10 +489,21 @@
                 <template x-if="selectedFactId() === 'goal'">
                   <div class="pt-4 border-t border-slate-100 space-y-3">
                     <p class="text-[10px] font-semibold text-rose-500 uppercase tracking-widest">目标</p>
-                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">角色</span><span class="text-slate-600 text-right break-words">项目目标事实</span></div>
+                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">角色</span><span class="text-slate-600 text-right break-words">任务目标</span></div>
+                    <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">完成状态</span><span class="font-medium text-right" :class="project.goal_status === 'completed' ? 'text-emerald-600' : 'text-slate-600'" x-text="project.goal_status === 'completed' ? 'Reason 已判定完成' : '验证中'"></span></div>
+                    <template x-if="project.goal_status === 'completed' && project.goal_completion_reason">
+                      <div class="pt-1 space-y-2">
+                        <div>
+                          <p class="text-slate-400 mb-1">Reason 判定理由</p>
+                          <p class="text-slate-600 leading-relaxed whitespace-pre-wrap break-words" x-text="project.goal_completion_reason"></p>
+                        </div>
+                        <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">判定者</span><span class="text-slate-600 text-right break-all" x-text="project.goal_completion_evaluator || '—'"></span></div>
+                        <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">判定时间</span><span class="text-slate-600 text-right break-words" x-text="formatTime(project.goal_completed_at)"></span></div>
+                      </div>
+                    </template>
                     <template x-if="selectedFactProducingIntent()">
                       <div class="pt-1 space-y-3">
-                        <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">完成来源</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().id"></span></div>
+                        <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">关联 Intent</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().id"></span></div>
                         <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">执行者</span><span class="text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().worker || '—'"></span></div>
                         <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">结束时间</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedFactProducingIntent().concluded_at || selectedFactProducingIntent().created_at)"></span></div>
                       </div>
@@ -572,22 +583,8 @@
               </template>
 
               <div class="pt-4 border-t border-slate-100">
-                <div class="flex items-center justify-between gap-3 mb-2">
-                  <p class="text-[10px] font-semibold text-amber-600 uppercase tracking-widest">达成证据 Fact</p>
-                  <span class="text-[10px] text-slate-400" x-text="`${selectedGoalEvidenceFacts().length} 条`"></span>
-                </div>
-                <template x-if="selectedGoalEvidenceFacts().length === 0">
-                  <p class="text-xs text-slate-400">本轮未保存可展示的 Fact 证据。</p>
-                </template>
-                <div class="space-y-2">
-                  <template x-for="fact in selectedGoalEvidenceFacts()" :key="`history-${selectedGoalHistoryId()}-${fact.id}`">
-                    <button type="button" @click="selectFact(fact.id); sideTab = 'detail'"
-                      class="w-full rounded-xl border border-amber-100 bg-amber-50/40 px-3 py-2 text-left hover:border-amber-300 hover:bg-amber-50 transition">
-                      <span class="font-mono text-[10px] font-semibold text-amber-700" x-text="fact.id"></span>
-                      <p class="mt-1 text-xs text-slate-600 leading-relaxed line-clamp-3" x-text="fact.description"></p>
-                    </button>
-                  </template>
-                </div>
+                <p class="text-[10px] font-semibold text-amber-600 uppercase tracking-widest mb-2">完成判定</p>
+                <p class="text-xs text-slate-500 leading-relaxed">本轮完成状态由 Reason 的 Goal Evaluation 决定，不要求或生成 Fact 达成连线。</p>
               </div>
             </div>
           </section>

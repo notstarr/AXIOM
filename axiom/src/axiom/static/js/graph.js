@@ -17,6 +17,12 @@ window.AxiomModules.graph = {
           label,
           description: f.description,
           nodeType,
+          goalStatus: f.id === 'goal' ? (this.project.goal_status || 'active') : '',
+          goalCompletedAt: f.id === 'goal' ? (this.project.goal_completed_at || '') : '',
+          goalCompletionReason: f.id === 'goal' ? (this.project.goal_completion_reason || '') : '',
+          goalCompletionEvaluator: f.id === 'goal' ? (this.project.goal_completion_evaluator || '') : '',
+          goalCompletionEvaluationId: f.id === 'goal' ? (this.project.goal_completion_evaluation_id || '') : '',
+          goalCompletionReasonRunId: f.id === 'goal' ? (this.project.goal_completion_reason_run_id || '') : '',
           title: this.nodeTitle(nodeType),
           iconType: this.nodeIconType(nodeType),
           width: size.width,
@@ -59,23 +65,6 @@ window.AxiomModules.graph = {
         }
       }
       if (!this.project.project.depth_mode) {
-        const existingGoalSources = new Set(
-          edges
-            .filter(edge => edge.data.target === 'goal')
-            .map(edge => edge.data.source),
-        );
-        for (const factId of this.project.goal_from_fact_ids || []) {
-          if (!factId || factId === 'goal' || existingGoalSources.has(factId)) continue;
-          if (!nodes.some(node => node.data.id === factId)) continue;
-          edges.push({ data: {
-            id: `_goal_evidence_${factId}`,
-            source: factId,
-            target: 'goal',
-            label: 'Goal 达成证据',
-            status: 'goal_evidence',
-            edgeType: 'goal_evidence',
-          }});
-        }
         if (this.showGoalHistory) {
           for (const history of this.project.goal_history || []) {
             const historyNodeId = `_goal_history_${history.goal_cycle_id}`;
@@ -93,13 +82,16 @@ window.AxiomModules.graph = {
               height: size.height,
               completedAt: history.completed_at || '',
             }});
+            // Preserve old history links as read-only lineage.  They are not
+            // used to determine completion and are deliberately styled as
+            // historical associations rather than current evidence.
             for (const factId of history.evidence_fact_ids || []) {
               if (!nodes.some(node => node.data.id === factId)) continue;
               edges.push({ data: {
                 id: `_history_goal_evidence_${history.goal_cycle_id}_${factId}`,
                 source: factId,
                 target: historyNodeId,
-                label: `第 ${history.sequence} 轮达成证据`,
+                label: `第 ${history.sequence} 轮历史 Fact 关联`,
                 status: 'goal_evidence_history',
                 edgeType: 'goal_evidence_history',
               }});
@@ -140,16 +132,21 @@ window.AxiomModules.graph = {
       const w = data.width || 60;
       const h = data.height || 40;
       const archivedClass = data.archived ? ' node-card--archived' : '';
+      const goalCompleted = data.nodeType === 'goal' && data.goalStatus === 'completed';
+      const goalStatusClass = goalCompleted ? ' node-card--goal-completed' : '';
+      const goalStatus = goalCompleted
+        ? '<span class="node-card__status" title="Reason 已判定 Goal 达成">✓ 已完成</span>'
+        : '';
       const interventionLabel = this.escapeNodeHtml(
         `需要人工介入：${data.humanInterventionReason || '未提供原因'}`,
       );
       const interventionDot = data.humanInterventionRequired
         ? `<span class="node-card__human-dot" title="${interventionLabel}" aria-label="${interventionLabel}"></span>`
         : '';
-      return `<div id="node-card-${data.id}" class="node-card node-card--${data.nodeType}${archivedClass}" style="width:${w}px;height:${h}px">`
+      return `<div id="node-card-${data.id}" class="node-card node-card--${data.nodeType}${goalStatusClass}${archivedClass}" style="width:${w}px;height:${h}px">`
         + interventionDot
         + `<span class="node-card__reason-beacon"></span>`
-        + `<div class="node-card__header">${icon}<span class="node-card__title">${title}</span></div>`
+        + `<div class="node-card__header">${icon}<span class="node-card__title">${title}</span>${goalStatus}</div>`
         + `<div class="node-card__body">${body}</div>`
         + `</div>`;
     },

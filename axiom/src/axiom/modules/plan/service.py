@@ -583,7 +583,7 @@ class PlanService:
         # exhausted/blocked Plan decision.
         effective = [row for row in rows if row["status"] == "completed" or row["failure_class"] != "transient"]
         config = load_runtime_config(conn)
-        max_consecutive = max(1, int(getattr(config, "plan_max_consecutive_runs", 5)))
+        max_consecutive = max(1, int(getattr(config, "plan_max_consecutive_runs", 3)))
         if len(effective) >= max_consecutive:
             return False
         return True

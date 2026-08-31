@@ -115,6 +115,28 @@ window.AxiomModules.timeline = {
         });
       }
 
+      // Goal completion is a Reason decision.  It is a timeline event that
+      // targets the Goal node, but it intentionally has no source Fact IDs.
+      // This keeps the causal graph intact without presenting a Fact as the
+      // completion proof.
+      for (const evaluation of (this.project.goal_evaluations || []).filter(item => item.achieved)) {
+        events.push({
+          id: `project-completed-${evaluation.id}`,
+          type: 'project_completed',
+          timestamp: evaluation.created_at,
+          actor: evaluation.evaluator || 'reasoner',
+          title: 'Goal 已达成',
+          meta: [evaluation.id, evaluation.reason].filter(Boolean),
+          targetType: 'goal',
+          targetId: 'goal',
+          order: order++,
+          intentId: null,
+          goalEvaluationId: evaluation.id,
+          producedFactId: null,
+          sourceFactIds: [],
+        });
+      }
+
       const chronological = [...events].sort((a, b) =>
         a.timestamp.localeCompare(b.timestamp) || a.order - b.order
       );
@@ -222,11 +244,11 @@ window.AxiomModules.timeline = {
     },
 
     timelineEventIsInteractive(entry) {
-      return entry?.targetType === 'fact' || entry?.targetType === 'intent' || entry?.targetType === 'hints' || entry?.targetType === 'reason';
+      return entry?.targetType === 'fact' || entry?.targetType === 'goal' || entry?.targetType === 'intent' || entry?.targetType === 'hints' || entry?.targetType === 'reason';
     },
 
     timelineEventTriggersGraphFocus(entry) {
-      return entry?.targetType === 'fact' || entry?.targetType === 'intent';
+      return entry?.targetType === 'fact' || entry?.targetType === 'goal' || entry?.targetType === 'intent';
     },
 
     timelineEventDotClass(entry) {
@@ -391,6 +413,13 @@ window.AxiomModules.timeline = {
         this.selectFact(entry.targetId);
         this.selectedTimelineEntryId = entry.id;
         if (centerGraph) this.centerGraphOnFact(entry.targetId);
+        return;
+      }
+      if (entry.targetType === 'goal') {
+        this.selectedFacts = ['goal'];
+        this.selectFact('goal');
+        this.selectedTimelineEntryId = entry.id;
+        if (centerGraph) this.centerGraphOnFact('goal');
       }
     },
 
@@ -429,6 +458,10 @@ window.AxiomModules.timeline = {
       if (entry.targetType === 'fact') {
         this.selectFact(entry.targetId);
         this.centerGraphOnFact(entry.targetId);
+        this.sideTab = 'detail';
+      } else if (entry.targetType === 'goal') {
+        this.selectFact('goal');
+        this.centerGraphOnFact('goal');
         this.sideTab = 'detail';
       } else if (entry.targetType === 'intent') {
         this.selectIntent(entry.targetId);
@@ -511,6 +544,12 @@ window.AxiomModules.timeline = {
         facts: [origin, goal].filter(Boolean).map(fact => this.cloneData(fact)),
         intents: [],
         hints: [],
+        goal_status: 'active',
+        goal_completed_at: null,
+        goal_completion_reason: '',
+        goal_completion_evaluator: '',
+        goal_completion_evaluation_id: null,
+        goal_completion_reason_run_id: null,
       };
     },
 
@@ -636,6 +675,19 @@ window.AxiomModules.timeline = {
       }
 
       if (event.type !== 'intent_concluded' && event.type !== 'project_completed') return;
+      if (event.type === 'project_completed' && !sourceIntent) {
+        const evaluation = (sourceProject.goal_evaluations || []).find(
+          item => item.id === event.goalEvaluationId,
+        );
+        replayProject.project.status = 'completed';
+        replayProject.goal_status = 'completed';
+        replayProject.goal_completed_at = evaluation?.created_at || event.timestamp;
+        replayProject.goal_completion_reason = evaluation?.reason || '';
+        replayProject.goal_completion_evaluator = evaluation?.evaluator || event.actor || '';
+        replayProject.goal_completion_evaluation_id = evaluation?.id || event.goalEvaluationId || null;
+        replayProject.goal_completion_reason_run_id = evaluation?.reason_run_id || null;
+        return;
+      }
       if (!sourceIntent) return;
 
       const replayIntent = replayProject.intents.find(intent => intent.id === sourceIntent.id);

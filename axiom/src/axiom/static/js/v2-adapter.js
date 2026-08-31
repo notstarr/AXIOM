@@ -450,6 +450,12 @@
       project: mappedTask,
       facts: [],
       intents: [],
+      goal_status: 'active',
+      goal_completed_at: null,
+      goal_completion_reason: '',
+      goal_completion_evaluator: '',
+      goal_completion_evaluation_id: null,
+      goal_completion_reason_run_id: null,
       goal_from_fact_ids: [],
       goal_history: [],
       goal_cycles: [],
@@ -470,6 +476,12 @@
       ...emptyTaskDetail(mappedTask, !!base.archived_locked),
       facts: [...(base.facts || [])],
       intents: [...(base.intents || [])],
+      goal_status: base.goal_status || 'active',
+      goal_completed_at: base.goal_completed_at || null,
+      goal_completion_reason: base.goal_completion_reason || '',
+      goal_completion_evaluator: base.goal_completion_evaluator || '',
+      goal_completion_evaluation_id: base.goal_completion_evaluation_id || null,
+      goal_completion_reason_run_id: base.goal_completion_reason_run_id || null,
       goal_from_fact_ids: [...(base.goal_from_fact_ids || [])],
       goal_history: [...(base.goal_history || [])],
       goal_cycles: [...(base.goal_cycles || [])],
@@ -540,6 +552,12 @@
       }, graph => {
         detail.facts = graph.facts || [];
         detail.intents = graph.intents || [];
+        detail.goal_status = graph.goal_status || 'active';
+        detail.goal_completed_at = graph.goal_completed_at || null;
+        detail.goal_completion_reason = graph.goal_completion_reason || '';
+        detail.goal_completion_evaluator = graph.goal_completion_evaluator || '';
+        detail.goal_completion_evaluation_id = graph.goal_completion_evaluation_id || null;
+        detail.goal_completion_reason_run_id = graph.goal_completion_reason_run_id || null;
         detail.goal_from_fact_ids = graph.goal_from_fact_ids || [];
         detail.goal_history = graph.goal_history || [];
         detail.project.fact_count = detail.facts.length;
@@ -623,6 +641,12 @@
       project: mappedTask,
       facts: graph.facts,
       intents: graph.intents.map(mapIntent),
+      goal_status: graph.goal_status || 'active',
+      goal_completed_at: graph.goal_completed_at || null,
+      goal_completion_reason: graph.goal_completion_reason || '',
+      goal_completion_evaluator: graph.goal_completion_evaluator || '',
+      goal_completion_evaluation_id: graph.goal_completion_evaluation_id || null,
+      goal_completion_reason_run_id: graph.goal_completion_reason_run_id || null,
       goal_from_fact_ids: graph.goal_from_fact_ids || [],
       goal_history: graph.goal_history || [],
       goal_cycles: goalCycles || [],
@@ -1502,6 +1526,12 @@
       if (task.archived) {
         this.project.facts = [];
         this.project.intents = [];
+        this.project.goal_status = 'active';
+        this.project.goal_completed_at = null;
+        this.project.goal_completion_reason = '';
+        this.project.goal_completion_evaluator = '';
+        this.project.goal_completion_evaluation_id = null;
+        this.project.goal_completion_reason_run_id = null;
         this.project.goal_from_fact_ids = [];
         this.project.goal_history = [];
         this.project.goal_cycles = [];
@@ -1524,6 +1554,12 @@
         updates.push(request('GET', `/tasks/${taskId}/graph`, null, { signal }).then(graph => {
           this.project.facts = graph.facts || [];
           this.project.intents = (graph.intents || []).map(mapIntent);
+          this.project.goal_status = graph.goal_status || 'active';
+          this.project.goal_completed_at = graph.goal_completed_at || null;
+          this.project.goal_completion_reason = graph.goal_completion_reason || '';
+          this.project.goal_completion_evaluator = graph.goal_completion_evaluator || '';
+          this.project.goal_completion_evaluation_id = graph.goal_completion_evaluation_id || null;
+          this.project.goal_completion_reason_run_id = graph.goal_completion_reason_run_id || null;
           this.project.goal_from_fact_ids = graph.goal_from_fact_ids || [];
           this.project.goal_history = graph.goal_history || [];
         }));

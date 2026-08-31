@@ -12,8 +12,9 @@
 3. **评估未决 Intent**：对 `assessment_status=open` 的 Intent 执行 `axiom reason intent assess --intent-id iXXX --status completed|partial|blocked --reason "..."`。
 4. **补齐 Todo / 派发未完分支**：对仍有未测分支的能力树保留 `open`/`partial` Todo 并派发新 Intent；严禁将未测完的模块直接改为 `completed`。
 5. **提交 Goal Assessment（关键）**：
-   - 若未达成或仍有后续测试：`axiom reason goal assess --not-achieved --reason "理由..." --evidence "fact:fXXX"`
-   - 若已达成：`axiom reason goal assess --achieved --reason "理由..." --evidence "fact:fXXX"`
+   - 若未达成或仍有后续测试：`axiom reason goal assess --not-achieved --reason "理由..."`
+   - 若已达成：`axiom reason goal assess --achieved --reason "理由..."`
+   - Fact 只用于分析上下文，不是完成前置条件，也不需要提供 `fact:*` 引用。
    - **注意**：若评估后又修改了 Todo/Intent，必须重新调用一次 `goal assess`。
 6. **再次验证**：重新运行 `axiom reason status` 确认 `ready=true`。
 

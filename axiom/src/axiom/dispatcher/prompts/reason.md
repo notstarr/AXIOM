@@ -36,14 +36,15 @@
    - 跨模块利用时，通过多个 `--from-fact` 传入所有前置依赖 Fact。按需充分派发，数量无上限。
 
 5. **提交 Goal Assessment**：
-   - 目标未达成（漏洞数未达标）：
+   - 目标未达成：
    ```bash
-   axiom reason goal assess --not-achieved --reason "当前仍有未覆盖分支..." --evidence "fact:f001"
+   axiom reason goal assess --not-achieved --reason "当前仍有未覆盖分支..."
    ```
-   - 目标已达成（必须有确凿漏洞 Fact 支撑）：
+   - 目标已达成（由你基于全局上下文作出判断）：
    ```bash
-   axiom reason goal assess --achieved --reason "目标已达成..." --evidence "fact:f001"
+   axiom reason goal assess --achieved --reason "目标已达成..."
    ```
+   Fact 可以作为判断时的上下文，但不是 Goal 完成的必填证据，也不需要建立 Fact → Goal 达成连线。
 6. 运行 `axiom reason status` 确认 `ready=true`。
 7. 输出唯一的结束字符：
 
@@ -57,5 +58,4 @@ FINISH
 2. **拒绝消极阻塞**：缺乏多账号时，必须通过自建自测闭环、参数遍历、Header 注入等方式完成单向独立攻击面验证，严禁直接标记 Blocked 放弃。
 3. **聚焦实质危害**：紧盯对象鉴权、未授权修改、敏感数据泄露与逻辑越权。忽略缺安全头、版本信息等无害配置。
 4. **总目标驱动**: 管理intent和todo是为了达成总目标的手段和过程，不是目的地；只要总目标还没完成，维护todo,派发intent就必须继续下去
-
 

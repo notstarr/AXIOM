@@ -143,9 +143,14 @@ class GraphRepository:
         )
 
     def graph(self, conn: Connection, task_id: str) -> TaskGraph:
-        current_goal_cycle_id = conn.execute(
-            select(tasks.c.current_goal_cycle_id).where(tasks.c.id == task_id)
-        ).scalar_one_or_none()
+        task_row = conn.execute(
+            select(
+                tasks.c.current_goal_cycle_id,
+                tasks.c.status,
+            ).where(tasks.c.id == task_id)
+        ).mappings().one_or_none()
+        current_goal_cycle_id = task_row["current_goal_cycle_id"] if task_row else None
+        task_status = task_row["status"] if task_row else "running"
         fact_rows = conn.execute(
             select(facts)
             .where(facts.c.task_id == task_id, facts.c.archived.is_(False))
@@ -173,30 +178,21 @@ class GraphRepository:
         sources_by_intent: dict[str, list[str]] = defaultdict(list)
         for source in source_rows:
             sources_by_intent[source["intent_id"]].append(source["fact_id"])
-        latest_goal_refs = conn.execute(
-            select(goal_evaluations.c.evidence_refs_json)
+        latest_goal_evaluation = conn.execute(
+            select(goal_evaluations)
             .where(
                 goal_evaluations.c.task_id == task_id,
                 goal_evaluations.c.goal_cycle_id == current_goal_cycle_id,
                 goal_evaluations.c.achieved.is_(True),
-                goal_evaluations.c.reason_run_id.is_not(None),
             )
             .order_by(goal_evaluations.c.created_at.desc(), goal_evaluations.c.id.desc())
             .limit(1)
-        ).scalar_one_or_none()
-        goal_from_fact_ids = []
-        if latest_goal_refs:
-            candidate_fact_ids = list(
-                dict.fromkeys(
-                    item_id
-                    for ref in json.loads(latest_goal_refs)
-                    for kind, separator, item_id in [ref.partition(":")]
-                    if separator and kind == "fact" and item_id not in {"origin", "goal"}
-                )
-            )
-            goal_from_fact_ids = [
-                fact_id for fact_id in candidate_fact_ids if fact_id in visible_fact_ids
-            ]
+        ).mappings().one_or_none()
+        goal_status = (
+            "completed"
+            if task_status == "completed"
+            else "active"
+        )
         history = []
         cycle_rows = conn.execute(
             select(task_goal_cycles)
@@ -208,14 +204,17 @@ class GraphRepository:
             .order_by(task_goal_cycles.c.sequence)
         ).mappings().all()
         cycle_ids = [cycle["id"] for cycle in cycle_rows]
-        latest_evidence_by_cycle: dict[str, str] = {}
+        latest_evaluation_by_cycle: dict[str, dict] = {}
         if cycle_ids:
             evaluation_rows = conn.execute(
                 select(
+                    goal_evaluations.c.id,
                     goal_evaluations.c.goal_cycle_id,
                     goal_evaluations.c.evidence_refs_json,
+                    goal_evaluations.c.reason,
+                    goal_evaluations.c.evaluator,
+                    goal_evaluations.c.reason_run_id,
                     goal_evaluations.c.created_at,
-                    goal_evaluations.c.id,
                 )
                 .where(
                     goal_evaluations.c.task_id == task_id,
@@ -229,21 +228,27 @@ class GraphRepository:
                 )
             ).mappings().all()
             for evaluation in evaluation_rows:
-                latest_evidence_by_cycle.setdefault(
+                latest_evaluation_by_cycle.setdefault(
                     evaluation["goal_cycle_id"],
-                    evaluation["evidence_refs_json"],
+                    dict(evaluation),
                 )
         for cycle in cycle_rows:
-            refs = latest_evidence_by_cycle.get(cycle["id"])
-            if refs is None:
+            evaluation = latest_evaluation_by_cycle.get(cycle["id"])
+            if evaluation is None:
                 continue
-            evidence_fact_ids = self._visible_fact_refs_from_set(refs, visible_fact_ids)
+            evidence_fact_ids = self._visible_fact_refs_from_set(
+                evaluation["evidence_refs_json"], visible_fact_ids
+            )
             history.append(
                 {
                     "goal_cycle_id": cycle["id"],
                     "sequence": cycle["sequence"],
                     "goal": cycle["goal"],
                     "completed_at": cycle["completed_at"],
+                    "completion_reason": evaluation["reason"] or "",
+                    "completion_evaluator": evaluation["evaluator"] or "",
+                    "completion_evaluation_id": evaluation["id"],
+                    "completion_reason_run_id": evaluation["reason_run_id"],
                     "evidence_fact_ids": evidence_fact_ids,
                 }
             )
@@ -260,7 +265,35 @@ class GraphRepository:
                 for row in intent_rows
             ],
             current_goal_cycle_id=current_goal_cycle_id,
-            goal_from_fact_ids=goal_from_fact_ids,
+            goal_status=goal_status,
+            goal_completed_at=(
+                latest_goal_evaluation["created_at"]
+                if latest_goal_evaluation is not None
+                else None
+            ),
+            goal_completion_reason=(
+                latest_goal_evaluation["reason"]
+                if latest_goal_evaluation is not None
+                else ""
+            ),
+            goal_completion_evaluator=(
+                latest_goal_evaluation["evaluator"]
+                if latest_goal_evaluation is not None
+                else ""
+            ),
+            goal_completion_evaluation_id=(
+                latest_goal_evaluation["id"]
+                if latest_goal_evaluation is not None
+                else None
+            ),
+            goal_completion_reason_run_id=(
+                latest_goal_evaluation["reason_run_id"]
+                if latest_goal_evaluation is not None
+                else None
+            ),
+            # Kept as a compatibility field for older consumers.  New graph
+            # payloads never derive completion edges from Fact evidence.
+            goal_from_fact_ids=[],
             goal_history=history,
         )
 

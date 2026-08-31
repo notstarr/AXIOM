@@ -2264,13 +2264,16 @@ class ReasonService:
                 "completed",
             }:
                 errors.append(f"Todo {todo_id} 使用了未知状态：{staged.status}")
+        assessment = draft.goal_assessment
         unconsumed_fact_ids = self._unconsumed_source_fact_ids(workspace, run)
-        if unconsumed_fact_ids:
+        # An achieved Goal is a Reason decision.  Its source Facts remain
+        # available as context, but they do not need to be attached as
+        # ``evidence_refs`` (or consumed through a Fact -> Goal relation).
+        if unconsumed_fact_ids and not (assessment and assessment.achieved):
             errors.append(
                 "本轮新 Fact 尚未纳入规划或 Goal 评估："
                 + ", ".join(unconsumed_fact_ids)
             )
-        assessment = draft.goal_assessment
         if assessment is None:
             errors.append("缺少 Goal assessment")
         else:
@@ -2341,7 +2344,11 @@ class ReasonService:
         for proposal in workspace.draft.intent_proposals:
             consumed.update(proposal.from_facts)
         assessment = workspace.draft.goal_assessment
-        if assessment is not None:
+        if assessment is not None and not assessment.achieved:
+            # Keep the legacy acknowledgement path for an unachieved run:
+            # a supplied Fact reference tells Reason that the input was
+            # reviewed.  This is not used to prove completion; achieved runs
+            # are allowed to finish without any Fact reference.
             consumed.update(
                 item_id
                 for ref in assessment.evidence_refs

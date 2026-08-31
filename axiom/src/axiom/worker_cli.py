@@ -301,7 +301,11 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--achieved/--not-achieved", default=None)
     @click.option("--reason", "assessment_reason")
     @click.option("--reason-file", type=click.Path(path_type=Path, dir_okay=False))
-    @click.option("--evidence", multiple=True)
+    @click.option(
+        "--evidence",
+        multiple=True,
+        help="兼容旧调用的可选引用；Goal 完成不要求 Fact evidence。",
+    )
     def reason_goal_assess(
         achieved: bool | None,
         assessment_reason: str | None,

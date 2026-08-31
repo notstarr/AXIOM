@@ -432,6 +432,46 @@ def test_pending_independent_plan_is_cancelled_when_reason_input_arrives(client,
     assert plan_status == "cancelled"
 
 
+def test_goal_completion_cancels_independent_plan_run_and_workspace(client, engine) -> None:
+    task = _task_with_completed_bootstrap(client, engine)
+    triggered = client.post(
+        f"/api/v1/tasks/{task['id']}/plan-runs/trigger",
+        json={"actor": "test", "trigger": "manual"},
+    )
+    assert triggered.status_code == 200, triggered.text
+    plan_run_id = triggered.json()["id"]
+    claimed, execution = _claim_plan(client, task["id"], plan_run_id)
+    workspace = client.post(
+        f"/api/v1/tasks/{task['id']}/plan/workspaces",
+        json={
+            "plan_run_id": plan_run_id,
+            "lease_id": claimed["lease_id"],
+            "context_revision": execution["context_revision"],
+        },
+    )
+    assert workspace.status_code == 200, workspace.text
+
+    completed = client.post(
+        f"/api/v1/tasks/{task['id']}/goal-evaluations",
+        json={
+            "achieved": True,
+            "reason": "人工确认 Goal 已达成，不需要 Fact 完成关系",
+            "evaluator": "human",
+        },
+    )
+
+    assert completed.status_code == 201, completed.text
+    assert client.get(f"/api/v1/tasks/{task['id']}").json()["status"] == "completed"
+    assert client.get(
+        f"/api/v1/tasks/{task['id']}/plan-runs/{plan_run_id}"
+    ).json()["status"] == "cancelled"
+    abandoned = client.get(
+        f"/api/v1/plan-workspaces/{workspace.json()['id']}"
+    ).json()
+    assert abandoned["status"] == "abandoned"
+    assert abandoned["failure_reason"] == "goal_achieved"
+
+
 
 def test_plan_historical_fact_is_visible_without_plan_consumption_marker(client, engine) -> None:
     task = _task_with_completed_bootstrap(client, engine)
