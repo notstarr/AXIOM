@@ -407,6 +407,8 @@ window.AxiomModules.state = {
     workerPhasesLoading: false,
     selectedWorkerPhase: 'bootstrap',
     workerPageMode: 'manage',
+    workerSide: 'phase',
+    workerPhaseDetailTab: 'capability',
     workerPhaseBackendDraft: {},
     workerPhaseBackendsSaving: {},
     phaseCapabilities: { scopes: {}, items: [], builtin_tools: [] },

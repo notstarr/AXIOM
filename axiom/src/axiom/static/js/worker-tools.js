@@ -643,6 +643,7 @@ window.AxiomModules.workerTools = {
       this.workerCapabilityFilter = 'all';
       this.workerCapabilityFocusKey = capabilityKey || '';
       this.resetWorkerCapabilityDraft();
+      this.workerSide = 'phase';
       this.workerCapabilityDrawerOpen = true;
       if (capabilityKey && this.workerCapabilityDrawerTab === 'mcp') {
         const item = this.phaseCapabilityRecord('mcp_tool', capabilityKey);
@@ -757,6 +758,16 @@ window.AxiomModules.workerTools = {
     selectWorkerPhase(phase) {
       if (!this.axiomPhases().includes(phase)) return;
       this.selectedWorkerPhase = phase;
+    },
+
+    selectWorkerSidePhase(phase) {
+      this.workerSide = 'phase';
+      this.openWorkerCapabilityDrawer(phase);
+    },
+
+    selectWorkerSideBackend(worker) {
+      this.workerSide = 'backend';
+      this.selectAxiomWorker(worker);
     },
 
     workerPhaseBackendSelected(phase, name) {
@@ -898,6 +909,7 @@ window.AxiomModules.workerTools = {
     },
 
     newAxiomWorker() {
+      this.workerSide = 'backend';
       const phase = this.selectedWorkerPhase || 'explore';
       this.axiomWorkerEditor = {
         _draftId: `axiom-worker-${Date.now()}`,
