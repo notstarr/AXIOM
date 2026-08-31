@@ -1,285 +1,299 @@
 <!-- ═══════════ VULNERABILITY PAGE ═══════════ -->
-<div x-show="activePage === 'vulnerabilities'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
+<div x-show="activePage === 'vulnerabilities'" x-cloak class="sto flex-1 flex flex-col overflow-hidden min-w-0">
   <header class="app-page-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
     <div>
       <h2 class="text-base font-semibold text-slate-800 tracking-tight">漏洞管理</h2>
       <p class="text-xs text-slate-400 mt-0.5">跨任务聚合漏洞，按列表查看证据、影响和修复建议</p>
     </div>
     <div class="flex-1"></div>
-    <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition">刷新</button>
+    <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="sto-ghost" style="padding:7px 13px;">刷新</button>
   </header>
-  <!-- Filter bar - sticky above scroll area -->
-  <div class="shrink-0 px-5 py-3 border-b border-slate-100 bg-white">
-    <div class="flex items-center gap-3">
-      <input x-model="vulnFilter.keyword" @input="scheduleVulnerabilitySearch()" placeholder="搜索标题、类型、描述" class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
-      <select x-model="vulnFilter.projectId" @change="applyVulnerabilityFilters()" class="px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+
+  <!-- 筛选 + 统计 -->
+  <div class="shrink-0 px-5 py-3 border-b border-slate-100" style="background:var(--sto-panel);">
+    <div class="flex items-center" style="gap:9px;">
+      <input x-model="vulnFilter.keyword" @input="scheduleVulnerabilitySearch()" placeholder="搜索标题、类型、描述" class="sto-input" style="flex:1;">
+      <select x-model="vulnFilter.projectId" @change="applyVulnerabilityFilters()" class="sto-input" style="width:auto;">
         <option value="">全部任务</option>
         <template x-for="p in projects.filter(item => !item.archived)" :key="`vuln-filter-${p.id}`">
           <option :value="p.id" x-text="`${p.id} ${p.title}`"></option>
         </template>
       </select>
-      <button @click="openVulnEditor()" class="px-3 py-2 text-xs rounded-lg bg-rose-500 text-white hover:bg-rose-600">新增漏洞</button>
+      <button @click="openVulnEditor()" class="sto-btn" style="padding:8px 13px;">新增漏洞</button>
     </div>
-    <p class="mt-2 text-xs text-slate-400" x-text="`显示 ${filteredVulnerabilities().length} / ${vulnerabilityTotal}`"></p>
+    <div class="flex flex-wrap items-center" style="gap:16px; margin-top:11px;">
+      <span class="sto-muted sto-num" style="font-size:10.5px;" x-text="`显示 ${filteredVulnerabilities().length} / ${vulnerabilityTotal}`"></span>
+      <span style="width:1px; height:14px; background:var(--sto-line);"></span>
+      <template x-for="sev in ['critical','high','medium','low']" :key="`vstat-${sev}`">
+        <span class="sto-status" :class="{critical:'err',high:'warn',medium:'warn',low:'ok'}[sev]" style="font-size:11px;">
+          <i class="sto-sevdot" :class="`sto-sev-${sev}`" style="box-shadow:none;"></i>
+          <span x-text="vulnSeverityLabel(sev)"></span>
+          <b class="sto-num" style="color:var(--sto-fg);" x-text="filteredVulnerabilities().filter(v => (v.severity || '').toLowerCase() === sev).length"></b>
+        </span>
+      </template>
+      <span style="width:1px; height:14px; background:var(--sto-line);"></span>
+      <span class="sto-status ok" style="font-size:11px;"><i></i><span>已验证</span><b class="sto-num" style="color:var(--sto-fg);" x-text="filteredVulnerabilities().filter(v => vulnStatusKey(v.status) === 'verified').length"></b></span>
+      <span class="sto-status warn" style="font-size:11px;"><i></i><span>待验证</span><b class="sto-num" style="color:var(--sto-fg);" x-text="filteredVulnerabilities().filter(v => vulnStatusKey(v.status) === 'pending').length"></b></span>
+    </div>
   </div>
 
-  <main class="flex-1 min-h-0 p-5">
-    <!-- Paginated list view -->
-    <div class="grid grid-cols-[340px_minmax(0,1fr)] gap-4 flex-1 min-h-0 h-full">
-        <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3 overflow-y-auto overflow-x-hidden space-y-2">
-          <template x-if="filteredVulnerabilities().length === 0">
-            <div class="px-4 py-10 text-sm text-center text-slate-400">暂无漏洞记录</div>
-          </template>
-          <template x-for="v in filteredVulnerabilities()" :key="`${v.project_id}-${v.id}`">
-           <button type="button" @click="selectVulnerability(v)" class="w-full flex flex-col items-start text-left rounded-xl border p-3 transition overflow-hidden"
-            :class="selectedVulnerabilityKey === vulnerabilityKey(v) ? 'border-rose-200 bg-rose-50/60' : 'border-slate-200 hover:bg-slate-50'">
-            <div class="flex items-center gap-1.5">
-              <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-mono font-bold whitespace-nowrap" x-text="v.id"></span>
-              <span class="px-1.5 py-0.5 rounded-md text-[9px] font-semibold whitespace-nowrap" :class="vulnSeverityClass(v.severity)" x-text="vulnSeverityLabel(v.severity)"></span>
-              <span
-                role="button"
-                tabindex="0"
-                @click.stop="openVulnStatusQuick(v)"
-                @keydown.enter.prevent.stop="openVulnStatusQuick(v)"
-                @keydown.space.prevent.stop="openVulnStatusQuick(v)"
-                class="px-1.5 py-0.5 rounded-md text-[9px] font-semibold whitespace-nowrap cursor-pointer border"
-                :class="vulnStatusClass(v.status)"
-                x-text="vulnStatusLabel(v.status)"></span>
-            </div>
-            <p class="mt-1.5 text-sm font-semibold text-slate-700 line-clamp-2" x-text="v.title"></p>
-          </button>
-          </template>
-          <div class="sticky bottom-0 mt-3 pt-3 border-t border-slate-100 bg-white flex items-center justify-between gap-2">
-            <button @click="setVulnerabilityPage(vulnerabilityPage - 1)" :disabled="vulnerabilityLoading || vulnerabilityPage <= 0" class="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[11px] text-slate-500 disabled:opacity-30">上一页</button>
-            <span class="text-[10px] text-slate-400 tabular-nums" x-text="`${vulnerabilityPage + 1} / ${vulnerabilityPageCount()}`"></span>
-            <button @click="setVulnerabilityPage(vulnerabilityPage + 1)" :disabled="vulnerabilityLoading || vulnerabilityPage + 1 >= vulnerabilityPageCount()" class="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[11px] text-slate-500 disabled:opacity-30">下一页</button>
+  <main class="flex-1 min-h-0 grid grid-cols-[340px_minmax(0,1fr)] gap-4" style="padding:14px 16px; background:var(--sto-inset);">
+    <!-- 列表 -->
+    <aside class="sto-panel sto-vlist overflow-y-auto overflow-x-hidden" style="padding:10px;">
+      <template x-if="filteredVulnerabilities().length === 0">
+        <div class="sto-muted" style="text-align:center; padding:36px 0;">暂无漏洞记录</div>
+      </template>
+      <template x-for="v in filteredVulnerabilities()" :key="`${v.project_id}-${v.id}`">
+        <button type="button" @click="selectVulnerability(v)" class="sto-navitem sto-vlist"
+          :class="[`sto-sev-${(v.severity || 'info').toLowerCase()}`, selectedVulnerabilityKey === vulnerabilityKey(v) ? 'active' : '']">
+          <div class="flex items-center" style="gap:7px;">
+            <span class="sto-sevdot" x-text="''"></span>
+            <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);" x-text="v.id"></span>
+            <span style="flex:1;"></span>
+            <span class="sto-status" style="font-size:10px;" :class="({verified:'ok',pending:'warn',duplicate:'err',ignored:'off'})[vulnStatusKey(v.status)] || 'off'"><i></i><span x-text="vulnStatusLabel(v.status)"></span></span>
           </div>
-        </aside>
-        <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-y-auto">
-          <template x-if="!selectedVulnerability()">
-            <div class="h-full min-h-[420px] flex items-center justify-center text-sm text-slate-400">请选择左侧漏洞查看详情</div>
-          </template>
-          <template x-if="selectedVulnerability()">
-            <article>
-              <div class="px-5 py-4 border-b border-rose-100 bg-rose-50/60">
-                 <div class="flex flex-wrap items-center gap-2">
-                  <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-mono font-bold" x-text="selectedVulnerability().id"></span>
-                  <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="vulnSeverityClass(selectedVulnerability().severity)" x-text="vulnSeverityLabel(selectedVulnerability().severity)"></span>
-                  <button type="button" @click="openVulnStatusQuick(selectedVulnerability())" class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="vulnStatusClass(selectedVulnerability().status)" x-text="vulnStatusLabel(selectedVulnerability().status)"></button>
-                  <span class="text-[11px] text-slate-400" x-text="`${selectedVulnerability().project_group_title || '未归属项目'} / ${selectedVulnerability().task_title || selectedVulnerability().project_id}`"></span>
-                </div>
-                <template x-if="selectedVulnerability().status_reason">
-                  <p class="mt-2 text-[11px] text-slate-500 whitespace-pre-wrap break-words"><span class="font-semibold text-slate-600">状态原因 / 审核结论：</span><span x-text="formatMultiline(selectedVulnerability().status_reason)"></span></p>
-                </template>
-                <h3 class="mt-3 text-lg font-semibold text-slate-800 break-words" x-text="selectedVulnerability().title"></h3>
-                <div class="mt-2 flex flex-wrap gap-2 text-[10px]">
-                  <span class="px-2 py-0.5 rounded-md bg-white/80 text-slate-600" x-text="selectedVulnerability().type || '通用漏洞'"></span>
-                  <span x-show="selectedVulnerability().affected_target" class="px-2 py-0.5 rounded-md bg-white/80 text-slate-500" x-text="selectedVulnerability().affected_target"></span>
-                </div>
-                <div class="mt-2 flex gap-2">
-                  <button @click="editVuln(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">编辑</button>
-                  <button @click="deleteVuln(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-rose-200 text-rose-500 hover:bg-rose-50">删除</button>
-                  <button @click="exportSingleVulnerability(selectedVulnerability())" class="text-[10px] px-2 py-0.5 rounded border border-emerald-200 text-emerald-700 bg-emerald-50/50 hover:bg-emerald-100 flex items-center gap-1 font-medium" title="一键导出包含漏洞原文、Findings与证据文件的完整Zip包">
-                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                    导出漏洞包
-                  </button>
-                  <button @click="triggerVulnerabilityReview(selectedVulnerability())" :disabled="!vulnerabilityReviewCanRetry()" :title="vulnerabilityReviewCanRetry() ? '创建一次新的 Reviewer 审核' : '已有审核正在排队或运行'" class="text-[10px] px-2 py-0.5 rounded border border-cyan-200 text-cyan-700 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-40" x-text="vulnerabilityReviewSubmitting ? '正在排队…' : '重新审核'"></button>
-                  <button x-show="selectedVulnerability().finding_artifact" @click="openVulnerabilityArtifact(selectedVulnerability(), selectedVulnerability().finding_artifact)" class="text-[10px] px-2 py-0.5 rounded border border-blue-200 text-blue-600 hover:bg-blue-50 flex items-center gap-1">
-                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
-                    Findings
-                  </button>
-                </div>
+          <p style="margin-top:5px; font-size:12.5px; font-weight:600; color:var(--sto-fg); line-height:1.45; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" x-text="v.title"></p>
+        </button>
+      </template>
+      <div class="sto-pager" style="border-top:1px solid var(--sto-line); margin-top:10px; padding-top:10px;">
+        <button @click="setVulnerabilityPage(vulnerabilityPage - 1)" :disabled="vulnerabilityLoading || vulnerabilityPage <= 0" class="sto-minibtn">上一页</button>
+        <span class="sto-num" x-text="`${vulnerabilityPage + 1} / ${vulnerabilityPageCount()}`"></span>
+        <button @click="setVulnerabilityPage(vulnerabilityPage + 1)" :disabled="vulnerabilityLoading || vulnerabilityPage + 1 >= vulnerabilityPageCount()" class="sto-minibtn">下一页</button>
+      </div>
+    </aside>
+
+    <!-- 详情 -->
+    <section class="sto-panel overflow-y-auto" style="overflow-x:hidden;">
+      <template x-if="!selectedVulnerability()">
+        <div class="sto-muted" style="min-height:420px; display:flex; align-items:center; justify-content:center;">请选择左侧漏洞查看详情</div>
+      </template>
+      <template x-if="selectedVulnerability()">
+        <article>
+          <!-- 严重度色 hero -->
+          <div class="sto-vhero" :class="`sto-sev-${(selectedVulnerability().severity || 'info').toLowerCase()}`" style="padding:16px 20px;">
+            <div class="flex flex-wrap items-center" style="gap:9px;">
+              <span class="sevsq" x-text="(selectedVulnerability().severity || 'info').toLowerCase() === 'critical' ? '严' : (selectedVulnerability().severity || '').toLowerCase() === 'high' ? '高' : (selectedVulnerability().severity || '').toLowerCase() === 'medium' ? '中' : (selectedVulnerability().severity || '').toLowerCase() === 'low' ? '低' : '信'"></span>
+              <span class="sto-num" style="font-size:11px; font-weight:700; color:var(--sto-fg-2);" x-text="selectedVulnerability().id"></span>
+              <button type="button" @click="openVulnStatusQuick(selectedVulnerability())" class="sto-status" style="font-size:11px; cursor:pointer; border:0; background:none; padding:0;" :class="({verified:'ok',pending:'warn',duplicate:'err',ignored:'off'})[vulnStatusKey(selectedVulnerability().status)] || 'off'"><i></i><span x-text="vulnStatusLabel(selectedVulnerability().status)"></span></button>
+              <span class="sto-muted" style="font-size:10.5px;" x-text="`${selectedVulnerability().project_group_title || '未归属项目'} / ${selectedVulnerability().task_title || selectedVulnerability().project_id}`"></span>
+            </div>
+            <h3 style="margin-top:9px; font-size:17px; font-weight:700; letter-spacing:-0.01em; color:var(--sto-fg); word-break:break-word;" x-text="selectedVulnerability().title"></h3>
+            <div class="flex flex-wrap items-center" style="gap:7px; margin-top:9px;">
+              <span class="sto-sevbadge" x-text="selectedVulnerability().type || '通用漏洞'"></span>
+              <span x-show="selectedVulnerability().affected_target" class="sto-badge neutral" x-text="selectedVulnerability().affected_target"></span>
+            </div>
+            <template x-if="selectedVulnerability().status_reason">
+              <p class="sto-muted" style="margin-top:9px; white-space:pre-wrap; word-break:break-word;"><span style="font-weight:650; color:var(--sto-fg-2);">状态原因 / 审核结论：</span><span x-text="formatMultiline(selectedVulnerability().status_reason)"></span></p>
+            </template>
+            <div class="flex flex-wrap items-center" style="gap:7px; margin-top:12px;">
+              <button @click="exportSingleVulnerability(selectedVulnerability())" class="sto-btn" title="一键导出包含漏洞原文、Findings与证据文件的完整Zip包">
+                <svg style="width:13px; height:13px;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                导出漏洞包
+              </button>
+              <button @click="triggerVulnerabilityReview(selectedVulnerability())" :disabled="!vulnerabilityReviewCanRetry()" :title="vulnerabilityReviewCanRetry() ? '创建一次新的 Reviewer 审核' : '已有审核正在排队或运行'" class="sto-ghost" x-text="vulnerabilityReviewSubmitting ? '正在排队…' : '重新审核'"></button>
+              <button x-show="selectedVulnerability().finding_artifact" @click="openVulnerabilityArtifact(selectedVulnerability(), selectedVulnerability().finding_artifact)" class="sto-ghost">
+                <svg style="width:12px; height:12px;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
+                Findings
+              </button>
+              <span style="flex:1;"></span>
+              <button @click="editVuln(selectedVulnerability())" class="sto-minibtn">编辑</button>
+              <button @click="deleteVuln(selectedVulnerability())" class="sto-minibtn danger">删除</button>
+            </div>
+          </div>
+
+          <div style="padding:16px 20px; display:flex; flex-direction:column; gap:13px;">
+            <!-- Reviewer 审核 -->
+            <div class="sto-panel inset" style="padding:13px 15px;">
+              <div class="flex items-center justify-between" style="gap:10px;">
+                <p class="sto-label">Reviewer 审核</p>
+                <span x-show="latestVulnerabilityReview()" class="sto-badge" :class="vulnerabilityReviewStateClass(latestVulnerabilityReview())" x-text="vulnerabilityReviewStateLabel(latestVulnerabilityReview())"></span>
               </div>
-              <div class="p-5 space-y-4">
-                <section class="rounded-2xl border border-cyan-100 bg-cyan-50/40 p-4">
-                  <div class="flex items-center justify-between gap-3">
-                    <div>
-                      <p class="text-[10px] font-semibold uppercase tracking-widest text-cyan-700">Reviewer 审核</p>
-                      <p class="mt-1 text-xs text-slate-500">证据优先审核；必要时在 Scope 内做最小复测。</p>
+              <p class="sto-muted" style="margin-top:4px;">证据优先审核；必要时在 Scope 内做最小复测。</p>
+              <p x-show="vulnerabilityReviewsLoading" class="sto-muted" style="margin-top:10px;">正在加载审核记录…</p>
+              <p x-show="vulnerabilityReviewsError" class="sto-warnline" style="margin-top:10px;" x-text="vulnerabilityReviewsError"></p>
+              <div x-show="!vulnerabilityReviewsLoading && !vulnerabilityReviewsError && (vulnerabilityReviews || []).length === 0" class="sto-empty" style="margin-top:10px; padding:14px 0;">暂无 Reviewer 审核记录。待验证漏洞会自动排队。</div>
+              <div x-show="(vulnerabilityReviews || []).length > 0" style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
+                <template x-for="run in (vulnerabilityReviews || [])" :key="run.id">
+                  <article class="sto-group" style="padding:10px 12px;">
+                    <div class="flex flex-wrap items-center" style="gap:7px;">
+                      <span class="sto-num" style="font-size:10px; font-weight:650; color:var(--sto-fg-2);" x-text="run.id"></span>
+                      <span class="sto-badge" style="padding:1px 7px; font-size:9px;" :class="vulnerabilityReviewStateClass(run)" x-text="vulnerabilityReviewStateLabel(run)"></span>
+                      <span class="sto-badge neutral" style="padding:1px 7px; font-size:9px;" x-text="vulnerabilityReviewTriggerLabel(run.trigger)"></span>
+                      <span x-show="run.decision" class="sto-badge" style="padding:1px 7px; font-size:9px; color:var(--sto-accent); border-color:color-mix(in srgb, var(--sto-accent) 35%, transparent);" x-text="vulnerabilityReviewDecisionLabel(run.decision)"></span>
+                      <span class="sto-muted sto-num" style="margin-left:auto; font-size:9.5px;" x-text="formatDate(run.concluded_at || run.updated_at || run.created_at)"></span>
                     </div>
-                    <span x-show="latestVulnerabilityReview()" class="rounded-lg border px-2 py-1 text-[10px] font-semibold" :class="vulnerabilityReviewStateClass(latestVulnerabilityReview())" x-text="vulnerabilityReviewStateLabel(latestVulnerabilityReview())"></span>
-                  </div>
-                  <p x-show="vulnerabilityReviewsLoading" class="mt-3 text-xs text-slate-400">正在加载审核记录…</p>
-                  <p x-show="vulnerabilityReviewsError" class="mt-3 text-xs text-rose-600" x-text="vulnerabilityReviewsError"></p>
-                  <div x-show="!vulnerabilityReviewsLoading && !vulnerabilityReviewsError && (vulnerabilityReviews || []).length === 0" class="mt-3 rounded-xl border border-dashed border-cyan-200 bg-white/60 px-3 py-4 text-center text-xs text-slate-400">暂无 Reviewer 审核记录。待验证漏洞会自动排队。</div>
-                  <div x-show="(vulnerabilityReviews || []).length > 0" class="mt-3 space-y-2">
-                    <template x-for="run in (vulnerabilityReviews || [])" :key="run.id">
-                      <article class="rounded-xl border border-slate-200 bg-white/80 p-3">
-                        <div class="flex flex-wrap items-center gap-2">
-                          <code class="text-[10px] font-semibold text-slate-600" x-text="run.id"></code>
-                          <span class="rounded-md border px-1.5 py-0.5 text-[9px] font-semibold" :class="vulnerabilityReviewStateClass(run)" x-text="vulnerabilityReviewStateLabel(run)"></span>
-                          <span class="rounded-md bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500" x-text="vulnerabilityReviewTriggerLabel(run.trigger)"></span>
-                          <span x-show="run.decision" class="rounded-md bg-violet-50 px-1.5 py-0.5 text-[9px] font-semibold text-violet-700" x-text="vulnerabilityReviewDecisionLabel(run.decision)"></span>
-                          <span class="ml-auto text-[9px] text-slate-400" x-text="formatDate(run.concluded_at || run.updated_at || run.created_at)"></span>
-                        </div>
-                        <p x-show="run.worker" class="mt-2 text-[10px] text-slate-500"><span class="font-semibold">审查者：</span><span x-text="run.worker"></span></p>
-                        <p x-show="run.activity_summary && ['pending','claimed','running','concluding'].includes(run.status)" class="mt-1 text-[10px] text-blue-600" x-text="run.activity_summary"></p>
-                        <p x-show="run.decision_reason" class="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-slate-600"><span class="font-semibold text-slate-700">审核原因：</span><span x-text="run.decision_reason"></span></p>
-                        <button x-show="run.duplicate_of_vulnerability_id" @click="openReviewDuplicate(run)" class="mt-2 text-xs font-medium text-blue-600 hover:underline">重复于 <span x-text="run.duplicate_of_vulnerability_id"></span> →</button>
-                        <p x-show="run.status === 'failed' && run.last_failure_kind" class="mt-2 text-xs text-rose-600"><span class="font-semibold">失败原因：</span><span x-text="run.last_failure_kind"></span></p>
-                        <div x-show="(run.artifacts || []).length > 0" class="mt-3 flex flex-wrap gap-2">
-                          <template x-for="artifact in (run.artifacts || [])" :key="`${run.id}-${artifact.id}`">
-                            <button @click="openVulnerabilityArtifact(selectedVulnerability(), artifact)" class="rounded-lg border border-blue-200 bg-blue-50/60 px-2 py-1 text-[10px] text-blue-700 hover:border-blue-300" x-text="artifact.artifact_type === 'review.report' ? '审核报告' : (artifact.path || artifact.id)"></button>
-                          </template>
-                        </div>
-                      </article>
-                    </template>
-                  </div>
-                </section>
-                <div>
-                  <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">描述</p>
-                  <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="formatMultiline(selectedVulnerability().description)"></p>
-                </div>
-                <div>
-                  <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">利用前提</p>
-                  <p class="text-sm whitespace-pre-wrap break-words"
-                    :class="selectedVulnerability().prerequisites ? 'text-slate-700' : 'text-slate-400 italic'"
-                    x-text="formatMultiline(selectedVulnerability().prerequisites || '未填写')"></p>
-                </div>
-                <div>
-                  <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">影响</p>
-                  <p class="text-sm text-slate-700 whitespace-pre-wrap break-words" x-text="formatMultiline(selectedVulnerability().impact)"></p>
-                </div>
-                <template x-if="selectedVulnerability().finding_artifact">
-                  <div>
-                    <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">关联 Findings</p>
-                    <button @click="openVulnerabilityArtifact(selectedVulnerability(), selectedVulnerability().finding_artifact)" class="w-full rounded-xl border border-blue-100 bg-blue-50/50 px-3 py-2 text-left hover:border-blue-300">
-                      <span class="block text-xs font-medium text-blue-700" x-text="selectedVulnerability().finding_artifact.path"></span>
-                      <span class="block mt-0.5 text-[10px] text-slate-400" x-text="selectedVulnerability().finding_artifact.summary"></span>
-                    </button>
-                  </div>
-                </template>
-                <template x-if="(selectedVulnerability().evidence_artifacts || []).length > 0">
-                  <div>
-                    <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">证据文件</p>
-                    <div class="space-y-1.5">
-                      <template x-for="artifact in (selectedVulnerability().evidence_artifacts || [])" :key="`${selectedVulnerability().id}-${artifact.id}`">
-                        <button @click="openVulnerabilityArtifact(selectedVulnerability(), artifact)" class="w-full flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-left hover:border-blue-300 hover:bg-blue-50/30">
-                          <span class="text-xs text-blue-700 font-mono truncate" x-text="artifact.path"></span>
-                          <span class="text-[10px] text-slate-400 shrink-0" x-text="formatBytes(artifact.size)"></span>
-                        </button>
+                    <p x-show="run.worker" class="sto-muted" style="margin-top:5px; font-size:10.5px;"><span style="font-weight:650;">审查者：</span><span x-text="run.worker"></span></p>
+                    <p x-show="run.activity_summary && ['pending','claimed','running','concluding'].includes(run.status)" style="margin-top:3px; font-size:10.5px; color:var(--sto-accent);" x-text="run.activity_summary"></p>
+                    <p x-show="run.decision_reason" class="sto-muted" style="margin-top:7px; white-space:pre-wrap; word-break:break-word; line-height:1.55;"><span style="font-weight:650; color:var(--sto-fg-2);">审核原因：</span><span x-text="run.decision_reason"></span></p>
+                    <button x-show="run.duplicate_of_vulnerability_id" @click="openReviewDuplicate(run)" style="margin-top:6px; font-size:11.5px; font-weight:600; color:var(--sto-accent); background:none; border:0; cursor:pointer; padding:0;">重复于 <span x-text="run.duplicate_of_vulnerability_id"></span> →</button>
+                    <p x-show="run.status === 'failed' && run.last_failure_kind" class="sto-warnline" style="margin-top:6px;"><span style="font-weight:650;">失败原因：</span><span x-text="run.last_failure_kind"></span></p>
+                    <div x-show="(run.artifacts || []).length > 0" class="sto-chipline" style="margin-top:8px;">
+                      <template x-for="artifact in (run.artifacts || [])" :key="`${run.id}-${artifact.id}`">
+                        <button @click="openVulnerabilityArtifact(selectedVulnerability(), artifact)" class="sto-minibtn acc" style="padding:3px 9px; font-size:10px;" x-text="artifact.artifact_type === 'review.report' ? '审核报告' : (artifact.path || artifact.id)"></button>
                       </template>
                     </div>
-                  </div>
-                </template>
-                <div>
-                  <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">修复建议</p>
-                  <p class="text-sm whitespace-pre-wrap break-words"
-                    :class="selectedVulnerability().remediation ? 'text-slate-700' : 'text-slate-400 italic'"
-                    x-text="formatMultiline(selectedVulnerability().remediation || '未填写')"></p>
-                </div>
-                <template x-if="selectedVulnerability().legacy">
-                  <div class="rounded-xl border border-amber-200 bg-amber-50/60 p-3 space-y-3">
-                    <p class="text-[10px] font-semibold text-amber-700 uppercase tracking-widest">旧格式内容（只读）</p>
-                    <div x-show="(selectedVulnerability().legacy.reproduction_steps || []).length">
-                      <p class="text-[10px] text-slate-500 mb-1">旧复现步骤</p>
-                      <ul class="list-disc ml-5 space-y-1"><template x-for="(step, idx) in selectedVulnerability().legacy.reproduction_steps" :key="`legacy-step-${idx}`"><li class="text-xs text-slate-600" x-text="step"></li></template></ul>
-                    </div>
-                    <div x-show="(selectedVulnerability().legacy.evidence || []).length">
-                      <p class="text-[10px] text-slate-500 mb-1">旧文字证据</p>
-                      <ul class="list-disc ml-5 space-y-1"><template x-for="(ev, idx) in selectedVulnerability().legacy.evidence" :key="`legacy-ev-${idx}`"><li class="text-xs text-slate-600" x-text="ev"></li></template></ul>
-                    </div>
-                    <div x-show="selectedVulnerability().legacy.curl_command"><p class="text-[10px] text-slate-500 mb-1">旧请求示例</p><pre class="rounded-lg bg-slate-900 p-2 text-xs text-slate-100 whitespace-pre-wrap break-all" x-text="selectedVulnerability().legacy.curl_command"></pre></div>
-                  </div>
+                  </article>
                 </template>
               </div>
-            </article>
-          </template>
-        </section>
-    </div>
+            </div>
+
+            <div class="sto-panel" style="padding:13px 15px;">
+              <p class="sto-label" style="margin-bottom:7px;">描述</p>
+              <p style="font-size:13px; color:var(--sto-fg); white-space:pre-wrap; word-break:break-word; line-height:1.6;" x-text="formatMultiline(selectedVulnerability().description)"></p>
+            </div>
+            <div class="sto-panel" style="padding:13px 15px;">
+              <p class="sto-label" style="margin-bottom:7px;">利用前提</p>
+              <p style="font-size:13px; white-space:pre-wrap; word-break:break-word; line-height:1.6;"
+                :style="selectedVulnerability().prerequisites ? 'color:var(--sto-fg);' : 'color:var(--sto-fg-3); font-style:italic;'"
+                x-text="formatMultiline(selectedVulnerability().prerequisites || '未填写')"></p>
+            </div>
+            <div class="sto-panel" style="padding:13px 15px;">
+              <p class="sto-label" style="margin-bottom:7px;">影响</p>
+              <p style="font-size:13px; color:var(--sto-fg); white-space:pre-wrap; word-break:break-word; line-height:1.6;" x-text="formatMultiline(selectedVulnerability().impact)"></p>
+            </div>
+            <template x-if="selectedVulnerability().finding_artifact">
+              <div class="sto-panel" style="padding:13px 15px;">
+                <p class="sto-label" style="margin-bottom:7px;">关联 Findings</p>
+                <button @click="openVulnerabilityArtifact(selectedVulnerability(), selectedVulnerability().finding_artifact)" class="sto-item" style="border:1px solid var(--sto-line); border-radius:9px; width:100%;">
+                  <span style="min-width:0;">
+                    <span class="sto-num" style="display:block; font-size:11.5px; font-weight:600; color:var(--sto-accent);" x-text="selectedVulnerability().finding_artifact.path"></span>
+                    <span class="sto-muted" style="display:block; margin-top:2px; font-size:10px;" x-text="selectedVulnerability().finding_artifact.summary"></span>
+                  </span>
+                </button>
+              </div>
+            </template>
+            <template x-if="(selectedVulnerability().evidence_artifacts || []).length > 0">
+              <div class="sto-panel" style="padding:13px 15px;">
+                <p class="sto-label" style="margin-bottom:7px;">证据文件</p>
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                  <template x-for="artifact in (selectedVulnerability().evidence_artifacts || [])" :key="`${selectedVulnerability().id}-${artifact.id}`">
+                    <button @click="openVulnerabilityArtifact(selectedVulnerability(), artifact)" class="sto-item" style="border:1px solid var(--sto-line); border-radius:9px; justify-content:space-between;">
+                      <span style="font-size:11.5px; color:var(--sto-accent); font-family:ui-monospace,'SF Mono',Menlo,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="artifact.path"></span>
+                      <span class="sto-muted sto-num" style="font-size:10px; flex-shrink:0;" x-text="formatBytes(artifact.size)"></span>
+                    </button>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <div class="sto-panel" style="padding:13px 15px;">
+              <p class="sto-label" style="margin-bottom:7px;">修复建议</p>
+              <p style="font-size:13px; white-space:pre-wrap; word-break:break-word; line-height:1.6;"
+                :style="selectedVulnerability().remediation ? 'color:var(--sto-fg);' : 'color:var(--sto-fg-3); font-style:italic;'"
+                x-text="formatMultiline(selectedVulnerability().remediation || '未填写')"></p>
+            </div>
+            <template x-if="selectedVulnerability().legacy">
+              <div class="sto-tiercard" style="--pc:#b45309; border-left-width:3px;">
+                <p class="sto-label" style="margin-bottom:8px;">旧格式内容（只读）</p>
+                <div x-show="(selectedVulnerability().legacy.reproduction_steps || []).length">
+                  <p class="sto-desc" style="margin-bottom:4px;">旧复现步骤</p>
+                  <ul style="list-style:disc; margin-left:18px; display:flex; flex-direction:column; gap:3px;"><template x-for="(step, idx) in selectedVulnerability().legacy.reproduction_steps" :key="`legacy-step-${idx}`"><li class="sto-muted" style="font-size:11.5px;" x-text="step"></li></template></ul>
+                </div>
+                <div x-show="(selectedVulnerability().legacy.evidence || []).length" style="margin-top:9px;">
+                  <p class="sto-desc" style="margin-bottom:4px;">旧文字证据</p>
+                  <ul style="list-style:disc; margin-left:18px; display:flex; flex-direction:column; gap:3px;"><template x-for="(ev, idx) in selectedVulnerability().legacy.evidence" :key="`legacy-ev-${idx}`"><li class="sto-muted" style="font-size:11.5px;" x-text="ev"></li></template></ul>
+                </div>
+                <div x-show="selectedVulnerability().legacy.curl_command" style="margin-top:9px;"><p class="sto-desc" style="margin-bottom:4px;">旧请求示例</p><pre class="sto-usage" x-text="selectedVulnerability().legacy.curl_command"></pre></div>
+              </div>
+            </template>
+          </div>
+        </article>
+      </template>
+    </section>
   </main>
 </div>
 
 <!-- Quick Status Modal -->
 <div x-show="vulnStatusQuick.open" x-cloak class="fixed inset-0 z-[60] flex items-center justify-center overlay" @click.self="closeVulnStatusQuick()">
-  <div class="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4" @click.stop>
-    <div class="px-5 py-4 border-b border-slate-200">
-      <h3 class="text-sm font-semibold text-slate-700">漏洞状态</h3>
-      <p class="mt-1 text-xs text-slate-500 break-all" x-text="`${vulnStatusQuick.id} · ${vulnStatusQuick.title}`"></p>
-    </div>
-    <div class="p-5 grid grid-cols-2 gap-3">
-      <button type="button" @click="pickVulnStatus('待验证')" :class="vulnStatusQuick.selected === '待验证' ? 'border-amber-400 bg-amber-100 text-amber-900' : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'" class="px-3 py-2.5 rounded-lg border text-sm font-medium">待验证</button>
-      <button type="button" @click="pickVulnStatus('已验证')" :class="vulnStatusQuick.selected === '已验证' ? 'border-blue-400 bg-blue-100 text-blue-900' : 'border-blue-300 bg-blue-50 text-blue-800 hover:bg-blue-100'" class="px-3 py-2.5 rounded-lg border text-sm font-medium">已验证</button>
-      <button type="button" @click="pickVulnStatus('忽略')" :class="vulnStatusQuick.selected === '忽略' ? 'border-slate-400 bg-slate-200 text-slate-900' : 'border-slate-300 bg-slate-50 text-slate-800 hover:bg-slate-100'" class="px-3 py-2.5 rounded-lg border text-sm font-medium">忽略</button>
-      <button type="button" @click="pickVulnStatus('重复')" :class="vulnStatusQuick.selected === '重复' ? 'border-rose-400 bg-rose-100 text-rose-900' : 'border-rose-300 bg-rose-50 text-rose-800 hover:bg-rose-100'" class="px-3 py-2.5 rounded-lg border text-sm font-medium">重复</button>
-    </div>
-    <template x-if="vulnStatusQuick.selected === '忽略'">
-      <div class="px-5 pb-1 -mt-1">
-        <label class="text-[11px] text-slate-400 mb-1 block font-medium">忽略原因（不少于 4 个字）</label>
-        <textarea x-model="vulnStatusQuick.reason" rows="3" placeholder="请填写忽略原因…" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
-        <p x-show="vulnStatusQuick.reasonError" x-text="vulnStatusQuick.reasonError" class="mt-1 text-[11px] text-rose-500"></p>
+  <div class="sto" style="width:100%; max-width:420px; margin:0 16px;">
+    <div class="sto-panel" @click.stop>
+      <div style="padding:15px 18px; border-bottom:1px solid var(--sto-line);">
+        <h3 style="font-size:13.5px; font-weight:650; color:var(--sto-fg);">漏洞状态</h3>
+        <p class="sto-muted sto-num" style="margin-top:4px; word-break:break-all; font-size:10.5px;" x-text="`${vulnStatusQuick.id} · ${vulnStatusQuick.title}`"></p>
       </div>
-    </template>
-    <div class="px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
-      <button type="button" @click="closeVulnStatusQuick()" class="px-4 py-2 text-sm rounded-xl border border-slate-200 text-slate-500">取消</button>
-      <button type="button" @click="confirmVulnStatus()" class="px-4 py-2 text-sm rounded-xl bg-slate-700 text-white hover:bg-slate-800">确认</button>
+      <div style="padding:18px; display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <button type="button" @click="pickVulnStatus('待验证')" class="sto-listbtn" :class="vulnStatusQuick.selected === '待验证' ? 'active' : ''" style="text-align:center; font-size:12.5px; font-weight:600;">待验证</button>
+        <button type="button" @click="pickVulnStatus('已验证')" class="sto-listbtn" :class="vulnStatusQuick.selected === '已验证' ? 'active' : ''" style="text-align:center; font-size:12.5px; font-weight:600;">已验证</button>
+        <button type="button" @click="pickVulnStatus('忽略')" class="sto-listbtn" :class="vulnStatusQuick.selected === '忽略' ? 'active' : ''" style="text-align:center; font-size:12.5px; font-weight:600;">忽略</button>
+        <button type="button" @click="pickVulnStatus('重复')" class="sto-listbtn" :class="vulnStatusQuick.selected === '重复' ? 'active' : ''" style="text-align:center; font-size:12.5px; font-weight:600;">重复</button>
+      </div>
+      <template x-if="vulnStatusQuick.selected === '忽略'">
+        <div style="padding:0 18px 4px;">
+          <div class="sto-field"><label>忽略原因（不少于 4 个字）</label>
+            <textarea x-model="vulnStatusQuick.reason" rows="3" placeholder="请填写忽略原因…" class="sto-input"></textarea>
+            <p x-show="vulnStatusQuick.reasonError" x-text="vulnStatusQuick.reasonError" class="sto-warnline"></p>
+          </div>
+        </div>
+      </template>
+      <div class="sto-foot" style="padding:13px 18px; border-top:1px solid var(--sto-line);">
+        <button type="button" @click="closeVulnStatusQuick()" class="sto-ghost">取消</button>
+        <button type="button" @click="confirmVulnStatus()" class="sto-btn">确认</button>
+      </div>
     </div>
   </div>
 </div>
 
 <!-- Vuln Editor Modal -->
 <div x-show="vulnEditor.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="vulnEditor.open = false">
-  <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto mx-4" @click.stop>
-    <div class="sticky top-0 bg-white px-5 py-3 border-b border-slate-200 flex items-center gap-3 z-10 rounded-t-2xl">
-      <h3 class="text-sm font-semibold text-slate-700" x-text="vulnEditor.isNew ? '新增漏洞' : '编辑漏洞'"></h3>
-      <div class="flex-1"></div>
-      <button @click="vulnEditor.open = false" class="text-slate-400 hover:text-slate-600 text-lg">&times;</button>
-    </div>
-    <div class="p-5 space-y-3">
-      <div class="flex gap-2">
-        <input x-model="vulnEditor.project_id" placeholder="任务 ID（如 t_042）" class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm" :disabled="!vulnEditor.isNew">
-        <button type="button" @click="loadVulnEditorArtifacts()" :disabled="!vulnEditor.project_id || vulnEditor.artifacts_loading" class="px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-600 disabled:opacity-40" x-text="vulnEditor.artifacts_loading ? '加载中…' : '加载产物'"></button>
+  <div class="sto" style="width:100%; max-width:640px; max-height:85vh; overflow-y:auto; margin:0 16px;">
+    <div class="sto-panel" @click.stop>
+      <div style="position:sticky; top:0; z-index:10; background:var(--sto-panel); padding:14px 18px; border-bottom:1px solid var(--sto-line); display:flex; align-items:center; gap:10px;">
+        <h3 style="font-size:13.5px; font-weight:650; color:var(--sto-fg);" x-text="vulnEditor.isNew ? '新增漏洞' : '编辑漏洞'"></h3>
+        <span style="flex:1;"></span>
+        <button @click="vulnEditor.open = false" class="sto-ghost" style="padding:4px 10px;">×</button>
       </div>
-      <input x-model="vulnEditor.title" placeholder="标题 *" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <input x-model="vulnEditor.type" placeholder="漏洞类型（如 IDOR / SQLi / JWT）" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-        <input x-model="vulnEditor.affected_target" placeholder="受影响目标 / 接口" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
-      </div>
-      <div>
-        <label class="text-[11px] text-slate-400 mb-1 block font-medium">严重程度</label>
-        <div class="flex gap-2">
-          <template x-for="sev in ['critical','high','medium','low','info']" :key="sev">
-            <button type="button" @click="vulnEditor.severity = sev" class="px-3 py-1.5 rounded-lg text-[11px] font-semibold transition border"
-              :class="vulnEditor.severity === sev ? vulnSeverityClass(sev) : 'border-slate-200 text-slate-400 hover:bg-slate-50'"
-              x-text="vulnSeverityLabel(sev)"></button>
-          </template>
+      <div style="padding:16px 18px; display:flex; flex-direction:column; gap:12px;">
+        <div class="flex" style="gap:8px;">
+          <input x-model="vulnEditor.project_id" placeholder="任务 ID（如 t_042）" class="sto-input" style="flex:1;" :disabled="!vulnEditor.isNew">
+          <button type="button" @click="loadVulnEditorArtifacts()" :disabled="!vulnEditor.project_id || vulnEditor.artifacts_loading" class="sto-minibtn" style="flex-shrink:0;" x-text="vulnEditor.artifacts_loading ? '加载中…' : '加载产物'"></button>
+        </div>
+        <div class="sto-field"><label>标题 *</label><input x-model="vulnEditor.title" placeholder="标题 *" class="sto-input"></div>
+        <div class="sto-grid2">
+          <div class="sto-field"><label>漏洞类型</label><input x-model="vulnEditor.type" placeholder="如 IDOR / SQLi / JWT" class="sto-input"></div>
+          <div class="sto-field"><label>受影响目标 / 接口</label><input x-model="vulnEditor.affected_target" placeholder="受影响目标 / 接口" class="sto-input"></div>
+        </div>
+        <div class="sto-field"><label>严重程度</label>
+          <div class="flex flex-wrap" style="gap:7px;">
+            <template x-for="sev in ['critical','high','medium','low','info']" :key="sev">
+              <button type="button" @click="vulnEditor.severity = sev" class="sto-sevbadge sto-listbtn" style="padding:5px 12px;"
+                :class="[`sto-sev-${sev}`, vulnEditor.severity === sev ? 'active' : '']"
+                x-text="vulnSeverityLabel(sev)"></button>
+            </template>
+          </div>
+        </div>
+        <div class="sto-grid2">
+          <div class="sto-field"><label>状态</label>
+            <select x-model="vulnEditor.status" class="sto-input">
+              <option value="待验证">待验证</option>
+              <option value="已验证">已验证</option>
+              <option value="忽略">忽略</option>
+              <option value="重复">重复</option>
+            </select>
+          </div>
+          <div class="sto-field"><label>关联 Findings</label>
+            <select x-model="vulnEditor.finding_artifact_id" class="sto-input">
+              <option value="">不关联</option>
+              <template x-for="artifact in (vulnEditor.available_artifacts || []).filter(item => item.artifact_type === 'explore.findings' || item.artifact_type === 'bootstrap.findings' || item.artifact_type === 'upload')" :key="`finding-${artifact.id}`"><option :value="artifact.id" x-text="`${artifact.path} · ${artifact.artifact_type}`"></option></template>
+            </select>
+          </div>
+        </div>
+        <div class="sto-field"><label>描述 *</label><textarea x-model="vulnEditor.description" rows="3" placeholder="描述 *" class="sto-input"></textarea></div>
+        <div class="sto-field"><label>利用前提</label><textarea x-model="vulnEditor.prerequisites" rows="2" placeholder="利用前提" class="sto-input"></textarea></div>
+        <div class="sto-field"><label>影响 *</label><textarea x-model="vulnEditor.impact" rows="2" placeholder="影响 *" class="sto-input"></textarea></div>
+        <div class="sto-field"><label>修复建议</label><textarea x-model="vulnEditor.remediation" rows="3" placeholder="修复建议" class="sto-input"></textarea></div>
+        <div class="sto-field"><label>证据文件（可多选）</label>
+          <select multiple size="5" x-model="vulnEditor.evidence_artifact_ids" class="sto-input">
+            <template x-for="artifact in (vulnEditor.available_artifacts || []).filter(item => item.artifact_type === 'explore.evidence' || item.artifact_type === 'review.evidence' || item.artifact_type === 'upload')" :key="`evidence-${artifact.id}`"><option :value="artifact.id" x-text="`${artifact.path} · ${formatBytes(artifact.size)}`"></option></template>
+          </select>
+          <p class="sto-desc">按住 Command / Ctrl 可选择多个已有 Artifact。</p>
+        </div>
+        <div class="sto-field"><label>状态原因（状态为「忽略」时必填，不少于 4 字）</label>
+          <textarea x-model="vulnEditor.status_reason" rows="2" placeholder="可记录人工裁决或忽略原因" class="sto-input"></textarea>
         </div>
       </div>
-      <div>
-        <label class="text-[11px] text-slate-400 mb-1 block font-medium">状态</label>
-        <select x-model="vulnEditor.status" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white">
-          <option value="待验证">待验证</option>
-          <option value="已验证">已验证</option>
-          <option value="忽略">忽略</option>
-          <option value="重复">重复</option>
-        </select>
+      <div class="sto-foot" style="padding:13px 18px; border-top:1px solid var(--sto-line); position:sticky; bottom:0; background:var(--sto-panel);">
+        <button @click="vulnEditor.open = false" class="sto-ghost">取消</button>
+        <button @click="saveVuln()" class="sto-btn">保存</button>
       </div>
-      <textarea x-model="vulnEditor.description" rows="3" placeholder="描述 *" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea>
-      <textarea x-model="vulnEditor.prerequisites" rows="2" placeholder="利用前提" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea>
-      <textarea x-model="vulnEditor.impact" rows="2" placeholder="影响 *" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea>
-      <textarea x-model="vulnEditor.remediation" rows="3" placeholder="修复建议" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea>
-      <div>
-        <label class="text-[11px] text-slate-400 mb-1 block font-medium">关联 Findings</label>
-        <select x-model="vulnEditor.finding_artifact_id" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white">
-          <option value="">不关联</option>
-          <template x-for="artifact in (vulnEditor.available_artifacts || []).filter(item => item.artifact_type === 'explore.findings' || item.artifact_type === 'bootstrap.findings' || item.artifact_type === 'upload')" :key="`finding-${artifact.id}`"><option :value="artifact.id" x-text="`${artifact.path} · ${artifact.artifact_type}`"></option></template>
-        </select>
-      </div>
-      <div>
-        <label class="text-[11px] text-slate-400 mb-1 block font-medium">证据文件（可多选）</label>
-        <select multiple size="5" x-model="vulnEditor.evidence_artifact_ids" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white">
-          <template x-for="artifact in (vulnEditor.available_artifacts || []).filter(item => item.artifact_type === 'explore.evidence' || item.artifact_type === 'review.evidence' || item.artifact_type === 'upload')" :key="`evidence-${artifact.id}`"><option :value="artifact.id" x-text="`${artifact.path} · ${formatBytes(artifact.size)}`"></option></template>
-        </select>
-        <p class="mt-1 text-[10px] text-slate-400">按住 Command / Ctrl 可选择多个已有 Artifact。</p>
-      </div>
-      <div>
-        <label class="text-[11px] text-slate-400 mb-1 block font-medium">状态原因（状态为「忽略」时必填，不少于 4 字）</label>
-        <textarea x-model="vulnEditor.status_reason" rows="2" placeholder="可记录人工裁决或忽略原因" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm"></textarea>
-      </div>
-    </div>
-    <div class="sticky bottom-0 bg-white px-5 py-3 border-t border-slate-200 flex justify-end gap-2 rounded-b-2xl">
-      <button @click="vulnEditor.open = false" class="px-4 py-2 text-sm rounded-xl border border-slate-200 text-slate-500">取消</button>
-      <button @click="saveVuln()" class="px-4 py-2 text-sm rounded-xl bg-rose-500 text-white hover:bg-rose-600">保存</button>
     </div>
   </div>
 </div>

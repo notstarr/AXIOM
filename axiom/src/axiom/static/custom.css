@@ -1135,3 +1135,27 @@
   .sto-eventrow .ereason { margin-top: 6px; font-size: 11.5px; line-height: 1.5; }
   .sto-eventrow.block .ereason { color: var(--sto-danger); }
   .sto-eventrow.allow .ereason { color: var(--sto-fg-2); }
+  /* ═══════════ 漏洞管理（严重度色彩体系） ═══════════ */
+  .sto-sev-critical { --sev: #dc2626; --sev-soft: rgba(220, 38, 38, 0.10); }
+  .sto-sev-high     { --sev: #ea580c; --sev-soft: rgba(234, 88, 12, 0.10); }
+  .sto-sev-medium   { --sev: #ca8a04; --sev-soft: rgba(202, 138, 4, 0.10); }
+  .sto-sev-low      { --sev: #2563eb; --sev-soft: rgba(37, 99, 235, 0.10); }
+  .sto-sev-info     { --sev: #64748b; --sev-soft: rgba(100, 116, 139, 0.10); }
+  .sto-sevdot { width: 9px; height: 9px; border-radius: 50%; background: var(--sev, var(--sto-fg-3)); flex-shrink: 0; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sev, #94a3b8) 18%, transparent); }
+  .sto-sevbadge {
+    font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
+    color: var(--sev); background: var(--sev-soft, var(--sto-inset));
+    border: 1px solid color-mix(in srgb, var(--sev, #94a3b8) 35%, transparent);
+  }
+  .sto-vlist .sto-navitem.active { border-color: color-mix(in srgb, var(--sev, #94a3b8) 40%, var(--sto-line)); }
+  .sto-vlist .sto-navitem.active::before { background: var(--sev, var(--sto-accent)); }
+  .sto-vhero {
+    border-bottom: 1px solid color-mix(in srgb, var(--sev, #94a3b8) 25%, var(--sto-line));
+    background: linear-gradient(120deg, color-mix(in srgb, var(--sev, #94a3b8) 8%, var(--sto-panel)) 0%, var(--sto-panel) 60%);
+  }
+  .sto-vhero .sevsq {
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 34px; height: 34px; border-radius: 10px; background: var(--sev); color: #fff;
+    font-size: 11px; font-weight: 800; letter-spacing: 0.02em;
+    box-shadow: 0 4px 14px color-mix(in srgb, var(--sev) 35%, transparent);
+  }
