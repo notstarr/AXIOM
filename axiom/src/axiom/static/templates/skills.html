@@ -1,167 +1,169 @@
 <!-- ═══════════ SKILL PAGE ═══════════ -->
-<div x-show="activePage === 'skills'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
+<div x-show="activePage === 'skills'" x-cloak class="sto flex-1 flex flex-col overflow-hidden min-w-0">
   <header class="app-page-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
     <h2 class="text-base font-semibold text-slate-800">Skill 管理</h2>
     <span class="text-xs text-slate-400">多文件结构 · 渐进式注入 · 阶段分配由 Worker 统一管理</span>
     <div class="flex-1"></div>
-    <button @click="openSkillEditor()" class="px-3 py-1.5 text-xs rounded-lg bg-brand-500 text-white hover:bg-brand-600">新建 Skill</button>
-    <label class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 cursor-pointer transition">
+    <button @click="openSkillEditor()" class="sto-btn" style="padding:7px 12px;">新建 Skill</button>
+    <label class="sto-ghost" style="padding:7px 12px; cursor:pointer;">
       上传文件夹/MD
       <input type="file" accept=".md,.txt,.sh,.py,.json,.yaml,.yml" multiple webkitdirectory @change="uploadSkillFiles($event)" class="hidden">
     </label>
-    <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition">刷新</button>
+    <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="sto-ghost" style="padding:7px 12px;">刷新</button>
   </header>
   <main class="flex-1 overflow-hidden grid grid-cols-[260px_200px_minmax(0,1fr)]">
     <!-- Skill list -->
-    <aside class="border-r border-slate-200 bg-white overflow-y-auto p-3 space-y-2">
+    <aside style="border-right:1px solid var(--sto-line); background:var(--sto-inset); overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:7px;">
       <template x-if="!skills || skills.length === 0">
-        <p class="text-sm text-slate-400 text-center py-10">暂无 Skill</p>
+        <p class="sto-muted" style="text-align:center; padding:36px 0;">暂无 Skill</p>
       </template>
       <template x-for="sk in (skills || [])" :key="sk.name">
-        <button type="button" @click="selectSkill(sk)" class="w-full flex flex-col items-start text-left rounded-xl border p-3 transition"
-          :class="skillEditor.name === sk.name ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'">
-          <div class="flex items-center gap-1.5 w-full">
-            <span class="text-sm font-semibold text-slate-700 truncate" x-text="sk.name"></span>
-            <span x-show="sk.builtin" class="px-1 py-0.5 rounded text-[8px] font-semibold bg-brand-50 text-brand-600 shrink-0">内置</span>
+        <button type="button" @click="selectSkill(sk)" class="sto-listbtn" :class="skillEditor.name === sk.name ? 'active' : ''">
+          <div class="flex items-center w-full" style="gap:6px;">
+            <span style="font-size:12.5px; font-weight:650; color:var(--sto-fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="sk.name"></span>
+            <span x-show="sk.builtin" class="sto-badge" style="padding:0 6px; font-size:8.5px; flex-shrink:0;">内置</span>
           </div>
-          <p class="mt-0.5 text-[10px] text-slate-400 line-clamp-2" x-text="sk.description || ''"></p>
-          <div class="mt-1 flex items-center gap-2">
-            <span class="px-1 py-0.5 rounded text-[8px] font-semibold"
-              :class="sk.enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'"
-              x-text="sk.enabled ? '启用' : '禁用'"></span>
-            <span x-show="sk.sync_status === 'bundled_update_available'" class="px-1 py-0.5 rounded text-[8px] font-semibold bg-amber-50 text-amber-700">有内置更新</span>
-            <span x-show="sk.sync_status === 'custom'" class="px-1 py-0.5 rounded text-[8px] font-semibold bg-slate-100 text-slate-500">定制版</span>
-            <span class="text-[8px] text-slate-400" x-text="capabilityPhaseSummary(skillCapabilityRecord(sk))"></span>
+          <p class="sto-muted" style="margin-top:3px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" x-text="sk.description || ''"></p>
+          <div class="flex items-center flex-wrap" style="gap:5px; margin-top:6px;">
+            <span class="sto-badge" style="padding:0 6px; font-size:8.5px;" :class="sk.enabled ? 'ok' : 'neutral'" x-text="sk.enabled ? '启用' : '禁用'"></span>
+            <span x-show="sk.sync_status === 'bundled_update_available'" class="sto-badge warn" style="padding:0 6px; font-size:8.5px;">有内置更新</span>
+            <span x-show="sk.sync_status === 'custom'" class="sto-badge neutral" style="padding:0 6px; font-size:8.5px;">定制版</span>
+            <span class="sto-muted" style="font-size:8.5px;" x-text="capabilityPhaseSummary(skillCapabilityRecord(sk))"></span>
           </div>
         </button>
       </template>
     </aside>
     <!-- File tree -->
-    <aside class="border-r border-slate-200 bg-white overflow-y-auto p-3 space-y-1" x-show="skillEditor.name || skillEditor.isNew">
+    <aside style="border-right:1px solid var(--sto-line); background:var(--sto-panel); overflow-y:auto; padding:12px;" x-show="skillEditor.name || skillEditor.isNew">
       <template x-if="!skillEditor.name && !skillEditor.isNew">
-        <p class="text-xs text-slate-400 text-center py-10">← 选择一个 Skill</p>
+        <p class="sto-muted" style="text-align:center; padding:36px 0;">← 选择一个 Skill</p>
       </template>
       <template x-if="skillEditor.name || skillEditor.isNew">
         <div>
-          <div class="flex items-center justify-between mb-2">
-            <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">文件</span>
-            <button @click="showNewSkillFileInput = !showNewSkillFileInput" class="text-[10px] text-brand-500 hover:text-brand-700">+ 新建</button>
+          <div class="flex items-center justify-between" style="margin-bottom:8px;">
+            <span class="sto-label">文件</span>
+            <button @click="showNewSkillFileInput = !showNewSkillFileInput" class="sto-minibtn acc" style="padding:2px 8px; font-size:10px;">+ 新建</button>
           </div>
-          <div x-show="showNewSkillFileInput" class="mb-2">
+          <div x-show="showNewSkillFileInput" style="margin-bottom:8px;">
             <input x-model="newSkillFilePath" placeholder="references/notes.md" @keydown.enter="createSkillFile()"
-              class="w-full px-2 py-1 text-[11px] border border-slate-200 rounded text-sm font-mono">
+              class="sto-input mono" style="padding:5px 9px; font-size:11px;">
             <button @click="createSkillFile()" :disabled="!newSkillFilePath"
-              class="mt-1 w-full px-2 py-1 text-[10px] rounded bg-brand-500 text-white hover:bg-brand-600 disabled:opacity-40">创建</button>
+              class="sto-btn" style="margin-top:5px; width:100%; justify-content:center; padding:5px 0; font-size:11px;">创建</button>
           </div>
           <template x-for="f in skillFileTreeRows()" :key="`${f.type}:${f.path}`">
-            <div class="group flex items-center gap-1 rounded-lg py-1.5 cursor-pointer transition"
-              :class="f.type === 'file' && skillEditor.activeFile === f.path ? 'bg-brand-50 text-brand-700' : 'hover:bg-slate-50 text-slate-600'"
-              :style="`padding-left: ${8 + f.depth * 14}px`"
+            <div class="group flex items-center" style="gap:5px; border-radius:7px; padding:5px 4px; cursor:pointer; transition:background 0.15s ease;"
+              :class="f.type === 'file' && skillEditor.activeFile === f.path ? '' : ''"
+              :style="`${f.type === 'file' && skillEditor.activeFile === f.path ? 'background:var(--sto-accent-soft); color:var(--sto-accent);' : 'color:var(--sto-fg-2);'} padding-left: ${8 + f.depth * 14}px;`"
+              @mouseenter="f.type === 'file' && skillEditor.activeFile !== f.path ? $el.style.background = 'var(--sto-inset)' : ''"
+              @mouseleave="f.type === 'file' && skillEditor.activeFile !== f.path ? $el.style.background = '' : ''"
               :title="f.path"
               @click="f.type === 'directory' ? toggleSkillDirectory(f.path) : openSkillFile(f.path)">
               <template x-if="f.type === 'directory'">
-                <span class="w-3.5 text-center text-[11px] text-slate-400 shrink-0" x-text="skillDirectoryExpanded(f.path) ? '▾' : '▸'"></span>
+                <span style="width:14px; text-align:center; font-size:10px; color:var(--sto-fg-3); flex-shrink:0;" x-text="skillDirectoryExpanded(f.path) ? '▾' : '▸'"></span>
               </template>
               <template x-if="f.type === 'directory'">
-                <svg class="w-3.5 h-3.5 shrink-0 text-amber-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H10l2 2h6.5A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/><path d="M3 8h18"/></svg>
+                <svg style="width:13px; height:13px; flex-shrink:0; color:var(--sto-warn);" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H10l2 2h6.5A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/><path d="M3 8h18"/></svg>
               </template>
               <template x-if="f.type === 'file'">
-                <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                <svg style="width:13px; height:13px; flex-shrink:0;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
               </template>
-              <span class="text-xs truncate flex-1" :class="f.type === 'directory' ? 'font-medium' : ''" x-text="f.name"></span>
-              <span x-show="f.type === 'directory'" class="text-[9px] text-slate-400 shrink-0" x-text="f.children.length"></span>
-              <span x-show="f.type === 'file' && !skillFilePreviewable(f)" class="text-[9px] text-slate-400 shrink-0">二进制</span>
-              <span x-show="f.type === 'file'" class="text-[9px] text-slate-400 shrink-0" x-text="formatSkillFileSize(f.size)"></span>
+              <span style="font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;" :class="f.type === 'directory' ? 'font-medium' : ''" x-text="f.name"></span>
+              <span x-show="f.type === 'directory'" class="sto-muted" style="font-size:9px; flex-shrink:0;" x-text="f.children.length"></span>
+              <span x-show="f.type === 'file' && !skillFilePreviewable(f)" class="sto-muted" style="font-size:9px; flex-shrink:0;">二进制</span>
+              <span x-show="f.type === 'file'" class="sto-muted sto-num" style="font-size:9px; flex-shrink:0;" x-text="formatSkillFileSize(f.size)"></span>
               <button x-show="f.type === 'file' && f.path !== 'SKILL.md'" @click.stop="deleteSkillFile(f.path)"
                 :disabled="skillFileDeleting === f.path"
                 :title="skillFileDeleting === f.path ? '删除中…' : '删除文件'"
-                class="opacity-0 group-hover:opacity-100 text-rose-400 hover:text-rose-600 text-[10px] shrink-0 disabled:opacity-40 disabled:cursor-wait">
+                style="opacity:0; color:var(--sto-danger); font-size:11px; flex-shrink:0; background:none; border:0; cursor:pointer;"
+                onmouseover="this.style.opacity='1'" onmouseout="if (this.dataset.deleting !== '1') this.style.opacity='0'"
+                class="group-hover:opacity-100">
                 <span x-text="skillFileDeleting === f.path ? '…' : '×'"></span>
               </button>
             </div>
           </template>
-          <div x-show="skillFiles.length === 0" class="text-xs text-slate-400 text-center py-4">无文件</div>
+          <div x-show="skillFiles.length === 0" class="sto-muted" style="text-align:center; padding:14px 0;">无文件</div>
         </div>
       </template>
     </aside>
     <!-- Editor -->
     <section class="overflow-hidden flex flex-col" x-show="skillEditor.name || skillEditor.isNew">
       <template x-if="!skillEditor.name && !skillEditor.isNew">
-        <div class="flex items-center justify-center h-full text-slate-400 text-sm">← 选择一个 Skill 开始编辑</div>
+        <div class="flex items-center justify-center h-full sto-muted text-sm">← 选择一个 Skill 开始编辑</div>
       </template>
       <template x-if="skillEditor.name || skillEditor.isNew">
         <div class="flex flex-col h-full">
           <!-- Skill meta bar -->
-          <div class="shrink-0 px-4 py-2 border-b border-slate-100 bg-white flex items-center gap-3">
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-semibold text-slate-700" x-text="skillEditor.name || '新 Skill'"></span>
-              <span x-show="skillEditor.builtin" class="px-1 py-0.5 rounded text-[8px] font-semibold bg-brand-50 text-brand-600">内置</span>
-              <span x-show="skillEditor.sync_status === 'synced'" class="px-1 py-0.5 rounded text-[8px] font-semibold bg-emerald-50 text-emerald-700">跟随内置更新</span>
-              <span x-show="skillEditor.sync_status === 'bundled_update_available'" class="px-1 py-0.5 rounded text-[8px] font-semibold bg-amber-50 text-amber-700">有内置更新</span>
-              <span x-show="skillEditor.sync_status === 'custom'" class="px-1 py-0.5 rounded text-[8px] font-semibold bg-slate-100 text-slate-500">运行时定制版</span>
+          <div class="shrink-0 flex items-center flex-wrap" style="gap:10px; padding:9px 16px; border-bottom:1px solid var(--sto-line); background:var(--sto-panel);">
+            <div class="flex items-center flex-wrap" style="gap:6px;">
+              <span style="font-size:13px; font-weight:650; color:var(--sto-fg);" x-text="skillEditor.name || '新 Skill'"></span>
+              <span x-show="skillEditor.builtin" class="sto-badge" style="padding:0 6px; font-size:8.5px;">内置</span>
+              <span x-show="skillEditor.sync_status === 'synced'" class="sto-badge ok" style="padding:0 6px; font-size:8.5px;">跟随内置更新</span>
+              <span x-show="skillEditor.sync_status === 'bundled_update_available'" class="sto-badge warn" style="padding:0 6px; font-size:8.5px;">有内置更新</span>
+              <span x-show="skillEditor.sync_status === 'custom'" class="sto-badge neutral" style="padding:0 6px; font-size:8.5px;">运行时定制版</span>
             </div>
+            <span style="flex:1;"></span>
             <button @click="toggleSkillFromEditor()" :disabled="skillToggleLoading === skillEditor.name || phaseCapabilityScopeLocked(selectedSkillCapabilityRecord(), 'common')"
               :title="phaseCapabilityScopeLocked(selectedSkillCapabilityRecord(), 'common') ? '锁定的全部阶段 Skill 不能停用' : (skillEditor.enabled ? '点击禁用该 Skill' : '点击启用该 Skill')"
-              class="ml-auto px-3 py-1 text-xs rounded-lg transition disabled:opacity-50 disabled:cursor-wait"
-              :class="skillEditor.enabled ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-slate-100 text-slate-400 border border-slate-200 hover:bg-slate-200'">
+              class="sto-badge" style="padding:4px 10px; cursor:pointer; border:1px solid;"
+              :class="skillToggleLoading === skillEditor.name ? 'neutral' : (skillEditor.enabled ? 'ok' : 'neutral')">
               <span x-show="skillToggleLoading === skillEditor.name">保存中...</span>
               <span x-show="skillToggleLoading !== skillEditor.name && skillEditor.enabled">✓ 已启用 · 点击禁用</span>
               <span x-show="skillToggleLoading !== skillEditor.name && !skillEditor.enabled">已禁用 · 点击启用</span>
             </button>
-            <button @click="deleteSkill({name: skillEditor.name})" :disabled="phaseCapabilityScopeLocked(selectedSkillCapabilityRecord(), 'common')" class="px-2 py-1 text-xs rounded border border-rose-200 text-rose-500 hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed">删除</button>
-            <button x-show="skillEditor.source === 'managed' && skillEditor.bundledHash" @click="restoreBundledSkill()" class="px-2 py-1 text-xs rounded border border-amber-200 text-amber-700 hover:bg-amber-50">恢复最新内置版</button>
+            <button @click="deleteSkill({name: skillEditor.name})" :disabled="phaseCapabilityScopeLocked(selectedSkillCapabilityRecord(), 'common')" class="sto-minibtn danger">删除</button>
+            <button x-show="skillEditor.source === 'managed' && skillEditor.bundledHash" @click="restoreBundledSkill()" class="sto-minibtn" style="color:var(--sto-warn); border-color:color-mix(in srgb, var(--sto-warn) 35%, transparent);">恢复最新内置版</button>
           </div>
           <!-- Read-only stage assignment summary -->
-          <div class="shrink-0 px-4 py-2.5 border-b border-slate-100 bg-white" x-show="!skillEditor.isNew && selectedSkillCapabilityRecord()" x-cloak>
-            <div class="flex items-center gap-3">
-              <div class="min-w-0">
-                <div class="text-[10px] font-semibold text-slate-500">Worker 可见性</div>
-                <div class="mt-0.5 text-[9px] text-slate-400">此处只读；阶段分配统一在 Worker 页面修改。</div>
-              </div>
-              <div class="ml-auto flex flex-wrap justify-end gap-1.5">
-                <template x-for="phase in axiomPhases()" :key="`skill-readonly-${phase}`"><span class="rounded-lg border px-2 py-1 text-[10px]" :class="phaseCapabilityAssigned(selectedSkillCapabilityRecord(), phase) ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-400'" x-text="`${phaseCapabilityAssigned(selectedSkillCapabilityRecord(), phase) ? '✓ ' : ''}${axiomPhaseLabel(phase)}`"></span></template>
-                <button type="button" @click="navigateToWorkerCapability('skill', skillEditor.name)" class="rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-[10px] text-brand-700">前往 Worker 能力管理</button>
-              </div>
+          <div class="shrink-0 flex items-center justify-between flex-wrap" style="gap:10px; padding:8px 16px; border-bottom:1px solid var(--sto-line); background:var(--sto-panel);" x-show="!skillEditor.isNew && selectedSkillCapabilityRecord()" x-cloak>
+            <div>
+              <p class="sto-label">Worker 可见性</p>
+              <p class="sto-desc">此处只读；阶段分配统一在 Worker 页面修改。</p>
+            </div>
+            <div class="flex flex-wrap items-center justify-end" style="gap:5px;">
+              <template x-for="phase in axiomPhases()" :key="`skill-readonly-${phase}`">
+                <span class="sto-phasechip" style="min-width:64px;" :class="phaseCapabilityAssigned(selectedSkillCapabilityRecord(), phase) ? 'on' : 'off'" x-text="`${phaseCapabilityAssigned(selectedSkillCapabilityRecord(), phase) ? '✓ ' : ''}${axiomPhaseLabel(phase)}`"></span>
+              </template>
+              <button type="button" @click="navigateToWorkerCapability('skill', skillEditor.name)" class="sto-minibtn acc">前往 Worker 能力管理</button>
             </div>
           </div>
-          <div class="shrink-0 px-4 py-2 border-b border-amber-100 bg-amber-50/60 text-[10px] text-amber-700" x-show="skillEditor.isNew">新 Skill 保存后默认不分配给任何阶段；需要使用时请前往 Worker 能力管理。</div>
-          <!-- SKILL.md frontmatter (name + description) -->
-          <div class="shrink-0 px-4 py-2 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3" x-show="skillEditor.activeFile === 'SKILL.md'">
-            <div class="flex-1 grid grid-cols-2 gap-3">
-              <div>
-                <label class="text-[10px] font-semibold text-slate-400 block">name</label>
+          <div class="shrink-0 sto-note" style="border-radius:0; border-left:0; border-right:0; border-color:color-mix(in srgb, var(--sto-warn) 25%, transparent); background:color-mix(in srgb, var(--sto-warn) 7%, transparent); color:var(--sto-warn);" x-show="skillEditor.isNew">新 Skill 保存后默认不分配给任何阶段；需要使用时请前往 Worker 能力管理。</div>
+          <!-- SKILL.md frontmatter -->
+          <div class="shrink-0 flex items-center" style="gap:12px; padding:9px 16px; border-bottom:1px solid var(--sto-line); background:var(--sto-inset);" x-show="skillEditor.activeFile === 'SKILL.md'">
+            <div style="flex:1; display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+              <div class="sto-field">
+                <label>name</label>
                 <input x-model="skillEditor.name" :disabled="!skillEditor.isNew" @input="skillEditor.name = skillEditor.name.replace(/[^a-z0-9-]/g, '-').replace(/--+/g, '-').replace(/^-|-$/g, ''); skillEditor.fileDirty = true"
-                  class="w-full px-2 py-1 text-xs border border-slate-200 rounded font-mono disabled:bg-slate-100 disabled:text-slate-400">
+                  class="sto-input mono" style="padding:6px 10px; font-size:11.5px;">
               </div>
-              <div>
-                <label class="text-[10px] font-semibold text-slate-400 block">description</label>
+              <div class="sto-field">
+                <label>description</label>
                 <input x-model="skillEditor.description" placeholder="触发场景描述" @input="skillEditor.fileDirty = true"
-                  class="w-full px-2 py-1 text-xs border border-slate-200 rounded">
+                  class="sto-input" style="padding:6px 10px; font-size:11.5px;">
               </div>
             </div>
-            <button @click="fillSkillPreset()" class="px-2 py-1 text-[10px] rounded border border-slate-200 text-slate-500 hover:bg-slate-100 shrink-0">预设</button>
+            <button @click="fillSkillPreset()" class="sto-minibtn" style="flex-shrink:0;">预设</button>
           </div>
           <!-- File editor -->
-          <div class="flex-1 overflow-hidden p-4">
-            <div class="flex items-center justify-between mb-2">
-              <div class="flex items-center gap-2 min-w-0">
-                <span class="text-xs font-mono text-slate-400 truncate" x-text="skillEditor.activeFile || ''"></span>
-                <span x-show="skillEditor.activeFile === 'SKILL.md'" class="text-[10px] text-slate-400 shrink-0">仅编辑正文，frontmatter 由上方字段维护</span>
-                <span x-show="skillEditor.fileTruncated" class="text-[10px] text-amber-600 shrink-0">仅显示部分</span>
+          <div style="flex:1; overflow:hidden; padding:14px 16px; display:flex; flex-direction:column;">
+            <div class="flex items-center justify-between" style="margin-bottom:8px;">
+              <div class="flex items-center" style="gap:8px; min-width:0;">
+                <span class="sto-muted sto-num" x-text="skillEditor.activeFile || ''"></span>
+                <span x-show="skillEditor.activeFile === 'SKILL.md'" class="sto-muted" style="font-size:10px; flex-shrink:0;">仅编辑正文，frontmatter 由上方字段维护</span>
+                <span x-show="skillEditor.fileTruncated" class="sto-warnline" style="flex-shrink:0;">仅显示部分</span>
               </div>
-              <span x-show="skillEditor.fileDirty" class="text-[10px] text-amber-500">未保存</span>
+              <span x-show="skillEditor.fileDirty" class="sto-warnline" style="flex-shrink:0;">未保存</span>
             </div>
             <textarea x-model="skillEditor.fileContent" @input="skillEditor.fileDirty = true"
               :placeholder="skillEditor.activeFile ? (skillEditor.fileTruncated ? '大文件截断预览，不可直接编辑' : '文件内容...') : '← 选择左侧文件'"
               :disabled="!skillEditor.activeFile || skillEditor.fileTruncated"
-              class="w-full h-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 resize-none disabled:bg-slate-50 disabled:cursor-not-allowed"></textarea>
+              class="sto-input" style="flex:1; resize:none; line-height:1.6; disabled:bg-slate-50;"></textarea>
           </div>
           <!-- Save bar -->
-          <div class="shrink-0 px-4 py-2 border-t border-slate-100 bg-white flex items-center justify-end gap-2">
-            <span class="text-[10px] text-slate-400 mr-auto" x-show="skillEditor.builtin && skillEditor.activeFile !== 'SKILL.md'">辅助文件从磁盘管理，直接保存到源码目录</span>
-            <span class="text-[10px] text-amber-600 mr-auto" x-show="skillEditor.fileTruncated">当前为截断预览，不能直接保存</span>
+          <div class="sto-foot shrink-0" style="padding:9px 16px; border-top:1px solid var(--sto-line); background:var(--sto-panel);">
+            <span class="sto-muted sto-num" style="margin-right:auto;" x-show="skillEditor.builtin && skillEditor.activeFile !== 'SKILL.md'">辅助文件从磁盘管理，直接保存到源码目录</span>
+            <span class="sto-warnline" style="margin-right:auto;" x-show="skillEditor.fileTruncated">当前为截断预览，不能直接保存</span>
             <button @click="saveSkillFile()" :disabled="!skillEditor.activeFile || !skillEditor.fileDirty || skillEditor.fileTruncated"
-              class="px-4 py-1.5 text-sm rounded-xl bg-brand-500 text-white hover:bg-brand-600 disabled:opacity-40">保存</button>
+              class="sto-btn">保存</button>
           </div>
         </div>
       </template>
