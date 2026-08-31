@@ -6,6 +6,7 @@
     </div>
     <div class="flex-1"></div>
     <button @click="loadMcpPage()" class="sto-ghost" style="padding:7px 12px;">刷新</button>
+    <button @click="showMcpImport=true; mcpImportContent=''" class="sto-ghost" style="padding:7px 12px;">导入配置</button>
     <button @click="openMcpEditor()" class="sto-btn" style="padding:7px 12px;">新增 Server</button>
   </header>
 
@@ -33,21 +34,33 @@
       </div>
     </div>
 
-    <!-- 导入配置 -->
-    <div class="sto-panel" style="padding:16px 18px;">
-      <div class="flex flex-wrap items-center justify-between" style="gap:10px; margin-bottom:10px;">
-        <div>
-          <p class="sto-label">Import · 导入配置</p>
-          <p class="sto-muted" style="margin-top:4px;">支持标准 mcpServers JSON/YAML、单 Server JSON，以及 Codex TOML。</p>
-        </div>
-        <div class="flex items-center" style="gap:8px;">
-          <select x-model="mcpImportFormat" class="sto-input" style="width:auto; padding:7px 10px; font-size:12px;">
-            <option value="auto">自动识别</option><option value="json">JSON</option><option value="yaml">YAML</option><option value="toml">TOML</option>
-          </select>
-          <button @click="importMcpConfig()" :disabled="mcpImportBusy" class="sto-btn" x-text="mcpImportBusy ? '导入中…' : '导入并保存'"></button>
+    <!-- 导入配置弹窗 -->
+    <div x-show="showMcpImport" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showMcpImport=false">
+      <div class="sto" style="width:100%; max-width:640px;">
+        <div class="sto-panel" style="padding:20px;" @click.stop>
+          <div class="flex items-center justify-between" style="margin-bottom:14px;">
+            <div>
+              <h3 style="font-size:14.5px; font-weight:650;">导入 MCP 配置</h3>
+              <p class="sto-muted" style="margin-top:3px;">支持标准 mcpServers JSON/YAML、单 Server JSON，以及 Codex TOML。</p>
+            </div>
+            <button @click="showMcpImport=false" class="sto-ghost" style="padding:4px 10px;">×</button>
+          </div>
+          <div class="sto-field">
+            <label>配置格式</label>
+            <select x-model="mcpImportFormat" class="sto-input" style="width:auto;">
+              <option value="auto">自动识别</option><option value="json">JSON</option><option value="yaml">YAML</option><option value="toml">TOML</option>
+            </select>
+          </div>
+          <div class="sto-field" style="margin-top:12px;">
+            <label>配置内容</label>
+            <textarea x-model="mcpImportContent" rows="10" class="sto-input" style="background:var(--sto-inset);" placeholder='{"mcpServers":{"browser":{"command":"npx","args":["-y","..."],"env":{}}}}'></textarea>
+          </div>
+          <div class="sto-foot" style="margin-top:14px;">
+            <button @click="showMcpImport=false" class="sto-ghost">取消</button>
+            <button @click="importMcpConfig()" :disabled="mcpImportBusy" class="sto-btn" x-text="mcpImportBusy ? '导入中…' : '导入并保存'"></button>
+          </div>
         </div>
       </div>
-      <textarea x-model="mcpImportContent" rows="6" class="sto-input" style="background:var(--sto-inset);" placeholder='{"mcpServers":{"browser":{"command":"npx","args":["-y","..."],"env":{}}}}'></textarea>
     </div>
 
     <!-- 已配置 Server -->
