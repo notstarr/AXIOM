@@ -42,8 +42,8 @@ window.AxiomModules.storage = {
       try {
         const data = await this._requestJson('GET', '/api/v1/storage/overview');
         this.storageOverview = data;
-        if (data.refreshing && attempt < 40) {
-          setTimeout(() => { this._fetchOverview(attempt + 1); }, 4000);
+        if (data.refreshing && attempt < 200) {
+          setTimeout(() => { this._fetchOverview(attempt + 1); }, 3000);
         }
         return data;
       } catch (e) {

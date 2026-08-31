@@ -198,22 +198,50 @@ class StorageAdminService:
         return datetime.now(timezone.utc) - parsed >= AUTO_ROTATE_INTERVAL
 
     def _compute_full_overview(self) -> StorageOverview:
+        """全量盘点。contexts/ 含数百万小文件，逐文件 stat 需 4 分钟级——
+        该分类复用清理计划快照的增量缓存（bytes+items），其余目录照常遍历。"""
+        snapshot = self._cleanup_snapshot()
+        context_sizes = snapshot.get("context_sizes") or {}
+        # 缓存齐全（全部任务都是带 items 的 dict）才走快照，否则现场统计一次
+        contexts_cached = (
+            bool(context_sizes)
+            and all(isinstance(v, dict) and v.get("items") is not None for v in context_sizes.values())
+        )
+
         categories: list[StorageCategory] = []
+        total_bytes = 0
         for rel in CATEGORY_DIRS:
             path = self._root / rel
             if not path.is_dir():
                 continue
-            size_bytes, items = _tree_stats(path)
+            if rel == "contexts" and contexts_cached:
+                size_bytes = sum(int(v["bytes"]) for v in context_sizes.values())
+                items = sum(int(v.get("items", 0)) for v in context_sizes.values())
+            else:
+                size_bytes, items = _tree_stats(path)
+            total_bytes += size_bytes
             categories.append(
                 StorageCategory(key=rel, path=str(path), bytes=size_bytes, items=items)
             )
+        # 根目录剩余部分：散文件 + 未归类目录（contexts 已由缓存覆盖，跳过）
+        for entry in self._root.iterdir():
+            if entry.name in CATEGORY_DIRS:
+                continue
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    dir_bytes, _items = _tree_stats(entry)
+                    total_bytes += dir_bytes
+                elif entry.is_file(follow_symlinks=False):
+                    total_bytes += entry.stat(follow_symlinks=False).st_size
+            except OSError:
+                continue
         categories.sort(key=lambda item: item.bytes, reverse=True)
 
         disk_total, _, disk_free = shutil.disk_usage(self._root)
         return StorageOverview(
             generated_at=utcnow(),
             data_dir=str(self._root),
-            total_bytes=_tree_stats(self._root)[0],
+            total_bytes=total_bytes,
             disk=DiskStats(total_bytes=disk_total, free_bytes=disk_free),
             categories=categories,
             database=self._database_stats(),
@@ -806,8 +834,13 @@ class StorageAdminService:
             path = self._root / "contexts" / task_id
             if not path.is_dir():
                 return [], 0, ""
-            cached_bytes = context["context_sizes"].get(task_id)
-            size = int(cached_bytes) if cached_bytes is not None else _tree_stats(path)[0]
+            cached = context["context_sizes"].get(task_id)
+            if isinstance(cached, dict):
+                size = int(cached["bytes"])
+            elif cached is not None:
+                size = int(cached)
+            else:
+                size = _tree_stats(path)[0]
             return [CleanupPreviewTarget(
                 path=path.relative_to(self._root).as_posix(),
                 bytes=size, kind="dir",
@@ -1035,15 +1068,19 @@ class StorageAdminService:
                 t1_process_count += 1
 
         # ── contexts/ 与 tasks/ 按任务（优先沿用快照，只统计新增） ──
-        context_tasks: dict[str, int] = {}
+        # contexts 值为 {"bytes", "items"}（概览分类需要文件数）；旧格式 int 视为
+        # 缺失，迁移时现场统计一次。
+        context_tasks: dict[str, dict] = {}
         contexts_root = self._root / "contexts"
         if contexts_root.is_dir():
             for entry in contexts_root.iterdir():
                 if entry.is_dir() and not entry.is_symlink():
-                    if entry.name in prev_context_sizes:
-                        context_tasks[entry.name] = prev_context_sizes[entry.name]
+                    prev = prev_context_sizes.get(entry.name)
+                    if isinstance(prev, dict) and prev.get("items") is not None:
+                        context_tasks[entry.name] = prev
                     else:
-                        context_tasks[entry.name] = _tree_stats(entry)[0]
+                        size_bytes, items = _tree_stats(entry)
+                        context_tasks[entry.name] = {"bytes": size_bytes, "items": items}
         artifact_tasks: dict[str, int] = {}
         tasks_root = self._root / "tasks"
         if tasks_root.is_dir():
@@ -1093,12 +1130,12 @@ class StorageAdminService:
                     description="runs/ 下已完结租约的产物文件（findings、资产清单等）与会话记录。",
                     bytes=bucket["clean_lease_bytes"], count=bucket["clean_lease_count"],
                 ))
-            if context_tasks.get(task_id, 0) > 0:
+            if context_tasks.get(task_id, {}).get('bytes', 0) > 0:
                 tier2.append(CleanupItem(
                     key=f"t2_task_contexts:{task_id}",
                     title=f"任务 {task_id} 上下文快照",
                     description="contexts/ 下该任务的会话上下文快照，删除后无法回放该任务历史上下文。",
-                    bytes=context_tasks[task_id], count=1,
+                    bytes=context_tasks[task_id].get('bytes', 0), count=1,
                 ))
         for task_id in sorted(artifact_tasks):
             state = task_states.get(task_id) or {"status": "stopped", "archived": True}
@@ -1160,7 +1197,7 @@ class StorageAdminService:
                 continue
             total = (
                 run_tasks.get(task_id, {}).get("total", 0)
-                + context_tasks.get(task_id, 0)
+                + context_tasks.get(task_id, {}).get('bytes', 0)
                 + artifact_tasks.get(task_id, 0)
             )
             tier3.append(CleanupItem(
