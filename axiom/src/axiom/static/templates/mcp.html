@@ -5,122 +5,184 @@
       <p class="text-xs text-slate-400 mt-0.5">管理 MCP Server、发现结果和 Tool 启停；阶段分配由 Worker 统一管理。</p>
     </div>
     <div class="flex-1"></div>
-    <button @click="loadMcpPage()" class="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50">刷新</button>
-    <button @click="openMcpEditor()" class="h-8 px-3 rounded-lg bg-brand-500 text-white text-xs hover:bg-brand-600">新增 Server</button>
+    <button @click="loadMcpPage()" class="sto-ghost" style="padding:7px 12px;">刷新</button>
+    <button @click="openMcpEditor()" class="sto-btn" style="padding:7px 12px;">新增 Server</button>
   </header>
 
-  <main class="flex-1 overflow-y-auto p-5 space-y-5">
-    <section class="rounded-2xl border border-slate-200 bg-white p-4">
-      <div class="flex items-center justify-between gap-3 mb-3">
-        <div><h3 class="text-sm font-semibold text-slate-800">导入配置</h3><p class="text-xs text-slate-400 mt-1">支持标准 mcpServers JSON/YAML、单 Server JSON，以及 Codex TOML。</p></div>
-        <div class="flex items-center gap-2">
-          <select x-model="mcpImportFormat" class="h-8 rounded-lg border border-slate-200 px-2 text-xs text-slate-600"><option value="auto">自动识别</option><option value="json">JSON</option><option value="yaml">YAML</option><option value="toml">TOML</option></select>
-          <button @click="importMcpConfig()" :disabled="mcpImportBusy" class="h-8 px-3 rounded-lg bg-slate-800 text-white text-xs disabled:opacity-50" x-text="mcpImportBusy ? '导入中…' : '导入并保存'"></button>
+  <main class="sto flex-1 overflow-y-auto p-5 space-y-4">
+    <!-- 概览条：Server/Tool 统计 + 五阶段可见性 -->
+    <div class="sto-panel" style="padding:16px 18px;">
+      <div class="sto-statstrip" style="margin-bottom:12px;">
+        <div class="sto-statcell"><span class="sto-label">Servers · 已配置</span><b class="sto-num" x-text="(mcpServers || []).length"></b></div>
+        <div class="sto-statcell"><span class="sto-label">Servers · 启用中</span><b class="sto-num" x-text="(mcpServers || []).filter(s => !s.disabled).length"></b></div>
+        <div class="sto-statcell"><span class="sto-label">Tools · 已发现</span><b class="sto-num" x-text="(mcpServers || []).reduce((a, s) => a + (s.tools || []).length, 0)"></b></div>
+        <div class="sto-statcell"><span class="sto-label">Tools · 已启用</span><b class="sto-num" x-text="(mcpServers || []).reduce((a, s) => a + (s.tools || []).filter(t => t.enabled).length, 0)"></b></div>
+      </div>
+      <div class="flex flex-wrap items-center justify-between" style="gap:10px;">
+        <div class="flex flex-wrap items-center" style="gap:8px;">
+          <template x-for="phase in axiomPhases()" :key="`mcp-strip-${phase}`">
+            <span class="sto-phasechip" style="min-width:86px;" :class="phaseCapabilityCount(phase, 'mcp_tool') > 0 ? 'on' : 'off'">
+              <span x-text="axiomPhaseLabel(phase)"></span>
+              <b class="sto-num" x-text="phaseCapabilityCount(phase, 'mcp_tool')"></b>
+            </span>
+          </template>
+        </div>
+        <span class="sto-muted">只统计当前可用的具体 MCP Tool · 批量分配在
+          <button @click="navigateToWorkerCapability('mcp_tool', '', 'reason')" class="sto-minibtn acc" style="margin:0 2px;">Worker 能力管理</button>完成
+        </span>
+      </div>
+    </div>
+
+    <!-- 导入配置 -->
+    <div class="sto-panel" style="padding:16px 18px;">
+      <div class="flex flex-wrap items-center justify-between" style="gap:10px; margin-bottom:10px;">
+        <div>
+          <p class="sto-label">Import · 导入配置</p>
+          <p class="sto-muted" style="margin-top:4px;">支持标准 mcpServers JSON/YAML、单 Server JSON，以及 Codex TOML。</p>
+        </div>
+        <div class="flex items-center" style="gap:8px;">
+          <select x-model="mcpImportFormat" class="sto-input" style="width:auto; padding:7px 10px; font-size:12px;">
+            <option value="auto">自动识别</option><option value="json">JSON</option><option value="yaml">YAML</option><option value="toml">TOML</option>
+          </select>
+          <button @click="importMcpConfig()" :disabled="mcpImportBusy" class="sto-btn" x-text="mcpImportBusy ? '导入中…' : '导入并保存'"></button>
         </div>
       </div>
-      <textarea x-model="mcpImportContent" rows="7" class="w-full rounded-xl border border-slate-200 bg-slate-50/60 p-3 text-xs font-mono text-slate-700 outline-none focus:border-brand-400" placeholder='{"mcpServers":{"browser":{"command":"npx","args":["-y","..."],"env":{}}}}'></textarea>
-    </section>
+      <textarea x-model="mcpImportContent" rows="6" class="sto-input" style="background:var(--sto-inset);" placeholder='{"mcpServers":{"browser":{"command":"npx","args":["-y","..."],"env":{}}}}'></textarea>
+    </div>
 
-    <section>
-      <div class="flex items-center justify-between mb-3"><h3 class="text-sm font-semibold text-slate-800">已配置 Server <span class="text-xs font-normal text-slate-400" x-text="`(${(mcpServers || []).length})`"></span></h3><span class="text-xs text-slate-400">只注册被选中的具体 Tool，同 Server 的其他 Tool 不会披露</span></div>
-      <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+    <!-- 已配置 Server -->
+    <div>
+      <div class="flex items-center justify-between" style="margin-bottom:10px;">
+        <p class="sto-label">Servers · 已配置 <span x-text="`(${(mcpServers || []).length})`"></span></p>
+        <span class="sto-muted">只注册被选中的具体 Tool，同 Server 的其他 Tool 不会披露</span>
+      </div>
+      <div class="grid grid-cols-1 xl:grid-cols-2" style="gap:12px;">
         <template x-for="server in (mcpServers || [])" :key="server.id">
-          <article class="rounded-2xl border bg-white p-4" :class="server.disabled ? 'border-slate-200 opacity-65' : 'border-slate-200 hover:border-brand-200'">
-            <div class="flex items-start gap-3">
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2 flex-wrap">
-                  <h4 class="text-sm font-semibold text-slate-800 truncate" x-text="server.name"></h4>
-                  <span class="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] text-slate-500" x-text="mcpTransportLabel(server)"></span>
-                  <span class="px-1.5 py-0.5 rounded text-[10px]" :class="mcpDiscoveryClass(server)" x-text="mcpDiscoveryLabel(server)"></span>
-                  <span x-show="server.disabled" class="px-1.5 py-0.5 rounded bg-amber-50 text-[10px] text-amber-600">已停用</span>
+          <article class="sto-panel sto-server" :class="server.disabled ? 'off' : ''" style="padding:14px 16px;">
+            <div class="flex items-start justify-between" style="gap:10px;">
+              <div style="min-width:0;">
+                <div class="flex items-center flex-wrap" style="gap:7px;">
+                  <span style="font-size:13.5px; font-weight:650; color:var(--sto-fg);" x-text="server.name"></span>
+                  <span class="sto-badge neutral" style="padding:2px 8px; font-size:10px;" x-text="mcpTransportLabel(server)"></span>
+                  <span class="sto-badge" style="padding:2px 8px; font-size:10px;" :class="mcpDiscoveryClass(server)" x-text="mcpDiscoveryLabel(server)"></span>
+                  <span x-show="server.disabled" class="sto-badge warn" style="padding:2px 8px; font-size:10px;">已停用</span>
                 </div>
-                <p class="mt-1 text-xs font-mono text-slate-400 truncate" x-text="mcpServerCommand(server)"></p>
-                <p x-show="server.server_info?.name || server.server_info?.version" class="mt-1 text-[10px] text-slate-400" x-text="[server.server_info?.name, server.server_info?.version].filter(Boolean).join(' · ')"></p>
+                <p class="sto-muted" style="margin-top:5px; font-size:10.5px;" x-show="server.server_info?.name || server.server_info?.version" x-text="[server.server_info?.name, server.server_info?.version].filter(Boolean).join(' · ')"></p>
               </div>
-              <div class="flex items-center gap-1 shrink-0">
-                <button @click="discoverMcpTools(server)" :disabled="server._discovering" class="px-2 py-1 rounded-lg border border-brand-100 text-[11px] text-brand-600 disabled:opacity-50" x-text="server._discovering ? '发现中…' : '重新发现'"></button>
-                <button @click="toggleMcpPageServer(server)" class="px-2 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-500" x-text="server.disabled ? '启用' : '停用'"></button>
-                <button @click="openMcpEditor(server)" class="px-2 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-500">编辑</button>
-                <button @click="deleteMcpPageServer(server)" class="px-2 py-1 rounded-lg border border-rose-100 text-[11px] text-rose-500">删除</button>
+              <div class="flex items-center" style="gap:6px; flex-shrink:0;">
+                <button @click="discoverMcpTools(server)" :disabled="server._discovering" class="sto-minibtn acc" x-text="server._discovering ? '发现中…' : '重新发现'"></button>
+                <button @click="toggleMcpPageServer(server)" class="sto-minibtn" x-text="server.disabled ? '启用' : '停用'"></button>
+                <button @click="openMcpEditor(server)" class="sto-minibtn">编辑</button>
+                <button @click="deleteMcpPageServer(server)" class="sto-minibtn danger">删除</button>
               </div>
             </div>
 
-            <div x-show="server.discovery_status === 'error'" class="mt-3 rounded-lg border border-rose-100 bg-rose-50/70 px-3 py-2 text-[11px] text-rose-600 break-words" x-text="server.discovery_error || 'MCP Server 未返回工具清单'"></div>
-            <details x-show="server.instructions" class="mt-3 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2">
-              <summary class="cursor-pointer text-[11px] font-medium text-slate-600">Server 使用说明</summary>
-              <p class="mt-2 whitespace-pre-wrap text-[11px] leading-5 text-slate-500" x-text="server.instructions"></p>
+            <div class="sto-cmd"><span x-text="mcpServerCommand(server)"></span></div>
+
+            <div x-show="server.discovery_status === 'error'" class="sto-errbox" style="margin-top:9px;" x-text="server.discovery_error || 'MCP Server 未返回工具清单'"></div>
+
+            <details x-show="server.instructions" class="sto-group" style="margin-top:9px;">
+              <summary class="sto-group-head" style="padding:7px 11px;"><span style="font-size:11px; font-weight:600; color:var(--sto-fg-2);">Server 使用说明</span></summary>
+              <p class="sto-muted" style="padding:0 11px 9px; white-space:pre-wrap;" x-text="server.instructions"></p>
             </details>
 
-            <div class="mt-3 pt-3 border-t border-slate-100">
-              <div class="flex items-center gap-2 mb-2">
-                <span class="text-xs font-medium text-slate-700">暴露工具</span>
-                <span class="text-[10px] text-slate-400" x-text="`${(server.tools || []).length} 个`"></span>
-                <div class="flex-1"></div>
-                <input x-show="(server.tools || []).length > 5" x-model="server._toolQuery" class="h-7 w-40 rounded-lg border border-slate-200 px-2 text-[11px] outline-none focus:border-brand-300" placeholder="搜索工具…">
+            <div style="margin-top:11px; padding-top:11px; border-top:1px solid var(--sto-line);">
+              <div class="flex items-center" style="gap:8px; margin-bottom:8px;">
+                <span class="sto-label">暴露工具</span>
+                <span class="sto-muted sto-num" x-text="`${(server.tools || []).length} 个`"></span>
+                <span style="flex:1;"></span>
+                <input x-show="(server.tools || []).length > 5" x-model="server._toolQuery" class="sto-input" style="width:150px; padding:5px 10px; font-size:11px;" placeholder="搜索工具…">
               </div>
-              <div x-show="(server.tools || []).length === 0 && server.discovery_status !== 'error'" class="rounded-lg border border-dashed border-slate-200 py-7 text-center text-xs text-slate-400">尚未发现工具，点击“重新发现”。</div>
-              <div x-show="(server.tools || []).length > 0" class="max-h-[30rem] overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100">
+              <div class="sto-empty" x-show="(server.tools || []).length === 0 && server.discovery_status !== 'error'">尚未发现工具，点击"重新发现"。</div>
+              <div x-show="(server.tools || []).length > 0" style="max-height:30rem; overflow-y:auto; border:1px solid var(--sto-line); border-radius:10px; background:var(--sto-panel);">
                 <template x-for="tool in mcpFilteredTools(server)" :key="tool.id">
-                  <details class="group bg-white open:bg-slate-50/50">
-                    <summary class="list-none cursor-pointer px-3 py-2.5 flex items-start gap-2">
-                      <span class="mt-0.5 text-[10px] text-slate-300 group-open:rotate-90 transition">▶</span>
-                      <div class="flex-1 min-w-0">
-                        <div class="flex items-center gap-2">
-                          <code class="text-[11px] font-semibold text-slate-700" x-text="tool.name"></code>
-                          <span x-show="tool.title && tool.title !== tool.name" class="text-[10px] text-slate-400 truncate" x-text="tool.title"></span>
+                  <details class="sto-toolrow">
+                    <summary>
+                      <span class="chev">▶</span>
+                      <div style="flex:1; min-width:0;">
+                        <div class="flex items-center" style="gap:7px;">
+                          <span class="tname" x-text="tool.name"></span>
+                          <span class="sto-muted" x-show="tool.title && tool.title !== tool.name" x-text="tool.title"></span>
                         </div>
-                        <p class="mt-0.5 text-[11px] text-slate-500 line-clamp-2" x-text="tool.description || 'Server 未提供功能说明'"></p>
+                        <p class="tdesc" x-text="tool.description || 'Server 未提供功能说明'"></p>
                       </div>
-                      <button @click.prevent.stop="toggleMcpTool(server, tool)" class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full" :class="tool.enabled ? 'bg-brand-500' : 'bg-slate-200'" :title="tool.enabled ? '停用此工具' : '启用此工具'"><span class="inline-block h-4 w-4 rounded-full bg-white shadow transition" :class="tool.enabled ? 'translate-x-4' : 'translate-x-0.5'"></span></button>
+                      <button @click.prevent.stop="toggleMcpTool(server, tool)" class="sto-toggle" :class="tool.enabled ? 'on' : ''" :title="tool.enabled ? '停用此工具' : '启用此工具'"></button>
                     </summary>
-                    <div class="px-8 pb-3 space-y-3">
-                      <div><div class="text-[10px] font-medium text-slate-400 mb-1">调用方式</div><code class="block rounded-lg bg-slate-900 px-3 py-2 text-[11px] text-emerald-300 whitespace-pre-wrap break-all" x-text="tool.usage || `${tool.name}()`"></code></div>
+                    <div style="padding:2px 12px 12px 34px; display:flex; flex-direction:column; gap:10px;">
+                      <div>
+                        <p class="sto-label" style="margin-bottom:4px;">调用方式</p>
+                        <code class="sto-usage" x-text="tool.usage || `${tool.name}()`"></code>
+                      </div>
                       <div x-show="mcpToolParameters(tool).length > 0">
-                        <div class="text-[10px] font-medium text-slate-400 mb-1">参数</div>
-                        <div class="rounded-lg border border-slate-200 divide-y divide-slate-100 bg-white">
-                          <template x-for="param in mcpToolParameters(tool)" :key="param.name"><div class="px-2.5 py-2 text-[11px]"><div class="flex items-center gap-2"><code class="font-semibold text-slate-700" x-text="param.name"></code><span class="text-[10px]" :class="param.required ? 'text-rose-500' : 'text-slate-400'" x-text="param.required ? '必填' : '可选'"></span><code class="text-[10px] text-blue-500" x-text="param.type"></code><span x-show="param.hasDefault" class="text-[10px] text-slate-400" x-text="`默认 ${JSON.stringify(param.defaultValue)}`"></span></div><p x-show="param.description" class="mt-1 leading-5 text-slate-500" x-text="param.description"></p></div></template>
+                        <p class="sto-label" style="margin-bottom:4px;">参数</p>
+                        <div class="sto-params">
+                          <template x-for="param in mcpToolParameters(tool)" :key="param.name">
+                            <div>
+                              <div class="flex items-center flex-wrap" style="gap:7px;">
+                                <span class="tname" x-text="param.name"></span>
+                                <span class="sto-badge" style="padding:1px 7px; font-size:9.5px;" :class="param.required ? 'warn' : 'neutral'" x-text="param.required ? '必填' : '可选'"></span>
+                                <span class="sto-badge neutral" style="padding:1px 7px; font-size:9.5px;" x-text="param.type"></span>
+                                <span x-show="param.hasDefault" class="sto-muted" x-text="`默认 ${JSON.stringify(param.defaultValue)}`"></span>
+                              </div>
+                              <p x-show="param.description" class="sto-muted" style="margin-top:3px;" x-text="param.description"></p>
+                            </div>
+                          </template>
                         </div>
                       </div>
-                      <p x-show="mcpToolParameters(tool).length === 0" class="text-[11px] text-slate-400">此工具无需参数，或 Server 未提供参数 Schema。</p>
-                      <div class="rounded-xl border border-slate-200 bg-white p-3" x-show="mcpCapabilityRecord(tool)" x-cloak>
-                        <div class="flex items-start justify-between gap-3">
-                          <div><div class="text-[10px] font-semibold text-slate-600">Worker 可见性</div><p class="mt-0.5 text-[9px] text-slate-400">此处只读；Server 会随已分配 Tool 自动加载。</p></div>
-                          <button @click.prevent.stop="navigateToWorkerCapability('mcp_tool', tool.id)" class="rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-[10px] text-brand-700">前往 Worker 能力管理</button>
+                      <p class="sto-muted" x-show="mcpToolParameters(tool).length === 0">此工具无需参数，或 Server 未提供参数 Schema。</p>
+                      <div x-show="mcpCapabilityRecord(tool)" x-cloak class="sto-group" style="padding:10px 12px;">
+                        <div class="flex items-start justify-between" style="gap:10px;">
+                          <div>
+                            <p class="sto-label">Worker 可见性</p>
+                            <p class="sto-desc" style="margin-top:2px;">此处只读；Server 会随已分配 Tool 自动加载。</p>
+                          </div>
+                          <button @click.prevent.stop="navigateToWorkerCapability('mcp_tool', tool.id)" class="sto-minibtn acc">前往 Worker 能力管理</button>
                         </div>
-                        <div class="mt-2 grid grid-cols-3 gap-1.5">
-                          <template x-for="phase in axiomPhases()" :key="`${tool.id}-readonly-${phase}`"><span class="rounded-lg border px-2 py-1.5 text-center text-[10px]" :class="phaseCapabilityAssigned(mcpCapabilityRecord(tool), phase) ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-400'" x-text="`${phaseCapabilityAssigned(mcpCapabilityRecord(tool), phase) ? '✓ ' : ''}${axiomPhaseLabel(phase)}`"></span></template>
+                        <div class="sto-grid2" style="grid-template-columns:repeat(3, 1fr); gap:6px; margin-top:9px;">
+                          <template x-for="phase in axiomPhases()" :key="`${tool.id}-readonly-${phase}`">
+                            <span class="sto-phasechip" :class="phaseCapabilityAssigned(mcpCapabilityRecord(tool), phase) ? 'on' : 'off'" x-text="`${phaseCapabilityAssigned(mcpCapabilityRecord(tool), phase) ? '✓ ' : ''}${axiomPhaseLabel(phase)}`"></span>
+                          </template>
                         </div>
                       </div>
                     </div>
                   </details>
                 </template>
-                <div x-show="mcpFilteredTools(server).length === 0" class="py-7 text-center text-xs text-slate-400">没有匹配的工具。</div>
+                <div class="sto-empty" style="border:0;" x-show="mcpFilteredTools(server).length === 0">没有匹配的工具。</div>
               </div>
             </div>
           </article>
         </template>
-        <div x-show="(mcpServers || []).length === 0" class="xl:col-span-2 rounded-2xl border border-dashed border-slate-200 bg-white py-12 text-center text-sm text-slate-400">还没有 MCP Server，先导入一份配置或点击右上角新增。</div>
+        <div x-show="(mcpServers || []).length === 0" class="sto-empty xl:col-span-2" style="padding:44px 0; font-size:13px;">还没有 MCP Server，先导入一份配置或点击右上角新增。</div>
       </div>
-    </section>
-
-    <section class="rounded-2xl border border-slate-200 bg-white p-4">
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <h3 class="text-sm font-semibold text-slate-800">五阶段 MCP 可见性</h3>
-          <p class="mt-1 text-xs text-slate-400">这里仅展示结果；具体 Tool 的批量分配统一在 Worker 能力抽屉完成。</p>
-        </div>
-        <button @click="navigateToWorkerCapability('mcp_tool', '', 'reason')" class="rounded-lg border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs text-brand-700">打开 Worker 能力管理</button>
-      </div>
-      <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-        <template x-for="phase in axiomPhases()" :key="`mcp-summary-${phase}`">
-          <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-            <div class="flex items-center justify-between"><span class="text-xs font-semibold text-slate-700" x-text="`${axiomPhaseLabel(phase)} Worker`"></span><span class="text-sm font-semibold text-slate-800" x-text="phaseCapabilityCount(phase, 'mcp_tool')"></span></div>
-            <p class="mt-1 text-[10px] text-slate-400">只统计当前可用的具体 MCP Tool</p>
-          </div>
-        </template>
-      </div>
-    </section>
+    </div>
   </main>
 
-  <div x-show="showMcpEditor" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showMcpEditor=false"><div class="w-full max-w-xl rounded-2xl bg-white shadow-2xl p-5" @click.stop><div class="flex items-center justify-between mb-4"><h3 class="text-base font-semibold text-slate-800" x-text="mcpServerEditor.id ? '编辑 MCP Server' : '新增 MCP Server'"></h3><button @click="showMcpEditor=false" class="text-slate-400">×</button></div><div class="grid grid-cols-2 gap-3"><label class="text-xs text-slate-600">名称<input x-model="mcpServerEditor.name" class="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm"></label><label class="text-xs text-slate-600">URL / SSE（与 command 二选一）<input x-model="mcpServerEditor.url" class="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-mono"></label></div><label class="block mt-3 text-xs text-slate-600">command（stdio）<input x-model="mcpServerEditor.command" class="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-mono"></label><div class="grid grid-cols-2 gap-3 mt-3"><label class="text-xs text-slate-600">args JSON<textarea x-model="mcpServerEditor.args" rows="5" class="mt-1 w-full rounded-lg border border-slate-200 p-2 text-xs font-mono"></textarea></label><label class="text-xs text-slate-600">env JSON<textarea x-model="mcpServerEditor.env" rows="5" class="mt-1 w-full rounded-lg border border-slate-200 p-2 text-xs font-mono"></textarea></label></div><label class="flex items-center gap-2 mt-3 text-xs text-slate-600"><input type="checkbox" x-model="mcpServerEditor.disabled">停用此 Server</label><div class="mt-4 flex justify-end gap-2"><button @click="showMcpEditor=false" class="px-3 py-2 rounded-lg border border-slate-200 text-xs text-slate-600">取消</button><button @click="saveMcpEditor()" class="px-3 py-2 rounded-lg bg-brand-500 text-white text-xs">保存</button></div></div></div>
+  <!-- 编辑弹窗 -->
+  <div x-show="showMcpEditor" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showMcpEditor=false">
+    <div class="sto" style="width:100%; max-width:560px;">
+      <div class="sto-panel" style="padding:20px;" @click.stop>
+        <div class="flex items-center justify-between" style="margin-bottom:16px;">
+          <h3 style="font-size:14.5px; font-weight:650;" x-text="mcpServerEditor.id ? '编辑 MCP Server' : '新增 MCP Server'"></h3>
+          <button @click="showMcpEditor=false" class="sto-ghost" style="padding:4px 10px;">×</button>
+        </div>
+        <div class="sto-grid2">
+          <div class="sto-field"><label>名称</label><input x-model="mcpServerEditor.name" class="sto-input"></div>
+          <div class="sto-field"><label>URL / SSE（与 command 二选一）</label><input x-model="mcpServerEditor.url" class="sto-input mono"></div>
+        </div>
+        <div class="sto-field" style="margin-top:12px;"><label>command（stdio）</label><input x-model="mcpServerEditor.command" class="sto-input mono"></div>
+        <div class="sto-grid2" style="margin-top:12px;">
+          <div class="sto-field"><label>args JSON</label><textarea x-model="mcpServerEditor.args" rows="5" class="sto-input"></textarea></div>
+          <div class="sto-field"><label>env JSON</label><textarea x-model="mcpServerEditor.env" rows="5" class="sto-input"></textarea></div>
+        </div>
+        <label class="sto-item" style="border:0; padding:12px 0 0; border-radius:0;">
+          <input type="checkbox" class="sto-check" x-model="mcpServerEditor.disabled">
+          <span class="nm">停用此 Server</span>
+        </label>
+        <div class="sto-foot" style="margin-top:14px;">
+          <button @click="showMcpEditor=false" class="sto-ghost">取消</button>
+          <button @click="saveMcpEditor()" class="sto-btn">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
