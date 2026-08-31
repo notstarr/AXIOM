@@ -611,7 +611,8 @@
   }
 
   /* ═══════════ 存储治理 · Ops Console（sto-*） ═══════════ */
-  .sto {
+  /* 变量挂在 :root，sto-* 组件在 .sto 容器外（如页面 header）同样可用 */
+  :root {
     --sto-accent: #0071e3;
     --sto-accent-soft: rgba(0, 113, 227, 0.10);
     --sto-fg: #1e293b;
@@ -625,7 +626,7 @@
     --sto-danger: #dc2626;
     --sto-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -12px rgba(15, 23, 42, 0.12);
   }
-  .dark .sto {
+  .dark {
     --sto-accent: #3b9eff;
     --sto-accent-soft: rgba(59, 158, 255, 0.14);
     --sto-fg: #e2e8f0;
