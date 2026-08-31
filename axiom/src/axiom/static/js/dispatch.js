@@ -398,10 +398,18 @@ window.AxiomModules.dispatch = {
     chooseWorkerModel(worker, modelId) {
       if (!modelId) return;
       worker.pi_model = modelId;
+      this.workerModelFilter = '';
       const model = (worker.available_models || []).find(item => item.id === modelId);
       if (!model || !model.context_window) return;
       worker.pi_model_context_window = String(model.context_window);
       worker.show_model_dropdown = false;
+    },
+
+    filteredWorkerModels(worker) {
+      const list = Array.isArray(worker?.available_models) ? worker.available_models : [];
+      const keyword = (this.workerModelFilter || '').trim().toLowerCase();
+      if (!keyword) return list;
+      return list.filter(item => (item.id || '').toLowerCase().includes(keyword));
     },
 
     toggleWorkerModelDropdown(worker) {
