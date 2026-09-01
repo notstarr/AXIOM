@@ -35,6 +35,11 @@ class IntentSnapshot(BaseModel):
     ]
     worker_pool: list[str] = Field(default_factory=list)
     next_retry_at: datetime | None = None
+    # Infrastructure failures are kept pending after the retry budget is
+    # exhausted.  The dispatcher uses this counter together with the
+    # snapshot limit to avoid repeatedly issuing claims that are known to be
+    # blocked until an operator or a recovered worker clears the condition.
+    infrastructure_retry_count: int = Field(default=0, ge=0)
     created_at: datetime
     claimed_at: datetime | None = None
 
@@ -55,6 +60,7 @@ class ReasonRunSnapshot(BaseModel):
     ]
     worker_pool: list[str] = Field(default_factory=list)
     next_retry_at: datetime | None = None
+    infrastructure_retry_count: int = Field(default=0, ge=0)
     created_at: datetime
     claimed_at: datetime | None = None
 
@@ -82,6 +88,7 @@ class PlanRunSnapshot(BaseModel):
     ]
     worker_pool: list[str] = Field(default_factory=list)
     next_retry_at: datetime | None = None
+    infrastructure_retry_count: int = Field(default=0, ge=0)
     created_at: datetime
     claimed_at: datetime | None = None
 
@@ -102,6 +109,7 @@ class ReviewRunSnapshot(BaseModel):
     ]
     worker_pool: list[str] = Field(default_factory=list)
     next_retry_at: datetime | None = None
+    infrastructure_retry_count: int = Field(default=0, ge=0)
     created_at: datetime
     claimed_at: datetime | None = None
 
@@ -136,6 +144,7 @@ class DispatchLimits(BaseModel):
     per_task_max_active_runs: int = Field(default=4, ge=1)
     per_task_explore_concurrency: int = Field(default=4, ge=1)
     per_task_review_concurrency: int = Field(default=4, ge=1)
+    infrastructure_retry_limit: int = Field(default=3, ge=1)
 
 
 class DispatcherSnapshot(BaseModel):

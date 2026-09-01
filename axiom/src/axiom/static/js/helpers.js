@@ -130,6 +130,7 @@ window.AxiomModules.helpers = {
       if (state === 'failed') return 'bg-rose-400';
       if (this.isBootstrapIntent(i)) return state === 'running' ? 'bg-orange-400' : 'bg-orange-200';
       if (state === 'running') return 'bg-amber-400';
+      if (i.activity_kind === 'retry_blocked') return 'bg-rose-300';
       if (i.next_retry_at || i.last_failure_kind || i.retry_count || i.infrastructure_retry_count) return 'bg-amber-300';
       return 'bg-slate-300';
     },
@@ -140,6 +141,7 @@ window.AxiomModules.helpers = {
       if (state === 'failed') return 'text-rose-600';
       if (this.isBootstrapIntent(i)) return state === 'running' ? 'text-orange-600' : 'text-orange-400';
       if (state === 'running') return 'text-amber-600';
+      if (i.activity_kind === 'retry_blocked') return 'text-rose-600';
       if (i.next_retry_at || i.last_failure_kind || i.retry_count || i.infrastructure_retry_count) return 'text-amber-600';
       return 'text-slate-400';
     },
@@ -149,6 +151,7 @@ window.AxiomModules.helpers = {
       if (state === 'cancelled') return '已取消';
       if (state === 'failed' && i.last_failure_kind === 'retry_exhausted') return '失败·待 Reason 重规划';
       if (state === 'failed') return '执行失败';
+      if (i.activity_kind === 'retry_blocked') return '重试已暂停';
       if (state === 'running') {
         if (this.isBootstrapIntent(i)) return 'Bootstrap 运行中';
         return '进行中';

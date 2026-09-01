@@ -228,9 +228,21 @@ class ExecutionRepository:
                 next_retry_at=None if terminal else next_retry_at,
                 last_failure_kind=failure_kind,
                 failure_class=failure_class,
-                activity_kind="failed" if terminal else "retry_wait",
+                activity_kind=(
+                    "failed"
+                    if terminal
+                    else "retry_blocked"
+                    if failure_class == "transient" and next_retry_at is None
+                    else "retry_wait"
+                ),
                 activity_summary=(
-                    f"执行失败：{failure_kind}" if terminal else f"执行释放，等待重试：{failure_kind}"
+                    f"执行失败：{failure_kind}"
+                    if terminal
+                    else (
+                        f"基础设施重试已达上限，等待人工或系统恢复：{failure_kind}"
+                        if failure_class == "transient" and next_retry_at is None
+                        else f"执行释放，等待重试：{failure_kind}"
+                    )
                 ),
                 activity_tool="",
                 activity_updated_at=now,

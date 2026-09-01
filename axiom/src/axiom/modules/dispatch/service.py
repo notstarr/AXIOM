@@ -107,6 +107,7 @@ class DispatchService:
                 status=intent["status"],
                 archived=bool(intent["archived"]),
                 next_retry_at=intent["next_retry_at"],
+                infrastructure_retry_count=int(intent["infrastructure_retry_count"] or 0),
                 worker_pool=json.loads(intent["worker_pool_json"] or "[]"),
                 now=now,
                 owner_label="Intent",
@@ -214,6 +215,7 @@ class DispatchService:
                 status=run["status"],
                 archived=False,
                 next_retry_at=run["next_retry_at"],
+                infrastructure_retry_count=int(run["infrastructure_retry_count"] or 0),
                 worker_pool=json.loads(run["worker_pool_json"] or "[]"),
                 now=now,
                 owner_label="ReasonRun",
@@ -345,6 +347,7 @@ class DispatchService:
                 status=run["status"],
                 archived=False,
                 next_retry_at=run["next_retry_at"],
+                infrastructure_retry_count=int(run["infrastructure_retry_count"] or 0),
                 worker_pool=json.loads(run["worker_pool_json"] or "[]"),
                 now=now,
                 owner_label="PlanRun",
@@ -421,6 +424,7 @@ class DispatchService:
                 status=run["status"],
                 archived=False,
                 next_retry_at=run["next_retry_at"],
+                infrastructure_retry_count=int(run["infrastructure_retry_count"] or 0),
                 worker_pool=json.loads(run["worker_pool_json"] or "[]"),
                 now=now,
                 owner_label="Vulnerability ReviewRun",
@@ -478,6 +482,7 @@ class DispatchService:
         status: str,
         archived: bool,
         next_retry_at: str | None,
+        infrastructure_retry_count: int,
         worker_pool: list[str],
         now: str,
         owner_label: str,
@@ -523,6 +528,11 @@ class DispatchService:
             .with_for_update()
         ).scalar_one_or_none()
         config = load_runtime_config(conn)
+        if infrastructure_retry_count >= config.infrastructure_retry_limit:
+            raise ConflictError(
+                f"{owner_label} infrastructure retry budget exhausted; "
+                "manual or system recovery is required before another claim"
+            )
         if self.repository.global_active_count(conn) >= config.global_max_active_runs:
             raise ConflictError("Global active run limit reached")
         active_task_ids = self.repository.active_task_ids(conn)
@@ -735,9 +745,12 @@ class DispatchService:
 
     @staticmethod
     def _retry_outcome(config, attempt: int, now) -> tuple[bool, str | None]:
-        terminal = attempt >= config.infrastructure_retry_limit
+        # Infrastructure failures never become terminal domain failures. At
+        # the limit the row remains pending with no retry timestamp and claim
+        # validation pauses it until an explicit recovery action.
+        retry_blocked = attempt >= config.infrastructure_retry_limit
         delay = min(
             config.retry_max_seconds,
             config.retry_base_seconds * (2 ** min(max(0, attempt - 1), 30)),
         )
-        return terminal, None if terminal else format_utc(now + timedelta(seconds=delay))
+        return False, None if retry_blocked else format_utc(now + timedelta(seconds=delay))

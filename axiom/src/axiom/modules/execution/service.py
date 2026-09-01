@@ -189,6 +189,7 @@ class ExecutionService:
                 raise LeaseInactiveError("Intent lease is not active")
             execute_timeout = row["execute_timeout_seconds"]
             conclude_timeout = row["conclude_timeout_seconds"]
+            config = load_runtime_config(conn)
             if row["kind"] == "bootstrap":
                 if execute_timeout is None or conclude_timeout is None:
                     raise ConflictError("Bootstrap budget snapshot is missing; release and reclaim it")
@@ -205,6 +206,7 @@ class ExecutionService:
                 "scope": self.repository.parse_scope(row),
                 "execute_timeout_seconds": execute_timeout,
                 "conclude_timeout_seconds": conclude_timeout,
+                "explore_no_progress_seconds": config.explore_no_progress_seconds,
                 "phase": row["kind"],
             }
         context = self.context.build(
@@ -248,6 +250,7 @@ class ExecutionService:
             run_dir=run_dir,
             execute_timeout_seconds=values["execute_timeout_seconds"],
             conclude_timeout_seconds=values["conclude_timeout_seconds"],
+            explore_no_progress_seconds=values["explore_no_progress_seconds"],
             context_revision=context.revision,
             context_manifest_path=context.manifest_path,
             axiom_tool_keys=capabilities.axiom_tool_keys,
@@ -770,13 +773,20 @@ class ExecutionService:
                 if command.failure_class == "execution"
                 else config.infrastructure_retry_limit
             )
-            terminal = next_count >= limit
+            # Execution failures are terminal at their configured limit.
+            # Infrastructure failures remain pending at the limit, but are
+            # deliberately blocked from automatic re-claim until an
+            # operator/system recovery clears the condition.
+            terminal = command.failure_class == "execution" and next_count >= limit
+            retry_blocked = command.failure_class == "transient" and next_count >= limit
             delay = min(
                 config.retry_max_seconds,
                 config.retry_base_seconds * (2 ** max(0, next_count - 1)),
             )
             next_retry_at = (
-                format_utc(parse_utc(now) + timedelta(seconds=delay)) if not terminal else None
+                format_utc(parse_utc(now) + timedelta(seconds=delay))
+                if not terminal and not retry_blocked
+                else None
             )
             if not self.repository.release(
                 conn,
@@ -805,6 +815,7 @@ class ExecutionService:
                         "failure_kind": command.failure_kind,
                         "failure_class": command.failure_class,
                         "terminal": terminal,
+                        "retry_blocked": retry_blocked,
                         "next_retry_at": next_retry_at,
                     },
                 ),

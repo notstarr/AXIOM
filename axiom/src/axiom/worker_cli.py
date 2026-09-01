@@ -220,8 +220,18 @@ def register_worker_commands(main: click.Group) -> None:
         help="Optional without Task Scope; repeat for scoped or multi-target work.",
     )
     @click.option("--priority", type=click.IntRange(0, 100), default=50, show_default=True)
-    @click.option("--execute-seconds", type=click.IntRange(1), required=True)
-    @click.option("--conclude-seconds", type=click.IntRange(1), required=True)
+    @click.option(
+        "--execute-seconds",
+        type=click.IntRange(1),
+        default=None,
+        help="Legacy override; normally assigned by the backend.",
+    )
+    @click.option(
+        "--conclude-seconds",
+        type=click.IntRange(1),
+        default=None,
+        help="Legacy override; normally assigned by the backend.",
+    )
     def reason_intent_propose(
         todo_ref: str | None,
         todo_id: str | None,
@@ -231,8 +241,8 @@ def register_worker_commands(main: click.Group) -> None:
         description_file: Path | None,
         target: tuple[str, ...],
         priority: int,
-        execute_seconds: int,
-        conclude_seconds: int,
+        execute_seconds: int | None,
+        conclude_seconds: int | None,
     ) -> None:
         if bool(todo_ref) == bool(todo_id):
             raise click.UsageError("exactly one of --todo-ref or --todo-id is required")
@@ -249,9 +259,11 @@ def register_worker_commands(main: click.Group) -> None:
             ),
             "targets": list(target),
             "priority": priority,
-            "execute_seconds": execute_seconds,
-            "conclude_seconds": conclude_seconds,
         }
+        if execute_seconds is not None:
+            proposal["execute_seconds"] = execute_seconds
+        if conclude_seconds is not None:
+            proposal["conclude_seconds"] = conclude_seconds
         _echo_workspace(_workspace_request("POST", "intents", {"intent": proposal}))
 
     @reason_intent_group.command("assess")
@@ -472,8 +484,18 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--dedup-fingerprint", default="")
     @click.option("--target", multiple=True)
     @click.option("--priority", type=click.IntRange(0, 100), default=50, show_default=True)
-    @click.option("--execute-seconds", type=click.IntRange(1), required=True)
-    @click.option("--conclude-seconds", type=click.IntRange(1), required=True)
+    @click.option(
+        "--execute-seconds",
+        type=click.IntRange(1),
+        default=None,
+        help="Legacy override; normally assigned by the backend.",
+    )
+    @click.option(
+        "--conclude-seconds",
+        type=click.IntRange(1),
+        default=None,
+        help="Legacy override; normally assigned by the backend.",
+    )
     def plan_intent_propose(
         todo_ref: str | None,
         todo_id: str | None,
@@ -489,40 +511,41 @@ def register_worker_commands(main: click.Group) -> None:
         dedup_fingerprint: str,
         target: tuple[str, ...],
         priority: int,
-        execute_seconds: int,
-        conclude_seconds: int,
+        execute_seconds: int | None,
+        conclude_seconds: int | None,
     ) -> None:
         if bool(todo_ref) == bool(todo_id):
             raise click.UsageError("exactly one of --todo-ref or --todo-id is required")
         if not from_fact and not source_ref:
             raise click.UsageError("provide at least one --from-fact or --source-ref")
+        intent = {
+            "todo_ref": todo_ref,
+            "todo_id": todo_id,
+            "from_facts": list(from_fact),
+            "source_refs": list(source_ref),
+            "description": _text_value(
+                description,
+                description_file,
+                "description",
+                required=True,
+            ),
+            "why_now": why_now,
+            "endpoint": endpoint,
+            "test_vector": test_vector,
+            "expected_signal": expected_signal,
+            "stop_condition": stop_condition,
+            "dedup_fingerprint": dedup_fingerprint,
+            "targets": list(target),
+            "priority": priority,
+        }
+        if execute_seconds is not None:
+            intent["execute_seconds"] = execute_seconds
+        if conclude_seconds is not None:
+            intent["conclude_seconds"] = conclude_seconds
         _echo_plan_workspace(
             _plan_workspace_request(
                 "intents",
-                {
-                    "intent": {
-                        "todo_ref": todo_ref,
-                        "todo_id": todo_id,
-                        "from_facts": list(from_fact),
-                        "source_refs": list(source_ref),
-                        "description": _text_value(
-                            description,
-                            description_file,
-                            "description",
-                            required=True,
-                        ),
-                        "why_now": why_now,
-                        "endpoint": endpoint,
-                        "test_vector": test_vector,
-                        "expected_signal": expected_signal,
-                        "stop_condition": stop_condition,
-                        "dedup_fingerprint": dedup_fingerprint,
-                        "targets": list(target),
-                        "priority": priority,
-                        "execute_seconds": execute_seconds,
-                        "conclude_seconds": conclude_seconds,
-                    }
-                },
+                {"intent": intent},
             )
         )
 

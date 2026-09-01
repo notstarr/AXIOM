@@ -130,12 +130,10 @@ class DraftPlanIntent(BaseModel):
     stop_condition: str
     dedup_fingerprint: str = ""
     priority: int = Field(default=50, ge=0, le=100)
-    execute_seconds: int = Field(default=300, gt=0)
-    # Explore's runtime minimum is 180 seconds by default.  Keeping the
-    # Plan proposal default below that bound makes an otherwise valid
-    # proposal fail during service validation when the caller omits the
-    # optional budget fields.
-    conclude_seconds: int = Field(default=180, gt=0)
+    # Runtime budgets are assigned by the backend.  Optional fields remain
+    # accepted for rolling compatibility with older Plan workers.
+    execute_seconds: int | None = None
+    conclude_seconds: int | None = None
 
     @field_validator("description", "why_now", "expected_signal", "stop_condition")
     @classmethod

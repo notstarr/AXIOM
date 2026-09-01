@@ -55,12 +55,13 @@ axiom plan intent propose --todo-ref plan-gap-1 \
   --test-vector "参数注入/越权/CSRF组合" \
   --expected-signal "敏感数据回显或业务越权执行" \
   --stop-condition "完成漏洞判定或触达安全边界" \
-  --target "https://target.example" \
-  --execute-seconds 900 --conclude-seconds 300
+  --target "https://target.example"
 
 # 4. 归档/关闭确已无价值的 Todo（软删除）
 axiom plan todo delete --todo-id td001 --reason "全量路径已完成验证且无衍生价值"
 ```
+
+Explore Intent 的执行和收口时间由 AXIOM 后端统一分配。Plan 只需描述目标、测试向量、预期信号和停止条件，不输出时间预算、超时或重试参数。
 
 ## 强制收口规则
 

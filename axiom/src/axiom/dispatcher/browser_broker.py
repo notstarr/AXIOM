@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
-from urllib.request import urlopen
 
 from playwright.async_api import (
     Browser,
@@ -65,6 +64,11 @@ INTERACTIVE_SELECTOR = (
 )
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 MAX_RESPONSE_CHARS = 128_000
+MAX_NETWORK_SUMMARY_CHARS = 32_768
+MAX_NETWORK_DETAIL_CHARS = 128_000
+MAX_NETWORK_BODY_CHARS = 16_000
+MAX_NETWORK_SUMMARY_ENTRIES = 100
+MAX_NETWORK_DETAIL_ENTRIES = 200
 MAX_SNAPSHOT_REFS = 600
 DEFAULT_ACTION_TIMEOUT_MS = 10_000
 MAX_ACTION_TIMEOUT_MS = 60_000
@@ -1221,23 +1225,42 @@ class BrowserBrokerServer:
     ) -> dict[str, Any]:
         state = self._page(lease, params)
         after = max(int(params.get("after_cursor") or 0), 0)
-        limit = min(max(int(params.get("limit") or 100), 1), 500)
+        detail = str(params.get("detail") or "summary").strip().casefold()
+        include_body = bool(params.get("include_body")) or detail in {"full", "detail"}
+        limit = min(
+            max(int(params.get("limit") or 100), 1),
+            MAX_NETWORK_DETAIL_ENTRIES if include_body else MAX_NETWORK_SUMMARY_ENTRIES,
+        )
         contains = str(params.get("url_contains") or "")
         include_sensitive = bool(params.get("include_sensitive", False))
         rows = [
-            self._network_public(item, include_sensitive=include_sensitive)
+            self._network_public(
+                item,
+                include_sensitive=include_sensitive,
+                include_body=include_body,
+            )
             for item in state.network_entries
             if int(item.get("cursor") or 0) > after
             and (not contains or contains in str(item.get("url") or ""))
         ][:limit]
+        max_chars = MAX_NETWORK_DETAIL_CHARS if include_body else MAX_NETWORK_SUMMARY_CHARS
+        rows, omitted = self._fit_network_rows(rows, max_chars=max_chars)
         content = "\n".join(json.dumps(item, ensure_ascii=False) for item in rows) or "没有新的网络记录"
+        if omitted:
+            content += f"\n[网络记录摘要已截断，另有 {omitted} 条记录保存在当前 Lease 的 network.jsonl]"
+        # Keep the model-facing payload bounded independently of the generic
+        # broker response ceiling.  Full records remain available in the
+        # lease-owned JSONL evidence file and can be requested explicitly.
         return self._ok(
-            content[:MAX_RESPONSE_CHARS],
+            content[:max_chars],
             {
                 "page_id": state.page_id,
                 "entries": rows,
                 "next_cursor": rows[-1]["cursor"] if rows else after,
                 "latest_cursor": state.network_cursor,
+                "detail": "full" if include_body else "summary",
+                "truncated": bool(omitted),
+                "omitted_entries": omitted,
             },
         )
 
@@ -1889,18 +1912,73 @@ class BrowserBrokerServer:
         ).strip()
 
     @staticmethod
-    def _network_public(entry: dict[str, Any], *, include_sensitive: bool) -> dict[str, Any]:
+    def _network_public(
+        entry: dict[str, Any],
+        *,
+        include_sensitive: bool,
+        include_body: bool = False,
+    ) -> dict[str, Any]:
         result = dict(entry)
         headers = result.get("headers")
         if isinstance(headers, dict):
             result["headers"] = redact_headers(headers, include_sensitive=include_sensitive)
         for key in ("body", "post_data", "payload"):
-            if isinstance(result.get(key), str):
-                value = str(result[key])
-                result[key] = value[:16_000]
-                if len(value) > 16_000:
-                    result[f"{key}_truncated"] = True
+            value = result.get(key)
+            if value is None:
+                continue
+            if isinstance(value, str):
+                result[f"{key}_bytes"] = len(value.encode("utf-8", errors="replace"))
+                result[f"{key}_sha256"] = hashlib.sha256(value.encode("utf-8")).hexdigest()
+                if include_body:
+                    result[key] = value[:MAX_NETWORK_BODY_CHARS]
+                    if len(value) > MAX_NETWORK_BODY_CHARS:
+                        result[f"{key}_truncated"] = True
+                else:
+                    # The full body remains in the lease's network.jsonl;
+                    # the model receives only metadata by default.
+                    result.pop(key, None)
+            elif isinstance(value, (bytes, bytearray)):
+                raw = bytes(value)
+                result[f"{key}_bytes"] = len(raw)
+                result[f"{key}_sha256"] = hashlib.sha256(raw).hexdigest()
+                if include_body:
+                    result[key] = raw[:MAX_NETWORK_BODY_CHARS].decode(
+                        "utf-8", errors="replace"
+                    )
+                    if len(raw) > MAX_NETWORK_BODY_CHARS:
+                        result[f"{key}_truncated"] = True
+                else:
+                    result.pop(key, None)
+            else:
+                encoded = json.dumps(value, ensure_ascii=False, default=str)
+                raw = encoded.encode("utf-8", errors="replace")
+                result[f"{key}_bytes"] = len(raw)
+                result[f"{key}_sha256"] = hashlib.sha256(raw).hexdigest()
+                if include_body:
+                    result[key] = encoded[:MAX_NETWORK_BODY_CHARS]
+                    if len(encoded) > MAX_NETWORK_BODY_CHARS:
+                        result[f"{key}_truncated"] = True
+                else:
+                    # Do not leak structured request/response bodies either.
+                    # A summary exposes only metadata regardless of how the
+                    # broker represented the captured payload.
+                    result.pop(key, None)
         return result
+
+    @staticmethod
+    def _fit_network_rows(
+        rows: list[dict[str, Any]], *, max_chars: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        selected: list[dict[str, Any]] = []
+        used = 0
+        for row in rows:
+            encoded = json.dumps(row, ensure_ascii=False)
+            cost = len(encoded) + (1 if selected else 0)
+            if selected and used + cost > max_chars:
+                break
+            selected.append(row)
+            used += cost
+        return selected, max(0, len(rows) - len(selected))
 
     @staticmethod
     def _ok(content: str, data: dict[str, Any] | None = None) -> dict[str, Any]:

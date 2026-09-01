@@ -568,8 +568,8 @@ def test_reason_workspace_commits_todos_and_pending_intents_atomically(client, d
     assert explore["kind"] == "explore"
     assert explore["status"] == "pending"
     assert explore["todo_id"] == "td001"
-    assert explore["execute_timeout_seconds"] == 420
-    assert explore["conclude_timeout_seconds"] == 180
+    assert explore["execute_timeout_seconds"] == 900
+    assert explore["conclude_timeout_seconds"] == 300
 
     context = client.post(
         f"/api/v1/tasks/{task['id']}/context",

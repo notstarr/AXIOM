@@ -250,7 +250,7 @@ class PlanRepository:
                 next_retry_at=None if terminal else next_retry_at, last_failure_kind=failure_kind, failure_class=failure_class,
                 retry_count=plan_runs.c.retry_count + (1 if failure_class == "execution" else 0),
                 infrastructure_retry_count=plan_runs.c.infrastructure_retry_count + (1 if failure_class == "transient" else 0),
-                activity_kind="failed" if terminal else "retry_wait", activity_summary=(f"Plan 执行失败：{failure_kind}" if terminal else f"Plan 已释放，等待重试：{failure_kind}"), activity_tool="", activity_updated_at=now, updated_at=now, concluded_at=now if terminal else None,
+                activity_kind=("failed" if terminal else "retry_blocked" if failure_class == "transient" and next_retry_at is None else "retry_wait"), activity_summary=(f"Plan 执行失败：{failure_kind}" if terminal else f"Plan 基础设施重试已达上限，等待人工或系统恢复：{failure_kind}" if failure_class == "transient" and next_retry_at is None else f"Plan 已释放，等待重试：{failure_kind}"), activity_tool="", activity_updated_at=now, updated_at=now, concluded_at=now if terminal else None,
             )
         )
         return bool(result.rowcount)

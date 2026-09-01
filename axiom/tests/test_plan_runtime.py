@@ -968,8 +968,8 @@ def test_dispatch_snapshot_counts_active_plan_worker_once(client, engine) -> Non
     assert worker["running"] == 1
 
 
-def test_terminal_transient_plan_failure_requires_manual_recovery(client, engine) -> None:
-    """A terminal infrastructure failure must not create replacement Runs forever."""
+def test_terminal_transient_plan_failure_stays_pending_and_requires_recovery(client, engine) -> None:
+    """Infrastructure budget exhaustion pauses the same pending PlanRun."""
 
     task = _task_with_completed_bootstrap(client, engine)
     update_runtime_settings(client, infrastructure_retry_limit=1)
@@ -990,7 +990,10 @@ def test_terminal_transient_plan_failure_requires_manual_recovery(client, engine
         },
     )
     assert released.status_code == 200, released.text
-    assert released.json()["status"] == "failed"
+    released_payload = released.json()
+    assert released_payload["status"] == "pending"
+    assert released_payload["infrastructure_retry_count"] == 1
+    assert released_payload["next_retry_at"] is None
 
     for _ in range(2):
         reconciled = client.post("/api/v1/dispatch/plan-runs/reconcile")
@@ -999,20 +1002,27 @@ def test_terminal_transient_plan_failure_requires_manual_recovery(client, engine
 
     task_after = client.get(f"/api/v1/tasks/{task['id']}").json()
     assert task_after["phase"] == "plan"
+    blocked_claim = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/plan-runs/{run['id']}/claim",
+        json={"worker_name": "plan-worker"},
+    )
+    assert blocked_claim.status_code == 409
+    assert "retry budget exhausted" in blocked_claim.text
+
     with engine.connect() as conn:
         rows = conn.execute(
             select(plan_runs.c.id, plan_runs.c.status).where(
                 plan_runs.c.task_id == task["id"]
             )
         ).all()
-    assert rows == [(run["id"], "failed")]
+    assert rows == [(run["id"], "pending")]
 
     manual = client.post(
         f"/api/v1/tasks/{task['id']}/plan-runs/trigger",
         json={"actor": "operator", "trigger": "manual-recovery"},
     )
     assert manual.status_code == 200, manual.text
-    assert manual.json()["id"] != run["id"]
+    assert manual.json()["id"] == run["id"]
 
 
 def test_plan_input_keeps_snapshot_and_excludes_fact_reserved_by_reason(client, engine) -> None:
@@ -1102,7 +1112,7 @@ def test_plan_intent_uses_explore_budget_and_scope_validation(client, engine) ->
         },
     )
     assert todo.status_code == 200, todo.text
-    invalid = client.post(
+    normalized = client.post(
         f"/api/v1/plan-workspaces/{workspace_id}/intents",
         json={
             "lease_id": claimed["lease_id"],
@@ -1122,8 +1132,10 @@ def test_plan_intent_uses_explore_budget_and_scope_validation(client, engine) ->
             },
         },
     )
-    assert invalid.status_code == 409, invalid.text
-    assert "execute_seconds" in invalid.text
+    assert normalized.status_code == 200, normalized.text
+    proposal = normalized.json()["draft"]["intent_proposals"][0]
+    assert proposal["execute_seconds"] == 900
+    assert proposal["conclude_seconds"] == 300
 
 
 def test_plan_claim_waits_behind_pending_reason_queue(client, engine) -> None:

@@ -73,6 +73,48 @@ def test_browser_tool_contract_is_explicit_and_does_not_expose_session_identity(
     assert all("session" not in name and "lease" not in name for name in BROWSER_TOOL_NAMES)
 
 
+def test_browser_network_summary_hides_payloads_but_keeps_metadata() -> None:
+    entry = {
+        "cursor": 1,
+        "url": "https://example.test/api",
+        "status": 200,
+        "body": '{"token":"redacted"}',
+        "post_data": {"password": "secret"},
+        "payload": b"binary-response",
+    }
+
+    summary = BrowserBrokerServer._network_public(entry, include_sensitive=False)
+
+    assert "body" not in summary
+    assert "post_data" not in summary
+    assert "payload" not in summary
+    assert summary["body_bytes"] > 0
+    assert len(summary["body_sha256"]) == 64
+    assert summary["payload_bytes"] == len(b"binary-response")
+
+
+def test_browser_network_full_detail_is_bounded_and_reports_omitted_rows() -> None:
+    rows = [
+        BrowserBrokerServer._network_public(
+            {
+                "cursor": index,
+                "url": f"https://example.test/{index}",
+                "status": 200,
+                "body": "x" * 2_000,
+            },
+            include_sensitive=False,
+            include_body=True,
+        )
+        for index in range(1, 20)
+    ]
+
+    selected, omitted = BrowserBrokerServer._fit_network_rows(rows, max_chars=8_000)
+
+    assert selected
+    assert omitted > 0
+    assert all(len(item["body"]) <= 16_000 for item in selected)
+
+
 def test_browser_skill_directory_only_requires_skill_markdown(tmp_path: Path) -> None:
     skill = _browser_skill(tmp_path)
     assert browser_skill_directory([str(skill)]) == skill

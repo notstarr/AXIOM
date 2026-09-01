@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -54,6 +55,45 @@ EXPLORE_RPC_STREAM_RECOVERY_PROMPT = (
     "Workspace 继续执行。不要重复已经完成的测试；先检查最后一个完整 Tool Result，然后从尚未完成的"
     "步骤继续。最终仍须遵守当前 Intent、产物和 FINISH 合同。"
 )
+
+
+class _ExploreArtifactProgressProbe:
+    """Detect durable Explore output progress without another model call."""
+
+    def __init__(self, run_dir: str, timeout_seconds: int, *, scan_interval: float = 2.0):
+        self.root = Path(run_dir).resolve() / "artifacts"
+        self.timeout_seconds = max(30, int(timeout_seconds))
+        self.scan_interval = max(0.2, float(scan_interval))
+        self._last_scan = 0.0
+        self._last_signature: tuple[tuple[str, int, int], ...] | None = None
+        self._last_change = time.monotonic()
+
+    def __call__(self) -> str | None:
+        now = time.monotonic()
+        if now - self._last_scan < self.scan_interval:
+            return None
+        self._last_scan = now
+        signature: list[tuple[str, int, int]] = []
+        try:
+            if self.root.is_dir() and not self.root.is_symlink():
+                for path in self.root.rglob("*"):
+                    if path.is_symlink() or not path.is_file():
+                        continue
+                    try:
+                        stat = path.stat()
+                    except OSError:
+                        continue
+                    signature.append((str(path.relative_to(self.root)), stat.st_size, stat.st_mtime_ns))
+        except OSError:
+            signature = []
+        current = tuple(sorted(signature))
+        if self._last_signature is None or current != self._last_signature:
+            self._last_signature = current
+            self._last_change = now
+            return None
+        if now - self._last_change >= self.timeout_seconds:
+            return "explore_no_progress"
+        return None
 _REASON_PROMPT_PROFILE_FILES = {
     "default": "reason_default.md",
     "bootstrap": "reason_bootstrap.md",
@@ -204,6 +244,7 @@ class PiBootstrapExecutor:
         steer_message: str | None = None,
         stream_idle_timeout_seconds: float | None = None,
         stream_recovery_prompt: str | None = None,
+        semantic_progress_probe: Callable[[], str | None] | None = None,
         enable_axiom_tools: bool = True,
         enable_browser: bool = True,
     ) -> ProcessResult:
@@ -355,6 +396,10 @@ class PiBootstrapExecutor:
             def should_cancel() -> str | None:
                 if (tracker is not None and tracker.lease_lost) or not lease_active():
                     return "lease_lost"
+                if semantic_progress_probe is not None:
+                    reason = semantic_progress_probe()
+                    if reason:
+                        return reason
                 return None
 
             if rpc:
@@ -817,6 +862,10 @@ class PiExploreExecutor(PiBootstrapExecutor):
         self._session_id = self._session_id or uuid.uuid4().hex
         timeout_seconds = execution_input.execute_timeout_seconds or 900
         steer_after_seconds, remaining_seconds = _explore_soft_reminder_timing(timeout_seconds)
+        progress_probe = _ExploreArtifactProgressProbe(
+            execution_input.run_dir,
+            execution_input.explore_no_progress_seconds,
+        )
         result = self._run(
             execution_input,
             self.prompts.render(
@@ -843,8 +892,13 @@ class PiExploreExecutor(PiBootstrapExecutor):
             steer_message=_explore_soft_reminder(remaining_seconds),
             stream_idle_timeout_seconds=EXPLORE_RPC_STREAM_IDLE_TIMEOUT_SECONDS,
             stream_recovery_prompt=EXPLORE_RPC_STREAM_RECOVERY_PROMPT,
+            semantic_progress_probe=progress_probe,
         )
         if result.cancelled:
+            if result.cancel_reason == "explore_no_progress":
+                raise ExploreExecutionTimeout(
+                    "Explore 持续无新产物，已由代码触发 bounded conclude"
+                )
             raise LeaseLostError(result.cancel_reason or "worker cancelled")
         if result.timed_out:
             raise ExploreExecutionTimeout("Explore execute budget exhausted")

@@ -157,6 +157,7 @@ def _reconcile_plan(client, task_id: str) -> str:
     assert created, (reconciled.json(), client.get(f"/api/v1/tasks/{task_id}").json())
     [run_id] = created
     run = client.get(f"/api/v1/tasks/{task_id}/plan-runs/{run_id}").json()
+    assert run["id"] == run_id
     return run_id
 
 
@@ -617,6 +618,7 @@ def test_manual_reason_bypasses_automatic_interval_and_fingerprint_suppression(c
     plan = client.get(
         f"/api/v1/tasks/{task['id']}/plan-runs/{plan_run_id}"
     ).json()
+    assert plan["id"] == plan_run_id
     task_with_plan = client.get(f"/api/v1/tasks/{task['id']}").json()
     assert task_with_plan["phase"] == "plan"
     assert task_with_plan["active_plan_run"] is None
@@ -1162,12 +1164,14 @@ def test_reason_runtime_quota_does_not_bound_proposals_but_explore_budget_is_sna
     second = _propose(client, workspace, claim["lease_id"], _proposal(11, "f002"))
     too_long = _proposal(12, "f002")
     too_long["execute_seconds"] = 1_200
-    out_of_snapshot_bounds = _propose(client, workspace, claim["lease_id"], too_long)
+    normalized_legacy_budget = _propose(client, workspace, claim["lease_id"], too_long)
 
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
-    assert out_of_snapshot_bounds.status_code == 409
-    assert "300-600" in out_of_snapshot_bounds.json()["error"]["message"]
+    assert normalized_legacy_budget.status_code == 200, normalized_legacy_budget.text
+    proposal = normalized_legacy_budget.json()["draft"]["intent_proposals"][-1]
+    assert proposal["execute_seconds"] == 600
+    assert proposal["conclude_seconds"] == 300
 
 
 def test_reason_low_watermark_ignores_todos_that_already_have_open_explore(client) -> None:

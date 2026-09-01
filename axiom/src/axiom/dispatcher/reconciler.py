@@ -86,7 +86,11 @@ class Reconciler:
                 or any(item.status == "pending" for item in task.plan_runs)
             ),
             key=lambda item: (
-                not self._has_ready_main_work(item, now),
+                not self._has_ready_main_work(
+                    item,
+                    now,
+                    infrastructure_retry_limit=limits.infrastructure_retry_limit,
+                ),
                 item.last_claimed_at is not None,
                 item.last_claimed_at or item.created_at,
                 item.created_at,
@@ -119,6 +123,7 @@ class Reconciler:
                     active_explore=active_explore_by_task[task.id],
                     explore_limit=limits.per_task_explore_concurrency,
                     review_limit=limits.per_task_review_concurrency,
+                    infrastructure_retry_limit=limits.infrastructure_retry_limit,
                 )
                 if candidate is None:
                     continue
@@ -164,22 +169,44 @@ class Reconciler:
         return actions
 
     @staticmethod
-    def _has_ready_main_work(task: TaskSnapshot, now: datetime) -> bool:
+    def _has_ready_main_work(
+        task: TaskSnapshot,
+        now: datetime,
+        *,
+        infrastructure_retry_limit: int = 3,
+    ) -> bool:
         if task.status != "running":
             return False
         return any(
             item.status == "pending"
             and item.kind in {"bootstrap", "explore"}
+            and not Reconciler._retry_blocked(item, infrastructure_retry_limit)
             and (item.next_retry_at is None or item.next_retry_at <= now)
             for item in task.intents
         ) or any(
             item.status == "pending"
+            and not Reconciler._retry_blocked(item, infrastructure_retry_limit)
             and (item.next_retry_at is None or item.next_retry_at <= now)
             for item in task.reason_runs
         ) or any(
             item.status == "pending"
+            and not Reconciler._retry_blocked(item, infrastructure_retry_limit)
             and (item.next_retry_at is None or item.next_retry_at <= now)
             for item in task.plan_runs
+        )
+
+    @staticmethod
+    def _retry_blocked(work, infrastructure_retry_limit: int) -> bool:
+        """Return whether a pending row has exhausted infra retries.
+
+        Such rows intentionally remain ``pending`` for auditability and
+        operator recovery, but they must not be emitted as claim candidates
+        on every reconciliation tick.
+        """
+
+        return (
+            int(getattr(work, "infrastructure_retry_count", 0) or 0)
+            >= infrastructure_retry_limit
         )
 
     @staticmethod
@@ -204,6 +231,7 @@ class Reconciler:
         active_explore: int,
         explore_limit: int,
         review_limit: int,
+        infrastructure_retry_limit: int,
     ) -> tuple[IntentSnapshot | ReasonRunSnapshot | PlanRunSnapshot | ReviewRunSnapshot, WorkerSnapshot] | None:
         pending_reasons = sorted(
             (
@@ -244,6 +272,8 @@ class Reconciler:
             )
         )
         for work in candidates:
+            if self._retry_blocked(work, infrastructure_retry_limit):
+                continue
             if work.next_retry_at is not None and work.next_retry_at > now:
                 continue
             if active_plan >= 1 and work.kind in {"bootstrap", "reason", "explore"}:

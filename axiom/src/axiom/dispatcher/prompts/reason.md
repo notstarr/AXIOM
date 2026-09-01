@@ -30,8 +30,10 @@
 4. **派发新 Intent**：
    ```bash
    axiom reason intent propose --todo-id tdXXX --title "意图标题" --description "详细测试方案" \
-     --target "目标Target" --from-fact f007 --from-fact f030 --execute-seconds 900 --conclude-seconds 300
+     --target "目标Target" --from-fact f007 --from-fact f030
    ```
+
+   Intent 的执行和收口时间由 AXIOM 后端按运行时配置自动分配；不要输出时间预算、超时或重试参数。
 
    - 跨模块利用时，通过多个 `--from-fact` 传入所有前置依赖 Fact。按需充分派发，数量无上限。
 
@@ -58,4 +60,3 @@ FINISH
 2. **拒绝消极阻塞**：缺乏多账号时，必须通过自建自测闭环、参数遍历、Header 注入等方式完成单向独立攻击面验证，严禁直接标记 Blocked 放弃。
 3. **聚焦实质危害**：紧盯对象鉴权、未授权修改、敏感数据泄露与逻辑越权。忽略缺安全头、版本信息等无害配置。
 4. **总目标驱动**: 管理intent和todo是为了达成总目标的手段和过程，不是目的地；只要总目标还没完成，维护todo,派发intent就必须继续下去
-

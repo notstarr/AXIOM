@@ -1509,6 +1509,7 @@ window.AxiomModules.graph = {
         concluding: '收尾中',
         submitting: '提交结果',
         waiting_retry: '等待重试',
+        retry_blocked: '重试已暂停',
         stopped: '已停止',
         failed: '未完成',
         finished: '已结束',

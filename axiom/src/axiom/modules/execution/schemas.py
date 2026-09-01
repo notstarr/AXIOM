@@ -117,6 +117,7 @@ class ExecutionInput(BaseModel):
     run_dir: str
     execute_timeout_seconds: int | None = None
     conclude_timeout_seconds: int | None = None
+    explore_no_progress_seconds: int = Field(default=300, ge=30, le=7_200)
     context_revision: int | None = None
     context_manifest_path: str | None = None
     axiom_tool_keys: list[str] = Field(default_factory=list)

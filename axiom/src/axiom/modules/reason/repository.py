@@ -547,11 +547,21 @@ class ReasonRepository:
                 retry_count=reason_runs.c.retry_count + (1 if failure_class == "execution" else 0),
                 infrastructure_retry_count=reason_runs.c.infrastructure_retry_count
                 + (1 if failure_class == "transient" else 0),
-                activity_kind="failed" if terminal else "retry_wait",
+                activity_kind=(
+                    "failed"
+                    if terminal
+                    else "retry_blocked"
+                    if failure_class == "transient" and next_retry_at is None
+                    else "retry_wait"
+                ),
                 activity_summary=(
                     f"Reason 执行失败：{failure_kind}"
                     if terminal
-                    else f"Reason 已释放，等待重试：{failure_kind}"
+                    else (
+                        f"Reason 基础设施重试已达上限，等待人工或系统恢复：{failure_kind}"
+                        if failure_class == "transient" and next_retry_at is None
+                        else f"Reason 已释放，等待重试：{failure_kind}"
+                    )
                 ),
                 activity_tool="",
                 activity_updated_at=now,

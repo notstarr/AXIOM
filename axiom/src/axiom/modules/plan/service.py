@@ -11,6 +11,7 @@ from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
 from axiom.modules.context.tables import context_revisions
+from axiom.modules.execution.intent_budget import resolve_explore_budget
 from axiom.modules.graph.tables import facts, intent_sources, intents
 from axiom.modules.goals.tables import goal_evaluations
 from axiom.modules.knowledge.tables import project_knowledge
@@ -591,14 +592,12 @@ class PlanService:
     def _has_terminal_transient_failure_in(self, conn, task) -> bool:
         """Return whether automatic Plan recovery is blocked by a terminal infra failure.
 
-        ``release_run`` deliberately keeps retryable infrastructure failures on
-        the same pending row.  Once the infrastructure retry budget is
-        exhausted, however, that row becomes terminal ``failed``.  Treating
-        terminal transient rows as invisible to reconciliation would create a
-        fresh PlanRun on every dispatcher tick and bypass the per-run retry
-        budget entirely.  Keep the task in the recoverable ``plan`` phase until
-        an operator explicitly triggers a new PlanRun (or a later verified
-        finding starts a new goal-cycle window).
+        New releases keep retryable infrastructure failures on the same
+        pending row and the claim path pauses that row when its budget is
+        exhausted. This check remains for legacy rows that were persisted as
+        terminal transient failures before the pause semantics shipped; those
+        rows must not cause reconciliation to create replacement PlanRuns on
+        every dispatcher tick.
         """
         conditions = [
             plan_runs.c.task_id == task.id,
@@ -1001,12 +1000,34 @@ class PlanService:
             config = load_runtime_config(conn)
             count = run.retry_count + 1 if failure_class == "execution" else run.infrastructure_retry_count + 1
             limit = getattr(config, "execution_retry_limit", 3) if failure_class == "execution" else getattr(config, "infrastructure_retry_limit", 3)
-            terminal = count >= limit
+            terminal = failure_class == "execution" and count >= limit
+            retry_blocked = failure_class == "transient" and count >= limit
             delay = min(getattr(config, "retry_max_seconds", 300), getattr(config, "retry_base_seconds", 5) * (2 ** min(max(0, count - 1), 30)))
-            retry_at = format_utc(parse_utc(now) + timedelta(seconds=delay)) if not terminal else None
+            retry_at = (
+                format_utc(parse_utc(now) + timedelta(seconds=delay))
+                if not terminal and not retry_blocked
+                else None
+            )
             if not self.repository.release(conn, task_id=task_id, run_id=plan_run_id, lease_id=lease_id, failure_kind=failure_kind, failure_class=failure_class, next_retry_at=retry_at, terminal=terminal, now=now):
                 raise LeaseInactiveError("PlanRun lease is no longer active")
             self.repository.abandon_open(conn, task_id=task_id, plan_run_id=plan_run_id, lease_id=lease_id, failure_reason=failure_kind or "plan_run_released", now=now)
+            task = self.tasks.get(conn, task_id)
+            if task is not None:
+                self._audit_in(
+                    conn,
+                    task=task,
+                    plan_run_id=plan_run_id,
+                    worker=run.worker or "",
+                    event_type="plan_run.released",
+                    message=f"PlanRun 已释放：{failure_kind or '未指定原因'}",
+                    payload={
+                        "failure_kind": failure_kind,
+                        "failure_class": failure_class,
+                        "terminal": terminal,
+                        "retry_blocked": retry_blocked,
+                        "next_retry_at": retry_at,
+                    },
+                )
             return ReleasedPlanRun(task_id=task_id, plan_run_id=plan_run_id, status="failed" if terminal else "pending", next_retry_at=retry_at, retry_count=run.retry_count + (1 if failure_class == "execution" else 0), infrastructure_retry_count=run.infrastructure_retry_count + (1 if failure_class == "transient" else 0))
 
     def _require_lease(self, conn, task_id: str, run_id: str, lease_id: str) -> PlanRun:
@@ -1137,6 +1158,19 @@ class PlanService:
     def propose_intent(self, workspace_id: str, proposal: DraftPlanIntent, *, lease_id: str) -> PlanWorkspace:
         with transaction(self.engine) as conn:
             workspace = self._active_workspace(conn, workspace_id, lease_id)
+            requested_execute_seconds = proposal.execute_seconds
+            requested_conclude_seconds = proposal.conclude_seconds
+            budget = resolve_explore_budget(
+                load_runtime_config(conn),
+                execute_seconds=requested_execute_seconds,
+                conclude_seconds=requested_conclude_seconds,
+            )
+            proposal = proposal.model_copy(
+                update={
+                    "execute_seconds": budget.execute_seconds,
+                    "conclude_seconds": budget.conclude_seconds,
+                }
+            )
             computed = self.intent_fingerprint(proposal)
             identity = computed
             if any((item.dedup_fingerprint or self.intent_fingerprint(item)) == identity for item in workspace.draft.intent_proposals):
@@ -1148,6 +1182,23 @@ class PlanService:
             result = self.repository.save_draft(conn, workspace_id, workspace.draft.model_copy(update={"intent_proposals": [*workspace.draft.intent_proposals, proposal]}), now=utcnow())
             task = self.tasks.get(conn, workspace.task_id)
             if task is not None:
+                if budget.used_legacy_values:
+                    self._audit_in(
+                        conn,
+                        task=task,
+                        plan_run_id=workspace.plan_run_id,
+                        workspace_id=workspace.id,
+                        worker=workspace.worker,
+                        event_type="plan.intent_budget_normalized",
+                        message="Plan Intent 的旧时间字段已由后端配置覆盖",
+                        payload={
+                            "legacy_execute_seconds": requested_execute_seconds,
+                            "legacy_conclude_seconds": requested_conclude_seconds,
+                            "execute_timeout_seconds": budget.execute_seconds,
+                            "conclude_timeout_seconds": budget.conclude_seconds,
+                            "legacy_values_ignored": True,
+                        },
+                    )
                 self._audit_in(conn, task=task, plan_run_id=workspace.plan_run_id, workspace_id=workspace.id, worker=workspace.worker, event_type="plan.intent_proposed", message="Plan 提出 Explore Intent 草案", payload=proposal.model_dump(mode="json"))
             return result
 
@@ -1217,9 +1268,14 @@ class PlanService:
         if task.scope.enabled and not proposal.targets:
             raise ConflictError("Intent targets are required when Task Scope is configured")
         config = load_runtime_config(conn)
+        budget = resolve_explore_budget(
+            config,
+            execute_seconds=proposal.execute_seconds,
+            conclude_seconds=proposal.conclude_seconds,
+        )
         if not (
             config.explore_execute_min_seconds
-            <= proposal.execute_seconds
+            <= budget.execute_seconds
             <= config.explore_execute_max_seconds
         ):
             raise ConflictError(
@@ -1229,7 +1285,7 @@ class PlanService:
             )
         if not (
             config.explore_conclude_min_seconds
-            <= proposal.conclude_seconds
+            <= budget.conclude_seconds
             <= config.explore_conclude_max_seconds
         ):
             raise ConflictError(
@@ -1646,6 +1702,36 @@ class PlanService:
             self._align_intent_counter(conn, workspace.task_id)
             created_intent_ids: list[str] = []
             for proposal in draft.intent_proposals:
+                requested_execute_seconds = proposal.execute_seconds
+                requested_conclude_seconds = proposal.conclude_seconds
+                budget = resolve_explore_budget(
+                    load_runtime_config(conn),
+                    execute_seconds=requested_execute_seconds,
+                    conclude_seconds=requested_conclude_seconds,
+                )
+                proposal = proposal.model_copy(
+                    update={
+                        "execute_seconds": budget.execute_seconds,
+                        "conclude_seconds": budget.conclude_seconds,
+                    }
+                )
+                if budget.used_legacy_values:
+                    self._audit_in(
+                        conn,
+                        task=task,
+                        plan_run_id=workspace.plan_run_id,
+                        workspace_id=workspace.id,
+                        worker=workspace.worker,
+                        event_type="plan.intent_budget_normalized",
+                        message="Plan Intent 的旧时间字段已由后端配置覆盖",
+                        payload={
+                            "legacy_execute_seconds": requested_execute_seconds,
+                            "legacy_conclude_seconds": requested_conclude_seconds,
+                            "execute_timeout_seconds": budget.execute_seconds,
+                            "conclude_timeout_seconds": budget.conclude_seconds,
+                            "legacy_values_ignored": True,
+                        },
+                    )
                 todo_id = proposal.todo_id or todo_refs.get(proposal.todo_ref or "")
                 if todo_id is None:
                     raise ConflictError(f"Intent references unknown Todo: {proposal.todo_ref}")

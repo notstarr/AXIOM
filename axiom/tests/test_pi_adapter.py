@@ -15,6 +15,7 @@ from axiom.dispatcher.pi import (
     PiReasonExecutor,
     PiReviewExecutor,
     PromptRenderer,
+    _ExploreArtifactProgressProbe,
     _explore_soft_reminder_timing,
     _intent_targets_text,
     _reason_target_guidance,
@@ -65,6 +66,23 @@ def make_script(tmp_path, body: str) -> Path:
     path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
     path.chmod(0o755)
     return path
+
+
+def test_explore_progress_probe_bounded_closeout_after_stale_artifacts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    ticks = iter([1.0, 2.0, 3.0, 34.0])
+    monkeypatch.setattr("axiom.dispatcher.pi.time.monotonic", lambda: next(ticks))
+
+    probe = _ExploreArtifactProgressProbe(
+        str(tmp_path / "run"),
+        timeout_seconds=30,
+        scan_interval=0.2,
+    )
+
+    assert probe() is None
+    assert probe() is None
+    assert probe() == "explore_no_progress"
 
 
 def test_pi_adapter_returns_the_final_assistant_text(tmp_path) -> None:

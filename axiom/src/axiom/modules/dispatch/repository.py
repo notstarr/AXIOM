@@ -70,6 +70,7 @@ class DispatchRepository:
             intents.c.status,
             intents.c.worker_pool_json,
             intents.c.next_retry_at,
+            intents.c.infrastructure_retry_count,
             intents.c.created_at,
             intents.c.claimed_at,
         ]
@@ -99,6 +100,7 @@ class DispatchRepository:
                     next_retry_at=(
                         parse_utc(row["next_retry_at"]) if row["next_retry_at"] else None
                     ),
+                    infrastructure_retry_count=int(row["infrastructure_retry_count"] or 0),
                     created_at=parse_utc(row["created_at"]),
                     claimed_at=parse_utc(row["claimed_at"]) if row["claimed_at"] else None,
                 )
@@ -112,6 +114,7 @@ class DispatchRepository:
                 reason_runs.c.trigger,
                 reason_runs.c.worker_pool_json,
                 reason_runs.c.next_retry_at,
+                reason_runs.c.infrastructure_retry_count,
                 reason_runs.c.created_at,
                 reason_runs.c.claimed_at,
             )
@@ -135,6 +138,7 @@ class DispatchRepository:
                     next_retry_at=(
                         parse_utc(row["next_retry_at"]) if row["next_retry_at"] else None
                     ),
+                    infrastructure_retry_count=int(row["infrastructure_retry_count"] or 0),
                     created_at=parse_utc(row["created_at"]),
                     claimed_at=parse_utc(row["claimed_at"]) if row["claimed_at"] else None,
                 )
@@ -148,6 +152,7 @@ class DispatchRepository:
                 plan_runs.c.trigger,
                 plan_runs.c.worker_pool_json,
                 plan_runs.c.next_retry_at,
+                plan_runs.c.infrastructure_retry_count,
                 plan_runs.c.created_at,
                 plan_runs.c.claimed_at,
             )
@@ -168,6 +173,7 @@ class DispatchRepository:
                     next_retry_at=(
                         parse_utc(row["next_retry_at"]) if row["next_retry_at"] else None
                     ),
+                    infrastructure_retry_count=int(row["infrastructure_retry_count"] or 0),
                     created_at=parse_utc(row["created_at"]),
                     claimed_at=parse_utc(row["claimed_at"]) if row["claimed_at"] else None,
                 )
@@ -181,6 +187,7 @@ class DispatchRepository:
                 vulnerability_review_runs.c.status,
                 vulnerability_review_runs.c.worker_pool_json,
                 vulnerability_review_runs.c.next_retry_at,
+                vulnerability_review_runs.c.infrastructure_retry_count,
                 vulnerability_review_runs.c.created_at,
                 vulnerability_review_runs.c.claimed_at,
             )
@@ -201,6 +208,7 @@ class DispatchRepository:
                     next_retry_at=(
                         parse_utc(row["next_retry_at"]) if row["next_retry_at"] else None
                     ),
+                    infrastructure_retry_count=int(row["infrastructure_retry_count"] or 0),
                     created_at=parse_utc(row["created_at"]),
                     claimed_at=parse_utc(row["claimed_at"]) if row["claimed_at"] else None,
                 )
@@ -290,6 +298,7 @@ class DispatchRepository:
                 per_task_max_active_runs=config.per_task_max_active_runs,
                 per_task_explore_concurrency=config.per_task_explore_concurrency,
                 per_task_review_concurrency=config.per_task_review_concurrency,
+                infrastructure_retry_limit=config.infrastructure_retry_limit,
             ),
         )
 
@@ -684,9 +693,21 @@ class DispatchRepository:
                 last_failure_kind="lease_expired",
                 failure_class="transient",
                 infrastructure_retry_count=intents.c.infrastructure_retry_count + 1,
-                activity_kind="released" if not terminal else "failed",
+                activity_kind=(
+                    "failed"
+                    if terminal
+                    else "retry_blocked"
+                    if next_retry_at is None
+                    else "released"
+                ),
                 activity_summary=(
-                    "租约已过期，等待重新领取" if not terminal else "租约连续过期，Intent 已失败"
+                    "租约连续过期，Intent 已失败"
+                    if terminal
+                    else (
+                        "基础设施重试已达上限，等待人工或系统恢复"
+                        if next_retry_at is None
+                        else "租约已过期，等待重新领取"
+                    )
                 ),
                 activity_tool="",
                 activity_updated_at=now,

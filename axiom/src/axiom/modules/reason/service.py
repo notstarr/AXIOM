@@ -12,6 +12,7 @@ from sqlalchemy import Engine, exists, func, or_, select, update
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
 from axiom.modules.context.tables import context_revisions
+from axiom.modules.execution.intent_budget import resolve_explore_budget
 from axiom.modules.goals.repository import GoalRepository
 from axiom.modules.goals.schemas import GoalAssessment
 from axiom.modules.goals.service import GoalService
@@ -1339,13 +1340,16 @@ class ReasonService:
                 if failure_class == "execution"
                 else config.infrastructure_retry_limit
             )
-            terminal = next_count >= limit
+            terminal = failure_class == "execution" and next_count >= limit
+            retry_blocked = failure_class == "transient" and next_count >= limit
             delay = min(
                 config.retry_max_seconds,
                 config.retry_base_seconds * (2 ** min(max(0, next_count - 1), 30)),
             )
             next_retry_at = (
-                format_utc(parse_utc(now) + timedelta(seconds=delay)) if not terminal else None
+                format_utc(parse_utc(now) + timedelta(seconds=delay))
+                if not terminal and not retry_blocked
+                else None
             )
             if not self.repository.release(
                 conn,
@@ -1383,6 +1387,7 @@ class ReasonService:
                         "failure_kind": failure_kind,
                         "failure_class": failure_class,
                         "terminal": terminal,
+                        "retry_blocked": retry_blocked,
                         "next_retry_at": next_retry_at,
                     },
                 ),
@@ -1617,6 +1622,24 @@ class ReasonService:
         with transaction(self.engine) as conn:
             workspace = self._require_active_open(conn, workspace_id, lease_id)
             run = self._workspace_run(conn, workspace)
+            config = load_runtime_config(conn)
+            requested_execute_seconds = proposal.execute_seconds
+            requested_conclude_seconds = proposal.conclude_seconds
+            budget = resolve_explore_budget(
+                config,
+                execute_seconds=requested_execute_seconds,
+                conclude_seconds=requested_conclude_seconds,
+                execute_min_seconds=run.explore_execute_min_seconds,
+                execute_max_seconds=run.explore_execute_max_seconds,
+                conclude_min_seconds=run.explore_conclude_min_seconds,
+                conclude_max_seconds=run.explore_conclude_max_seconds,
+            )
+            proposal = proposal.model_copy(
+                update={
+                    "execute_seconds": budget.execute_seconds,
+                    "conclude_seconds": budget.conclude_seconds,
+                }
+            )
             self._validate_intent(conn, workspace.task_id, workspace.draft, proposal, run)
             identity = self._intent_identity(proposal)
             existing = next(
@@ -1654,7 +1677,30 @@ class ReasonService:
             draft = workspace.draft.model_copy(
                 update={"intent_proposals": [*workspace.draft.intent_proposals, proposal]}
             )
-            return self.repository.save_draft(conn, workspace_id, draft, now=utcnow())
+            saved = self.repository.save_draft(conn, workspace_id, draft, now=utcnow())
+            if budget.used_legacy_values:
+                task = self.tasks.get(conn, workspace.task_id)
+                if task is not None:
+                    self.audit.record_in(
+                        conn,
+                        RecordAuditEvent(
+                            project_id=task.project_id,
+                            task_id=task.id,
+                            reason_run_id=run.id,
+                            workspace_id=workspace.id,
+                            worker=workspace.worker,
+                            event_type="reason.intent_budget_normalized",
+                            message="Reason Intent 的旧时间字段已由后端配置覆盖",
+                            payload={
+                                "legacy_execute_seconds": requested_execute_seconds,
+                                "legacy_conclude_seconds": requested_conclude_seconds,
+                                "execute_timeout_seconds": budget.execute_seconds,
+                                "conclude_timeout_seconds": budget.conclude_seconds,
+                                "legacy_values_ignored": True,
+                            },
+                        ),
+                    )
+            return saved
 
     def assess_intent(
         self,
@@ -1928,6 +1974,47 @@ class ReasonService:
 
                 created_intent_ids: list[str] = []
                 for proposal in draft.intent_proposals:
+                    # Runtime budgets are code-owned.  Older clients may
+                    # still include explicit values, but a new client can
+                    # omit them entirely and receives the configured defaults.
+                    requested_execute_seconds = proposal.execute_seconds
+                    requested_conclude_seconds = proposal.conclude_seconds
+                    budget = resolve_explore_budget(
+                        load_runtime_config(conn),
+                        execute_seconds=requested_execute_seconds,
+                        conclude_seconds=requested_conclude_seconds,
+                        execute_min_seconds=run.explore_execute_min_seconds,
+                        execute_max_seconds=run.explore_execute_max_seconds,
+                        conclude_min_seconds=run.explore_conclude_min_seconds,
+                        conclude_max_seconds=run.explore_conclude_max_seconds,
+                    )
+                    proposal = proposal.model_copy(
+                        update={
+                            "execute_seconds": budget.execute_seconds,
+                            "conclude_seconds": budget.conclude_seconds,
+                        }
+                    )
+                    if budget.used_legacy_values:
+                        self.audit.record_in(
+                            conn,
+                            RecordAuditEvent(
+                                project_id=task.project_id,
+                                task_id=workspace.task_id,
+                                reason_run_id=run.id,
+                                workspace_id=workspace.id,
+                                worker=workspace.worker,
+                                event_type="reason.intent_budget_normalized",
+                                message="Reason Intent 的旧时间字段已由后端配置覆盖",
+                                payload={
+                                    "legacy_execute_seconds": requested_execute_seconds,
+                                    "legacy_conclude_seconds": requested_conclude_seconds,
+                                    "execute_timeout_seconds": budget.execute_seconds,
+                                    "conclude_timeout_seconds": budget.conclude_seconds,
+                                    "legacy_values_ignored": True,
+                                },
+                            ),
+                        )
+                    self._validate_intent(conn, workspace.task_id, draft, proposal, run)
                     todo_id = proposal.todo_id or todo_refs.get(proposal.todo_ref or "")
                     if todo_id is None:
                         raise ConflictError(f"Intent references unknown Todo: {proposal.todo_ref}")
@@ -2703,9 +2790,19 @@ class ReasonService:
             ).scalar_one_or_none()
             if exists_fact is None:
                 raise ConflictError(f"Intent source Fact not found: {fact_id}")
+        config = load_runtime_config(conn)
+        budget = resolve_explore_budget(
+            config,
+            execute_seconds=proposal.execute_seconds,
+            conclude_seconds=proposal.conclude_seconds,
+            execute_min_seconds=run.explore_execute_min_seconds,
+            execute_max_seconds=run.explore_execute_max_seconds,
+            conclude_min_seconds=run.explore_conclude_min_seconds,
+            conclude_max_seconds=run.explore_conclude_max_seconds,
+        )
         if not (
             run.explore_execute_min_seconds
-            <= proposal.execute_seconds
+            <= budget.execute_seconds
             <= run.explore_execute_max_seconds
         ):
             raise ConflictError(
@@ -2715,7 +2812,7 @@ class ReasonService:
             )
         if not (
             run.explore_conclude_min_seconds
-            <= proposal.conclude_seconds
+            <= budget.conclude_seconds
             <= run.explore_conclude_max_seconds
         ):
             raise ConflictError(

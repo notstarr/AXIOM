@@ -98,6 +98,31 @@ def test_reconciler_prioritizes_intents_within_a_work_kind():
     assert [item.claim.intent_id for item in actions] == ["i003", "i004", "i002"]
 
 
+def test_reconciler_skips_pending_work_blocked_by_infrastructure_retry_limit():
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                intents=[
+                    IntentSnapshot(
+                        task_id="t_001",
+                        id="i001",
+                        kind="explore",
+                        status="pending",
+                        infrastructure_retry_count=3,
+                        created_at=NOW,
+                    )
+                ],
+            )
+        ],
+        workers=[worker("worker-a", capabilities=("explore",))],
+        limits=DispatchLimits(infrastructure_retry_limit=3),
+    )
+
+    assert Reconciler(now=lambda: NOW).calculate(snapshot) == []
+
+
 def worker(name: str, *, capabilities=("explore",), running=0, max_running=1, priority=0):
     return WorkerSnapshot(
         name=name,

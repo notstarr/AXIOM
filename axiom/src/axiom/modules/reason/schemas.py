@@ -123,8 +123,10 @@ class DraftIntent(BaseModel):
     description: str
     targets: list[str] = Field(default_factory=list)
     priority: int = Field(default=50, ge=0, le=100)
-    execute_seconds: int = Field(gt=0)
-    conclude_seconds: int = Field(gt=0)
+    # Runtime budgets are assigned by the backend.  Optional fields remain
+    # accepted for rolling compatibility with older workers.
+    execute_seconds: int | None = None
+    conclude_seconds: int | None = None
 
     @field_validator("description")
     @classmethod

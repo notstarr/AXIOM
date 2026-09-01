@@ -48,7 +48,7 @@ class RuntimeConfig(BaseModel):
     heartbeat_interval_seconds: int = Field(default=10, ge=1, le=300)
     lease_timeout_seconds: int = Field(default=60, ge=20, le=3_600)
     execution_retry_limit: int = Field(default=6, ge=1, le=50)
-    infrastructure_retry_limit: int = Field(default=30, ge=1, le=200)
+    infrastructure_retry_limit: int = Field(default=3, ge=1, le=200)
     retry_base_seconds: int = Field(default=30, ge=1, le=3_600)
     retry_max_seconds: int = Field(default=300, ge=1, le=86_400)
     worker_failure_cooldown_seconds: int = Field(default=30, ge=1, le=3_600)
@@ -76,8 +76,11 @@ class RuntimeConfig(BaseModel):
     plan_max_consecutive_runs: int = Field(default=3, ge=1, le=20)
     explore_execute_min_seconds: int = Field(default=300, ge=10, le=86_400)
     explore_execute_max_seconds: int = Field(default=3_600, ge=10, le=86_400)
+    explore_execute_default_seconds: int = Field(default=900, ge=10, le=86_400)
     explore_conclude_min_seconds: int = Field(default=180, ge=180, le=7_200)
     explore_conclude_max_seconds: int = Field(default=600, ge=10, le=7_200)
+    explore_conclude_default_seconds: int = Field(default=300, ge=10, le=7_200)
+    explore_no_progress_seconds: int = Field(default=300, ge=30, le=7_200)
     network_proxy_mode: Literal["off", "http", "vpn"] = "off"
     network_proxy_url: str = "http://127.0.0.1:7890"
     guard_mode: Literal["off", "audit", "enforce"] = "enforce"

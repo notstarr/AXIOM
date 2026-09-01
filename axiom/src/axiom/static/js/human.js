@@ -507,6 +507,7 @@ window.AxiomModules.human = {
       if (key === 'cancelled') return '已取消';
       if (key === 'retry_exhausted') return '失败 · 待 Reason 重规划';
       if (key === 'failed') return '执行失败';
+      if (intent?.activity_kind === 'retry_blocked') return '重试已暂停';
       if (intent?.next_retry_at || intent?.last_failure_kind || (intent?.retry_count || 0) > 0 || (intent?.infrastructure_retry_count || 0) > 0) {
         const execution = Number(intent?.retry_count || 0);
         const infrastructure = Number(intent?.infrastructure_retry_count || 0);
@@ -524,6 +525,7 @@ window.AxiomModules.human = {
       if (key === 'completed') return 'bg-emerald-50 text-emerald-700 border-emerald-100';
       if (key === 'working') return 'bg-blue-50 text-blue-700 border-blue-100';
       if (key === 'retry_exhausted' || key === 'failed') return 'bg-rose-50 text-rose-700 border-rose-100';
+      if (intent?.activity_kind === 'retry_blocked') return 'bg-rose-50 text-rose-700 border-rose-100';
       if (key === 'cancelled') return 'bg-slate-100 text-slate-500 border-slate-200';
       return 'bg-amber-50 text-amber-700 border-amber-100';
     },
