@@ -715,6 +715,41 @@ window.AxiomModules.human = {
       return this.humanNextActionLabel();
     },
 
+    humanAttentionItems() {
+      const items = [];
+      const p = this.project?.project;
+      if (!p) return items;
+      const status = String(p.status || '').toLowerCase();
+      if (status === 'stopped') items.push({ level: 'info', label: '任务已暂停，恢复后将从当前状态继续' });
+      for (const intent of (this.humanCycleDisplayIntents() || [])) {
+        const st = String(intent.status || '').toLowerCase();
+        const retries = (intent.retry_count || 0) + (intent.infrastructure_retry_count || 0);
+        if (['failed', 'error'].includes(st)) {
+          items.push({ level: 'danger', label: `${intent.id} 执行失败：${(intent.description || '未命名 Intent').slice(0, 48)}` });
+        } else if (st === 'blocked') {
+          items.push({ level: 'warn', label: `${intent.id} 被阻塞：${(intent.description || '').slice(0, 48)}` });
+        } else if (retries > 0) {
+          items.push({ level: 'warn', label: `${intent.id} 重试 ${intent.retry_count || 0} 次 · 基础设施重试 ${intent.infrastructure_retry_count || 0}` });
+        }
+      }
+      const ts = this.taskTokenSummary ? this.taskTokenSummary() : null;
+      if (ts && (ts.complete === false || ts.incomplete_sources > 0)) {
+        items.push({ level: 'warn', label: `${ts.incomplete_sources || 0} 个 Session 来源不完整，Token 统计偏低` });
+      }
+      return items.slice(0, 5);
+    },
+
+    taskTokenBreakdown() {
+      const ts = this.taskTokenSummary ? this.taskTokenSummary() : {};
+      const total = Number(ts.total_tokens ?? ts.total ?? 0) || 0;
+      const read = Number(ts.cache_read_tokens ?? ts.cache_read ?? 0) || 0;
+      const input = Number(ts.input_tokens ?? ts.input_uncached ?? 0) || 0;
+      const write = Number(ts.cache_write_tokens ?? ts.cache_write ?? 0) || 0;
+      const output = Number(ts.output_tokens ?? ts.output ?? 0) || 0;
+      const pct = (v) => total > 0 ? Math.max(v / total * 100, v > 0 ? 1.5 : 0) : 0;
+      return { total, read, input, write, output, readPct: pct(read), inputPct: pct(input), writePct: pct(write), outputPct: pct(output) };
+    },
+
     humanSeverityCounts() {
       const counts = { critical: 0, high: 0, medium: 0, low: 0 };
       for (const vuln of (this.project?.vulns || [])) {

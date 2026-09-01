@@ -1919,7 +1919,7 @@ def test_frontend_and_static_assets_are_served(client):
     assert "toggleProjectGuardById" in human.text
     assert "开启守卫" in human.text
     assert "关闭守卫" in human.text
-    assert "本任务 Token 消耗" in human.text
+    assert "Token 消耗" in human.text
     assert "taskTokenModel" in human.text
     assert "taskTokenRange" in human.text
 

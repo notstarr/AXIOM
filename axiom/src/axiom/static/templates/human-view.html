@@ -119,37 +119,26 @@
             <span class="px-2 py-1 rounded-lg text-[10px] border" :class="humanCycleStatusClass(humanCycleModel().current?.status)" x-text="humanCycleStatusLabel(humanCycleModel().current?.status)"></span>
           </div>
 
-          <div class="mt-4 space-y-3">
-            <div class="flex items-start gap-2.5">
-              <span class="mt-0.5 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold" :class="humanStageStateClass('bootstrap')" x-text="humanStageState('bootstrap').icon"></span>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center justify-between gap-2"><span class="text-xs font-semibold text-slate-700">Bootstrap</span><span class="text-[10px] text-slate-400" x-text="humanStageLabel('bootstrap')"></span></div>
-                <p class="mt-0.5 text-[10px] text-slate-400">攻击面初始化</p>
-              </div>
+          <div class="mt-4 space-y-2.5">
+            <div class="flex items-center gap-2">
+              <span class="h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0" :class="humanStageStateClass('bootstrap')" title="攻击面初始化" x-text="humanStageState('bootstrap').icon"></span>
+              <span class="text-xs font-semibold text-slate-700">Bootstrap</span>
+              <span class="ml-auto text-[10px] text-slate-400 shrink-0" x-text="humanStageLabel('bootstrap')"></span>
             </div>
-            <div class="ml-2.5 h-3 border-l border-dashed border-slate-200"></div>
-            <div class="flex items-start gap-2.5">
-              <span class="mt-0.5 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold" :class="humanStageStateClass('plan')" x-text="humanStageState('plan').icon"></span>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center justify-between gap-2"><span class="text-xs font-semibold text-indigo-700">Plan 全景复盘</span><span class="text-[10px] text-indigo-400" x-text="humanStageLabel('plan')"></span></div>
-                <p class="mt-0.5 text-[10px] text-slate-400">复核历史覆盖、证据武器化和阻断替代方案</p>
-              </div>
+            <div class="flex items-center gap-2">
+              <span class="h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0" :class="humanStageStateClass('plan')" title="复核历史覆盖、证据武器化和阻断替代方案" x-text="humanStageState('plan').icon"></span>
+              <span class="text-xs font-semibold text-indigo-700">Plan 全景复盘</span>
+              <span class="ml-auto text-[10px] text-indigo-400 shrink-0" x-text="humanStageLabel('plan')"></span>
             </div>
-            <div class="ml-2.5 h-3 border-l border-dashed border-slate-200"></div>
-            <div class="flex items-start gap-2.5">
-              <span class="mt-0.5 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold" :class="humanStageStateClass('reason')" x-text="humanStageState('reason').icon"></span>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center justify-between gap-2"><span class="text-xs font-semibold text-slate-700">Reason</span><span class="text-[10px] text-blue-600" x-text="`${humanCycleCounts().reason} 轮`"></span></div>
-                <p class="mt-0.5 text-[10px] text-slate-400" x-text="humanStageLabel('reason')"></p>
-              </div>
+            <div class="flex items-center gap-2">
+              <span class="h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0" :class="humanStageStateClass('reason')" x-text="humanStageState('reason').icon"></span>
+              <span class="text-xs font-semibold text-slate-700">Reason</span>
+              <span class="ml-auto text-[10px] shrink-0" :class="humanStageLabel('reason') === '等待领取' ? 'text-slate-400' : 'text-blue-600'" x-text="`${humanStageLabel('reason')} · ${humanCycleCounts().reason} 轮`"></span>
             </div>
-            <div class="ml-2.5 h-3 border-l border-dashed border-slate-200"></div>
-            <div class="flex items-start gap-2.5">
-              <span class="mt-0.5 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold" :class="humanStageStateClass('explore')" x-text="humanStageState('explore').icon"></span>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center justify-between gap-2"><span class="text-xs font-semibold text-slate-700">Explore</span><span class="text-[10px] text-violet-600" x-text="`${humanCycleCounts().explore} 个 Intent`"></span></div>
-                <p class="mt-0.5 text-[10px] text-slate-400" x-text="`${humanStageLabel('explore')}${humanCycleCounts().active ? ` · ${humanCycleCounts().active} 个活动` : ''}`"></p>
-              </div>
+            <div class="flex items-center gap-2">
+              <span class="h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0" :class="humanStageStateClass('explore')" x-text="humanStageState('explore').icon"></span>
+              <span class="text-xs font-semibold text-slate-700">Explore</span>
+              <span class="ml-auto text-[10px] shrink-0" :class="humanStageLabel('explore') === '等待执行' ? 'text-slate-400' : 'text-violet-600'" x-text="`${humanStageLabel('explore')} · ${humanCycleCounts().explore} Intent`"></span>
             </div>
           </div>
 
@@ -171,11 +160,12 @@
         </section>
 
         <section class="sto-panel" style="padding:16px;">
-          <div class="flex items-center justify-between">
-            <h3 class="text-xs font-semibold text-slate-700">历史循环</h3>
-            <span class="text-[10px] text-slate-400" x-text="`${humanCycleModel().history.length} 轮`"></span>
-          </div>
-          <div class="human-cycle-history mt-3 space-y-2">
+          <details>
+            <summary class="flex items-center justify-between cursor-pointer select-none" style="list-style:none;">
+              <h3 class="text-xs font-semibold text-slate-700">历史循环</h3>
+              <span class="text-[10px] text-slate-400" x-text="`${humanCycleModel().history.length} 轮 ▾`"></span>
+            </summary>
+            <div class="human-cycle-history mt-3 space-y-2">
             <template x-for="cycle in humanCycleModel().history" :key="cycle.key">
               <details class="rounded-lg border border-slate-100 bg-slate-50/60 group">
                 <summary class="flex items-center gap-2 cursor-pointer list-none px-2 py-2 hover:bg-slate-100/70 transition">
@@ -197,57 +187,78 @@
               </details>
             </template>
             <p x-show="humanCycleModel().history.length === 0" class="text-[11px] text-slate-400">还没有已结束的历史循环。</p>
-          </div>
+            </div>
+          </details>
+        </section>
+
+        <section class="sto-panel" style="padding:16px;" x-show="(project?.goal_cycles || []).length > 1">
+          <details>
+            <summary class="flex items-center justify-between cursor-pointer select-none" style="list-style:none;">
+              <h3 class="text-xs font-semibold text-slate-700">Goal 历史</h3>
+              <span class="text-[10px] text-slate-400" x-text="`${project.goal_cycles.length} 轮 ▾`"></span>
+            </summary>
+            <div class="mt-3 space-y-2">
+              <template x-for="cycle in project.goal_cycles" :key="cycle.id">
+                <div class="rounded-xl border px-3 py-2" :class="cycle.id === project.project.current_goal_cycle_id ? 'border-amber-200 bg-amber-50/70' : 'border-slate-100 bg-slate-50'">
+                  <div class="flex items-center justify-between gap-2"><span class="text-[10px] font-semibold" :class="cycle.id === project.project.current_goal_cycle_id ? 'text-amber-800' : 'text-slate-500'" x-text="`第 ${cycle.sequence} 轮${cycle.id === project.project.current_goal_cycle_id ? ' · 当前' : ''}`"></span><span class="text-[9px] text-slate-400" x-text="cycle.status === 'completed' ? `完成于 ${formatTime(cycle.completed_at)}` : '进行中'"></span></div>
+                  <p class="mt-1 text-xs leading-5 text-slate-600" x-text="cycle.goal"></p>
+                  <p x-show="cycle.continuation_reason" class="mt-1 text-[10px] text-slate-400" x-text="`续跑原因：${cycle.continuation_reason}`"></p>
+                </div>
+              </template>
+            </div>
+          </details>
         </section>
       </aside>
 
       <div class="min-w-0 space-y-4">
-        <section class="grid grid-cols-1 lg:grid-cols-[1.35fr_1fr] gap-4">
-          <div class="sto-panel" style="padding:18px 20px;">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <p class="sto-label">Goal</p>
-                <h3 class="mt-1 text-base font-semibold text-slate-800">任务目标与完成条件</h3>
+        <section class="sto-panel" style="padding:16px 20px;">
+          <div class="flex items-center gap-4 flex-wrap">
+            <div class="min-w-0 flex-1" style="min-width:260px;">
+              <p class="sto-label">任务目标</p>
+              <p class="mt-1 text-sm font-semibold text-slate-800 truncate" :title="project?.project?.goal" x-text="project?.project?.goal || '未设置任务目标'"></p>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <span class="sto-ghost" style="cursor:default;" x-text="humanCycleModel().current ? `第 ${humanCycleModel().current.number} 轮` : '未启动'"></span>
+              <span class="px-2.5 py-1.5 rounded-lg border text-[10px] font-semibold" :class="humanGoalStatusClass()" x-text="humanGoalStatusLabel()"></span>
+            </div>
+            <div class="flex items-center gap-2.5 shrink-0" style="min-width:250px;">
+              <div class="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden" style="min-width:120px;">
+                <div class="h-full rounded-full bg-brand-500 transition-all" :style="`width:${humanTodoProgress().percent}%`"></div>
               </div>
-              <span class="px-2.5 py-1 rounded-lg border text-[10px] font-semibold" :class="humanGoalStatusClass()" x-text="humanGoalStatusLabel()"></span>
-            </div>
-            <p class="mt-3 text-sm leading-6 text-slate-700" x-text="project?.project?.goal || '未设置任务目标'"></p>
-            <div class="mt-4 rounded-xl bg-slate-50 border border-slate-100 p-3">
-              <p class="text-[10px] text-slate-400">当前判定</p>
-              <p class="mt-1 text-xs leading-5 text-slate-600" x-text="humanGoalExplanation()"></p>
-            </div>
-            <div x-show="(project?.goal_cycles || []).length > 1" class="mt-4 border-t border-slate-100 pt-4">
-              <div class="flex items-center justify-between"><p class="text-[10px] uppercase tracking-[0.14em] text-slate-400">Goal 历史</p><span class="text-[10px] text-slate-400" x-text="`${project.goal_cycles.length} 轮`"></span></div>
-              <div class="mt-2 space-y-2">
-                <template x-for="cycle in project.goal_cycles" :key="cycle.id">
-                  <div class="rounded-xl border px-3 py-2" :class="cycle.id === project.project.current_goal_cycle_id ? 'border-amber-200 bg-amber-50/70' : 'border-slate-100 bg-slate-50'">
-                    <div class="flex items-center justify-between gap-2"><span class="text-[10px] font-semibold" :class="cycle.id === project.project.current_goal_cycle_id ? 'text-amber-800' : 'text-slate-500'" x-text="`第 ${cycle.sequence} 轮${cycle.id === project.project.current_goal_cycle_id ? ' · 当前' : ''}`"></span><span class="text-[9px] text-slate-400" x-text="cycle.status === 'completed' ? `完成于 ${formatTime(cycle.completed_at)}` : '进行中'"></span></div>
-                    <p class="mt-1 text-xs leading-5 text-slate-600" x-text="cycle.goal"></p>
-                    <p x-show="cycle.continuation_reason" class="mt-1 text-[10px] text-slate-400" x-text="`续跑原因：${cycle.continuation_reason}`"></p>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </div>
-          <div class="sto-panel" style="padding:18px 20px;">
-            <div class="flex items-center justify-between"><div><p class="sto-label">覆盖概况</p><h3 class="mt-1 text-base font-semibold text-slate-800">Todo 覆盖进度</h3></div><span class="text-sm font-semibold text-brand-600" x-text="`${humanTodoProgress().percent}%`"></span></div>
-            <div class="mt-4 h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full bg-brand-500 transition-all" :style="`width:${humanTodoProgress().percent}%`"></div></div>
-            <div class="mt-4 grid grid-cols-4 gap-2.5">
-              <div class="sto-statcell"><p class="sto-label">事实</p><b x-text="humanFactCount()"></b></div>
-              <div class="sto-statcell"><p class="sto-label" style="color:var(--sto-accent);">Intent</p><b style="color:var(--sto-accent);" x-text="humanIntentCount()"></b></div>
-              <div class="sto-statcell"><p class="sto-label" style="color:var(--sto-warn);">Todo</p><b style="color:var(--sto-warn);" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total}`"></b></div>
-              <div class="sto-statcell"><p class="sto-label" style="color:var(--sto-ok);">产物</p><b x-text="humanArtifactCount()"></b></div>
+              <span class="text-sm font-bold text-brand-600 tabular-nums" x-text="`${humanTodoProgress().percent}%`"></span>
+              <span class="text-[10px] text-slate-400 tabular-nums shrink-0" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total} Todo`"></span>
             </div>
           </div>
         </section>
-
-        <section class="token-usage-panel sto-panel" style="padding:18px 20px;">
-          <div class="flex flex-wrap items-start gap-3">
-            <div>
-              <p class="sto-label">LLM usage</p>
-              <h3 class="mt-1 text-base font-semibold text-slate-800">本任务 Token 消耗</h3>
-              <p class="mt-1 text-xs text-slate-400">包含所有 Goal 轮次、失败、超时、重试、Execute 与 Conclude。</p>
+        <template x-if="humanAttentionItems().length">
+          <div class="sto-panel" style="padding:12px 16px; border-left:3px solid var(--sto-warn);">
+            <div class="flex items-center gap-2 flex-wrap">
+              <p class="sto-label" style="color:var(--sto-warn); flex-shrink:0;">需要关注</p>
+              <template x-for="(item, idx) in humanAttentionItems()" :key="`attn-${idx}`">
+                <span class="px-2.5 py-1 rounded-lg text-[11px] font-medium"
+                  :class="item.level === 'danger' ? 'bg-rose-50 text-rose-700 border border-rose-100' : item.level === 'warn' ? 'bg-amber-50 text-amber-700 border border-amber-100' : 'bg-sky-50 text-sky-700 border border-sky-100'"
+                  x-text="item.label"></span>
+              </template>
             </div>
+          </div>
+        </template>
+
+        <section class="token-usage-panel sto-panel" style="padding:14px 20px;">
+          <div class="flex items-center gap-4 flex-wrap">
+            <p class="sto-label" style="flex-shrink:0;">Token 消耗</p>
+            <template x-if="selectedTaskDiagnostics()">
+              <div class="flex items-center gap-x-4 gap-y-1 flex-wrap text-[11px] text-slate-500">
+                <span>总 <b class="text-[13px] font-bold text-slate-800 tabular-nums" x-text="formatTokenCount(taskTokenSummary().total_tokens ?? taskTokenSummary().total)"></b></span>
+                <span style="color:#3b82f6;">输入 <b class="font-semibold tabular-nums" x-text="formatTokenCount(taskTokenSummary().input_tokens ?? taskTokenSummary().input_uncached)"></b></span>
+                <span style="color:#18a875;">命中 <b class="font-semibold tabular-nums" x-text="formatTokenCount(taskTokenSummary().cache_read_tokens ?? taskTokenSummary().cache_read)"></b></span>
+                <span style="color:#d88706;">写入 <b class="font-semibold tabular-nums" x-text="formatTokenCount(taskTokenSummary().cache_write_tokens ?? taskTokenSummary().cache_write)"></b></span>
+                <span style="color:#8b5cf6;">输出 <b class="font-semibold tabular-nums" x-text="formatTokenCount(taskTokenSummary().output_tokens ?? taskTokenSummary().output)"></b></span>
+                <span class="font-semibold text-emerald-600" x-text="`命中率 ${tokenCacheHitRateLabel(taskTokenSummary().cache_hit_rate)}`"></span>
+              </div>
+            </template>
+            <template x-if="!selectedTaskDiagnostics()">
+              <span class="text-[11px] text-slate-400">正在读取本任务 Token 明细…</span>
+            </template>
             <div class="flex-1"></div>
             <label class="token-filter-select inline-flex items-center gap-1.5 text-[11px] text-slate-400">
               <span>模型</span>
@@ -260,27 +271,22 @@
               <template x-for="option in tokenRangeOptions()" :key="`task-token-range-${option.value}`"><button type="button" @click="setTaskTokenRange(option.value)" class="rounded-lg px-2 py-1.5 text-[11px] font-medium transition" :class="taskTokenRange === option.value ? 'bg-brand-500 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'" x-text="option.label"></button></template>
             </div>
           </div>
-          <template x-if="!selectedTaskDiagnostics()">
-            <div class="mt-4 rounded-xl bg-slate-50 p-4 text-xs text-slate-400">正在读取本任务 Token 明细…</div>
-          </template>
           <template x-if="selectedTaskDiagnostics()">
-            <div class="mt-4 space-y-3">
-              <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
-                <div class="token-hit-rate sto-statcell" style="min-width:0;"><p class="sto-label">总 Token</p><p class="mt-1 text-lg font-semibold text-slate-800 tabular-nums" x-text="formatTokenCount(taskTokenSummary().total_tokens ?? taskTokenSummary().total)"></p></div>
-                <div class="token-hit-rate sto-statcell" style="min-width:0;"><p class="sto-label" style="color:#3b82f6;">输入（未命中）</p><p class="mt-1 text-lg font-semibold token-fg-input tabular-nums" x-text="formatTokenCount(taskTokenSummary().input_tokens ?? taskTokenSummary().input_uncached)"></p></div>
-                <div class="token-hit-rate sto-statcell" style="min-width:0;"><p class="sto-label" style="color:#18a875;">缓存命中</p><p class="mt-1 text-lg font-semibold token-fg-cache tabular-nums" x-text="formatTokenCount(taskTokenSummary().cache_read_tokens ?? taskTokenSummary().cache_read)"></p></div>
-                <div class="token-hit-rate sto-statcell" style="min-width:0;"><p class="sto-label" style="color:#d88706;">缓存写入</p><p class="mt-1 text-lg font-semibold token-fg-cache-write tabular-nums" x-text="formatTokenCount(taskTokenSummary().cache_write_tokens ?? taskTokenSummary().cache_write)"></p></div>
-                <div class="token-hit-rate sto-statcell" style="min-width:0;"><p class="sto-label" style="color:#8b5cf6;">输出</p><p class="mt-1 text-lg font-semibold token-fg-output tabular-nums" x-text="formatTokenCount(taskTokenSummary().output_tokens ?? taskTokenSummary().output)"></p></div>
-                <div class="token-hit-rate sto-statcell" style="min-width:0;"><p class="sto-label" style="color:#18a875;">缓存命中率</p><p class="mt-1 text-lg font-semibold token-fg-cache tabular-nums" x-text="tokenCacheHitRateLabel(taskTokenSummary().cache_hit_rate)"></p></div>
+            <div class="mt-3">
+              <div class="flex h-1.5 rounded-full overflow-hidden bg-slate-100">
+                <div style="background:#18a875; transition:width .4s ease;" :style="`width:${taskTokenBreakdown().readPct}%`"></div>
+                <div style="background:#d88706; transition:width .4s ease;" :style="`width:${taskTokenBreakdown().writePct}%`"></div>
+                <div style="background:#3b82f6; transition:width .4s ease;" :style="`width:${taskTokenBreakdown().inputPct}%`"></div>
+                <div style="background:#8b5cf6; transition:width .4s ease;" :style="`width:${taskTokenBreakdown().outputPct}%`"></div>
               </div>
-              <div x-show="taskTokenSummary().complete === false || taskTokenSummary().incomplete_sources > 0" class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">有 <span class="font-semibold" x-text="taskTokenSummary().incomplete_sources || 0"></span> 个 Session 来源不完整；缺失 Token 未被估算。</div>
+              <div x-show="taskTokenSummary().complete === false || taskTokenSummary().incomplete_sources > 0" class="mt-2 text-[10px] text-amber-700">有 <span class="font-semibold" x-text="taskTokenSummary().incomplete_sources || 0"></span> 个 Session 来源不完整；缺失 Token 未被估算。</div>
             </div>
           </template>
         </section>
 
         <section class="sto-panel overflow-hidden">
           <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
-            <div><h3 class="text-sm font-semibold text-slate-800" x-text="humanCurrentIntents().length ? '当前执行' : '最近一轮执行'"></h3><p class="mt-1 text-xs text-slate-400" x-text="humanCurrentIntents().length ? '按运行状态优先展示当前或等待领取的 Intent。' : `当前没有活动 Intent，展示 ${humanCycleDisplaySourceLabel()} 的最近批次。`"></p></div>
+            <div><h3 class="text-sm font-semibold text-slate-800" x-text="humanCurrentIntents().length ? '最新动态 · 当前执行' : '最新动态'"></h3><p class="mt-1 text-xs text-slate-400" x-text="humanCurrentIntents().length ? '按运行状态优先展示当前或等待领取的 Intent。' : `当前没有活动 Intent，展示 ${humanCycleDisplaySourceLabel()} 的最近批次。`"></p></div>
             <span class="px-2 py-1 rounded-lg bg-blue-50 text-blue-700 text-[10px] font-semibold" x-text="humanCurrentIntents().length ? `${humanCurrentIntents().length} 个活动 Intent` : `${humanCycleDisplayIntents().length} 个最近 Intent`"></span>
           </div>
           <div class="p-4">
@@ -291,7 +297,7 @@
                     <span class="mt-0.5 h-7 w-7 rounded-lg flex items-center justify-center text-xs font-mono" :class="`${humanIntentStatusClass(intent)} ${humanIntentIconClass(intent)}`" x-text="humanIntentIcon(intent)"></span>
                     <div class="min-w-0 flex-1">
                       <div class="flex items-start justify-between gap-2"><p class="text-xs font-medium leading-5 text-slate-700" x-text="intent.description || '未命名 Intent'"></p><span class="shrink-0 px-1.5 py-0.5 rounded-md border text-[9px]" :class="humanIntentStatusClass(intent)" x-text="humanIntentStatusLabel(intent)"></span></div>
-                      <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-400"><span x-text="intent.worker || '未领取'"></span><span x-text="intent.todo_id ? `Todo：${intent.todo_id}` : '未关联 Todo'"></span><span x-show="intent.targets?.length" x-text="intent.targets.join(', ')"></span><span x-show="intent.retry_count || intent.infrastructure_retry_count" class="text-rose-500" x-text="`执行重试 ${intent.retry_count || 0} · 基础设施重试 ${intent.infrastructure_retry_count || 0}`"></span></div>
+                      <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-400"><span x-show="intent.created_at" class="text-slate-500" x-text="formatTime(intent.created_at)"></span><span x-text="intent.worker || '未领取'"></span><span x-text="intent.todo_id ? `Todo：${intent.todo_id}` : '未关联 Todo'"></span><span x-show="intent.targets?.length" x-text="intent.targets.join(', ')"></span><span x-show="intent.retry_count || intent.infrastructure_retry_count" class="text-rose-500" x-text="`执行重试 ${intent.retry_count || 0} · 基础设施重试 ${intent.infrastructure_retry_count || 0}`"></span></div>
                     </div>
                   </div>
                 </div>
