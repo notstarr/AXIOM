@@ -1,4 +1,4 @@
-function cairnApp() {
+function axiomApp() {
   const M = window.AxiomModules;
   return Object.assign(
     {},
