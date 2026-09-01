@@ -5,7 +5,6 @@ description = "Modular penetration-testing orchestration platform"
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.14,<2",
-    "apsw>=3.51.3,<3.52",
     "click>=8.1,<9",
     "dingtalk-stream>=0.24,<1",
     "fastapi>=0.115,<1",
