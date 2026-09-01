@@ -289,7 +289,6 @@
               <p class="sto-muted sto-num" style="margin-top:3px; font-size:11px;" x-text="axiomWorkerEditor?.pi_model || '未配置模型'"></p>
             </div>
             <div class="flex items-center" style="gap:8px;">
-              <button @click="testAxiomWorkerEditor()" :disabled="axiomWorkerEditorTesting || !axiomWorkerEditor?.pi_base_url || !axiomWorkerEditor?.pi_model" class="sto-ghost" style="padding:8px 13px;" x-text="axiomWorkerEditorTesting ? '测试中…' : '测试连接'"></button>
               <button x-show="axiomWorkerEditor?.persisted_name" @click="deleteAxiomWorkerEditor()" class="sto-minibtn danger" style="padding:8px 13px;">删除</button>
               <button @click="saveAxiomWorkerEditor()" :disabled="axiomWorkerEditorSaving" class="sto-btn" x-text="axiomWorkerEditorSaving ? '保存中…' : '保存配置'"></button>
             </div>
