@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="./README/banner.png" alt="AXIOM Banner"/>
-
 # AXIOM
 ### AI 驱动的渗透测试与通用问题求解引擎
 
