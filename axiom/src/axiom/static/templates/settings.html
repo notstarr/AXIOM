@@ -57,6 +57,27 @@
 
       <div class="sto-panel" style="padding:16px 18px;">
         <div class="sto-cardhead">
+          <h3>LLM 代理</h3>
+          <p>只影响 LLM API 请求（Worker 模型调用、模型发现、监管模型），经 serve 网关转发；渗透目标流量与 Worker 其他通信不受影响。</p>
+        </div>
+        <div class="sto-grid2">
+          <div class="sto-field">
+            <label>代理模式</label>
+            <select x-model="dispatchSettings.network_proxy_mode" class="sto-input">
+              <option value="off">关闭（直连）</option>
+              <option value="http">HTTP 代理</option>
+            </select>
+          </div>
+          <div class="sto-field">
+            <label>代理地址</label>
+            <input x-model="dispatchSettings.network_proxy_url" placeholder="http://127.0.0.1:7890" class="sto-input" :disabled="dispatchSettings.network_proxy_mode !== 'http'">
+          </div>
+        </div>
+        <p class="sto-muted" style="font-size:11px; margin-top:10px;">启用后 Worker 的真实模型 Key 不再下发到 Worker 进程，统一由 serve 持有并注入。保存后下一轮 Lease 生效。</p>
+      </div>
+
+      <div class="sto-panel" style="padding:16px 18px;">
+        <div class="sto-cardhead">
           <h3>阶段预算</h3>
           <p>Bootstrap、Reason、Plan 在领取时分别快照各自预算；Explore 由 Reason 逐 Intent 分配，必须落在下限与上限之间。</p>
         </div>
@@ -71,8 +92,11 @@
           <div class="sto-field"><label>Reviewer 收口（秒）</label><input type="number" min="30" x-model.number="dispatchSettings.review_conclude_seconds" class="sto-input sto-num"></div>
           <div class="sto-field"><label>Explore 执行下限（秒）</label><input type="number" min="10" x-model.number="dispatchSettings.explore_execute_min_seconds" class="sto-input sto-num"></div>
           <div class="sto-field"><label>Explore 执行上限（秒）</label><input type="number" min="10" x-model.number="dispatchSettings.explore_execute_max_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Explore 执行默认（秒）</label><input type="number" min="10" x-model.number="dispatchSettings.explore_execute_default_seconds" class="sto-input sto-num"><p class="sto-desc">Intent 未指定时间时由后端使用。</p></div>
           <div class="sto-field"><label>Explore 收口下限（秒）</label><input type="number" min="180" x-model.number="dispatchSettings.explore_conclude_min_seconds" class="sto-input sto-num"></div>
           <div class="sto-field"><label>Explore 收口上限（秒）</label><input type="number" min="10" x-model.number="dispatchSettings.explore_conclude_max_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Explore 收口默认（秒）</label><input type="number" min="10" x-model.number="dispatchSettings.explore_conclude_default_seconds" class="sto-input sto-num"><p class="sto-desc">Intent 未指定时间时由后端使用。</p></div>
+          <div class="sto-field"><label>Explore 无进展收口（秒）</label><input type="number" min="30" x-model.number="dispatchSettings.explore_no_progress_seconds" class="sto-input sto-num"><p class="sto-desc">持续无新产物时由代码触发 bounded conclude。</p></div>
         </div>
       </div>
 

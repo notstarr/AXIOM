@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import httpx
+
+from axiom.modules.settings.service import load_runtime_config
 from collections import defaultdict
 from sqlalchemy import Engine, func, select
 
@@ -268,6 +270,17 @@ class WorkerService:
                 raise ConflictError("Worker with active Vulnerability ReviewRuns cannot be deleted")
             self.repository.delete(conn, name)
 
+    def _llm_proxy(self) -> str | None:
+        """LLM key 流量的代理开关（network_proxy_mode == "http" 时生效）。"""
+        try:
+            with self.engine.connect() as conn:
+                config = load_runtime_config(conn)
+        except Exception:
+            return None
+        if config.network_proxy_mode == "http" and config.network_proxy_url.strip():
+            return config.network_proxy_url.strip()
+        return None
+
     def list_models(
         self,
         name: str,
@@ -286,6 +299,7 @@ class WorkerService:
                 connection.base_url.rstrip("/") + "/models",
                 headers=self._authorization(connection.api_key),
                 timeout=10,
+                proxy=self._llm_proxy(),
             )
         except httpx.HTTPError as exc:
             return WorkerModelsResult(error=f"请求失败：{exc}")

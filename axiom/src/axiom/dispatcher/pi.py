@@ -114,6 +114,7 @@ class PiBootstrapExecutor:
         intervention_poller: Callable[[], list[tuple[str, str]]] | None = None,
         intervention_result_reporter: Callable[[str, bool, str], None] | None = None,
         browser_broker: BrowserBrokerManager | None = None,
+        llm_gateway_enabled: bool = False,
     ):
         self.worker = worker
         self.settings = PiSettings.model_validate(worker.config)
@@ -128,6 +129,7 @@ class PiBootstrapExecutor:
         self.intervention_poller = intervention_poller
         self.intervention_result_reporter = intervention_result_reporter
         self.browser_broker = browser_broker
+        self.llm_gateway_enabled = llm_gateway_enabled
         self._session_id: str | None = None
         self._browser_lease: BrowserLeaseHandle | None = None
 
@@ -274,6 +276,14 @@ class PiBootstrapExecutor:
             environment["PI_PROVIDER_API"] = self.settings.provider_api
         if self.settings.api_key:
             environment["PI_API_KEY"] = self.settings.api_key
+        if self.llm_gateway_enabled and self.service_token:
+            # 网关模式下同步改写 env，任何读取 PI_BASE_URL 的路径都走网关。
+            from urllib.parse import quote
+
+            environment["PI_BASE_URL"] = (
+                f"{self.api_url}/api/v1/llm-gateway/{quote(str(self.worker.name), safe='')}"
+            )
+            environment["PI_API_KEY"] = self.service_token
         environment["PI_MODEL_CONTEXT_WINDOW"] = str(self.settings.context_window)
         venv_bin = Path(sys.executable).parent
         runtime_bin = prepare_runtime_bin(
@@ -545,6 +555,15 @@ class PiBootstrapExecutor:
             "apiKey": self.settings.api_key or "none",
             "models": [model],
         }
+        if self.llm_gateway_enabled and self.service_token:
+            # LLM 代理模式：LLM 请求改走 serve 网关（代理只作用于 serve 这一跳），
+            # 真实 base_url / api_key 不再下发到 Worker 进程。
+            from urllib.parse import quote
+
+            provider["baseUrl"] = (
+                f"{self.api_url}/api/v1/llm-gateway/{quote(str(self.worker.name), safe='')}"
+            )
+            provider["apiKey"] = self.service_token
         payload = {"providers": {self.settings.provider: provider}}
         agent_dir.mkdir(parents=True, exist_ok=True)
         path = agent_dir / "models.json"

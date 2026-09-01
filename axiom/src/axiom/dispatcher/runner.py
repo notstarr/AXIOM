@@ -253,6 +253,7 @@ class AxiomRunner:
             "api_url": getattr(self.control_plane, "api_url", "http://127.0.0.1:8899"),
             "service_token": getattr(self.control_plane, "service_token", ""),
             "browser_broker": self.browser_broker,
+            "llm_gateway_enabled": bool(getattr(self, "llm_gateway_enabled", False)),
         }
         if work.kind == "bootstrap":
             return PiBootstrapExecutor(worker, **common)
@@ -320,6 +321,7 @@ class AxiomRunner:
         self.heartbeat_interval_seconds = heartbeat
         self.lease_timeout_seconds = max(lease_timeout, minimum)
         self.runner_interval_seconds = float(config.runner_interval_seconds)
+        self.llm_gateway_enabled = config.network_proxy_mode == "http"
         return int(settings.version)
 
     @staticmethod

@@ -99,7 +99,12 @@ def _model_decision(request: GuardRequest, normalized: dict[str, str], config) -
         )
     started = time.perf_counter()
     try:
-        with httpx.Client(timeout=config.guard_timeout_seconds) as client:
+        proxy = (
+            config.network_proxy_url.strip()
+            if config.network_proxy_mode == "http" and config.network_proxy_url.strip()
+            else None
+        )
+        with httpx.Client(timeout=config.guard_timeout_seconds, proxy=proxy) as client:
             response = client.post(
                 f"{base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {key}"},

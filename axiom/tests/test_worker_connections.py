@@ -77,8 +77,8 @@ def test_worker_models_uses_saved_connection_and_normalizes_response(client, mon
     )
     captured = {}
 
-    def fake_get(url, *, headers, timeout):
-        captured.update(url=url, headers=headers, timeout=timeout)
+    def fake_get(url, *, headers, timeout, proxy=None):
+        captured.update(url=url, headers=headers, timeout=timeout, proxy=proxy)
         return httpx.Response(
             200,
             json={
@@ -101,7 +101,7 @@ def test_worker_models_uses_saved_connection_and_normalizes_response(client, mon
         ],
         "error": "",
     }
-    assert captured == {
+    assert {k: captured[k] for k in ('url', 'headers', 'timeout')} == {
         "url": "https://models.example/v1/models",
         "headers": {"Authorization": "Bearer secret"},
         "timeout": 10,
