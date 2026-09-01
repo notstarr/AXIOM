@@ -219,15 +219,23 @@
           <button type="button" :data-task-management-id="p.id" @click="selectTaskManagement(p.id)" class="sto-navitem"
             :class="selectedTaskManagementId === p.id ? 'active' : ''">
             <div class="flex items-center justify-between gap-2">
-              <span class="font-mono text-[11px] text-slate-400" x-text="p.id"></span>
-              <div class="flex items-center gap-1.5">
-                <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="p.guard_enabled ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-500'" x-text="p.guard_enabled ? '监管开' : '监管关'"></span>
+              <div class="flex items-center gap-1.5 min-w-0">
+                <span class="sto-livedot" :class="p.status === 'active' ? (p.working_intent_count > 0 ? 'run' : 'idle') : (p.status === 'completed' ? 'done' : '')"
+                  :title="p.status === 'active' ? (p.working_intent_count > 0 ? `运行中 · ${p.working_intent_count} 个意图执行中` : '运行中 · 空闲') : projectStatusLabel(p.status)"></span>
+                <span class="font-mono text-[11px] text-slate-400" x-text="p.id"></span>
+              </div>
+              <div class="flex items-center gap-1.5 flex-shrink-0">
+                <span x-show="p.guard_enabled" class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-rose-50 text-rose-700">监管开</span>
                 <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="projectStatusBadgeClass(p.status)" x-text="projectStatusLabel(p.status)"></span>
                 <span x-show="p.archived" class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-slate-200 text-slate-600">已归档</span>
               </div>
             </div>
             <p class="mt-2 text-sm font-semibold text-slate-700 break-words" x-text="p.title"></p>
             <p class="mt-1 text-xs text-slate-400 truncate" x-text="projectGroupTitle(p.parent_project_id)"></p>
+            <div class="mt-2 flex items-center gap-2 text-[10px] tabular-nums">
+              <span class="text-slate-400"><span x-text="p.fact_count"></span> 事实 · <span x-text="p.intent_count"></span> 意图</span>
+              <span x-show="p.working_intent_count > 0" class="font-semibold" style="color: var(--sto-warn);" x-text="`${p.working_intent_count} 执行中`"></span>
+            </div>
             <div x-show="taskRunWindowLabel(p)" class="mt-2 flex items-center justify-between gap-2 rounded-lg border px-2 py-1.5"
               :class="taskRunWindowClass(p)">
               <span class="text-[10px] font-semibold tabular-nums" x-text="taskRunWindowLabel(p)"></span>
@@ -271,7 +279,10 @@
               <div class="sto-statcell"><p class="sto-label" style="color:var(--sto-warn);">执行中</p><p class="mt-1 text-xl font-semibold text-amber-700 tabular-nums" x-text="selectedTaskSummary().working_intent_count"></p></div>
               <div class="sto-statcell"><p class="sto-label" style="color:var(--sto-ok);">Hints</p><p class="mt-1 text-xl font-semibold text-sky-700 tabular-nums" x-text="selectedTaskSummary().hint_count"></p></div>
             </div>
-            <div class="sto-panel" style="padding:14px 16px;" x-data="{ activeDiagnosticPhase: 'bootstrap' }" x-init="
+            <details class="sto-collapse" style="margin-top:14px;">
+              <summary>任务诊断</summary>
+              <div class="sto-collapse-body">
+            <div style="padding:0;" x-data="{ activeDiagnosticPhase: 'bootstrap' }" x-init="
               const diagPick = () => {
                 const val = selectedTaskDiagnostics();
                 if (!val) return;
@@ -289,7 +300,6 @@
             ">
               <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
                 <div>
-                  <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">任务诊断</p>
                   <h4 class="mt-1 text-sm font-semibold text-slate-800">Worker 完成率 / 失败超时排行榜</h4>
                   <p class="mt-0.5 text-[11px] text-slate-400">只读检查，不会改变任务派发；按 Bootstrap、Explore、Reason、Plan、Reviewer 分阶段统计表现。</p>
                 </div>
@@ -452,6 +462,12 @@
                 </div>
               </template>
             </div>
+              </div>
+            </details>
+
+            <details class="sto-collapse">
+              <summary>执行配置</summary>
+              <div class="sto-collapse-body" style="display: grid; gap: 12px;">
             <div class="sto-tiercard" style="--pc: var(--sto-accent);">
               <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
                 <div>
@@ -538,7 +554,9 @@
                 <button type="button" @click="saveTaskScope()" :disabled="selectedTaskSummary().legacy_readonly || selectedTaskSummary().archived || selectedTaskSummary().status === 'completed' || !taskScopeChanged(selectedTaskSummary()) || taskScopeEditor.saving" class="px-3 py-1.5 text-xs rounded-lg bg-brand-500 text-white disabled:opacity-40" x-text="taskScopeEditor.saving ? '保存中...' : '保存 Scope'"></button>
               </div>
             </div>
-            <div class="rounded-xl border border-slate-200 p-4">
+              </div>
+            </details>
+            <div class="rounded-xl border border-slate-200 p-4" style="margin-top:14px;">
               <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">操作</p>
               <div class="flex flex-wrap gap-2">
                 <template x-if="!selectedTaskSummary().legacy_readonly && !selectedTaskSummary().archived && ['active', 'stopped'].includes(selectedTaskSummary().status)">
