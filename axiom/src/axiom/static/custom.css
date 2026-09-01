@@ -1160,3 +1160,55 @@
     font-size: 11px; font-weight: 800; letter-spacing: 0.02em;
     box-shadow: 0 4px 14px color-mix(in srgb, var(--sev) 35%, transparent);
   }
+
+  /* ═══════════ 产物中心预览 · Markdown/代码渲染修复 ═══════════ */
+  /* 白线根因：Tailwind preflight 的 border-width:0 + border-style:solid 组合
+     在某些元素上产生可见的 1px 描边；加上 .md-preview 内 code 的浅色底
+     在暗色 pre 里形成亮线。全面覆盖修复。 */
+  .sto-preview .md-preview {
+    color: var(--sto-fg); font-size: 13px; line-height: 1.7;
+  }
+  .sto-preview .md-preview * {
+    text-decoration: none !important;
+  }
+  .sto-preview .md-preview pre {
+    background: #0d1420 !important; color: #c9d1d9 !important;
+    border: 1px solid #1e2a3d !important; border-radius: 10px !important;
+    padding: 14px 16px !important; margin: 10px 0 !important;
+    overflow-x: auto; line-height: 1.65;
+  }
+  .sto-preview .md-preview pre code {
+    background: transparent !important; padding: 0 !important;
+    color: #c9d1d9 !important; border: none !important;
+    text-decoration: none !important;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px; line-height: 1.65;
+  }
+  .sto-preview .md-preview code {
+    background: var(--sto-inset) !important; padding: 1px 5px !important;
+    border-radius: 4px; font-size: 0.9em; color: var(--sto-accent) !important;
+    border: 1px solid var(--sto-line) !important;
+  }
+  .sto-preview .md-preview h1, .sto-preview .md-preview h2,
+  .sto-preview .md-preview h3, .sto-preview .md-preview h4 {
+    color: var(--sto-fg) !important; border-bottom: 1px solid var(--sto-line);
+    padding-bottom: 5px; margin-top: 1.2em; margin-bottom: 0.5em;
+  }
+  .sto-preview .md-preview p { color: var(--sto-fg-2); line-height: 1.7; }
+  .sto-preview .md-preview strong { color: var(--sto-fg); font-weight: 650; }
+  .sto-preview .md-preview table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 12px; }
+  .sto-preview .md-preview th { background: var(--sto-inset); color: var(--sto-fg-2); font-weight: 600; }
+  .sto-preview .md-preview th, .sto-preview .md-preview td {
+    border: 1px solid var(--sto-line) !important; padding: 6px 10px; text-align: left;
+    color: var(--sto-fg-2);
+  }
+  .sto-preview .md-preview hr {
+    border: none; border-top: 1px solid var(--sto-line); margin: 14px 0;
+  }
+  .sto-preview .md-preview ul, .sto-preview .md-preview ol { color: var(--sto-fg-2); }
+  .sto-preview .md-preview li { color: var(--sto-fg-2); line-height: 1.6; }
+  .sto-preview .md-preview blockquote {
+    border-left: 3px solid var(--sto-accent); padding: 6px 14px;
+    background: var(--sto-accent-soft); border-radius: 0 8px 8px 0;
+    color: var(--sto-fg-2); margin: 10px 0;
+  }

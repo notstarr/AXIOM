@@ -1,4 +1,4 @@
-<div x-show="activePage === 'tasks'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
+<div x-show="activePage === 'tasks'" x-cloak class="sto flex-1 flex flex-col overflow-hidden min-w-0">
   <header class="app-page-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
     <div class="flex items-center gap-2.5 min-w-0">
       <span class="text-base font-semibold text-slate-800 tracking-tight">任务管理</span>
@@ -23,11 +23,11 @@
       </span>
     </div>
     <div class="flex items-center gap-1.5">
-      <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="h-7 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center gap-1.5 disabled:opacity-40">
+      <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="sto-ghost" style="padding:6px 11px; font-size:12px;">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
         刷新
       </button>
-      <button @click="showTaskComposer ? (showTaskComposer = false) : openTaskComposer()" class="h-7 px-2.5 rounded-lg border border-brand-200 text-xs text-brand-600 hover:bg-brand-50 transition inline-flex items-center gap-1.5">
+      <button @click="showTaskComposer ? (showTaskComposer = false) : openTaskComposer()" class="sto-btn" style="padding:6px 11px; font-size:12px;">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
         新建任务
       </button>
@@ -35,10 +35,10 @@
   </header>
 
   <div x-ref="projectListScroll" class="flex-1 min-h-0 p-4 flex flex-col gap-3">
-    <div class="rounded-2xl border border-slate-200 bg-white shadow-sm px-3 py-2 flex items-center gap-2 shrink-0">
+    <div class="sto-panel" style="padding:9px 14px; display:flex; align-items:center; gap:8px; flex-shrink:0; border-radius:12px;">
       <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-      <input x-model="taskSearch" placeholder="搜索任务名称、ID、Origin、Goal 或所属项目" class="flex-1 h-8 text-sm text-slate-700 placeholder:text-slate-300 focus:outline-none">
-      <select x-model="taskStatusFilter" class="h-8 px-2.5 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-100">
+      <input x-model="taskSearch" placeholder="搜索任务名称、ID、Origin、Goal 或所属项目" class="sto-input" style="flex:1; padding:7px 12px; font-size:12.5px; border:none; background:transparent;">
+      <select x-model="taskStatusFilter" class="sto-input" style="width:auto; padding:7px 10px; font-size:12px;">
         <option value="all">全部状态</option><option value="active">运行中</option><option value="stopped">已暂停</option><option value="completed">已完成</option><option value="failed">失败</option><option value="archived">已归档</option>
       </select>
       <span class="text-[11px] text-slate-400 tabular-nums" x-text="`${filteredTasks().length} / ${taskStatusFilter === 'archived' ? archivedProjectsCount() : activeProjectsCount()}`"></span>
@@ -211,13 +211,13 @@
     </template>
 
     <div class="grid grid-cols-[320px_minmax(0,1fr)] gap-4 flex-1 min-h-0">
-      <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3 overflow-y-auto overflow-x-hidden space-y-2">
+      <aside class="sto-panel sto-vlist" style="padding:10px; overflow-y:auto; overflow-x:hidden;">
         <template x-if="filteredTasks().length === 0">
           <p class="text-sm text-slate-400 text-center py-10">没有匹配的任务</p>
         </template>
         <template x-for="p in filteredTasks()" :key="p.id">
-          <button type="button" :data-task-management-id="p.id" @click="selectTaskManagement(p.id)" class="w-full text-left rounded-xl border p-3 transition"
-            :class="selectedTaskManagementId === p.id ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 hover:bg-slate-50'">
+          <button type="button" :data-task-management-id="p.id" @click="selectTaskManagement(p.id)" class="sto-navitem"
+            :class="selectedTaskManagementId === p.id ? 'active' : ''">
             <div class="flex items-center justify-between gap-2">
               <span class="font-mono text-[11px] text-slate-400" x-text="p.id"></span>
               <div class="flex items-center gap-1.5">
@@ -236,7 +236,7 @@
           </button>
         </template>
       </aside>
-      <section class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 overflow-y-auto">
+      <section class="sto-panel" style="padding:18px 20px; overflow-y:auto;">
         <template x-if="!selectedTaskSummary()">
           <div class="h-full min-h-[420px] flex items-center justify-center text-sm text-slate-400">请选择左侧任务查看详情</div>
         </template>
@@ -266,10 +266,10 @@
               </div>
             </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div class="rounded-xl bg-slate-50 p-3"><p class="text-xs text-slate-400">事实</p><p class="mt-1 text-xl font-semibold tabular-nums" x-text="selectedTaskSummary().fact_count"></p></div>
-              <div class="rounded-xl bg-violet-50 p-3"><p class="text-xs text-violet-600">意图</p><p class="mt-1 text-xl font-semibold text-violet-700 tabular-nums" x-text="selectedTaskSummary().intent_count"></p></div>
-              <div class="rounded-xl bg-amber-50 p-3"><p class="text-xs text-amber-600">执行中</p><p class="mt-1 text-xl font-semibold text-amber-700 tabular-nums" x-text="selectedTaskSummary().working_intent_count"></p></div>
-              <div class="rounded-xl bg-sky-50 p-3"><p class="text-xs text-sky-600">Hints</p><p class="mt-1 text-xl font-semibold text-sky-700 tabular-nums" x-text="selectedTaskSummary().hint_count"></p></div>
+              <div class="sto-statcell"><p class="sto-label">事实</p><p class="mt-1 text-xl font-semibold tabular-nums" x-text="selectedTaskSummary().fact_count"></p></div>
+              <div class="sto-statcell"><p class="sto-label" style="color:var(--sto-accent);">意图</p><p class="mt-1 text-xl font-semibold text-violet-700 tabular-nums" x-text="selectedTaskSummary().intent_count"></p></div>
+              <div class="sto-statcell"><p class="sto-label" style="color:var(--sto-warn);">执行中</p><p class="mt-1 text-xl font-semibold text-amber-700 tabular-nums" x-text="selectedTaskSummary().working_intent_count"></p></div>
+              <div class="sto-statcell"><p class="sto-label" style="color:var(--sto-ok);">Hints</p><p class="mt-1 text-xl font-semibold text-sky-700 tabular-nums" x-text="selectedTaskSummary().hint_count"></p></div>
             </div>
             <div class="rounded-xl border border-slate-200 p-4 bg-white" x-data="{ activeDiagnosticPhase: 'bootstrap' }" x-init="
               const diagPick = () => {
