@@ -1887,7 +1887,7 @@ def test_frontend_and_static_assets_are_served(client):
     assert "关闭守卫" in graph.text
     assert "漏洞报告" not in graph.text
     assert "showLocalPrefs" not in graph.text
-    assert "task-view-switcher" in graph.text
+    assert "sto-seg" in graph.text
     assert 'class="app-page-header shrink-0 bg-white/90 backdrop-blur border-b border-slate-200/70 z-[60]"' in graph.text
     assert "openTaskContinuation(project.project)" in graph.text
     assert "showGoalHistory" in graph.text
@@ -1913,7 +1913,7 @@ def test_frontend_and_static_assets_are_served(client):
     assert "humanArtifactPageCount" in human.text
     assert "triggerManualReason()" not in human.text
     assert "manual-reason-trigger" not in human.text
-    assert "task-view-switcher" in human.text
+    assert "sto-seg" in human.text
     assert "Goal 历史" in human.text
     assert "openTaskContinuation(project.project)" in human.text
     assert "toggleProjectGuardById" in human.text
@@ -1927,7 +1927,7 @@ def test_frontend_and_static_assets_are_served(client):
     assert archive.status_code == 200
     assert "triggerManualReason()" not in archive.text
     assert "manual-reason-trigger" not in archive.text
-    assert "task-view-switcher" in archive.text
+    assert "sto-seg" in archive.text
     assert "openTaskContinuation(project.project)" in archive.text
 
     core = client.get("/static/js/core.js").text
@@ -2004,10 +2004,10 @@ def test_frontend_and_static_assets_are_served(client):
     assert "@media (prefers-color-scheme: dark)" not in css
     assert "#cy {\n  background: #f8fafc" not in css
     assert "background-color: var(--surface-graph)" in css
-    assert ".task-view-switcher button.is-active" in css
     assert ".phase-plan" in css
     assert "@media (max-width: 640px)" in css
     custom_css = client.get("/static/custom.css").text
+    assert ".sto-seg > button.on" in custom_css
     assert ".worker-capability-drawer" in custom_css
     assert ".worker-capability-scope-button.is-selected" in custom_css
     assert "applyGraphTheme()" in graph_js

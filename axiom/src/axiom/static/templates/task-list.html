@@ -268,9 +268,9 @@
                 </div>
               </div>
               <div class="flex flex-wrap gap-2">
-                <button x-show="!selectedTaskSummary().archived" @click="openTaskOverview(selectedTaskSummary().id)" class="px-4 py-2 text-sm rounded-xl border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 transition">打开概览</button>
-                <button x-show="!selectedTaskSummary().archived" @click="openTaskGraph(selectedTaskSummary().id)" class="px-4 py-2 text-sm rounded-xl bg-brand-500 text-white hover:bg-brand-600 transition">打开图谱</button>
-                <button x-show="!selectedTaskSummary().legacy_readonly && !selectedTaskSummary().archived" @click="openRenameProject(selectedTaskSummary().id, selectedTaskSummary().title)" class="px-3 py-2 text-sm rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition">重命名</button>
+                <button x-show="!selectedTaskSummary().archived" @click="openTaskOverview(selectedTaskSummary().id)" class="sto-btn">打开概览</button>
+                <button x-show="!selectedTaskSummary().archived" @click="openTaskGraph(selectedTaskSummary().id)" class="sto-ghost is-brand">打开图谱</button>
+                <button x-show="!selectedTaskSummary().legacy_readonly && !selectedTaskSummary().archived" @click="openRenameProject(selectedTaskSummary().id, selectedTaskSummary().title)" class="sto-ghost">重命名</button>
               </div>
             </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">

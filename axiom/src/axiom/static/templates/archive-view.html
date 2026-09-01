@@ -14,10 +14,10 @@
         </div>
         <p class="text-xs text-slate-400 mt-0.5 truncate" x-text="project?.project?.origin"></p>
       </div>
-      <div class="task-view-switcher" role="group" aria-label="任务视图">
-        <button type="button" @click="switchTaskView('human')" :class="view === 'human' ? 'is-active' : ''" :aria-pressed="view === 'human'">概览</button>
-        <button type="button" @click="switchTaskView('graph')" :class="view === 'graph' ? 'is-active' : ''" :aria-pressed="view === 'graph'">图谱</button>
-        <button type="button" @click="switchTaskView('archive')" :class="view === 'archive' ? 'is-active' : ''" :aria-pressed="view === 'archive'">归档</button>
+      <div class="sto-seg" role="group" aria-label="任务视图">
+        <button type="button" @click="switchTaskView('human')" :class="view === 'human' ? 'on' : ''" :aria-pressed="view === 'human'">概览</button>
+        <button type="button" @click="switchTaskView('graph')" :class="view === 'graph' ? 'on' : ''" :aria-pressed="view === 'graph'">图谱</button>
+        <button type="button" @click="switchTaskView('archive')" :class="view === 'archive' ? 'on' : ''" :aria-pressed="view === 'archive'">归档</button>
       </div>
       <div class="task-detail-spacer flex-1"></div>
       <div class="task-detail-actions flex items-center gap-2">

@@ -28,10 +28,10 @@
         </div>
         <p class="text-xs text-slate-400 mt-0.5 truncate" x-text="project?.project?.origin"></p>
       </div>
-      <div class="task-view-switcher" role="group" aria-label="任务视图">
-        <button type="button" @click="switchTaskView('human')" :class="view === 'human' ? 'is-active' : ''" :aria-pressed="view === 'human'">概览</button>
-        <button type="button" @click="switchTaskView('graph')" :class="view === 'graph' ? 'is-active' : ''" :aria-pressed="view === 'graph'">图谱</button>
-        <button type="button" @click="switchTaskView('archive')" :class="view === 'archive' ? 'is-active' : ''" :aria-pressed="view === 'archive'">归档</button>
+      <div class="sto-seg" role="group" aria-label="任务视图">
+        <button type="button" @click="switchTaskView('human')" :class="view === 'human' ? 'on' : ''" :aria-pressed="view === 'human'">概览</button>
+        <button type="button" @click="switchTaskView('graph')" :class="view === 'graph' ? 'on' : ''" :aria-pressed="view === 'graph'">图谱</button>
+        <button type="button" @click="switchTaskView('archive')" :class="view === 'archive' ? 'on' : ''" :aria-pressed="view === 'archive'">归档</button>
       </div>
       <div class="task-detail-spacer flex-1"></div>
       <div class="task-detail-actions flex items-center gap-2">
@@ -46,18 +46,18 @@
         </span>
         <button x-show="!project?.project?.archived && !project?.project?.legacy_readonly && ['active', 'stopped'].includes(project?.project?.status)"
           @click="toggleProjectStopById(project.project.id, project.project.status)"
-          class="px-2.5 py-1 rounded-lg border text-xs transition"
-          :class="project.project.status === 'active' ? 'border-amber-200 text-amber-600 hover:bg-amber-50' : 'border-teal-200 text-teal-600 hover:bg-teal-50'"
+          class="sto-ghost"
+          :class="project.project.status === 'active' ? 'is-warn' : 'is-ok'"
           x-text="project.project.status === 'active' ? '暂停' : '继续'"></button>
         <button x-show="!project?.project?.archived && !project?.project?.legacy_readonly"
           @click="toggleProjectGuardById(project.project.id, project.project.guard_enabled)"
-          class="px-2.5 py-1 rounded-lg border text-xs transition"
-          :class="project.project.guard_enabled ? 'border-emerald-200 text-emerald-700 hover:bg-emerald-50' : 'border-rose-200 text-rose-600 hover:bg-rose-50'"
+          class="sto-ghost"
+          :class="project.project.guard_enabled ? 'is-ok' : 'is-danger'"
           :title="project.project.guard_enabled ? '关闭当前任务的 Guard 守卫' : '开启当前任务的 Guard 守卫'"
           x-text="project.project.guard_enabled ? '关闭守卫' : '开启守卫'"></button>
-        <button x-show="project?.project?.status === 'completed' && !project?.project?.archived && !project?.project?.legacy_readonly" @click="openTaskContinuation(project.project)" class="px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-xs font-medium text-amber-800 hover:bg-amber-100 transition">继续任务</button>
-        <button x-show="!project?.project?.archived && !project?.project?.legacy_readonly" @click="archiveProjectById(project.project.id, project.project.title)" :disabled="project.project.status === 'active'" :title="project.project.status === 'active' ? '请先暂停任务' : '保留历史并停止后续 Worker 调度'" class="px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600 hover:bg-slate-50 transition disabled:cursor-not-allowed disabled:opacity-40">归档任务</button>
-        <button x-show="project?.project?.archived && !project?.project?.legacy_readonly" @click="unarchiveProjectById(project.project.id, project.project.title)" class="px-2.5 py-1 rounded-lg border border-emerald-200 text-xs text-emerald-700 hover:bg-emerald-50 transition">恢复任务</button>
+        <button x-show="project?.project?.status === 'completed' && !project?.project?.archived && !project?.project?.legacy_readonly" @click="openTaskContinuation(project.project)" class="sto-ghost is-warn">继续任务</button>
+        <button x-show="!project?.project?.archived && !project?.project?.legacy_readonly" @click="archiveProjectById(project.project.id, project.project.title)" :disabled="project.project.status === 'active'" :title="project.project.status === 'active' ? '请先暂停任务' : '保留历史并停止后续 Worker 调度'" class="sto-ghost" style="font-size: 12px;" disabled:cursor-not-allowed disabled:opacity-40>归档任务</button>
+        <button x-show="project?.project?.archived && !project?.project?.legacy_readonly" @click="unarchiveProjectById(project.project.id, project.project.title)" class="sto-ghost is-ok">恢复任务</button>
         <button x-show="project?.project?.archived && !project?.project?.legacy_readonly" @click="deleteProjectById(project.project.id, project.project.title)" class="px-2.5 py-1 rounded-lg border border-rose-200 text-xs text-rose-600 hover:bg-rose-50 transition">永久删除</button>
         <button @click="refreshCurrentPage()" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition">刷新</button>
       </div>

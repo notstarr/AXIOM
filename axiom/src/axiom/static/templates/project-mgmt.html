@@ -47,15 +47,15 @@
                 <p class="mt-1 text-xs text-slate-400" x-text="selectedProjectGroup().description || '暂无项目说明'"></p>
               </div>
               <div class="flex gap-2">
-                <button @click="toggleSelectedProjectArchive()" class="px-3 py-2 text-sm rounded-xl border border-amber-200 text-amber-700 hover:bg-amber-50 transition" x-text="selectedProjectGroup().status === 'active' ? '归档项目' : '恢复项目'"></button>
-                <button @click="openTaskComposer(selectedProjectGroup().id); navigateTo('tasks')" class="px-3 py-2 text-sm rounded-xl border border-brand-200 text-brand-600 hover:bg-brand-50 transition">新建关联任务</button>
-                <button @click="deleteProjectGroup(selectedProjectGroup().id, selectedProjectGroup().title)" class="px-3 py-2 text-sm rounded-xl border border-rose-200 text-rose-500 hover:bg-rose-50 transition">删除项目</button>
+                <button @click="toggleSelectedProjectArchive()" class="sto-ghost is-warn" x-text="selectedProjectGroup().status === 'active' ? '归档项目' : '恢复项目'"></button>
+                <button @click="openTaskComposer(selectedProjectGroup().id); navigateTo('tasks')" class="sto-ghost is-brand">新建关联任务</button>
+                <button @click="deleteProjectGroup(selectedProjectGroup().id, selectedProjectGroup().title)" class="sto-ghost is-danger">删除项目</button>
               </div>
             </div>
             <div class="mt-4 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto] gap-2 border-t border-slate-100 pt-4">
               <input x-model="projectGroupSettingsForm.title" placeholder="项目名称" class="px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100">
               <input x-model="projectGroupSettingsForm.description" placeholder="项目说明" class="px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100">
-              <button @click="saveSelectedProjectGroup()" class="px-4 py-2 text-sm rounded-xl bg-slate-800 text-white hover:bg-slate-900 transition">保存资料</button>
+              <button @click="saveSelectedProjectGroup()" class="sto-btn">保存资料</button>
             </div>
             <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
               <div class="rounded-xl bg-slate-50 p-3"><p class="text-xs text-slate-400">任务</p><p class="mt-1 text-xl font-semibold tabular-nums" x-text="selectedProjectGroup().task_count"></p></div>
