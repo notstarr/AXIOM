@@ -3,7 +3,7 @@
 <img src="./README/banner.png" alt="AXIOM Banner"/>
 
 # AXIOM
-### AI 驱动的渗透测试与通用问题求解引擎
+### 多智能体协同的自动化渗透测试编排平台
 
 <p>
   <a href="https://github.com/notstarr/AXIOM" target="_blank" rel="noopener noreferrer">
@@ -13,312 +13,146 @@
     <img src="https://img.shields.io/badge/License-AGPL--3.0-blue?style=flat-square" alt="License" />
   </a>
   <img src="https://img.shields.io/badge/Python-3.12+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
-  <img src="https://img.shields.io/badge/FastAPI-latest-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL" />
+  <img src="https://img.shields.io/badge/tests-734%20passed-2EA043?style=flat-square" alt="Tests" />
 </p>
 
 </div>
 
-> **基于 [oritera/Cairn](https://github.com/oritera/Cairn) 的 Fork** — 重构为纯本地部署，大幅改进前端，新增维护者阶段、资产数据库和架构清理。
-
 ---
 
-## 概述
+AXIOM 以 PostgreSQL 为唯一事实源，通过五阶段确定性状态机驱动 Worker 池执行侦察、推理、实操、规划与复核，产出经过独立复现验证的真实漏洞报告。系统采用模块化单体设计，内置 Web 运营控制台、原生浏览器沙箱、可插拔技能库、命令守门审计与钉钉双向机器人，面向**授权范围内**的安全评估场景。
 
-AXIOM 是一个通用问题求解引擎，基于**黑板架构**构建，使用显式的事实-意图图。给定一个起点和一个目标，它通过 LLM 驱动的 Agent Worker 在未知状态空间中搜索解决方案。
-
-AI 渗透测试是第一个经过验证的领域。该引擎与领域无关——任何有明确起点、明确成功条件、中间路径未知的问题都适用同一模型。
-
-### 核心概念
-
-| 概念 | 含义 |
-|---------|---------|
-| **事实（Fact）** | 写入共享黑板的已确认的客观发现 |
-| **意图（Intent）** | 已声明但尚未执行的探索方向 |
-| **提示（Hint）** | 随时注入的人工判断；Worker 下次读取时吸收 |
-
-图从 `origin` 向 `goal` 增长。Agent Worker 仅通过共享黑板协调（间接通信机制）——无直接通信，无信息孤岛。
-
----
+> 本仓库 `axiom/` 目录为当前唯一活跃的 V2 平台（PostgreSQL 原生架构）；根目录 `cairn/` 为旧版 SQLite 架构的历史代码，已停止维护，仅作存档。
 
 ## 系统架构
 
-```
-                         ┌──────────────┐
-                         │   浏览器前端   │
-                         └──────┬───────┘
-                                │
-                    ┌───────────┴───────────┐
-                    │   AXIOM 服务端         │
-                    │   (FastAPI + SQLite)   │
-                    │   项目 · 意图 · 事实    │
-                    │   提示 · 漏洞          │
-                    └───────────┬───────────┘
-                                │
-                    ┌───────────┴───────────┐
-                    │     调度器循环         │
-                    │  每3秒 tick · 认领管理 │
-                    │  Worker 选择           │
-                    │  阶段限制              │
-                    └───────────┬───────────┘
-                                │
-        ┌───────────────────────┼───────────────────────┐
-        │                       │                       │
-        ▼                       ▼                       ▼
-  ┌──────────┐          ┌──────────┐          ┌──────────────┐
-  │  推理阶段  │ ──意图→  │  探索阶段  │ ──发现报告→ │  维护者阶段   │
-  │  Reason  │          │ Explore  │          │ Maintainer   │
-  │qwen3.6+  │          │deepseek  │          │ stepfun-flash│
-  │          │          │ / qwen   │          │              │
-  └──────────┘          └──────────┘          └──────┬───────┘
-        ▲                                           │
-        │          新事实（触发下一轮推理）              │
-        └───────────────────────────────────────────┘
-                                                     │
-                                              ┌──────┴───────┐
-                                              │    资产数据库  │
-                                              │   (SQLite)   │
-                                              │ 接口 · 参数   │
-                                              │ 测试状态      │
-                                              └──────────────┘
+两个宿主机常驻进程 + 一个 PostgreSQL 实例，API 是唯一的通信总线：
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│                         PostgreSQL 18                        │
+│          127.0.0.1:55432 · DB: axiom · Schema: axiom         │
+└───────────────▲──────────────────────────────────────────────┘
+                │ (SQLAlchemy / Alembic)
+┌───────────────┴──────────────────────────────────────────────┐
+│  axiom serve  (FastAPI + Uvicorn, 默认端口 8888)              │
+│  · RESTful API / WebSocket（/api/v1，33 个领域路由）          │
+│  · Web 运营控制台与静态资源托管                               │
+│  · 登录鉴权 · 钉钉 Webhook · 模型网关代理                     │
+└───────────────▲──────────────────────────────────────────────┘
+                │ (HTTP API, API-only 无直连 DB)
+┌───────────────┴──────────────────────────────────────────────┐
+│  axiom runner  (调度器 + 心跳)                                │
+│  · Worker 领取 Lease、阶段执行与超时管控                      │
+│  · 子进程 Pi Agent 启动与会话跟踪                             │
+│  · Browser Broker 原生浏览器沙箱管理                          │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-### 三阶段流水线
+## 五阶段流水线
 
-调度器在三个阶段之间协调持续循环：
+```text
+[ 新建任务 (Task) ]
+        │
+        ▼
+ 1. Bootstrap（初始测绘）—— JS Chunk / SPA 路由 / Source Map / API 能力树 / 鉴权矩阵
+        │
+        ▼
+ 2. Reason（增量推理规划）—— 动态 Todo 树与 Intent 派发，单账号自建自测闭环
+        │
+        ▼
+ 3. Explore（动态实操与验证）—— Browser Broker 深层交互，凭据自动提取，结构化证据
+        │
+        ▼
+ 4. Plan（增量漏洞规划）—— 基于已确认事实规划下一轮攻击面
+        │
+        ▼
+ 5. Review（独立交叉复现审计）—— 端到端复现，剔除误报，给出真实裁决与理由
+```
 
-| 阶段 | Worker | 职责 | 产出 |
-|-------|--------|------|--------|
-| **Reason（推理）** | qwen3.6-plus | 读取完整事实图+资产库；判断目标是否达成或需要新意图 | 完成 / 新意图 / 无操作 |
-| **Explore（探索）** | deepseekv4-pro / qwen3.6-plus | 认领一个意图，执行探索计划，运行安全工具 | 发现报告文件 + 新事实 |
-| **Maintainer（维护者）** | stepfun-flash | 读取探索发现报告，提取 API 端点+请求体，上报漏洞 | 资产入库 · 漏洞上报 |
+**漏洞判定原则：危害驱动（Impact-Driven）。** 没有真实危害证据的空壳发现会被 Review 阶段直接剔除。
 
-循环：**推理 → 意图 → 探索 → 发现报告 → 维护者 → 新事实 → 推理**（不断循环直到目标达成）。
+## Web 运营控制台
 
-### 推理触发逻辑
+单页控制台（Alpine.js + Tailwind，统一 sto-* 设计系统，亮/暗双主题），18 个页面：仪表盘、任务管理（卡片自带生命体征点与统计）、图谱视图、漏洞管理（严重度色彩体系 + 漏洞包导出）、项目管理、守门审计、Worker 管理（分阶段能力与模型后端）、工具管理、Skill 管理、产物中心（Markdown 渲染 / 代码高亮预览）、MCP 管理、提示词、任务归档、资产测绘、爬虫、人工视图、动作回放、设置（含存储治理三档清理）。
 
-推理在以下情况触发：
+## 核心子系统
 
-- **初始触发** — 新项目首次调度
-- **事实变化** — Explore Worker 产生了新事实
-- **开放意图归零** — 所有活跃意图均已结项
-- **过期兜底** — 超过 `reason.timeout` 秒无活动且有 0 个开放意图（防止永久空闲）
+| 子系统 | 说明 |
+|---|---|
+| Worker 池与模型后端 | 按阶段（bootstrap/reason/explore/plan/review）分配能力；Pi 兼容网关模型发现、上下文窗口、思考强度；Provider 错误分类与冷却 |
+| Browser Broker | 受控 Chrome 沙箱（与日常浏览器物理隔离）、CDP、抓包、`browser_get_credentials` 凭据提取 |
+| 内置技能库（16 项） | nmap / subfinder / httpx / katana / ffuf / nuclei / sqlmap / whatisvul / vuln-report / vuln-review / xss-verify / business-logic-testing / browser-control / credential-refresh / miniapp / agent-mail |
+| 守门审计（Guard） | Worker 敏感命令策略裁决，审计全量落库，控制台按裁决着色 |
+| 漏洞管理与评审 | 上报 → 独立复现 → 定论状态机；严重度体系；Markdown 报告 + 证据导出 |
+| MCP 管理 | Server 发现与导入、工具浏览与启用控制 |
+| 存储治理 | 三档清理中心（一键 / 预览确认 / 锁定展示）、日志轮转 |
+| Token 用量 | 按 Intent / 模型 / 阶段统计与缓存命中率，烧钱热点排行 |
+| 钉钉机器人 | 两阶段精准推送（初报 → 评审定论）；群内 `/tasks` `/status` `/pause` `/resume` `/vulns` `/vuln` 双向指令 |
+| 人工干预与可观测 | Explore 实时对话与人工插话、动作回放、诊断中心、PostgreSQL 备份 / 快照 / 恢复演练 |
 
----
+## 快速部署
 
-## 与上游的区别
-
-### 维护者阶段与资产数据库
-- **新增阶段**专门处理发现报告（stepfun-flash worker）
-- SQLite 资产数据库（`/tmp/axiom-assets.db`）追踪所有已发现的 API 端点
-- 维护者自动提取端点、请求体、Content-Type 和测试状态
-- 通过唯一约束（项目、域名、路径、方法）自动去重
-- 180s 超时 + 失败自动重试
-- 支持多并发——多个维护者任务同时运行
-
-### Worker 任务分配
-- Worker 有明确的 `task_types`（bootstrap / reason / explore / plan / maintainer）
-- Reason 阶段固定使用 qwen3.6-plus（deepseek 在大量事实的推理任务上不可靠）
-- stepfun-flash 专用于维护者
-- 阶段限制防止过载
-
-### 前端重写
-- 单文件 Alpine.js SPA 取代原有前端
-- **资产管理页面** — 可筛选/搜索的 API 端点表格，鼠标悬停显示请求体详情
-- **知识图谱可视化** 基于 Cytoscape.js + ELK 布局引擎
-  - 卡片式节点，含 SVG 图标 + 类型标题 + 正文
-  - 双击聚焦子图（上游+下游谱系）
-  - 自绘 Canvas 小地图含视口指示器
-  - 底部时间线滑动条带事件标记
-- **设计系统**（`apple.css`）— Apple 风格 UI，组件一致
-- 旧版前端保留在 `/legacy` 路由
-
-### 过期推理处理
-- 当所有意图完成但推理模型返回"无操作"时，调度器之前会永久空闲
-- **已修复**：无活动且开放意图为 0 超过 `reason.timeout` 秒后，强制重新触发推理
-
-### 架构变更
-- 移除 Docker/容器层——完全通过 `start.sh` 本地运行
-- 通过 `shared/` 包解耦服务端和调度器
-- 清理死代码——Claude Code、Codex、Mock 驱动；容器管理器
-- 纯 PI Worker——简化为单一 Worker 后端
-- 深度模式——延迟推理直到本地探索完成
-- Token 追踪——从 PI 会话文件端到端统计
-- 黑板系统——结构化 Prompt 注入、懒加载、提示元数据
-
-### 项目管理
-- 项目分组，弹窗式创建和删除
-- 全局搜索（Cmd+K）
-- 深色模式切换
-- 通知系统带错误详情弹窗
-
----
-
-## 快速开始
-
-### 环境要求
-
-- macOS 或 Linux
-- Python ≥ 3.12
-- [uv](https://docs.astral.sh/uv/)（Python 包管理器）
-
-### 安装
+环境要求：macOS（Apple Silicon 推荐）或 Linux、Python 3.12+（uv）、Docker。
 
 ```bash
-# 克隆仓库
-git clone https://github.com/notstarr/AXIOM.git
-cd AXIOM
+cd axiom
 
-# 创建调度器配置
-cp dispatch.example.yaml dispatch.yaml
-# 编辑 dispatch.yaml —— 填入你的 LLM 端点、模型和 API Key
+# 1. 启动 PostgreSQL（含自动建库与最小权限角色初始化）
+docker compose -f compose.yaml -f compose.host.yaml up -d postgres
 
-# 安装依赖
-cd cairn && uv sync && cd ..
+# 2. 同步依赖
+uv sync --frozen
+
+# 3. 数据库迁移
+.venv/bin/axiom db upgrade
+
+# 4. 启动 API + Web 控制台
+.venv/bin/axiom serve --host 127.0.0.1 --port 8888 --data-dir ~/.local/share/axiom-v3 &
+
+# 5. 启动调度 Runner
+.venv/bin/axiom runner --api-url http://127.0.0.1:8888 &
 ```
 
-### 运行
+访问 `http://127.0.0.1:8888` 进入控制台。首次启动自动创建管理员（用户名取 `AXIOM_ADMIN_USER`，默认 `axiom`；密码取 `AXIOM_ADMIN_PASSWORD`，未设置则随机生成并写入数据目录）。生产环境建议以 launchd / systemd 托管进程。
+
+## 一键升级
 
 ```bash
-# 一键启动（服务端 + 调度器）
-bash start.sh start
-
-# 查看状态
-bash start.sh status
-
-# 停止
-bash start.sh stop
+cd axiom && ./scripts/upgrade.sh
 ```
 
-启动后：
-- **AXIOM Server** 监听 `8888` 端口
-- **AXIOM Dispatcher**（服务端健康检查通过后自动启动）
+安全机制：数据库连通性检查 → 拉取最新代码 → 依赖同步 → 迁移（失败自动回滚）→ 平滑重启 → 健康检查确认。
 
-访问 `http://localhost:8888` 打开 Web 界面。数据持久化到 `~/.local/share/cairn/cairn.db`。
+## 仓库结构
 
-### 手动启动
+```text
+axiom/                        # ★ 当前 V2 平台（唯一活跃开发目录）
+├── compose.yaml              # PostgreSQL 容器编排（镜像按 digest 固定）
+├── pyproject.toml / uv.lock  # 依赖（FastAPI / SQLAlchemy / Playwright / MCP 等）
+├── migrations/               # Alembic 数据库迁移
+├── scripts/upgrade.sh        # 一键升级
+├── ops/postgres/             # 备份、快照、恢复演练、观察者
+├── docs/                     # 按日期归档的设计与变更文档
+└── src/axiom/
+    ├── api/                  # 路由汇聚（33 个领域路由）
+    ├── dispatcher/           # 调度引擎：五阶段执行器、browser_broker、prompts/、skills/
+    ├── modules/              # 33 个领域模块（tasks/goals/reason/plan/graph/workers/
+    │                         #   vulnerabilities/vulnerability_reviews/guard/skills/mcp/
+    │                         #   storage_admin/token_usage/interventions/auth/...）
+    ├── shared/               # 共享底座（database、dingtalk、storage、ids）
+    └── static/               # Web 控制台（18 页 + sto-* 设计系统）
+cairn/                        # 旧版 SQLite 架构（已停维护，仅存档）
+README/                       # README 图片资源
+```
+
+## 测试
 
 ```bash
-# 启动服务端
-uv run --project cairn cairn serve
-
-# 运行调度器（另一个终端）
-uv run --project cairn cairn dispatch --config dispatch.yaml
+cd axiom && .venv/bin/python3 -m pytest -q    # 734 个用例
 ```
 
----
+## 安全与合规声明
 
-## 项目结构
-
-```
-AXIOM/
-├── cairn/                            # 主应用
-│   ├── src/axiom/
-│   │   ├── server/                   # FastAPI 服务端
-│   │   │   ├── routers/              # API 路由（项目、意图、提示、资产、事实、漏洞……）
-│   │   │   ├── static/               # 前端 SPA（index.html、apple.css、vendor/）
-│   │   │   ├── app.py                # FastAPI 应用及路由注册
-│   │   │   ├── db.py                 # SQLite 数据库层
-│   │   │   └── models.py             # Pydantic 数据模型
-│   │   ├── dispatcher/               # 任务调度引擎
-│   │   │   ├── scheduler/            # 调度循环
-│   │   │   ├── tasks/                # 任务执行器（Bootstrap、Reason、Explore、Plan、Maintainer）
-│   │   │   ├── workers/              # PI Worker 适配器
-│   │   │   ├── prompts/              # LLM Prompt 模板（default、depth）
-│   │   │   ├── skills/               # Worker 技能（browser、nuclei、katana、whatisvul……）
-│   │   │   └── tools/                # 网关、追踪器
-│   │   └── shared/                   # 共享工具（密钥环、输出解析器）
-│   └── pyproject.toml
-├── tools/                            # 外部工具
-│   ├── crawler/                      # Playwright CDP CLI 辅助工具
-│   ├── mitm/                         # mitmproxy 流量录制插件
-│   └── xss-verify/                   # 自动化 XSS 检测工具
-├── docs/                             # 文档
-├── dispatch.example.yaml             # 调度器配置模板（不含真实密钥）
-├── start.sh                          # 一键启动/停止脚本
-└── .gitignore
-```
-
----
-
-## 配置说明
-
-### `dispatch.yaml`
-
-```yaml
-server: "http://localhost:8888"
-
-runtime:
-  interval: 3                  # 调度间隔（秒）
-  max_workers: 8               # 最大并发 worker
-  max_running_projects: 3      # 最大同时运行项目数
-  max_project_workers: 4       # 每个项目最大 worker 数
-  healthcheck_timeout: 60      # 启动健康检查超时（秒）
-  worker_healthcheck: "startup_only"
-  prompt_group: "default"
-
-tasks:
-  bootstrap: { timeout: 300, conclude_timeout: 90 }
-  reason:    { timeout: 300, max_intents: 3, depth_max_intents: 5 }
-  explore:   { timeout: 600, conclude_timeout: 150 }
-
-workers:
-  - name: "deepseek-worker"
-    type: "pi"
-    task_types: [bootstrap, explore, plan]    # 不包含 reason（深度推理不稳定）
-    max_running: 2
-    env:
-      PI_MODEL: "your-model"
-      PI_BASE_URL: "https://your-proxy/v1"
-      PI_API_KEY: "sk-xxx"
-      PI_PROVIDER_API: "openai-completions"
-
-  - name: "qwen-worker"
-    type: "pi"
-    task_types: [bootstrap, reason, explore, plan]  # 负责推理任务
-    max_running: 2
-    env:
-      PI_MODEL: "your-model"
-      PI_BASE_URL: "https://your-proxy/v1"
-      PI_API_KEY: "sk-xxx"
-      PI_PROVIDER_API: "openai-completions"
-
-  - name: "maintainer-worker"
-    type: "pi"
-    task_types: [maintainer]                     # 专用维护者
-    max_running: 2
-    env:
-      PI_MODEL: "your-model"
-      PI_BASE_URL: "https://your-proxy/v1"
-      PI_API_KEY: "sk-xxx"
-      PI_PROVIDER_API: "openai-completions"
-```
-
-API Key 使用 `MASTER_KEY` 加密存储（首次运行时自动生成，保存在 `~/.config/cairn/master.key`）。
-
----
-
-## 免责声明
-
-AXIOM 是一个通用问题求解引擎。虽然它支持渗透测试、CTF 解题、安全评估和漏洞研究工作流，但它仅应在**你拥有明确操作授权**的环境中使用。
-
-你对自己如何使用本项目负有完全责任。未经所有者或运营方明确的事先许可，不得对系统、网络、应用程序或数据使用 AXIOM。
-
-本项目的开发者和贡献者不对任何滥用、损害、损失或法律后果承担或认可任何责任。
-
----
-
-## 致谢
-
-- **[oritera/Cairn](https://github.com/oritera/Cairn)** — 本项目基于的原始项目
-- **[Cytoscape.js](https://js.cytoscape.org/)** — 图可视化库
-- **[ELK](https://www.eclipse.org/elk/)** — 布局引擎
-- **[FastAPI](https://fastapi.tiangolo.com/)** — Web 框架
-- **[Alpine.js](https://alpinejs.dev/)** — 前端响应式框架
-
----
-
-## 许可证
-
-本项目采用 **GNU AGPLv3** 许可证，适用于个人和教育用途。
-
-**商业用途**：如果你希望在商业或专有环境中使用本项目而不受 AGPL-3.0 开源义务的约束，请联系维护者获取商业许可证。
+AXIOM 仅用于**获得明确书面授权**的安全评估场景。使用者须遵守当地法律法规，对目标系统具备合法测试授权；因滥用本工具造成的任何后果由使用者自行承担。
