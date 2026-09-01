@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="./README/banner.png" alt="AXIOM Banner"/>
-
 # AXIOM
 ### 多智能体协同的自动化渗透测试编排平台
 
