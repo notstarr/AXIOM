@@ -271,7 +271,7 @@
               <div class="sto-statcell"><p class="sto-label" style="color:var(--sto-warn);">执行中</p><p class="mt-1 text-xl font-semibold text-amber-700 tabular-nums" x-text="selectedTaskSummary().working_intent_count"></p></div>
               <div class="sto-statcell"><p class="sto-label" style="color:var(--sto-ok);">Hints</p><p class="mt-1 text-xl font-semibold text-sky-700 tabular-nums" x-text="selectedTaskSummary().hint_count"></p></div>
             </div>
-            <div class="rounded-xl border border-slate-200 p-4 bg-white" x-data="{ activeDiagnosticPhase: 'bootstrap' }" x-init="
+            <div class="sto-panel" style="padding:14px 16px;" x-data="{ activeDiagnosticPhase: 'bootstrap' }" x-init="
               const diagPick = () => {
                 const val = selectedTaskDiagnostics();
                 if (!val) return;
@@ -325,7 +325,7 @@
                     </div>
                   </template>
                   <div class="space-y-3">
-                    <div class="rounded-xl border border-slate-100 p-3 bg-white">
+                    <div class="sto-group" style="padding:10px 12px;">
                       <div class="flex flex-wrap gap-1.5 mb-3 rounded-xl bg-slate-50 p-1">
                         <template x-for="phase in ['bootstrap', 'explore', 'reason', 'plan', 'review']" :key="`diag-phase-tab-${phase}`">
                           <button type="button" @click="activeDiagnosticPhase = phase" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition" :class="activeDiagnosticPhase === phase ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'">
@@ -452,7 +452,7 @@
                 </div>
               </template>
             </div>
-            <div class="rounded-xl border border-slate-200 p-4 bg-slate-50/40">
+            <div class="sto-tiercard" style="--pc: var(--sto-accent);">
               <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
                 <div>
                   <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">即时生效配置</p>
@@ -486,7 +486,7 @@
                 </div>
               </div>
             </div>
-            <div class="rounded-xl border border-indigo-100 p-4 bg-indigo-50/30">
+            <div class="sto-tiercard" style="--pc: #8b5cf6; border-left-width:3px;">
               <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
                 <div>
                   <p class="text-xs font-semibold text-indigo-600 uppercase tracking-wider">Plan 阶段</p>
@@ -510,7 +510,7 @@
               </div>
               <p class="mt-2 text-[10px] text-slate-400">留空表示兼容模式：PlanRun 使用普通任务池。指定后 Plan 与 Reason/Explore 池完全隔离。</p>
             </div>
-            <div class="rounded-xl border border-slate-200 p-4 bg-white">
+            <div class="sto-panel" style="padding:14px 16px;">
               <div class="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">任务 Scope</p>

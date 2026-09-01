@@ -1,5 +1,5 @@
 <!-- ═══════════ DASHBOARD PAGE ═══════════ -->
-<div x-show="activePage === 'dashboard'" x-cloak class="flex-1 flex flex-col overflow-hidden min-w-0">
+<div x-show="activePage === 'dashboard'" x-cloak class="sto flex-1 flex flex-col overflow-hidden min-w-0">
   <header class="app-page-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
     <div>
       <h2 class="text-base font-semibold text-slate-800 tracking-tight">AXIOM</h2>
@@ -25,7 +25,7 @@
 
       <!-- 项目总数 -->
       <button type="button" @click="navigateTo('projects')"
-        class="text-left rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md card-hover transition group">
+        class="text-left rounded-2xl border border-slate-200 var(--sto-panel) p-5 hover:shadow-md card-hover transition group">
         <div class="flex items-start justify-between">
           <div class="h-9 w-9 rounded-xl bg-blue-50 text-blue-500 inline-flex items-center justify-center shrink-0">
             <svg class="w-4.5 h-4.5 w-[18px] h-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
@@ -41,7 +41,7 @@
 
       <!-- 运行中任务 -->
       <button type="button" @click="navigateTo('tasks')"
-        class="text-left rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md card-hover transition group">
+        class="text-left rounded-2xl border border-slate-200 var(--sto-panel) p-5 hover:shadow-md card-hover transition group">
         <div class="flex items-start justify-between">
           <div class="h-9 w-9 rounded-xl bg-teal-50 text-teal-500 inline-flex items-center justify-center shrink-0">
             <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
@@ -57,7 +57,7 @@
 
       <!-- 漏洞总数 -->
       <button type="button" @click="navigateTo('vulnerabilities')"
-        class="text-left rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md card-hover transition group">
+        class="text-left rounded-2xl border border-slate-200 var(--sto-panel) p-5 hover:shadow-md card-hover transition group">
         <div class="flex items-start justify-between">
           <div class="h-9 w-9 rounded-xl bg-rose-50 text-rose-500 inline-flex items-center justify-center shrink-0">
             <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
@@ -96,7 +96,7 @@
     <section class="grid grid-cols-1 xl:grid-cols-3 gap-3">
 
       <!-- 任务状态分布 (2/3 width) -->
-      <div class="xl:col-span-2 rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div class="xl:col-span-2 sto-panel overflow-hidden">
         <div class="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
           <h3 class="text-sm font-semibold text-slate-700">任务状态分布</h3>
           <button @click="navigateTo('tasks')" class="text-xs text-brand-500 hover:text-brand-600 transition inline-flex items-center gap-1">
@@ -145,7 +145,7 @@
       </div>
 
       <!-- 最近事件 (1/3 width) -->
-      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col">
+      <div class="sto-panel overflow-hidden flex flex-col">
         <div class="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between shrink-0">
           <h3 class="text-sm font-semibold text-slate-700">最近事件</h3>
           <span class="text-[10px] text-slate-300 tabular-nums" x-text="recentGlobalEvents().length > 0 ? `${recentGlobalEvents().length} 条` : ''"></span>
@@ -156,7 +156,7 @@
           <div x-show="projectDetailsLoaded && recentGlobalEvents().length === 0" class="flex items-center justify-center h-24 text-sm text-slate-300">暂无事件</div>
           </template>
            <template x-for="event in recentGlobalEvents()" :key="`${event.project_id}-${event.id}`">
-             <div class="rounded-xl bg-slate-50 p-3">
+             <div class="sto-chip" style="align-items:flex-start;">
                <div class="flex items-center gap-2 mb-1">
                  <span class="text-[11px] font-medium text-slate-500 font-mono tabular-nums shrink-0 truncate" x-text="event.project_id"></span>
                  <span class="flex-1"></span>
@@ -171,7 +171,7 @@
     </section>
 
     <!-- LLM Token 消耗 -->
-    <section class="token-usage-panel rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+    <section class="token-usage-panel sto-panel overflow-hidden">
       <div class="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center gap-3">
         <div class="flex items-center gap-2 min-w-0">
           <span class="token-usage-icon inline-flex h-8 w-8 items-center justify-center rounded-xl">
