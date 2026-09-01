@@ -34,9 +34,9 @@
         </div>
       </div>
       <div class="sto-statflat" style="margin-top:13px;">
-        <div><div class="k">总记录</div><b x-text="(guardAudit.events || []).length"></b></div>
-        <div><div class="k" style="color:var(--sto-danger);">拦截</div><b style="color:var(--sto-danger);" x-text="(guardAudit.events || []).filter(e => e.decision === 'BLOCK').length"></b></div>
-        <div><div class="k" style="color:var(--sto-ok);">放行</div><b style="color:var(--sto-ok);" x-text="(guardAudit.events || []).filter(e => e.decision !== 'BLOCK').length"></b></div>
+        <div @click="guardAudit.decision = 'all'; loadGuardAuditEvents()" :class="guardAudit.decision === 'all' ? 'stat-active' : ''" title="查看全部"><div class="k">总记录</div><b x-text="(guardAudit.events || []).length"></b></div>
+        <div @click="guardAudit.decision = 'block'; loadGuardAuditEvents()" :class="guardAudit.decision === 'block' ? 'stat-active' : ''" title="只看拦截"><div class="k" style="color:var(--sto-danger);">拦截</div><b style="color:var(--sto-danger);" x-text="(guardAudit.events || []).filter(e => e.decision === 'BLOCK').length"></b></div>
+        <div @click="guardAudit.decision = 'allow'; loadGuardAuditEvents()" :class="guardAudit.decision === 'allow' ? 'stat-active' : ''" title="只看放行"><div class="k" style="color:var(--sto-ok);">放行</div><b style="color:var(--sto-ok);" x-text="(guardAudit.events || []).filter(e => e.decision !== 'BLOCK').length"></b></div>
         <div><div class="k">拦截率</div><b x-text="`${(guardAudit.events || []).length ? Math.round((guardAudit.events || []).filter(e => e.decision === 'BLOCK').length / (guardAudit.events || []).length * 100) : 0}%`"></b></div>
       </div>
     </div>

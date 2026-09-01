@@ -27,6 +27,11 @@
           :class="selectedProjectManagementId === p.id ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'">
           <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold whitespace-nowrap" :class="p.status === 'active' ? 'bg-teal-50 text-teal-600' : 'bg-slate-100 text-slate-500'" x-text="p.status === 'active' ? '启用' : '已归档'"></span>
           <p class="mt-1.5 text-sm font-semibold text-slate-700 line-clamp-2" x-text="p.title"></p>
+          <div class="mt-2 flex items-center gap-2 text-[10px] tabular-nums">
+            <span class="text-slate-400" x-text="`${p.task_count ?? 0} 任务`"></span>
+            <span x-show="p.active_task_count > 0" class="font-semibold text-teal-600" x-text="`${p.active_task_count} 运行中`"></span>
+            <span x-show="p.vuln_count > 0" class="font-semibold text-rose-500" x-text="`${p.vuln_count} 漏洞`"></span>
+          </div>
         </button>
       </template>
     </aside>

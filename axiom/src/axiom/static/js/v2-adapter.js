@@ -1600,7 +1600,13 @@
         if (!keyword) return true;
         return [task.id, task.title, task.origin, task.goal, this.projectGroupTitle(task.parent_project_id)]
           .some(value => String(value || '').toLowerCase().includes(keyword));
-      });
+      }).sort((a, b) => this.taskHealthRank(a) - this.taskHealthRank(b));
+    },
+    taskHealthRank(task) {
+      if (task.archived) return 4;
+      if (task.status === 'active') return (task.working_intent_count || 0) > 0 ? 0 : 1;
+      if (task.status === 'stopped') return 2;
+      return 3;
     },
     filteredProjectGroups() {
       const keyword = String(this.projectSearch || '').trim().toLowerCase();
