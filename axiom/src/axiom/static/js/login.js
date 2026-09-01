@@ -17,9 +17,9 @@
     refresh() { window.location.reload(); },
   };
 
-  /* 占位 cairnApp：登录卡阶段所需的最小状态与方法。
-   * app.js 在已登录 HTML 中会重新声明完整 cairnApp()，本占位仅作兜底。 */
-  window.cairnApp = function cairnApp() {
+  /* 占位 axiomApp：登录卡阶段所需的最小状态与方法。
+   * app.js 在已登录 HTML 中会重新声明完整 axiomApp()，本占位仅作兜底。 */
+  window.axiomApp = function axiomApp() {
     return {
       authLoading: true,
       isAuthenticated: false,

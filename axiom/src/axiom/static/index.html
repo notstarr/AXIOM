@@ -10,7 +10,7 @@
 <script defer src="/static/vendor/alpine.min.js?v=20260807-manual-reason-v1"></script>
 <link rel="stylesheet" href="/static/custom.css?v=20260807-manual-reason-v1">
 </head>
-<body class="h-screen overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="cairnApp()" style="background:var(--bg-secondary);color:var(--text-primary)">
+<body class="h-screen overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="axiomApp()" style="background:var(--bg-secondary);color:var(--text-primary)">
 
 <!-- ═══════════ AUTH GATE (登录拦截) ═══════════ -->
 <template x-if="authLoading">
