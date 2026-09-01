@@ -93,7 +93,7 @@
 
   <template x-if="project?.project?.archived">
     <main class="flex-1 min-h-0 flex items-center justify-center p-6 bg-slate-50/40">
-      <section class="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+      <section class="w-full max-w-lg sto-panel p-8 text-center">
         <div class="mx-auto h-12 w-12 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center text-xl">▣</div>
         <h3 class="mt-4 text-base font-semibold text-slate-800">任务已归档</h3>
         <p class="mt-2 text-sm leading-6 text-slate-500">该任务的 Fact、Intent、Todo、漏洞和产物已从正常页面隐藏。恢复任务后，历史内容才会重新显示。</p>
@@ -110,10 +110,10 @@
   <main x-show="!project?.project?.archived" class="flex-1 min-h-0 overflow-y-auto p-5">
     <div class="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-4 max-w-[1600px] mx-auto">
       <aside class="space-y-3 self-start xl:sticky xl:top-0">
-        <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <section class="sto-panel" style="padding:16px;">
           <div class="flex items-center justify-between">
             <div>
-              <p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">运行循环</p>
+              <p class="sto-label">运行循环</p>
               <h3 class="mt-1 text-sm font-semibold text-slate-800" x-text="humanCycleModel().current ? `当前第 ${humanCycleModel().current.number} 轮` : '等待启动'"></h3>
             </div>
             <span class="px-2 py-1 rounded-lg text-[10px] border" :class="humanCycleStatusClass(humanCycleModel().current?.status)" x-text="humanCycleStatusLabel(humanCycleModel().current?.status)"></span>
@@ -170,7 +170,7 @@
           </template>
         </section>
 
-        <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <section class="sto-panel" style="padding:16px;">
           <div class="flex items-center justify-between">
             <h3 class="text-xs font-semibold text-slate-700">历史循环</h3>
             <span class="text-[10px] text-slate-400" x-text="`${humanCycleModel().history.length} 轮`"></span>
@@ -203,10 +203,10 @@
 
       <div class="min-w-0 space-y-4">
         <section class="grid grid-cols-1 lg:grid-cols-[1.35fr_1fr] gap-4">
-          <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="sto-panel" style="padding:18px 20px;">
             <div class="flex items-start justify-between gap-3">
               <div>
-                <p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Goal</p>
+                <p class="sto-label">Goal</p>
                 <h3 class="mt-1 text-base font-semibold text-slate-800">任务目标与完成条件</h3>
               </div>
               <span class="px-2.5 py-1 rounded-lg border text-[10px] font-semibold" :class="humanGoalStatusClass()" x-text="humanGoalStatusLabel()"></span>
@@ -229,22 +229,22 @@
               </div>
             </div>
           </div>
-          <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div class="flex items-center justify-between"><div><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">覆盖概况</p><h3 class="mt-1 text-base font-semibold text-slate-800">Todo 覆盖进度</h3></div><span class="text-sm font-semibold text-brand-600" x-text="`${humanTodoProgress().percent}%`"></span></div>
+          <div class="sto-panel" style="padding:18px 20px;">
+            <div class="flex items-center justify-between"><div><p class="sto-label">覆盖概况</p><h3 class="mt-1 text-base font-semibold text-slate-800">Todo 覆盖进度</h3></div><span class="text-sm font-semibold text-brand-600" x-text="`${humanTodoProgress().percent}%`"></span></div>
             <div class="mt-4 h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full bg-brand-500 transition-all" :style="`width:${humanTodoProgress().percent}%`"></div></div>
-            <div class="mt-4 grid grid-cols-4 gap-2 text-center">
-              <div><div class="text-lg font-semibold text-slate-700" x-text="humanFactCount()"></div><div class="text-[10px] text-slate-400">事实</div></div>
-              <div><div class="text-lg font-semibold text-violet-700" x-text="humanIntentCount()"></div><div class="text-[10px] text-slate-400">Intent</div></div>
-              <div><div class="text-lg font-semibold text-amber-700" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total}`"></div><div class="text-[10px] text-slate-400">Todo</div></div>
-              <div><div class="text-lg font-semibold text-slate-700" x-text="humanArtifactCount()"></div><div class="text-[10px] text-slate-400">产物</div></div>
+            <div class="mt-4 grid grid-cols-4 gap-2.5">
+              <div class="sto-statcell"><p class="sto-label">事实</p><b x-text="humanFactCount()"></b></div>
+              <div class="sto-statcell"><p class="sto-label" style="color:var(--sto-accent);">Intent</p><b style="color:var(--sto-accent);" x-text="humanIntentCount()"></b></div>
+              <div class="sto-statcell"><p class="sto-label" style="color:var(--sto-warn);">Todo</p><b style="color:var(--sto-warn);" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total}`"></b></div>
+              <div class="sto-statcell"><p class="sto-label" style="color:var(--sto-ok);">产物</p><b x-text="humanArtifactCount()"></b></div>
             </div>
           </div>
         </section>
 
-        <section class="token-usage-panel rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section class="token-usage-panel sto-panel" style="padding:18px 20px;">
           <div class="flex flex-wrap items-start gap-3">
             <div>
-              <p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">LLM usage</p>
+              <p class="sto-label">LLM usage</p>
               <h3 class="mt-1 text-base font-semibold text-slate-800">本任务 Token 消耗</h3>
               <p class="mt-1 text-xs text-slate-400">包含所有 Goal 轮次、失败、超时、重试、Execute 与 Conclude。</p>
             </div>
@@ -257,7 +257,7 @@
               </select>
             </label>
             <div class="token-range-switch inline-flex items-center gap-0.5 rounded-xl border border-slate-200 p-0.5">
-              <template x-for="option in tokenRangeOptions()" :key="`task-token-range-${option.value}`"><button type="button" @click="setTaskTokenRange(option.value)" class="rounded-lg px-2 py-1.5 text-[11px] font-medium transition" :class="taskTokenRange === option.value ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'" x-text="option.label"></button></template>
+              <template x-for="option in tokenRangeOptions()" :key="`task-token-range-${option.value}`"><button type="button" @click="setTaskTokenRange(option.value)" class="rounded-lg px-2 py-1.5 text-[11px] font-medium transition" :class="taskTokenRange === option.value ? 'bg-brand-500 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'" x-text="option.label"></button></template>
             </div>
           </div>
           <template x-if="!selectedTaskDiagnostics()">
@@ -266,19 +266,19 @@
           <template x-if="selectedTaskDiagnostics()">
             <div class="mt-4 space-y-3">
               <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
-                <div class="token-hit-rate rounded-xl border border-slate-200 p-3"><p class="text-[10px] text-slate-400">总 Token</p><p class="mt-1 text-lg font-semibold text-slate-800 tabular-nums" x-text="formatTokenCount(taskTokenSummary().total_tokens ?? taskTokenSummary().total)"></p></div>
-                <div class="token-hit-rate rounded-xl border border-slate-200 p-3"><p class="text-[10px] text-slate-400">输入（未命中）</p><p class="mt-1 text-lg font-semibold token-fg-input tabular-nums" x-text="formatTokenCount(taskTokenSummary().input_tokens ?? taskTokenSummary().input_uncached)"></p></div>
-                <div class="token-hit-rate rounded-xl border border-slate-200 p-3"><p class="text-[10px] text-slate-400">缓存命中</p><p class="mt-1 text-lg font-semibold token-fg-cache tabular-nums" x-text="formatTokenCount(taskTokenSummary().cache_read_tokens ?? taskTokenSummary().cache_read)"></p></div>
-                <div class="token-hit-rate rounded-xl border border-slate-200 p-3"><p class="text-[10px] text-slate-400">缓存写入</p><p class="mt-1 text-lg font-semibold token-fg-cache-write tabular-nums" x-text="formatTokenCount(taskTokenSummary().cache_write_tokens ?? taskTokenSummary().cache_write)"></p></div>
-                <div class="token-hit-rate rounded-xl border border-slate-200 p-3"><p class="text-[10px] text-slate-400">输出</p><p class="mt-1 text-lg font-semibold token-fg-output tabular-nums" x-text="formatTokenCount(taskTokenSummary().output_tokens ?? taskTokenSummary().output)"></p></div>
-                <div class="token-hit-rate rounded-xl border border-slate-200 p-3"><p class="text-[10px] text-slate-400">缓存命中率</p><p class="mt-1 text-lg font-semibold token-fg-cache tabular-nums" x-text="tokenCacheHitRateLabel(taskTokenSummary().cache_hit_rate)"></p></div>
+                <div class="token-hit-rate sto-statcell" style="min-width:0;"><p class="sto-label">总 Token</p><p class="mt-1 text-lg font-semibold text-slate-800 tabular-nums" x-text="formatTokenCount(taskTokenSummary().total_tokens ?? taskTokenSummary().total)"></p></div>
+                <div class="token-hit-rate sto-statcell" style="min-width:0;"><p class="sto-label" style="color:#3b82f6;">输入（未命中）</p><p class="mt-1 text-lg font-semibold token-fg-input tabular-nums" x-text="formatTokenCount(taskTokenSummary().input_tokens ?? taskTokenSummary().input_uncached)"></p></div>
+                <div class="token-hit-rate sto-statcell" style="min-width:0;"><p class="sto-label" style="color:#18a875;">缓存命中</p><p class="mt-1 text-lg font-semibold token-fg-cache tabular-nums" x-text="formatTokenCount(taskTokenSummary().cache_read_tokens ?? taskTokenSummary().cache_read)"></p></div>
+                <div class="token-hit-rate sto-statcell" style="min-width:0;"><p class="sto-label" style="color:#d88706;">缓存写入</p><p class="mt-1 text-lg font-semibold token-fg-cache-write tabular-nums" x-text="formatTokenCount(taskTokenSummary().cache_write_tokens ?? taskTokenSummary().cache_write)"></p></div>
+                <div class="token-hit-rate sto-statcell" style="min-width:0;"><p class="sto-label" style="color:#8b5cf6;">输出</p><p class="mt-1 text-lg font-semibold token-fg-output tabular-nums" x-text="formatTokenCount(taskTokenSummary().output_tokens ?? taskTokenSummary().output)"></p></div>
+                <div class="token-hit-rate sto-statcell" style="min-width:0;"><p class="sto-label" style="color:#18a875;">缓存命中率</p><p class="mt-1 text-lg font-semibold token-fg-cache tabular-nums" x-text="tokenCacheHitRateLabel(taskTokenSummary().cache_hit_rate)"></p></div>
               </div>
               <div x-show="taskTokenSummary().complete === false || taskTokenSummary().incomplete_sources > 0" class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">有 <span class="font-semibold" x-text="taskTokenSummary().incomplete_sources || 0"></span> 个 Session 来源不完整；缺失 Token 未被估算。</div>
             </div>
           </template>
         </section>
 
-        <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <section class="sto-panel overflow-hidden">
           <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
             <div><h3 class="text-sm font-semibold text-slate-800" x-text="humanCurrentIntents().length ? '当前执行' : '最近一轮执行'"></h3><p class="mt-1 text-xs text-slate-400" x-text="humanCurrentIntents().length ? '按运行状态优先展示当前或等待领取的 Intent。' : `当前没有活动 Intent，展示 ${humanCycleDisplaySourceLabel()} 的最近批次。`"></p></div>
             <span class="px-2 py-1 rounded-lg bg-blue-50 text-blue-700 text-[10px] font-semibold" x-text="humanCurrentIntents().length ? `${humanCurrentIntents().length} 个活动 Intent` : `${humanCycleDisplayIntents().length} 个最近 Intent`"></span>
@@ -286,7 +286,7 @@
           <div class="p-4">
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
               <template x-for="intent in humanCycleDisplayIntents()" :key="`running-intent-${intent.id}`">
-                <div class="rounded-xl border border-slate-200 p-3 hover:border-brand-200 hover:bg-brand-50/20 transition">
+                <div class="rounded-xl border border-slate-200 bg-white p-3 shadow-sm hover:border-brand-200 hover:bg-brand-50/20 transition">
                   <div class="flex items-start gap-2.5">
                     <span class="mt-0.5 h-7 w-7 rounded-lg flex items-center justify-center text-xs font-mono" :class="`${humanIntentStatusClass(intent)} ${humanIntentIconClass(intent)}`" x-text="humanIntentIcon(intent)"></span>
                     <div class="min-w-0 flex-1">
@@ -304,7 +304,7 @@
         </section>
 
         <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="sto-panel" style="padding:18px 20px;">
             <div class="flex items-center justify-between"><div><h3 class="text-sm font-semibold text-slate-800">Todo 覆盖</h3><p class="mt-1 text-xs text-slate-400">所有 Reason 共享同一层 Todo。</p></div><button @click="switchHumanTab('todos')" class="text-[11px] text-brand-600 hover:text-brand-700">查看全部 →</button></div>
             <div class="mt-4 space-y-3">
               <template x-for="group in humanTodoGroups().slice(0, 5)" :key="`workspace-todo-${group.name}`">
@@ -318,7 +318,7 @@
               <p x-show="taskDetailSectionReady('todos') && humanTodoGroups().length === 0" class="py-4 text-xs text-slate-400">Reason 尚未生成 Todo。</p>
             </div>
           </div>
-          <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="sto-panel" style="padding:18px 20px;">
             <div class="flex items-center justify-between"><div><h3 class="text-sm font-semibold text-slate-800">事实与待验证线索</h3><p class="mt-1 text-xs text-slate-400">各展示最新 3 条，并保留生产 Intent 深链。</p></div><button @click="switchHumanTab('facts')" class="text-[11px] text-brand-600 hover:text-brand-700">查看全部 →</button></div>
             <div class="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-3">
               <div class="space-y-2"><p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">事实</p><template x-for="fact in humanRecentFacts(3)" :key="`workspace-fact-${fact.id}`"><button type="button" @click="openHumanFact(fact)" class="human-link-card w-full text-left rounded-lg bg-slate-50 border border-slate-100 p-2.5 hover:border-brand-300 transition"><div class="flex items-center justify-between gap-2"><span class="text-[10px] font-mono text-slate-400" x-text="fact.id"></span><span class="text-[10px] text-brand-600 truncate" x-text="humanSourceLabel(fact, '系统事实')"></span></div><p class="mt-1 text-xs text-slate-600 line-clamp-2" x-text="fact.description"></p></button></template><p x-show="taskDetailSectionPending('graph')" class="py-2 text-xs text-slate-400">正在加载事实…</p><p x-show="taskDetailSectionError('graph')" class="py-2 text-xs text-rose-500">事实加载失败。<button @click="retryTaskDetailSection('graph')" class="ml-1 text-brand-600 hover:underline">重试</button></p><p x-show="taskDetailSectionReady('graph') && humanRecentFacts(3).length === 0" class="py-2 text-xs text-slate-400">尚未产生事实。</p></div>
@@ -328,7 +328,7 @@
         </section>
 
         <section class="grid grid-cols-1 lg:grid-cols-[1fr_1.35fr] gap-4">
-          <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="sto-panel" style="padding:18px 20px;">
             <div class="flex items-center justify-between"><div><h3 class="text-sm font-semibold text-slate-800">风险摘要</h3><p class="mt-1 text-xs text-slate-400">漏洞详情和状态统一在漏洞管理中维护。</p></div><button @click="openTaskVulnerabilities()" class="text-[11px] text-brand-600 hover:text-brand-700">查看本任务漏洞 →</button></div>
             <div class="mt-4 flex flex-wrap gap-2">
               <span class="px-2.5 py-1.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100 text-xs">严重 <b x-text="humanSeverityCounts().critical"></b></span>
@@ -340,7 +340,7 @@
             <p x-show="taskDetailSectionError('vulnerabilities')" class="mt-4 text-xs text-rose-500">漏洞记录加载失败。<button @click="retryTaskDetailSection('vulnerabilities')" class="ml-1 text-brand-600 hover:underline">重试</button></p>
             <p x-show="taskDetailSectionReady('vulnerabilities')" class="mt-4 text-xs text-slate-400" x-text="humanVulnerabilityCount() ? `本任务共有 ${humanVulnerabilityCount()} 个漏洞记录。` : '当前没有确认漏洞记录。'"></p>
           </div>
-          <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="sto-panel" style="padding:18px 20px;">
             <div class="flex items-center justify-between"><div><h3 class="text-sm font-semibold text-slate-800">最近产物</h3><p class="mt-1 text-xs text-slate-400">产物保留在文件管理中心。</p></div><button @click="switchHumanTab('artifacts')" class="text-[11px] text-brand-600 hover:text-brand-700">查看全部 →</button></div>
             <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2">
               <template x-for="artifact in humanRecentArtifacts(6)" :key="`workspace-artifact-${artifact.id}`"><button type="button" @click="openHumanArtifact(artifact)" class="human-link-card flex items-center gap-2 py-1.5 min-w-0 w-full text-left rounded-lg px-1 hover:bg-brand-50/50 transition"><span class="text-base text-slate-400">▤</span><div class="min-w-0 flex-1"><div class="text-xs text-slate-700 truncate" x-text="humanArtifactLabel(artifact)"></div><div class="text-[10px] text-slate-400 truncate" x-text="`${humanArtifactPhase(artifact)} · ${humanArtifactTypeLabel(artifact)} · ${humanSourceLabel(artifact)}`"></div></div><span class="text-[10px] text-slate-400 shrink-0" x-text="formatTime(artifact.created_at)"></span></button></template>
@@ -359,8 +359,8 @@
   <template x-if="humanTab === 'conversation'">
   <main x-show="!project?.project?.archived" class="flex-1 min-h-0 overflow-y-auto p-5">
     <div class="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4 h-full min-h-[520px]">
-      <aside class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col min-h-0">
-        <div class="px-4 py-3 border-b border-slate-100"><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Explore monitor</p><h3 class="mt-1 text-sm font-semibold text-slate-800">所有 Explore Intent</h3><p class="mt-1 text-[10px] text-slate-400">运行中的 Intent 高亮；消息只绑定当前 Lease。</p></div>
+      <aside class="sto-panel overflow-hidden flex flex-col min-h-0">
+        <div class="px-4 py-3 border-b border-slate-100"><p class="sto-label">Explore monitor</p><h3 class="mt-1 text-sm font-semibold text-slate-800">所有 Explore Intent</h3><p class="mt-1 text-[10px] text-slate-400">运行中的 Intent 高亮；消息只绑定当前 Lease。</p></div>
         <div class="p-2 space-y-1 overflow-y-auto min-h-0">
           <template x-for="intent in exploreConversationIntents()" :key="`conversation-intent-${intent.id}`">
             <button type="button" @click="selectExploreConversationIntent(intent.id)" class="w-full text-left rounded-xl border px-3 py-2.5 transition" :class="`${exploreConversationIntentClass(intent)} ${exploreConversationIntentId === intent.id ? 'ring-2 ring-brand-200' : ''}`">
@@ -371,10 +371,10 @@
           <p x-show="exploreConversationIntents().length === 0" class="py-12 text-center text-xs text-slate-400">当前没有 Explore Intent。</p>
         </div>
       </aside>
-      <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col min-h-0">
+      <section class="sto-panel overflow-hidden flex flex-col min-h-0">
         <template x-if="exploreConversationIntentId">
           <div class="flex flex-col min-h-0 h-full">
-            <div class="px-5 py-4 border-b border-slate-100 flex items-start gap-3"><div class="min-w-0 flex-1"><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Intent conversation</p><h3 class="mt-1 text-sm font-semibold text-slate-800" x-text="exploreConversationIntentId"></h3><p class="mt-1 text-xs text-slate-500" x-text="exploreConversationIntents().find(item => item.id === exploreConversationIntentId)?.description || '未命名 Intent'"></p></div><span class="shrink-0 px-2 py-1 rounded-lg border text-[10px]" :class="exploreConversationIntentClass(exploreConversationIntents().find(item => item.id === exploreConversationIntentId))" x-text="exploreConversationIntentStatus(exploreConversationIntents().find(item => item.id === exploreConversationIntentId))"></span></div>
+            <div class="px-5 py-4 border-b border-slate-100 flex items-start gap-3"><div class="min-w-0 flex-1"><p class="sto-label">Intent conversation</p><h3 class="mt-1 text-sm font-semibold text-slate-800" x-text="exploreConversationIntentId"></h3><p class="mt-1 text-xs text-slate-500" x-text="exploreConversationIntents().find(item => item.id === exploreConversationIntentId)?.description || '未命名 Intent'"></p></div><span class="shrink-0 px-2 py-1 rounded-lg border text-[10px]" :class="exploreConversationIntentClass(exploreConversationIntents().find(item => item.id === exploreConversationIntentId))" x-text="exploreConversationIntentStatus(exploreConversationIntents().find(item => item.id === exploreConversationIntentId))"></span></div>
             <div class="px-5 py-2.5 bg-slate-50/70 border-b border-slate-100 text-[10px] text-slate-500 flex flex-wrap gap-x-4 gap-y-1"><span x-text="`Worker：${exploreConversationIntents().find(item => item.id === exploreConversationIntentId)?.worker || '未领取'}`"></span><span x-text="`活动：${exploreConversationIntents().find(item => item.id === exploreConversationIntentId)?.activity_summary || '暂无活动摘要'}`"></span><span>完整 Session 保留在审计与运行目录，页面只显示脱敏摘要。</span></div>
             <div class="relative flex-1 min-h-0">
               <div x-ref="exploreConversationScroll" class="absolute inset-0 overflow-y-auto p-5 pb-20 space-y-2.5"><div x-show="exploreConversationLoading && !exploreConversationEvents.length" class="py-12 text-center text-xs text-slate-400">正在读取 Explore 活动…</div><template x-for="event in exploreConversationEvents" :key="`conversation-event-${event.cursor}-${event.kind}-${event.intervention_id || ''}`"><article class="rounded-xl border px-3.5 py-3" :class="exploreConversationEventClass(event)"><div class="flex items-center gap-2"><span class="text-[10px] font-semibold" x-text="event.source === 'intervention' ? '人工指导' : event.kind === 'tool_call' ? '工具调用' : event.kind === 'tool_result' ? '工具结果' : event.kind === 'action_summary' ? '行动摘要' : '生命周期'"></span><span x-show="event.tool" class="rounded bg-white/70 border border-slate-200 px-1.5 py-0.5 font-mono text-[9px] text-slate-600" x-text="event.tool"></span><span class="text-[10px] text-slate-400" x-text="formatTime(event.created_at)"></span><span x-show="event.status" class="ml-auto text-[10px] text-violet-600" x-text="event.status === 'accepted' ? '已发送' : event.status === 'failed' ? '发送失败' : event.status"></span></div><p class="mt-1.5 text-xs leading-5 text-slate-700 whitespace-pre-wrap break-words" :class="['tool_call','tool_result'].includes(event.kind) ? 'font-mono' : ''" x-text="event.detail || event.summary"></p></article></template><p x-show="!exploreConversationLoading && !exploreConversationEvents.length" class="py-12 text-center text-xs text-slate-400">当前还没有可展示的操作摘要。</p></div>
@@ -393,7 +393,7 @@
   <template x-if="humanTab === 'todos'">
   <main x-show="!project?.project?.archived" class="flex-1 min-h-0 overflow-y-auto p-5">
     <div class="max-w-[1300px] mx-auto space-y-5">
-      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div class="sto-panel" style="padding:18px 20px;">
         <div class="flex items-start justify-between gap-3 pb-4 border-b border-slate-100">
           <div>
             <p class="text-[10px] uppercase tracking-[0.16em] text-slate-400 font-medium">Reason workspace</p>
@@ -495,7 +495,7 @@
 
       <!-- Unlinked Intents Section (Clean, excludes bootstrap) -->
       <template x-if="getUnlinkedIntents().length > 0">
-        <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div class="sto-panel" style="padding:18px 20px;">
           <div class="flex items-center justify-between pb-3 border-b border-slate-100">
             <div>
               <h3 class="text-sm font-semibold text-slate-800">未关联 Todo 的探索 Intent</h3>
@@ -530,8 +530,8 @@
   <!-- Intent 全量视图 -->
   <template x-if="humanTab === 'intents'">
   <main x-show="!project?.project?.archived" class="flex-1 min-h-0 overflow-y-auto p-5">
-    <div class="max-w-[1300px] mx-auto rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-      <div class="px-5 py-4 border-b border-slate-100"><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Concurrent execution</p><h3 class="mt-1 text-base font-semibold text-slate-800">Intent 执行队列</h3></div>
+    <div class="max-w-[1300px] mx-auto sto-panel overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100"><p class="sto-label">Concurrent execution</p><h3 class="mt-1 text-base font-semibold text-slate-800">Intent 执行队列</h3></div>
       <div class="divide-y divide-slate-100">
         <template x-for="intent in (project?.intents || []).filter(item => !item.archived).slice().reverse().slice(0, humanIntentLimit)" :key="`intent-tab-${intent.id}`">
           <div class="px-5 py-4 flex items-start gap-3">
@@ -552,15 +552,15 @@
   <template x-if="humanTab === 'facts'">
   <main x-show="!project?.project?.archived" class="flex-1 min-h-0 overflow-y-auto p-5">
     <div class="max-w-[1300px] mx-auto grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div class="flex items-center justify-between"><div><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Evidence</p><h3 class="mt-1 text-base font-semibold text-slate-800">事实</h3></div><span class="text-xs text-slate-400" x-text="`${humanFactCount()} 条`"></span></div>
+      <section class="sto-panel" style="padding:18px 20px;">
+        <div class="flex items-center justify-between"><div><p class="sto-label">Evidence</p><h3 class="mt-1 text-base font-semibold text-slate-800">事实</h3></div><span class="text-xs text-slate-400" x-text="`${humanFactCount()} 条`"></span></div>
         <div class="mt-4 space-y-3"><template x-for="fact in humanSortedByCreated((project?.facts || []).filter(item => !item.archived && !['goal', 'origin'].includes(item.id))).slice(0, humanFactLimit)" :key="`fact-tab-${fact.id}`"><button type="button" @click="openHumanFact(fact)" class="human-link-card w-full text-left rounded-xl border border-slate-200 p-3 hover:border-brand-300 transition"><div class="flex items-center justify-between gap-2"><span class="text-[10px] font-mono text-slate-400" x-text="fact.id"></span><span class="text-[10px] text-brand-600 truncate" x-text="humanSourceLabel(fact, '系统事实')"></span><span class="text-[10px] text-slate-400 shrink-0" x-text="formatTime(fact.created_at)"></span></div><p class="mt-2 text-xs leading-5 text-slate-600 whitespace-pre-line" x-text="fact.description"></p><p class="mt-1 text-[10px] text-brand-600" x-text="humanFactArtifact(fact) ? '点击打开 Findings' : (humanFactProducer(fact) ? '点击打开生产 Intent 文件夹' : '暂无可定位产物')"></p></button></template></div>
         <button x-show="(project?.facts || []).filter(item => !item.archived && !['goal', 'origin'].includes(item.id)).length > humanFactLimit" @click="humanFactLimit += 50" class="mt-3 w-full py-2 rounded-lg border border-slate-200 text-xs text-brand-600">再显示 50 条</button>
         <p x-show="taskDetailSectionPending('graph')" class="py-12 text-center text-xs text-slate-400">正在加载事实…</p>
         <p x-show="taskDetailSectionError('graph')" class="py-12 text-center text-xs text-rose-500">事实加载失败。<button @click="retryTaskDetailSection('graph')" class="ml-1 text-brand-600 hover:underline">重试</button></p>
         <p x-show="taskDetailSectionReady('graph') && humanFactCount() === 0" class="py-12 text-center text-xs text-slate-400">尚未产生事实。</p>
       </section>
-      <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Follow-up</p><h3 class="mt-1 text-base font-semibold text-slate-800">待验证线索</h3><p class="mt-1 text-xs text-slate-400">每条线索显示生产 Intent，并可直接打开文件。</p></div><div class="mt-4 space-y-3"><template x-for="lead in humanLeadArtifacts(20)" :key="`lead-tab-${lead.id}`"><button type="button" @click="openHumanArtifact(lead)" class="w-full text-left rounded-xl border border-amber-100 bg-amber-50/50 p-3 hover:border-amber-300"><div class="flex items-center justify-between gap-2"><span class="text-xs font-semibold text-amber-800" x-text="humanArtifactLabel(lead)"></span><span class="text-[10px] text-amber-600 truncate" x-text="humanSourceLabel(lead)"></span><span class="text-[10px] text-amber-600 shrink-0" x-text="formatTime(lead.created_at)"></span></div><p class="mt-2 text-xs leading-5 text-amber-900" x-text="lead.summary || '存在待验证线索，请查看产物原文。'"></p></button></template><p x-show="taskDetailSectionPending('lead_artifacts')" class="py-12 text-center text-xs text-slate-400">正在加载待验证线索…</p><p x-show="taskDetailSectionError('lead_artifacts')" class="py-12 text-center text-xs text-rose-500">线索加载失败。<button @click="retryTaskDetailSection('lead_artifacts')" class="ml-1 text-brand-600 hover:underline">重试</button></p><p x-show="taskDetailSectionReady('lead_artifacts') && humanLeadArtifacts(20).length === 0" class="py-12 text-center text-xs text-slate-400">当前没有待验证线索产物。</p></div></section>
+      <section class="sto-panel" style="padding:18px 20px;"><div><p class="sto-label">Follow-up</p><h3 class="mt-1 text-base font-semibold text-slate-800">待验证线索</h3><p class="mt-1 text-xs text-slate-400">每条线索显示生产 Intent，并可直接打开文件。</p></div><div class="mt-4 space-y-3"><template x-for="lead in humanLeadArtifacts(20)" :key="`lead-tab-${lead.id}`"><button type="button" @click="openHumanArtifact(lead)" class="w-full text-left rounded-xl border border-amber-100 bg-amber-50/50 p-3 hover:border-amber-300"><div class="flex items-center justify-between gap-2"><span class="text-xs font-semibold text-amber-800" x-text="humanArtifactLabel(lead)"></span><span class="text-[10px] text-amber-600 truncate" x-text="humanSourceLabel(lead)"></span><span class="text-[10px] text-amber-600 shrink-0" x-text="formatTime(lead.created_at)"></span></div><p class="mt-2 text-xs leading-5 text-amber-900" x-text="lead.summary || '存在待验证线索，请查看产物原文。'"></p></button></template><p x-show="taskDetailSectionPending('lead_artifacts')" class="py-12 text-center text-xs text-slate-400">正在加载待验证线索…</p><p x-show="taskDetailSectionError('lead_artifacts')" class="py-12 text-center text-xs text-rose-500">线索加载失败。<button @click="retryTaskDetailSection('lead_artifacts')" class="ml-1 text-brand-600 hover:underline">重试</button></p><p x-show="taskDetailSectionReady('lead_artifacts') && humanLeadArtifacts(20).length === 0" class="py-12 text-center text-xs text-slate-400">当前没有待验证线索产物。</p></div></section>
     </div>
   </main>
   </template>
@@ -568,8 +568,8 @@
   <!-- Artifact 视图 -->
   <template x-if="humanTab === 'artifacts'">
   <main x-show="!project?.project?.archived" class="flex-1 min-h-0 overflow-y-auto p-5">
-    <div class="max-w-[1300px] mx-auto rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3"><div><p class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Task files</p><h3 class="mt-1 text-base font-semibold text-slate-800">任务产物</h3><p class="mt-1 text-xs text-slate-400">原始文件统一由文件管理中心维护。</p></div><span class="text-xs text-slate-400" x-text="`${humanArtifactTotal} 个`"></span></div>
+    <div class="max-w-[1300px] mx-auto sto-panel overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3"><div><p class="sto-label">Task files</p><h3 class="mt-1 text-base font-semibold text-slate-800">任务产物</h3><p class="mt-1 text-xs text-slate-400">原始文件统一由文件管理中心维护。</p></div><span class="text-xs text-slate-400" x-text="`${humanArtifactTotal} 个`"></span></div>
       <div class="divide-y divide-slate-100"><template x-for="artifact in (humanArtifactItems || []).filter(item => !item.archived)" :key="`artifact-tab-${artifact.id}`"><button type="button" @click="openHumanArtifact(artifact)" class="w-full text-left px-5 py-3.5 flex items-center gap-3 hover:bg-brand-50/50"><span class="text-lg text-slate-400">▤</span><div class="min-w-0 flex-1"><div class="flex items-center gap-2"><span class="text-sm text-slate-700 truncate" x-text="humanArtifactLabel(artifact)"></span><span class="px-1.5 py-0.5 rounded border border-slate-200 text-[9px] text-slate-500" x-text="humanArtifactTypeLabel(artifact)"></span><span class="px-1.5 py-0.5 rounded border border-brand-100 bg-brand-50 text-[9px] text-brand-600" x-text="humanArtifactPhase(artifact)"></span></div><p class="mt-1 text-xs text-slate-400 truncate" x-text="`${humanSourceLabel(artifact)} · ${artifact.summary || artifact.path}`"></p></div><span class="text-[10px] text-slate-400" x-text="formatTime(artifact.created_at)"></span></button></template></div>
       <p x-show="!(humanArtifactItems || []).length" class="py-12 text-center text-xs text-slate-400">尚未产生任务产物。</p>
       <div class="px-5 py-3 border-t border-slate-100 flex items-center justify-between"><button @click="setHumanArtifactPage(humanArtifactPage - 1)" :disabled="humanArtifactPage <= 0" class="px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-500 disabled:opacity-30">上一页</button><span class="text-[10px] text-slate-400 tabular-nums" x-text="`${humanArtifactPage + 1} / ${humanArtifactPageCount()}`"></span><button @click="setHumanArtifactPage(humanArtifactPage + 1)" :disabled="humanArtifactPage + 1 >= humanArtifactPageCount()" class="px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-500 disabled:opacity-30">下一页</button></div>
