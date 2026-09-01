@@ -111,7 +111,7 @@ def test_worker_models_uses_saved_connection_and_normalizes_response(client, mon
 def test_worker_connection_supports_responses_api_and_unsaved_guard(client, monkeypatch) -> None:
     captured = {}
 
-    def fake_post(url, *, headers, json, timeout):
+    def fake_post(url, *, headers, json, timeout, proxy=None):
         captured.update(url=url, headers=headers, json=json, timeout=timeout)
         return httpx.Response(200, json={"id": "response"})
 

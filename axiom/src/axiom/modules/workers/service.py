@@ -364,6 +364,7 @@ class WorkerService:
                 headers=headers,
                 json=payload,
                 timeout=15,
+                proxy=self._llm_proxy(),
             )
         except httpx.HTTPError as exc:
             return WorkerConnectionResult(ok=False, message=f"连接失败：{exc}")

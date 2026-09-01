@@ -198,3 +198,35 @@ def test_list_models_uses_proxy_when_enabled(client, monkeypatch):
     client.put("/api/v1/settings/runtime", json={"config": config, "expected_version": current_version})
     client.get("/api/v1/workers/gw-proxy/models")
     assert captured["proxy"] is None
+
+
+def test_test_connection_uses_proxy_when_enabled(client, monkeypatch):
+    """Worker 测试连接（chat/completions ping）同样走代理。"""
+    captured: dict = {}
+
+    def fake_post(url, *, headers, json, timeout, proxy=None):
+        captured["proxy"] = proxy
+        request = httpx.Request("POST", url)
+        return httpx.Response(200, request=request, json={"choices": [{"message": {"content": "pong"}}]})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    client.put("/api/v1/workers/gw-proxy", json=_upsert_body(base_url="http://upstream.test/v1"))
+
+    settings_response = client.get("/api/v1/settings/runtime")
+    settings = settings_response.json()
+    config = settings["config"] if "config" in settings else settings
+    config["network_proxy_mode"] = "http"
+    config["network_proxy_url"] = "http://127.0.0.1:7890"
+    updated = client.put(
+        "/api/v1/settings/runtime",
+        json={"config": config, "expected_version": settings.get("version")},
+    ).json()
+    config["network_proxy_mode"] = "off"
+
+    client.post("/api/v1/workers/gw-proxy/test", json={"base_url": "http://upstream.test/v1", "model": "test-model"})
+    assert captured["proxy"] == "http://127.0.0.1:7890"
+
+    client.put("/api/v1/settings/runtime", json={"config": config, "expected_version": updated.get("version")})
+    client.post("/api/v1/workers/gw-proxy/test", json={"base_url": "http://upstream.test/v1", "model": "test-model"})
+    assert captured["proxy"] is None
