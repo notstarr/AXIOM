@@ -981,6 +981,58 @@ window.AxiomModules.workerTools = {
       }
     },
 
+    async settingsRuntimeRequest(method, body) {
+      // /settings/runtime 不在 v2 legacyApi 映射表里，直接走原始 fetch（cookie 鉴权）。
+      const init = { method, headers: {} };
+      if (body !== undefined) {
+        init.headers['Content-Type'] = 'application/json';
+        init.body = JSON.stringify(body);
+      }
+      const response = await fetch('/api/v1/settings/runtime', init);
+      const text = await response.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch (_) {}
+      if (!response.ok) {
+        const detail = data && (data.detail || data.message);
+        throw new Error(typeof detail === 'string' ? detail : `HTTP ${response.status}`);
+      }
+      return data;
+    },
+
+    async openWorkerProxyModal() {
+      this.workerProxyModal = true;
+      try {
+        const data = await this.settingsRuntimeRequest('GET');
+        const config = data.config || data;
+        this.workerProxyForm.mode = config.network_proxy_mode === 'http' ? 'http' : 'off';
+        this.workerProxyForm.url = config.network_proxy_url || 'http://127.0.0.1:7890';
+        this.workerProxyForm.version = data.version ?? null;
+      } catch (e) {
+        this.showToast(`读取代理配置失败：${e.message || e}`);
+      }
+    },
+
+    async saveWorkerProxy() {
+      this.workerProxyForm.saving = true;
+      try {
+        const data = await this.settingsRuntimeRequest('GET');
+        const config = data.config || data;
+        config.network_proxy_mode = this.workerProxyForm.mode;
+        config.network_proxy_url = this.workerProxyForm.url;
+        await this.settingsRuntimeRequest('PUT', {
+          config,
+          expected_version: data.version ?? this.workerProxyForm.version,
+          actor: 'ui.worker-proxy',
+        });
+        this.showToast(this.workerProxyForm.mode === 'http' ? 'LLM 代理已启用，立即生效' : 'LLM 代理已关闭，LLM 请求直连');
+        this.workerProxyModal = false;
+      } catch (e) {
+        this.showToast(`保存失败：${e.message || e}`);
+      } finally {
+        this.workerProxyForm.saving = false;
+      }
+    },
+
     async testAxiomWorkerEditor() {
       if (!this.axiomWorkerEditor || this.axiomWorkerEditorTesting) return;
       this.axiomWorkerEditorTesting = true;
