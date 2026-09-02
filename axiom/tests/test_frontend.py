@@ -1823,8 +1823,8 @@ def test_frontend_and_static_assets_are_served(client):
     assert "border-brand-300 bg-brand-50/60" not in workers.text
     assert "workerPhaseBackendRunning(selectedWorkerPhase, backend.name)" in workers.text
     assert "backend.shared_running" not in workers.text
-    assert "axiomWorkerEditor?.test_result?.ok" in workers.text
-    assert "axiomWorkerEditor.test_result.ok" not in workers.text
+    assert "workerTestColor(axiomWorkerEditor)" in workers.text
+    assert "axiomWorkerEditor?.test_result?.message" in workers.text
     assert "saveWorkerPhaseBackends" in workers.text
     assert "Plan 队列等待可用后端" in workers.text
     assert "saveWorkerAxiomToolBindings" not in workers.text

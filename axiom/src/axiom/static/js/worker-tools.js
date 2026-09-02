@@ -965,6 +965,7 @@ window.AxiomModules.workerTools = {
         this.axiomWorkerEditorSaving = true;
         const persistedName = worker.persisted_name || '__new__';
         const payload = this.workerPayload(worker);
+        const renamed = !!worker.persisted_name && worker.name.trim() !== worker.persisted_name;
         const result = await this.api('PUT', `/settings/dispatch/workers/${encodeURIComponent(persistedName)}`, payload);
         this.applyDispatchSettings(result);
         await Promise.all([
@@ -973,7 +974,7 @@ window.AxiomModules.workerTools = {
         ]);
         this.selectedAxiomWorker = worker.name;
         this.editAxiomWorker(worker.name);
-        this.showToast(`模型执行后端 ${worker.name} 已保存`);
+        this.showToast(renamed ? `模型执行后端已重命名为 ${worker.name.trim()}` : `模型执行后端 ${worker.name} 已保存`);
       } catch (error) {
         this.showToast(error?.message || '保存模型执行后端失败', 'error');
       } finally {

@@ -802,7 +802,10 @@
     delete nextConfig.thinking_capable;
     delete nextConfig.thinking_tested_at;
     if (body.pi_api_key) nextConfig.api_key = body.pi_api_key;
-    await request('PUT', `/workers/${encodeURIComponent(targetName)}`, {
+    // 改名走 rename 端点原地改名：保留 created_at/冷却状态/工具绑定，
+    // 且目标名已存在时报 409 而不是静默覆盖。
+    const nameChanged = !!persistedName && !!targetName && persistedName !== targetName;
+    await request('PUT', `/workers/${encodeURIComponent(nameChanged ? persistedName : targetName)}`, {
       worker_type: 'pi',
       capabilities,
       max_running: Number(body.max_running ?? 1),
@@ -810,8 +813,8 @@
       config: nextConfig,
       disabled: !!body.disabled,
     });
-    if (persistedName && persistedName !== targetName) {
-      await request('DELETE', `/workers/${encodeURIComponent(persistedName)}`);
+    if (nameChanged) {
+      await request('POST', `/workers/${encodeURIComponent(persistedName)}/rename`, { new_name: targetName });
     }
     return dispatchSettings();
   }
@@ -1066,6 +1069,14 @@
         }
         return dispatchSettings();
       }
+    }
+    if ((match = path.match(/^\/settings\/dispatch\/workers\/([^/]+)\/rename$/)) && method === 'POST') {
+      const persistedName = decodeURIComponent(match[1]);
+      const target = String(body?.new_name || '').trim();
+      if (persistedName !== '__new__' && target && target !== persistedName) {
+        await request('POST', `/workers/${encodeURIComponent(persistedName)}/rename`, { new_name: target });
+      }
+      return dispatchSettings();
     }
     if ((match = path.match(/^\/settings\/dispatch\/workers\/([^/]+)\/toggle$/)) && method === 'PUT') {
       const workers = await request('GET', '/workers');

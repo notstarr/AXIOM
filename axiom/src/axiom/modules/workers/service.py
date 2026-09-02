@@ -6,7 +6,9 @@ from axiom.modules.settings.service import load_runtime_config
 from collections import defaultdict
 from sqlalchemy import Engine, func, select
 
+from axiom.modules.axiom_tools.tables import worker_axiom_tool_bindings
 from axiom.modules.graph.tables import intents
+from axiom.modules.workers.tables import workers
 from axiom.modules.reason.tables import reason_runs
 from axiom.modules.plan.tables import plan_runs
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
@@ -219,6 +221,32 @@ class WorkerService:
         if worker is None:
             raise NotFoundError(f"Worker not found: {name}")
         return self._normalize_worker(worker)
+
+    def rename(self, name: str, new_name: str) -> Worker:
+        old_name = self._normalize_name(name)
+        target = self._normalize_name(new_name or "")
+        if target == old_name:
+            return self.get(old_name)
+        with self.engine.begin() as conn:
+            worker = self.repository.get(conn, old_name)
+            if worker is None:
+                raise NotFoundError(f"Worker not found: {old_name}")
+            if self.repository.get(conn, target) is not None:
+                raise ConflictError(f"Worker already exists: {target}")
+            conn.execute(
+                workers.update()
+                .where(workers.c.name == old_name)
+                .values(name=target, updated_at=utcnow())
+            )
+            # 工具绑定以 worker_name 为明文键（无外键），随改名迁移；
+            # 运行历史（intents/reason_runs/plan_runs.worker）保留旧名。
+            conn.execute(
+                worker_axiom_tool_bindings.update()
+                .where(worker_axiom_tool_bindings.c.worker_name == old_name)
+                .values(worker_name=target)
+            )
+            row = self.repository.get(conn, target)
+        return self._normalize_worker(row)
 
     def delete(self, name: str) -> None:
         with self.engine.begin() as conn:

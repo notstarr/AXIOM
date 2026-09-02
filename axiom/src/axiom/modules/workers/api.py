@@ -13,6 +13,7 @@ from axiom.modules.workers.schemas import (
     WorkerConnectionResult,
     WorkerCooldown,
     WorkerModelsResult,
+    WorkerRename,
 )
 
 
@@ -87,6 +88,15 @@ def test_worker_connection(
     container: Container = Depends(get_container),
 ) -> WorkerConnectionResult:
     return container.workers.test_connection(name, body)
+
+
+@router.post("/{name}/rename", response_model=Worker)
+def rename_worker(
+    name: str,
+    body: WorkerRename,
+    container: Container = Depends(get_container),
+) -> Worker:
+    return container.workers.rename(name, body.new_name)
 
 
 @router.post("/{name}/cooldown", response_model=Worker)

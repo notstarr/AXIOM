@@ -48,6 +48,10 @@ class Worker(BaseModel):
     updated_at: str
 
 
+class WorkerRename(BaseModel):
+    new_name: str
+
+
 class WorkerCooldown(BaseModel):
     cooldown_until: str | None = None
 
