@@ -1009,6 +1009,21 @@ window.AxiomModules.workerTools = {
       turbo:    { label: '高效档', max_running: 5, per_task_explore_concurrency: 4, per_task_review_concurrency: 4, global_max_active_runs: 15, global_max_active_tasks: 3, per_task_max_active_runs: 10, runner_interval_seconds: 2, execution_retry_limit: 6, infrastructure_retry_limit: 3, retry_base_seconds: 30, retry_max_seconds: 300, worker_failure_cooldown_seconds: 30, reason_min_interval_seconds: 30 },
     },
 
+    async syncDispatchPresetName() {
+      try {
+        const config = this.dispatchSettings || {};
+        let maxes = (this.dispatchSettings?.workers || [])
+          .filter(w => !w.disabled)
+          .map(w => Number(w.max_running))
+          .filter(v => !Number.isNaN(v));
+        if (!maxes.length) {
+          const workers = await this.rawRequest('GET', '/workers');
+          maxes = workers.filter(w => !w.disabled && w.worker_type === 'pi').map(w => Number(w.max_running));
+        }
+        this.workerPresetName = this.detectDispatchPreset(config, maxes.length ? maxes : [-1]);
+      } catch (_) { this.workerPresetName = 'custom'; }
+    },
+
     detectDispatchPreset(config, workersMaxRunning) {
       const runningValues = [...new Set(workersMaxRunning)];
       for (const [name, preset] of Object.entries(this.dispatchPresets)) {
@@ -1047,6 +1062,7 @@ window.AxiomModules.workerTools = {
           });
         }
         this.workerPresetName = name;
+        if (typeof this.loadDispatchSettings === 'function') await this.loadDispatchSettings();
         this.showToast(`${preset.label}已套用：并发 ${preset.max_running}，重试 ${preset.retry_base_seconds}s 起`);
       } catch (e) {
         this.showToast(`档位套用失败：${e.message || e}`);

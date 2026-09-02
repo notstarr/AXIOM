@@ -38,6 +38,31 @@
 
       <div class="sto-panel" style="padding:16px 18px;">
         <div class="sto-cardhead">
+          <h3>调度档位</h3>
+          <p>一键套用整套并发与重试参数（含全部启用 Worker 的最大并发）。当前档位自动识别，自定义组合可点任意档位覆盖。</p>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px;">
+          <button @click="applyDispatchPreset('snail')" :disabled="workerPresetApplying" class="sto-pcard" style="padding:12px;" :class="workerPresetName === 'snail' ? 'active' : ''">
+            <div style="font-size:13px; font-weight:650;">🐌 蜗牛档</div>
+            <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">1 并发 · 90s 退避 · 120s 冷却</div>
+            <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">严格限流 key 保命</div>
+          </button>
+          <button @click="applyDispatchPreset('balanced')" :disabled="workerPresetApplying" class="sto-pcard" style="padding:12px;" :class="workerPresetName === 'balanced' ? 'active' : ''">
+            <div style="font-size:13px; font-weight:650;">⚖️ 均衡档</div>
+            <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">2 并发 · 60s 退避 · 60s 冷却</div>
+            <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">中转 key 推荐</div>
+          </button>
+          <button @click="applyDispatchPreset('turbo')" :disabled="workerPresetApplying" class="sto-pcard" style="padding:12px;" :class="workerPresetName === 'turbo' ? 'active' : ''">
+            <div style="font-size:13px; font-weight:650;">🚀 高效档</div>
+            <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">5 并发 · 30s 退避 · 30s 冷却</div>
+            <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">官方 / 高额度 key</div>
+          </button>
+        </div>
+        <p class="sto-muted" style="font-size:10.5px; margin-top:8px;" x-show="workerPresetName === 'custom'">当前为自定义组合，点击任一档位整体套用。</p>
+      </div>
+
+      <div class="sto-panel" style="padding:16px 18px;">
+        <div class="sto-cardhead">
           <h3>调度并发</h3>
           <p>所有限制会同时在调度计算和数据库 claim 事务中校验。</p>
         </div>

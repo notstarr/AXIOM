@@ -219,6 +219,7 @@ window.AxiomModules.dispatch = {
       try {
         const data = await this.api('GET', '/settings/dispatch');
         this.applyDispatchSettings(data);
+        if (typeof this.syncDispatchPresetName === 'function') this.syncDispatchPresetName();
       } catch (e) {
         this.showToast('加载 Dispatch 配置失败: ' + e.message, 'error');
       }

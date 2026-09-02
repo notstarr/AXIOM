@@ -374,22 +374,6 @@
             <input x-model="workerProxyForm.url" placeholder="http://127.0.0.1:7890" class="sto-input mono" :disabled="workerProxyForm.mode !== 'http'">
           </div>
         </div>
-        <p class="sto-label" style="margin:16px 0 8px;">并发调度档位</p>
-        <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;">
-          <button @click="applyDispatchPreset('snail')" :disabled="workerPresetApplying" class="sto-pcard" style="padding:10px;" :class="workerPresetName === 'snail' ? 'active' : ''">
-            <div style="font-size:12.5px; font-weight:650;">🐌 蜗牛档</div>
-            <div style="font-size:10px; color:var(--sto-fg-3); margin-top:3px;">1 并发 · 严格限流 key</div>
-          </button>
-          <button @click="applyDispatchPreset('balanced')" :disabled="workerPresetApplying" class="sto-pcard" style="padding:10px;" :class="workerPresetName === 'balanced' ? 'active' : ''">
-            <div style="font-size:12.5px; font-weight:650;">⚖️ 均衡档</div>
-            <div style="font-size:10px; color:var(--sto-fg-3); margin-top:3px;">2 并发 · 中转 key 推荐</div>
-          </button>
-          <button @click="applyDispatchPreset('turbo')" :disabled="workerPresetApplying" class="sto-pcard" style="padding:10px;" :class="workerPresetName === 'turbo' ? 'active' : ''">
-            <div style="font-size:12.5px; font-weight:650;">🚀 高效档</div>
-            <div style="font-size:10px; color:var(--sto-fg-3); margin-top:3px;">4-5 并发 · 官方/高额度 key</div>
-          </button>
-        </div>
-        <p class="sto-muted" style="font-size:10.5px; margin-top:8px;" x-show="workerPresetName === 'custom'">当前为自定义组合，点击任一档位整体套用。</p>
         <div class="flex items-center justify-end gap-2" style="margin-top:16px;">
           <button @click="workerProxyModal=false" class="sto-ghost" style="padding:7px 14px;">取消</button>
           <button @click="saveWorkerProxy()" :disabled="workerProxyForm.saving" class="sto-btn" style="padding:7px 14px;" x-text="workerProxyForm.saving ? '保存中…' : '保存'"></button>
