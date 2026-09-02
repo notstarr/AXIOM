@@ -256,16 +256,10 @@ Reason 的 Provider transient 错误直接废弃 Workspace 并释放 Lease，不
 
 Reason Prompt 对规划粒度有硬性文字约束：一个 Todo 只承载一个攻击主题，一个 Todo/Intent 最多包含 2–3 个紧密相关的独立测试分支；获取对象 ID、准备登录态和调用前置接口等同一攻击链步骤不单独算分支。超过三个方向必须拆开，额度不足的方向保留为 Todo 交给后续 ReasonRun。时间预算仍由 Reason 按每个 Intent 的实际复杂度单独决定，Prompt 不再提供可被机械复制的固定 `600/120` 示例。
 
-每轮新增 Intent 由后端强制限额：
+Reason 不按开放 Explore 数或单轮 Intent 数量限流。Workspace 只保留
+基础设施级的草稿大小护栏，Intent 的实际数量由 Reason 自主规划。
 
-```text
-remaining = min(
-  reason_max_new_intents_per_run,
-  reason_target_open_intents - 当前开放 Explore 数
-) - 当前 Workspace proposal 数
-```
-
-开放 Explore 包括 `pending/claimed/running/concluding`。额度耗尽时 CLI 立即返回当前开放数、目标数和剩余额度；commit 在同一事务中再次校验。Todo 数量不与 Intent 额度绑定。
+开放 Explore 包括 `pending/claimed/running/concluding`，该数量仅用于状态展示和调度判断，不作为 Reason 创建 Intent 的配额。CLI 返回当前开放数以及 Workspace 基础设施护栏的剩余容量；Todo 数量不与 Intent 数量绑定。
 
 Reason 最后一条 assistant 文本精确等于 `FINISH` 后，Runner 先读取 Workspace readiness：必须存在 Goal assessment；Goal 达成时必须有真实 Fact 证据且不能继续派发；Goal 未达成且 0 proposal 时，至少要把没有后续工作的可执行 Todo 明确收口，材料性与阻塞判断由 Prompt 合同约束。校验通过才调用 `/commit`。提交后由代码生成 `reason_plan.json` 审计文件；`/submit` 不再存在。
 

@@ -147,6 +147,12 @@ def test_postgresql_baseline_upgrade_has_no_metadata_drift_and_native_types(
             item["name"]: item
             for item in inspector.get_columns("tasks", schema=AXIOM_SCHEMA)
         }
+        reason_run_columns = {
+            item["name"]
+            for item in inspector.get_columns("reason_runs", schema=AXIOM_SCHEMA)
+        }
+        assert "target_open_intents" not in reason_run_columns
+        assert "max_new_intents" not in reason_run_columns
         assert str(task_columns["scope_json"]["type"]).upper() == "JSONB"
         assert task_columns["origin_host"]["nullable"] is True
         assert "TIMESTAMP" in str(task_columns["created_at"]["type"]).upper()

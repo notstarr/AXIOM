@@ -40,8 +40,6 @@ def test_runtime_settings_expose_the_formal_scheduler_defaults(client) -> None:
             "reason_low_watermark",
             "reason_max_wait_seconds",
             "reason_min_interval_seconds",
-            "reason_target_open_intents",
-            "reason_max_new_intents_per_run",
             "reason_queue_limit",
             "plan_queue_limit",
             "explore_execute_min_seconds",
@@ -68,8 +66,6 @@ def test_runtime_settings_expose_the_formal_scheduler_defaults(client) -> None:
             "reason_low_watermark": 1,
             "reason_max_wait_seconds": 180,
             "reason_min_interval_seconds": 60,
-            "reason_target_open_intents": 4,
-            "reason_max_new_intents_per_run": 4,
             "reason_queue_limit": 3,
             "plan_queue_limit": 3,
             "explore_execute_min_seconds": 300,
@@ -80,6 +76,29 @@ def test_runtime_settings_expose_the_formal_scheduler_defaults(client) -> None:
     assert "max_parallel" not in config
     assert "bootstrap_concurrency" not in config
     assert "reason_concurrency" not in config
+    assert "reason_target_open_intents" not in config
+    assert "reason_max_new_intents_per_run" not in config
+
+
+def test_runtime_settings_ignore_retired_reason_intent_quota_fields(client) -> None:
+    current = client.get("/api/v1/settings/runtime").json()
+    response = client.put(
+        "/api/v1/settings/runtime",
+        json={
+            "actor": "legacy-client",
+            "expected_version": current["version"],
+            "config": {
+                **current["config"],
+                "reason_target_open_intents": 1,
+                "reason_max_new_intents_per_run": 1,
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    config = response.json()["config"]
+    assert "reason_target_open_intents" not in config
+    assert "reason_max_new_intents_per_run" not in config
 
 
 def test_runtime_settings_reject_explore_closeout_below_180_seconds(client) -> None:

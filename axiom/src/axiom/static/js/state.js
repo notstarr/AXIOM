@@ -263,8 +263,6 @@ window.AxiomModules.state = {
       reason_low_watermark: 1,
       reason_max_wait_seconds: 180,
       reason_min_interval_seconds: 60,
-      reason_target_open_intents: 4,
-      reason_max_new_intents_per_run: 4,
       reason_queue_limit: 3,
       plan_queue_limit: 3,
       plan_max_consecutive_runs: 3,

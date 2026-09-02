@@ -67,8 +67,6 @@ class RuntimeConfig(BaseModel):
     reason_low_watermark: int = Field(default=1, ge=0, le=20)
     reason_max_wait_seconds: int = Field(default=180, ge=10, le=3_600)
     reason_min_interval_seconds: int = Field(default=60, ge=0, le=3_600)
-    reason_target_open_intents: int = Field(default=4, ge=1, le=8)
-    reason_max_new_intents_per_run: int = Field(default=4, ge=1, le=8)
     # At least one pending slot keeps the queue semantics lossless.  Legacy
     # persisted values of 0 are normalized by the pre-validator below.
     reason_queue_limit: int = Field(default=3, ge=1, le=10)
@@ -158,10 +156,6 @@ class RuntimeConfig(BaseModel):
             raise ValueError("retry_max_seconds cannot be smaller than retry_base_seconds")
         if self.network_proxy_mode != "off" and not self.network_proxy_url.strip():
             raise ValueError("network_proxy_url is required when proxy mode is enabled")
-        if self.reason_max_new_intents_per_run > self.reason_target_open_intents:
-            raise ValueError(
-                "reason_max_new_intents_per_run cannot exceed reason_target_open_intents"
-            )
         if self.explore_execute_min_seconds > self.explore_execute_max_seconds:
             raise ValueError("explore execute minimum cannot exceed maximum")
         if self.explore_conclude_min_seconds > self.explore_conclude_max_seconds:

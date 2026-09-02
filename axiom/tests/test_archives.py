@@ -419,8 +419,6 @@ def _seed_active_reason_run(
                 settings_version=1,
                 execute_timeout_seconds=300,
                 conclude_timeout_seconds=120,
-                target_open_intents=4,
-                max_new_intents=4,
                 explore_execute_min_seconds=60,
                 explore_execute_max_seconds=3600,
                 explore_conclude_min_seconds=180,

@@ -232,8 +232,6 @@ class DispatchService:
                 settings_version=settings_version,
                 execute_timeout_seconds=config.reason_execute_seconds,
                 conclude_timeout_seconds=config.reason_conclude_seconds,
-                target_open_intents=config.reason_target_open_intents,
-                max_new_intents=config.reason_max_new_intents_per_run,
                 explore_execute_min_seconds=config.explore_execute_min_seconds,
                 explore_execute_max_seconds=config.explore_execute_max_seconds,
                 explore_conclude_min_seconds=config.explore_conclude_min_seconds,

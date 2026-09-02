@@ -280,8 +280,6 @@ def test_internal_intent_and_reason_endpoints_accept_only_active_matching_leases
                 settings_version=1,
                 execute_timeout_seconds=600,
                 conclude_timeout_seconds=180,
-                target_open_intents=4,
-                max_new_intents=8,
                 explore_execute_min_seconds=60,
                 explore_execute_max_seconds=3600,
                 explore_conclude_min_seconds=180,

@@ -380,8 +380,6 @@ def test_worker_delete_is_blocked_by_active_reason_run(client, engine) -> None:
                 settings_version=1,
                 execute_timeout_seconds=300,
                 conclude_timeout_seconds=180,
-                target_open_intents=1,
-                max_new_intents=1,
                 explore_execute_min_seconds=60,
                 explore_execute_max_seconds=3600,
                 explore_conclude_min_seconds=180,

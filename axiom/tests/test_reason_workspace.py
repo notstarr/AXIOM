@@ -117,7 +117,6 @@ def todo_review_workspace(client, *, sibling_intent: bool = False) -> tuple[dict
         client,
         reason_batch_size=1,
         reason_min_interval_seconds=0,
-        reason_target_open_intents=4,
     )
     task, reason_claim, completed = active_reason(client)
     workspace = open_reason_workspace(client, task_id=task["id"], claim=reason_claim)

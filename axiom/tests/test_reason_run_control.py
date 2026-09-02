@@ -1075,8 +1075,6 @@ def test_reason_run_can_read_project_credentials_only_while_its_lease_is_active(
 def test_reason_workspace_can_persist_more_proposals_than_dispatcher_quota(client) -> None:
     task, completed = _bootstrap_to_reason(
         client,
-        reason_target_open_intents=4,
-        reason_max_new_intents_per_run=4,
     )
     claim, workspace = _active_workspace(client, task, completed["next_reason_run_id"])
     for number in range(1, 6):
@@ -1133,8 +1131,6 @@ def test_reason_runtime_quota_does_not_bound_proposals_but_explore_budget_is_sna
         client,
         reason_batch_size=1,
         reason_min_interval_seconds=0,
-        reason_target_open_intents=4,
-        reason_max_new_intents_per_run=4,
         explore_execute_max_seconds=600,
     )
     assert len(_commit_plan(client, task, completed, count=3)) == 3
@@ -1154,8 +1150,6 @@ def test_reason_runtime_quota_does_not_bound_proposals_but_explore_budget_is_sna
 
     update_runtime_settings(
         client,
-        reason_target_open_intents=8,
-        reason_max_new_intents_per_run=8,
         explore_execute_max_seconds=3_600,
     )
     for number in (10, 11, 12):

@@ -340,8 +340,6 @@ class ReasonRun(BaseModel):
     settings_version: int
     execute_timeout_seconds: int
     conclude_timeout_seconds: int
-    target_open_intents: int
-    max_new_intents: int
     explore_execute_min_seconds: int
     explore_execute_max_seconds: int
     explore_conclude_min_seconds: int

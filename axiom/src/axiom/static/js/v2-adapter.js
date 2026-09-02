@@ -38,8 +38,6 @@
     'reason_low_watermark',
     'reason_max_wait_seconds',
     'reason_min_interval_seconds',
-    'reason_target_open_intents',
-    'reason_max_new_intents_per_run',
     'reason_queue_limit',
     'plan_queue_limit',
     'plan_max_consecutive_runs',

@@ -38,7 +38,6 @@ def test_runtime_settings_have_safe_defaults_and_versioned_updates(client) -> No
                 **body["config"],
                 "global_max_active_runs": 4,
                 "per_task_max_active_runs": 4,
-                "reason_target_open_intents": 4,
                 "network_proxy_mode": "http",
                 "network_proxy_url": "http://127.0.0.1:7890",
             },

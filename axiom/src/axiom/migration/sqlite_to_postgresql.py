@@ -29,7 +29,7 @@ LEGACY_SQLITE_REVISION = "20260805_0035"
 # this aligned with the latest migration whenever a schema change is added;
 # otherwise a database that has successfully upgraded cannot accept a legacy
 # SQLite import.
-POSTGRESQL_TARGET_REVISION = "20260821_pg0012"
+POSTGRESQL_TARGET_REVISION = "20260902_pg0013"
 DEFAULT_BATCH_SIZE = 1_000
 
 # A 20260805 SQLite export predates the independent Plan runtime.  These
@@ -63,6 +63,13 @@ LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
         "dedup_fingerprint": "",
         "plan_metadata_json": "{}",
     },
+}
+
+# Columns present only in the frozen SQLite export.  They are validated as
+# part of the source shape and then ignored when rows are normalized for the
+# current PostgreSQL schema.
+LEGACY_SQLITE_SOURCE_ONLY_COLUMNS: dict[str, set[str]] = {
+    "reason_runs": {"target_open_intents", "max_new_intents"},
 }
 
 
@@ -370,6 +377,7 @@ def _validate_source_table(
     expected_columns = [
         column.name for column in table.columns if column.name not in target_only_columns
     ]
+    expected_columns.extend(sorted(LEGACY_SQLITE_SOURCE_ONLY_COLUMNS.get(table_name, set())))
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
         (table_name,),
