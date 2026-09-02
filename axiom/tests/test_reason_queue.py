@@ -82,6 +82,57 @@ def test_fact_trickle_below_batch_size_does_not_spawn_follow_up(client) -> None:
     ]
 
 
+def test_unassessed_intent_does_not_bypass_batch_gate(client) -> None:
+    """终态未评估 Intent 不再是 follow-up 触发信号（t_189：每个 explore
+    完成都伴随诞生一个 unassessed，把 fact_batch 闸门永久捅开，
+    rr002323/rr002324 各带 1 条 fact 就成跑）。评估搭每班车：快照自带
+    全量 unassessed，收口门禁要求清零，队列排空后由独立分支收尾。"""
+    from axiom.modules.graph.tables import intents
+
+    task, completed = _bootstrap_to_reason(
+        client, reason_batch_size=4, reason_queue_limit=2
+    )
+    _claim_active(client, task, completed["next_reason_run_id"])
+    queued = _trigger_manual_reason(client, task["id"], actor="Alice")
+    assert queued.status_code == 200, queued.text
+
+    now = utcnow()
+    with client.app.state.container.engine.begin() as conn:
+        conn.execute(
+            insert(facts).values(
+                id="f-trickle-2",
+                task_id=task["id"],
+                description="伴随单条 fact 的评估信号",
+                created_at=now,
+                archived=False,
+            )
+        )
+        conn.execute(
+            insert(intents).values(
+                id="i-unassessed",
+                task_id=task["id"],
+                kind="explore",
+                description="已完成但未评估的探索",
+                priority=50,
+                status="completed",
+                creator="worker-a",
+                dedup_fingerprint="",
+                concluded_at=now,
+                created_at=now,
+                archived=False,
+            )
+        )
+
+    reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    assert reconciled.status_code == 200, reconciled.text
+    assert reconciled.json()["created_reason_run_ids"] == []
+
+    current = client.get(f"/api/v1/tasks/{task['id']}").json()
+    assert [item["id"] for item in current["queued_reason_runs"]] == [
+        queued.json()["id"]
+    ]
+
+
 def test_queue_limit_coalesces_to_tail_and_preserves_trigger_metadata(client) -> None:
     task, completed = _bootstrap_to_reason(client, reason_queue_limit=1)
     _claim_active(client, task, completed["next_reason_run_id"])

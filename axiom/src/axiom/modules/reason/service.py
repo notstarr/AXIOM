@@ -848,27 +848,24 @@ class ReasonService:
         trigger = ""
         if open_runs:
             # A follow-up run must clear the same bar as a fresh trigger.
-            # Non-fact signals (unassessed terminal intents, failures,
-            # actionable todos) are correctness/actionable and queue right
-            # away, but a fact trickle below reason_batch_size must NOT
-            # spawn its own run: it rides along via claim-time
-            # late-binding, or fires standalone once the queue drains
-            # (batch threshold / max_wait backstop).  Without this gate
-            # every single explore completion queued its own follow-up
-            # ReasonRun (t_189: rr002321+rr002322 carried one fact each).
+            # Failed intents and actionable todos are rare, actionable
+            # signals and queue right away.  A fact trickle below
+            # reason_batch_size must NOT spawn its own run: it rides along
+            # via claim-time late-binding, or fires standalone once the
+            # queue drains (batch threshold / max_wait backstop).
+            # Unassessed terminal Intents are deliberately NOT a trigger in
+            # this branch: every explore completion mints exactly one, so
+            # the signal never empties and would nullify reason_batch_size
+            # (t_189 rr002323/rr002324 still carried one fact each through
+            # the unassessed side-channel).  Assessments keep happening:
+            # every new run's snapshot carries the current unassessed list,
+            # the workspace conclude gate requires it emptied, and the
+            # standalone intent_assessment branch mops up once the queue
+            # drains with no open explores left.
             non_fact_signals = bool(
-                unassessed_intent_ids
-                or failed_intent_ids
-                or actionable_todo_ids
-                or todo_review_ids
+                failed_intent_ids or actionable_todo_ids or todo_review_ids
             )
-            if non_fact_signals:
-                trigger = (
-                    "intent_assessment"
-                    if unassessed_intent_ids and not source_fact_ids
-                    else "fact_batch"
-                )
-            elif len(source_fact_ids) >= config.reason_batch_size:
+            if non_fact_signals or len(source_fact_ids) >= config.reason_batch_size:
                 trigger = "fact_batch"
             else:
                 self._set_phase(
