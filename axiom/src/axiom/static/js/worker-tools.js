@@ -887,6 +887,18 @@ window.AxiomModules.workerTools = {
       }
     },
 
+    globalSlotUsage() {
+      // 后端并发槽池是全局唯一的：Σ 启用后端的 max_running。
+      // 每个阶段的「容量」只是绑定后端的份额，实际所有阶段共享这一个池。
+      const enabled = (this.axiomWorkers || []).filter(
+        w => !w.disabled && w.worker_type === 'pi'
+      );
+      return {
+        used: enabled.reduce((sum, w) => sum + (Number(w.running) || 0), 0),
+        total: enabled.reduce((sum, w) => sum + (Number(w.max_running) || 0), 0),
+      };
+    },
+
     async loadAxiomWorkersOverview({ preserveSelection = true } = {}) {
       this.axiomWorkersLoading = true;
       try {

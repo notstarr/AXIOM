@@ -18,6 +18,13 @@
         <button style="flex:1;" :class="workerSide === 'backend' ? 'on' : ''" @click="selectWorkerSideTab('backend')">模型后端</button>
       </div>
       <div x-show="workerSide === 'phase'" style="display:flex; flex-direction:column; gap:6px;">
+        <div class="sto-panel" style="padding:8px 11px;">
+          <div style="display:flex; justify-content:space-between; align-items:baseline;">
+            <span style="font-size:11px; font-weight:650; color:var(--sto-fg);">后端并发槽</span>
+            <span class="sto-num" style="font-size:10.5px; color:var(--sto-fg-3);" title="Σ 启用后端的 max_running。全局只有这一个池：下面各阶段显示的占用都从它里面出，单阶段数字不是独立名额" x-text="`${globalSlotUsage().used}/${globalSlotUsage().total}`"></span>
+          </div>
+          <div class="pprog"><i :style="`width:${globalSlotUsage().total ? Math.round(globalSlotUsage().used / globalSlotUsage().total * 100) : 0}%`"></i></div>
+        </div>
         <template x-for="phase in (workerPhases || [])" :key="`side-phase-${phase.phase}`">
           <button type="button" @click="selectWorkerSidePhase(phase.phase)" class="sto-pcard" :class="[`sto-ph-${phase.phase}`, workerSide === 'phase' && selectedWorkerPhase === phase.phase ? 'active' : '']">
             <div class="flex items-center" style="gap:10px;">
@@ -25,7 +32,7 @@
               <div style="min-width:0; flex:1;">
                 <div class="flex items-center justify-between" style="gap:6px;">
                   <span class="pname" x-text="phase.title"></span>
-                  <span class="sto-num" style="font-size:10px; color:var(--sto-fg-3);" title="该阶段正在执行的 run 数 / 并发槽容量（启用后端 max_running 之和；各阶段共享同一批后端槽池）" x-text="`并发 ${phase.running}/${phase.capacity}`"></span>
+                  <span class="sto-num" style="font-size:10px; color:var(--sto-fg-3);" title="该阶段当前占用的并发槽数。槽池全局共享（见上方指示），阶段上限只是绑定后端份额，非独立名额" x-text="`占用 ${phase.running} 槽`"></span>
                 </div>
                 <div class="pprog"><i :style="`width:${phase.capacity ? Math.round(phase.running / phase.capacity * 100) : 0}%`"></i></div>
               </div>
@@ -67,7 +74,7 @@
               <span class="psq" x-text="axiomPhaseShortLabel(selectedWorkerPhase)"></span>
               <div>
                 <h3 x-text="`${axiomPhaseLabel(selectedWorkerPhase)} Worker`"></h3>
-                <p class="pmeta" style="margin-top:3px;" x-text="`并发槽 ${selectedWorkerPhaseRecord()?.running || 0}/${selectedWorkerPhaseRecord()?.capacity || 0} · ${(selectedWorkerPhaseRecord()?.backends || []).length} 个后端 · 空闲 ${selectedWorkerPhaseRecord()?.available || 0}`" title="容量 = 启用后端 max_running 之和；同一个后端的槽池被所有阶段共享，单阶段满不代表其他阶段满"></p>
+                <p class="pmeta" style="margin-top:3px;" x-text="`本阶段占用 ${selectedWorkerPhaseRecord()?.running || 0} 槽 · 绑定 ${(selectedWorkerPhaseRecord()?.backends || []).length} 个后端（份额上限 ${selectedWorkerPhaseRecord()?.capacity || 0}，与其它阶段共享全局池 ${globalSlotUsage().total}）`" title="份额上限 = 绑定后端 max_running 之和，仅在只有该阶段在跑时可达；实际全局只有 Σ 启用后端 max_running 个槽"></p>
               </div>
             </div>
             <div class="sto-seg" style="background:var(--sto-panel);">
@@ -129,7 +136,7 @@
                   <template x-for="backend in (workerCapabilityDrawerRecord()?.backends || [])" :key="`detail-backend-${backend.name}`">
                     <div class="sto-chip">
                       <span class="sto-status" :class="backend.connection_state === 'ready' ? 'ok' : backend.connection_state === 'cooldown' ? 'warn' : 'off'"><i></i><span x-text="backend.name"></span></span>
-                      <b x-text="`${backend.running}/${backend.max_running}`"></b>
+                      <b title="该后端全部阶段的合计占用 / max_running" x-text="`${backend.running}/${backend.max_running}`"></b>
                     </div>
                   </template>
                   <p x-show="(workerCapabilityDrawerRecord()?.backends || []).length === 0" class="sto-empty" style="padding:18px 0;">该阶段没有模型后端。</p>
