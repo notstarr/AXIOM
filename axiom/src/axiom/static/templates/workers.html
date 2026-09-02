@@ -25,7 +25,7 @@
               <div style="min-width:0; flex:1;">
                 <div class="flex items-center justify-between" style="gap:6px;">
                   <span class="pname" x-text="phase.title"></span>
-                  <span class="sto-num" style="font-size:10px; color:var(--sto-fg-3);" x-text="`${phase.running}/${phase.capacity}`"></span>
+                  <span class="sto-num" style="font-size:10px; color:var(--sto-fg-3);" title="该阶段正在执行的 run 数 / 并发槽容量（启用后端 max_running 之和；各阶段共享同一批后端槽池）" x-text="`并发 ${phase.running}/${phase.capacity}`"></span>
                 </div>
                 <div class="pprog"><i :style="`width:${phase.capacity ? Math.round(phase.running / phase.capacity * 100) : 0}%`"></i></div>
               </div>
@@ -67,7 +67,7 @@
               <span class="psq" x-text="axiomPhaseShortLabel(selectedWorkerPhase)"></span>
               <div>
                 <h3 x-text="`${axiomPhaseLabel(selectedWorkerPhase)} Worker`"></h3>
-                <p class="pmeta" style="margin-top:3px;" x-text="`${selectedWorkerPhaseRecord()?.running || 0}/${selectedWorkerPhaseRecord()?.capacity || 0} 运行中 · ${(selectedWorkerPhaseRecord()?.backends || []).length} 个后端 · ${selectedWorkerPhaseRecord()?.available || 0} 可用槽位`"></p>
+                <p class="pmeta" style="margin-top:3px;" x-text="`并发槽 ${selectedWorkerPhaseRecord()?.running || 0}/${selectedWorkerPhaseRecord()?.capacity || 0} · ${(selectedWorkerPhaseRecord()?.backends || []).length} 个后端 · 空闲 ${selectedWorkerPhaseRecord()?.available || 0}`" title="容量 = 启用后端 max_running 之和；同一个后端的槽池被所有阶段共享，单阶段满不代表其他阶段满"></p>
               </div>
             </div>
             <div class="sto-seg" style="background:var(--sto-panel);">
@@ -95,7 +95,7 @@
                     <span class="sto-status" :class="(axiomWorkerConnectionClass(backend) || '').includes('emerald') ? 'ok' : 'warn'" style="margin-left:auto;"><i></i></span>
                   </div>
                   <p class="sto-muted sto-num" style="margin-top:4px; font-size:10.5px;" x-text="backend.model || '未配置模型'"></p>
-                  <p class="sto-muted sto-num" style="font-size:9.5px;" x-text="`${backend.running}/${backend.max_running} 总运行中 · 本阶段 ${workerPhaseBackendRunning(selectedWorkerPhase, backend.name)} · 优先级 ${backend.priority}`"></p>
+                  <p class="sto-muted sto-num" style="font-size:9.5px;" x-text="`并发 ${backend.running}/${backend.max_running}（全阶段合计）· 本阶段 ${workerPhaseBackendRunning(selectedWorkerPhase, backend.name)} · 优先级 ${backend.priority}`"></p>
                 </button>
               </template>
             </div>
