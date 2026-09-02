@@ -1137,7 +1137,7 @@ global.fetch = async () => {{
     id:'t_179', project_id:'prj_1', title:'Plan only',
     origin:{{host:'target.example', original_input:'target.example'}},
     goal:'全景复盘', status:'running', phase:'plan', scope:{{enabled:false,targets:[],exclude:[]}},
-    worker_pool:[], plan_worker_pool:[], guard_enabled:false,
+    worker_pool:[], guard_enabled:false,
     legacy_readonly:false,
     reason_worker:'legacy-reason-worker', reason_activity_kind:'analyzing',
     reason_activity_summary:'正在准备 Reason Context 与能力快照',

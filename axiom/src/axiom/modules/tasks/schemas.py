@@ -59,10 +59,6 @@ class CreateTask(BaseModel):
     hints: list[str] = Field(default_factory=list)
     scope: TaskScope | None = None
     worker_pool: list[str] = Field(default_factory=list)
-    # Optional independent Plan backend pool.  An empty list deliberately
-    # means "inherit worker_pool" so old clients and old task payloads keep
-    # their scheduling behavior.
-    plan_worker_pool: list[str] = Field(default_factory=list)
     guard_enabled: bool = False
     run_duration_seconds: int | None = Field(
         default=None,
@@ -78,7 +74,7 @@ class CreateTask(BaseModel):
             raise ValueError("must not be empty")
         return value
 
-    @field_validator("hints", "worker_pool", "plan_worker_pool")
+    @field_validator("hints", "worker_pool")
     @classmethod
     def normalize_lists(cls, values: list[str]) -> list[str]:
         return list(dict.fromkeys(value.strip() for value in values if value.strip()))
@@ -179,7 +175,6 @@ class Task(BaseModel):
     phase: Literal["bootstrap", "reason", "explore", "plan", "waiting", "none"]
     scope: TaskScope
     worker_pool: list[str]
-    plan_worker_pool: list[str] = Field(default_factory=list)
     guard_enabled: bool
     legacy_readonly: bool
     archived: bool = False
@@ -242,7 +237,6 @@ class UpdateTask(BaseModel):
     goal: str | None = None
     scope: TaskScope | None = None
     worker_pool: list[str] | None = None
-    plan_worker_pool: list[str] | None = None
     guard_enabled: bool | None = None
 
     @field_validator("title", "goal")
@@ -255,7 +249,7 @@ class UpdateTask(BaseModel):
             raise ValueError("must not be empty")
         return value
 
-    @field_validator("worker_pool", "plan_worker_pool")
+    @field_validator("worker_pool")
     @classmethod
     def normalize_workers(cls, values: list[str] | None) -> list[str] | None:
         return (

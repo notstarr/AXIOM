@@ -82,39 +82,38 @@ def _claim_plan(client, task_id: str, plan_run_id: str) -> tuple[dict, dict]:
     return claimed, execution.json()
 
 
-def test_plan_worker_pool_isolated_from_reason_pool_with_legacy_fallback(client) -> None:
+def test_plan_run_pool_follows_task_pool(client) -> None:
+    """Plan is equivalent to the other phases: it claims from the ordinary
+    task worker pool (intersected with plan-capable workers at dispatch)."""
     project = client.post("/api/v1/projects", json={"title": "Plan pool"}).json()
     task_response = client.post(
         "/api/v1/tasks",
         json={
             "project_id": project["id"],
-            "title": "Plan pool isolation",
+            "title": "Plan pool follows task",
             "origin": "a.example.com",
-            "goal": "验证独立 Plan 后端池",
+            "goal": "验证 Plan 跟随任务池",
             "worker_pool": ["reason-worker"],
-            "plan_worker_pool": ["plan-worker"],
         },
     )
     assert task_response.status_code == 201, task_response.text
     task = task_response.json()
     assert task["worker_pool"] == ["reason-worker"]
-    assert task["plan_worker_pool"] == ["plan-worker"]
 
     triggered = client.post(
         f"/api/v1/tasks/{task['id']}/plan-runs/trigger",
         json={"actor": "test", "trigger": "manual"},
     )
     assert triggered.status_code == 200, triggered.text
-    assert triggered.json()["worker_pool"] == ["plan-worker"]
+    assert triggered.json()["worker_pool"] == ["reason-worker"]
 
-    # Clearing the optional Plan pool restores compatibility inheritance: a
-    # subsequent Plan snapshot follows the current ordinary task pool.
+    # A task pool change also refreshes pending PlanRuns, matching the
+    # pending intents / reason runs behavior.
     updated = client.patch(
         f"/api/v1/tasks/{task['id']}",
-        json={"plan_worker_pool": [], "worker_pool": ["reason-worker-2"]},
+        json={"worker_pool": ["reason-worker-2"]},
     )
     assert updated.status_code == 200, updated.text
-    assert updated.json()["plan_worker_pool"] == []
     assert updated.json()["worker_pool"] == ["reason-worker-2"]
 
     inherited = client.post(

@@ -53,7 +53,6 @@ class TaskRepository:
         goal: str,
         scope: TaskScope,
         worker_pool: list[str],
-        plan_worker_pool: list[str] | None = None,
         guard_enabled: bool,
         run_duration_seconds: int | None,
         run_started_at: str,
@@ -81,7 +80,6 @@ class TaskRepository:
             "phase": "bootstrap",
             "scope_json": scope.model_dump_json(),
             "worker_pool_json": json.dumps(worker_pool, ensure_ascii=False),
-            "plan_worker_pool_json": json.dumps(plan_worker_pool or [], ensure_ascii=False),
             "guard_enabled": guard_enabled,
             "legacy_readonly": False,
             "archived": False,
@@ -241,12 +239,6 @@ class TaskRepository:
         if command.worker_pool is not None:
             values.pop("worker_pool", None)
             values["worker_pool_json"] = json.dumps(command.worker_pool, ensure_ascii=False)
-        if command.plan_worker_pool is not None:
-            values.pop("plan_worker_pool", None)
-            values["plan_worker_pool_json"] = json.dumps(
-                command.plan_worker_pool,
-                ensure_ascii=False,
-            )
         if values:
             values["updated_at"] = now
             result = conn.execute(update(tasks).where(tasks.c.id == task_id).values(**values))
@@ -325,7 +317,6 @@ class TaskRepository:
             phase=row["phase"],
             scope=TaskScope.model_validate_json(row["scope_json"]),
             worker_pool=_json_list(row["worker_pool_json"]),
-            plan_worker_pool=_json_list(row.get("plan_worker_pool_json")),
             guard_enabled=bool(row["guard_enabled"]),
             legacy_readonly=bool(row["legacy_readonly"]),
             archived=bool(row.get("archived", False)),

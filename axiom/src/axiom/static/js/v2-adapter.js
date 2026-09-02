@@ -218,7 +218,6 @@
       bootstrap_status: task.phase === 'bootstrap' ? 'running' : (task.status === 'completed' ? 'completed' : ''),
       guard_enabled: !!task.guard_enabled,
       worker_pool: task.worker_pool || [],
-      plan_worker_pool: task.plan_worker_pool || [],
       task_scope: task.scope || { enabled: false, targets: [], exclude: [], notes: '' },
       legacy_readonly: !!task.legacy_readonly,
       archived: !!task.archived,
@@ -954,7 +953,6 @@
         hints: (body.hints || []).map(item => item.content || item).filter(Boolean),
         guard_enabled: !!body.guard_enabled,
         worker_pool: body.worker_pool || [],
-        plan_worker_pool: body.plan_worker_pool || [],
         scope: body.task_scope || null,
         run_duration_seconds: body.run_duration_seconds ?? null,
       });
@@ -987,7 +985,6 @@
     if ((match = path.match(/^\/projects\/([^/]+)\/worker-pool$/)) && method === 'PUT') {
       const result = await request('PATCH', `/tasks/${match[1]}`, {
         worker_pool: body.worker_pool || [],
-        plan_worker_pool: body.plan_worker_pool || [],
       });
       return { project: mapTask(result), updated_unclaimed_intents: 0 };
     }

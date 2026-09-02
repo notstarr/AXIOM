@@ -102,7 +102,6 @@ class TaskService:
                 goal=command.goal,
                 scope=scope,
                 worker_pool=command.worker_pool,
-                plan_worker_pool=command.plan_worker_pool,
                 guard_enabled=command.guard_enabled,
                 run_duration_seconds=command.run_duration_seconds,
                 run_started_at=now,
@@ -206,28 +205,14 @@ class TaskService:
                         updated_at=now,
                     )
                 )
-            if command.worker_pool is not None or command.plan_worker_pool is not None:
-                # A blank Plan pool is the compatibility value meaning
-                # "inherit the task pool".  Pending PlanRuns snapshot their
-                # pool at creation time, so update only future claims.
-                requested_plan_pool = (
-                    command.plan_worker_pool
-                    if command.plan_worker_pool is not None
-                    else task.plan_worker_pool
-                )
-                effective_plan_pool = requested_plan_pool or (
-                    command.worker_pool
-                    if command.worker_pool is not None
-                    else task.worker_pool
-                )
+            if command.worker_pool is not None:
+                # Plan is equivalent to the other phases: pending PlanRuns
+                # follow the ordinary task pool.
                 conn.execute(
                     update(plan_runs)
                     .where(plan_runs.c.task_id == task_id, plan_runs.c.status == "pending")
                     .values(
-                        worker_pool_json=json.dumps(
-                            effective_plan_pool,
-                            ensure_ascii=False,
-                        ),
+                        worker_pool_json=json.dumps(command.worker_pool, ensure_ascii=False),
                         updated_at=now,
                     )
                 )

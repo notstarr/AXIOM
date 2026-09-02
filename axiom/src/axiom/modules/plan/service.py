@@ -229,19 +229,6 @@ class PlanService:
         )
 
     @staticmethod
-    def _worker_pool_for_task(task) -> list[str]:
-        """Return the Plan-specific pool, with legacy task-pool fallback.
-
-        ``plan_worker_pool`` was added after tasks already existed.  Keeping
-        the fallback here (at every Plan snapshot boundary) means old rows,
-        old API clients, and an explicit empty value all retain the previous
-        shared-pool behavior while non-empty values isolate Plan claims.
-        """
-
-        plan_pool = getattr(task, "plan_worker_pool", None) or []
-        return list(plan_pool or getattr(task, "worker_pool", None) or [])
-
-    @staticmethod
     def _current_snapshot(conn, task_id: str) -> dict[str, list[str]]:
         """Return the durable planning signals visible to a new Plan pass.
 
@@ -744,7 +731,7 @@ class PlanService:
                 trigger=trigger,
                 trigger_payload={**payload, "source_fact_ids": source_ids},
                 input_fingerprint=fingerprint,
-                worker_pool=self._worker_pool_for_task(task),
+                worker_pool=task.worker_pool,
                 settings_version=int(settings_version),
                 execute_timeout_seconds=getattr(config, "plan_execute_seconds", 600),
                 conclude_timeout_seconds=getattr(config, "plan_conclude_seconds", 300),
@@ -798,7 +785,7 @@ class PlanService:
             trigger=trigger,
             trigger_payload={**payload, "source_fact_ids": source_ids},
             input_fingerprint=self._snapshot_fingerprint(snapshot),
-            worker_pool=self._worker_pool_for_task(task),
+            worker_pool=task.worker_pool,
             settings_version=int(settings_version),
             execute_timeout_seconds=getattr(config, "plan_execute_seconds", 600),
             conclude_timeout_seconds=getattr(config, "plan_conclude_seconds", 300),
