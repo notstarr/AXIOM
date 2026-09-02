@@ -49,6 +49,39 @@ def test_active_reason_is_separate_from_fifo_pending_runs(client) -> None:
     )
 
 
+def test_fact_trickle_below_batch_size_does_not_spawn_follow_up(client) -> None:
+    """已有在跑/排队 ReasonRun 时，不足 reason_batch_size 的 fact 涓流
+    不得再排新的 follow-up run（t_189 曾把 1+1 条 fact 拆成两个
+    fact_batch run）。输入不丢：领取时 late-bind 搭车，或队列清空后
+    由独立触发（批量阈值 / max_wait 兜底）消费。"""
+    task, completed = _bootstrap_to_reason(
+        client, reason_batch_size=4, reason_queue_limit=2
+    )
+    _claim_active(client, task, completed["next_reason_run_id"])
+    queued = _trigger_manual_reason(client, task["id"], actor="Alice")
+    assert queued.status_code == 200, queued.text
+
+    with client.app.state.container.engine.begin() as conn:
+        conn.execute(
+            insert(facts).values(
+                id="f-trickle",
+                task_id=task["id"],
+                description="不足批量的单条新 Fact",
+                created_at=utcnow(),
+                archived=False,
+            )
+        )
+
+    reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    assert reconciled.status_code == 200, reconciled.text
+    assert reconciled.json()["created_reason_run_ids"] == []
+
+    current = client.get(f"/api/v1/tasks/{task['id']}").json()
+    assert [item["id"] for item in current["queued_reason_runs"]] == [
+        queued.json()["id"]
+    ]
+
+
 def test_queue_limit_coalesces_to_tail_and_preserves_trigger_metadata(client) -> None:
     task, completed = _bootstrap_to_reason(client, reason_queue_limit=1)
     _claim_active(client, task, completed["next_reason_run_id"])

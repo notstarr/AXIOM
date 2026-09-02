@@ -847,12 +847,39 @@ class ReasonService:
 
         trigger = ""
         if open_runs:
-            if unassessed_intent_ids and not open_explore_ids:
-                trigger = "intent_assessment"
-            elif source_fact_ids:
+            # A follow-up run must clear the same bar as a fresh trigger.
+            # Non-fact signals (unassessed terminal intents, failures,
+            # actionable todos) are correctness/actionable and queue right
+            # away, but a fact trickle below reason_batch_size must NOT
+            # spawn its own run: it rides along via claim-time
+            # late-binding, or fires standalone once the queue drains
+            # (batch threshold / max_wait backstop).  Without this gate
+            # every single explore completion queued its own follow-up
+            # ReasonRun (t_189: rr002321+rr002322 carried one fact each).
+            non_fact_signals = bool(
+                unassessed_intent_ids
+                or failed_intent_ids
+                or actionable_todo_ids
+                or todo_review_ids
+            )
+            if non_fact_signals:
+                trigger = (
+                    "intent_assessment"
+                    if unassessed_intent_ids and not source_fact_ids
+                    else "fact_batch"
+                )
+            elif len(source_fact_ids) >= config.reason_batch_size:
                 trigger = "fact_batch"
             else:
-                trigger = "low_watermark"
+                self._set_phase(
+                    conn,
+                    task_id,
+                    "plan"
+                    if independent_plan_present
+                    else ("explore" if open_explore_ids else "waiting"),
+                    now,
+                )
+                return None
         elif latest is None:
             trigger = "bootstrap"
         else:
@@ -987,8 +1014,6 @@ class ReasonService:
             settings_version=settings_version,
             execute_timeout_seconds=config.reason_execute_seconds,
             conclude_timeout_seconds=config.reason_conclude_seconds,
-            target_open_intents=config.reason_target_open_intents,
-            max_new_intents=config.reason_max_new_intents_per_run,
             explore_execute_min_seconds=config.explore_execute_min_seconds,
             explore_execute_max_seconds=config.explore_execute_max_seconds,
             explore_conclude_min_seconds=config.explore_conclude_min_seconds,
