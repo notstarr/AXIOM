@@ -981,14 +981,13 @@ window.AxiomModules.workerTools = {
       }
     },
 
-    async settingsRuntimeRequest(method, body) {
-      // /settings/runtime 不在 v2 legacyApi 映射表里，直接走原始 fetch（cookie 鉴权）。
+    async rawRequest(method, path, body) {
       const init = { method, headers: {} };
       if (body !== undefined) {
         init.headers['Content-Type'] = 'application/json';
         init.body = JSON.stringify(body);
       }
-      const response = await fetch('/api/v1/settings/runtime', init);
+      const response = await fetch(`/api/v1${path}`, init);
       const text = await response.text();
       let data = null;
       try { data = text ? JSON.parse(text) : null; } catch (_) {}
@@ -999,6 +998,63 @@ window.AxiomModules.workerTools = {
       return data;
     },
 
+    async settingsRuntimeRequest(method, body) {
+      // /settings/runtime 不在 v2 legacyApi 映射表里，直接走原始 fetch（cookie 鉴权）。
+      return this.rawRequest(method, '/settings/runtime', body);
+    },
+
+    dispatchPresets: {
+      snail:    { label: '蜗牛档', max_running: 1, per_task_explore_concurrency: 1, per_task_review_concurrency: 1, global_max_active_runs: 3,  global_max_active_tasks: 1, per_task_max_active_runs: 2,  runner_interval_seconds: 5, execution_retry_limit: 4, infrastructure_retry_limit: 2, retry_base_seconds: 90, retry_max_seconds: 900, worker_failure_cooldown_seconds: 120, reason_min_interval_seconds: 180 },
+      balanced: { label: '均衡档', max_running: 2, per_task_explore_concurrency: 2, per_task_review_concurrency: 2, global_max_active_runs: 8,  global_max_active_tasks: 2, per_task_max_active_runs: 4,  runner_interval_seconds: 3, execution_retry_limit: 6, infrastructure_retry_limit: 3, retry_base_seconds: 60, retry_max_seconds: 600, worker_failure_cooldown_seconds: 60, reason_min_interval_seconds: 60 },
+      turbo:    { label: '高效档', max_running: 5, per_task_explore_concurrency: 4, per_task_review_concurrency: 4, global_max_active_runs: 15, global_max_active_tasks: 3, per_task_max_active_runs: 10, runner_interval_seconds: 2, execution_retry_limit: 6, infrastructure_retry_limit: 3, retry_base_seconds: 30, retry_max_seconds: 300, worker_failure_cooldown_seconds: 30, reason_min_interval_seconds: 30 },
+    },
+
+    detectDispatchPreset(config, workersMaxRunning) {
+      const runningValues = [...new Set(workersMaxRunning)];
+      for (const [name, preset] of Object.entries(this.dispatchPresets)) {
+        const runtimeKeys = ['per_task_explore_concurrency', 'per_task_review_concurrency', 'global_max_active_runs', 'global_max_active_tasks', 'per_task_max_active_runs', 'runner_interval_seconds', 'execution_retry_limit', 'infrastructure_retry_limit', 'retry_base_seconds', 'retry_max_seconds', 'worker_failure_cooldown_seconds', 'reason_min_interval_seconds'];
+        const runtimeMatch = runtimeKeys.every(key => Number(config[key]) === preset[key]);
+        const workerMatch = runningValues.length === 1 && runningValues[0] === preset.max_running;
+        if (runtimeMatch && workerMatch) return name;
+      }
+      return 'custom';
+    },
+
+    async applyDispatchPreset(name) {
+      const preset = this.dispatchPresets[name];
+      if (!preset || this.workerPresetApplying) return;
+      this.workerPresetApplying = true;
+      try {
+        const settings = await this.settingsRuntimeRequest('GET');
+        const config = settings.config || {};
+        for (const key of ['per_task_explore_concurrency', 'per_task_review_concurrency', 'global_max_active_runs', 'global_max_active_tasks', 'per_task_max_active_runs', 'runner_interval_seconds', 'execution_retry_limit', 'infrastructure_retry_limit', 'retry_base_seconds', 'retry_max_seconds', 'worker_failure_cooldown_seconds', 'reason_min_interval_seconds']) {
+          config[key] = preset[key];
+        }
+        await this.settingsRuntimeRequest('PUT', {
+          config, expected_version: settings.version, actor: `ui.preset.${name}`,
+        });
+        const workers = await this.rawRequest('GET', '/workers');
+        for (const w of workers.filter(item => !item.disabled && item.worker_type === 'pi')) {
+          if (Number(w.max_running) === preset.max_running) continue;
+          // upsert 是整体替换，必须带全量字段，config 传原值防止清空模型配置
+          await this.rawRequest('PUT', `/workers/${encodeURIComponent(w.name)}`, {
+            worker_type: w.worker_type,
+            capabilities: w.capabilities,
+            max_running: preset.max_running,
+            priority: w.priority,
+            disabled: Boolean(w.disabled),
+            config: w.config || {},
+          });
+        }
+        this.workerPresetName = name;
+        this.showToast(`${preset.label}已套用：并发 ${preset.max_running}，重试 ${preset.retry_base_seconds}s 起`);
+      } catch (e) {
+        this.showToast(`档位套用失败：${e.message || e}`);
+      } finally {
+        this.workerPresetApplying = false;
+      }
+    },
+
     async openWorkerProxyModal() {
       this.workerProxyModal = true;
       try {
@@ -1007,6 +1063,11 @@ window.AxiomModules.workerTools = {
         this.workerProxyForm.mode = config.network_proxy_mode === 'http' ? 'http' : 'off';
         this.workerProxyForm.url = config.network_proxy_url || 'http://127.0.0.1:7890';
         this.workerProxyForm.version = data.version ?? null;
+        try {
+          const workers = await this.rawRequest('GET', '/workers');
+          const enabledMax = workers.filter(w => !w.disabled && w.worker_type === 'pi').map(w => Number(w.max_running));
+          this.workerPresetName = this.detectDispatchPreset(config, enabledMax);
+        } catch (_) { this.workerPresetName = 'custom'; }
       } catch (e) {
         this.showToast(`读取代理配置失败：${e.message || e}`);
       }

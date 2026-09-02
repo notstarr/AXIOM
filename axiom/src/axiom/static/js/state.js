@@ -414,6 +414,8 @@ window.AxiomModules.state = {
     workerSide: 'phase',
     workerProxyModal: false,
     workerProxyForm: { mode: 'off', url: 'http://127.0.0.1:7890', version: null, saving: false },
+    workerPresetApplying: false,
+    workerPresetName: 'custom',
     workerPhaseDetailTab: 'capability',
     workerPhaseBackendDraft: {},
     workerPhaseBackendsSaving: {},

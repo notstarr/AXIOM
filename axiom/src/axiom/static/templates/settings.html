@@ -82,15 +82,13 @@
       <div class="sto-panel" style="padding:16px 18px;">
         <div class="sto-cardhead">
           <h3>Reason 触发与派发</h3>
-          <p>Todo 不限量；Explore Intent 同时受开放目标数和单轮新增上限约束。</p>
+          <p>Todo 不限量；Explore Intent 派发不设上限，由全局并发槽位与 Worker 并发兜底。</p>
         </div>
         <div class="sto-grid2">
           <div class="sto-field"><label>未规划 Fact 批量数</label><input type="number" min="1" max="20" x-model.number="dispatchSettings.reason_batch_size" class="sto-input sto-num"></div>
           <div class="sto-field"><label>开放 Explore 低水位</label><input type="number" min="0" max="20" x-model.number="dispatchSettings.reason_low_watermark" class="sto-input sto-num"></div>
           <div class="sto-field"><label>Fact 最大等待（秒）</label><input type="number" min="10" max="3600" x-model.number="dispatchSettings.reason_max_wait_seconds" class="sto-input sto-num"></div>
           <div class="sto-field"><label>Reason 最短间隔（秒）</label><input type="number" min="0" max="3600" x-model.number="dispatchSettings.reason_min_interval_seconds" class="sto-input sto-num"></div>
-          <div class="sto-field"><label>目标开放 Explore 数</label><input type="number" min="1" max="8" x-model.number="dispatchSettings.reason_target_open_intents" class="sto-input sto-num"></div>
-          <div class="sto-field"><label>单轮最多新增 Intent</label><input type="number" min="1" max="8" x-model.number="dispatchSettings.reason_max_new_intents_per_run" class="sto-input sto-num"></div>
           <div class="sto-field"><label>Reason 最大排队数</label><input type="number" min="1" max="10" x-model.number="dispatchSettings.reason_queue_limit" class="sto-input sto-num"></div>
           <div class="sto-field"><label>Plan 最大排队数</label><input type="number" min="1" max="10" x-model.number="dispatchSettings.plan_queue_limit" class="sto-input sto-num"></div>
           <div class="sto-field span2"><label>Plan 连续复盘上限（无新漏洞自动收敛阈值）</label><input type="number" min="1" max="20" x-model.number="dispatchSettings.plan_max_consecutive_runs" class="sto-input sto-num" placeholder="默认 3 次"></div>
