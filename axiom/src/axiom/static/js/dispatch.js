@@ -422,6 +422,29 @@ window.AxiomModules.dispatch = {
         return;
       }
       worker.show_model_dropdown = !worker.show_model_dropdown;
+      if (worker.show_model_dropdown) {
+        // 依据模型输入行在可视卡片内的剩余空间决定上/下弹与限高，避免被卡片边缘裁剪。
+        this.$nextTick(() => {
+          const input = document.querySelector('input[placeholder="输入或从下拉选择模型 ID"]');
+          const panel = input ? input.closest('.sto-field')?.querySelector('div[x-show*="show_model_dropdown"]') : null;
+          if (!input || !panel) return;
+          const card = input.closest('.sto-panel');
+          const inputRect = input.getBoundingClientRect();
+          const cardRect = (card || document.body).getBoundingClientRect();
+          const spaceBelow = cardRect.bottom - inputRect.bottom - 14;
+          const spaceAbove = inputRect.top - cardRect.top - 14;
+          const desired = Math.min(280, panel.scrollHeight + 14);
+          if (spaceBelow >= desired || spaceBelow >= spaceAbove) {
+            panel.style.top = 'calc(100% + 6px)';
+            panel.style.bottom = 'auto';
+            panel.style.maxHeight = `${Math.max(160, Math.min(280, spaceBelow))}px`;
+          } else {
+            panel.style.top = 'auto';
+            panel.style.bottom = 'calc(100% + 6px)';
+            panel.style.maxHeight = `${Math.max(160, Math.min(280, spaceAbove))}px`;
+          }
+        });
+      }
     },
 
     async openActionReplay(projectId, title = '', fromRoute = false) {

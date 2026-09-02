@@ -279,8 +279,8 @@
 
       <!-- 后端编辑 -->
       <div x-show="workerSide === 'backend' && axiomWorkerEditor">
-        <div class="sto-panel" style="overflow:hidden;">
-          <div style="padding:16px 20px; border-bottom:1px solid var(--sto-line); background:var(--sto-inset); display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px;">
+        <div class="sto-panel" style="overflow:visible;">
+          <div style="padding:16px 20px; border-bottom:1px solid var(--sto-line); background:var(--sto-inset); display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; border-radius:14px 14px 0 0;">
             <div style="min-width:0;">
               <div class="flex items-center" style="gap:9px;">
                 <h3 style="font-size:15px; font-weight:650; color:var(--sto-fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="axiomWorkerEditor?.name || (axiomWorkerEditor?.persisted_name ? '编辑模型后端' : '新增模型后端')"></h3>
@@ -318,7 +318,7 @@
                   class="sto-panel" style="position:absolute; left:0; right:0; top:calc(100% + 6px); z-index:40; max-height:280px; overflow-y:auto; padding:7px; box-shadow:0 12px 32px -8px rgba(15,23,42,0.25);">
                   <input x-model="workerModelFilter" placeholder="搜索模型…" class="sto-input" style="margin-bottom:6px; padding:6px 10px; font-size:11.5px; position:sticky; top:0;">
                   <template x-for="m in filteredWorkerModels(axiomWorkerEditor)" :key="`model-opt-${m.id}`">
-                    <button type="button" @click="chooseWorkerModel(axiomWorkerEditor, m.id)" class="sto-item" style="border:0; border-radius:8px; justify-content:space-between;" :style="axiomWorkerEditor.pi_model === m.id ? 'background:var(--sto-accent-soft);' : ''">
+                    <button type="button" @click="chooseWorkerModel(axiomWorkerEditor, m.id)" class="sto-item" style="border:0; border-radius:8px; justify-content:space-between; display:flex; width:100%;" :style="axiomWorkerEditor.pi_model === m.id ? 'background:var(--sto-accent-soft);' : ''">
                       <span class="sto-num" style="font-size:11.5px; color:var(--sto-fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="m.id"></span>
                       <span class="sto-muted sto-num" style="font-size:10px; flex-shrink:0;" x-show="m.context_window" x-text="`${Math.round(m.context_window / 1000)}k`"></span>
                     </button>
