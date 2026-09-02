@@ -42,26 +42,27 @@
           <p>一键套用整套调度与重试参数（Worker 最大并发不归档位管，在 Worker 页按 key 额度自行控制）。当前档位自动识别，自定义组合可点任意档位覆盖。</p>
         </div>
         <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px;">
-          <button @click="applyDispatchPreset('snail')" :disabled="workerPresetApplying" class="sto-pcard" style="padding:12px;" :class="workerPresetName === 'snail' ? 'active' : ''">
+          <button @click="selectDispatchPreset('snail')" class="sto-pcard" style="padding:12px; position:relative;" :class="workerPresetName === 'snail' ? 'active' : ''"><span x-show="workerPresetPending === 'snail'" style="position:absolute; top:8px; right:8px; font-size:9px; font-weight:650; padding:2px 7px; border-radius:999px; background:var(--sto-warn); color:#fff;">待保存</span>
             <div style="font-size:13px; font-weight:650;">🐌 蜗牛档</div>
             <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">Reason ≥5min · 90s 退避 · 120s 冷却</div>
             <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">严格限流 key 保命</div>
           </button>
-          <button @click="applyDispatchPreset('balanced')" :disabled="workerPresetApplying" class="sto-pcard" style="padding:12px;" :class="workerPresetName === 'balanced' ? 'active' : ''">
+          <button @click="selectDispatchPreset('balanced')" class="sto-pcard" style="padding:12px; position:relative;" :class="workerPresetName === 'balanced' ? 'active' : ''"><span x-show="workerPresetPending === 'balanced'" style="position:absolute; top:8px; right:8px; font-size:9px; font-weight:650; padding:2px 7px; border-radius:999px; background:var(--sto-warn); color:#fff;">待保存</span>
             <div style="font-size:13px; font-weight:650;">⚖️ 均衡档</div>
             <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">Reason ≥150s · 60s 退避 · 60s 冷却</div>
             <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">中转 key 推荐</div>
           </button>
-          <button @click="applyDispatchPreset('turbo')" :disabled="workerPresetApplying" class="sto-pcard" style="padding:12px;" :class="workerPresetName === 'turbo' ? 'active' : ''">
+          <button @click="selectDispatchPreset('turbo')" class="sto-pcard" style="padding:12px; position:relative;" :class="workerPresetName === 'turbo' ? 'active' : ''"><span x-show="workerPresetPending === 'turbo'" style="position:absolute; top:8px; right:8px; font-size:9px; font-weight:650; padding:2px 7px; border-radius:999px; background:var(--sto-warn); color:#fff;">待保存</span>
             <div style="font-size:13px; font-weight:650;">🚀 高效档</div>
             <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">Reason ≥90s · 30s 退避 · 30s 冷却</div>
             <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">官方 / 高额度 key</div>
           </button>
         </div>
-        <p class="sto-muted" style="font-size:10.5px; margin-top:8px;" x-show="workerPresetName === 'custom'">当前为自定义组合，点击任一档位整体套用。</p>
+        <p class="sto-muted" style="font-size:10.5px; margin-top:8px;" x-show="workerPresetPending">已选择档位但尚未保存，点右上角「保存系统设置」后生效；手动改动下方参数会作废该选择。</p>
+        <p class="sto-muted" style="font-size:10.5px; margin-top:8px;" x-show="!workerPresetPending && workerPresetName === 'custom'">当前为自定义组合，点击任一档位整体套用。</p>
       </div>
 
-      <div class="sto-panel" style="padding:16px 18px;" @input="syncDispatchPresetName()">
+      <div class="sto-panel" style="padding:16px 18px;" @input="dispatchSettingsEdited()">
         <div class="sto-cardhead">
           <h3>调度并发</h3>
           <p>所有限制会同时在调度计算和数据库 claim 事务中校验。</p>
@@ -120,7 +121,7 @@
         </div>
       </div>
 
-      <div class="sto-panel" style="padding:16px 18px;" @input="syncDispatchPresetName()">
+      <div class="sto-panel" style="padding:16px 18px;" @input="dispatchSettingsEdited()">
         <div class="sto-cardhead">
           <h3>高级可靠性</h3>
           <p>租约至少要容纳三个心跳；重试退避上限不能小于基准值。</p>

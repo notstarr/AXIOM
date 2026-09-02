@@ -775,6 +775,7 @@ window.AxiomModules.dispatch = {
       try {
         const updated = await this.api('PUT', '/settings/dispatch', this.dispatchPayload());
         this.applyDispatchSettings(updated);
+        this.workerPresetPending = '';
         this.showToast('系统配置已保存');
         this.waitForRuntimeSettingsApplied(updated.config_version);
       } catch(e) {

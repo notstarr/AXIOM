@@ -1040,29 +1040,20 @@ window.AxiomModules.workerTools = {
       return 'custom';
     },
 
-    async applyDispatchPreset(name) {
+    selectDispatchPreset(name) {
+      // 点档位只填表单（草稿态），不落库；点「保存系统设置」才应用。
       const preset = this.dispatchPresets[name];
-      if (!preset || this.workerPresetApplying) return;
-      this.workerPresetApplying = true;
-      try {
-        const settings = await this.settingsRuntimeRequest('GET');
-        const config = settings.config || {};
-        for (const key of ['per_task_explore_concurrency', 'per_task_review_concurrency', 'global_max_active_runs', 'global_max_active_tasks', 'per_task_max_active_runs', 'runner_interval_seconds', 'execution_retry_limit', 'infrastructure_retry_limit', 'retry_base_seconds', 'retry_max_seconds', 'worker_failure_cooldown_seconds', 'reason_min_interval_seconds', 'reason_batch_size', 'reason_max_wait_seconds', 'reason_queue_limit', 'reason_low_watermark']) {
-          config[key] = preset[key];
-        }
-        await this.settingsRuntimeRequest('PUT', {
-          config, expected_version: settings.version, actor: `ui.preset.${name}`,
-        });
-        // Worker 的 max_running 不归档位管：后端并发由 Worker 页按
-        // key 额度/限流人工控制，套用档位不得覆盖。
-        this.workerPresetName = name;
-        if (typeof this.loadDispatchSettings === 'function') await this.loadDispatchSettings();
-        this.showToast(`${preset.label}已套用：Reason ≥${preset.reason_min_interval_seconds}s，重试 ${preset.retry_base_seconds}s 起`);
-      } catch (e) {
-        this.showToast(`档位套用失败：${e.message || e}`);
-      } finally {
-        this.workerPresetApplying = false;
-      }
+      if (!preset) return;
+      const keys = ['per_task_explore_concurrency', 'per_task_review_concurrency', 'global_max_active_runs', 'global_max_active_tasks', 'per_task_max_active_runs', 'runner_interval_seconds', 'execution_retry_limit', 'infrastructure_retry_limit', 'retry_base_seconds', 'retry_max_seconds', 'worker_failure_cooldown_seconds', 'reason_min_interval_seconds', 'reason_batch_size', 'reason_max_wait_seconds', 'reason_queue_limit', 'reason_low_watermark'];
+      for (const key of keys) this.dispatchSettings[key] = preset[key];
+      this.workerPresetPending = name;
+      if (typeof this.syncDispatchPresetName === 'function') this.syncDispatchPresetName();
+    },
+
+    dispatchSettingsEdited() {
+      // 手动改任何受档位覆盖的字段 → 待保存档位作废，回到自定义识别
+      this.workerPresetPending = '';
+      if (typeof this.syncDispatchPresetName === 'function') this.syncDispatchPresetName();
     },
 
     async openWorkerProxyModal() {
