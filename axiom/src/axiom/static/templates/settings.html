@@ -44,17 +44,17 @@
         <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px;">
           <button @click="applyDispatchPreset('snail')" :disabled="workerPresetApplying" class="sto-pcard" style="padding:12px;" :class="workerPresetName === 'snail' ? 'active' : ''">
             <div style="font-size:13px; font-weight:650;">🐌 蜗牛档</div>
-            <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">1 并发 · 90s 退避 · 120s 冷却</div>
+            <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">1 并发 · Reason ≥5min · 90s 退避</div>
             <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">严格限流 key 保命</div>
           </button>
           <button @click="applyDispatchPreset('balanced')" :disabled="workerPresetApplying" class="sto-pcard" style="padding:12px;" :class="workerPresetName === 'balanced' ? 'active' : ''">
             <div style="font-size:13px; font-weight:650;">⚖️ 均衡档</div>
-            <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">2 并发 · 60s 退避 · 60s 冷却</div>
+            <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">2 并发 · Reason ≥150s · 60s 退避</div>
             <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">中转 key 推荐</div>
           </button>
           <button @click="applyDispatchPreset('turbo')" :disabled="workerPresetApplying" class="sto-pcard" style="padding:12px;" :class="workerPresetName === 'turbo' ? 'active' : ''">
             <div style="font-size:13px; font-weight:650;">🚀 高效档</div>
-            <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">5 并发 · 30s 退避 · 30s 冷却</div>
+            <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">5 并发 · Reason ≥90s · 30s 退避</div>
             <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">官方 / 高额度 key</div>
           </button>
         </div>
