@@ -72,9 +72,11 @@ async def llm_gateway(
     if request.url.query:
         upstream_url += "?" + request.url.query
 
-    headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
+    headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP and k.lower() != "authorization"}
     if config.api_key:
-        headers["Authorization"] = f"Bearer {config.api_key}"
+        # Starlette 头键为小写；必须先剔除再小写写入，否则会出现大小写两个
+        # Authorization 头（dict 大小写敏感），上游 ELB 直接 400。
+        headers["authorization"] = f"Bearer {config.api_key}"
 
     body = await request.body()
     proxy_url = _llm_proxy_url(container)
