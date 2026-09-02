@@ -1007,9 +1007,9 @@ window.AxiomModules.workerTools = {
     dispatchPresets: {
       // reason 节流键（min_interval / batch_size / max_wait / queue_limit / low_watermark）
       // 让触发与派发节奏和 explore 的消费能力对齐，避免 intent 积压。
-      snail:    { label: '蜗牛档', max_running: 1, per_task_explore_concurrency: 1, per_task_review_concurrency: 1, global_max_active_runs: 3,  global_max_active_tasks: 1, per_task_max_active_runs: 2,  runner_interval_seconds: 5, execution_retry_limit: 4, infrastructure_retry_limit: 2, retry_base_seconds: 90, retry_max_seconds: 900, worker_failure_cooldown_seconds: 120, reason_min_interval_seconds: 300, reason_batch_size: 6, reason_max_wait_seconds: 600, reason_queue_limit: 1, reason_low_watermark: 1 },
-      balanced: { label: '均衡档', max_running: 2, per_task_explore_concurrency: 2, per_task_review_concurrency: 2, global_max_active_runs: 8,  global_max_active_tasks: 2, per_task_max_active_runs: 4,  runner_interval_seconds: 3, execution_retry_limit: 6, infrastructure_retry_limit: 3, retry_base_seconds: 60, retry_max_seconds: 600, worker_failure_cooldown_seconds: 60, reason_min_interval_seconds: 150, reason_batch_size: 4, reason_max_wait_seconds: 360, reason_queue_limit: 2, reason_low_watermark: 1 },
-      turbo:    { label: '高效档', max_running: 5, per_task_explore_concurrency: 4, per_task_review_concurrency: 4, global_max_active_runs: 15, global_max_active_tasks: 3, per_task_max_active_runs: 10, runner_interval_seconds: 2, execution_retry_limit: 6, infrastructure_retry_limit: 3, retry_base_seconds: 30, retry_max_seconds: 300, worker_failure_cooldown_seconds: 30, reason_min_interval_seconds: 90, reason_batch_size: 3, reason_max_wait_seconds: 240, reason_queue_limit: 2, reason_low_watermark: 1 },
+      snail:    { label: '蜗牛档', per_task_explore_concurrency: 1, per_task_review_concurrency: 1, global_max_active_runs: 3,  global_max_active_tasks: 1, per_task_max_active_runs: 2,  runner_interval_seconds: 5, execution_retry_limit: 4, infrastructure_retry_limit: 2, retry_base_seconds: 90, retry_max_seconds: 900, worker_failure_cooldown_seconds: 120, reason_min_interval_seconds: 300, reason_batch_size: 6, reason_max_wait_seconds: 600, reason_queue_limit: 1, reason_low_watermark: 1 },
+      balanced: { label: '均衡档', per_task_explore_concurrency: 2, per_task_review_concurrency: 2, global_max_active_runs: 8,  global_max_active_tasks: 2, per_task_max_active_runs: 4,  runner_interval_seconds: 3, execution_retry_limit: 6, infrastructure_retry_limit: 3, retry_base_seconds: 60, retry_max_seconds: 600, worker_failure_cooldown_seconds: 60, reason_min_interval_seconds: 150, reason_batch_size: 4, reason_max_wait_seconds: 360, reason_queue_limit: 2, reason_low_watermark: 1 },
+      turbo:    { label: '高效档', per_task_explore_concurrency: 4, per_task_review_concurrency: 4, global_max_active_runs: 15, global_max_active_tasks: 3, per_task_max_active_runs: 10, runner_interval_seconds: 2, execution_retry_limit: 6, infrastructure_retry_limit: 3, retry_base_seconds: 30, retry_max_seconds: 300, worker_failure_cooldown_seconds: 30, reason_min_interval_seconds: 90, reason_batch_size: 3, reason_max_wait_seconds: 240, reason_queue_limit: 2, reason_low_watermark: 1 },
     },
 
     async syncDispatchPresetName() {
@@ -1041,22 +1041,11 @@ window.AxiomModules.workerTools = {
         await this.settingsRuntimeRequest('PUT', {
           config, expected_version: settings.version, actor: `ui.preset.${name}`,
         });
-        const workers = await this.rawRequest('GET', '/workers');
-        for (const w of workers.filter(item => !item.disabled && item.worker_type === 'pi')) {
-          if (Number(w.max_running) === preset.max_running) continue;
-          // upsert 是整体替换，必须带全量字段，config 传原值防止清空模型配置
-          await this.rawRequest('PUT', `/workers/${encodeURIComponent(w.name)}`, {
-            worker_type: w.worker_type,
-            capabilities: w.capabilities,
-            max_running: preset.max_running,
-            priority: w.priority,
-            disabled: Boolean(w.disabled),
-            config: w.config || {},
-          });
-        }
+        // Worker 的 max_running 不归档位管：后端并发由 Worker 页按
+        // key 额度/限流人工控制，套用档位不得覆盖。
         this.workerPresetName = name;
         if (typeof this.loadDispatchSettings === 'function') await this.loadDispatchSettings();
-        this.showToast(`${preset.label}已套用：并发 ${preset.max_running}，重试 ${preset.retry_base_seconds}s 起`);
+        this.showToast(`${preset.label}已套用：Reason ≥${preset.reason_min_interval_seconds}s，重试 ${preset.retry_base_seconds}s 起`);
       } catch (e) {
         this.showToast(`档位套用失败：${e.message || e}`);
       } finally {
