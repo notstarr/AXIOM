@@ -61,7 +61,7 @@
         <p class="sto-muted" style="font-size:10.5px; margin-top:8px;" x-show="workerPresetName === 'custom'">当前为自定义组合，点击任一档位整体套用。</p>
       </div>
 
-      <div class="sto-panel" style="padding:16px 18px;">
+      <div class="sto-panel" style="padding:16px 18px;" @input="syncDispatchPresetName()">
         <div class="sto-cardhead">
           <h3>调度并发</h3>
           <p>所有限制会同时在调度计算和数据库 claim 事务中校验。</p>
@@ -120,7 +120,7 @@
         </div>
       </div>
 
-      <div class="sto-panel" style="padding:16px 18px;">
+      <div class="sto-panel" style="padding:16px 18px;" @input="syncDispatchPresetName()">
         <div class="sto-cardhead">
           <h3>高级可靠性</h3>
           <p>租约至少要容纳三个心跳；重试退避上限不能小于基准值。</p>

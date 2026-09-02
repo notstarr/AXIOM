@@ -1010,27 +1010,17 @@ window.AxiomModules.workerTools = {
     },
 
     async syncDispatchPresetName() {
+      // 档位识别只看运行时参数；Worker 的 max_running 是 Worker 页单体配置，
+      // 不参与识别（新增/改并发不影响当前档位灯）。
       try {
-        const config = this.dispatchSettings || {};
-        let maxes = (this.dispatchSettings?.workers || [])
-          .filter(w => !w.disabled)
-          .map(w => Number(w.max_running))
-          .filter(v => !Number.isNaN(v));
-        if (!maxes.length) {
-          const workers = await this.rawRequest('GET', '/workers');
-          maxes = workers.filter(w => !w.disabled && w.worker_type === 'pi').map(w => Number(w.max_running));
-        }
-        this.workerPresetName = this.detectDispatchPreset(config, maxes.length ? maxes : [-1]);
+        this.workerPresetName = this.detectDispatchPreset(this.dispatchSettings || {});
       } catch (_) { this.workerPresetName = 'custom'; }
     },
 
-    detectDispatchPreset(config, workersMaxRunning) {
-      const runningValues = [...new Set(workersMaxRunning)];
+    detectDispatchPreset(config) {
+      const runtimeKeys = ['per_task_explore_concurrency', 'per_task_review_concurrency', 'global_max_active_runs', 'global_max_active_tasks', 'per_task_max_active_runs', 'runner_interval_seconds', 'execution_retry_limit', 'infrastructure_retry_limit', 'retry_base_seconds', 'retry_max_seconds', 'worker_failure_cooldown_seconds', 'reason_min_interval_seconds'];
       for (const [name, preset] of Object.entries(this.dispatchPresets)) {
-        const runtimeKeys = ['per_task_explore_concurrency', 'per_task_review_concurrency', 'global_max_active_runs', 'global_max_active_tasks', 'per_task_max_active_runs', 'runner_interval_seconds', 'execution_retry_limit', 'infrastructure_retry_limit', 'retry_base_seconds', 'retry_max_seconds', 'worker_failure_cooldown_seconds', 'reason_min_interval_seconds'];
-        const runtimeMatch = runtimeKeys.every(key => Number(config[key]) === preset[key]);
-        const workerMatch = runningValues.length === 1 && runningValues[0] === preset.max_running;
-        if (runtimeMatch && workerMatch) return name;
+        if (runtimeKeys.every(key => Number(config[key]) === preset[key])) return name;
       }
       return 'custom';
     },
@@ -1080,9 +1070,7 @@ window.AxiomModules.workerTools = {
         this.workerProxyForm.url = config.network_proxy_url || 'http://127.0.0.1:7890';
         this.workerProxyForm.version = data.version ?? null;
         try {
-          const workers = await this.rawRequest('GET', '/workers');
-          const enabledMax = workers.filter(w => !w.disabled && w.worker_type === 'pi').map(w => Number(w.max_running));
-          this.workerPresetName = this.detectDispatchPreset(config, enabledMax);
+          this.workerPresetName = this.detectDispatchPreset(config);
         } catch (_) { this.workerPresetName = 'custom'; }
       } catch (e) {
         this.showToast(`读取代理配置失败：${e.message || e}`);
