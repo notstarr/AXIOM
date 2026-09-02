@@ -1101,8 +1101,9 @@ window.AxiomModules.workerTools = {
     async testAxiomWorkerEditor() {
       if (!this.axiomWorkerEditor || this.axiomWorkerEditorTesting) return;
       this.axiomWorkerEditorTesting = true;
+      const worker = this.axiomWorkerEditor;
+      const started = performance.now();
       try {
-        const worker = this.axiomWorkerEditor;
         const result = await this.api('POST', '/settings/test-pi', {
           worker_name: worker.name,
           pi_base_url: worker.pi_base_url,
@@ -1110,13 +1111,25 @@ window.AxiomModules.workerTools = {
           pi_provider_api: worker.pi_provider_api || 'openai-completions',
           pi_api_key: worker.pi_api_key || '',
         });
-        worker.test_result = result;
-        this.showToast(result.message || '连接测试完成', result.ok ? 'info' : 'error');
+        const latencyMs = Math.round(performance.now() - started);
+        worker.test_result = { ...result, latency_ms: latencyMs };
+        worker.test_result.message = result.ok ? `连接正常 · ${latencyMs} ms` : (result.message || '连接测试失败');
+        this.showToast(worker.test_result.message, result.ok ? 'info' : 'error');
       } catch (error) {
-        this.axiomWorkerEditor.test_result = { ok: false, message: error?.message || '连接测试失败' };
+        worker.test_result = { ok: false, message: error?.message || '连接测试失败' };
       } finally {
         this.axiomWorkerEditorTesting = false;
       }
+    },
+
+    workerTestColor(editor) {
+      const r = editor?.test_result;
+      if (!r?.message) return 'var(--sto-fg-3)';
+      if (!r.ok) return 'var(--sto-danger)';
+      const ms = Number(r.latency_ms || 0);
+      if (ms > 8000) return 'var(--sto-danger)';
+      if (ms > 3000) return 'var(--sto-warn)';
+      return 'var(--sto-ok)';
     },
 
     async deleteAxiomWorkerEditor() {
