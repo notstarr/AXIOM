@@ -829,6 +829,10 @@ class BrowserBrokerServer:
             args.append("--headless")
         elif os.environ.get("CHROME_WINDOW") == "minimized":
             args.append("--start-minimized")
+        if os.environ.get("AXIOM_CHROME_NO_SANDBOX", "") in {"1", "true"}:
+            # 容器内以 root 运行 Chrome 必需；宿主机默认不开启
+            args.append("--no-sandbox")
+            args.append("--disable-dev-shm-usage")
         environment = {
             key: value
             for key, value in os.environ.items()

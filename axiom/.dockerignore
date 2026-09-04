@@ -1,0 +1,36 @@
+# 依赖无关的上下文裁剪：pentest 工作产物与本地产物严禁进入镜像
+.venv
+.git
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+
+# pentest 落盘产物（可能含凭据/截图/抓包）
+cookie*
+attacker_*
+captures*
+chunks/
+*.png
+*.jsonl
+*_probe*
+probe_*
+otp_*.json
+r_*.json
+baseline_*
+sandbox_*.html
+plan_sonar_demo.html
+graph_plan_sonar_preview.html
+*.async.js
+aisearch_*
+i*_canvas.png
+.quota*
+network_probe_prompt.json
+
+# 本地数据与运行时产物
+*.log
+*.db
+*.db-*
+credentials.txt
+service_token

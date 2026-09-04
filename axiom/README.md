@@ -173,6 +173,29 @@ uv sync --frozen
 ### 5.3 常驻守护
 生产环境建议以 `launchd`（macOS）/ `systemd`（Linux）托管两个进程；`ops/postgres/` 内置备份与观察者的 LaunchAgent 安装脚本。
 
+### 5.4 一行命令 Docker 部署（含 Windows）
+
+三件套（PostgreSQL + API/控制台 + 调度 Runner，镜像内含 pi Worker 运行时与 Chromium）：
+
+```bash
+docker compose -f compose.deploy.yaml up -d --build
+```
+
+- 国内网络构建可传镜像源（可选）：
+
+```bash
+docker compose -f compose.deploy.yaml build \
+  --build-arg APT_MIRROR=mirrors.tuna.tsinghua.edu.cn \
+  --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+  --build-arg UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple \
+  --build-arg PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright
+docker compose -f compose.deploy.yaml up -d
+```
+
+- 首次启动自动完成：数据库迁移（migrator 角色）→ 管理员引导（`AXIOM_ADMIN_USER`/`AXIOM_ADMIN_PASSWORD`，未传密码则随机生成并写入数据卷 `credentials.txt`）→ service_token 生成（Runner 与 Worker 网关模式自动读取）。
+- Worker（pi 运行时 + Chromium）在 runner 容器内原生运行，浏览器为 headless（`CHROME_HEADLESS=1`、容器内自动 `--no-sandbox`）。
+- 部署后访问 `http://127.0.0.1:8888`，在系统设置里配置 LLM Provider 即可开工。
+
 ## 6. 一键升级
 
 ```bash

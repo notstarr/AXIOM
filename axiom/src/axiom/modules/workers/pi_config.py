@@ -40,6 +40,13 @@ def _resolve_pi_node_binary() -> Path:
     )
     if candidates:
         return candidates[-1]
+    # 仓库 vendored 运行时兜底（容器部署场景：linux x86_64 构建随镜像分发）
+    vendored = (
+        Path(__file__).resolve().parents[4]
+        / "runtime" / "node" / PI_NODE_VERSION.lstrip("v") / "bin" / "node"
+    )
+    if vendored.is_file():
+        return vendored
     return exact
 
 

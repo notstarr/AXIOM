@@ -1,0 +1,91 @@
+name: axiom-deploy
+
+# 一键部署：docker compose -f compose.deploy.yaml up -d --build
+# 独立项目名 axiom-deploy + 默认端口 18888，与宿主机上可能存在的原生/生产实例完全隔离
+# 自包含三件套：PostgreSQL + app(API/控制台/迁移) + runner(调度/Worker 宿主)
+
+services:
+  postgres:
+    image: ${AXIOM_POSTGRES_IMAGE:-postgres:18.4-bookworm@sha256:882236b897e39051d2368c5ccc6cda944904723506b2dfc97f2a8f5bc9afa382}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: axiom_bootstrap
+      POSTGRES_PASSWORD: ${AXIOM_POSTGRES_BOOTSTRAP_PASSWORD:-axiom-bootstrap-local}
+      POSTGRES_DB: postgres
+      AXIOM_DB_NAME: ${AXIOM_DB_NAME:-axiom}
+      AXIOM_DB_MIGRATOR_PASSWORD: ${AXIOM_DB_MIGRATOR_PASSWORD:-axiom-migrator-local}
+      AXIOM_DB_APP_PASSWORD: ${AXIOM_DB_APP_PASSWORD:-axiom-app-local}
+      PGDATA: /var/lib/postgresql/18/docker
+    volumes:
+      - axiom-postgres:/var/lib/postgresql
+      - ./ops/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U axiom_bootstrap -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      - axiom
+
+  app:
+    build: .
+    image: axiom-app:latest
+    restart: unless-stopped
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # 迁移用 migrator（DDL），serve 用 app（DML）——与生产 launchd 口径一致
+      AXIOM_MIGRATOR_DATABASE_URL: postgresql+psycopg://axiom_migrator:${AXIOM_DB_MIGRATOR_PASSWORD:-axiom-migrator-local}@postgres:5432/${AXIOM_DB_NAME:-axiom}
+      AXIOM_DATABASE_URL: postgresql+psycopg://axiom_app:${AXIOM_DB_APP_PASSWORD:-axiom-app-local}@postgres:5432/${AXIOM_DB_NAME:-axiom}
+      AXIOM_DATA_DIR: /data
+      AXIOM_ADMIN_USER: ${AXIOM_ADMIN_USER:-axiom}
+      AXIOM_ADMIN_PASSWORD: ${AXIOM_ADMIN_PASSWORD:-}
+      CHROME_HEADLESS: "1"
+      AXIOM_CHROME_NO_SANDBOX: "1"
+    command: >
+      sh -c "axiom db upgrade --database-url \"$$AXIOM_MIGRATOR_DATABASE_URL\" &&
+             if [ ! -s /data/service_token ]; then
+               mkdir -p /data &&
+               python -c \"import secrets; open('/data/service_token','w').write(secrets.token_hex(32))\" &&
+               chmod 600 /data/service_token;
+             fi &&
+             exec axiom serve --host 0.0.0.0 --port 8888 --data-dir /data"
+    volumes:
+      - axiom-data:/data
+    ports:
+      - "127.0.0.1:${AXIOM_PORT:-18888}:8888"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8888/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - axiom
+
+  runner:
+    image: axiom-app:latest
+    restart: unless-stopped
+    init: true
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      AXIOM_DATA_DIR: /data
+      CHROME_HEADLESS: "1"
+      AXIOM_CHROME_NO_SANDBOX: "1"
+    command: axiom runner --api-url http://app:8888
+    volumes:
+      - axiom-data:/data
+    networks:
+      - axiom
+
+volumes:
+  axiom-postgres:
+  axiom-data:
+
+networks:
+  axiom:
+    name: axiom-deploy
