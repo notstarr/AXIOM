@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, Query, Response, status
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
-from axiom.modules.vulnerabilities.schemas import Vulnerability, VulnerabilityReport, UpdateVulnerability
+from axiom.modules.vulnerabilities.schemas import (
+    SetVulnerabilityHumanReviewed,
+    UpdateVulnerability,
+    Vulnerability,
+    VulnerabilityReport,
+)
 
 
 router = APIRouter(tags=["vulnerabilities"])
@@ -68,6 +73,24 @@ def update_vulnerability(
     return container.vulnerabilities.update(task_id, vulnerability_id, body)
 
 
+@router.post(
+    "/tasks/{task_id}/vulnerabilities/{vulnerability_id}/human-reviewed",
+    response_model=Vulnerability,
+)
+def set_vulnerability_human_reviewed(
+    task_id: str,
+    vulnerability_id: str,
+    body: SetVulnerabilityHumanReviewed,
+    container: Container = Depends(get_container),
+) -> Vulnerability:
+    return container.vulnerabilities.set_human_reviewed(
+        task_id,
+        vulnerability_id,
+        value=body.value,
+        actor=body.actor,
+    )
+
+
 @router.delete("/tasks/{task_id}/vulnerabilities/{vulnerability_id}", status_code=status.HTTP_204_NO_CONTENT)
 def archive_vulnerability(
     task_id: str,
@@ -86,6 +109,7 @@ def list_vulnerabilities(
     status_filter: str | None = Query(default=None, alias="status"),
     severity: str | None = None,
     include_archived: bool = False,
+    sort: str = Query(default="updated", pattern="^(updated|severity|unreviewed|newest)$"),
     limit: int | None = Query(default=None, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     container: Container = Depends(get_container),
@@ -97,6 +121,7 @@ def list_vulnerabilities(
         status=status_filter,
         severity=severity,
         include_archived=include_archived,
+        sort=sort,
     )
     if limit is None:
         items = container.vulnerabilities.list_all(**filters)

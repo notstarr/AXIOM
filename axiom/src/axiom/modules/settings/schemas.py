@@ -69,7 +69,7 @@ class RuntimeConfig(BaseModel):
     reason_min_interval_seconds: int = Field(default=60, ge=0, le=3_600)
     # At least one pending slot keeps the queue semantics lossless.  Legacy
     # persisted values of 0 are normalized by the pre-validator below.
-    reason_queue_limit: int = Field(default=3, ge=1, le=10)
+    reason_queue_limit: int = Field(default=3, ge=0, le=10)
     plan_queue_limit: int = Field(default=3, ge=1, le=10)
     plan_max_consecutive_runs: int = Field(default=3, ge=1, le=20)
     explore_execute_min_seconds: int = Field(default=300, ge=10, le=86_400)
@@ -106,8 +106,8 @@ class RuntimeConfig(BaseModel):
     def normalize_reason_queue_limit(cls, value: int | str | None) -> int:
         if value is None or value == "":
             return 3
-        parsed = int(value)
-        return 1 if parsed == 0 else parsed
+        # 0 是合法配置：不排队模式（Reason run 不与活动 run 并存排队）。
+        return max(0, int(value))
 
     @field_validator("plan_queue_limit", "plan_max_consecutive_runs", mode="before")
     @classmethod

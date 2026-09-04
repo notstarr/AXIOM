@@ -29,7 +29,7 @@ LEGACY_SQLITE_REVISION = "20260805_0035"
 # this aligned with the latest migration whenever a schema change is added;
 # otherwise a database that has successfully upgraded cannot accept a legacy
 # SQLite import.
-POSTGRESQL_TARGET_REVISION = "20260902_pg0013"
+POSTGRESQL_TARGET_REVISION = "20260902_pg0014"
 DEFAULT_BATCH_SIZE = 1_000
 
 # A 20260805 SQLite export predates the independent Plan runtime.  These
@@ -52,6 +52,13 @@ LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
     # target schema backfills it to the compatibility value (inherit the
     # ordinary Task Worker pool).
     "tasks": {"plan_worker_pool_json": "[]"},
+    # The source SQLite export predates the vulnerability human-review
+    # toggle.  Imported rows keep the unreviewed default.
+    "vulnerabilities": {
+        "human_reviewed": False,
+        "human_reviewed_at": None,
+        "human_reviewed_by": None,
+    },
     "intents": {
         "human_intervention_required": False,
         "human_intervention_reason": "",

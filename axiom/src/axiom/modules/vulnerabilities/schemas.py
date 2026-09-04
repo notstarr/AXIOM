@@ -151,6 +151,24 @@ class Vulnerability(VulnerabilityReport):
     created_at: str
     updated_at: str
     archived: bool = False
+    human_reviewed: bool = False
+    human_reviewed_at: str | None = None
+    human_reviewed_by: str | None = None
+
+
+class SetVulnerabilityHumanReviewed(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    value: bool
+    actor: str = "human.frontend"
+
+    @field_validator("actor")
+    @classmethod
+    def require_actor_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("actor must not be empty")
+        return value
 
 
 class UpdateVulnerability(BaseModel):

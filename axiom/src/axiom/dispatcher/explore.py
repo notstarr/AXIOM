@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from axiom.dispatcher.bootstrap import AxiomToolLoadError, TransientWorkerError
-from axiom.dispatcher.closeout import bounded_closeout
+from axiom.dispatcher.closeout import bounded_closeout, make_closeout_progress
 from axiom.dispatcher.heartbeat import LeaseHeartbeat, LeaseLostError
 from axiom.dispatcher.http import ControlPlaneError, is_transient_control_plane_error
 from axiom.dispatcher.schemas import ClaimedIntent
@@ -198,6 +198,11 @@ class ExploreRunner:
                 reason=reason,
                 retry_errors=(StageOutputError,),
                 default_timeout_seconds=180,
+                progress=make_closeout_progress(
+                    self.control_plane.activity,
+                    work,
+                    verb="收口整理中：补齐阶段产物并完成校验",
+                ),
             )
         except (StageOutputError, TimeoutError) as exc:
             heartbeat.ensure_active()

@@ -108,17 +108,18 @@ class Container:
         token_usage = TokenUsageService(engine)
         interventions = InterventionService(engine, store)
         mcp = MCPService(engine, phase_capabilities=phase_capabilities)
+        audit = AuditService(engine)
         return cls(
             engine=engine,
             projects=ProjectService(engine),
             tasks=TaskService(engine, store),
-            graph=GraphService(engine, archives=archives),
+            graph=GraphService(engine, archives=archives, audit=audit),
             axiom_tools=axiom_tools,
             workers=WorkerService(engine),
             dispatch=DispatchService(engine, reviews=vulnerability_reviews),
             artifacts=ArtifactService(engine, store, archives=archives),
             archives=archives,
-            audit=AuditService(engine),
+            audit=audit,
             store=store,
             execution=ExecutionService(
                 engine,

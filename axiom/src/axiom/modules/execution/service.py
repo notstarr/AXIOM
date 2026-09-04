@@ -72,7 +72,6 @@ _REASON_PROMPT_PROFILE_BY_TRIGGER = {
     "fact_batch": "progress",
     "low_watermark": "progress",
     "max_wait": "progress",
-    "intent_assessment": "progress",
     "manual": "human",
     "hint": "human",
     "continuation": "continuation",
@@ -300,7 +299,7 @@ class ExecutionService:
             "bootstrap": "分析 Bootstrap 初始攻击面并规划第一批 Explore Intent",
             "fact_batch": "消费新 Fact 批次并规划后续 Explore Intent",
             "low_watermark": "补充即将耗尽的 Explore 工作队列",
-            "max_wait": "处理等待时间达到上限的新 Fact",
+            "max_wait": "处理等待时间达到上限的输入，并评估快照中尚未评估的已结束 Intent",
         }.get(run.trigger, f"根据触发原因 {run.trigger} 增量规划下一轮测试")
         goal_cycle_guidance = ""
         if goal_cycle is not None and goal_cycle.sequence > 1:
@@ -356,17 +355,6 @@ class ExecutionService:
                 "历史 Goal、Goal Evaluation 及其证据不会作为本轮上下文提供，"
                 "必须依据当前可见的原始事实和产物独立判断；人工续跑说明/重点可以作为恢复 Todo 和规划新 Intent 的依据，"
                 "没有材料性方向时才允许新增 0 个 Intent。"
-            )
-        elif run.trigger == "intent_assessment":
-            payload = run.trigger_payload
-            intent_ids = payload.get("unassessed_intent_ids") or []
-            trigger_summary = (
-                "代码发现以下已结束的 Explore Intent 尚未完成一次性评估："
-                f"{', '.join(str(item) for item in intent_ids) or '未提供'}。"
-                "请先逐项读取这些 Intent 的 findings、leads、输出 Fact 和执行结果，"
-                "对每个 Intent 只调用一次 `axiom reason intent assess`，状态只能是 partial、blocked 或 completed，"
-                "并写明具体理由；若仍需继续测试，保留原评估并创建关联相关 Fact 的新 Intent。"
-                "评估本身不消费 Fact，仍需通过 Todo source 或后续 Intent from_fact 处理新 Fact。"
             )
         if goal_cycle_guidance:
             trigger_summary += goal_cycle_guidance

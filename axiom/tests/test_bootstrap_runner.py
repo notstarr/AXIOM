@@ -16,6 +16,7 @@ from axiom.dispatcher.loop import Dispatcher
 from axiom.dispatcher.runner import AxiomRunner
 from axiom.dispatcher.schemas import ClaimedIntent, DispatchReport, DispatcherSnapshot
 from axiom.modules.execution.schemas import (
+    ActivityCommand,
     BootstrapCompleted,
     CompleteBootstrapCommand,
     ExecutionInput,
@@ -94,6 +95,14 @@ class ApiControlPlane:
         )
         assert response.status_code == 200, response.text
         return BootstrapCompleted.model_validate(response.json())
+
+    def activity(self, work: ClaimedIntent, command: ActivityCommand) -> None:
+        self.events.append("activity")
+        response = self.client.post(
+            self._url(work, "activity"),
+            json=command.model_dump(mode="json"),
+        )
+        assert response.status_code == 204, response.text
 
     def release(self, work: ClaimedIntent, command: ReleaseIntentCommand) -> None:
         self.events.append("release")

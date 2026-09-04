@@ -21,6 +21,15 @@
       </select>
       <button @click="openVulnEditor()" class="sto-btn" style="padding:8px 13px;">新增漏洞</button>
     </div>
+    <div class="flex items-center" style="gap:7px; margin-top:9px;">
+      <span class="sto-muted" style="font-size:10.5px;">排序</span>
+      <template x-for="opt in vulnerabilitySortOptions()" :key="`vsort-${opt.id}`">
+        <button @click="setVulnerabilitySort(opt.id)" class="sto-minibtn"
+          :class="vulnerabilitySort === opt.id ? 'acc' : ''"
+          style="padding:3px 10px;"
+          x-text="opt.label"></button>
+      </template>
+    </div>
     <div class="flex flex-wrap items-center" style="gap:16px; margin-top:11px;">
       <span class="sto-muted sto-num" style="font-size:10.5px;" x-text="`显示 ${filteredVulnerabilities().length} / ${vulnerabilityTotal}`"></span>
       <span style="width:1px; height:14px; background:var(--sto-line);"></span>
@@ -48,6 +57,13 @@
           :class="[`sto-sev-${(v.severity || 'info').toLowerCase()}`, selectedVulnerabilityKey === vulnerabilityKey(v) ? 'active' : '']">
           <div class="flex items-center" style="gap:7px;">
             <span class="sto-sevdot" x-text="''"></span>
+            <span role="button" @click.stop="toggleVulnReviewed(v)"
+              :title="v.human_reviewed ? '人工已阅（点击取消）' : '标记人工已阅'"
+              :style="v.human_reviewed
+                ? 'width:14px;height:14px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:#10b981;flex-shrink:0;cursor:pointer;'
+                : 'width:14px;height:14px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;border:1.5px solid var(--sto-line);flex-shrink:0;cursor:pointer;'">
+              <svg x-show="v.human_reviewed" style="width:9px;height:9px;" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </span>
             <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);" x-text="v.id"></span>
             <span style="flex:1;"></span>
             <span class="sto-status" style="font-size:10px;" :class="({verified:'ok',pending:'warn',duplicate:'err',ignored:'off'})[vulnStatusKey(v.status)] || 'off'"><i></i><span x-text="vulnStatusLabel(v.status)"></span></span>
@@ -96,6 +112,11 @@
                 Findings
               </button>
               <span style="flex:1;"></span>
+              <button @click="toggleVulnReviewed(selectedVulnerability())" class="sto-minibtn"
+                :class="selectedVulnerability().human_reviewed ? 'acc' : ''"
+                :title="selectedVulnerability().human_reviewed ? '人工已阅，点击取消' : '标记人工已阅'">
+                <span x-text="selectedVulnerability().human_reviewed ? '✓ 已阅' : '○ 未阅'"></span>
+              </button>
               <button @click="editVuln(selectedVulnerability())" class="sto-minibtn">编辑</button>
               <button @click="deleteVuln(selectedVulnerability())" class="sto-minibtn danger">删除</button>
             </div>

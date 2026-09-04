@@ -9,6 +9,7 @@ from axiom.dispatcher.bootstrap import TransientWorkerError
 from axiom.dispatcher.explore import ExploreExecutionTimeout, ExploreRunner
 from axiom.dispatcher.schemas import ClaimedIntent
 from axiom.modules.execution.schemas import (
+    ActivityCommand,
     CompleteExploreCommand,
     ExecutionInput,
     ExploreCompleted,
@@ -103,12 +104,16 @@ class _ControlPlane:
         self.began_conclude = 0
         self.completed = 0
         self.released: list[ReleaseIntentCommand] = []
+        self.activities: list[ActivityCommand] = []
 
     def start(self, _work: ClaimedIntent) -> None:
         return None
 
     def heartbeat(self, _work: ClaimedIntent) -> None:
         return None
+
+    def activity(self, _work: ClaimedIntent, command: ActivityCommand) -> None:
+        self.activities.append(command)
 
     def input(self, _work: ClaimedIntent) -> ExecutionInput:
         return self.execution_input

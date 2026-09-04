@@ -1,7 +1,10 @@
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
+from alembic.script import ScriptDirectory
+
 from axiom.app import create_app
+from axiom.cli import alembic_config
 from axiom.modules.axiom_tools.tables import axiom_tools
 from axiom.modules.phase_capabilities.tables import phase_capability_bindings
 from axiom.shared.maintenance import write_maintenance
@@ -14,7 +17,17 @@ def test_health(client) -> None:
     assert payload["status"] == "ok"
     assert payload["api"] == "v1"
     assert payload["database"]["backend"] == "postgresql"
-    assert payload["database"]["migration"] == "20260902_pg0013"
+    # The runtime database only tracks the PostgreSQL branch; pick its head
+    # out of the script directory instead of hardcoding the revision.
+    pg_heads = [
+        head
+        for head in ScriptDirectory.from_config(
+            alembic_config("postgresql+psycopg://unused:unused@127.0.0.1/unused")
+        ).get_heads()
+        if "_pg" in head
+    ]
+    assert len(pg_heads) == 1
+    assert payload["database"]["migration"] == pg_heads[0]
     assert payload["database"]["pool"]["size"] >= 1
     assert payload["maintenance"]["state"] == "normal"
 

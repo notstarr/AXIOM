@@ -678,3 +678,56 @@ def test_review_uses_only_review_capable_backends_and_shared_capacity() -> None:
     assert len(actions) == 1
     assert actions[0].claim.worker_name == "shared-backend"
     assert actions[0].claim.kind == "review"
+
+
+def test_bounded_closeout_reports_progress_per_attempt():
+    from axiom.dispatcher.closeout import bounded_closeout, make_closeout_progress
+    from axiom.modules.execution.schemas import ActivityCommand, ExecutionInput
+    from axiom.modules.execution.stage_outputs import StageOutputError
+
+    execution_input = ExecutionInput(
+        task_id="t_001",
+        intent_id="i001",
+        lease_id="lease_1",
+        worker_name="worker-a",
+        origin="https://x.example.com",
+        goal="g",
+        scope={},
+        run_dir="/tmp/x",
+        conclude_timeout_seconds=60,
+    )
+    attempts: list[int] = []
+    reports: list[str] = []
+    activities: list[str] = []
+
+    def conclude(_input, _reason):
+        attempts.append(len(attempts) + 1)
+        if len(attempts) < 3:
+            raise StageOutputError("最终响应必须以独立的 FINISH 结束")
+        return "FINISH"
+
+    def validate(_input, _result):
+        return None
+
+    def activity(_work, command: ActivityCommand):
+        activities.append(command.activity_summary)
+
+    work = type("W", (), {"lease_id": "lease_1"})()
+    progress = make_closeout_progress(activity, work, verb="收口整理中")
+
+    bounded_closeout(
+        execution_input=execution_input,
+        begin=lambda: None,
+        conclude=conclude,
+        validate=validate,
+        reason="execute_timeout",
+        retry_errors=(StageOutputError,),
+        default_timeout_seconds=120,
+        progress=progress,
+    )
+
+    assert attempts == [1, 2, 3]
+    assert len(activities) == 3
+    assert "第 1/3 次" in activities[0]
+    assert "第 3/3 次" in activities[2]
+    assert "上一轮校验未过" in activities[1]

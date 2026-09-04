@@ -741,6 +741,55 @@ class ReasonRepository:
         ).mappings().one_or_none()
         return self._workspace(row) if row is not None else None
 
+    def open_for_run(
+        self,
+        conn: Connection,
+        task_id: str,
+        reason_run_id: str,
+        *,
+        excluding_lease_id: str,
+    ) -> ReasonWorkspace | None:
+        """Find an open Workspace left behind by a previous attempt of this run.
+
+        Workspace 延续：run 重试时上一个 lease 的 draft 仍可复用。
+        """
+        row = conn.execute(
+            select(reason_workspaces)
+            .where(
+                reason_workspaces.c.task_id == task_id,
+                reason_workspaces.c.reason_run_id == reason_run_id,
+                reason_workspaces.c.status == "open",
+                reason_workspaces.c.lease_id != excluding_lease_id,
+            )
+            .order_by(reason_workspaces.c.created_at.desc())
+            .limit(1)
+        ).mappings().one_or_none()
+        return self._workspace(row) if row is not None else None
+
+    def rebind_lease(
+        self,
+        conn: Connection,
+        workspace_id: str,
+        *,
+        lease_id: str,
+        worker: str,
+        now: str,
+    ) -> ReasonWorkspace | None:
+        result = conn.execute(
+            update(reason_workspaces)
+            .where(
+                reason_workspaces.c.id == workspace_id,
+                reason_workspaces.c.status == "open",
+            )
+            .values(lease_id=lease_id, worker=worker, updated_at=now)
+        )
+        if not result.rowcount:
+            return None
+        row = conn.execute(
+            select(reason_workspaces).where(reason_workspaces.c.id == workspace_id)
+        ).mappings().one_or_none()
+        return self._workspace(row) if row is not None else None
+
     def save_draft(
         self,
         conn: Connection,

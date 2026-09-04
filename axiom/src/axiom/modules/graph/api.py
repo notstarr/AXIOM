@@ -95,3 +95,12 @@ def toggle_intent_archive(
         intent_id,
         UpdateIntent(archived=not current.archived),
     )
+
+
+@router.post("/{task_id}/intents/{intent_id}/reset-retries", response_model=Intent)
+def reset_intent_retries(
+    task_id: str,
+    intent_id: str,
+    container: Container = Depends(get_container),
+) -> Intent:
+    return container.graph.reset_intent_retries(task_id, intent_id)

@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from axiom.dispatcher.bootstrap import AxiomToolLoadError, TransientWorkerError
-from axiom.dispatcher.closeout import bounded_closeout
+from axiom.dispatcher.closeout import bounded_closeout, make_closeout_progress
 from axiom.dispatcher.heartbeat import LeaseHeartbeat, LeaseLostError
 from axiom.dispatcher.http import ControlPlaneError, is_transient_control_plane_error
 from axiom.modules.execution.schemas import (
@@ -194,11 +194,14 @@ class ReasonRunner:
             )
             raise
         except (ReasonExecutionTimeout, ReasonPlanError, StageOutputError):
+            # Workspace 延续：规划类失败是可重试的执行失败，draft 保留给
+            # 下一次尝试续用（open 时按 run 认领孤儿工作区），不在这里弃置。
             self._close_failed_attempt(
                 work,
                 workspace,
                 failure_kind="reason_plan_invalid",
                 failure_class="execution",
+                keep_workspace=True,
             )
             raise
         except ControlPlaneError as exc:
@@ -253,6 +256,11 @@ class ReasonRunner:
             reason=reason,
             retry_errors=(ReasonPlanError, StageOutputError),
             default_timeout_seconds=120,
+            progress=make_closeout_progress(
+                self.control_plane.activity,
+                work,
+                verb="Reason 收口整理中：补齐 Workspace 校验缺口",
+            ),
         )
 
     def _validate_finish_and_workspace(
@@ -276,8 +284,9 @@ class ReasonRunner:
         *,
         failure_kind: str,
         failure_class: str,
+        keep_workspace: bool = False,
     ) -> None:
-        if workspace is not None:
+        if workspace is not None and not keep_workspace:
             try:
                 self.control_plane.abandon_reason_workspace(
                     work,

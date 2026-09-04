@@ -258,6 +258,41 @@ class VulnerabilityService:
             root_id=vulnerability_id,
         )
 
+    def set_human_reviewed(
+        self,
+        task_id: str,
+        vulnerability_id: str,
+        *,
+        value: bool,
+        actor: str,
+    ) -> Vulnerability:
+        """人工已阅开关：只改标记本身，不触碰状态机、不触发重审。"""
+        with self.engine.begin() as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.legacy_readonly:
+                raise ConflictError("Legacy Task is read-only")
+            if task.archived:
+                raise ConflictError("已归档任务不能修改漏洞，请先恢复任务")
+            current = self.repository.get(conn, task_id, vulnerability_id)
+            if current is None:
+                raise NotFoundError(f"Vulnerability not found: {vulnerability_id}")
+            if current.archived:
+                raise ConflictError(
+                    f"Archived Vulnerability cannot be updated: {vulnerability_id}"
+                )
+            updated = self.repository.set_human_reviewed(
+                conn,
+                task_id,
+                vulnerability_id,
+                value=value,
+                actor=actor,
+                now=utcnow(),
+            )
+            assert updated is not None
+            return updated
+
     @staticmethod
     def _validate_status_reason(status: str, reason: str) -> None:
         if status == "忽略" and len(reason.strip()) < 4:

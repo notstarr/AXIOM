@@ -684,7 +684,6 @@ class ReasonService:
             or failed_intent_ids
             or actionable_todo_ids
             or todo_review_ids
-            or unassessed_intent_ids
         )
 
         # An independent Plan can explicitly hand the task back to Reason
@@ -809,7 +808,25 @@ class ReasonService:
             )
             return (in_flight or pending[0]).id
         # A terminal Explore without a follow-up is itself a planning signal.
-        if not signals_present:
+        config = load_runtime_config(conn)
+        oldest_unassessed_age = (
+            self._oldest_unassessed_age_seconds(conn, task_id, now)
+            if unassessed_intent_ids
+            else 0.0
+        )
+        # Unassessed terminal Intents are passive input, never a signal of
+        # their own: they ride along with any run started for other reasons
+        # via claim-time late-binding.  The max_wait backstop below is the
+        # only guarantee they are eventually assessed when no other signal
+        # ever fires again.
+        unassessed_backstop_due = (
+            not signals_present
+            and not open_explore_ids
+            and not pending_plans
+            and not independent_plan_present
+            and oldest_unassessed_age >= config.reason_max_wait_seconds
+        )
+        if not signals_present and not unassessed_backstop_due:
             if open_explore_ids:
                 self._set_phase(
                     conn,
@@ -832,7 +849,6 @@ class ReasonService:
             self._set_phase(conn, task_id, "waiting", now)
             return None
 
-        config = load_runtime_config(conn)
         oldest_age = (
             max(
                 0.0,
@@ -853,15 +869,9 @@ class ReasonService:
             # reason_batch_size must NOT spawn its own run: it rides along
             # via claim-time late-binding, or fires standalone once the
             # queue drains (batch threshold / max_wait backstop).
-            # Unassessed terminal Intents are deliberately NOT a trigger in
-            # this branch: every explore completion mints exactly one, so
-            # the signal never empties and would nullify reason_batch_size
-            # (t_189 rr002323/rr002324 still carried one fact each through
-            # the unassessed side-channel).  Assessments keep happening:
-            # every new run's snapshot carries the current unassessed list,
-            # the workspace conclude gate requires it emptied, and the
-            # standalone intent_assessment branch mops up once the queue
-            # drains with no open explores left.
+            # Unassessed terminal Intents are likewise NOT a signal here:
+            # they are passive input that rides along with any run and is
+            # mopped up by the max_wait backstop once it ages out.
             non_fact_signals = bool(
                 failed_intent_ids or actionable_todo_ids or todo_review_ids
             )
@@ -883,17 +893,10 @@ class ReasonService:
             last_finished = latest["concluded_at"] or latest["updated_at"]
             elapsed = max(0.0, (parse_utc(now) - parse_utc(last_finished)).total_seconds())
             after_plan_handoff = task.phase == "reason" and latest["trigger"] == "plan"
-            # Unassessed terminal Intents are a correctness signal, not a
-            # throughput hint.  Do not let the normal Reason debounce leave
-            # them waiting (and potentially forgotten) after Explore ends.
-            # The same rule applies to input which arrived during Plan: the
-            # Plan commit has explicitly handed that state to Reason, so a
-            # normal debounce/low-watermark setting must not strand it.
-            if (
-                elapsed < config.reason_min_interval_seconds
-                and not unassessed_intent_ids
-                and not after_plan_handoff
-            ):
+            # Input which arrived during Plan is exempt from the debounce:
+            # the Plan commit has explicitly handed that state to Reason, so
+            # a normal debounce/low-watermark setting must not strand it.
+            if elapsed < config.reason_min_interval_seconds and not after_plan_handoff:
                 self._set_phase(
                     conn,
                     task_id,
@@ -903,22 +906,26 @@ class ReasonService:
                     now,
                 )
                 return None
-            if after_plan_handoff and unassessed_intent_ids and not open_explore_ids:
-                trigger = "intent_assessment"
-            elif after_plan_handoff and source_fact_ids:
+            if after_plan_handoff and source_fact_ids:
                 trigger = "fact_batch"
             elif after_plan_handoff and signals_present:
                 trigger = "low_watermark"
             elif len(source_fact_ids) >= config.reason_batch_size:
                 trigger = "fact_batch"
-            elif unassessed_intent_ids and not open_explore_ids:
-                # Every terminal Explore must receive exactly one Reason-side
-                # assessment, even if its Todo was already closed or the
-                # dispatcher low-watermark is configured to zero.
-                trigger = "intent_assessment"
             elif len(open_explore_ids) < config.reason_low_watermark and signals_present:
                 trigger = "low_watermark"
-            elif source_fact_ids and oldest_age >= config.reason_max_wait_seconds:
+            elif (
+                source_fact_ids
+                and oldest_age >= config.reason_max_wait_seconds
+            ) or (
+                unassessed_intent_ids
+                and oldest_unassessed_age >= config.reason_max_wait_seconds
+            ):
+                # Unassessed terminal Intents are passive input, never a
+                # trigger of their own: they ride along with any run started
+                # for other reasons via claim-time late-binding.  This
+                # max_wait backstop is the only guarantee they are eventually
+                # assessed when no other signal ever fires again.
                 trigger = "max_wait"
             else:
                 self._set_phase(
@@ -951,6 +958,21 @@ class ReasonService:
             )
             return None
 
+        if open_runs and int(getattr(config, "reason_queue_limit", 3)) == 0:
+            # 不排队模式（reason_queue_limit=0）：调度 tick 不再创建或合并
+            # 新的排队项。未覆盖的输入保持未消费，待当前 run 结束、队列
+            # 传清后的下一 tick 会重新触发并一次性吸收全部输入，避免
+            # Worker 消化不及的 Intent 被 Reason 继续堆叠。
+            self._set_phase(
+                conn,
+                task_id,
+                "plan"
+                if independent_plan_present
+                else ("explore" if open_explore_ids else "waiting"),
+                now,
+            )
+            return None
+
         run = self._enqueue_or_coalesce_in(
             conn,
             task=task,
@@ -963,6 +985,7 @@ class ReasonService:
                 "todo_review_ids": todo_review_ids,
                 "unassessed_intent_ids": unassessed_intent_ids,
                 "oldest_fact_age_seconds": oldest_age,
+                "oldest_unassessed_age_seconds": oldest_unassessed_age,
             },
             snapshot=snapshot,
             input_fingerprint=fingerprint,
@@ -1385,14 +1408,19 @@ class ReasonService:
                 now=now,
             ):
                 raise LeaseInactiveError("ReasonRun lease is no longer active")
-            self.repository.abandon_open(
-                conn,
-                task_id=task_id,
-                reason_run_id=reason_run_id,
-                lease_id=lease_id,
-                failure_reason=failure_kind or "reason_run_released",
-                now=now,
-            )
+            if failure_kind == "reason_plan_invalid" and not terminal:
+                # Workspace 延续：规划类失败且仍可重试时保留 draft，下一次
+                # 尝试认领孤儿工作区续用；终态（重试预算耗尽）照常弃置。
+                pass
+            else:
+                self.repository.abandon_open(
+                    conn,
+                    task_id=task_id,
+                    reason_run_id=reason_run_id,
+                    lease_id=lease_id,
+                    failure_reason=failure_kind or "reason_run_released",
+                    now=now,
+                )
             task = self.tasks.get(conn, task_id)
             self.audit.record_in(
                 conn,
@@ -1479,6 +1507,44 @@ class ReasonService:
                 if existing.status == "open" and existing.worker == (run.worker or ""):
                     return existing
                 raise ConflictError("Reason attempt already has a closed Workspace")
+            orphan = self.repository.open_for_run(
+                conn,
+                task_id,
+                reason_run_id,
+                excluding_lease_id=lease_id,
+            )
+            if orphan is not None:
+                # Workspace 延续：上一次尝试因 reason_plan_invalid 释放后，
+                # draft（评估/提案/Todo 更新）原样保留，改绑到本 lease 继续，
+                # 模型只需通过 status 查看缺口并补齐，而不是从零重做。
+                adopted = self.repository.rebind_lease(
+                    conn,
+                    orphan.id,
+                    lease_id=lease_id,
+                    worker=run.worker or "",
+                    now=utcnow(),
+                )
+                if adopted is not None:
+                    self.audit.record_in(
+                        conn,
+                        RecordAuditEvent(
+                            task_id=task_id,
+                            reason_run_id=reason_run_id,
+                            workspace_id=adopted.id,
+                            worker=run.worker or "",
+                            event_type="reason.workspace_readopted",
+                            message="Reason 重试沿用上次工作区草稿",
+                            payload={
+                                "phase": "plan" if run.trigger == "plan" else "reason",
+                                "workspace_id": adopted.id,
+                                "todo_add_count": len(adopted.draft.todo_adds),
+                                "todo_update_count": len(adopted.draft.todo_updates),
+                                "intent_proposal_count": len(adopted.draft.intent_proposals),
+                                "intent_assessment_count": len(adopted.draft.intent_assessments),
+                            },
+                        ),
+                    )
+                    return adopted
             workspace = self.repository.open(
                 conn,
                 task_id=task_id,
@@ -1741,6 +1807,17 @@ class ReasonService:
 
         with transaction(self.engine) as conn:
             workspace = self._require_active_open(conn, workspace_id, lease_id)
+            # 已被其他路径评估过的 Intent：提交按 no-op 成功处理，避免模型
+            # 带着旧快照重放评估时被死锁在不可修复的冲突上。
+            status_column = intents.c.get("assessment_status")
+            if status_column is not None and conn.execute(
+                select(intents.c.id).where(
+                    intents.c.task_id == workspace.task_id,
+                    intents.c.id == assessment.intent_id,
+                    status_column != "open",
+                )
+            ).scalar_one_or_none() is not None:
+                return workspace
             self._validate_intent_assessment(
                 conn, workspace.task_id, workspace.draft, assessment
             )
@@ -1755,8 +1832,19 @@ class ReasonService:
             if existing is not None:
                 if existing == assessment:
                     return workspace
-                raise ConflictError(
-                    "Intent assessment already exists with different parameters"
+                # Workspace 延续：模型重放评估时给出最新结论，直接替换
+                # 旧草稿项（评估尚未 commit，替换是无损的）。
+                replaced = [
+                    assessment
+                    if item.intent_id == assessment.intent_id
+                    else item
+                    for item in workspace.draft.intent_assessments
+                ]
+                draft = workspace.draft.model_copy(
+                    update={"intent_assessments": replaced}
+                )
+                return self.repository.save_draft(
+                    conn, workspace_id, draft, now=utcnow()
                 )
             if len(workspace.draft.intent_assessments) >= MAX_WORKSPACE_INTENTS:
                 raise ConflictError(
@@ -2523,6 +2611,33 @@ class ReasonService:
             ).scalars()
         )
 
+    def _oldest_unassessed_age_seconds(self, conn, task_id: str, now: str) -> float:
+        """Seconds since the oldest unassessed terminal Intent concluded.
+
+        Anchored on ``concluded_at`` (not ``created_at``): a long-running
+        Explore that just completed must start its backstop clock at zero.
+        """
+
+        assessment_status = intents.c.get("assessment_status")
+        if assessment_status is None:
+            return 0.0
+        rows = conn.execute(
+            select(intents.c.concluded_at, intents.c.created_at).where(
+                intents.c.task_id == task_id,
+                intents.c.kind == "explore",
+                intents.c.status.in_(TERMINAL_EXPLORE_STATUSES),
+                assessment_status == "open",
+                intents.c.archived.is_(False),
+            )
+        ).all()
+        if not rows:
+            return 0.0
+        anchors = [
+            parse_utc(str(row.concluded_at or row.created_at))
+            for row in rows
+        ]
+        return max(0.0, (parse_utc(now) - min(anchors)).total_seconds())
+
     def _run_todo_review_ids(self, conn, task_id: str, run: ReasonRun) -> list[str]:
         snapshot = run.trigger_payload.get("todo_review_ids", [])
         if not isinstance(snapshot, list):
@@ -2663,27 +2778,11 @@ class ReasonService:
                 "Intent assessment requires a terminal execution status: "
                 f"{assessment.intent_id} is {row['status']}"
             )
-        persisted_status = (
-            row.get("assessment_status")
-            if intents.c.get("assessment_status") is not None
-            else "open"
-        ) or "open"
-        if persisted_status != "open":
-            raise ConflictError(
-                f"Intent {assessment.intent_id} has already been assessed: {persisted_status}"
-            )
-        staged = next(
-            (
-                item
-                for item in draft.intent_assessments
-                if item.intent_id == assessment.intent_id
-            ),
-            None,
-        )
-        if staged is not None and staged != assessment:
-            raise ConflictError(
-                "Intent assessment already exists with different parameters"
-            )
+        # 已被其他路径评估过的 Intent 不再视为错误：提交按 no-op 处理、
+        # readiness 视为已消费、commit 跳过。Workspace 延续后模型可能带着
+        # 旧快照重放评估，这里必须保持幂等而不是死锁。
+        # 草稿内同 Intent 的既有评估不再视为冲突：Workspace 延续后模型重放
+        # 评估是常态，替换语义由 assess_intent 处理（最新结论覆盖旧草稿）。
 
     @staticmethod
     def _align_todo_counter(conn, task_id: str) -> None:
@@ -2766,8 +2865,12 @@ class ReasonService:
             )
         )
         if not result.rowcount:
-            raise ConflictError(
-                f"Intent {assessment.intent_id} was assessed concurrently or is no longer terminal"
+            # 该 Intent 已被其他路径评估（Workspace 延续下重放评估是常态）
+            # 或执行状态已漂移：跳过而不是回滚整个 Reason 计划。
+            logger.info(
+                "skip intent assessment %s/%s: already assessed or no longer terminal",
+                task_id,
+                assessment.intent_id,
             )
 
     def _validate_intent(

@@ -1913,6 +1913,18 @@ window.AxiomModules.projects = {
       this.showEditContentModal = true;
       this.$nextTick(() => { if (this.$refs.editContentInput) this.$refs.editContentInput.focus(); });
     },
+    async resetIntentRetries() {
+      const intent = this.selectedIntentRecord();
+      if (!intent) return;
+      if (!confirm(`确定重置 Intent ${intent.id} 的重试预算？重试计数将清零，Worker 可以重新认领执行。`)) return;
+      try {
+        await this.api('PUT', `/projects/${this.selectedProjectId}/intents/${intent.id}/reset-retries`, {});
+        this.showToast('已重置重试预算，等待 Worker 认领', 'success');
+        await this.loadProject(this.selectedProjectId);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
     openEditHint(h) {
       if (!h) return;
       this.editForm = { type: 'hint', id: h.id, title: `编辑 Hint ${h.id}`, content: h.content };

@@ -514,6 +514,38 @@ window.AxiomModules.dashboard = {
 
     editVuln(v) { this.openVulnEditor(v); },
 
+    vulnerabilitySortOptions() {
+      return [
+        { id: 'updated', label: '最近更新' },
+        { id: 'severity', label: '严重度' },
+        { id: 'unreviewed', label: '未阅优先' },
+        { id: 'newest', label: '最新发现' },
+      ];
+    },
+
+    async setVulnerabilitySort(sort) {
+      if (!sort || sort === this.vulnerabilitySort) return;
+      this.vulnerabilitySort = sort;
+      try { localStorage.setItem('axiom-vuln-sort', sort); } catch (e) {}
+      this.vulnerabilityPage = 0;
+      await this.loadVulnerabilityPage({ selectFirst: false });
+    },
+
+    async toggleVulnReviewed(v) {
+      if (!v?.project_id || !v?.id) return;
+      const next = !v.human_reviewed;
+      try {
+        await this.api('PUT', `/projects/${v.project_id}/vulns/${v.id}/human-reviewed`, { value: next });
+        v.human_reviewed = next;
+        v.human_reviewed_at = next ? new Date().toISOString() : null;
+        await this.loadVulnerabilityPage();
+        await this.loadDashboardSummary?.();
+        this.showToast(next ? '已标记人工已阅' : '已取消人工已阅');
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
     async deleteVuln(v) {
       if (!confirm(`删除 ${v.title}？`)) return;
       try {

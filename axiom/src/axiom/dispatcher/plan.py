@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from axiom.dispatcher.bootstrap import AxiomToolLoadError, TransientWorkerError
-from axiom.dispatcher.closeout import bounded_closeout
+from axiom.dispatcher.closeout import bounded_closeout, make_closeout_progress
 from axiom.dispatcher.heartbeat import LeaseHeartbeat, LeaseLostError
 from axiom.dispatcher.http import ControlPlaneError, is_transient_control_plane_error
 from axiom.modules.execution.schemas import ActivityCommand, PlanExecutionInput, ReleaseIntentCommand
@@ -253,6 +253,11 @@ class PlanRunner:
             reason=reason,
             retry_errors=(PlanDecisionError, StageOutputError),
             default_timeout_seconds=120,
+            progress=make_closeout_progress(
+                self.control_plane.activity,
+                work,
+                verb="Plan 收口整理中：补齐 Workspace 校验缺口",
+            ),
         )
 
     def _validate_finish_and_workspace(

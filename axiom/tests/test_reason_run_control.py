@@ -32,7 +32,6 @@ from protocol_helpers import (
         ("fact_batch", "progress"),
         ("low_watermark", "progress"),
         ("max_wait", "progress"),
-        ("intent_assessment", "progress"),
         ("manual", "human"),
         ("hint", "human"),
         ("continuation", "continuation"),
@@ -271,6 +270,7 @@ def _closed_todo_terminal_explore_signal(
     *,
     reason_low_watermark: int = 0,
     reason_min_interval_seconds: int = 3_600,
+    reason_max_wait_seconds: int = 3_600,
 ) -> tuple[dict, str]:
     """Build the exact signal that must not be lost by Reason reconciliation.
 
@@ -285,6 +285,7 @@ def _closed_todo_terminal_explore_signal(
         client,
         reason_low_watermark=reason_low_watermark,
         reason_min_interval_seconds=reason_min_interval_seconds,
+        reason_max_wait_seconds=reason_max_wait_seconds,
         reason_batch_size=5,
     )
     [intent_id] = _commit_plan(client, task, completed, count=1)
@@ -1197,10 +1198,28 @@ def test_reason_low_watermark_ignores_todos_that_already_have_open_explore(clien
     assert created_todo.json()["id"] in run["trigger_payload"]["actionable_todo_ids"]
 
 
-def test_unassessed_terminal_explore_reconciles_past_debounce_and_zero_low_watermark(
+def test_unassessed_only_input_never_triggers_and_backstop_ages_into_max_wait(
     client,
 ) -> None:
-    task, intent_id = _closed_todo_terminal_explore_signal(client)
+    """unassessed Intent 是被动输入：零信号时不触发任何 run，只能等
+    max_wait 兜底（按 concluded_at 计龄）把评估捞起来。"""
+
+    task, intent_id = _closed_todo_terminal_explore_signal(
+        client,
+        reason_max_wait_seconds=60,
+        reason_min_interval_seconds=0,
+    )
+
+    fresh = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
+    assert fresh.status_code == 200, fresh.text
+    assert fresh.json()["created_reason_run_ids"] == []
+
+    with client.app.state.container.engine.begin() as conn:
+        conn.execute(
+            update(intents)
+            .where(intents.c.task_id == task["id"], intents.c.id == intent_id)
+            .values(concluded_at="2020-01-01T00:00:00Z")
+        )
 
     reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
     assert reconciled.status_code == 200, reconciled.text
@@ -1209,23 +1228,29 @@ def test_unassessed_terminal_explore_reconciles_past_debounce_and_zero_low_water
         f"/api/v1/tasks/{task['id']}/reason-runs/{reason_run_id}"
     ).json()
 
-    assert run["trigger"] == "intent_assessment"
+    assert run["trigger"] == "max_wait"
     assert run["trigger_payload"]["unassessed_intent_ids"] == [intent_id]
-
-    # The active run itself is the deduplication guard; a second dispatcher
-    # sweep must not create another ReasonRun for the same assessment signal.
-    repeated = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
-    assert repeated.status_code == 200, repeated.text
-    assert repeated.json()["created_reason_run_ids"] == []
+    assert run["trigger_payload"]["source_fact_ids"] == []
 
 
-def test_unassessed_terminal_explore_prefers_assessment_over_default_low_watermark(
-    client,
-) -> None:
+def test_unassessed_intent_rides_along_with_the_low_watermark_run(client) -> None:
+    """unassessed 不再抢占 low_watermark：评估作为搭车输入随
+    low_watermark run 一起处理，payload 同时携带两个信号。"""
+
     task, intent_id = _closed_todo_terminal_explore_signal(
         client,
         reason_low_watermark=4,
+        reason_min_interval_seconds=0,
     )
+    created_todo = client.post(
+        f"/api/v1/tasks/{task['id']}/todos",
+        json={
+            "title": "尚未派发的可执行 Todo",
+            "category": "recon",
+            "sources": [{"type": "fact", "id": "origin"}],
+        },
+    )
+    assert created_todo.status_code == 201, created_todo.text
 
     reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
     assert reconciled.status_code == 200, reconciled.text
@@ -1234,22 +1259,22 @@ def test_unassessed_terminal_explore_prefers_assessment_over_default_low_waterma
         f"/api/v1/tasks/{task['id']}/reason-runs/{reason_run_id}"
     ).json()
 
-    assert run["trigger"] == "intent_assessment"
+    assert run["trigger"] == "low_watermark"
+    assert created_todo.json()["id"] in run["trigger_payload"]["actionable_todo_ids"]
     assert run["trigger_payload"]["unassessed_intent_ids"] == [intent_id]
 
 
-def test_intent_assessment_commits_once_and_rejects_a_later_reassessment(client) -> None:
+def test_intent_assessment_commits_once_and_ignores_a_later_reassessment(client) -> None:
     task, intent_id = _closed_todo_terminal_explore_signal(client)
-    reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={}).json()
-    [reason_run_id] = reconciled["created_reason_run_ids"]
+    manual = _trigger_manual_reason(client, task["id"], actor="评估回归")
+    assert manual.status_code == 200, manual.text
+    reason_run_id = manual.json()["id"]
     claim, execution = claim_reason_run(
         client,
         task_id=task["id"],
         reason_run_id=reason_run_id,
     )
-    assert execution["reason_prompt_profile"] == "progress"
-    assert intent_id in execution["intent_description"]
-    assert "评估本身不消费 Fact" in execution["intent_description"]
+    assert execution["reason_prompt_profile"] == "human"
     workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
     assessment = {
         "intent_id": intent_id,
@@ -1283,7 +1308,18 @@ def test_intent_assessment_commits_once_and_rejects_a_later_reassessment(client)
             },
         },
     )
-    assert conflicting_stage.status_code == 409
+    # Workspace 延续语义：draft 内重放评估按「最新结论覆盖」处理。
+    assert conflicting_stage.status_code == 200, conflicting_stage.text
+    assert len(conflicting_stage.json()["draft"]["intent_assessments"]) == 1
+    assert conflicting_stage.json()["draft"]["intent_assessments"][0]["status"] == "partial"
+
+    # 恢复原结论后再走 goal 评估与 commit。
+    restored = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/intent-assessments",
+        json={"lease_id": claim["lease_id"], "assessment": assessment},
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["draft"]["intent_assessments"][0]["reason"] == assessment["reason"]
 
     goal = client.post(
         f"/api/v1/reason-workspaces/{workspace['id']}/goal-assessment",
@@ -1333,8 +1369,18 @@ def test_intent_assessment_commits_once_and_rejects_a_later_reassessment(client)
         f"/api/v1/reason-workspaces/{duplicate_workspace['id']}/intent-assessments",
         json={"lease_id": duplicate_claim["lease_id"], "assessment": assessment},
     )
-    assert duplicate.status_code == 409
-    assert "already been assessed" in duplicate.text
+    # Workspace 延续语义：已评估 Intent 的重复评估按 no-op 成功处理。
+    assert duplicate.status_code == 200, duplicate.text
+    assert duplicate.json()["draft"]["intent_assessments"] == []
+    with client.app.state.container.engine.connect() as conn:
+        row = conn.execute(
+            select(
+                intents.c.assessment_status,
+                intents.c.assessment_reason,
+            ).where(intents.c.task_id == task["id"], intents.c.id == intent_id)
+        ).mappings().one()
+    assert row["assessment_status"] == "completed"
+    assert row["assessment_reason"] == assessment["reason"]
 
 
 def test_reason_min_interval_and_max_wait_use_the_latest_runtime_config(client) -> None:
@@ -1456,8 +1502,9 @@ def test_failed_explore_and_resume_follow_trigger_rules(client) -> None:
     run = client.get(
         f"/api/v1/tasks/{task['id']}/reason-runs/{triggered['created_reason_run_ids'][0]}"
     ).json()
-    # A failed terminal Explore must be assessed before the normal low-watermark
-    # replenishment signal, otherwise its result can be forgotten.
-    assert run["trigger"] == "intent_assessment"
+    # A failed terminal Explore is a low-watermark signal; its one-time
+    # assessment rides along via the snapshot (the conclude gate requires
+    # the unassessed list emptied) instead of minting its own trigger.
+    assert run["trigger"] == "low_watermark"
     assert run["trigger_payload"]["failed_intent_ids"] == [intent_id]
     assert run["trigger_payload"]["unassessed_intent_ids"] == [intent_id]

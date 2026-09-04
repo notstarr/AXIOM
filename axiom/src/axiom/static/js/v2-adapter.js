@@ -1015,6 +1015,10 @@
     if ((match = path.match(/^\/projects\/([^/]+)\/intents\/([^/]+)\/archive$/)) && method === 'PUT') {
       return request('POST', `/tasks/${match[1]}/intents/${match[2]}/toggle-archive`, { actor: 'human.frontend' });
     }
+    if ((match = path.match(/^\/projects\/([^/]+)\/intents\/([^/]+)\/reset-retries$/)) && method === 'PUT') {
+      const intent = await request('POST', `/tasks/${match[1]}/intents/${match[2]}/reset-retries`, { actor: 'human.frontend' }, options);
+      return mapIntent(intent);
+    }
     if ((match = path.match(/^\/projects\/([^/]+)\/events$/)) && method === 'GET') {
       const afterId = query.get('after_id') || '';
       const initialLoad = !afterId || afterId === '0';
@@ -1051,6 +1055,12 @@
     if ((match = path.match(/^\/projects\/([^/]+)\/vulns\/([^/]+)$/))) {
       if (method === 'PUT') return request('PATCH', `/tasks/${match[1]}/vulnerabilities/${match[2]}`, vulnerabilityBody(body, true));
       if (method === 'DELETE') return request('DELETE', `/tasks/${match[1]}/vulnerabilities/${match[2]}`);
+    }
+    if ((match = path.match(/^\/projects\/([^/]+)\/vulns\/([^/]+)\/human-reviewed$/)) && method === 'PUT') {
+      return request('POST', `/tasks/${match[1]}/vulnerabilities/${match[2]}/human-reviewed`, {
+        value: !!body.value,
+        actor: body.actor || 'human.frontend',
+      });
     }
 
     if (path === '/settings/dispatch' && method === 'GET') return dispatchSettings();
@@ -1445,6 +1455,7 @@
         const keyword = String(this.vulnFilter.keyword || '').trim();
         if (keyword) params.set('search', keyword);
         if (this.vulnFilter.projectId) params.set('task_id', this.vulnFilter.projectId);
+        params.set('sort', String(this.vulnerabilitySort || 'updated'));
         const page = await requestPage(`/vulnerabilities?${params}`, {
           signal: this._pageAbortController?.signal,
         });

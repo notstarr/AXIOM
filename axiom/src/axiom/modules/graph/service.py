@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import Engine
 
+from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.graph.repository import GraphRepository
 from axiom.modules.graph.schemas import Fact, Intent, TaskGraph, UpdateFact, UpdateIntent
 from axiom.modules.tasks.repository import TaskRepository
@@ -13,14 +14,22 @@ from axiom.shared.errors import ConflictError, NotFoundError
 
 if TYPE_CHECKING:
     from axiom.modules.archives.service import ArchiveService
+    from axiom.modules.audit.service import AuditService
 
 
 class GraphService:
-    def __init__(self, engine: Engine, *, archives: ArchiveService | None = None):
+    def __init__(
+        self,
+        engine: Engine,
+        *,
+        archives: ArchiveService | None = None,
+        audit: AuditService | None = None,
+    ):
         self.engine = engine
         self.repository = GraphRepository()
         self.tasks = TaskRepository()
         self.archives = archives
+        self.audit = audit
 
     def get(self, task_id: str) -> TaskGraph:
         with self.engine.connect() as conn:
@@ -113,6 +122,63 @@ class GraphService:
             values = command.model_dump(exclude_none=True)
             updated = self.repository.update_intent(conn, task_id, intent_id, values)
             assert updated is not None
+            return updated
+
+    def reset_intent_retries(self, task_id: str, intent_id: str) -> Intent:
+        with self.engine.begin() as conn:
+            task = self._mutable_task(conn, task_id)
+            current = self.repository.get_intent(conn, task_id, intent_id)
+            if current is None:
+                raise NotFoundError(f"Intent not found: {task_id}/{intent_id}")
+            if current.archived:
+                raise ConflictError(f"Archived Intent cannot be updated: {intent_id}")
+            if current.status != "pending":
+                raise ConflictError(
+                    f"Intent is not pending: {intent_id} (status={current.status})"
+                )
+            has_retry_debris = bool(
+                current.infrastructure_retry_count > 0
+                or current.retry_count > 0
+                or current.failure_class
+                or current.last_failure_kind
+                or current.next_retry_at is not None
+            )
+            if not has_retry_debris:
+                return current
+            values = {
+                "retry_count": 0,
+                "infrastructure_retry_count": 0,
+                "next_retry_at": None,
+                "last_failure_kind": "",
+                "failure_class": "",
+                "activity_kind": "",
+                "activity_summary": "",
+                "activity_tool": "",
+                "activity_started_at": None,
+                "activity_updated_at": None,
+                "lease_id": None,
+                "claimed_at": None,
+                "last_heartbeat_at": None,
+            }
+            updated = self.repository.update_intent(conn, task_id, intent_id, values)
+            assert updated is not None
+            if self.audit is not None:
+                self.audit.record_in(
+                    conn,
+                    RecordAuditEvent(
+                        project_id=task.project_id,
+                        task_id=task_id,
+                        intent_id=intent_id,
+                        event_type="intent.retry_budget_reset",
+                        message="人工重置 Intent 重试预算",
+                        payload={
+                            "actor": "human.frontend",
+                            "previous_retry_count": current.retry_count,
+                            "previous_infrastructure_retry_count": current.infrastructure_retry_count,
+                            "previous_failure_class": current.failure_class,
+                        },
+                    ),
+                )
             return updated
 
     def _mutable_task(self, conn, task_id: str):

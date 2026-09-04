@@ -115,7 +115,7 @@
           <div class="sto-field"><label>开放 Explore 低水位</label><input type="number" min="0" max="20" x-model.number="dispatchSettings.reason_low_watermark" class="sto-input sto-num"></div>
           <div class="sto-field"><label>Fact 最大等待（秒）</label><input type="number" min="10" max="3600" x-model.number="dispatchSettings.reason_max_wait_seconds" class="sto-input sto-num"></div>
           <div class="sto-field"><label>Reason 最短间隔（秒）</label><input type="number" min="0" max="3600" x-model.number="dispatchSettings.reason_min_interval_seconds" class="sto-input sto-num"></div>
-          <div class="sto-field"><label>Reason 最大排队数</label><input type="number" min="1" max="10" x-model.number="dispatchSettings.reason_queue_limit" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Reason 最大排队数（0 = 不排队）</label><input type="number" min="0" max="10" x-model.number="dispatchSettings.reason_queue_limit" class="sto-input sto-num"></div>
           <div class="sto-field"><label>Plan 最大排队数</label><input type="number" min="1" max="10" x-model.number="dispatchSettings.plan_queue_limit" class="sto-input sto-num"></div>
           <div class="sto-field span2"><label>Plan 连续复盘上限（无新漏洞自动收敛阈值）</label><input type="number" min="1" max="20" x-model.number="dispatchSettings.plan_max_consecutive_runs" class="sto-input sto-num" placeholder="默认 3 次"></div>
         </div>

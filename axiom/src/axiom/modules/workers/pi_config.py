@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -14,9 +15,35 @@ PI_NODE_VERSION = "v22.22.2"
 PI_RUNTIME_BINARY = (
     Path(__file__).resolve().parents[4] / "runtime" / "pi" / PI_RUNTIME_VERSION / "bin" / "pi"
 )
-PI_NODE_BINARY = Path(
-    "/Users/hexin/.workbuddy/binaries/node/versions/22.22.2/bin/node"
-)
+# The workbuddy-managed Node install uses package-revision directory suffixes
+# (22.22.2, 22.22.2-2, ...) for the same pinned Node version.  Resolve the
+# newest matching revision at import time instead of pinning one path that
+# silently disappears on a workbuddy runtime update.
+_AXIOM_PI_NODE_ENV = "AXIOM_PI_NODE_BINARY"
+_PI_NODE_VERSIONS_DIR = Path.home() / ".workbuddy" / "binaries" / "node" / "versions"
+
+
+def _resolve_pi_node_binary() -> Path:
+    override = os.environ.get(_AXIOM_PI_NODE_ENV, "").strip()
+    if override:
+        return Path(override).expanduser()
+    exact = _PI_NODE_VERSIONS_DIR / PI_NODE_VERSION.lstrip("v") / "bin" / "node"
+    if exact.is_file():
+        return exact
+    candidates = sorted(
+        (
+            item / "bin" / "node"
+            for item in _PI_NODE_VERSIONS_DIR.glob(f"{PI_NODE_VERSION.lstrip('v')}*")
+            if (item / "bin" / "node").is_file()
+        ),
+        key=lambda path: path.stat().st_mtime,
+    )
+    if candidates:
+        return candidates[-1]
+    return exact
+
+
+PI_NODE_BINARY = _resolve_pi_node_binary()
 _LEGACY_PI_BINARIES = frozenset({"", "pi", "/usr/local/bin/pi"})
 _PI_PACKAGE_RELATIVE_PATH = Path(
     "node_modules", "@earendil-works", "pi-coding-agent", "package.json"

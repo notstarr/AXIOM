@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import Connection, delete, func, or_, select, update
+from sqlalchemy import Connection, case, delete, func, or_, select, update
 
 from axiom.modules.artifacts.schemas import Artifact
 from axiom.modules.artifacts.tables import artifacts
@@ -19,6 +19,39 @@ from axiom.shared.ids import allocate_id
 
 
 class VulnerabilityRepository:
+    @staticmethod
+    def _order_by(sort: str) -> list:
+        """排序预设：updated（默认）/severity/unreviewed/newest。"""
+        severity_rank = case(
+            (vulnerabilities.c.severity == "critical", 0),
+            (vulnerabilities.c.severity == "high", 1),
+            (vulnerabilities.c.severity == "medium", 2),
+            (vulnerabilities.c.severity == "low", 3),
+            else_=4,
+        )
+        if sort == "severity":
+            return [
+                severity_rank.asc(),
+                vulnerabilities.c.updated_at.desc(),
+                vulnerabilities.c.id.desc(),
+            ]
+        if sort == "unreviewed":
+            return [
+                vulnerabilities.c.human_reviewed.asc(),
+                severity_rank.asc(),
+                vulnerabilities.c.updated_at.desc(),
+                vulnerabilities.c.id.desc(),
+            ]
+        if sort == "newest":
+            return [
+                vulnerabilities.c.created_at.desc(),
+                vulnerabilities.c.id.desc(),
+            ]
+        return [
+            vulnerabilities.c.updated_at.desc(),
+            vulnerabilities.c.id.desc(),
+        ]
+
     def create(
         self,
         conn: Connection,
@@ -94,6 +127,7 @@ class VulnerabilityRepository:
         status: str | None = None,
         severity: str | None = None,
         include_archived: bool = False,
+        sort: str = "updated",
     ) -> list[Vulnerability]:
         query = select(vulnerabilities).join(tasks, tasks.c.id == vulnerabilities.c.task_id)
         if project_id:
@@ -124,7 +158,7 @@ class VulnerabilityRepository:
             )
         rows = list(
             conn.execute(
-                query.order_by(vulnerabilities.c.updated_at.desc(), vulnerabilities.c.id.desc())
+                query.order_by(*self._order_by(sort))
             ).mappings()
         )
         return self._models(conn, rows)
@@ -141,6 +175,7 @@ class VulnerabilityRepository:
         include_archived: bool = False,
         limit: int,
         offset: int,
+        sort: str = "updated",
     ) -> tuple[list[Vulnerability], int]:
         query = select(vulnerabilities).join(tasks, tasks.c.id == vulnerabilities.c.task_id)
         if project_id:
@@ -174,7 +209,7 @@ class VulnerabilityRepository:
         ).scalar_one()
         rows = list(
             conn.execute(
-                query.order_by(vulnerabilities.c.updated_at.desc(), vulnerabilities.c.id.desc())
+                query.order_by(*self._order_by(sort))
                 .limit(limit)
                 .offset(offset)
             ).mappings()
@@ -340,9 +375,42 @@ class VulnerabilityRepository:
                     created_at=row["created_at"],
                     updated_at=row["updated_at"],
                     archived=bool(row["archived"]),
+                    human_reviewed=bool(row.get("human_reviewed") or False),
+                    human_reviewed_at=row.get("human_reviewed_at"),
+                    human_reviewed_by=row.get("human_reviewed_by"),
                 )
             )
         return result
+
+    def set_human_reviewed(
+        self,
+        conn: Connection,
+        task_id: str,
+        vulnerability_id: str,
+        *,
+        value: bool,
+        actor: str,
+        now: str,
+    ) -> Vulnerability | None:
+        values: dict[str, object] = {
+            "human_reviewed": value,
+            "human_reviewed_at": now if value else None,
+            "human_reviewed_by": actor if value else None,
+            "updated_at": now,
+        }
+        result = conn.execute(
+            update(vulnerabilities)
+            .where(
+                vulnerabilities.c.task_id == task_id,
+                vulnerabilities.c.id == vulnerability_id,
+            )
+            .values(**values)
+        )
+        if not result.rowcount:
+            return None
+        found = self.get(conn, task_id, vulnerability_id)
+        assert found is not None
+        return found
 
     @staticmethod
     def _replace_artifacts(

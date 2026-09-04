@@ -160,6 +160,18 @@ window.AxiomModules.helpers = {
       if (this.isBootstrapIntent(i)) return 'Bootstrap 等待中';
       return '等待 Worker';
     },
+    intentRetryStuck(i) {
+      if (!i) return false;
+      if (this.intentLifecycleState(i) !== 'pending' && i.status !== 'pending') return false;
+      return Boolean(
+        i.activity_kind === 'retry_blocked'
+        || i.infrastructure_retry_count > 0
+        || i.retry_count > 0
+        || i.failure_class
+        || i.last_failure_kind
+        || i.next_retry_at,
+      );
+    },
 
     vulnStatusClass(status) {
       const key = this.vulnStatusKey(status);
