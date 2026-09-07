@@ -30,8 +30,8 @@ class FakePlaywright:
 
 
 class FakeContext:
-    def __init__(self, storage_state: str | None = None) -> None:
-        self.storage_state = storage_state
+    def __init__(self, seed: str | dict | None = None) -> None:
+        self.seed = seed  # new_context 收到的注入来源（文件路径或导出 dict）
         self.pages: list[object] = []
         self.closed = False
 
@@ -41,6 +41,9 @@ class FakeContext:
     async def close(self) -> None:
         self.closed = True
 
+    async def storage_state(self) -> dict:
+        # Playwright API：默认上下文导出（模拟操作者已登录的持久状态）
+        return {"cookies": [{"name": "sid", "value": "USER"}], "origins": []}
 
 class FakeBrowser:
     def __init__(self) -> None:
@@ -51,11 +54,10 @@ class FakeBrowser:
     def is_connected(self) -> bool:
         return not self.closed
 
-    async def new_context(self, storage_state: str | None = None) -> FakeContext:
-        context = FakeContext(storage_state=storage_state)
+    async def new_context(self, storage_state: str | dict | None = None) -> FakeContext:
+        context = FakeContext(seed=storage_state)
         self.contexts.append(context)
         return context
-
 
 def _server(tmp_path: Path, *, slots: int = 4, page_limit: int = 8, idle: float = 600.0) -> tuple[BrowserBrokerServer, FakeBrowser]:
     server = BrowserBrokerServer(
@@ -108,7 +110,7 @@ def test_slot_pool_injects_session_snapshot(tmp_path: Path) -> None:
     )
     slot = server.leases["tok-l1"].slot
     assert slot is not None
-    assert slot.context.storage_state == str(session_file)
+    assert slot.context.seed == str(session_file)
 
 
 def test_slot_pool_rejects_missing_session_snapshot(tmp_path: Path) -> None:
@@ -121,6 +123,18 @@ def test_slot_pool_rejects_missing_session_snapshot(tmp_path: Path) -> None:
         )
     assert raised.value.code == "browser_session_missing"  # type: ignore[attr-defined]
     assert "tok-l1" not in server.leases
+
+
+def test_slot_pool_seeds_from_persistent_profile_state(tmp_path: Path) -> None:
+    """无显式快照时，槽位上下文默认从 SecTest 默认上下文导出的登录态注入。"""
+    server, browser = _server(tmp_path)
+    asyncio.run(server._register_lease(_payload("l1", tmp_path)))
+    slot = server.leases["tok-l1"].slot
+    assert slot is not None
+    assert slot.context.seed == {
+        "cookies": [{"name": "sid", "value": "USER"}],
+        "origins": [],
+    }
 
 
 def test_slot_pool_exhaustion_parks_then_times_out(tmp_path: Path) -> None:

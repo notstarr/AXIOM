@@ -557,10 +557,18 @@ class BrowserBrokerServer:
                 await slot.context.close()
         self._slot_freed.set()
         # 当所有活跃 Lease 均已关闭（空闲期/任务暂停）且 Chrome 归 Broker 所有时，
-        # 自动断开并平滑退出无头 Chrome 实例，释放 SingletonLock 文件锁，
-        # 方便操作者随时点击系统中的 Chrome-SecTest 浏览器进行手动登录与凭证维护。
+        # 自动平滑退出无头 Chrome 实例，释放 SingletonLock 文件锁，
+        # 方便操作者随时打开测试浏览器进行手动登录与凭证维护。
+        # 注意顺序：必须先 SIGTERM 让 Chrome 优雅退出（把内存中的 Cookie 落盘），
+        # 再清理 Playwright 连接；Browser.close() 会直接终止进程导致未落盘的登录态丢失。
         if not self.leases and self._chrome_pid is not None:
             async with self._connect_lock:
+                self._stop_owned_chrome()
+                for _ in range(40):
+                    await asyncio.sleep(0.25)
+                    pid = self._chrome_pid
+                    if pid is None or self._process_command(pid) == "":
+                        break
                 if self._browser is not None:
                     with contextlib.suppress(Exception):
                         await self._browser.close()
@@ -569,7 +577,6 @@ class BrowserBrokerServer:
                     with contextlib.suppress(Exception):
                         await self._playwright.stop()
                     self._playwright = None
-                self._stop_owned_chrome()
 
     async def _tool(
         self, lease: LeaseState, operation: str, params: dict[str, Any]
@@ -720,7 +727,15 @@ class BrowserBrokerServer:
         return True
 
     async def _new_slot_context(self, lease: LeaseState) -> BrowserContext:
-        storage_state: str | None = None
+        """Create an isolated context seeded with the SecTest login state.
+
+        会话源就是 SecTest 持久 Profile 本体：操作者手动打开浏览器登录后，
+        每个租约的隔离上下文在创建时从默认上下文导出 storage_state 注入，
+        实现登录一次、多 Intent 并发复用且互不干扰。显式提供
+        AXIOM_BROWSER_SESSION 快照文件时以文件为准（多身份等场景）。
+        """
+        assert self._browser is not None
+        storage_state: str | dict[str, Any] | None = None
         if lease.session_path:
             session_file = Path(lease.session_path)
             if not session_file.is_file():
@@ -729,7 +744,9 @@ class BrowserBrokerServer:
                     f"浏览器会话快照不存在：{session_file}",
                 )
             storage_state = str(session_file)
-        assert self._browser is not None
+        elif self._browser.contexts:
+            with contextlib.suppress(Exception):
+                storage_state = await self._browser.contexts[0].storage_state()
         return await self._browser.new_context(storage_state=storage_state)
 
     def _release_idle_slots(self) -> None:
@@ -871,20 +888,9 @@ class BrowserBrokerServer:
         # 严格安全断言：必须精确匹配包含当前 Chrome-SecTest 独立 Profile 和端口的命令，严禁触碰任何常规浏览器实例
         if self._is_expected_chrome_command(pid, port=port, profile=profile):
             try:
-                pgid_result = subprocess.run(
-                    ["ps", "-p", str(pid), "-o", "pgid="],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=1.0,
-                )
-                pgid_text = pgid_result.stdout.strip()
-                pgid = int(pgid_text) if pgid_text.isdigit() else pid
-                # 二次校验 pgid 领头进程是否仍属于受控 Chrome，防止系统 PID 复用误杀
-                if pgid != os.getpid() and self._is_expected_chrome_command(pgid, port=port, profile=profile):
-                    os.killpg(pgid, signal.SIGTERM)
-                else:
-                    os.kill(pid, signal.SIGTERM)
+                # 只对主进程发 SIGTERM：Chrome 优雅退出时会将内存 Cookie 落盘；
+                # killpg 全组同杀会让存储辅助进程先行退出，导致登录态丢失。
+                os.kill(pid, signal.SIGTERM)
             except (OSError, ValueError, subprocess.TimeoutExpired):
                 pass
         else:
