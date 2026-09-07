@@ -69,7 +69,7 @@ class RuntimeConfig(BaseModel):
     reason_min_interval_seconds: int = Field(default=60, ge=0, le=3_600)
     # At least one pending slot keeps the queue semantics lossless.  Legacy
     # persisted values of 0 are normalized by the pre-validator below.
-    reason_queue_limit: int = Field(default=3, ge=0, le=10)
+    reason_queue_limit: int = Field(default=3, ge=1, le=10)
     plan_queue_limit: int = Field(default=3, ge=1, le=10)
     plan_max_consecutive_runs: int = Field(default=3, ge=1, le=20)
     explore_execute_min_seconds: int = Field(default=300, ge=10, le=86_400)
@@ -79,6 +79,10 @@ class RuntimeConfig(BaseModel):
     explore_conclude_max_seconds: int = Field(default=600, ge=10, le=7_200)
     explore_conclude_default_seconds: int = Field(default=300, ge=10, le=7_200)
     explore_no_progress_seconds: int = Field(default=300, ge=30, le=7_200)
+    sandbox_backend: Literal["local", "cube"] = "local"
+    sandbox_required: bool = False
+    sandbox_local_fallback: bool = True
+    sandbox_template: str = "axiom-worker"
     network_proxy_mode: Literal["off", "http", "vpn"] = "off"
     network_proxy_url: str = "http://127.0.0.1:7890"
     guard_mode: Literal["off", "audit", "enforce"] = "enforce"
@@ -106,8 +110,9 @@ class RuntimeConfig(BaseModel):
     def normalize_reason_queue_limit(cls, value: int | str | None) -> int:
         if value is None or value == "":
             return 3
-        # 0 是合法配置：不排队模式（Reason run 不与活动 run 并存排队）。
-        return max(0, int(value))
+        # Legacy installations persisted 0.  A lossless queue always keeps
+        # at least one pending slot, so normalize that value on read.
+        return max(1, int(value))
 
     @field_validator("plan_queue_limit", "plan_max_consecutive_runs", mode="before")
     @classmethod
@@ -138,6 +143,10 @@ class RuntimeConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_relationships(self) -> "RuntimeConfig":
+        if self.sandbox_required and self.sandbox_backend != "cube":
+            raise ValueError("sandbox_required requires sandbox_backend='cube'")
+        if self.sandbox_backend == "cube" and self.sandbox_required and self.sandbox_local_fallback:
+            raise ValueError("sandbox_required disables sandbox_local_fallback")
         if self.global_max_active_tasks > self.global_max_active_runs:
             raise ValueError("global_max_active_tasks cannot exceed global_max_active_runs")
         if self.per_task_max_active_runs > self.global_max_active_runs:

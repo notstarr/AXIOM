@@ -99,6 +99,10 @@ class RpcProcessSpec(ProcessSpec):
     intervention_poller: Callable[[], list[tuple[str, str]]] | None = None
     intervention_result_reporter: Callable[[str, bool, str], None] | None = None
     intervention_poll_interval_seconds: float = 1.0
+    # Called only for real tool/binary/browser actions.  Context reads and
+    # assistant text streaming deliberately do not arm semantic Explore
+    # progress watchdogs.
+    external_action_reporter: Callable[[], None] | None = None
 
 
 class ProcessSupervisor:
@@ -644,6 +648,14 @@ class RpcProcessSupervisor(ProcessSupervisor):
                             "tool_execution_start",
                             "bash_execution_start",
                         }:
+                            if spec.external_action_reporter is not None:
+                                try:
+                                    spec.external_action_reporter()
+                                except Exception:
+                                    logger.warning(
+                                        "failed to report external worker action",
+                                        exc_info=True,
+                                    )
                             active_tool_calls.add(tool_id)
                             assistant_stream_active = False
                             last_tool_started_at = last_progress_at

@@ -123,6 +123,15 @@ class ExecutionInput(BaseModel):
     axiom_tool_keys: list[str] = Field(default_factory=list)
     axiom_tool_extensions: list[str] = Field(default_factory=list)
     axiom_tool_snapshot_path: str | None = None
+    # High-attention Context is appended to the Pi system prompt by the
+    # control plane.  The manifest and JSON indexes remain available for
+    # on-demand expansion and are still the source of truth.
+    injected_system_context: str = ""
+    injected_context_revision: int | None = None
+    injected_context_hash: str = ""
+    injected_context_refs: list[str] = Field(default_factory=list)
+    sandbox_id: str | None = None
+    sandbox_backend: str = "local"
 
     @model_validator(mode="after")
     def require_one_execution_owner(self) -> "ExecutionInput":
@@ -175,6 +184,12 @@ class PlanExecutionInput(BaseModel):
     axiom_tool_keys: list[str] = Field(default_factory=list)
     axiom_tool_extensions: list[str] = Field(default_factory=list)
     axiom_tool_snapshot_path: str | None = None
+    injected_system_context: str = ""
+    injected_context_revision: int | None = None
+    injected_context_hash: str = ""
+    injected_context_refs: list[str] = Field(default_factory=list)
+    sandbox_id: str | None = None
+    sandbox_backend: str = "local"
 
 
 class StartedIntent(BaseModel):

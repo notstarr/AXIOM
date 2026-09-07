@@ -12,6 +12,7 @@ from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.audit.tables import audit_events
 from axiom.modules.context.repository import ContextRepository
 from axiom.modules.context.schemas import ContextRevision, ExpandedContext
+from axiom.modules.context.injection import ContextInjectionService, InjectedSystemContext
 from axiom.modules.graph.repository import GraphRepository
 from axiom.modules.graph.tables import facts, intents
 from axiom.modules.goals.tables import goal_evaluations
@@ -45,6 +46,32 @@ class ContextService:
         self.todos = TodoRepository()
         self.artifacts = ArtifactRepository()
         self.vulnerabilities = VulnerabilityRepository()
+        self.injection = ContextInjectionService()
+
+    def build_system_context(
+        self,
+        *,
+        revision: ContextRevision,
+        phase: str,
+        intent_id: str | None = None,
+        reason_run_id: str | None = None,
+        plan_run_id: str | None = None,
+        review_run_id: str | None = None,
+        current_description: str = "",
+        current_targets: list[str] | None = None,
+        trigger_payload: dict[str, Any] | None = None,
+    ) -> InjectedSystemContext:
+        return self.injection.build(
+            revision=revision,
+            phase=phase,
+            intent_id=intent_id,
+            reason_run_id=reason_run_id,
+            plan_run_id=plan_run_id,
+            review_run_id=review_run_id,
+            current_description=current_description,
+            current_targets=current_targets,
+            trigger_payload=trigger_payload,
+        )
 
     def build(
         self,

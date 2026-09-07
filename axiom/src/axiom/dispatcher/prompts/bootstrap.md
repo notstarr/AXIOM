@@ -13,8 +13,8 @@
 ## 执行步骤
 
 1. **上下文读取与类型锁定**：
-   - 完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`，避免重复测试和上报。
-   - 运行 `axiom skill path whatisvul` 并完整读取 `whatisvul/SKILL.md` 中的 `SKILL.md`（判定标准，失败时用 `axiom skill doctor whatisvul`）。
+   - `hints.json`、`knowledge.json`、`vulnerabilities.json`、目标入口与 Scope，以及 `whatisvul/SKILL.md` 和漏洞标准已由 AXIOM 直接注入；不要重复读取已注入内容。
+   - 需要完整资产产物时按 Manifest 路径按需读取；注入内容缺失时才运行 `axiom skill path whatisvul`，失败时用 `axiom skill doctor whatisvul`。
    - 根据入口与目标判断类型（`小程序` / `App` / `Web`），读取对应的唯一子提示词；WebView/H5 仍属于该小程序，不要默认按 Web 处理，不得因为发现其它缓存应用就切换目标；每轮最多读取一份类型子提示词，不得读取任何类型子提示词（除已选中的这一份）：
    ```bash
    PROMPT_DIR="$("$AXIOM_PYTHON" -c 'from pathlib import Path; import axiom; print(Path(axiom.__file__).resolve().parent / "dispatcher" / "prompts")')"

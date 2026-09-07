@@ -14,7 +14,8 @@
 
 1. **上下文与产物读取**：
    - 运行 `axiom reason status` 确认工作区状态与待处理输入。
-   - 完整读取 `hints.json`、`knowledge.json` 、 `vulnerabilities.json` 和 `{goal}`
+   - `hints.json`、`knowledge.json`、`vulnerabilities.json`、Goal/Goal Cycle、触发快照、当前 Todo、新 Fact 摘要、相关 Findings/Leads、Intent 状态，以及 `whatisvul` 标准已由 AXIOM 直接注入；不要重复读取已注入内容。
+   - 需要完整产物、证据或额外历史材料时，按 Context Manifest 和 Graph ref 按需读取。
    - 判断 总目标是否已达成，已达成，转到第5步；未完成，继续按顺序进行.
    - 读取 Context Manifest 中的 `todos.json` 与新 Fact。
    - 通过 `graph.json` 找到新 Fact 对应的 `findings.md`（已测事实）与 `leads.md`（未决线索）并完整阅读。

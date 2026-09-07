@@ -245,7 +245,7 @@ class FileStore:
         )
         prepared = PreparedTaskDeletion(staging_dir=staging_dir)
         try:
-            for namespace in ("tasks", "runs"):
+            for namespace in ("tasks", "runs", "sandboxes"):
                 original = self.resolve(f"{namespace}/{task_id}")
                 if not original.exists() and not original.is_symlink():
                     continue

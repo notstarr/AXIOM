@@ -7,7 +7,6 @@ import os
 import shutil
 import threading
 import time
-from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -59,6 +58,7 @@ PG_BACKUP_KEEP_COUNT = 3
 ACTIVE_LEASE_STATUSES = ("claimed", "running", "concluding")
 CLEANUP_ALLOWED_PREFIXES = (
     "runs/",
+    "sandboxes/",
     "contexts/",
     "tasks/",
     "backups/",
@@ -73,6 +73,7 @@ LEASE_DIR_PREFIX = "lease_"
 # 它们的体积已包含在 total_bytes 与各分类差值中。
 CATEGORY_DIRS = (
     "runs",
+    "sandboxes",
     "contexts",
     "tasks",
     "logs",

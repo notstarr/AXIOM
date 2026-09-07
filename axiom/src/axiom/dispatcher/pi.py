@@ -60,19 +60,36 @@ EXPLORE_RPC_STREAM_RECOVERY_PROMPT = (
 class _ExploreArtifactProgressProbe:
     """Detect durable Explore output progress without another model call."""
 
-    def __init__(self, run_dir: str, timeout_seconds: int, *, scan_interval: float = 2.0):
+    def __init__(
+        self,
+        run_dir: str,
+        timeout_seconds: int,
+        *,
+        scan_interval: float = 2.0,
+        start_armed: bool = True,
+    ):
         self.root = Path(run_dir).resolve() / "artifacts"
         self.timeout_seconds = max(30, int(timeout_seconds))
         self.scan_interval = max(0.2, float(scan_interval))
         self._last_scan = 0.0
         self._last_signature: tuple[tuple[str, int, int], ...] | None = None
         self._last_change = time.monotonic()
+        self._armed = start_armed
+
+    def mark_external_action(self) -> None:
+        """Arm the no-progress timer after the first real probe/tool action."""
+
+        if not self._armed:
+            self._armed = True
+            self._last_change = time.monotonic()
 
     def __call__(self) -> str | None:
         now = time.monotonic()
         if now - self._last_scan < self.scan_interval:
             return None
         self._last_scan = now
+        if not self._armed:
+            return None
         signature: list[tuple[str, int, int]] = []
         try:
             if self.root.is_dir() and not self.root.is_symlink():
@@ -222,6 +239,7 @@ class PiBootstrapExecutor:
             tool_names=native_tool_names("bootstrap", "conclude"),
             enable_axiom_tools=False,
             enable_browser=False,
+            append_injected_context=False,
         )
         if result.cancelled:
             raise LeaseLostError(result.cancel_reason or "worker cancelled")
@@ -245,9 +263,20 @@ class PiBootstrapExecutor:
         stream_idle_timeout_seconds: float | None = None,
         stream_recovery_prompt: str | None = None,
         semantic_progress_probe: Callable[[], str | None] | None = None,
+        external_action_reporter: Callable[[], None] | None = None,
         enable_axiom_tools: bool = True,
         enable_browser: bool = True,
+        append_injected_context: bool = True,
     ) -> ProcessResult:
+        if getattr(execution_input, "sandbox_backend", "local") == "cube":
+            # The control-plane process supervisor cannot execute a command
+            # against a remote CubeSandbox path.  Fail closed here rather
+            # than accidentally launching Pi on the host when production is
+            # configured for mandatory isolation.  Deployments must inject a
+            # remote supervisor/transport before enabling Cube execution.
+            raise TransientWorkerError(
+                "CubeSandbox execution requires a remote worker supervisor; host fallback is disabled"
+            )
         session_dir = Path(self.settings.session_dir or Path(execution_input.run_dir) / "sessions")
         session_dir.mkdir(parents=True, exist_ok=True)
         agent_dir = session_dir.parent
@@ -264,6 +293,9 @@ class PiBootstrapExecutor:
                 "AXIOM_LEASE_ID": execution_input.lease_id,
                 "AXIOM_PHASE": phase,
                 "AXIOM_WORKER": execution_input.worker_name,
+                "AXIOM_SANDBOX_ID": getattr(execution_input, "sandbox_id", None) or "",
+                "AXIOM_CONTEXT_REVISION": str(getattr(execution_input, "injected_context_revision", None) or getattr(execution_input, "context_revision", None) or ""),
+                "AXIOM_CONTEXT_HASH": getattr(execution_input, "injected_context_hash", "") or "",
                 "AXIOM_GUARD_ENABLED": "1" if execution_input.guard_enabled else "0",
                 "PI_CODING_AGENT_DIR": str(agent_dir),
                 "AXIOM_SKILL_DIRECTORIES": ":".join(execution_input.skill_directories),
@@ -379,6 +411,9 @@ class PiBootstrapExecutor:
             ),
             mcp_tool_names=execution_input.mcp_tool_names,
             browser_enabled=browser_enabled,
+            injected_system_context=(
+                execution_input.injected_system_context if append_injected_context else ""
+            ),
         )
         tracker = None
         if self.activity_reporter is not None or self.token_usage_reporter is not None:
@@ -416,6 +451,7 @@ class PiBootstrapExecutor:
                         stream_recovery_prompt=stream_recovery_prompt,
                         intervention_poller=self.intervention_poller if phase == "explore" else None,
                         intervention_result_reporter=self.intervention_result_reporter if phase == "explore" else None,
+                        external_action_reporter=external_action_reporter,
                     ),
                     should_cancel=should_cancel,
                     on_steer=lambda: self._report_soft_reminder(execution_input),
@@ -481,7 +517,15 @@ class PiBootstrapExecutor:
         axiom_tool_keys: list[str] | None = None,
         mcp_tool_names: list[str] | None = None,
         browser_enabled: bool = False,
+        injected_system_context: str = "",
     ) -> list[str]:
+        attention_prompt = (
+            CONTEXT_ATTENTION_SYSTEM_PROMPT
+            if "bash" in tool_names
+            else NO_BASH_CONTEXT_ATTENTION_SYSTEM_PROMPT
+        )
+        if injected_system_context.strip():
+            attention_prompt = attention_prompt.rstrip() + "\n\n" + injected_system_context.strip()
         argv = [
             self.settings.binary,
             "--provider",
@@ -493,11 +537,7 @@ class PiBootstrapExecutor:
             "--mode",
             mode,
             "--append-system-prompt",
-            (
-                CONTEXT_ATTENTION_SYSTEM_PROMPT
-                if "bash" in tool_names
-                else NO_BASH_CONTEXT_ATTENTION_SYSTEM_PROMPT
-            ),
+            attention_prompt,
         ]
         if self._session_id:
             argv.extend([self.settings.session_flag, self._session_id])
@@ -749,6 +789,7 @@ class PiReasonExecutor(PiBootstrapExecutor):
             tool_names=native_tool_names("reason", "conclude"),
             extra_environment={"AXIOM_REASON_WORKSPACE_ID": workspace.id},
             enable_axiom_tools=False,
+            append_injected_context=False,
         )
         if result.cancelled:
             raise LeaseLostError(result.cancel_reason or "worker cancelled")
@@ -842,6 +883,7 @@ class PiPlanExecutor(PiBootstrapExecutor):
             tool_names=native_tool_names("plan", "conclude"),
             extra_environment={"AXIOM_PLAN_WORKSPACE_ID": workspace.id},
             enable_browser=False,
+            append_injected_context=False,
         )
         if result.cancelled:
             raise LeaseLostError(result.cancel_reason or "worker cancelled")
@@ -865,6 +907,7 @@ class PiExploreExecutor(PiBootstrapExecutor):
         progress_probe = _ExploreArtifactProgressProbe(
             execution_input.run_dir,
             execution_input.explore_no_progress_seconds,
+            start_armed=False,
         )
         result = self._run(
             execution_input,
@@ -893,6 +936,7 @@ class PiExploreExecutor(PiBootstrapExecutor):
             stream_idle_timeout_seconds=EXPLORE_RPC_STREAM_IDLE_TIMEOUT_SECONDS,
             stream_recovery_prompt=EXPLORE_RPC_STREAM_RECOVERY_PROMPT,
             semantic_progress_probe=progress_probe,
+            external_action_reporter=progress_probe.mark_external_action,
         )
         if result.cancelled:
             if result.cancel_reason == "explore_no_progress":
@@ -929,6 +973,7 @@ class PiExploreExecutor(PiBootstrapExecutor):
             tool_names=native_tool_names("explore", "conclude"),
             rpc=True,
             enable_axiom_tools=False,
+            append_injected_context=False,
         )
         if result.cancelled:
             raise LeaseLostError(result.cancel_reason or "worker cancelled")
@@ -1003,6 +1048,7 @@ class PiReviewExecutor(PiBootstrapExecutor):
             or self.default_conclude_seconds,
             tool_names=native_tool_names("review", "conclude"),
             enable_axiom_tools=False,
+            append_injected_context=False,
         )
         if result.cancelled:
             raise LeaseLostError(result.cancel_reason or "worker cancelled")

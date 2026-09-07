@@ -19,6 +19,8 @@
 3. 重点核验所有高价值 `artifact:*` 中的 Findings、Leads 和失败 Evidence，提取被前序轮次遗漏或草率标记为 blocked/completed 的端点。
 4. 读取 `whatisvul` Skill。所有新规划必须以已有事实、产物和漏洞证据为依据。
 
+> 上述 Context 索引、全量关键历史摘要、Goal/Goal Cycle、漏洞标准和 whatisvul 正文已经由 AXIOM 直接追加到本轮系统提示词末端。不要重复读取已注入内容；只有需要完整 Artifact、Evidence 或被压缩的历史正文时，才按 Manifest/Workspace 路径按需读取。
+
 ## 必须深挖的四大进攻维度（全图复盘核心铁律，严禁直接放弃）
 
 1. **全图未覆盖端点与能测未测深水区激活**：

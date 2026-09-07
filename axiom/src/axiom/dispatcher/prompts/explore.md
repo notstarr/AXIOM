@@ -21,8 +21,8 @@
 ## 执行规则
 
 1. **上下文与判定标准加载**：
-   - 优先完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`（避免重复测试和上报）；重点检查 Todo 的 `status_reason`；再按需读取相关事实、执行意图、待办、产物、证据；
-   - 执行 `axiom skill path whatisvul` 并完整阅读其 `whatisvul/SKILL.md`（漏洞定级与判定标准，失败时运行 `axiom skill doctor whatisvul`）；
+   - `hints.json`、`knowledge.json`、`vulnerabilities.json`、当前 Intent/Todo 摘要、相关 Fact、Findings/Leads 摘要，以及 `whatisvul/SKILL.md` 和漏洞标准已由 AXIOM 直接注入本轮系统提示词；不要重复 cat/read 这些已注入内容；
+   - 需要完整 Artifact、Evidence 或额外历史材料时，再按 Context Manifest 的路径按需读取；注入内容缺失时才运行 `axiom skill path whatisvul`，失败时运行 `axiom skill doctor whatisvul`；
    - 按需读取当前所需的其他 Skill（`axiom skill path <name>`）或上游资产（`asset_inventory.md`、上游 Intent 的 `findings.md`），严禁无脑全盘读取历史。
 2. **目标与对象取值规则**：
    - 严格围绕当前 Intent 目标展开；测试所需对象 ID 优先从基线或自身列表响应（`items[].id`）获取，必要时展开联想；未显式披露 Scope 时以当前目标及关联业务为界。

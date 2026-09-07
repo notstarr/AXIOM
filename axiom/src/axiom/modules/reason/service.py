@@ -958,21 +958,6 @@ class ReasonService:
             )
             return None
 
-        if open_runs and int(getattr(config, "reason_queue_limit", 3)) == 0:
-            # 不排队模式（reason_queue_limit=0）：调度 tick 不再创建或合并
-            # 新的排队项。未覆盖的输入保持未消费，待当前 run 结束、队列
-            # 传清后的下一 tick 会重新触发并一次性吸收全部输入，避免
-            # Worker 消化不及的 Intent 被 Reason 继续堆叠。
-            self._set_phase(
-                conn,
-                task_id,
-                "plan"
-                if independent_plan_present
-                else ("explore" if open_explore_ids else "waiting"),
-                now,
-            )
-            return None
-
         run = self._enqueue_or_coalesce_in(
             conn,
             task=task,

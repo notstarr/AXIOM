@@ -36,7 +36,7 @@ DEFAULT_BATCH_SIZE = 1_000
 # tables are represented as empty target tables during import; all other
 # historical rows remain byte-for-byte migratable.
 LEGACY_SQLITE_OMIT_TABLES = frozenset(
-    {"plan_runs", "plan_run_sources", "plan_workspaces"}
+    {"plan_runs", "plan_run_sources", "plan_workspaces", "task_sandboxes"}
 )
 
 LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {

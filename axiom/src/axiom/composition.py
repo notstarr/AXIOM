@@ -36,6 +36,7 @@ from axiom.modules.vulnerabilities.service import VulnerabilityService
 from axiom.modules.vulnerability_reviews.service import VulnerabilityReviewService
 from axiom.modules.workers.service import WorkerService
 from axiom.modules.storage_admin.service import StorageAdminService
+from axiom.modules.sandboxes.service import TaskSandboxManager
 from axiom.shared.storage import FileStore
 
 
@@ -74,6 +75,7 @@ class Container:
     token_usage: TokenUsageService
     interventions: InterventionService
     auth: AuthService
+    sandboxes: TaskSandboxManager
 
     @classmethod
     def build(
@@ -84,6 +86,7 @@ class Container:
         allow_startup_writes: bool = True,
     ) -> "Container":
         store = FileStore(data_dir)
+        sandboxes = TaskSandboxManager(engine, store)
         vulnerability_reviews = VulnerabilityReviewService(engine, store)
         archives = ArchiveService(engine, store, reviews=vulnerability_reviews)
         context = ContextService(engine, store)
@@ -112,7 +115,7 @@ class Container:
         return cls(
             engine=engine,
             projects=ProjectService(engine),
-            tasks=TaskService(engine, store),
+            tasks=TaskService(engine, store, sandboxes=sandboxes),
             graph=GraphService(engine, archives=archives, audit=audit),
             axiom_tools=axiom_tools,
             workers=WorkerService(engine),
@@ -129,6 +132,7 @@ class Container:
                 skills,
                 axiom_tools,
                 vulnerability_reviews,
+                sandboxes,
             ),
             todos=TodoService(engine),
             reason=reason,
@@ -155,4 +159,5 @@ class Container:
             token_usage=token_usage,
             interventions=interventions,
             auth=AuthService(data_dir),
+            sandboxes=sandboxes,
         )

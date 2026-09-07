@@ -50,6 +50,7 @@ from axiom.modules.graph.tables import facts
 from axiom.modules.axiom_tools.service import AxiomToolService
 from axiom.modules.plan.repository import PlanRepository
 from axiom.modules.reason.service import ReasonService
+from axiom.modules.sandboxes.service import TaskSandboxManager
 from axiom.modules.settings.service import load_runtime_config
 from axiom.modules.tasks.schemas import TaskScope
 from axiom.modules.workers.tables import workers
@@ -98,6 +99,7 @@ class ExecutionService:
         skills: SkillService,
         axiom_tools: AxiomToolService,
         reviews: VulnerabilityReviewService,
+        sandboxes: TaskSandboxManager | None = None,
     ):
         self.engine = engine
         self.store = store
@@ -112,7 +114,69 @@ class ExecutionService:
         self.credentials = CredentialRepository()
         self.vulnerabilities = VulnerabilityRepository()
         self.reviews = reviews
+        self.sandboxes = sandboxes
         self.audit = AuditService(engine)
+
+    def _run_directory(self, task_id: str, owner_id: str, lease_id: str, *, owner_kind: str = "intent"):
+        if self.sandboxes is not None:
+            return self.sandboxes.run_directory(
+                task_id=task_id,
+                owner_id=owner_id,
+                lease_id=lease_id,
+            )
+        # Compatibility for direct unit construction and pre-sandbox data
+        # migrations.  The application container always supplies a manager.
+        owner_kw = {f"{owner_kind}_id": owner_id}
+        return self.store.run_directory(task_id=task_id, lease_id=lease_id, **owner_kw)
+
+    def _record_context_injection(
+        self,
+        *,
+        project_id: str,
+        task_id: str,
+        phase: str,
+        injected,
+        lease_id: str,
+        intent_id: str | None = None,
+        reason_run_id: str | None = None,
+        plan_run_id: str | None = None,
+        review_run_id: str | None = None,
+    ) -> None:
+        """Make prompt suffix provenance visible without persisting its body."""
+        with transaction(self.engine) as conn:
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=project_id,
+                    task_id=task_id,
+                    intent_id=intent_id,
+                    reason_run_id=reason_run_id,
+                    plan_run_id=plan_run_id,
+                    review_run_id=review_run_id,
+                    event_type="context.injected",
+                    message=f"{phase} 强制上下文已注入 Worker 系统提示词",
+                    payload={
+                        "phase": phase,
+                        "lease_id": lease_id,
+                        "context_revision": injected.source_revision,
+                        "content_hash": injected.content_hash,
+                        "estimated_tokens": injected.estimated_tokens,
+                        "source_refs": injected.source_refs,
+                    },
+                ),
+            )
+
+    def _cleanup_committed_run(self, *, task_id: str, owner_id: str, lease_id: str) -> None:
+        if self.sandboxes is None:
+            return
+        try:
+            self.sandboxes.cleanup_run_directory(
+                task_id=task_id,
+                owner_id=owner_id,
+                lease_id=lease_id,
+            )
+        except OSError:
+            logger.exception("failed to clean committed sandbox run: %s/%s", task_id, owner_id)
 
     def credential_summaries(
         self,
@@ -214,13 +278,23 @@ class ExecutionService:
             intent_id=intent_id,
             lease_id=command.lease_id,
         )
-        run_dir = str(
-            self.store.run_directory(
-                task_id=task_id,
-                intent_id=intent_id,
-                lease_id=command.lease_id,
-            )
+        injected = self.context.build_system_context(
+            revision=context,
+            phase=values["phase"],
+            intent_id=intent_id,
+            current_description=values["intent_description"],
+            current_targets=values["intent_targets"],
         )
+        self._record_context_injection(
+            project_id=row["project_id"],
+            task_id=task_id,
+            phase=values["phase"],
+            injected=injected,
+            lease_id=command.lease_id,
+            intent_id=intent_id,
+        )
+        run_dir = str(self._run_directory(task_id, intent_id, command.lease_id, owner_kind="intent"))
+        sandbox = self.sandboxes.get(task_id) if self.sandboxes is not None else None
         capabilities = self.phase_capabilities.snapshot_for_lease(
             worker_name=values["worker_name"],
             phase=values["phase"],
@@ -255,6 +329,12 @@ class ExecutionService:
             axiom_tool_keys=capabilities.axiom_tool_keys,
             axiom_tool_extensions=capabilities.axiom_tool_extensions,
             axiom_tool_snapshot_path=capabilities.axiom_tool_snapshot_path,
+            injected_system_context=injected.text,
+            injected_context_revision=injected.source_revision,
+            injected_context_hash=injected.content_hash,
+            injected_context_refs=injected.source_refs,
+            sandbox_id=sandbox.sandbox_id if sandbox else None,
+            sandbox_backend=sandbox.backend if sandbox else "local",
         )
 
     def reason_input(
@@ -358,13 +438,23 @@ class ExecutionService:
             )
         if goal_cycle_guidance:
             trigger_summary += goal_cycle_guidance
-        run_dir = str(
-            self.store.run_directory(
-                task_id=task_id,
-                reason_run_id=reason_run_id,
-                lease_id=command.lease_id,
-            )
+        injected = self.context.build_system_context(
+            revision=context,
+            phase="reason",
+            reason_run_id=reason_run_id,
+            current_description=trigger_summary,
+            trigger_payload=run.trigger_payload,
         )
+        self._record_context_injection(
+            project_id=task.project_id,
+            task_id=task_id,
+            phase="reason",
+            injected=injected,
+            lease_id=command.lease_id,
+            reason_run_id=reason_run_id,
+        )
+        run_dir = str(self._run_directory(task_id, reason_run_id, command.lease_id, owner_kind="reason_run"))
+        sandbox = self.sandboxes.get(task_id) if self.sandboxes is not None else None
         capabilities = self.phase_capabilities.snapshot_for_lease(
             worker_name=run.worker or "",
             phase="reason",
@@ -400,6 +490,12 @@ class ExecutionService:
             axiom_tool_keys=capabilities.axiom_tool_keys,
             axiom_tool_extensions=capabilities.axiom_tool_extensions,
             axiom_tool_snapshot_path=capabilities.axiom_tool_snapshot_path,
+            injected_system_context=injected.text,
+            injected_context_revision=injected.source_revision,
+            injected_context_hash=injected.content_hash,
+            injected_context_refs=injected.source_refs,
+            sandbox_id=sandbox.sandbox_id if sandbox else None,
+            sandbox_backend=sandbox.backend if sandbox else "local",
         )
 
     def plan_input(
@@ -441,13 +537,23 @@ class ExecutionService:
             plan_run_id=plan_run_id,
             lease_id=command.lease_id,
         )
-        run_dir = str(
-            self.store.run_directory(
-                task_id=task_id,
-                plan_run_id=plan_run_id,
-                lease_id=command.lease_id,
-            )
+        injected = self.context.build_system_context(
+            revision=context,
+            phase="plan",
+            plan_run_id=plan_run_id,
+            current_description="Plan 全局复盘：检查历史覆盖、阻断方向和跨模块资产组合。",
+            trigger_payload=run.trigger_payload,
         )
+        self._record_context_injection(
+            project_id=task.project_id,
+            task_id=task_id,
+            phase="plan",
+            injected=injected,
+            lease_id=command.lease_id,
+            plan_run_id=plan_run_id,
+        )
+        run_dir = str(self._run_directory(task_id, plan_run_id, command.lease_id, owner_kind="plan_run"))
+        sandbox = self.sandboxes.get(task_id) if self.sandboxes is not None else None
         capabilities = self.phase_capabilities.snapshot_for_lease(
             worker_name=run.worker or "",
             phase="plan",
@@ -480,6 +586,12 @@ class ExecutionService:
             axiom_tool_keys=capabilities.axiom_tool_keys,
             axiom_tool_extensions=capabilities.axiom_tool_extensions,
             axiom_tool_snapshot_path=capabilities.axiom_tool_snapshot_path,
+            injected_system_context=injected.text,
+            injected_context_revision=injected.source_revision,
+            injected_context_hash=injected.content_hash,
+            injected_context_refs=injected.source_refs,
+            sandbox_id=sandbox.sandbox_id if sandbox else None,
+            sandbox_backend=sandbox.backend if sandbox else "local",
         )
 
     def review_input(
@@ -526,19 +638,29 @@ class ExecutionService:
         manual_reason = str(run.trigger_payload.get("reason") or "").strip()
         if manual_reason:
             trigger_summary += f"。人工说明：{manual_reason}"
-        run_dir = str(
-            self.store.run_directory(
-                task_id=task_id,
-                review_run_id=review_run_id,
-                lease_id=command.lease_id,
-            )
+        targets = [vulnerability.affected_target] if vulnerability.affected_target else []
+        injected = self.context.build_system_context(
+            revision=context,
+            phase="review",
+            review_run_id=review_run_id,
+            current_description=trigger_summary,
+            current_targets=targets,
         )
+        self._record_context_injection(
+            project_id=task.project_id,
+            task_id=task_id,
+            phase="review",
+            injected=injected,
+            lease_id=command.lease_id,
+            review_run_id=review_run_id,
+        )
+        run_dir = str(self._run_directory(task_id, review_run_id, command.lease_id, owner_kind="review_run"))
+        sandbox = self.sandboxes.get(task_id) if self.sandboxes is not None else None
         capabilities = self.phase_capabilities.snapshot_for_lease(
             worker_name=run.worker or "",
             phase="review",
             run_dir=run_dir,
         )
-        targets = [vulnerability.affected_target] if vulnerability.affected_target else []
         return ExecutionInput(
             task_id=task_id,
             project_id=task.project_id,
@@ -567,6 +689,12 @@ class ExecutionService:
             axiom_tool_keys=capabilities.axiom_tool_keys,
             axiom_tool_extensions=capabilities.axiom_tool_extensions,
             axiom_tool_snapshot_path=capabilities.axiom_tool_snapshot_path,
+            injected_system_context=injected.text,
+            injected_context_revision=injected.source_revision,
+            injected_context_hash=injected.content_hash,
+            injected_context_refs=injected.source_refs,
+            sandbox_id=sandbox.sandbox_id if sandbox else None,
+            sandbox_backend=sandbox.backend if sandbox else "local",
         )
 
     def start(self, *, task_id: str, intent_id: str, command: LeaseCommand) -> StartedIntent:
@@ -841,11 +969,7 @@ class ExecutionService:
             if existing["intent_status"] == "completed" and existing["to_fact_id"]:
                 return self._completed(conn, task_id, intent_id, existing["to_fact_id"])
 
-        run_dir = self.store.run_directory(
-            task_id=task_id,
-            intent_id=intent_id,
-            lease_id=command.lease_id,
-        )
+        run_dir = self._run_directory(task_id, intent_id, command.lease_id, owner_kind="intent")
         outputs = bootstrap_files(run_dir)
         prepared = self.store.prepare_existing_files(
             base_key=f"tasks/{task_id}/artifacts/{intent_id}",
@@ -929,6 +1053,9 @@ class ExecutionService:
                 # retaining a worker-run copy is safer than deleting the only
                 # registered file during cleanup.
                 logger.exception("failed to clean Bootstrap run outputs: %s/%s", task_id, intent_id)
+            self._cleanup_committed_run(
+                task_id=task_id, owner_id=intent_id, lease_id=command.lease_id
+            )
             result = BootstrapCompleted(
                 task_id=task_id,
                 intent_id=intent_id,
@@ -960,11 +1087,7 @@ class ExecutionService:
             if existing["intent_status"] == "completed" and existing["to_fact_id"]:
                 return self._explore_completed(conn, task_id, intent_id, existing["to_fact_id"])
 
-        run_dir = self.store.run_directory(
-            task_id=task_id,
-            intent_id=intent_id,
-            lease_id=command.lease_id,
-        )
+        run_dir = self._run_directory(task_id, intent_id, command.lease_id, owner_kind="intent")
         outputs = explore_files(run_dir)
         prepared = self.store.prepare_existing_files(
             base_key=f"tasks/{task_id}/artifacts/{intent_id}",
@@ -1122,6 +1245,9 @@ class ExecutionService:
                         task_id,
                         intent_id,
                     )
+                self._cleanup_committed_run(
+                    task_id=task_id, owner_id=intent_id, lease_id=command.lease_id
+                )
 
                 # 事务成功提交后再触发钉钉推送，确保漏洞 ID 已落库且不会在事务内发生网络 IO 阻塞
                 for vuln in vulnerability_records:
@@ -1166,11 +1292,7 @@ class ExecutionService:
         intent_id: str,
         command: ReportExploreVulnerabilityCommand,
     ) -> ExploreVulnerabilityRecorded:
-        run_dir = self.store.run_directory(
-            task_id=task_id,
-            intent_id=intent_id,
-            lease_id=command.lease_id,
-        )
+        run_dir = self._run_directory(task_id, intent_id, command.lease_id, owner_kind="intent")
         with explore_state_guard(run_dir):
             with self.engine.connect() as conn:
                 row = self.repository.input_row(conn, task_id, intent_id)

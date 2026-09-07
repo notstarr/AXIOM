@@ -115,9 +115,13 @@
           <div class="sto-field"><label>开放 Explore 低水位</label><input type="number" min="0" max="20" x-model.number="dispatchSettings.reason_low_watermark" class="sto-input sto-num"></div>
           <div class="sto-field"><label>Fact 最大等待（秒）</label><input type="number" min="10" max="3600" x-model.number="dispatchSettings.reason_max_wait_seconds" class="sto-input sto-num"></div>
           <div class="sto-field"><label>Reason 最短间隔（秒）</label><input type="number" min="0" max="3600" x-model.number="dispatchSettings.reason_min_interval_seconds" class="sto-input sto-num"></div>
-          <div class="sto-field"><label>Reason 最大排队数（0 = 不排队）</label><input type="number" min="0" max="10" x-model.number="dispatchSettings.reason_queue_limit" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>Reason 最大排队数</label><input type="number" min="1" max="10" x-model.number="dispatchSettings.reason_queue_limit" class="sto-input sto-num"><p class="sto-desc">至少保留 1 个 pending 槽位，避免触发输入丢失。</p></div>
           <div class="sto-field"><label>Plan 最大排队数</label><input type="number" min="1" max="10" x-model.number="dispatchSettings.plan_queue_limit" class="sto-input sto-num"></div>
           <div class="sto-field span2"><label>Plan 连续复盘上限（无新漏洞自动收敛阈值）</label><input type="number" min="1" max="20" x-model.number="dispatchSettings.plan_max_consecutive_runs" class="sto-input sto-num" placeholder="默认 3 次"></div>
+          <div class="sto-field"><label>Sandbox 后端</label><select x-model="dispatchSettings.sandbox_backend" class="sto-input"><option value="local">Local（开发/测试）</option><option value="cube">CubeSandbox（生产）</option></select></div>
+          <div class="sto-field"><label>Sandbox 模板版本</label><input type="text" x-model="dispatchSettings.sandbox_template" class="sto-input"></div>
+          <div class="sto-field"><label>强制 CubeSandbox</label><label class="sto-check"><input type="checkbox" x-model="dispatchSettings.sandbox_required"> 不可用时保持 pending，不回退宿主机</label></div>
+          <div class="sto-field"><label>允许 Local fallback</label><label class="sto-check"><input type="checkbox" x-model="dispatchSettings.sandbox_local_fallback" :disabled="dispatchSettings.sandbox_required"> 仅开发环境建议开启</label></div>
         </div>
       </div>
 

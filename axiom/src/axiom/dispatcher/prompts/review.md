@@ -11,8 +11,8 @@
 ## 唯一职责与流程
 
 1. **读取上下文与标准**：
-   - 读取 Context Manifest 中的 `review_target.json`（含 Finding 与 Evidence 路径）、`hints.json` 与 `vulnerabilities.json`。
-   - 运行 `axiom skill path whatisvul` 并阅读 `whatisvul/SKILL.md`。若分配了 `vuln-review`，运行 `axiom skill path vuln-review`，按该 Skill 的“必读附件”规则读取对应状态示例；未分配该 Skill 时不要把它当作缺失依赖。
+   - `review_target.json` 摘要、`hints.json`、`vulnerabilities.json`、相关 Fact/Intent、Evidence 索引，以及 `whatisvul/SKILL.md` 已由 AXIOM 直接注入；不要重复读取已注入内容。
+   - 需要完整 Finding/Evidence 正文时按 Manifest 路径读取。若分配了 `vuln-review`，运行 `axiom skill path vuln-review`，按该 Skill 的“必读附件”规则读取对应状态示例；未分配该 Skill 时不要把它当作缺失依赖。
 2. **独立验证（必须）**：
    - 不创建 Fact、Todo 或 Intent；只提交当前漏洞的审核裁决。
    - 默认必须进行至少一次新的独立验证与关键对照请求；不得只复述文件内容后直接裁决。只要目标可达且安全，至少一个关键对照结果（如自身对象 vs 异租户对象，有效入参 vs 无效入参）必须写入结论。

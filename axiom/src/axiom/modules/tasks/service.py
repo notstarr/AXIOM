@@ -48,6 +48,7 @@ from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.tables import vulnerabilities
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
+from axiom.modules.sandboxes.service import TaskSandboxManager
 from axiom.shared import model_registry as _model_registry  # noqa: F401
 from axiom.shared.clock import format_utc, parse_utc, utcnow
 from axiom.shared.database import metadata, run_transaction, transaction
@@ -71,7 +72,7 @@ def _json_object(value: object) -> dict[str, object]:
 
 
 class TaskService:
-    def __init__(self, engine: Engine, store: FileStore):
+    def __init__(self, engine: Engine, store: FileStore, *, sandboxes: TaskSandboxManager | None = None):
         self.engine = engine
         self.store = store
         self.projects = ProjectRepository()
@@ -82,6 +83,7 @@ class TaskService:
         self.plan = PlanRepository()
         self.reason_service = ReasonService(engine)
         self.audit = AuditService(engine)
+        self.sandboxes = sandboxes
 
     def create(self, command: CreateTask) -> Task:
         origin = Origin(original_input=command.origin)
@@ -439,6 +441,14 @@ class TaskService:
                 if active_count:
                     raise ConflictError("任务仍有活动 Worker Lease，暂时不能永久删除")
 
+                # An archived task should already have released its sandbox,
+                # but keep deletion safe for databases created before the
+                # sandbox lifecycle hook was introduced.
+                if self.sandboxes is not None:
+                    sandbox = self.sandboxes.get(task_id)
+                    if sandbox is not None and sandbox.status != "terminated":
+                        raise ConflictError("任务 Sandbox 尚未销毁，暂时不能永久删除")
+
                 prepared = self.store.prepare_task_deletion(task_id)
                 for table in reversed(metadata.sorted_tables):
                     if table is tasks or "task_id" not in table.c:
@@ -469,6 +479,37 @@ class TaskService:
                 raise ConflictError("任务已经归档")
             if task.status == "running":
                 raise ConflictError("请先暂停任务，再归档")
+            # Archived Tasks are never schedulable again until explicitly
+            # unarchived.  Cancel queued Explore work before releasing the
+            # sandbox so no pending run can keep the writable environment
+            # alive indefinitely.
+            conn.execute(
+                update(intents)
+                .where(
+                    intents.c.task_id == task_id,
+                    intents.c.status == "pending",
+                    intents.c.archived.is_(False),
+                )
+                .values(
+                    status="cancelled",
+                    worker=None,
+                    lease_id=None,
+                    claimed_at=None,
+                    last_heartbeat_at=None,
+                    next_retry_at=None,
+                    concluded_at=now,
+                    last_failure_kind="task_archived",
+                    activity_kind="cancelled",
+                    activity_summary="任务已归档，排队中的 Explore 已取消",
+                    activity_updated_at=now,
+                )
+            )
+            self.reason.cancel_open_for_task(
+                conn, task_id, now=now, failure_kind="task_archived"
+            )
+            self.plan.cancel_open_for_task(
+                conn, task_id, now=now, failure_kind="task_archived"
+            )
             active_count = sum(
                 conn.execute(
                     select(func.count())
@@ -501,6 +542,20 @@ class TaskService:
             )
             archived = self.tasks.get(conn, task_id)
             assert archived is not None
+        if self.sandboxes is not None:
+            destroyed = self.sandboxes.destroy_if_idle(task_id)
+            if destroyed:
+                with transaction(self.engine) as conn:
+                    self.audit.record_in(
+                        conn,
+                        RecordAuditEvent(
+                            project_id=archived.project_id,
+                            task_id=task_id,
+                            event_type="sandbox.destroyed",
+                            message="任务归档后已销毁 Task Sandbox",
+                            payload={"reason": "task_archived"},
+                        ),
+                    )
         return self._decorate(archived)
 
     def unarchive(self, task_id: str, *, actor: str = "human.frontend") -> Task:

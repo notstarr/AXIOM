@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import delete, insert
+from sqlalchemy import insert
 
 from axiom.modules.graph.tables import facts
-from axiom.modules.reason.tables import reason_runs
 from axiom.shared.clock import utcnow
 from protocol_helpers import claim_reason_run
 from test_reason_run_control import (
@@ -300,11 +299,8 @@ def test_stopping_task_cancels_active_and_all_pending_reason_runs(client) -> Non
         assert run["status"] == "cancelled"
 
 
-def test_queue_limit_zero_does_not_prequeue_while_run_is_open(client) -> None:
-    """reason_queue_limit=0（蜗牛/均衡档默认）为不排队模式：有活动或
-    待领取 run 时，调度 tick 不再排队/合并新 run；未消费输入保持到
-    队列传清，由下一 tick 一次性成跑，避免 Worker 消化不及的 Intent
-    被 Reason 继续堆叠。"""
+def test_queue_limit_zero_is_normalized_to_one_pending_slot(client) -> None:
+    """Legacy zero means one lossless pending slot, not a drop-input mode."""
     task, completed = _bootstrap_to_reason(
         client,
         reason_batch_size=2,
@@ -332,24 +328,8 @@ def test_queue_limit_zero_does_not_prequeue_while_run_is_open(client) -> None:
     assert reconciled.status_code == 200, reconciled.text
     assert reconciled.json()["created_reason_run_ids"] == []
     current = client.get(f"/api/v1/tasks/{task['id']}").json()
-    assert [item["id"] for item in current["queued_reason_runs"]] == [
-        queued.json()["id"]
-    ]
-
-    # 队列传清：活动 run 结束、pending run 移除 → 下一 tick 一次性成跑
-    engine = client.app.state.container.engine
-    _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
-    with engine.begin() as conn:
-        conn.execute(
-            delete(reason_runs).where(
-                reason_runs.c.task_id == task["id"],
-                reason_runs.c.id == queued.json()["id"],
-                reason_runs.c.status == "pending",
-            )
-        )
-
-    reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile", json={})
-    assert reconciled.status_code == 200, reconciled.text
-    [created] = reconciled.json()["created_reason_run_ids"]
-    run = client.get(f"/api/v1/tasks/{task['id']}/reason-runs/{created}").json()
+    assert [item["id"] for item in current["queued_reason_runs"]] == [queued.json()["id"]]
+    run = client.get(
+        f"/api/v1/tasks/{task['id']}/reason-runs/{queued.json()['id']}"
+    ).json()
     assert set(run["source_fact_ids"]) >= {"f-noqueue-1", "f-noqueue-2"}
