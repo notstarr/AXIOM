@@ -32,8 +32,42 @@ def _browser_skill(tmp_path: Path) -> Path:
 
 
 def test_browser_broker_registers_and_closes_lease_without_starting_chrome(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Registration allocates a slot without launching any real browser."""
+
+    class FakeSlotContext:
+        def __init__(self) -> None:
+            self.pages: list[object] = []
+            self.closed = False
+
+        def is_closed(self) -> bool:
+            return self.closed
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class _DummyBrowser:
+        contexts: list[object] = []
+
+        def is_connected(self) -> bool:
+            return True
+
+    contexts: list[FakeSlotContext] = []
+
+    async def fake_ensure_connected(self, lease) -> None:  # noqa: ANN001
+        if self._browser is None:
+            self._browser = _DummyBrowser()
+        return None
+
+    async def fake_new_slot_context(self, lease) -> FakeSlotContext:  # noqa: ANN001
+        context = FakeSlotContext()
+        contexts.append(context)
+        return context
+
+    monkeypatch.setattr(BrowserBrokerServer, "_ensure_connected", fake_ensure_connected)
+    monkeypatch.setattr(BrowserBrokerServer, "_new_slot_context", fake_new_slot_context)
+
     manager = BrowserBrokerManager(socket_dir=tmp_path)
     try:
         handle = manager.register_lease(
@@ -44,6 +78,7 @@ def test_browser_broker_registers_and_closes_lease_without_starting_chrome(
             scope={"enabled": True, "targets": ["example.com"]},
             cdp_url="http://127.0.0.1:65530",
         )
+        assert contexts, "注册时应分配槽位上下文"
 
         response = manager._request(
             {"op": "browser_list_pages", "token": handle.token, "params": {}}
@@ -60,6 +95,7 @@ def test_browser_broker_registers_and_closes_lease_without_starting_chrome(
         )
         assert closed["ok"] is False
         assert closed["error"]["code"] == "lease_not_found"
+        assert contexts[0].closed is True
     finally:
         manager.close()
 

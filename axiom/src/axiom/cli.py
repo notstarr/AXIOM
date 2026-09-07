@@ -24,6 +24,7 @@ from axiom.shared.database import (
 from axiom.shared.maintenance import read_maintenance, write_maintenance
 from axiom.skill_cli import register_skill_commands
 from axiom.worker_cli import register_worker_commands
+from axiom.browser_cli import register_browser_session_commands
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -235,5 +236,6 @@ register_runner_command(main)
 register_skill_commands(main)
 register_worker_commands(main)
 register_token_usage_commands(main)
+register_browser_session_commands(main)
 
 from axiom.modules.integrations import cli as dingtalk_cli

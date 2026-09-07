@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import platform
 import secrets
@@ -32,6 +33,8 @@ from playwright.async_api import (
 
 from axiom.modules.tasks.origin import normalize_scope_target, scope_entry_matches_host
 
+
+logger = logging.getLogger(__name__)
 
 BROWSER_TOOL_NAMES = (
     "browser_open_page",
@@ -132,6 +135,17 @@ class PageState:
 
 
 @dataclass(slots=True)
+class BrowserSlot:
+    """One isolated context bound to a single lease."""
+
+    context: BrowserContext
+    persistent: bool
+    session_path: str
+    created_at: float
+    last_active: float
+
+
+@dataclass(slots=True)
 class LeaseState:
     token: str
     lease_id: str
@@ -140,8 +154,12 @@ class LeaseState:
     run_dir: Path
     scope: dict[str, Any]
     cdp_url: str
+    session_path: str = ""
+    persistent: bool = False
+    slot: BrowserSlot | None = None
     pages: dict[str, PageState] = field(default_factory=dict)
     page_sequence: int = 0
+    last_active: float = 0.0
 
 
 def browser_skill_directory(paths: list[str]) -> Path | None:
@@ -228,6 +246,9 @@ class BrowserBrokerManager:
         run_dir: str,
         scope: dict[str, Any],
         cdp_url: str,
+        session_path: str = "",
+        persistent: bool = False,
+        wait_seconds: float = 90.0,
     ) -> BrowserLeaseHandle:
         self._ensure_started()
         token = secrets.token_urlsafe(32)
@@ -242,7 +263,11 @@ class BrowserBrokerManager:
                 "run_dir": run_dir,
                 "scope": scope,
                 "cdp_url": cdp_url,
-            }
+                "session_path": session_path,
+                "persistent": persistent,
+                "wait_seconds": wait_seconds,
+            },
+            timeout=wait_seconds + 15.0,
         )
         if not response.get("ok"):
             error = response.get("error") or {}
@@ -359,7 +384,12 @@ class BrowserBrokerServer:
         self._shutdown = asyncio.Event()
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
-        self._context: BrowserContext | None = None
+        self._slot_freed: asyncio.Event = asyncio.Event()
+        self._slot_limit = max(1, int(os.environ.get("AXIOM_BROWSER_SLOTS", "4") or "4"))
+        self._page_limit = max(1, int(os.environ.get("AXIOM_BROWSER_PAGE_LIMIT", "8") or "8"))
+        self._slot_idle_seconds = max(
+            0.0, float(os.environ.get("AXIOM_BROWSER_SLOT_IDLE_SECONDS", "600") or "600")
+        )
         self._cdp_url = ""
         self._chrome_pid: int | None = None
         self._chrome_port: int | None = None
@@ -490,7 +520,7 @@ class BrowserBrokerServer:
             return self._ok("Browser Lease 已存在")
         run_dir = Path(str(payload.get("run_dir") or "")).resolve()
         run_dir.mkdir(parents=True, exist_ok=True)
-        self.leases[token] = LeaseState(
+        lease = LeaseState(
             token=token,
             lease_id=lease_id,
             task_id=str(payload.get("task_id") or ""),
@@ -498,7 +528,17 @@ class BrowserBrokerServer:
             run_dir=run_dir,
             scope=dict(payload.get("scope") or {}),
             cdp_url=str(payload.get("cdp_url") or "http://127.0.0.1:9223"),
+            session_path=str(payload.get("session_path") or ""),
+            persistent=bool(payload.get("persistent") or False),
         )
+        self.leases[token] = lease
+        try:
+            await self._acquire_slot(
+                lease, wait_seconds=float(payload.get("wait_seconds") or 90.0)
+            )
+        except BaseException:
+            self.leases.pop(token, None)
+            raise
         return self._ok("Browser Lease 已注册")
 
     async def _close_lease(self, token: str) -> None:
@@ -510,6 +550,12 @@ class BrowserBrokerServer:
                 await page_state.page.close()
             await self._clear_refs(page_state)
         lease.pages.clear()
+        slot = lease.slot
+        lease.slot = None
+        if slot is not None and not slot.persistent:
+            with contextlib.suppress(Exception):
+                await slot.context.close()
+        self._slot_freed.set()
         # 当所有活跃 Lease 均已关闭（空闲期/任务暂停）且 Chrome 归 Broker 所有时，
         # 自动断开并平滑退出无头 Chrome 实例，释放 SingletonLock 文件锁，
         # 方便操作者随时点击系统中的 Chrome-SecTest 浏览器进行手动登录与凭证维护。
@@ -519,7 +565,6 @@ class BrowserBrokerServer:
                     with contextlib.suppress(Exception):
                         await self._browser.close()
                     self._browser = None
-                    self._context = None
                 if self._playwright is not None:
                     with contextlib.suppress(Exception):
                         await self._playwright.stop()
@@ -557,39 +602,154 @@ class BrowserBrokerServer:
         return await handler(lease, params)
 
     async def _ensure_browser(self, lease: LeaseState) -> BrowserContext:
+        """Return the lease's own slot context, recovering after a browser restart."""
         async with self._connect_lock:
-            if self._browser is not None and self._browser.is_connected():
-                if self._cdp_url != lease.cdp_url:
-                    raise BrowserBrokerError(
-                        "cdp_mismatch",
-                        "同一 Runner Browser Broker不能连接多个CDP地址",
-                    )
-                assert self._context is not None
-                return self._context
-            if self._playwright is None:
-                self._playwright = await async_playwright().start()
-            # Always verify ownership before attaching.  A live CDP endpoint may
-            # belong to the user's ordinary browser; attaching to it would leak
-            # pages and credentials across Tasks.  _launch_chrome is idempotent
-            # for the Broker-owned profile and starts Chrome only when needed.
-            await self._launch_chrome(lease)
-            try:
-                self._browser = await self._playwright.chromium.connect_over_cdp(
-                    lease.cdp_url, timeout=10_000
-                )
-            except Exception as exc:
+            await self._ensure_connected(lease)
+            lease.last_active = time.time()
+            if await self._try_acquire(lease):
+                assert lease.slot is not None
+                if lease.slot.persistent:
+                    await self._rebind_pages()
+                    await self._minimize_only_if_already_minimized()
+                return lease.slot.context
+            raise BrowserBrokerError(
+                "slot_pool_exhausted",
+                f"浏览器槽位已占满（上限 {self._slot_limit}）",
+                retryable=True,
+            )
+
+    async def _ensure_connected(self, lease: LeaseState) -> None:
+        """Launch/attach Chrome when needed. The connect lock must be held."""
+        if self._browser is not None and self._browser.is_connected():
+            if self._cdp_url != lease.cdp_url:
                 raise BrowserBrokerError(
-                    "browser_unavailable",
-                    f"无法连接Chrome-SecTest：{exc}",
+                    "cdp_mismatch",
+                    "同一 Runner Browser Broker不能连接多个CDP地址",
+                )
+            return
+        had_browser = self._browser is not None
+        if self._playwright is None:
+            self._playwright = await async_playwright().start()
+        # Always verify ownership before attaching.  A live CDP endpoint may
+        # belong to the user's ordinary browser; attaching to it would leak
+        # pages and credentials across Tasks.  _launch_chrome is idempotent
+        # for the Broker-owned profile and starts Chrome only when needed.
+        await self._launch_chrome(lease)
+        try:
+            browser = await self._playwright.chromium.connect_over_cdp(
+                lease.cdp_url, timeout=10_000
+            )
+        except Exception as exc:
+            raise BrowserBrokerError(
+                "browser_unavailable",
+                f"无法连接Chrome-SecTest：{exc}",
+                retryable=True,
+            ) from exc
+        if had_browser:
+            # 浏览器进程曾中断重启：旧槽位上下文已随进程消失，全部失效，
+            # 各租约在下次操作时按会话快照重建独立上下文。
+            for item in self.leases.values():
+                item.slot = None
+                item.pages.clear()
+        self._browser = browser
+        self._cdp_url = lease.cdp_url
+
+    async def _acquire_slot(self, lease: LeaseState, *, wait_seconds: float) -> None:
+        """Bind a free slot to the lease, queueing until capacity frees up."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, wait_seconds)
+        while True:
+            async with self._connect_lock:
+                await self._ensure_connected(lease)
+                if await self._try_acquire(lease):
+                    lease.last_active = time.time()
+                    return
+                self._release_idle_slots()
+                if await self._try_acquire(lease):
+                    lease.last_active = time.time()
+                    return
+            if loop.time() >= deadline:
+                raise BrowserBrokerError(
+                    "slot_pool_exhausted",
+                    f"浏览器槽位已占满（上限 {self._slot_limit}），等待 {wait_seconds:.0f}s 后仍无空闲",
                     retryable=True,
-                ) from exc
-            if not self._browser.contexts:
+                )
+            self._slot_freed.clear()
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    self._slot_freed.wait(),
+                    timeout=min(1.0, max(0.05, deadline - loop.time())),
+                )
+
+    async def _try_acquire(self, lease: LeaseState) -> bool:
+        """Bind a free slot to the lease. The connect lock must be held."""
+        if lease.slot is not None and not lease.slot.context.is_closed():
+            return True
+        if lease.slot is not None:
+            lease.slot = None
+        assert self._browser is not None
+        if lease.persistent:
+            for other in self.leases.values():
+                if other is not lease and other.slot is not None and other.slot.persistent:
+                    return False
+            contexts = self._browser.contexts
+            if not contexts:
                 raise BrowserBrokerError("browser_context_missing", "Chrome没有可用BrowserContext")
-            self._context = self._browser.contexts[0]
-            self._cdp_url = lease.cdp_url
-            await self._rebind_pages()
-            await self._minimize_only_if_already_minimized()
-            return self._context
+            lease.slot = BrowserSlot(
+                context=contexts[0],
+                persistent=True,
+                session_path="",
+                created_at=time.time(),
+                last_active=time.time(),
+            )
+            return True
+        bound = sum(
+            1
+            for item in self.leases.values()
+            if item is not lease and item.slot is not None and not item.slot.persistent
+        )
+        if bound >= self._slot_limit:
+            return False
+        lease.slot = BrowserSlot(
+            context=await self._new_slot_context(lease),
+            persistent=False,
+            session_path=lease.session_path,
+            created_at=time.time(),
+            last_active=time.time(),
+        )
+        return True
+
+    async def _new_slot_context(self, lease: LeaseState) -> BrowserContext:
+        storage_state: str | None = None
+        if lease.session_path:
+            session_file = Path(lease.session_path)
+            if not session_file.is_file():
+                raise BrowserBrokerError(
+                    "browser_session_missing",
+                    f"浏览器会话快照不存在：{session_file}",
+                )
+            storage_state = str(session_file)
+        assert self._browser is not None
+        return await self._browser.new_context(storage_state=storage_state)
+
+    def _release_idle_slots(self) -> None:
+        """Drop contexts of leases that hold no pages and have been idle."""
+        if self._slot_idle_seconds <= 0:
+            return
+        now = time.time()
+        freed = False
+        for item in self.leases.values():
+            slot = item.slot
+            if slot is None or slot.persistent or item.pages:
+                continue
+            if now - slot.last_active < self._slot_idle_seconds:
+                continue
+            with contextlib.suppress(Exception):
+                asyncio.get_running_loop().create_task(slot.context.close())
+            item.slot = None
+            freed = True
+        if freed:
+            self._slot_freed.set()
 
     @staticmethod
     def _chrome_profile_dir() -> Path:
@@ -775,6 +935,12 @@ class BrowserBrokerServer:
                 "未找到 Chrome/Chromium；请配置 CHROME_BIN",
                 retryable=True,
             )
+        if binary and "ms-playwright" not in binary:
+            logger.warning(
+                "Browser Broker 回退到系统浏览器 %s：与 Playwright 的 CDP 协议可能不兼容，"
+                "建议优先安装 Playwright Chromium（playwright install chromium）",
+                binary,
+            )
         profile.mkdir(parents=True, exist_ok=True)
         # Apple Silicon 上强制以 arm64 原生运行 Chrome：
         # 若进程树被 Rosetta (x86_64 转译) 拉起，JS 执行全走翻译层，
@@ -871,13 +1037,17 @@ class BrowserBrokerServer:
         )
 
     async def _rebind_pages(self) -> None:
-        if self._context is None:
+        """Rebind persistent-slot pages after a reconnect; slot contexts are recreated fresh."""
+        if self._browser is None:
             return
-        live: dict[str, Page] = {}
-        for page in self._context.pages:
-            with contextlib.suppress(Exception):
-                live[await self._target_id(page)] = page
         for lease in self.leases.values():
+            slot = lease.slot
+            if slot is None or not slot.persistent:
+                continue
+            live: dict[str, Page] = {}
+            for page in slot.context.pages:
+                with contextlib.suppress(Exception):
+                    live[await self._target_id(page)] = page
             for page_id, state in list(lease.pages.items()):
                 replacement = live.get(state.target_id)
                 if replacement is None:
@@ -894,6 +1064,16 @@ class BrowserBrokerServer:
         url = str(params.get("url") or "about:blank")
         self._require_target(lease, url)
         context = await self._ensure_browser(lease)
+        slot = lease.slot
+        if (
+            slot is not None
+            and not slot.persistent
+            and len(lease.pages) >= self._page_limit
+        ):
+            raise BrowserBrokerError(
+                "slot_page_limit",
+                f"当前 Lease 页面数已达上限 {self._page_limit}，请先 browser_close_page 释放不需要的页面",
+            )
         was_minimized = await self._all_windows_minimized()
         page = await context.new_page()
         state = await self._register_page(lease, page)

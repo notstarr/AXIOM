@@ -494,6 +494,7 @@ class PiBootstrapExecutor:
                 )
             return self._browser_lease
         assert self.browser_broker is not None
+        session_path, persistent = self._browser_session_options()
         handle = self.browser_broker.register_lease(
             lease_id=execution_input.lease_id,
             task_id=execution_input.task_id,
@@ -501,9 +502,33 @@ class PiBootstrapExecutor:
             run_dir=execution_input.run_dir,
             scope=execution_input.scope,
             cdp_url=environment.get("CDP_URL", "http://127.0.0.1:9223"),
+            session_path=session_path,
+            persistent=persistent,
         )
         self._browser_lease = handle
         return handle
+
+    @staticmethod
+    def _browser_session_options() -> tuple[str, bool]:
+        """Resolve the runner-level session snapshot and persistence mode."""
+        persistent = os.environ.get("AXIOM_BROWSER_PERSISTENT", "").strip().lower() in {"1", "true"}
+        if persistent:
+            return "", True
+        name = os.environ.get("AXIOM_BROWSER_SESSION", "").strip()
+        if not name:
+            return "", False
+        base = os.environ.get("AXIOM_BROWSER_SESSION_DIR", "").strip()
+        if not base:
+            data_dir = os.environ.get("AXIOM_DATA_DIR", "").strip()
+            base = str(Path(data_dir) / "browser-sessions") if data_dir else ""
+        if not base:
+            print(
+                f"[axiom] AXIOM_BROWSER_SESSION={name} 已设置但缺少 "
+                "AXIOM_BROWSER_SESSION_DIR/AXIOM_DATA_DIR，本轮不注入会话",
+                file=sys.stderr,
+            )
+            return "", False
+        return str(Path(base) / f"{name}.json"), False
 
     def _build_argv(
         self,
