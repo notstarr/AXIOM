@@ -1081,7 +1081,7 @@ class BrowserBrokerServer:
                 f"当前 Lease 页面数已达上限 {self._page_limit}，请先 browser_close_page 释放不需要的页面",
             )
         was_minimized = await self._all_windows_minimized()
-        page = await context.new_page()
+        page, created_background = await self._new_page_background(context, url)
         state = await self._register_page(lease, page)
         wait_until = str(params.get("wait_until") or "domcontentloaded")
         navigation_note = ""
@@ -1094,15 +1094,57 @@ class BrowserBrokerServer:
                 )
             except Exception as exc:
                 navigation_note = str(exc)
-        if was_minimized:
-            # new_page() 会把 Chrome 窗口激活到前台;若之前所有窗口都是
+        if was_minimized and not created_background:
+            # 前台 new_page() 会把 Chrome 窗口激活到前台;若之前所有窗口都是
             # 最小化状态(用户没有人工恢复),立刻压回,避免抢占前台焦点。
+            # 后台创建的标签(CDP foreground=False)不激活窗口,无需此补救。
             await self._minimize_all_windows()
         return await self._page_response(
             state,
             f"已打开页面 {state.page_id}",
             extra={"navigation_note": navigation_note} if navigation_note else None,
         )
+
+    async def _new_page_background(
+        self, context: BrowserContext, url: str
+    ) -> tuple[Page, bool]:
+        """Create a tab WITHOUT raising/focusing the Chrome window.
+
+        通过 CDP Target.createTarget(foreground=False) 后台建页：操作者正常
+        使用这台浏览器时，AI 开新标签不会把窗口调到前台抢走焦点。
+        私有 _browser_context_id 用于把标签建进租约自己的隔离上下文；
+        任何一步失败都回退到 context.new_page()（旧行为，可能前置窗口）。
+        """
+        target_url = url if url != "about:blank" else "about:blank"
+        if self._browser is None:
+            return await context.new_page(), False
+        try:
+            session = await self._browser.new_browser_cdp_session()
+        except Exception:
+            return await context.new_page(), False
+        target_id = ""
+        try:
+            params: dict[str, Any] = {"url": target_url, "foreground": False}
+            impl = getattr(context, "_impl_obj", None)
+            ctx_id = getattr(impl, "_browser_context_id", None)
+            if ctx_id:
+                params["browserContextId"] = ctx_id
+            result = await session.send("Target.createTarget", params)
+            target_id = str((result or {}).get("targetId") or "")
+        except Exception:
+            target_id = ""
+        finally:
+            with contextlib.suppress(Exception):
+                await session.detach()
+        if not target_id:
+            return await context.new_page(), False
+        for _ in range(20):
+            for page in context.pages:
+                with contextlib.suppress(Exception):
+                    if await self._target_id(page) == target_id:
+                        return page, True
+            await asyncio.sleep(0.1)
+        return await context.new_page(), False
 
     async def _list_pages(
         self, lease: LeaseState, _params: dict[str, Any]
