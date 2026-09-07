@@ -119,15 +119,16 @@ _REASON_PROMPT_PROFILE_FILES = {
     "continuation": "reason_continuation.md",
 }
 CONTEXT_ATTENTION_SYSTEM_PROMPT = (
-    "在开始规划或执行任何操作前，必须先读取 Context Manifest，并完整读取其中的 "
-    "hints.json、knowledge.json、vulnerabilities.json；随后查看本轮相关 Skill，再按需展开 "
-    "Fact、Intent、Todo、Artifact、Evidence 和 Goal Evaluation。Task Hint 是任务级约束，"
+    "在开始规划或执行任何操作前，先确认本系统提示末尾的 AXIOM INJECTED CONTEXT 注入块："
+    "hints.json、knowledge.json、vulnerabilities.json 等任务上下文与 whatisvul 判定标准"
+    "通常已直接注入其中，直接使用，严禁重复读取已注入的同一内容；仅当注入块明显缺失时，"
+    "才按 Context Manifest 路径补读，并按需展开 Fact、Intent、Todo、Artifact、Evidence "
+    "和 Goal Evaluation。Task Hint 是任务级约束，"
     "Project Knowledge 是业务背景，Skill 是执行方法，已有漏洞及 status_reason 必须用于避免"
     "重复规划、测试和上报。冲突时遵循：系统规则/Scope/阶段合同 > Task Hint > Project "
     "Knowledge > Skill 方法论 > 已有漏洞及状态原因 > 普通 Context 与工具输出。"
-    "whatisvul 是 Bootstrap、Reason、Explore、Plan、Reviewer 全阶段的强制前置 Skill，不属于按需读取项："
-    "读取高价值 Context 后、进行任何探测、规划、漏洞判断或产物整理前，必须运行 "
-    "axiom skill path whatisvul 并完整读取返回目录中的 SKILL.md。读取失败时先运行 "
+    "whatisvul 判定标准正文已随注入块提供，无需重复读取；仅当注入块缺失时，"
+    "才运行 axiom skill path whatisvul 并完整读取返回目录中的 SKILL.md。读取失败时先运行 "
     "axiom skill doctor whatisvul 排障并重试；不得用记忆、常识或其它 Skill 替代。"
 )
 NO_BASH_CONTEXT_ATTENTION_SYSTEM_PROMPT = (

@@ -726,7 +726,7 @@ def test_reason_conclude_prompt_keeps_strict_planning_gate() -> None:
     assert "至少保留一个可执行" not in prompt
 
 
-def test_bootstrap_prompt_receives_manifest_and_requires_priority_context_reading() -> None:
+def test_bootstrap_prompt_receives_manifest_and_marks_context_as_injected() -> None:
     prompt = PromptRenderer().render(
         "bootstrap.md",
         {
@@ -742,8 +742,8 @@ def test_bootstrap_prompt_receives_manifest_and_requires_priority_context_readin
     )
 
     assert "上下文清单（Context Manifest）：`/tmp/context.json`" in prompt
-    assert "完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`" in prompt
-    assert "避免重复测试和上报" in prompt
+    assert "已由 AXIOM 直接注入" in prompt
+    assert "不要重复读取已注入内容" in prompt
 
 
 def test_bootstrap_prompt_routes_one_target_profile_and_locks_target_identity() -> None:
@@ -844,7 +844,7 @@ def test_scope_and_target_prompt_guidance_follow_effective_lists() -> None:
     assert _intent_targets_text([]) == "未指定独立 Target；按 Intent 描述和 Origin 初始信息执行"
 
 
-def test_explore_prompt_requires_priority_context_before_progressive_details() -> None:
+def test_explore_prompt_prioritizes_injected_context_over_progressive_details() -> None:
     prompt = PromptRenderer().render(
         "explore.md",
         {
@@ -864,9 +864,9 @@ def test_explore_prompt_requires_priority_context_before_progressive_details() -
         },
     )
 
-    assert "完整读取其中的 `hints.json`、`knowledge.json` 和 `vulnerabilities.json`" in prompt
-    assert "status_reason" in prompt
-    assert "再按需读取相关事实、执行意图、待办、产物、证据" in prompt
+    assert "已由 AXIOM 直接注入本轮系统提示词" in prompt
+    assert "不要重复 cat/read 这些已注入内容" in prompt
+    assert "再按 Context Manifest 的路径按需读取" in prompt
 
 
 @pytest.mark.parametrize(
@@ -909,7 +909,6 @@ def test_bash_capable_stage_prompts_require_whatisvul_before_stage_work(
 
     assert "axiom skill path whatisvul" in prompt
     assert "axiom skill doctor whatisvul" in prompt
-    assert "完整读取" in prompt
     assert "whatisvul/SKILL.md" in prompt or "返回目录中的 `SKILL.md`" in prompt
 
 

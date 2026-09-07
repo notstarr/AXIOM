@@ -19,7 +19,7 @@
    - 判断 总目标是否已达成，已达成，转到第5步；未完成，继续按顺序进行.
    - 读取 Context Manifest 中的 `todos.json` 与新 Fact。
    - 通过 `graph.json` 找到新 Fact 对应的 `findings.md`（已测事实）与 `leads.md`（未决线索）并完整阅读。
-   - 运行 `axiom skill path whatisvul` 并完整读取返回目录中的 `whatisvul/SKILL.md`（定级基准，失败则用 `axiom skill doctor whatisvul`）。
+- `whatisvul` 判定标准已直接注入；仅当注入缺失时，运行 `axiom skill path whatisvul` 并完整读取返回目录中的 `whatisvul/SKILL.md`（失败则用 `axiom skill doctor whatisvul`）。
 2. **评估前序 Intent**：
    - 对 `assessment_status=open` 的已结束 Intent 进行评估：
    ```bash
