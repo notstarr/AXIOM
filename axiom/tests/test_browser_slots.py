@@ -212,3 +212,40 @@ def test_browser_restart_recreates_slot_contexts(tmp_path: Path) -> None:
     assert browser.reconnects == 2
 
 
+def test_session_options_match_by_origin_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from axiom.dispatcher.pi import PiBootstrapExecutor
+
+    base = tmp_path / "browser-sessions"
+    base.mkdir()
+    (base / "tdream.qq.com.json").write_text("{}", encoding="utf-8")
+    (base / "qq.com.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("AXIOM_BROWSER_SESSION_DIR", str(base))
+
+    exact, persistent = PiBootstrapExecutor._browser_session_options("https://tdream.qq.com/")
+    assert exact.endswith("tdream.qq.com.json") and persistent is False
+
+    # 精确域名缺失时按最长后缀回退
+    (base / "tdream.qq.com.json").unlink()
+    suffix, _ = PiBootstrapExecutor._browser_session_options("https://tdream.qq.com/")
+    assert suffix.endswith("qq.com.json")
+
+    # 无匹配 → 干净上下文
+    none_path, _ = PiBootstrapExecutor._browser_session_options("https://other.example.com/")
+    assert none_path == ""
+
+    # 显式 AXIOM_BROWSER_SESSION 优先于域名匹配
+    monkeypatch.setenv("AXIOM_BROWSER_SESSION", "tdream.qq.com")
+    forced, _ = PiBootstrapExecutor._browser_session_options("https://other.example.com/")
+    assert forced.endswith("tdream.qq.com.json")
+
+
+def test_session_options_require_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from axiom.dispatcher.pi import PiBootstrapExecutor
+
+    monkeypatch.delenv("AXIOM_BROWSER_SESSION", raising=False)
+    monkeypatch.delenv("AXIOM_BROWSER_SESSION_DIR", raising=False)
+    monkeypatch.delenv("AXIOM_DATA_DIR", raising=False)
+    path, persistent = PiBootstrapExecutor._browser_session_options("https://tdream.qq.com/")
+    assert path == "" and persistent is False
+
+

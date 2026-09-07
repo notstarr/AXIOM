@@ -6,6 +6,7 @@ import sys
 import time
 import uuid
 from collections.abc import Callable
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any
 
@@ -494,7 +495,7 @@ class PiBootstrapExecutor:
                 )
             return self._browser_lease
         assert self.browser_broker is not None
-        session_path, persistent = self._browser_session_options()
+        session_path, persistent = self._browser_session_options(execution_input.origin)
         handle = self.browser_broker.register_lease(
             lease_id=execution_input.lease_id,
             task_id=execution_input.task_id,
@@ -509,26 +510,44 @@ class PiBootstrapExecutor:
         return handle
 
     @staticmethod
-    def _browser_session_options() -> tuple[str, bool]:
-        """Resolve the runner-level session snapshot and persistence mode."""
+    def _browser_session_options(origin: str = "") -> tuple[str, bool]:
+        """Resolve the session snapshot for this lease.
+
+        优先级：AXIOM_BROWSER_PERSISTENT > AXIOM_BROWSER_SESSION 显式名称 >
+        按任务 origin 域名自动匹配（<域名>.json，支持后缀回退，如
+        qq.com.json 匹配 tdream.qq.com）> 干净上下文。
+        """
         persistent = os.environ.get("AXIOM_BROWSER_PERSISTENT", "").strip().lower() in {"1", "true"}
         if persistent:
             return "", True
-        name = os.environ.get("AXIOM_BROWSER_SESSION", "").strip()
-        if not name:
-            return "", False
         base = os.environ.get("AXIOM_BROWSER_SESSION_DIR", "").strip()
         if not base:
             data_dir = os.environ.get("AXIOM_DATA_DIR", "").strip()
             base = str(Path(data_dir) / "browser-sessions") if data_dir else ""
         if not base:
-            print(
-                f"[axiom] AXIOM_BROWSER_SESSION={name} 已设置但缺少 "
-                "AXIOM_BROWSER_SESSION_DIR/AXIOM_DATA_DIR，本轮不注入会话",
-                file=sys.stderr,
-            )
             return "", False
-        return str(Path(base) / f"{name}.json"), False
+        base_path = Path(base)
+        name = os.environ.get("AXIOM_BROWSER_SESSION", "").strip()
+        if name:
+            return str(base_path / f"{name}.json"), False
+        origin_text = (origin or "").strip()
+        host = ""
+        if origin_text:
+            parsed = urlparse(origin_text if "://" in origin_text else f"//{origin_text}")
+            host = (parsed.hostname or "").strip().lower().rstrip(".")
+        if not host:
+            return "", False
+        exact = base_path / f"{host}.json"
+        if exact.is_file():
+            return str(exact), False
+        matches = [
+            (len(item.stem), item)
+            for item in base_path.glob("*.json")
+            if "." in item.stem and host.endswith(f".{item.stem.lower()}")
+        ]
+        if matches:
+            return str(max(matches)[1]), False
+        return "", False
 
     def _build_argv(
         self,
