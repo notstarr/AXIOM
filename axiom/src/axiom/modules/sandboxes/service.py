@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +66,10 @@ class TaskSandboxManager:
         if self.sandbox_required and selected != "cube" and backend is None:
             raise ConflictError("sandbox_required=true requires sandbox_backend=cube")
         self.template_version = template_version
+        self.runtime_revision = os.getenv(
+            "AXIOM_SANDBOX_RUNTIME_REVISION", "legacy-local"
+        )
+        self.healthcheck_timeout = 10.0
         self.resource_profile = resource_profile or {}
         self.network_policy = network_policy or {}
         if backend is not None:
@@ -96,6 +102,8 @@ class TaskSandboxManager:
         self.sandbox_required = config.sandbox_required
         self.local_fallback = config.sandbox_local_fallback
         self.template_version = config.sandbox_template
+        self.runtime_revision = config.sandbox_runtime_revision
+        self.healthcheck_timeout = float(config.sandbox_healthcheck_timeout)
         if self.sandbox_required and selected != "cube":
             raise ConflictError("sandbox_required=true requires sandbox_backend=cube")
         if getattr(self.backend, "name", None) == selected:
@@ -120,6 +128,7 @@ class TaskSandboxManager:
         self._refresh_runtime_config()
         now = utcnow()
         root = self.store.resolve(f"sandboxes/{task_id}")
+        existing: tuple[TaskSandbox, SandboxHandle] | None = None
         with transaction(self.engine) as conn:
             task_exists = conn.execute(
                 select(tasks.c.id).where(tasks.c.id == task_id).with_for_update()
@@ -131,82 +140,122 @@ class TaskSandboxManager:
                 model = TaskSandbox.model_validate(self.repository.to_model(row))
                 handle = SandboxHandle(
                     sandbox_id=model.sandbox_id,
-                    root_path=str(root if model.backend == "local" else "/workspace/axiom"),
+                    root_path=str(root if model.backend == "local" else model.remote_root),
                     backend=model.backend,
                 )
-                self.repository.touch(conn, task_id=task_id, now=now)
-                return model, handle
-            if row is not None and row["status"] in {"creating", "terminating"}:
+                # The remote healthcheck happens after this transaction.  If
+                # it raises here, SQLAlchemy rolls back the diagnostic update
+                # and the broken sandbox incorrectly remains ``ready``.
+                existing = (model, handle)
+            elif row is not None and row["status"] in {"creating", "terminating"}:
                 raise ConflictError(f"Task Sandbox is currently {row['status']}: {task_id}")
-            sandbox_pk = allocate_id(conn, scope=task_id, kind="sandbox", prefix="sb")
-            backend = self.backend
-            try:
-                handle = backend.create(
-                    task_id=task_id,
-                    root=root,
-                    template_version=self.template_version,
-                    resource_profile=self.resource_profile,
-                    network_policy=self.network_policy,
-                )
-            except Exception as exc:
-                if backend.name != "cube" or self.sandbox_required or not self.local_fallback:
-                    raise
-                # Development fallback is explicit and observable.  It is
-                # disabled by production defaults when CubeSandbox is
-                # required, so a worker can never silently escape isolation.
-                backend = LocalExecutionBackend()
-                handle = backend.create(
-                    task_id=task_id,
-                    root=root,
-                    template_version=self.template_version,
-                    resource_profile=self.resource_profile,
-                    network_policy=self.network_policy,
-                )
-                self.resource_profile = {
-                    **self.resource_profile,
-                    "fallback_reason": str(exc),
-                }
-            values = {
-                "sandbox_id": handle.sandbox_id,
-                "backend": handle.backend,
-                "status": "ready",
-                "template_version": self.template_version,
-                "resource_profile_json": json.dumps(self.resource_profile, ensure_ascii=False),
-                "network_policy_json": json.dumps(self.network_policy, ensure_ascii=False),
-                "active_worker_count": 0,
-                "last_used_at": now,
-                "terminated_at": None,
-                "last_error": "",
-            }
-            if row is None:
-                self.repository.insert(
-                    conn,
-                    {
-                        "id": sandbox_pk,
-                        "task_id": task_id,
-                        "created_at": now,
-                        **values,
-                    },
-                )
             else:
-                conn.execute(
-                    update(task_sandboxes)
-                    .where(task_sandboxes.c.task_id == task_id)
-                    .values(**values)
+                sandbox_pk = allocate_id(conn, scope=task_id, kind="sandbox", prefix="sb")
+                backend = self.backend
+                try:
+                    handle = backend.create(
+                        task_id=task_id,
+                        root=root,
+                        template_version=self.template_version,
+                        resource_profile=self.resource_profile,
+                        network_policy=self.network_policy,
+                    )
+                except Exception as exc:
+                    if backend.name != "cube" or self.sandbox_required or not self.local_fallback:
+                        raise
+                    # Development fallback is explicit and observable.  It is
+                    # disabled by production defaults when CubeSandbox is
+                    # required, so a worker can never silently escape isolation.
+                    backend = LocalExecutionBackend()
+                    handle = backend.create(
+                        task_id=task_id,
+                        root=root,
+                        template_version=self.template_version,
+                        resource_profile=self.resource_profile,
+                        network_policy=self.network_policy,
+                    )
+                    self.resource_profile = {
+                        **self.resource_profile,
+                        "fallback_reason": str(exc),
+                    }
+                values = {
+                    "sandbox_id": handle.sandbox_id,
+                    "backend": handle.backend,
+                    "status": "ready",
+                    "template_version": self.template_version,
+                    "runtime_revision": self.runtime_revision,
+                    "remote_root": handle.root_path if handle.backend == "cube" else "/workspace/axiom",
+                    "resource_profile_json": json.dumps(self.resource_profile, ensure_ascii=False),
+                    "network_policy_json": json.dumps(self.network_policy, ensure_ascii=False),
+                    "active_worker_count": 0,
+                    "last_used_at": now,
+                    "terminated_at": None,
+                    "last_error": "",
+                    "last_healthcheck_at": now,
+                    "last_healthcheck_error": "",
+                }
+                if row is None:
+                    self.repository.insert(
+                        conn,
+                        {
+                            "id": sandbox_pk,
+                            "task_id": task_id,
+                            "created_at": now,
+                            **values,
+                        },
+                    )
+                else:
+                    conn.execute(
+                        update(task_sandboxes)
+                        .where(task_sandboxes.c.task_id == task_id)
+                        .values(**values)
+                    )
+                    sandbox_pk = row["id"]
+                existing = (
+                    TaskSandbox(
+                        id=sandbox_pk,
+                        task_id=task_id,
+                        sandbox_id=handle.sandbox_id,
+                        backend=handle.backend,
+                        status="ready",
+                        template_version=self.template_version,
+                        runtime_revision=values["runtime_revision"],
+                        remote_root=values["remote_root"],
+                        resource_profile=self.resource_profile,
+                        network_policy=self.network_policy,
+                        created_at=now,
+                        last_used_at=now,
+                        last_healthcheck_at=now,
+                    ),
+                    handle,
                 )
-                sandbox_pk = row["id"]
-            return TaskSandbox(
-                id=sandbox_pk,
-                task_id=task_id,
-                sandbox_id=handle.sandbox_id,
-                backend=handle.backend,
-                status="ready",
-                template_version=self.template_version,
-                resource_profile=self.resource_profile,
-                network_policy=self.network_policy,
-                created_at=now,
-                last_used_at=now,
-            ), handle
+
+        assert existing is not None
+        model, handle = existing
+        backend = self._backend_for_handle(handle)
+        try:
+            try:
+                backend.healthcheck(handle, timeout=self.healthcheck_timeout)
+            except TypeError:
+                # Small fake backends and older adapters may still implement
+                # the original one-argument protocol.
+                backend.healthcheck(handle)
+        except Exception as exc:
+            with transaction(self.engine) as conn:
+                self.repository.record_healthcheck(
+                    conn, task_id=task_id, now=utcnow(), error=str(exc)
+                )
+            raise ConflictError(f"Task Sandbox healthcheck failed: {exc}") from exc
+        checked_at = utcnow()
+        with transaction(self.engine) as conn:
+            self.repository.record_healthcheck(conn, task_id=task_id, now=checked_at)
+        return model.model_copy(
+            update={
+                "status": "ready",
+                "last_healthcheck_at": checked_at,
+                "last_healthcheck_error": "",
+            }
+        ), handle
 
     def run_directory(self, *, task_id: str, owner_id: str, lease_id: str) -> Path:
         _, handle = self.ensure(task_id)
@@ -216,30 +265,292 @@ class TaskSandboxManager:
         # intentionally not mkdir'ed on the control plane.
         return path
 
+    def stage_run_directory(self, *, task_id: str, owner_id: str, lease_id: str) -> Path:
+        """Materialize a remote Cube run into control-plane staging.
+
+        The returned directory is disposable input to the existing
+        FileStore/Artifact transaction.  It is never exposed to the worker.
+        """
+        sandbox = self.get(task_id)
+        if sandbox is None or sandbox.status not in {"ready", "degraded"}:
+            raise ConflictError(f"Task Sandbox is unavailable: {task_id}")
+        if sandbox.backend == "local":
+            return self.run_directory(task_id=task_id, owner_id=owner_id, lease_id=lease_id)
+        for value in (owner_id, lease_id):
+            if not value or "/" in value or "\\" in value or value in {".", ".."}:
+                raise ConflictError("Invalid sandbox staging owner")
+        handle = SandboxHandle(
+            sandbox_id=sandbox.sandbox_id,
+            root_path=sandbox.remote_root,
+            backend=sandbox.backend,
+        )
+        destination = self.store.resolve(
+            f"staging/sandbox-runs/{task_id}/{owner_id}/{lease_id}"
+        )
+        self._backend_for_handle(handle).download_directory(
+            handle,
+            source=f"runs/{owner_id}/{lease_id}",
+            destination=destination,
+        )
+        return destination
+
+    def upload_run_file(
+        self,
+        *,
+        task_id: str,
+        owner_id: str,
+        lease_id: str,
+        source: Path,
+        relative_path: str,
+    ) -> None:
+        sandbox = self.get(task_id)
+        if sandbox is None or sandbox.status not in {"ready", "degraded"}:
+            raise ConflictError(f"Task Sandbox is unavailable: {task_id}")
+        if sandbox.backend == "local":
+            return
+        self._validate_run_path(
+            f"runs/{owner_id}/{lease_id}/{relative_path}",
+            owner_id=owner_id,
+            lease_id=lease_id,
+        )
+        handle = SandboxHandle(
+            sandbox_id=sandbox.sandbox_id,
+            root_path=sandbox.remote_root,
+            backend=sandbox.backend,
+        )
+        self._backend_for_handle(handle).upload_file(
+            handle,
+            source=source,
+            destination=f"runs/{owner_id}/{lease_id}/{self._relative_worker_path(relative_path)}",
+        )
+
     def cleanup_run_directory(self, *, task_id: str, owner_id: str, lease_id: str) -> None:
         """Remove only a successfully committed run's private directory."""
         sandbox = self.get(task_id)
         if sandbox is None or sandbox.status != "ready":
             return
-        if sandbox.backend != "local":
-            # Remote backends own their filesystem.  The remote cleanup hook
-            # is intentionally optional; never delete a control-plane path
-            # that merely resembles the remote POSIX location.
-            return
         handle = SandboxHandle(
             sandbox_id=sandbox.sandbox_id,
-            root_path=str(self.store.resolve(f"sandboxes/{task_id}")),
+                root_path=str(
+                    self.store.resolve(f"sandboxes/{task_id}")
+                    if sandbox.backend == "local"
+                    else sandbox.remote_root
+            ),
             backend=sandbox.backend,
         )
         for value in (owner_id, lease_id):
             if not value or "/" in value or "\\" in value or value in {".", ".."}:
                 raise ConflictError("Invalid sandbox cleanup owner")
-        path = Path(handle.root_path) / "workspace" / "axiom" / "runs" / owner_id / lease_id
-        root = Path(handle.root_path).resolve()
-        resolved = path.resolve()
-        if root not in resolved.parents or resolved == root:
-            raise ConflictError("Invalid sandbox cleanup path")
-        shutil.rmtree(resolved, ignore_errors=True)
+        relative = f"runs/{owner_id}/{lease_id}"
+        if sandbox.backend == "local":
+            path = Path(handle.root_path) / "workspace" / "axiom" / relative
+            root = Path(handle.root_path).resolve()
+            resolved = path.resolve()
+            if root not in resolved.parents or resolved == root:
+                raise ConflictError("Invalid sandbox cleanup path")
+            shutil.rmtree(resolved, ignore_errors=True)
+        else:
+            self._backend_for_handle(handle).remove_path(handle, path=relative)
+
+    def file_read(self, *, task_id: str, owner_id: str, lease_id: str, path: str) -> bytes:
+        handle, sandbox = self._file_handle(task_id)
+        self._validate_run_path(path, owner_id=owner_id, lease_id=lease_id)
+        return self._backend_for_handle(handle).read_file(handle, source=path)
+
+    def file_write(
+        self,
+        *,
+        task_id: str,
+        owner_id: str,
+        lease_id: str,
+        path: str,
+        content: bytes,
+        append: bool = False,
+    ) -> None:
+        handle, _sandbox = self._file_handle(task_id)
+        self._validate_run_path(path, owner_id=owner_id, lease_id=lease_id)
+        backend = self._backend_for_handle(handle)
+        if append:
+            backend.append_file(handle, destination=path, content=content)
+        else:
+            backend.write_file(handle, destination=path, content=content)
+
+    def file_exists(self, *, task_id: str, owner_id: str, lease_id: str, path: str) -> bool:
+        handle, _sandbox = self._file_handle(task_id)
+        self._validate_run_path(path, owner_id=owner_id, lease_id=lease_id)
+        return self._backend_for_handle(handle).exists(handle, path=path)
+
+    def sync_file(self, *, task_id: str, source: Path, destination: str) -> str:
+        """Copy a control-plane file into the Task sandbox and return worker path."""
+        if not source.is_file():
+            raise ConflictError(f"Sandbox source file is missing: {source}")
+        _model, handle = self.ensure(task_id)
+        relative = self._relative_worker_path(destination)
+        self._backend_for_handle(handle).upload_file(handle, source=source, destination=relative)
+        return self._worker_path(handle, relative)
+
+    def sync_directory(self, *, task_id: str, source: Path, destination: str) -> str:
+        if not source.is_dir():
+            raise ConflictError(f"Sandbox source directory is missing: {source}")
+        root = source.resolve()
+        for item in root.rglob("*"):
+            if item.is_file() and not item.is_symlink():
+                relative = Path(destination) / item.relative_to(root)
+                self.sync_file(task_id=task_id, source=item, destination=str(relative))
+        _model, handle = self.ensure(task_id)
+        return self._worker_path(handle, self._relative_worker_path(destination))
+
+    def prepare_worker_assets(
+        self,
+        *,
+        task_id: str,
+        context_manifest_path: str | None,
+        context_revision: int | None,
+        skill_directories: list[str],
+        capability_snapshot_path: str | None,
+        axiom_tool_snapshot_path: str | None,
+        axiom_tool_extensions: list[str],
+    ) -> dict[str, Any]:
+        """Synchronize the immutable inputs needed by a Cube Worker.
+
+        Local sandboxes intentionally keep the historical host paths.  Cube
+        workers receive only paths under ``/workspace/axiom``.
+        """
+        sandbox = self.get(task_id)
+        if sandbox is None or sandbox.backend != "cube":
+            return {
+                "context_manifest_path": context_manifest_path,
+                "skill_directories": skill_directories,
+                "capability_snapshot_path": capability_snapshot_path,
+                "axiom_tool_snapshot_path": axiom_tool_snapshot_path,
+                "axiom_tool_extensions": axiom_tool_extensions,
+            }
+        context_worker_path = context_manifest_path
+        if context_manifest_path and context_revision is not None:
+            manifest = Path(context_manifest_path)
+            context_worker_path = self.sync_directory(
+                task_id=task_id,
+                source=manifest.parent,
+                destination=f"contexts/{context_revision}",
+            ) + "/manifest.json"
+        skill_worker_paths: list[str] = []
+        path_map: dict[str, str] = {}
+        for directory in skill_directories:
+            source = Path(directory)
+            digest = hashlib.sha256(str(source.resolve()).encode()).hexdigest()[:16]
+            worker_path = self.sync_directory(
+                    task_id=task_id,
+                    source=source,
+                    destination=f"shared/skills/{digest}/{source.name}",
+                )
+            skill_worker_paths.append(worker_path)
+            path_map[str(source)] = worker_path
+        extension_paths: list[str] = []
+        for extension in axiom_tool_extensions:
+            source = Path(extension)
+            if not source.is_file():
+                continue
+            package_root = source.parent
+            digest = hashlib.sha256(str(package_root.resolve()).encode()).hexdigest()[:16]
+            worker_root = self.sync_directory(
+                task_id=task_id,
+                source=package_root,
+                destination=f"shared/axiom-tools/{digest}/{package_root.name}",
+            )
+            worker_extension = f"{worker_root}/{source.name}"
+            extension_paths.append(worker_extension)
+            path_map[str(package_root)] = worker_root
+            path_map[str(source)] = worker_extension
+        cap_worker = None
+        if capability_snapshot_path:
+            snapshot_source = Path(capability_snapshot_path)
+            try:
+                payload = json.loads(snapshot_source.read_text(encoding="utf-8"))
+                payload = self._rewrite_worker_paths(payload, path_map)
+                with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as stream:
+                    json.dump(payload, stream, ensure_ascii=False, separators=(",", ":"))
+                    rewritten = Path(stream.name)
+                try:
+                    cap_worker = self.sync_file(
+                        task_id=task_id,
+                        source=rewritten,
+                        destination=f"shared/capabilities/{snapshot_source.name}",
+                    )
+                finally:
+                    rewritten.unlink(missing_ok=True)
+            except (OSError, json.JSONDecodeError):
+                cap_worker = self.sync_file(
+                    task_id=task_id,
+                    source=snapshot_source,
+                    destination=f"shared/capabilities/{snapshot_source.name}",
+                )
+        axiom_worker = self.sync_file(
+            task_id=task_id,
+            source=Path(axiom_tool_snapshot_path),
+            destination=f"shared/capabilities/{Path(axiom_tool_snapshot_path).name}",
+        ) if axiom_tool_snapshot_path else None
+        return {
+            "context_manifest_path": context_worker_path,
+            "skill_directories": skill_worker_paths,
+            "capability_snapshot_path": cap_worker,
+            "axiom_tool_snapshot_path": axiom_worker,
+            "axiom_tool_extensions": extension_paths,
+        }
+
+    @classmethod
+    def _rewrite_worker_paths(cls, value: Any, mapping: dict[str, str]) -> Any:
+        if isinstance(value, str):
+            for source, target in mapping.items():
+                if value == source:
+                    return target
+                if value.startswith(source.rstrip("/") + "/"):
+                    return target.rstrip("/") + value[len(source.rstrip("/")):]
+            return value
+        if isinstance(value, list):
+            return [cls._rewrite_worker_paths(item, mapping) for item in value]
+        if isinstance(value, dict):
+            return {key: cls._rewrite_worker_paths(item, mapping) for key, item in value.items()}
+        return value
+
+    def _file_handle(self, task_id: str) -> tuple[SandboxHandle, TaskSandbox]:
+        sandbox = self.get(task_id)
+        if sandbox is None or sandbox.status not in {"ready", "degraded"}:
+            raise ConflictError(f"Task Sandbox is unavailable: {task_id}")
+        handle = SandboxHandle(
+            sandbox_id=sandbox.sandbox_id,
+            root_path=(
+                str(self.store.resolve(f"sandboxes/{task_id}")
+                if sandbox.backend == "local"
+                else sandbox.remote_root)
+            ),
+            backend=sandbox.backend,
+        )
+        return handle, sandbox
+
+    @staticmethod
+    def _relative_worker_path(path: str) -> str:
+        from posixpath import normpath
+
+        normalized = normpath(str(path).replace("\\", "/").lstrip("/"))
+        if normalized in {"", "."} or normalized == ".." or normalized.startswith("../"):
+            raise ConflictError("Invalid sandbox worker path")
+        return normalized
+
+    @staticmethod
+    def _worker_path(handle: SandboxHandle, relative: str) -> str:
+        if handle.backend == "cube":
+            return f"/workspace/axiom/{relative}"
+        return str(Path(handle.root_path) / "workspace" / "axiom" / relative)
+
+    @staticmethod
+    def _validate_run_path(path: str, *, owner_id: str, lease_id: str) -> None:
+        for value in (owner_id, lease_id):
+            if not value or "/" in value or "\\" in value or value in {".", ".."}:
+                raise ConflictError("Invalid sandbox run owner")
+        relative = TaskSandboxManager._relative_worker_path(path)
+        prefix = f"runs/{owner_id}/{lease_id}/"
+        if not relative.startswith(prefix):
+            raise ConflictError("Sandbox file path is outside the current Lease run directory")
 
     def destroy(self, task_id: str) -> None:
         with transaction(self.engine) as conn:
@@ -249,7 +560,11 @@ class TaskSandboxManager:
             model = TaskSandbox.model_validate(self.repository.to_model(row))
             handle = SandboxHandle(
                 sandbox_id=model.sandbox_id,
-                root_path=str(self.store.resolve(f"sandboxes/{task_id}")),
+                root_path=str(
+                    self.store.resolve(f"sandboxes/{task_id}")
+                    if model.backend == "local"
+                    else model.remote_root
+                ),
                 backend=model.backend,
             )
             self._backend_for_handle(handle).destroy(handle)
@@ -283,7 +598,11 @@ class TaskSandboxManager:
             model = TaskSandbox.model_validate(self.repository.to_model(row))
             handle = SandboxHandle(
                 sandbox_id=model.sandbox_id,
-                root_path=str(self.store.resolve(f"sandboxes/{task_id}")),
+                root_path=str(
+                    self.store.resolve(f"sandboxes/{task_id}")
+                    if model.backend == "local"
+                    else model.remote_root
+                ),
                 backend=model.backend,
             )
             self.repository.update_status(conn, task_id=task_id, status="terminating", now=now)

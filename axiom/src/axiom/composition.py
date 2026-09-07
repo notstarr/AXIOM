@@ -87,7 +87,7 @@ class Container:
     ) -> "Container":
         store = FileStore(data_dir)
         sandboxes = TaskSandboxManager(engine, store)
-        vulnerability_reviews = VulnerabilityReviewService(engine, store)
+        vulnerability_reviews = VulnerabilityReviewService(engine, store, sandboxes=sandboxes)
         archives = ArchiveService(engine, store, reviews=vulnerability_reviews)
         context = ContextService(engine, store)
         reason = ReasonService(engine, store=store)

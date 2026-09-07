@@ -7,7 +7,7 @@ import time
 import uuid
 from collections.abc import Callable
 from urllib.parse import urlparse
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from axiom.dispatcher.bootstrap import (
@@ -21,11 +21,13 @@ from axiom.dispatcher.browser_broker import (
     BrowserBrokerError,
     BrowserBrokerManager,
     BrowserLeaseHandle,
+    HttpBrowserRunIO,
     browser_skill_directory,
 )
 from axiom.dispatcher.heartbeat import LeaseLostError
 from axiom.dispatcher.explore import ExploreExecutionTimeout
 from axiom.dispatcher.process import (
+    CubePtySupervisor,
     ProcessResult,
     ProcessSpec,
     ProcessSupervisor,
@@ -46,6 +48,8 @@ from axiom.modules.reason.schemas import ReasonWorkspace
 from axiom.modules.token_usage.schemas import TokenUsageBatchCommand
 from axiom.modules.workers.pi_config import PiWorkerConfig
 from axiom.modules.workers.schemas import Worker
+from axiom.modules.sandboxes.backend import CubeSandboxExecutionBackend
+from axiom.modules.sandboxes.schemas import SandboxHandle
 
 
 PiSettings = PiWorkerConfig
@@ -270,19 +274,48 @@ class PiBootstrapExecutor:
         enable_browser: bool = True,
         append_injected_context: bool = True,
     ) -> ProcessResult:
-        if getattr(execution_input, "sandbox_backend", "local") == "cube":
-            # The control-plane process supervisor cannot execute a command
-            # against a remote CubeSandbox path.  Fail closed here rather
-            # than accidentally launching Pi on the host when production is
-            # configured for mandatory isolation.  Deployments must inject a
-            # remote supervisor/transport before enabling Cube execution.
-            raise TransientWorkerError(
-                "CubeSandbox execution requires a remote worker supervisor; host fallback is disabled"
+        remote_cube = getattr(execution_input, "sandbox_backend", "local") == "cube"
+        cube_backend: CubeSandboxExecutionBackend | None = None
+        cube_handle: SandboxHandle | None = None
+        runtime_extension_paths: dict[str, str] = {}
+        if remote_cube:
+            sandbox_id = getattr(execution_input, "sandbox_id", None) or ""
+            if not sandbox_id:
+                raise TransientWorkerError("Cube Sandbox identity is missing")
+            run_root = PurePosixPath(execution_input.run_dir)
+            worker_root = PurePosixPath("/workspace/axiom")
+            if run_root != worker_root and worker_root not in run_root.parents:
+                raise TransientWorkerError("Cube Run directory is outside /workspace/axiom")
+            configured_session = (self.settings.session_dir or "").strip()
+            if configured_session:
+                candidate = PurePosixPath(configured_session)
+                if not candidate.is_absolute() or (
+                    candidate != worker_root and worker_root not in candidate.parents
+                ):
+                    configured_session = ""
+            session_dir = Path(configured_session or str(run_root / "sessions"))
+            agent_dir = session_dir.parent
+            cube_backend = CubeSandboxExecutionBackend(
+                api_key=os.environ.get("CUBESANDBOX_API_KEY", ""),
+                base_url=os.environ.get("CUBESANDBOX_BASE_URL", ""),
             )
-        session_dir = Path(self.settings.session_dir or Path(execution_input.run_dir) / "sessions")
-        session_dir.mkdir(parents=True, exist_ok=True)
-        agent_dir = session_dir.parent
-        self._write_models_file(agent_dir)
+            cube_handle = SandboxHandle(
+                sandbox_id=sandbox_id,
+                root_path="/workspace/axiom",
+                backend="cube",
+            )
+            self._write_models_file_remote(cube_backend, cube_handle, agent_dir)
+            runtime_extension_paths = self._sync_cube_runtime_extensions(
+                cube_backend,
+                cube_handle,
+            )
+        else:
+            session_dir = Path(
+                self.settings.session_dir or Path(execution_input.run_dir) / "sessions"
+            )
+            session_dir.mkdir(parents=True, exist_ok=True)
+            agent_dir = session_dir.parent
+            self._write_models_file(agent_dir)
         environment = dict(self.settings.environment)
         phase = getattr(execution_input, "intent_kind", None) or getattr(
             execution_input, "phase", ""
@@ -319,7 +352,7 @@ class PiBootstrapExecutor:
                     ensure_ascii=False,
                     separators=(",", ":"),
                 ),
-                "AXIOM_PYTHON": sys.executable,
+                "AXIOM_PYTHON": "python3" if remote_cube else sys.executable,
             }
         )
         # Stage capability bindings are the runtime authority.  Apply their
@@ -360,26 +393,36 @@ class PiBootstrapExecutor:
             )
             environment["PI_API_KEY"] = self.service_token
         environment["PI_MODEL_CONTEXT_WINDOW"] = str(self.settings.context_window)
-        venv_bin = Path(sys.executable).parent
-        runtime_bin = prepare_runtime_bin(
-            agent_dir / ".axiom-bin",
-            python_executable=sys.executable,
-            axiom_executable=venv_bin / "axiom",
-        )
-        environment["PATH"] = build_tool_path(
-            inherited=environment.get("PATH", os.environ.get("PATH", "")),
-            configured=environment.get("AXIOM_TOOL_PATH"),
-            runtime_bin=runtime_bin,
-            fallback_bins=[venv_bin],
-        )
-        discovered_environment = discover_tool_environment(
-            {**os.environ, **environment}
-        )
-        for name, value in discovered_environment.items():
-            environment.setdefault(name, value)
+        if remote_cube:
+            # Cube templates own their toolchain.  Never materialize or expose
+            # the control-plane virtualenv/bin directory to a remote worker.
+            environment["PATH"] = environment.get(
+                "PATH", "/usr/local/bin:/usr/bin:/bin"
+            )
+        else:
+            venv_bin = Path(sys.executable).parent
+            runtime_bin = prepare_runtime_bin(
+                agent_dir / ".axiom-bin",
+                python_executable=sys.executable,
+                axiom_executable=venv_bin / "axiom",
+            )
+            environment["PATH"] = build_tool_path(
+                inherited=environment.get("PATH", os.environ.get("PATH", "")),
+                configured=environment.get("AXIOM_TOOL_PATH"),
+                runtime_bin=runtime_bin,
+                fallback_bins=[venv_bin],
+            )
+            discovered_environment = discover_tool_environment(
+                {**os.environ, **environment}
+            )
+            for name, value in discovered_environment.items():
+                environment.setdefault(name, value)
         browser_enabled = False
         if enable_browser and phase in {"bootstrap", "explore"}:
-            browser_skill = browser_skill_directory(execution_input.skill_directories)
+            browser_skill = browser_skill_directory(
+                execution_input.skill_directories,
+                allow_remote=remote_cube,
+            )
             if browser_skill is not None and self.browser_broker is not None:
                 browser_enabled = True
                 try:
@@ -395,6 +438,14 @@ class PiBootstrapExecutor:
                     {
                         "AXIOM_BROWSER_SOCKET": browser_lease.socket_path,
                         "AXIOM_BROWSER_TOKEN": browser_lease.token,
+                        "AXIOM_BROWSER_TRANSPORT": browser_lease.transport,
+                        "AXIOM_BROWSER_ENDPOINT": browser_lease.endpoint,
+                        "AXIOM_BROWSER_LEASE_ID": browser_lease.lease_id,
+                        "AXIOM_BROWSER_SESSION_REF": browser_lease.session_ref,
+                        "AXIOM_BROWSER_GATEWAY_TOKEN": (
+                            getattr(self.browser_broker, "gateway_service_token", "")
+                            or self.service_token
+                        ),
                     }
                 )
                 tool_names = list(dict.fromkeys([*tool_names, *BROWSER_TOOL_NAMES]))
@@ -413,12 +464,17 @@ class PiBootstrapExecutor:
             ),
             mcp_tool_names=execution_input.mcp_tool_names,
             browser_enabled=browser_enabled,
+            binary="pi" if remote_cube else None,
+            runtime_extension_paths=runtime_extension_paths,
             injected_system_context=(
                 execution_input.injected_system_context if append_injected_context else ""
             ),
         )
         tracker = None
-        if self.activity_reporter is not None or self.token_usage_reporter is not None:
+        if (
+            not remote_cube
+            and (self.activity_reporter is not None or self.token_usage_reporter is not None)
+        ):
             tracker = SessionActivityTracker(
                 session_dir,
                 execution_input.lease_id,
@@ -439,9 +495,15 @@ class PiBootstrapExecutor:
                         return reason
                 return None
 
+            cube_supervisor = None
+            if remote_cube:
+                assert cube_backend is not None and cube_handle is not None
+                cube_supervisor = CubePtySupervisor(
+                    backend=cube_backend,
+                    handle=cube_handle,
+                )
             if rpc:
-                result = self.rpc_supervisor.run(
-                    RpcProcessSpec(
+                rpc_spec = RpcProcessSpec(
                         command=argv,
                         log_dir=Path(execution_input.run_dir) / "process",
                         timeout_seconds=timeout_seconds,
@@ -454,19 +516,30 @@ class PiBootstrapExecutor:
                         intervention_poller=self.intervention_poller if phase == "explore" else None,
                         intervention_result_reporter=self.intervention_result_reporter if phase == "explore" else None,
                         external_action_reporter=external_action_reporter,
-                    ),
-                    should_cancel=should_cancel,
-                    on_steer=lambda: self._report_soft_reminder(execution_input),
-                )
+                    )
+                if cube_supervisor is not None:
+                    result = cube_supervisor.run_rpc(
+                        rpc_spec,
+                        should_cancel=should_cancel,
+                        on_steer=lambda: self._report_soft_reminder(execution_input),
+                    )
+                else:
+                    result = self.rpc_supervisor.run(
+                        rpc_spec,
+                        should_cancel=should_cancel,
+                        on_steer=lambda: self._report_soft_reminder(execution_input),
+                    )
             else:
-                result = self.supervisor.run(
-                    ProcessSpec(
+                process_spec = ProcessSpec(
                         command=argv,
                         log_dir=Path(execution_input.run_dir) / "process",
                         timeout_seconds=timeout_seconds,
                         environment=environment,
-                    ),
-                    should_cancel=should_cancel,
+                    )
+                result = (
+                    cube_supervisor.run(process_spec, should_cancel=should_cancel)
+                    if cube_supervisor is not None
+                    else self.supervisor.run(process_spec, should_cancel=should_cancel)
                 )
         finally:
             if tracker is not None:
@@ -505,6 +578,31 @@ class PiBootstrapExecutor:
             cdp_url=environment.get("CDP_URL", "http://127.0.0.1:9223"),
             session_path=session_path,
             persistent=persistent,
+            transport="http" if getattr(execution_input, "sandbox_backend", "local") == "cube" else "unix",
+            session_ref=Path(session_path).stem if session_path else "",
+            run_io=(
+                HttpBrowserRunIO(
+                    api_url=self.api_url,
+                    service_token=self.service_token,
+                    task_id=execution_input.task_id,
+                    owner_id=(
+                        getattr(execution_input, "intent_id", None)
+                        or getattr(execution_input, "reason_run_id", None)
+                        or getattr(execution_input, "plan_run_id", None)
+                        or getattr(execution_input, "review_run_id", None)
+                        or ""
+                    ),
+                    lease_id=execution_input.lease_id,
+                    root=execution_input.run_dir,
+                    max_file_bytes=getattr(
+                        self.browser_broker,
+                        "file_bridge_limit",
+                        2 * 1024 * 1024,
+                    ),
+                )
+                if getattr(execution_input, "sandbox_backend", "local") == "cube"
+                else None
+            ),
         )
         self._browser_lease = handle
         return handle
@@ -563,6 +661,8 @@ class PiBootstrapExecutor:
         mcp_tool_names: list[str] | None = None,
         browser_enabled: bool = False,
         injected_system_context: str = "",
+        binary: str | None = None,
+        runtime_extension_paths: dict[str, str] | None = None,
     ) -> list[str]:
         attention_prompt = (
             CONTEXT_ATTENTION_SYSTEM_PROMPT
@@ -572,7 +672,7 @@ class PiBootstrapExecutor:
         if injected_system_context.strip():
             attention_prompt = attention_prompt.rstrip() + "\n\n" + injected_system_context.strip()
         argv = [
-            self.settings.binary,
+            binary or self.settings.binary,
             "--provider",
             self.settings.provider,
             "--model",
@@ -607,18 +707,21 @@ class PiBootstrapExecutor:
         # legacy backend field and is intentionally not used for new Leases.
         for path in dict.fromkeys(skill_paths or []):
             argv.extend(["--skill", path])
+        runtime_paths = runtime_extension_paths or {}
         if guard_enabled:
-            extension = Path(__file__).with_name("extensions") / "axiom-guard" / "index.ts"
+            extension = runtime_paths.get("axiom-guard") or str(
+                Path(__file__).with_name("extensions") / "axiom-guard" / "index.ts"
+            )
             argv.extend(["--extension", str(extension)])
         if selected_mcp_tools:
-            extension = (
+            extension = runtime_paths.get("axiom-mcp-tools") or str(
                 Path(__file__).with_name("extensions")
                 / "axiom-mcp-tools"
                 / "index.ts"
             )
             argv.extend(["--extension", str(extension)])
         if browser_enabled:
-            extension = (
+            extension = runtime_paths.get("axiom-browser") or str(
                 Path(__file__).with_name("extensions")
                 / "axiom-browser"
                 / "index.ts"
@@ -628,7 +731,7 @@ class PiBootstrapExecutor:
         for extension in selected_extensions:
             argv.extend(["--extension", extension])
         if selected_keys:
-            activation = (
+            activation = runtime_paths.get("axiom-tool-activation") or str(
                 Path(__file__).with_name("extensions")
                 / "axiom-tool-activation"
                 / "index.ts"
@@ -658,8 +761,22 @@ class PiBootstrapExecutor:
         ``PI_CODING_AGENT_DIR``; without this file ``--provider axiom`` only
         sees whatever happens to be configured in the user's global Pi home.
         """
-        if not self.settings.base_url or not self.settings.model:
+        payload = self._models_payload()
+        if payload is None:
             return
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        path = agent_dir / "models.json"
+        temporary = agent_dir / ".models.json.tmp"
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        temporary.chmod(0o600)
+        temporary.replace(path)
+
+    def _models_payload(self) -> dict[str, Any] | None:
+        if not self.settings.base_url or not self.settings.model:
+            return None
         model: dict[str, Any] = {
             "id": self.settings.model,
             "name": self.settings.model,
@@ -694,16 +811,78 @@ class PiBootstrapExecutor:
                 f"{self.api_url}/api/v1/llm-gateway/{quote(str(self.worker.name), safe='')}"
             )
             provider["apiKey"] = self.service_token
-        payload = {"providers": {self.settings.provider: provider}}
-        agent_dir.mkdir(parents=True, exist_ok=True)
-        path = agent_dir / "models.json"
-        temporary = agent_dir / ".models.json.tmp"
-        temporary.write_text(
-            json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
-            encoding="utf-8",
+        return {"providers": {self.settings.provider: provider}}
+
+    def _write_models_file_remote(
+        self,
+        backend: CubeSandboxExecutionBackend,
+        handle: SandboxHandle,
+        agent_dir: Path,
+    ) -> None:
+        payload = self._models_payload()
+        if payload is None:
+            return
+        backend.write_file(
+            handle,
+            destination=str(agent_dir / "models.json"),
+            content=json.dumps(
+                payload,
+                ensure_ascii=True,
+                separators=(",", ":"),
+            ).encode("utf-8"),
         )
-        temporary.chmod(0o600)
-        temporary.replace(path)
+
+    @staticmethod
+    def _sync_cube_runtime_extensions(
+        backend: CubeSandboxExecutionBackend,
+        handle: SandboxHandle,
+    ) -> dict[str, str]:
+        """Copy runner-owned TypeScript extensions into the Task Cube.
+
+        The browser process stays on the runner, but the extension code is
+        loaded by Pi inside Cube.  Using the source-tree path in ``--extension``
+        would leak a host path and fail at runtime, so copy the small runtime
+        package under the fixed worker root and return Cube-visible paths.
+        """
+
+        dispatcher_root = Path(__file__).resolve().parent
+        remote_root = PurePosixPath("/workspace/axiom/shared/runtime")
+        source_roots = [
+            dispatcher_root / "extensions" / name
+            for name in (
+                "axiom-guard",
+                "axiom-mcp-tools",
+                "axiom-browser",
+                "axiom-tool-activation",
+            )
+        ]
+        source_roots.append(dispatcher_root / "axiom_tools")
+        for source_root in source_roots:
+            if not source_root.is_dir():
+                raise TransientWorkerError(
+                    f"Cube runtime extension source is missing: {source_root.name}"
+                )
+            relative_root = source_root.relative_to(dispatcher_root)
+            for source in source_root.rglob("*"):
+                if not source.is_file() or source.is_symlink():
+                    continue
+                destination = remote_root / relative_root / source.relative_to(source_root)
+                if backend.exists(handle, path=str(destination)):
+                    continue
+                backend.upload_file(
+                    handle,
+                    source=source,
+                    destination=str(destination),
+                )
+        return {
+            name: str(remote_root / "extensions" / name / "index.ts")
+            for name in (
+                "axiom-guard",
+                "axiom-mcp-tools",
+                "axiom-browser",
+                "axiom-tool-activation",
+            )
+        }
 
     @staticmethod
     def _raise_on_process_failure(result: ProcessResult) -> None:

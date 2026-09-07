@@ -40,6 +40,19 @@ class TaskSandboxRepository:
             .values(last_used_at=now)
         )
 
+    def record_healthcheck(self, conn: Connection, *, task_id: str, now: str, error: str = "") -> None:
+        conn.execute(
+            update(task_sandboxes)
+            .where(task_sandboxes.c.task_id == task_id)
+            .values(
+                status="ready" if not error else "degraded",
+                last_used_at=now,
+                last_healthcheck_at=now,
+                last_healthcheck_error=error,
+                last_error=error,
+            )
+        )
+
     @staticmethod
     def to_model(row) -> dict:
         if row is None:

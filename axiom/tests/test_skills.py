@@ -216,7 +216,7 @@ def test_skill_save_keeps_one_frontmatter_layer_and_preserves_metadata(client) -
     assert not body.startswith("---")
 
 
-def test_execution_input_contains_skill_directories_without_skill_content(client) -> None:
+def test_execution_input_contains_skill_directories_and_injected_skill_context(client) -> None:
     project = client.post("/api/v1/projects", json={"title": "Skill 注入"}).json()
     task = client.post(
         "/api/v1/tasks",
@@ -237,7 +237,8 @@ def test_execution_input_contains_skill_directories_without_skill_content(client
     assert execution.status_code == 200, execution.text
     body = execution.json()
     assert body["skill_directories"]
-    assert "SKILL.md" not in execution.text
+    assert "SKILL.md" in body["injected_system_context"]
+    assert body["injected_context_hash"]
 
 
 def test_bundled_skill_is_read_only_and_enabled_state_is_persisted(client) -> None:

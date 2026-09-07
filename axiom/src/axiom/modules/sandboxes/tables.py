@@ -15,6 +15,8 @@ task_sandboxes = Table(
     Column("backend", String, nullable=False, server_default="local"),
     Column("status", String, nullable=False, server_default="ready"),
     Column("template_version", String, nullable=False, server_default="default"),
+    Column("runtime_revision", String, nullable=False, server_default="legacy-local"),
+    Column("remote_root", String, nullable=False, server_default="/workspace/axiom"),
     Column("resource_profile_json", JSONText, nullable=False, server_default="{}"),
     Column("network_policy_json", JSONText, nullable=False, server_default="{}"),
     Column("active_worker_count", Integer, nullable=False, server_default="0"),
@@ -22,6 +24,8 @@ task_sandboxes = Table(
     Column("last_used_at", UTCDateTimeText, nullable=False),
     Column("terminated_at", UTCDateTimeText),
     Column("last_error", Text, nullable=False, server_default=""),
+    Column("last_healthcheck_at", UTCDateTimeText),
+    Column("last_healthcheck_error", Text, nullable=False, server_default=""),
     UniqueConstraint("task_id", name="uq_task_sandboxes_task_id"),
     CheckConstraint("status IN ('creating','ready','degraded','terminating','terminated','failed')", name="status"),
 )

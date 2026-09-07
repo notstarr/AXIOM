@@ -32,6 +32,11 @@ const REF = Type.String({ minLength: 1, description: "browser_snapshot 返回的
 const TIMEOUT = Type.Optional(Type.Integer({ minimum: 250, maximum: 60000, description: "本次操作超时毫秒数" }));
 
 function brokerCall(operation: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<BrokerResponse> {
+  const endpoint = process.env.AXIOM_BROWSER_ENDPOINT || "";
+  const transport = process.env.AXIOM_BROWSER_TRANSPORT || (endpoint ? "http" : "unix");
+  if (transport === "http" || endpoint) {
+    return brokerCallHttp(endpoint, operation, params, signal);
+  }
   return new Promise((resolve, reject) => {
     const socketPath = process.env.AXIOM_BROWSER_SOCKET || "";
     const token = process.env.AXIOM_BROWSER_TOKEN || "";
@@ -81,6 +86,61 @@ function brokerCall(operation: string, params: Record<string, unknown>, signal?:
       if (!settled) finish(new Error("browser_broker_eof: Browser Broker 在返回结果前断开"));
     });
   });
+}
+
+async function brokerCallHttp(
+  endpoint: string,
+  operation: string,
+  params: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<BrokerResponse> {
+  const token = process.env.AXIOM_BROWSER_TOKEN || "";
+  const leaseId = process.env.AXIOM_BROWSER_LEASE_ID || "";
+  if (!endpoint || !token || !leaseId) {
+    throw new Error("browser_broker_unavailable: 当前阶段没有完整的 Browser Gateway 身份");
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 65000);
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${process.env.AXIOM_BROWSER_GATEWAY_TOKEN || process.env.AXIOM_SERVICE_TOKEN || ""}`,
+        "x-axiom-browser-token": token,
+        "x-axiom-browser-lease": leaseId,
+      },
+      body: JSON.stringify({ op: operation, token, params }),
+      signal: controller.signal,
+    });
+    const raw = await response.text();
+    if (Buffer.byteLength(raw, "utf8") > MAX_BROKER_RESPONSE_BYTES) {
+      throw new Error("browser_broker_response_too_large: Browser Gateway 响应超过上限");
+    }
+    let parsed: BrokerResponse;
+    try {
+      parsed = JSON.parse(raw) as BrokerResponse;
+    } catch (error) {
+      throw new Error(`browser_broker_invalid_response: ${String(error)}`);
+    }
+    if (!response.ok && !parsed.error) {
+      throw new Error(`browser_broker_unavailable: Gateway HTTP ${response.status}`);
+    }
+    return parsed;
+  } catch (error) {
+    if (controller.signal.aborted && signal?.aborted) {
+      throw new Error("browser_operation_aborted: 浏览器操作已取消");
+    }
+    if (controller.signal.aborted) {
+      throw new Error("browser_broker_timeout: Browser Gateway 响应超时");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
 }
 
 function register(

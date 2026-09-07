@@ -205,6 +205,11 @@ dependencies = [
     { name = "websocket-client" },
 ]
 
+[package.optional-dependencies]
+sandbox = [
+    { name = "cubesandbox" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
@@ -215,6 +220,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.14,<2" },
     { name = "click", specifier = ">=8.1,<9" },
+    { name = "cubesandbox", marker = "extra == 'sandbox'", specifier = ">=0.7,<1" },
     { name = "dingtalk-stream", specifier = ">=0.24,<1" },
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
@@ -228,6 +234,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34,<1" },
     { name = "websocket-client", specifier = ">=1.8,<2" },
 ]
+provides-extras = ["sandbox"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -529,6 +536,19 @@ wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/6c/a0/db537264e234f7273a73ec020873d6d6b39dfd8a53db78b550ca8320440e/cryptography-49.0.0-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:67e1d20ad9ef3a563c59ef22e7a8a0b8210bd26604369ea4a30a7c66aefe504e" },
     { url = "https://mirrors.aliyun.com/pypi/packages/93/77/8df9eb486495979bccecd1062e2eaf435250e84437040295b57d09048b0b/cryptography-49.0.0-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:42b0684e0e40cf26122427802486f6d93aea593612603a94fbf260c7eb1e9c1b" },
     { url = "https://mirrors.aliyun.com/pypi/packages/c2/e6/f60198ea8d9dfa15fff9ed4ca02ce362f6eadd9ba757dcc50634c4257b63/cryptography-49.0.0-cp39-abi3-win_amd64.whl", hash = "sha256:026ac7423e6fa66872d3bf889be5974507da3944f866f704fa200eadacd00001" },
+]
+
+[[package]]
+name = "cubesandbox"
+version = "0.7.0"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "requests" },
+]
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/c7/12/9effcbd7ad786dbc80a3e507e10f14443029b5c8c9b0fd82c4ec8780b0b9/cubesandbox-0.7.0.tar.gz", hash = "sha256:5c7d4bb76467ea101e35c7af4a4f5d320846a9ca5050d33bd8b4a77baf7864a6" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/12/bc/cea10d8fffeb2226ad8678a851ccf4c47153a9970f709c70373fc4546fc8/cubesandbox-0.7.0-py3-none-any.whl", hash = "sha256:3dc5d452ccb01684de7a2e12f00659c1df2798d484ea66c9e546c76bb459fa05" },
 ]
 
 [[package]]

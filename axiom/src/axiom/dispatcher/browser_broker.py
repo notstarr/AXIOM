@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import hashlib
+import http.server
 import json
 import logging
 import os
@@ -18,8 +20,11 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from pathlib import PurePosixPath
+from typing import Any, Callable, Protocol
 from urllib.parse import urlparse, urlunparse
+from urllib.error import HTTPError
+from urllib.request import Request as UrlRequest, urlopen
 
 from playwright.async_api import (
     Browser,
@@ -91,11 +96,232 @@ class BrowserBrokerError(RuntimeError):
         self.retryable = retryable
 
 
+class BrowserRunIO(Protocol):
+    """Lease-scoped file access used by Browser Broker side effects.
+
+    The browser itself is runner-owned, while a Cube Worker owns the actual
+    run directory.  Keeping this boundary explicit prevents browser tools
+    from accidentally resolving a Cube path on the host filesystem.
+    """
+
+    root: str
+
+    def resolve(self, value: str) -> str:
+        ...
+
+    def read_file(self, value: str) -> bytes:
+        ...
+
+    def write_file(self, value: str, content: bytes) -> None:
+        ...
+
+    def append_file(self, value: str, content: bytes) -> None:
+        ...
+
+    def exists(self, value: str) -> bool:
+        ...
+
+
+class LocalBrowserRunIO:
+    """Safe local implementation used by the existing AF_UNIX path."""
+
+    def __init__(self, root: str | Path):
+        self.root = str(Path(root).expanduser().resolve())
+        Path(self.root).mkdir(parents=True, exist_ok=True)
+
+    def resolve(self, value: str) -> str:
+        candidate = Path(value)
+        resolved = candidate.resolve() if candidate.is_absolute() else (Path(self.root) / candidate).resolve()
+        root = Path(self.root)
+        if resolved != root and root not in resolved.parents:
+            raise BrowserBrokerError("path_outside_run", "文件路径必须位于当前运行目录")
+        return str(resolved)
+
+    def read_file(self, value: str) -> bytes:
+        return Path(self.resolve(value)).read_bytes()
+
+    def write_file(self, value: str, content: bytes) -> None:
+        path = Path(self.resolve(value))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        with contextlib.suppress(OSError):
+            path.chmod(0o600)
+
+    def append_file(self, value: str, content: bytes) -> None:
+        path = Path(self.resolve(value))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("ab") as handle:
+            handle.write(content)
+        with contextlib.suppress(OSError):
+            path.chmod(0o600)
+
+    def exists(self, value: str) -> bool:
+        return Path(self.resolve(value)).exists()
+
+
+class CallbackBrowserRunIO:
+    """Remote implementation backed by runner/control-plane file callbacks."""
+
+    def __init__(
+        self,
+        root: str,
+        *,
+        read_file: Callable[[str], bytes],
+        write_file: Callable[[str, bytes], None],
+        append_file: Callable[[str, bytes], None],
+        exists: Callable[[str], bool] | None = None,
+    ):
+        self.root = str(PurePosixPath(root))
+        self._read = read_file
+        self._write = write_file
+        self._append = append_file
+        self._exists = exists
+
+    def resolve(self, value: str) -> str:
+        candidate = PurePosixPath(value)
+        resolved = candidate if candidate.is_absolute() else PurePosixPath(self.root) / candidate
+        normalized = PurePosixPath("/") / resolved.relative_to("/")
+        root = PurePosixPath(self.root)
+        if normalized != root and root not in normalized.parents:
+            raise BrowserBrokerError("path_outside_run", "文件路径必须位于当前运行目录")
+        return str(normalized)
+
+    def read_file(self, value: str) -> bytes:
+        return self._read(self.resolve(value))
+
+    def write_file(self, value: str, content: bytes) -> None:
+        self._write(self.resolve(value), content)
+
+    def append_file(self, value: str, content: bytes) -> None:
+        self._append(self.resolve(value), content)
+
+    def exists(self, value: str) -> bool:
+        if self._exists is None:
+            try:
+                self.read_file(value)
+            except (FileNotFoundError, BrowserBrokerError):
+                return False
+            return True
+        return self._exists(self.resolve(value))
+
+
+class HttpBrowserRunIO(CallbackBrowserRunIO):
+    """BrowserRunIO backed by the control-plane sandbox file bridge.
+
+    The object is created only for a Cube Worker.  It carries the runner's
+    service credential (never a host filesystem path) and talks to the
+    control plane synchronously from the Browser Broker thread.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_url: str,
+        service_token: str,
+        task_id: str,
+        owner_id: str,
+        lease_id: str,
+        root: str,
+        timeout_seconds: float = 30.0,
+        max_file_bytes: int = MAX_REQUEST_BYTES,
+    ):
+        self.api_url = api_url.rstrip("/")
+        self.service_token = service_token
+        self.task_id = task_id
+        self.owner_id = owner_id
+        self.lease_id = lease_id
+        self.timeout_seconds = timeout_seconds
+        self.max_file_bytes = max(64 * 1024, int(max_file_bytes))
+        self.max_response_bytes = int(self.max_file_bytes * 4 / 3) + 64 * 1024
+        super().__init__(
+            root,
+            read_file=self._read_remote,
+            write_file=self._write_remote,
+            append_file=self._append_remote,
+            exists=self._exists_remote,
+        )
+
+    def _call(self, operation: str, path: str, content: bytes = b"") -> dict[str, Any]:
+        url = (
+            f"{self.api_url}/api/v1/tasks/{self.task_id}/sandbox-runs/"
+            f"{self.lease_id}/{operation}"
+        )
+        payload = {
+            "owner_id": self.owner_id,
+            "path": path,
+            "content_base64": base64.b64encode(content).decode("ascii"),
+        }
+        request = UrlRequest(
+            url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "content-type": "application/json",
+                "authorization": f"Bearer {self.service_token}",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310 - configured control plane
+                raw = response.read(self.max_response_bytes + 1)
+        except HTTPError as exc:
+            try:
+                raw = exc.read(self.max_response_bytes + 1)
+                detail_payload = json.loads(raw.decode("utf-8"))
+                detail = str(detail_payload.get("detail") or "sandbox file bridge request failed")
+            except Exception:
+                detail = str(exc)
+            if exc.code == 404:
+                raise FileNotFoundError(detail) from exc
+            raise BrowserBrokerError(
+                "sandbox_file_bridge_error",
+                detail,
+                retryable=exc.code >= 500 or exc.code in {408, 429},
+            ) from exc
+        except OSError as exc:
+            raise BrowserBrokerError("sandbox_file_bridge_unavailable", str(exc), retryable=True) from exc
+        if len(raw) > self.max_response_bytes:
+            raise BrowserBrokerError("sandbox_file_too_large", "Sandbox file bridge response is too large")
+        try:
+            result = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise BrowserBrokerError("sandbox_file_bridge_invalid_response", str(exc), retryable=True) from exc
+        if not isinstance(result, dict):
+            raise BrowserBrokerError("sandbox_file_bridge_invalid_response", "Sandbox file bridge returned an invalid response")
+        if "detail" in result and "content_base64" not in result and not result.get("ok", False):
+            detail = str(result.get("detail") or "sandbox file bridge request failed")
+            if "not found" in detail.lower():
+                raise FileNotFoundError(detail)
+            raise BrowserBrokerError("sandbox_file_bridge_error", detail, retryable=True)
+        return result
+
+    def _read_remote(self, path: str) -> bytes:
+        result = self._call("read", path)
+        try:
+            return base64.b64decode(str(result.get("content_base64") or "").encode("ascii"), validate=True)
+        except (ValueError, TypeError) as exc:
+            raise BrowserBrokerError("sandbox_file_bridge_invalid_response", "Invalid file payload") from exc
+
+    def _write_remote(self, path: str, content: bytes) -> None:
+        self._call("write", path, content)
+
+    def _append_remote(self, path: str, content: bytes) -> None:
+        self._call("append", path, content)
+
+    def _exists_remote(self, path: str) -> bool:
+        try:
+            return bool(self._call("exists", path).get("exists"))
+        except FileNotFoundError:
+            return False
+
+
 @dataclass(slots=True)
 class BrowserLeaseHandle:
     socket_path: str
     token: str
     lease_id: str
+    transport: str = "unix"
+    endpoint: str = ""
+    session_ref: str = ""
 
 
 @dataclass(slots=True)
@@ -154,6 +380,7 @@ class LeaseState:
     run_dir: Path
     scope: dict[str, Any]
     cdp_url: str
+    run_io: BrowserRunIO | None = None
     session_path: str = ""
     persistent: bool = False
     slot: BrowserSlot | None = None
@@ -162,13 +389,17 @@ class LeaseState:
     last_active: float = 0.0
 
 
-def browser_skill_directory(paths: list[str]) -> Path | None:
+def browser_skill_directory(
+    paths: list[str],
+    *,
+    allow_remote: bool = False,
+) -> Path | None:
     return next(
         (
             Path(value)
             for value in paths
             if Path(value).name == "browser-control"
-            and (Path(value) / "SKILL.md").is_file()
+            and (allow_remote or (Path(value) / "SKILL.md").is_file())
         ),
         None,
     )
@@ -222,7 +453,17 @@ def redact_headers(headers: dict[str, Any], *, include_sensitive: bool) -> dict[
 class BrowserBrokerManager:
     """Runner-owned bridge between Pi native tools and one Playwright session."""
 
-    def __init__(self, *, socket_dir: Path | None = None):
+    def __init__(
+        self,
+        *,
+        socket_dir: Path | None = None,
+        gateway_enabled: bool | None = None,
+        gateway_bind: str | None = None,
+        gateway_port: int | None = None,
+        gateway_base_url: str | None = None,
+        gateway_service_token: str | None = None,
+        file_bridge_limit: int | None = None,
+    ):
         directory = socket_dir or Path(tempfile.gettempdir())
         name = f"axiom-browser-{os.getpid()}-{uuid.uuid4().hex[:8]}.sock"
         candidate = directory / name
@@ -236,6 +477,27 @@ class BrowserBrokerManager:
         self._ready = threading.Event()
         self._closed = False
         self._start_error: BaseException | None = None
+        self._lease_tokens: dict[str, str] = {}
+        self._lease_lock = threading.Lock()
+        self._browser_server: BrowserBrokerServer | None = None
+        self.gateway_enabled = (
+            gateway_enabled
+            if gateway_enabled is not None
+            else os.environ.get("AXIOM_BROWSER_GATEWAY_ENABLED", "0") == "1"
+        )
+        self.gateway_bind = gateway_bind or os.environ.get("AXIOM_BROWSER_GATEWAY_BIND", "127.0.0.1")
+        self.gateway_port = int(gateway_port or os.environ.get("AXIOM_BROWSER_GATEWAY_PORT", "0") or 0)
+        self.gateway_base_url = (gateway_base_url or os.environ.get("AXIOM_BROWSER_GATEWAY_BASE_URL", "")).rstrip("/")
+        self.gateway_service_token = gateway_service_token or os.environ.get("AXIOM_BROWSER_GATEWAY_TOKEN", "")
+        self.file_bridge_limit = max(
+            64 * 1024,
+            int(
+                file_bridge_limit
+                or os.environ.get("AXIOM_BROWSER_FILE_BRIDGE_LIMIT", str(MAX_REQUEST_BYTES))
+                or MAX_REQUEST_BYTES
+            ),
+        )
+        self._gateway: BrowserGatewayServer | None = None
 
     def register_lease(
         self,
@@ -249,8 +511,20 @@ class BrowserBrokerManager:
         session_path: str = "",
         persistent: bool = False,
         wait_seconds: float = 90.0,
+        transport: str = "unix",
+        session_ref: str = "",
+        run_io: BrowserRunIO | None = None,
     ) -> BrowserLeaseHandle:
         self._ensure_started()
+        if transport not in {"unix", "http"}:
+            raise BrowserBrokerError("invalid_browser_transport", f"Unsupported Browser transport: {transport}")
+        if transport == "http" and not self.gateway_enabled:
+            raise BrowserBrokerError(
+                "browser_gateway_disabled",
+                "Cube Browser Gateway is disabled",
+                retryable=True,
+            )
+        self._ensure_gateway() if transport == "http" else None
         token = secrets.token_urlsafe(32)
         response = self._request(
             {
@@ -276,9 +550,25 @@ class BrowserBrokerManager:
                 str(error.get("message") or "Browser Broker registration failed"),
                 retryable=bool(error.get("retryable")),
             )
-        return BrowserLeaseHandle(str(self.socket_path), token, lease_id)
+        with self._lease_lock:
+            self._lease_tokens[lease_id] = token
+        if run_io is not None:
+            # The socket protocol cannot carry Python callbacks.  Direct
+            # in-process callers may bind the IO object after registration;
+            # remote callers use the sandbox file bridge in a later layer.
+            self._bind_run_io(token, run_io)
+        return BrowserLeaseHandle(
+            str(self.socket_path),
+            token,
+            lease_id,
+            transport=transport,
+            endpoint=self.gateway_endpoint if transport == "http" else "",
+            session_ref=session_ref,
+        )
 
     def close_lease(self, handle: BrowserLeaseHandle) -> None:
+        with self._lease_lock:
+            self._lease_tokens.pop(handle.lease_id, None)
         if self._closed or not self.socket_path.exists():
             return
         with contextlib.suppress(OSError, BrowserBrokerError):
@@ -295,6 +585,9 @@ class BrowserBrokerManager:
         if self._closed:
             return
         self._closed = True
+        if self._gateway is not None:
+            self._gateway.close()
+            self._gateway = None
         if self.socket_path.exists():
             with contextlib.suppress(OSError, BrowserBrokerError):
                 self._request(
@@ -304,6 +597,30 @@ class BrowserBrokerManager:
         if self._thread is not None:
             self._thread.join(timeout=8.0)
         self.socket_path.unlink(missing_ok=True)
+
+    @property
+    def gateway_endpoint(self) -> str:
+        if self._gateway is None:
+            return self.gateway_base_url
+        return self.gateway_base_url or f"http://{self.gateway_bind}:{self._gateway.port}"
+
+    def _ensure_gateway(self) -> None:
+        if not self.gateway_enabled:
+            return
+        if self._gateway is not None:
+            return
+        self._gateway = BrowserGatewayServer(
+            manager=self,
+            bind=self.gateway_bind,
+            port=self.gateway_port,
+            service_token=self.gateway_service_token,
+        )
+        self._gateway.start()
+
+    def _bind_run_io(self, token: str, run_io: BrowserRunIO) -> None:
+        server = self._browser_server
+        if server is not None:
+            server.bind_run_io(token, run_io)
 
     def _ensure_started(self) -> None:
         if self._closed:
@@ -330,13 +647,12 @@ class BrowserBrokerManager:
 
     def _thread_main(self) -> None:
         try:
-            asyncio.run(
-                BrowserBrokerServer(
-                    manager_secret=self._secret,
-                    socket_path=self.socket_path,
-                    ready=self._ready,
-                ).serve()
+            self._browser_server = BrowserBrokerServer(
+                manager_secret=self._secret,
+                socket_path=self.socket_path,
+                ready=self._ready,
             )
+            asyncio.run(self._browser_server.serve())
         except BaseException as exc:
             self._start_error = exc
             self._ready.set()
@@ -369,6 +685,98 @@ class BrowserBrokerManager:
         return value
 
 
+class BrowserGatewayServer:
+    """Private HTTP bridge for Cube workers.
+
+    Browser state remains in the Runner-owned BrowserBrokerServer.  The
+    gateway only authenticates and forwards one JSON request at a time, so
+    the existing Browser Tool protocol and slot semantics stay unchanged.
+    """
+
+    def __init__(self, *, manager: BrowserBrokerManager, bind: str, port: int, service_token: str):
+        self.manager = manager
+        self.bind = bind
+        self.requested_port = port
+        self.service_token = service_token
+        self.httpd: http.server.ThreadingHTTPServer | None = None
+        self.thread: threading.Thread | None = None
+
+    @property
+    def port(self) -> int:
+        return int(self.httpd.server_address[1]) if self.httpd is not None else self.requested_port
+
+    def start(self) -> None:
+        gateway = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            server_version = "AXIOMBrowserGateway/1"
+
+            def log_message(self, _format: str, *_args: object) -> None:
+                return
+
+            def _send(self, status: int, payload: dict[str, Any]) -> None:
+                encoded = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+            def do_POST(self) -> None:  # noqa: N802
+                if self.path != "/internal/browser/v1/call":
+                    self._send(404, {"ok": False, "content": "Not found"})
+                    return
+                if gateway.service_token:
+                    supplied = self.headers.get("Authorization", "")
+                    expected = f"Bearer {gateway.service_token}"
+                    if not secrets.compare_digest(supplied, expected):
+                        self._send(401, BrowserBrokerServer._error("forbidden", "Invalid Browser Gateway credential"))
+                        return
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    length = 0
+                if length <= 0 or length > MAX_REQUEST_BYTES:
+                    self._send(413, BrowserBrokerServer._error("invalid_request", "Browser Gateway request is empty or too large"))
+                    return
+                try:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                    if not isinstance(payload, dict):
+                        raise ValueError("request must be an object")
+                    token = self.headers.get("X-Axiom-Browser-Token", "") or str(payload.get("token") or "")
+                    lease_id = self.headers.get("X-Axiom-Browser-Lease", "").strip()
+                    with gateway.manager._lease_lock:
+                        expected_token = gateway.manager._lease_tokens.get(lease_id) if lease_id else None
+                    if (
+                        not lease_id
+                        or expected_token is None
+                        or not token
+                        or not secrets.compare_digest(token, expected_token)
+                    ):
+                        self._send(403, BrowserBrokerServer._error("forbidden", "Invalid Browser Lease credential"))
+                        return
+                    payload["token"] = token
+                    response = gateway.manager._request(payload, timeout=70.0)
+                    self._send(200, response)
+                except BrowserBrokerError as exc:
+                    self._send(503 if exc.retryable else 400, BrowserBrokerServer._error(exc.code, str(exc), retryable=exc.retryable))
+                except Exception as exc:
+                    self._send(400, BrowserBrokerServer._error("browser_gateway_invalid_request", str(exc)))
+
+        self.httpd = http.server.ThreadingHTTPServer((self.bind, self.requested_port), Handler)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, name="axiom-browser-gateway", daemon=True)
+        self.thread.start()
+
+    def close(self) -> None:
+        if self.httpd is not None:
+            self.httpd.shutdown()
+            self.httpd.server_close()
+        if self.thread is not None:
+            self.thread.join(timeout=3.0)
+        self.httpd = None
+        self.thread = None
+
+
 class BrowserBrokerServer:
     def __init__(
         self,
@@ -376,11 +784,14 @@ class BrowserBrokerServer:
         manager_secret: str,
         socket_path: Path,
         ready: threading.Event,
+        run_io_factory: Callable[[dict[str, Any]], BrowserRunIO] | None = None,
     ):
         self.manager_secret = manager_secret
         self.socket_path = socket_path
         self.ready = ready
+        self.run_io_factory = run_io_factory
         self.leases: dict[str, LeaseState] = {}
+        self._run_ios: dict[str, BrowserRunIO] = {}
         self._shutdown = asyncio.Event()
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
@@ -396,6 +807,18 @@ class BrowserBrokerServer:
         self._chrome_profile: Path | None = None
         self._chrome_pid_file: Path | None = None
         self._connect_lock = asyncio.Lock()
+
+    def bind_run_io(self, token: str, run_io: BrowserRunIO) -> None:
+        """Bind a remote/local file bridge to an already registered Lease."""
+        lease = self.leases.get(token)
+        if lease is not None:
+            lease.run_io = run_io
+        else:
+            self._run_ios[token] = run_io
+
+    @staticmethod
+    def _run_io(lease: LeaseState) -> BrowserRunIO:
+        return lease.run_io or LocalBrowserRunIO(lease.run_dir)
 
     async def serve(self) -> None:
         self.socket_path.unlink(missing_ok=True)
@@ -518,14 +941,26 @@ class BrowserBrokerServer:
         old = self.leases.get(token)
         if old is not None:
             return self._ok("Browser Lease 已存在")
-        run_dir = Path(str(payload.get("run_dir") or "")).resolve()
-        run_dir.mkdir(parents=True, exist_ok=True)
+        run_dir_value = str(payload.get("run_dir") or "")
+        if not run_dir_value:
+            raise BrowserBrokerError("invalid_registration", "run_dir is required")
+        run_io = payload.get("_run_io")
+        if not isinstance(run_io, (LocalBrowserRunIO, CallbackBrowserRunIO)):
+            run_io = self._run_ios.pop(token, None)
+        if run_io is None and self.run_io_factory is not None:
+            run_io = self.run_io_factory(payload)
+        if run_io is None:
+            run_io = LocalBrowserRunIO(run_dir_value)
+        run_dir = Path(run_io.root) if isinstance(run_io, LocalBrowserRunIO) else Path(run_dir_value)
+        if isinstance(run_io, LocalBrowserRunIO):
+            run_dir.mkdir(parents=True, exist_ok=True)
         lease = LeaseState(
             token=token,
             lease_id=lease_id,
             task_id=str(payload.get("task_id") or ""),
             intent_id=str(payload.get("intent_id") or ""),
             run_dir=run_dir,
+            run_io=run_io,
             scope=dict(payload.get("scope") or {}),
             cdp_url=str(payload.get("cdp_url") or "http://127.0.0.1:9223"),
             session_path=str(payload.get("session_path") or ""),
@@ -1358,10 +1793,24 @@ class BrowserBrokerServer:
         paths = params.get("file_paths")
         if not isinstance(paths, list) or not paths:
             raise BrowserBrokerError("invalid_files", "file_paths不能为空")
-        resolved = [str(self._inside_run_dir(lease, str(item))) for item in paths]
         await self._require_live_ref(ref)
-        await ref.handle.set_input_files(resolved, timeout=self._timeout_ms(params))
-        return await self._page_response(state, f"已上传 {len(resolved)} 个文件")
+        run_io = self._run_io(lease)
+        temporary_paths: list[Path] = []
+        try:
+            for item in paths:
+                source = str(item)
+                content = run_io.read_file(source)
+                suffix = Path(source).suffix
+                fd, temporary_name = tempfile.mkstemp(prefix="axiom-browser-upload-", suffix=suffix)
+                os.close(fd)
+                temporary = Path(temporary_name)
+                temporary.write_bytes(content)
+                temporary_paths.append(temporary)
+            await ref.handle.set_input_files([str(path) for path in temporary_paths], timeout=self._timeout_ms(params))
+        finally:
+            for path in temporary_paths:
+                path.unlink(missing_ok=True)
+        return await self._page_response(state, f"已上传 {len(temporary_paths)} 个文件")
 
     async def _wait(self, lease: LeaseState, params: dict[str, Any]) -> dict[str, Any]:
         state = self._page(lease, params)
@@ -1401,12 +1850,14 @@ class BrowserBrokerServer:
         state = self._page(lease, params)
         output = str(params.get("output_path") or "")
         if output:
-            path = self._inside_run_dir(lease, output)
+            output_path = self._run_io(lease).resolve(output)
         else:
-            path = lease.run_dir / "process" / "browser" / "screenshots" / f"{int(time.time() * 1000)}-{state.page_id}.png"
-        if path.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+            output_path = self._run_io(lease).resolve(
+                f"process/browser/screenshots/{int(time.time() * 1000)}-{state.page_id}.png"
+            )
+        suffix = Path(output_path).suffix.lower()
+        if suffix not in {".png", ".jpg", ".jpeg"}:
             raise BrowserBrokerError("invalid_screenshot_format", "截图仅支持PNG或JPEG")
-        path.parent.mkdir(parents=True, exist_ok=True)
         labels = bool(params.get("labels", False))
         overlay_id = f"axiom-labels-{uuid.uuid4().hex}"
         label_to_ref: dict[str, str] = {}
@@ -1431,26 +1882,27 @@ class BrowserBrokerServer:
                 {"id": overlay_id, "markers": markers},
             )
         try:
-            await state.page.screenshot(
-                path=str(path),
+            content = await state.page.screenshot(
                 full_page=bool(params.get("full_page", False)),
-                quality=(int(params["quality"]) if path.suffix.lower() in {".jpg", ".jpeg"} and params.get("quality") else None),
+                type="jpeg" if suffix in {".jpg", ".jpeg"} else "png",
+                quality=(int(params["quality"]) if suffix in {".jpg", ".jpeg"} and params.get("quality") else None),
             )
         finally:
             if labels:
                 with contextlib.suppress(Exception):
                     await state.page.evaluate("id => document.getElementById(id)?.remove()", overlay_id)
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        self._run_io(lease).write_file(output_path, content)
+        digest = hashlib.sha256(content).hexdigest()
         data = await self._page_data(state)
         data.update(
             {
-                "output_path": str(path),
-                "size": path.stat().st_size,
+                "output_path": output_path,
+                "size": len(content),
                 "sha256": digest,
                 "label_to_ref": label_to_ref,
             }
         )
-        return self._ok(f"截图已保存：{path}", data)
+        return self._ok(f"截图已保存：{output_path}", data)
 
     async def _read_network(
         self, lease: LeaseState, params: dict[str, Any]
@@ -1789,19 +2241,22 @@ class BrowserBrokerServer:
             await dialog.dismiss()
 
     async def _download_event(self, lease: LeaseState, state: PageState, download) -> None:
-        directory = lease.run_dir / "process" / "browser" / "downloads"
-        directory.mkdir(parents=True, exist_ok=True)
         name = Path(download.suggested_filename or f"download-{int(time.time() * 1000)}").name
-        path = directory / name
+        path = self._run_io(lease).resolve(f"process/browser/downloads/{name}")
+        fd, temporary_name = tempfile.mkstemp(prefix="axiom-browser-download-")
+        os.close(fd)
+        temporary = Path(temporary_name)
         with contextlib.suppress(Exception):
-            await download.save_as(str(path))
+            await download.save_as(str(temporary))
+            self._run_io(lease).write_file(path, temporary.read_bytes())
+        temporary.unlink(missing_ok=True)
         state.download_cursor += 1
         entry = {
             "cursor": state.download_cursor,
             "page_id": state.page_id,
             "time": time.time(),
             "suggested_filename": name,
-            "path": str(path),
+            "path": path,
         }
         state.download_entries.append(entry)
         self._append_jsonl(lease, "downloads.jsonl", entry)
@@ -1815,13 +2270,8 @@ class BrowserBrokerServer:
         self._append_jsonl(lease, "network.jsonl", record)
 
     def _append_jsonl(self, lease: LeaseState, name: str, entry: dict[str, Any]) -> None:
-        directory = lease.run_dir / "process" / "browser"
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / name
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
-        with contextlib.suppress(OSError):
-            path.chmod(0o600)
+        payload = (json.dumps(entry, ensure_ascii=False, default=str) + "\n").encode("utf-8")
+        self._run_io(lease).append_file(f"process/browser/{name}", payload)
 
     async def _collect_refs(
         self,
@@ -2103,16 +2553,14 @@ class BrowserBrokerServer:
         if not target_allowed(lease.scope, url):
             raise BrowserBrokerError("target_out_of_scope", f"目标不在当前Task Scope：{url}")
 
-    def _inside_run_dir(self, lease: LeaseState, value: str) -> Path:
-        candidate = Path(value)
-        resolved = (
-            candidate.resolve()
-            if candidate.is_absolute()
-            else (lease.run_dir / candidate).resolve()
-        )
-        if resolved != lease.run_dir and lease.run_dir not in resolved.parents:
-            raise BrowserBrokerError("path_outside_run", "文件路径必须位于当前运行目录")
-        return resolved
+    def _inside_run_dir(self, lease: LeaseState, value: str) -> str:
+        """Resolve through the lease-scoped file bridge.
+
+        Remote Cube leases must never be resolved against a host ``Path``.
+        BrowserRunIO applies the same traversal checks for local and remote
+        implementations and returns the worker-visible path.
+        """
+        return self._run_io(lease).resolve(value)
 
     @staticmethod
     def _timeout_ms(params: dict[str, Any]) -> int:

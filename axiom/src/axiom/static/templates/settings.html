@@ -120,8 +120,14 @@
           <div class="sto-field span2"><label>Plan 连续复盘上限（无新漏洞自动收敛阈值）</label><input type="number" min="1" max="20" x-model.number="dispatchSettings.plan_max_consecutive_runs" class="sto-input sto-num" placeholder="默认 3 次"></div>
           <div class="sto-field"><label>Sandbox 后端</label><select x-model="dispatchSettings.sandbox_backend" class="sto-input"><option value="local">Local（开发/测试）</option><option value="cube">CubeSandbox（生产）</option></select></div>
           <div class="sto-field"><label>Sandbox 模板版本</label><input type="text" x-model="dispatchSettings.sandbox_template" class="sto-input"></div>
+          <div class="sto-field"><label>Runtime Revision</label><input type="text" x-model="dispatchSettings.sandbox_runtime_revision" class="sto-input" placeholder="镜像/运行时版本"></div>
+          <div class="sto-field"><label>Sandbox 健康检查（秒）</label><input type="number" min="1" max="300" x-model.number="dispatchSettings.sandbox_healthcheck_timeout" class="sto-input sto-num"></div>
           <div class="sto-field"><label>强制 CubeSandbox</label><label class="sto-check"><input type="checkbox" x-model="dispatchSettings.sandbox_required"> 不可用时保持 pending，不回退宿主机</label></div>
           <div class="sto-field"><label>允许 Local fallback</label><label class="sto-check"><input type="checkbox" x-model="dispatchSettings.sandbox_local_fallback" :disabled="dispatchSettings.sandbox_required"> 仅开发环境建议开启</label></div>
+          <div class="sto-field"><label>Browser Gateway</label><label class="sto-check"><input type="checkbox" x-model="dispatchSettings.browser_gateway_enabled"> Cube Worker 使用私有 HTTP Browser Broker 通道</label></div>
+          <div class="sto-field"><label>Gateway 监听地址</label><input type="text" x-model="dispatchSettings.browser_gateway_bind" class="sto-input" placeholder="127.0.0.1"></div>
+          <div class="sto-field span2"><label>Cube 可访问 Gateway URL</label><input type="text" x-model="dispatchSettings.browser_gateway_base_url" class="sto-input" placeholder="http://runner.internal:端口"><p class="sto-desc">生产强制 Cube 且启用 Browser Gateway 时必填；不得填写公网地址。</p></div>
+          <div class="sto-field span2"><label>Browser 文件桥单次上限（字节）</label><input type="number" min="65536" max="67108864" x-model.number="dispatchSettings.browser_file_bridge_limit" class="sto-input sto-num"></div>
         </div>
       </div>
 

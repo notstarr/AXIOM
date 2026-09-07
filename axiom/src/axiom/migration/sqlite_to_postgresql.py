@@ -29,7 +29,7 @@ LEGACY_SQLITE_REVISION = "20260805_0035"
 # this aligned with the latest migration whenever a schema change is added;
 # otherwise a database that has successfully upgraded cannot accept a legacy
 # SQLite import.
-POSTGRESQL_TARGET_REVISION = "20260902_pg0014"
+POSTGRESQL_TARGET_REVISION = "20260907_pg0016"
 DEFAULT_BATCH_SIZE = 1_000
 
 # A 20260805 SQLite export predates the independent Plan runtime.  These

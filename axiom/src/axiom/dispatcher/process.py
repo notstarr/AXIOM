@@ -4,10 +4,13 @@ import json
 import logging
 import os
 import queue
+import re
 import signal
+import shlex
 import subprocess
 import threading
 import time
+import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1092,3 +1095,534 @@ def _read_tail(path: Path, limit: int) -> str:
         return payload.decode("utf-8", errors="replace")
     except OSError:
         return ""
+
+
+class CubePtySupervisor:
+    """Small remote counterpart of the local process supervisors.
+
+    CubeSandbox owns the process and PTY; AXIOM only sends the command and
+    consumes bounded output.  The class intentionally implements the same
+    ``run`` shape as the local supervisors so Pi's lifecycle and cancellation
+    logic remain shared.  It is conservative when an SDK lacks a PTY method:
+    the run fails as infrastructure instead of falling back to ``Popen``.
+    """
+
+    def __init__(self, *, backend, handle, output_limit_bytes: int = 4 * 1024 * 1024):
+        self.backend = backend
+        self.handle = handle
+        self.output_limit_bytes = output_limit_bytes
+
+    @staticmethod
+    def _clean_line(value: str) -> str:
+        # PTY output may contain bracketed-paste/colour control sequences and
+        # a carriage return.  Never feed those bytes to the JSON decoder.
+        value = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", value)
+        return value.replace("\r", "").strip()
+
+    def _write_log(self, path: Path, content: str) -> str | None:
+        try:
+            self.backend.write_file(
+                self.handle,
+                destination=str(path),
+                content=content.encode("utf-8", errors="replace"),
+            )
+        except Exception as exc:  # pragma: no cover - SDK/network dependent
+            return f"CubeSandbox log write failed for {path}: {exc}"
+        return None
+
+    @staticmethod
+    def _validate_rpc(spec: RpcProcessSpec) -> None:
+        ProcessSupervisor._validate(spec)
+        if not spec.prompt.strip():
+            raise ValueError("RPC prompt must not be empty")
+        if bool(spec.steer_message) != (spec.steer_after_seconds is not None):
+            raise ValueError("RPC steer timing and message must be configured together")
+        if spec.steer_after_seconds is not None and not (
+            0 < spec.steer_after_seconds < spec.timeout_seconds
+        ):
+            raise ValueError("RPC steer timing must fall within the process timeout")
+        if spec.stream_idle_timeout_seconds is not None and spec.stream_idle_timeout_seconds <= 0:
+            raise ValueError("RPC stream idle timeout must be positive")
+        if spec.stream_recovery_prompt is not None:
+            if spec.stream_idle_timeout_seconds is None:
+                raise ValueError("RPC stream recovery requires an idle timeout")
+            if not spec.stream_recovery_prompt.strip():
+                raise ValueError("RPC stream recovery prompt must not be empty")
+        if spec.stream_recovery_abort_timeout_seconds <= 0:
+            raise ValueError("RPC stream recovery abort timeout must be positive")
+        if spec.provider_failure_grace_seconds <= 0:
+            raise ValueError("RPC provider failure grace must be positive")
+
+    def run(self, spec, *, should_cancel=None, on_steer=None):
+        stdout_path = spec.log_dir / "stdout.log"
+        stderr_path = spec.log_dir / "stderr.log"
+        environment = dict(spec.environment)
+        command = "stty -echo 2>/dev/null || true; exec " + shlex.join(spec.command)
+        try:
+            pty = self.backend.open_pty(
+                self.handle,
+                cwd=str(spec.cwd or self.handle.root_path),
+                env=environment,
+                timeout=float(spec.timeout_seconds) + 10,
+            )
+        except Exception as exc:
+            raise ProcessLaunchError(f"failed to open CubeSandbox PTY: {exc}") from exc
+        output: bytearray = bytearray()
+        finished = threading.Event()
+        return_code: list[int] = [0]
+        reader_error: list[BaseException] = []
+
+        def on_data(data):
+            if isinstance(data, str):
+                data = data.encode("utf-8", errors="replace")
+            if data:
+                output.extend(bytes(data))
+                if len(output) > self.output_limit_bytes:
+                    del output[:-self.output_limit_bytes]
+
+        def wait_remote():
+            try:
+                value = self.backend.pty_wait(pty, on_data)
+                return_code[0] = int(getattr(value, "exit_code", getattr(value, "returncode", value or 0)))
+            except BaseException as exc:  # pragma: no cover - SDK dependent
+                reader_error.append(exc)
+            finally:
+                finished.set()
+
+        thread = threading.Thread(target=wait_remote, name="cube-pty-output", daemon=True)
+        thread.start()
+        self.backend.pty_send_stdin(pty, (command + "\n").encode("utf-8"))
+        started = time.monotonic()
+        timed_out = False
+        cancelled = False
+        cancel_reason = None
+        while not finished.wait(timeout=min(0.25, max(0.05, spec.poll_interval_seconds))):
+            if should_cancel is not None:
+                cancel_reason = should_cancel()
+                if cancel_reason:
+                    cancelled = True
+                    self.backend.pty_kill(pty)
+                    break
+            if time.monotonic() - started >= spec.timeout_seconds:
+                timed_out = True
+                self.backend.pty_kill(pty)
+                break
+        if not finished.is_set():
+            finished.wait(timeout=3.0)
+        text = bytes(output).decode("utf-8", errors="replace")
+        stderr_text = "\n".join(str(item) for item in reader_error)
+        log_errors = [
+            error
+            for error in (
+                self._write_log(stdout_path, text),
+                self._write_log(stderr_path, stderr_text),
+            )
+            if error
+        ]
+        if log_errors:
+            stderr_text = "\n".join(item for item in (stderr_text, *log_errors) if item)
+        if reader_error:
+            raise ProcessLaunchError(str(reader_error[-1]))
+        code = return_code[0]
+        if timed_out and code == 0:
+            code = 124
+        return ProcessResult(
+            returncode=code,
+            stdout=text,
+            stderr=stderr_text,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            timed_out=timed_out,
+            cancelled=cancelled,
+            cancel_reason=cancel_reason,
+        )
+
+    def run_rpc(self, spec: RpcProcessSpec, *, should_cancel=None, on_steer=None):
+        """Run Pi JSON-RPC over a remote PTY with bounded control handling.
+
+        The local supervisor has a pipe with line framing; a remote PTY does
+        not.  This implementation therefore keeps a byte buffer between
+        callbacks and applies the same retry, recovery, intervention and
+        semantic-progress rules as the local path.  Logs are written through
+        the backend instead of touching the control-plane filesystem.
+        """
+        self._validate_rpc(spec)
+        stdout_path = spec.log_dir / "stdout.log"
+        stderr_path = spec.log_dir / "stderr.log"
+        environment = dict(spec.environment)
+        command = "stty -echo 2>/dev/null || true; exec " + shlex.join(spec.command)
+        try:
+            pty = self.backend.open_pty(
+                self.handle,
+                cwd=str(spec.cwd or self.handle.root_path),
+                env=environment,
+                timeout=float(spec.timeout_seconds) + 10,
+            )
+        except Exception as exc:
+            raise ProcessLaunchError(f"failed to open CubeSandbox PTY: {exc}") from exc
+        events: queue.Queue[dict[str, Any] | None] = queue.Queue()
+        output = bytearray()
+        reader_error: list[BaseException] = []
+        finished = threading.Event()
+        return_code = [0]
+        line_buffer = bytearray()
+
+        def on_data(data):
+            if isinstance(data, str):
+                data = data.encode("utf-8", errors="replace")
+            if not data:
+                return
+            output.extend(bytes(data))
+            if len(output) > self.output_limit_bytes:
+                del output[:-self.output_limit_bytes]
+            line_buffer.extend(bytes(data))
+            while b"\n" in line_buffer:
+                raw_line, _, remainder = line_buffer.partition(b"\n")
+                line_buffer.clear()
+                line_buffer.extend(remainder)
+                clean = self._clean_line(raw_line.decode("utf-8", errors="replace"))
+                if not clean:
+                    continue
+                try:
+                    value = json.loads(clean)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(value, dict):
+                    event_type = str(value.get("type") or "")
+                    if event_type in _RPC_CONTROL_EVENT_TYPES:
+                        events.put(_compact_rpc_control_event(value))
+                    elif event_type in _RPC_PROGRESS_EVENT_TYPES:
+                        events.put(_compact_rpc_progress_event(value))
+
+        def wait_remote():
+            try:
+                value = self.backend.pty_wait(pty, on_data)
+                return_code[0] = int(getattr(value, "exit_code", getattr(value, "returncode", value or 0)))
+            except BaseException as exc:  # pragma: no cover - SDK dependent
+                reader_error.append(exc)
+            finally:
+                events.put(None)
+                finished.set()
+
+        reader = threading.Thread(target=wait_remote, name="cube-rpc-output", daemon=True)
+        reader.start()
+        self.backend.pty_send_stdin(
+            pty,
+            (command + "\n" + json.dumps({"id": _RPC_PROMPT_ID, "type": "prompt", "message": spec.prompt}, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"),
+        )
+        started = time.monotonic()
+        deadline = started + spec.timeout_seconds
+        steer_sent = False
+        completed = False
+        final_text: str | None = None
+        timed_out = False
+        cancelled = False
+        cancel_reason = None
+        protocol_error = ""
+        provider_error = ""
+        provider_failure_deadline: float | None = None
+        last_progress_at = started
+        last_event_type = ""
+        last_tool_name = ""
+        last_tool_started_at: float | None = None
+        last_tool_finished_at: float | None = None
+        assistant_stream_active = False
+        active_tool_calls: set[str] = set()
+        agent_end_seen = False
+        agent_settled_seen = False
+        final_text_requested = False
+        recovery_attempted = False
+        recovery_deadline: float | None = None
+        recovery_abort_acknowledged = False
+        recovery_settled = False
+        recovery_state = "none"
+        next_intervention_poll = started
+        intervention_commands: dict[str, str] = {}
+
+        def send(payload: dict[str, Any]) -> bool:
+            try:
+                self.backend.pty_send_stdin(
+                    pty,
+                    (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"),
+                )
+                return True
+            except Exception as exc:
+                nonlocal protocol_error
+                protocol_error = f"failed to send Cube Pi RPC command: {exc}"
+                return False
+
+        def send_recovery_prompt() -> None:
+            nonlocal recovery_deadline, recovery_settled, recovery_state
+            nonlocal recovery_abort_acknowledged, provider_error, provider_failure_deadline
+            nonlocal assistant_stream_active, agent_end_seen, agent_settled_seen
+            nonlocal final_text_requested, last_progress_at, last_event_type
+            if not (recovery_abort_acknowledged and recovery_settled):
+                return
+            if not send({
+                "id": _RPC_STREAM_RECOVERY_PROMPT_ID,
+                "type": "prompt",
+                "message": spec.stream_recovery_prompt,
+            }):
+                return
+            recovery_state = "recovery_prompt_sent"
+            recovery_deadline = None
+            recovery_settled = False
+            recovery_abort_acknowledged = False
+            provider_error = ""
+            provider_failure_deadline = None
+            assistant_stream_active = False
+            active_tool_calls.clear()
+            agent_end_seen = False
+            agent_settled_seen = False
+            final_text_requested = False
+            last_progress_at = time.monotonic()
+            last_event_type = "stream_recovery_prompt_sent"
+
+        while not completed and not protocol_error:
+            if should_cancel is not None:
+                cancel_reason = should_cancel()
+                if cancel_reason:
+                    cancelled = True
+                    self.backend.pty_kill(pty)
+                    break
+            now = time.monotonic()
+            if now >= deadline:
+                timed_out = True
+                self.backend.pty_kill(pty)
+                break
+            if provider_failure_deadline is not None and now >= provider_failure_deadline:
+                protocol_error = (
+                    "Pi RPC provider failed and did not settle within "
+                    f"{spec.provider_failure_grace_seconds:g}s: {provider_error}"
+                )
+                break
+            if recovery_deadline is not None and now >= recovery_deadline:
+                protocol_error = _rpc_stream_stall_diagnostic(
+                    task_id=environment.get("AXIOM_TASK_ID", ""),
+                    intent_id=environment.get("AXIOM_INTENT_ID", ""),
+                    lease_id=environment.get("AXIOM_LEASE_ID", ""),
+                    idle_seconds=max(0.0, now - last_progress_at),
+                    last_event_type=last_event_type,
+                    last_tool_name=last_tool_name,
+                    last_tool_started_at=last_tool_started_at,
+                    last_tool_finished_at=last_tool_finished_at,
+                    soft_reminder_sent=steer_sent,
+                    soft_reminder_acknowledged=False,
+                    agent_end_seen=agent_end_seen,
+                    agent_settled_seen=agent_settled_seen,
+                    recovery_state=recovery_state,
+                    recovery_abort_acknowledged=recovery_abort_acknowledged,
+                )
+                break
+            if (
+                spec.stream_idle_timeout_seconds is not None
+                and assistant_stream_active
+                and not active_tool_calls
+                and recovery_deadline is None
+                and now - last_progress_at >= spec.stream_idle_timeout_seconds
+            ):
+                idle_seconds = now - last_progress_at
+                if spec.stream_recovery_prompt and not recovery_attempted:
+                    recovery_attempted = True
+                    recovery_state = "abort_sent"
+                    recovery_abort_acknowledged = False
+                    recovery_settled = False
+                    recovery_deadline = min(
+                        deadline,
+                        now + spec.stream_recovery_abort_timeout_seconds,
+                    )
+                    if not send({"id": _RPC_STREAM_RECOVERY_ABORT_ID, "type": "abort"}):
+                        break
+                    continue
+                protocol_error = _rpc_stream_stall_diagnostic(
+                    task_id=environment.get("AXIOM_TASK_ID", ""),
+                    intent_id=environment.get("AXIOM_INTENT_ID", ""),
+                    lease_id=environment.get("AXIOM_LEASE_ID", ""),
+                    idle_seconds=idle_seconds,
+                    last_event_type=last_event_type,
+                    last_tool_name=last_tool_name,
+                    last_tool_started_at=last_tool_started_at,
+                    last_tool_finished_at=last_tool_finished_at,
+                    soft_reminder_sent=steer_sent,
+                    soft_reminder_acknowledged=False,
+                    agent_end_seen=agent_end_seen,
+                    agent_settled_seen=agent_settled_seen,
+                    recovery_state=recovery_state,
+                    recovery_abort_acknowledged=recovery_abort_acknowledged,
+                )
+                break
+            if not steer_sent and spec.steer_after_seconds is not None and now - started >= spec.steer_after_seconds:
+                steer_sent = True
+                if spec.steer_message:
+                    send({"id": _RPC_STEER_ID, "type": "steer", "message": spec.steer_message})
+            if (
+                spec.intervention_poller is not None
+                and now >= next_intervention_poll
+                and recovery_deadline is None
+            ):
+                next_intervention_poll = now + max(0.2, spec.intervention_poll_interval_seconds)
+                try:
+                    interventions = spec.intervention_poller() or []
+                except Exception:
+                    interventions = []
+                for intervention_id, message in interventions:
+                    rpc_id = f"{_RPC_INTERVENTION_PREFIX}{intervention_id}"
+                    if send({"id": rpc_id, "type": "steer", "message": message}):
+                        intervention_commands[rpc_id] = intervention_id
+            try:
+                line = events.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            if line is None:
+                if not finished.is_set():
+                    continue
+                if not completed and not timed_out and not cancelled:
+                    protocol_error = (
+                        "CubeSandbox PTY ended before final assistant text response"
+                        if agent_settled_seen
+                        else "CubeSandbox PTY ended before agent_settled"
+                    )
+                break
+            event = line
+            event_type = str(event.get("type") or "")
+            now = time.monotonic()
+            if event_type == "response":
+                success = event.get("success") is True
+                event_id = event.get("id")
+                if event_id == _RPC_PROMPT_ID and not success:
+                    protocol_error = str(event.get("error") or "Pi RPC prompt command failed")
+                elif event_id == _RPC_STREAM_RECOVERY_ABORT_ID:
+                    if not success:
+                        protocol_error = str(event.get("error") or "Pi RPC stream recovery abort failed")
+                    else:
+                        recovery_abort_acknowledged = True
+                        recovery_state = "abort_acknowledged"
+                        send_recovery_prompt()
+                elif event_id == _RPC_STEER_ID:
+                    if success and on_steer is not None:
+                        on_steer()
+                elif event_id in intervention_commands:
+                    intervention_id = intervention_commands.pop(event_id)
+                    if spec.intervention_result_reporter is not None:
+                        spec.intervention_result_reporter(
+                            intervention_id,
+                            success,
+                            "" if success else str(event.get("error") or "Pi RPC steer rejected"),
+                        )
+                elif event_id == _RPC_FINAL_TEXT_ID:
+                    if not final_text_requested:
+                        protocol_error = "Pi RPC returned final assistant text before agent_settled"
+                    elif not success:
+                        protocol_error = str(event.get("error") or "Pi RPC final assistant text query failed")
+                    else:
+                        data = event.get("data")
+                        if not isinstance(data, dict) or not isinstance(data.get("text"), (str, type(None))):
+                            protocol_error = "Pi RPC final assistant text response is malformed"
+                        else:
+                            final_text = data.get("text") or ""
+                            completed = True
+                continue
+            if event_type == "_progress":
+                progress_type = str(event.get("event_type") or "")
+                last_progress_at = now
+                last_event_type = progress_type
+                tool_name = str(event.get("tool_name") or "")
+                tool_id = str(event.get("tool_id") or tool_name or "unknown")
+                if tool_name:
+                    last_tool_name = tool_name
+                if progress_type in {"message_start", "message_update"}:
+                    assistant_stream_active = True
+                elif progress_type == "message_end":
+                    assistant_stream_active = False
+                elif progress_type in {"tool_execution_start", "bash_execution_start"}:
+                    if spec.external_action_reporter is not None:
+                        spec.external_action_reporter()
+                    active_tool_calls.add(tool_id)
+                    assistant_stream_active = False
+                    last_tool_started_at = now
+                elif progress_type in {"tool_execution_end", "bash_execution_end"}:
+                    active_tool_calls.discard(tool_id)
+                    last_tool_finished_at = now
+                continue
+            if event_type == "agent_end":
+                last_progress_at = now
+                last_event_type = event_type
+                agent_end_seen = True
+                assistant_stream_active = False
+                if recovery_deadline is not None:
+                    continue
+                terminal_error = _rpc_terminal_agent_error(event)
+                if terminal_error:
+                    provider_error = terminal_error
+                    provider_failure_deadline = min(
+                        deadline,
+                        now + spec.provider_failure_grace_seconds,
+                    )
+                continue
+            if event_type == "auto_retry_start":
+                last_progress_at = now
+                provider_error = ""
+                provider_failure_deadline = None
+                continue
+            if event_type == "auto_retry_end":
+                last_progress_at = now
+                if event.get("success") is True:
+                    provider_error = ""
+                    provider_failure_deadline = None
+                else:
+                    provider_error = str(event.get("finalError") or provider_error or "Pi provider retries were exhausted")
+                    provider_failure_deadline = min(
+                        deadline,
+                        now + spec.provider_failure_grace_seconds,
+                    )
+                continue
+            if event_type == "agent_settled":
+                last_progress_at = now
+                last_event_type = event_type
+                agent_settled_seen = True
+                assistant_stream_active = False
+                if recovery_deadline is not None:
+                    recovery_settled = True
+                    send_recovery_prompt()
+                elif provider_error:
+                    protocol_error = f"Pi RPC provider failed: {provider_error}"
+                elif not final_text_requested:
+                    final_text_requested = True
+                    send({"id": _RPC_FINAL_TEXT_ID, "type": "get_last_assistant_text"})
+        if not finished.is_set():
+            finished.wait(timeout=3.0)
+        if not completed and not cancelled and not timed_out and not protocol_error:
+            protocol_error = "CubeSandbox PTY ended before completion"
+        if timed_out or cancelled or protocol_error:
+            send({"id": _RPC_ABORT_ID, "type": "abort"})
+            with contextlib.suppress(Exception):
+                self.backend.pty_kill(pty)
+        text = bytes(output).decode("utf-8", errors="replace")
+        stderr_text = "\n".join(str(item) for item in reader_error)
+        if protocol_error:
+            stderr_text = "\n".join(item for item in (stderr_text, protocol_error) if item)
+        log_errors = [
+            error
+            for error in (
+                self._write_log(stdout_path, text),
+                self._write_log(stderr_path, stderr_text),
+            )
+            if error
+        ]
+        if log_errors:
+            stderr_text = "\n".join(item for item in (stderr_text, *log_errors) if item)
+        if reader_error:
+            raise ProcessLaunchError(str(reader_error[-1]))
+        if protocol_error:
+            return_code[0] = return_code[0] or 1
+        return ProcessResult(
+            returncode=return_code[0],
+            stdout=text,
+            stderr=stderr_text,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            timed_out=timed_out,
+            cancelled=cancelled,
+            cancel_reason=cancel_reason,
+            last_assistant_text=final_text,
+        )

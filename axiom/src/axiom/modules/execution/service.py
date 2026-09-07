@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
 from datetime import timedelta
 
@@ -129,6 +130,17 @@ class ExecutionService:
         owner_kw = {f"{owner_kind}_id": owner_id}
         return self.store.run_directory(task_id=task_id, lease_id=lease_id, **owner_kw)
 
+    def _materialize_run_directory(self, task_id: str, owner_id: str, lease_id: str, *, owner_kind: str):
+        if self.sandboxes is not None:
+            sandbox = self.sandboxes.get(task_id)
+            if sandbox is not None and sandbox.backend == "cube":
+                return self.sandboxes.stage_run_directory(
+                    task_id=task_id,
+                    owner_id=owner_id,
+                    lease_id=lease_id,
+                )
+        return self._run_directory(task_id, owner_id, lease_id, owner_kind=owner_kind)
+
     def _record_context_injection(
         self,
         *,
@@ -177,6 +189,25 @@ class ExecutionService:
             )
         except OSError:
             logger.exception("failed to clean committed sandbox run: %s/%s", task_id, owner_id)
+
+    def _prepare_worker_assets(self, *, task_id: str, context, capabilities):
+        if self.sandboxes is None:
+            return {
+                "context_manifest_path": context.manifest_path,
+                "skill_directories": capabilities.skill_directories,
+                "capability_snapshot_path": capabilities.capability_snapshot_path,
+                "axiom_tool_snapshot_path": capabilities.axiom_tool_snapshot_path,
+                "axiom_tool_extensions": capabilities.axiom_tool_extensions,
+            }
+        return self.sandboxes.prepare_worker_assets(
+            task_id=task_id,
+            context_manifest_path=context.manifest_path,
+            context_revision=context.revision,
+            skill_directories=capabilities.skill_directories,
+            capability_snapshot_path=capabilities.capability_snapshot_path,
+            axiom_tool_snapshot_path=capabilities.axiom_tool_snapshot_path,
+            axiom_tool_extensions=capabilities.axiom_tool_extensions,
+        )
 
     def credential_summaries(
         self,
@@ -300,6 +331,7 @@ class ExecutionService:
             phase=values["phase"],
             run_dir=run_dir,
         )
+        assets = self._prepare_worker_assets(task_id=task_id, context=context, capabilities=capabilities)
         return ExecutionInput(
             task_id=task_id,
             project_id=row["project_id"],
@@ -314,10 +346,10 @@ class ExecutionService:
             origin=values["origin"],
             goal=values["goal"],
             hints=values["hints"],
-            skill_directories=capabilities.skill_directories,
+            skill_directories=assets["skill_directories"],
             mcp_tool_names=capabilities.mcp_tool_names,
             capability_environment=capabilities.mcp_environment,
-            capability_snapshot_path=capabilities.capability_snapshot_path,
+            capability_snapshot_path=assets["capability_snapshot_path"],
             guard_enabled=bool(row["guard_enabled"]),
             scope=values["scope"],
             run_dir=run_dir,
@@ -325,10 +357,10 @@ class ExecutionService:
             conclude_timeout_seconds=values["conclude_timeout_seconds"],
             explore_no_progress_seconds=values["explore_no_progress_seconds"],
             context_revision=context.revision,
-            context_manifest_path=context.manifest_path,
+            context_manifest_path=assets["context_manifest_path"],
             axiom_tool_keys=capabilities.axiom_tool_keys,
-            axiom_tool_extensions=capabilities.axiom_tool_extensions,
-            axiom_tool_snapshot_path=capabilities.axiom_tool_snapshot_path,
+            axiom_tool_extensions=assets["axiom_tool_extensions"],
+            axiom_tool_snapshot_path=assets["axiom_tool_snapshot_path"],
             injected_system_context=injected.text,
             injected_context_revision=injected.source_revision,
             injected_context_hash=injected.content_hash,
@@ -460,6 +492,7 @@ class ExecutionService:
             phase="reason",
             run_dir=run_dir,
         )
+        assets = self._prepare_worker_assets(task_id=task_id, context=context, capabilities=capabilities)
         return ExecutionInput(
             task_id=task_id,
             project_id=task.project_id,
@@ -476,20 +509,20 @@ class ExecutionService:
             origin=task.origin.original_input,
             goal=task.goal,
             hints=hints,
-            skill_directories=capabilities.skill_directories,
+            skill_directories=assets["skill_directories"],
             mcp_tool_names=capabilities.mcp_tool_names,
             capability_environment=capabilities.mcp_environment,
-            capability_snapshot_path=capabilities.capability_snapshot_path,
+            capability_snapshot_path=assets["capability_snapshot_path"],
             guard_enabled=task.guard_enabled,
             scope=_scope_payload(task.scope),
             run_dir=run_dir,
             execute_timeout_seconds=run.execute_timeout_seconds,
             conclude_timeout_seconds=run.conclude_timeout_seconds,
             context_revision=context.revision,
-            context_manifest_path=context.manifest_path,
+            context_manifest_path=assets["context_manifest_path"],
             axiom_tool_keys=capabilities.axiom_tool_keys,
-            axiom_tool_extensions=capabilities.axiom_tool_extensions,
-            axiom_tool_snapshot_path=capabilities.axiom_tool_snapshot_path,
+            axiom_tool_extensions=assets["axiom_tool_extensions"],
+            axiom_tool_snapshot_path=assets["axiom_tool_snapshot_path"],
             injected_system_context=injected.text,
             injected_context_revision=injected.source_revision,
             injected_context_hash=injected.content_hash,
@@ -559,6 +592,7 @@ class ExecutionService:
             phase="plan",
             run_dir=run_dir,
         )
+        assets = self._prepare_worker_assets(task_id=task_id, context=context, capabilities=capabilities)
         return PlanExecutionInput(
             task_id=task_id,
             project_id=task.project_id,
@@ -572,20 +606,20 @@ class ExecutionService:
             origin=task.origin.original_input,
             goal=task.goal,
             hints=hints,
-            skill_directories=capabilities.skill_directories,
+            skill_directories=assets["skill_directories"],
             mcp_tool_names=capabilities.mcp_tool_names,
             capability_environment=capabilities.mcp_environment,
-            capability_snapshot_path=capabilities.capability_snapshot_path,
+            capability_snapshot_path=assets["capability_snapshot_path"],
             guard_enabled=task.guard_enabled,
             scope=_scope_payload(task.scope),
             run_dir=run_dir,
             execute_timeout_seconds=run.execute_timeout_seconds,
             conclude_timeout_seconds=run.conclude_timeout_seconds,
             context_revision=context.revision,
-            context_manifest_path=context.manifest_path,
+            context_manifest_path=assets["context_manifest_path"],
             axiom_tool_keys=capabilities.axiom_tool_keys,
-            axiom_tool_extensions=capabilities.axiom_tool_extensions,
-            axiom_tool_snapshot_path=capabilities.axiom_tool_snapshot_path,
+            axiom_tool_extensions=assets["axiom_tool_extensions"],
+            axiom_tool_snapshot_path=assets["axiom_tool_snapshot_path"],
             injected_system_context=injected.text,
             injected_context_revision=injected.source_revision,
             injected_context_hash=injected.content_hash,
@@ -661,6 +695,7 @@ class ExecutionService:
             phase="review",
             run_dir=run_dir,
         )
+        assets = self._prepare_worker_assets(task_id=task_id, context=context, capabilities=capabilities)
         return ExecutionInput(
             task_id=task_id,
             project_id=task.project_id,
@@ -675,20 +710,20 @@ class ExecutionService:
             origin=task.origin.original_input,
             goal=task.goal,
             hints=hints,
-            skill_directories=capabilities.skill_directories,
+            skill_directories=assets["skill_directories"],
             mcp_tool_names=capabilities.mcp_tool_names,
             capability_environment=capabilities.mcp_environment,
-            capability_snapshot_path=capabilities.capability_snapshot_path,
+            capability_snapshot_path=assets["capability_snapshot_path"],
             guard_enabled=task.guard_enabled,
             scope=_scope_payload(task.scope),
             run_dir=run_dir,
             execute_timeout_seconds=run.execute_timeout_seconds,
             conclude_timeout_seconds=run.conclude_timeout_seconds,
             context_revision=context.revision,
-            context_manifest_path=context.manifest_path,
+            context_manifest_path=assets["context_manifest_path"],
             axiom_tool_keys=capabilities.axiom_tool_keys,
-            axiom_tool_extensions=capabilities.axiom_tool_extensions,
-            axiom_tool_snapshot_path=capabilities.axiom_tool_snapshot_path,
+            axiom_tool_extensions=assets["axiom_tool_extensions"],
+            axiom_tool_snapshot_path=assets["axiom_tool_snapshot_path"],
             injected_system_context=injected.text,
             injected_context_revision=injected.source_revision,
             injected_context_hash=injected.content_hash,
@@ -969,7 +1004,7 @@ class ExecutionService:
             if existing["intent_status"] == "completed" and existing["to_fact_id"]:
                 return self._completed(conn, task_id, intent_id, existing["to_fact_id"])
 
-        run_dir = self._run_directory(task_id, intent_id, command.lease_id, owner_kind="intent")
+        run_dir = self._materialize_run_directory(task_id, intent_id, command.lease_id, owner_kind="intent")
         outputs = bootstrap_files(run_dir)
         prepared = self.store.prepare_existing_files(
             base_key=f"tasks/{task_id}/artifacts/{intent_id}",
@@ -1087,7 +1122,7 @@ class ExecutionService:
             if existing["intent_status"] == "completed" and existing["to_fact_id"]:
                 return self._explore_completed(conn, task_id, intent_id, existing["to_fact_id"])
 
-        run_dir = self._run_directory(task_id, intent_id, command.lease_id, owner_kind="intent")
+        run_dir = self._materialize_run_directory(task_id, intent_id, command.lease_id, owner_kind="intent")
         outputs = explore_files(run_dir)
         prepared = self.store.prepare_existing_files(
             base_key=f"tasks/{task_id}/artifacts/{intent_id}",
@@ -1292,7 +1327,7 @@ class ExecutionService:
         intent_id: str,
         command: ReportExploreVulnerabilityCommand,
     ) -> ExploreVulnerabilityRecorded:
-        run_dir = self._run_directory(task_id, intent_id, command.lease_id, owner_kind="intent")
+        run_dir = self._materialize_run_directory(task_id, intent_id, command.lease_id, owner_kind="intent")
         with explore_state_guard(run_dir):
             with self.engine.connect() as conn:
                 row = self.repository.input_row(conn, task_id, intent_id)
@@ -1312,6 +1347,16 @@ class ExecutionService:
                 reported_by=worker,
             )
             after, duplicate = append_explore_vulnerability_locked(run_dir, report)
+            if self.sandboxes is not None:
+                sandbox = self.sandboxes.get(task_id)
+                if sandbox is not None and sandbox.backend == "cube":
+                    self.sandboxes.upload_run_file(
+                        task_id=task_id,
+                        owner_id=intent_id,
+                        lease_id=command.lease_id,
+                        source=Path(run_dir) / "explore_result.json",
+                        relative_path="explore_result.json",
+                    )
         return ExploreVulnerabilityRecorded(
             total=len(after.vulnerabilities),
             duplicate=duplicate,

@@ -83,6 +83,12 @@ class RuntimeConfig(BaseModel):
     sandbox_required: bool = False
     sandbox_local_fallback: bool = True
     sandbox_template: str = "axiom-worker"
+    sandbox_runtime_revision: str = "legacy-local"
+    sandbox_healthcheck_timeout: int = Field(default=10, ge=1, le=300)
+    browser_gateway_enabled: bool = True
+    browser_gateway_bind: str = "127.0.0.1"
+    browser_gateway_base_url: str = ""
+    browser_file_bridge_limit: int = Field(default=2 * 1024 * 1024, ge=64 * 1024, le=64 * 1024 * 1024)
     network_proxy_mode: Literal["off", "http", "vpn"] = "off"
     network_proxy_url: str = "http://127.0.0.1:7890"
     guard_mode: Literal["off", "audit", "enforce"] = "enforce"
@@ -147,6 +153,15 @@ class RuntimeConfig(BaseModel):
             raise ValueError("sandbox_required requires sandbox_backend='cube'")
         if self.sandbox_backend == "cube" and self.sandbox_required and self.sandbox_local_fallback:
             raise ValueError("sandbox_required disables sandbox_local_fallback")
+        if (
+            self.sandbox_backend == "cube"
+            and self.sandbox_required
+            and self.browser_gateway_enabled
+            and not self.browser_gateway_base_url.strip()
+        ):
+            raise ValueError(
+                "browser_gateway_base_url is required when Cube workers use the Browser Gateway"
+            )
         if self.global_max_active_tasks > self.global_max_active_runs:
             raise ValueError("global_max_active_tasks cannot exceed global_max_active_runs")
         if self.per_task_max_active_runs > self.global_max_active_runs:

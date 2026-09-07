@@ -59,7 +59,9 @@ class AxiomRunner:
         self.runner_interval_seconds = 3.0
         self._applied_settings_version = 0
         self._pool = ThreadPoolExecutor(max_workers=128, thread_name_prefix="axiom-runner")
-        self.browser_broker = BrowserBrokerManager()
+        self.browser_broker = BrowserBrokerManager(
+            gateway_service_token=getattr(control_plane, "service_token", ""),
+        )
         self._futures: dict[Future, tuple[ClaimedWork, threading.Event]] = {}
         self._lock = threading.Lock()
         # A completed Future releases a local runner slot.  Wake the loop as
@@ -322,6 +324,14 @@ class AxiomRunner:
         self.lease_timeout_seconds = max(lease_timeout, minimum)
         self.runner_interval_seconds = float(config.runner_interval_seconds)
         self.llm_gateway_enabled = config.network_proxy_mode == "http"
+        # Browser Broker remains runner-owned, but its private Cube transport
+        # is controlled by the same persisted runtime settings as the
+        # sandbox.  Apply these before the next lease is registered.
+        self.browser_broker.gateway_enabled = bool(config.browser_gateway_enabled)
+        self.browser_broker.gateway_bind = config.browser_gateway_bind or self.browser_broker.gateway_bind
+        if config.browser_gateway_base_url:
+            self.browser_broker.gateway_base_url = config.browser_gateway_base_url.rstrip("/")
+        self.browser_broker.file_bridge_limit = int(config.browser_file_bridge_limit)
         return int(settings.version)
 
     @staticmethod
