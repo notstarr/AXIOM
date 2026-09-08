@@ -566,7 +566,7 @@ class BrowserBrokerManager:
             session_ref=session_ref,
         )
 
-    def close_lease(self, handle: BrowserLeaseHandle) -> None:
+    def close_lease(self, handle: BrowserLeaseHandle, *, save_session_path: str = "") -> None:
         with self._lease_lock:
             self._lease_tokens.pop(handle.lease_id, None)
         if self._closed or not self.socket_path.exists():
@@ -577,8 +577,9 @@ class BrowserBrokerManager:
                     "op": "_close_lease",
                     "manager_secret": self._secret,
                     "token": handle.token,
+                    "save_session_path": save_session_path,
                 },
-                timeout=8.0,
+                timeout=30.0,
             )
 
     def close(self) -> None:
@@ -900,7 +901,7 @@ class BrowserBrokerServer:
             if operation == "_register_lease":
                 return await self._register_lease(payload)
             if operation == "_close_lease":
-                await self._close_lease(str(payload.get("token") or ""))
+                await self._close_lease(str(payload.get("token") or ""), save_session_path=str(payload.get("save_session_path") or ""))
                 return self._ok("Browser Lease 已关闭")
             if operation == "_shutdown":
                 self._shutdown.set()
@@ -976,9 +977,22 @@ class BrowserBrokerServer:
             raise
         return self._ok("Browser Lease 已注册")
 
-    async def _close_lease(self, token: str) -> None:
+    async def _close_lease(self, token: str, save_session_path: str = "") -> None:
         lease = self.leases.pop(token, None)
         if lease is None:
+            return
+        if save_session_path:
+            # 关闭前把隔离上下文的完整登录态（注入的 + 本次会话新增的 Cookie）
+            # 刷成 storage-state 快照，供后续同域 lease 注入复用。
+            context = next(
+                (page_state.page.context for page_state in lease.pages.values()), None
+            ) or (lease.slot.context if lease.slot is not None else None)
+            if context is not None:
+                try:
+                    await context.storage_state(path=save_session_path)
+                except Exception:
+                    with contextlib.suppress(Exception):
+                        Path(save_session_path).unlink(missing_ok=True)
             return
         for page_state in list(lease.pages.values()):
             with contextlib.suppress(Exception):

@@ -1,0 +1,985 @@
+[
+  {
+    "category": "API接口",
+    "subtype": "Spring Boot路径",
+    "severity": "Medium",
+    "pattern": "(?xi) [\"'`] (/(?:api|prod-api|test-api|pre-api|staging-api|dev-api)/[a-z0-9_\\-/{},:;?=&%+.@~$]+) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "Jeecg Boot路径",
+    "severity": "Medium",
+    "pattern": "(?xi) [\"'`] (/(?:jeecgboot|jeecg-boot|jeecg|jeecg-boot-vue3)/[a-z0-9_\\-/{},:;?=&%+.@~$]+) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "axios/封装请求调用",
+    "severity": "Medium",
+    "pattern": "(?xi) (?:axios|api|http|request|service|client) \\s*\\.\\s* (?:get|post|put|delete|patch|head|options) \\s*\\(\\s* [\"'`] ([^\"'`\\s)]{2,300}) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "fetch请求调用",
+    "severity": "Medium",
+    "pattern": "(?xi) \\bfetch\\s*\\(\\s* [\"'`] ([^\"'`\\s)]{2,300}) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "小程序request配置",
+    "severity": "Medium",
+    "pattern": "(?xis) \\b(?:wx|uni|tt|my|swan)\\s*\\.\\s*request\\s*\\(\\s*\\{.{0,600}?\\burl\\s*:\\s*[\"'`] ([^\"'`\\s,}]{2,300}) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "Axios对象请求配置",
+    "severity": "Medium",
+    "pattern": "(?xis) \\b(?:axios|service|http|client)\\s*\\(\\s*\\{.{0,600}?\\burl\\s*:\\s*[\"'`] ([^\"'`\\s,}]{2,300}) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "JQuery Ajax请求",
+    "severity": "Medium",
+    "pattern": "(?xis) \\$\\s*\\.\\s*(?:ajax|get|post|put|delete|patch)\\s*\\(.{0,500}? (?:\\burl\\s*:\\s*)? [\"'`] ([^\"'`\\s,)}]{2,300}) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "XHR open请求",
+    "severity": "Medium",
+    "pattern": "(?xi) \\.open\\s*\\(\\s*[\"'`](?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)[\"'`]\\s*,\\s*[\"'`] ([^\"'`\\s)]{2,300}) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "环境变量API",
+    "severity": "Medium",
+    "pattern": "(?xim) ^\\s*(?:(?:VUE_APP|VITE|REACT_APP|NEXT_PUBLIC|NUXT_PUBLIC|NG_APP)_?)?(?:API(?:_?(?:BASE|SERVER|HOST|ENDPOINT|BACKEND|GATEWAY))?_?(?:URL|PATH|HOST|ENDPOINT)?|BASE_?URL|SERVER_?URL|REQUEST_?URL|BACKEND_?URL|GATEWAY_?URL)\\s*[:=]\\s*[\"'`]? ([^\\s\"'`,;]{2,300})",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "全局API配置",
+    "severity": "Medium",
+    "pattern": "(?xi) (?:window\\.|globalThis\\.)?(?:API_?(?:BASE|URL|HOST)|BASE_?URL|SERVER_?URL|GATEWAY_?URL|__[A-Z_]*API[A-Z_]*__)\\s*=\\s*[\"'`] ([^\"'`\\s]{2,300}) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "API字段配置",
+    "severity": "Medium",
+    "pattern": "(?xi) \\b(?:api|apiUrl|apiPath|apiBase|apiHost|baseURL|baseUrl|endpoint|target|requestUrl|serviceUrl|serverUrl|gatewayUrl|loginApi|uploadApi|downloadApi)\\s*[:=]\\s*[\"'`] ((?:/|[a-z0-9_{}.-]+/)[^\"'`\\s,}]{1,299}) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "动态拼接请求路径",
+    "severity": "Medium",
+    "pattern": "(?xi) (?:\\burl\\s*:|(?:axios|api|http|request|service|client)\\s*\\.\\s*(?:get|post|put|delete|patch)\\s*\\()\\s*(?:[a-z_$][a-z0-9_$.]*\\s*\\+\\s*)+[\"'`] ([^\"'`\\s,)}]{2,300}) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "REST及网关路径",
+    "severity": "Medium",
+    "pattern": "(?xi) [\"'`] (/(?:api|v\\d+|rest|services?|backend|gateway|proxy|rpc|graphql|gql|auth|oauth|admin)/[a-z0-9_\\-/{},:;?=&%+.@~$]+) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "JSFinder单段接口路径",
+    "severity": "Medium",
+    "pattern": "(?i)(?:^|[^\\\\])[\"'](/(?:auth|bind|callback|captcha|check|create|delete|detail|download|get|health|list|login|logout|query|refresh|register|remove|save|search|send|signin|signup|status|submit|token|unbind|update|upload|verify)[a-z0-9_{}-]*/?(?:\\?[^\\s'\"]*)?)[\"']",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "JSFinder多段接口路径",
+    "severity": "Medium",
+    "pattern": "(?i)(?:^|[^\\\\])[\"'](/[a-z0-9_{}:-]+(?:/[a-z0-9_{}:.-]+)+/?(?:\\?[^\\s'\"]*)?)[\"']",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "JSFinder转义单段接口",
+    "severity": "Medium",
+    "pattern": "(?i)\\\\[\"'](/(?:auth|bind|callback|captcha|check|create|delete|detail|download|get|health|list|login|logout|query|refresh|register|remove|save|search|send|signin|signup|status|submit|token|unbind|update|upload|verify)[a-z0-9_{}-]*/?(?:\\?[^\\s'\"]*)?)\\\\[\"']",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "JSFinder转义多段接口",
+    "severity": "Medium",
+    "pattern": "(?i)\\\\[\"'](/[a-z0-9_{}:-]+(?:/[a-z0-9_{}:.-]+)+/?(?:\\?[^\\s'\"]*)?)\\\\[\"']",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "服务端扩展名接口",
+    "severity": "Medium",
+    "pattern": "(?xi) [\"'`] ((?:https?://[^\\s\"'`/?\\#]+(?::\\d+)?|)/(?:[^\\s\"'`?\\#]*/)*[^/\\s\"'`?\\#]+\\.(?:php|asp|aspx|jsp|jspx|do|action|cgi|ashx|asmx|py|pl|go|rb|svc)(?:[?\\#][^\\s\"'`]*)?) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "HTTP方法加路径",
+    "severity": "Medium",
+    "pattern": "(?xi) \\b(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\\s+ ((?:https?://[^\\s\"'`]+|/[a-z0-9_\\-/{},:;?=&%+.@~$]{2,300}))",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "API接口",
+    "subtype": "转义引号API路径",
+    "severity": "Medium",
+    "pattern": "(?xi) \\\\[\"'] ((?:https?://|/)(?:api|v\\d+|rest|services?|backend|gateway|proxy|rpc|graphql|gql|auth|oauth|admin)?/?[a-z0-9_\\-/{},:;?=&%+.@~$]+) \\\\[\"']",
+    "captureGroup": 1,
+    "minLength": 2,
+    "validator": "is_api_route"
+  },
+  {
+    "category": "URL",
+    "subtype": "完整URL",
+    "severity": "Medium",
+    "pattern": "(?xi) \\b (https?://(?:localhost|(?:\\d{1,3}\\.){3}\\d{1,3}|(?:[a-z0-9](?:[a-z0-9\\-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9\\-]{0,61}[a-z0-9])?)(?::\\d{1,5})?(?:/[^\\s\"'\\x60<>()]*)?)",
+    "captureGroup": 1,
+    "minLength": 10,
+    "validator": "is_valid_http_url"
+  },
+  {
+    "category": "域名IP",
+    "subtype": "IPv4地址",
+    "severity": "Info",
+    "pattern": "(?xi) (?: (?:https?|wss?|ftp|tcp|udp|ssh|redis|rediss|mongodb):// | \\b(?:ip|ipAddress|host|hostname|server|serverHost|address|addr|endpoint|target|proxy|backend|listen|bind|baseURL|apiHost)\\s*[:=]\\s*[\"'\\x60]? ) ((?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}(?::\\d{1,5})?) \\b",
+    "captureGroup": 1,
+    "minLength": 7,
+    "validator": "is_valid_ipv4"
+  },
+  {
+    "category": "域名IP",
+    "subtype": "内网IPv4地址",
+    "severity": "Info",
+    "pattern": "(?x) \\b ((?:10(?:\\.\\d{1,3}){3}|127(?:\\.\\d{1,3}){3}|169\\.254(?:\\.\\d{1,3}){2}|172\\.(?:1[6-9]|2\\d|3[01])(?:\\.\\d{1,3}){2}|192\\.168(?:\\.\\d{1,3}){2})(?::\\d{1,5})?) \\b",
+    "captureGroup": 1,
+    "minLength": 7,
+    "validator": "is_valid_ipv4"
+  },
+  {
+    "category": "域名IP",
+    "subtype": "域名",
+    "severity": "Info",
+    "pattern": "(?xi) (?:[\"']|\\\\[\"']) ( (?:[a-z0-9](?:[a-z0-9\\-]{0,61}[a-z0-9])?\\.)+(?:com|cn|net|org|gov|edu|io|co|ai|dev|app|cloud|top|xyz|vip|club|site|tech|online|store|cc|me|tv|info|biz|pro|mobi|asia|中国|公司|网络)(?::\\d{1,5})? ) (?:[\"']|\\\\[\"'])",
+    "captureGroup": 1,
+    "minLength": 4,
+    "validator": "always_valid"
+  },
+  {
+    "category": "用户相关",
+    "subtype": "手机号",
+    "severity": "Medium",
+    "pattern": "(?:^|[^0-9])((?:\\+?86)?1[3-9]\\d{9})(?:[^0-9]|$)",
+    "captureGroup": 1,
+    "minLength": 11,
+    "validator": "is_valid_phone"
+  },
+  {
+    "category": "用户相关",
+    "subtype": "固话-区号",
+    "severity": "Low",
+    "pattern": "(?x) (?:电话|固话|座机|Tel|Phone|Fax|传真|tel|phone|fax)\\s*[:：]?\\s* 0\\d{2,3}[-\\s]?\\d{7,8} (?:(?:[-\\s]?分机)?[-\\s]?\\d{1,6})?",
+    "captureGroup": 0,
+    "minLength": 10,
+    "validator": "is_valid_landline"
+  },
+  {
+    "category": "用户相关",
+    "subtype": "400/800电话",
+    "severity": "Low",
+    "pattern": "(?x)[48]00[-\\s]?\\d{3}[-\\s]?\\d{4}",
+    "captureGroup": 0,
+    "minLength": 10,
+    "validator": "is_valid_toll_free"
+  },
+  {
+    "category": "用户相关",
+    "categoryEnabled": true,
+    "subtype": "通用邮箱",
+    "severity": "Medium",
+    "pattern": "[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}",
+    "captureGroup": 0,
+    "minLength": 6,
+    "validator": "is_valid_email_v2",
+    "enabled": true
+  },
+  {
+    "category": "用户相关",
+    "subtype": "18位身份证",
+    "severity": "Critical",
+    "pattern": "\\b([1-9]\\d{5}(?:18|19|20)\\d{2}(?:(?:0[13578]|1[02])(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)(?:0[1-9]|[12]\\d|30)|02(?:0[1-9]|1\\d|2[0-9]))\\d{3}[\\dXx])\\b",
+    "captureGroup": 1,
+    "minLength": 18,
+    "validator": "is_valid_id_card_18"
+  },
+  {
+    "category": "用户相关",
+    "subtype": "15位身份证",
+    "severity": "High",
+    "pattern": "\\b([1-9]\\d{5}\\d{2}(?:(?:0[13578]|1[02])(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)(?:0[1-9]|[12]\\d|30)|02(?:0[1-9]|1\\d|2[0-9]))\\d{3})\\b",
+    "captureGroup": 1,
+    "minLength": 15,
+    "validator": "is_valid_id_card_15"
+  },
+  {
+    "category": "账号密码",
+    "subtype": "明文密码",
+    "severity": "Critical",
+    "pattern": "(?i)[\"']?\\b[\\w-]*(?:pass(?:word)?|passwd|pwd)\\b[\"']?\\s*[=:]\\s*\\\\?[\"']([^\"'\\\\\\r\\n]{6,128})\\\\?[\"']",
+    "captureGroup": 1,
+    "minLength": 4,
+    "validator": "is_valid_secret"
+  },
+  {
+    "category": "账号密码",
+    "subtype": "用户名赋值",
+    "severity": "Medium",
+    "pattern": "(?i)[\"']?\\b[\\w-]*user(?:name)?\\b[\"']?\\s*[=:]\\s*\\\\?[\"']([^\"'\\\\\\r\\n]{3,128})\\\\?[\"']",
+    "captureGroup": 1,
+    "minLength": 3,
+    "validator": "always_valid"
+  },
+  {
+    "category": "账号密码",
+    "subtype": "中文账号赋值",
+    "severity": "High",
+    "pattern": "(?i)[\"']?(?:账户|账户名|用户名|账号|测试账户)\\b[\"']?\\s*[=:]\\s*\\\\?[\"']([^\"'\\\\\\r\\n]{3,128})\\\\?[\"']",
+    "captureGroup": 1,
+    "minLength": 3,
+    "validator": "always_valid"
+  },
+  {
+    "category": "账号密码",
+    "subtype": "中文密码赋值",
+    "severity": "Critical",
+    "pattern": "(?i)[\"']?(?:默认口令|默认密码|口令|密码|测试密码)\\b[\"']?[^\\S\\r\\n]*[=:][^\\S\\r\\n]*\\\\?[\"']([^\"'\\\\\\r\\n]{3,128})\\\\?[\"']",
+    "captureGroup": 1,
+    "minLength": 4,
+    "validator": "is_valid_secret"
+  },
+  {
+    "category": "账号密码",
+    "subtype": "数据库连接串",
+    "severity": "Critical",
+    "pattern": "(?x) (?: mongodb|mysql|postgres|postgresql|mssql|sqlserver| redis|oracle|sqlite|clickhouse|doris ) :// [^:@\\s\"'`\\)]+: ([^:@\\s\"'`\\)]+) @",
+    "captureGroup": 1,
+    "minLength": 1,
+    "validator": "always_valid"
+  },
+  {
+    "category": "账号密码",
+    "subtype": "FTP连接串",
+    "severity": "High",
+    "pattern": "(?x)ftp://[^:@\\s]+:([^@\\s]+)@",
+    "captureGroup": 1,
+    "minLength": 1,
+    "validator": "always_valid"
+  },
+  {
+    "category": "账号密码",
+    "subtype": "SMTP连接串",
+    "severity": "High",
+    "pattern": "(?x)smtp://[^:@\\s]+:([^@\\s]+)@",
+    "captureGroup": 1,
+    "minLength": 1,
+    "validator": "always_valid"
+  },
+  {
+    "category": "账号密码",
+    "subtype": "测试账号",
+    "severity": "Medium",
+    "pattern": "(?x)(?:测试账号|testaccount|test_?account|test_?user)",
+    "captureGroup": 0,
+    "minLength": 4,
+    "validator": "always_valid"
+  },
+  {
+    "category": "云Key",
+    "subtype": "阿里云AccessKey ID",
+    "severity": "Critical",
+    "pattern": "(?x)(?:阿里云\\s*)?LTAI[A-Za-z0-9]{12,24}",
+    "captureGroup": 0,
+    "minLength": 16,
+    "validator": "is_valid_aliyun_ak"
+  },
+  {
+    "category": "云Key",
+    "subtype": "阿里云AccessKey Secret",
+    "severity": "Critical",
+    "pattern": "(?x) (?: access[Kk]ey[Ss]ecret|access_?key_?secret| secret|aliyun.*secret|oss.*secret| aliyun[_\\-]?access[_\\-]?key| aliyun[_\\-]?secret )\\s*[:：=]\\s* [\"'`]{0,1} ([A-Za-z0-9/+=]{20,40}) [\"'`]{0,1}",
+    "captureGroup": 1,
+    "minLength": 20,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "腾讯云SecretId",
+    "severity": "Critical",
+    "pattern": "(?x)(?:腾讯云\\s*)?AKID[A-Za-z0-9]{10,32}",
+    "captureGroup": 0,
+    "minLength": 14,
+    "validator": "is_valid_tencent_ak"
+  },
+  {
+    "category": "云Key",
+    "subtype": "腾讯云SecretKey",
+    "severity": "Critical",
+    "pattern": "(?x) (?: secret[Kk]ey|secret_?key|secretkey| tencent.*secret|qcloud.*secret|qcloud.*key| 腾讯云.*secret|腾讯云.*key )\\s*[:：=]\\s* [\"'`]{0,1} ([A-Za-z0-9]{24,40}) [\"'`]{0,1}",
+    "captureGroup": 1,
+    "minLength": 24,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "AWS Access Key ID",
+    "severity": "Critical",
+    "pattern": "(?x)(?:AWS|aws\\s*)?AKIA[0-9A-Z]{16}",
+    "captureGroup": 0,
+    "minLength": 20,
+    "validator": "is_valid_aws_ak"
+  },
+  {
+    "category": "云Key",
+    "subtype": "AWS Secret Access Key",
+    "severity": "Critical",
+    "pattern": "(?x) (?: aws[_\\-]?secret[_\\-]?access[_\\-]?key| secret[Aa]ccess[Kk]ey|secret_?access_?key| aws[_\\-]?secret )\\s*[:：=]\\s* [\"'`]{0,1} ([A-Za-z0-9/+=]{40}) [\"'`]{0,1}",
+    "captureGroup": 1,
+    "minLength": 40,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "GCP API Key",
+    "severity": "Critical",
+    "pattern": "(?xi) (?:\\b(?:google|gcp)[\\w .\\-]{0,32}(?:api[ _\\-]?key|access[ _\\-]?key)\\b\\s*[:：=]\\s*[\"'`]?)? (AIza[0-9A-Za-z_\\-]{35}) [\"'`]?",
+    "captureGroup": 1,
+    "minLength": 35,
+    "validator": "is_valid_google_api_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "Microsoft Azure Key",
+    "severity": "Critical",
+    "pattern": "(?xi) (?:\\b(?:azure|microsoft)[\\w .\\-]{0,32}(?:key|secret|access[ _\\-]?key)\\b\\s*[:：=]\\s*[\"'`]?)? (AZ[A-Za-z0-9]{32,40}) [\"'`]?",
+    "captureGroup": 1,
+    "minLength": 32,
+    "validator": "is_valid_azure_ak"
+  },
+  {
+    "category": "云Key",
+    "subtype": "华为云AccessKey",
+    "severity": "Critical",
+    "pattern": "(?x) (?: huawei.*access[Kk]ey|huawei.*access_?key| hw[Aa]k|hw_?ak|hwc[Aa]k|hwc_?ak| hw_?access[Kk]ey|huawei_?ak| 华为云.*key|华为云.*secret )\\s*[:：=]\\s* [\"'`]{0,1} ([A-Za-z0-9]{16,32}) [\"'`]{0,1}",
+    "captureGroup": 1,
+    "minLength": 16,
+    "validator": "is_valid_huwei_ak"
+  },
+  {
+    "category": "云Key",
+    "subtype": "火山引擎AccessKey",
+    "severity": "Critical",
+    "pattern": "(?x) (?: volc.*access[Kk]ey|volcengine.*[Aa]k| 字节.*key|火山引擎.*[Aa]k| AKLT[a-zA-Z0-9\\-_]{10,52} )\\s*[:：=]\\s* [\"'`]{0,1} ([A-Za-z0-9\\-_]{10,52}) [\"'`]{0,1}",
+    "captureGroup": 1,
+    "minLength": 10,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "京东云Secret",
+    "severity": "Critical",
+    "pattern": "(?xi) (?:\\b(?:jingdong|jd|jdcloud)[\\w .\\-]{0,24}secret\\b\\s*[:：=]\\s*[\"'`]?)? (JDC_[A-Z0-9]{28,32}) [\"'`]?",
+    "captureGroup": 1,
+    "minLength": 16,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "百度云AccessKey",
+    "severity": "Critical",
+    "pattern": "(?x) (?: baidu.*access[Kk]ey|baidu.*[Aa]k| bce.*[Ss]ecret|bce.*access[Kk]ey| AK[A-Za-z0-9]{10,40} )\\s*[:：=]\\s* [\"'`]{0,1} ([A-Za-z0-9]{10,40}) [\"'`]{0,1}",
+    "captureGroup": 1,
+    "minLength": 10,
+    "validator": "is_valid_baidu_ak"
+  },
+  {
+    "category": "云Key",
+    "subtype": "青云CloudAccessKey",
+    "severity": "High",
+    "pattern": "(?xi) (?:\\bqingcloud[\\w .\\-]{0,24}(?:access[ _\\-]?key|ak|secret)\\b\\s*[:：=]\\s*[\"'`]?)? (QY[A-Za-z0-9]{10,40}) [\"'`]?",
+    "captureGroup": 1,
+    "minLength": 10,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "金山云AccessKey",
+    "severity": "Critical",
+    "pattern": "(?x) (?: ksyun.*access[Kk]ey|ksyun.*[Aa]k| ksyun.*[Ss]ecret|kingsoft.*[Aa]k| 金山云.*key| AKLT[a-zA-Z0-9\\-_]{16,28} )\\s*[:：=]\\s* [\"'`]{0,1} ([A-Za-z0-9]{16,28}) [\"'`]{0,1}",
+    "captureGroup": 1,
+    "minLength": 16,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "UCloud AccessKey",
+    "severity": "High",
+    "pattern": "(?x)(?:(?:UCloud|ucloud)\\s*(?:AccessKey|Key|Secret|密钥|AK)\\s*[:：=]?\\s*)(UC[A-Za-z0-9]{10,40})",
+    "captureGroup": 1,
+    "minLength": 12,
+    "validator": "is_valid_uc_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "IBM Cloud API Key",
+    "severity": "High",
+    "pattern": "(?xi) (?:\\bibm[\\w .\\-]{0,24}(?:api[ _\\-]?key|access[ _\\-]?key)\\b\\s*[:：=]\\s*[\"'`]?)? (IBM[A-Za-z0-9]{10,40}) [\"'`]?",
+    "captureGroup": 1,
+    "minLength": 10,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "Oracle Cloud OCID",
+    "severity": "Critical",
+    "pattern": "(?xi) (?:\\boracle[\\w .\\-]{0,24}(?:api[ _\\-]?key|access[ _\\-]?key)\\b\\s*[:：=]\\s*[\"'`]?)? (OCID[A-Za-z0-9]{10,40}) [\"'`]?",
+    "captureGroup": 1,
+    "minLength": 10,
+    "validator": "is_valid_oracle_ak"
+  },
+  {
+    "category": "云Key",
+    "subtype": "联通云AccessKey",
+    "severity": "Critical",
+    "pattern": "(?xi)(?:联通云|ChinaUnicom|Unicom)[\\w\\s.\\-]{0,32}(?:access[_\\-]?key|key|密钥|AK)\\s*[:：=]\\s*[\"'`]?(LTC[A-Za-z0-9]{10,60})[\"'`]?",
+    "captureGroup": 1,
+    "minLength": 13,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "移动云AccessKey",
+    "severity": "Critical",
+    "pattern": "(?x)(?:(?:移动云|ChinaMobile)\\s*(?:AccessKey|Key|Secret|密钥|AK)\\s*[:：=]?\\s*)(YD[A-Za-z0-9]{10,60})",
+    "captureGroup": 1,
+    "minLength": 12,
+    "validator": "is_valid_yun_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "一云通AccessKey",
+    "severity": "High",
+    "pattern": "(?xi)(?:一云通|YiYunTong)[\\w\\s.\\-]{0,32}(?:access[_\\-]?key|key|密钥|AK)\\s*[:：=]\\s*[\"'`]?(YYT[A-Za-z0-9]{10,60})[\"'`]?",
+    "captureGroup": 1,
+    "minLength": 13,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "用友云AccessKey",
+    "severity": "High",
+    "pattern": "(?xi) (?:\\b(?:yonyou|用友)[\\w .\\-]{0,24}(?:access[ _\\-]?key|ak|key)\\b\\s*[:：=]\\s*[\"'`]?)? (YY[A-Za-z0-9]{10,40}) [\"'`]?",
+    "captureGroup": 1,
+    "minLength": 10,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "南大通用云/G-Core",
+    "severity": "High",
+    "pattern": "(?x)(?:(?:南大|G-Core|Gcore|通用云)\\s*(?:AccessKey|Key|Secret|密钥|AK)\\s*[:：=]?\\s*)(CI[A-Za-z0-9]{10,40}|gcore[A-Za-z0-9]{10,30})",
+    "captureGroup": 1,
+    "minLength": 10,
+    "validator": "is_valid_ci_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "S3 Bucket地址",
+    "severity": "High",
+    "pattern": "(?x)(?:s3://|s3\\.amazonaws\\.com/)[a-zA-Z0-9.\\-_]+",
+    "captureGroup": 0,
+    "minLength": 10,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "OSS Bucket地址",
+    "severity": "High",
+    "pattern": "https?://[a-zA-Z0-9\\-]+\\.oss[-a-z0-9]*\\.aliyuncs\\.com",
+    "captureGroup": 0,
+    "minLength": 20,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "COS Bucket地址",
+    "severity": "High",
+    "pattern": "https?://[a-zA-Z0-9\\-]+\\.cos\\.[a-zA-Z0-9\\-]*\\.myqcloud\\.com",
+    "captureGroup": 0,
+    "minLength": 20,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "通用Secret/Token",
+    "severity": "High",
+    "pattern": "(?i)[\"']?\\b(?:secret(?:[_-]?(?:key|token))?|token|(?:api|app|session|client|access|auth|cloud|service|backend)[_-]?(?:key|secret|token)(?:[_-]?key)?)\\b[\"']?\\s*[=:]\\s*(?:[\"'`]|\\\\[\"'])([A-Za-z0-9][A-Za-z0-9_./+=:@#$%^-]{10,254}[A-Za-z0-9=])(?:[\"'`]|\\\\[\"'])",
+    "captureGroup": 1,
+    "minLength": 10,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "云Key",
+    "subtype": "访问密钥赋值",
+    "severity": "Critical",
+    "pattern": "(?i)[\"']?\\b(?:secret[_-]?access[-_]?key|access[_-]?(?:key|secret)|secret[_-]?key|corp[_-]?secret)\\b[\"']?\\s*[=:]\\s*(?:[\"'`]|\\\\[\"'])([A-Za-z0-9][A-Za-z0-9_./+=:@#$%^-]{10,254}[A-Za-z0-9=])(?:[\"'`]|\\\\[\"'])",
+    "captureGroup": 1,
+    "minLength": 12,
+    "validator": "is_valid_cloud_key"
+  },
+  {
+    "category": "URL",
+    "subtype": "上传接口路径",
+    "severity": "High",
+    "pattern": "(?x) (?: upload|file[Uu]pload|upload[Ff]ile|upload[Uu]rl| upload_?url|upload_?path|upload_?api|upload_?endpoint| file[Uu]rl|file[Pp]ath|file[Uu]ri| 上传|上传接口|uploadUrl )\\s*[:：=]\\s* [\"'`]{0,1} (/[^\\s\"'`>)]+) [\"'`]{0,1}",
+    "captureGroup": 1,
+    "minLength": 4,
+    "validator": "is_valid_url_or_path"
+  },
+  {
+    "category": "URL",
+    "subtype": "上传完整URL",
+    "severity": "High",
+    "pattern": "(?xi) (https?://[^\\s\"'`>)]+/(?:upload(?:[_\\-/]?(?:file|image|video|img))?|file[_\\-]?upload|oss/(?:upload|put)|cos/(?:upload|put)|s3/(?:upload|put)|storage/(?:upload|put)|attach(?:ment)?/upload)[^\\s\"'`>)]*)",
+    "captureGroup": 1,
+    "minLength": 15,
+    "validator": "is_valid_http_url"
+  },
+  {
+    "category": "其他",
+    "subtype": "FormData上传",
+    "severity": "Medium",
+    "pattern": "(?x) (?: new\\s+FormData\\s*\\(\\s*\\)|multipart/form-data| formData\\s*[:=]|enctype\\s*=\\s*[\"\\x27]?multipart/form-data )",
+    "captureGroup": 0,
+    "minLength": 5,
+    "validator": "always_valid"
+  },
+  {
+    "category": "其他",
+    "subtype": "文件选择器",
+    "severity": "Info",
+    "pattern": "<input[^>]*\\btype\\s*=\\s*[\"\\x27]?file[\"\\x27]?[^>]*/?>",
+    "captureGroup": 0,
+    "minLength": 10,
+    "validator": "always_valid"
+  },
+  {
+    "category": "其他",
+    "subtype": "ueditor富文本编辑器",
+    "severity": "Medium",
+    "pattern": "(?xi) (?: ueditor(?:\\.config|\\.all)?\\.js| \\bUE\\.getEditor\\b| \\b(?:uploadify|webuploader|plupload)\\b )",
+    "captureGroup": 0,
+    "minLength": 5,
+    "validator": "always_valid"
+  },
+  {
+    "category": "加解密",
+    "subtype": "AES密钥",
+    "severity": "Critical",
+    "pattern": "(?x) (?: aes[Kk]ey|aes_?key|encryption[Kk]ey|encryption_?key| encrypt[Kk]ey|encrypt_?key|cipher[Kk]ey|cipher_?key| crypto[Kk]ey|crypto_?key|symmetric[Kk]ey|symmetric_?key| AES[_\\-]?KEY|AES[_\\-]?SECRET|secretKey )\\s*[:：=]\\s* [\"'`]{0,1} ([A-Za-z0-9/+=]{16,64}) [\"'`]{0,1}",
+    "captureGroup": 1,
+    "minLength": 16,
+    "validator": "always_valid"
+  },
+  {
+    "category": "加解密",
+    "subtype": "DES/3DES密钥",
+    "severity": "Critical",
+    "pattern": "(?x) (?: des[Kk]ey|des_?key|3des[Kk]ey|3des_?key| triple[Dd]es[Kk]ey|triple_?des_?key|DES[_\\-]?KEY )\\s*[:：=]\\s* [\"'`]{0,1} ([A-Za-z0-9/+=]{8,32}) [\"'`]{0,1}",
+    "captureGroup": 1,
+    "minLength": 8,
+    "validator": "always_valid"
+  },
+  {
+    "category": "加解密",
+    "subtype": "RSA私钥",
+    "severity": "Critical",
+    "pattern": "-----BEGIN\\s+(?:RSA\\s+)?PRIVATE\\s+KEY-----",
+    "captureGroup": 0,
+    "minLength": 30,
+    "validator": "is_valid_private_key"
+  },
+  {
+    "category": "加解密",
+    "subtype": "EC/ECDSA私钥",
+    "severity": "Critical",
+    "pattern": "-----BEGIN\\s+(?:EC\\s+)?PRIVATE\\s+KEY-----",
+    "captureGroup": 0,
+    "minLength": 30,
+    "validator": "is_valid_private_key"
+  },
+  {
+    "category": "加解密",
+    "subtype": "IV向量",
+    "severity": "High",
+    "pattern": "(?x) (?: iv|initialization[Vv]ector|aes[Ii]v|aes_?iv| crypto[Ii]v|crypto_?iv|init_?vector|偏移量 )\\s*[:：=]\\s* [\"'`] ((?:[A-Fa-f0-9]{16}|[A-Fa-f0-9]{24}|[A-Fa-f0-9]{32}|[A-Za-z0-9+/]{16,43}={0,2})) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 8,
+    "validator": "always_valid"
+  },
+  {
+    "category": "加解密",
+    "subtype": "CryptoJS加密调用",
+    "severity": "Medium",
+    "pattern": "(?x) (?: CryptoJS\\.(?:AES|DES)\\.(?:encrypt|decrypt)| crypto\\.create(?:Cipher|Decipher)(?:iv)?| forge\\.(?:cipher|util\\.encode)| sjcl\\.(?:encrypt|decrypt)| JSEncrypt|RSA\\.(?:encrypt|decrypt)| \\.(?:encrypt|decrypt|encode|decode) ) \\s*\\(",
+    "captureGroup": 0,
+    "minLength": 8,
+    "validator": "always_valid"
+  },
+  {
+    "category": "加解密",
+    "subtype": "SM2私钥",
+    "severity": "Critical",
+    "pattern": "(?x) (?: privceKey|privateKey|sm2Key|sm2_key|priv_key|private_key ) \\s* [=:] \\s* [\"'] ([0-9a-fA-F]{64}) [\"']",
+    "captureGroup": 1,
+    "minLength": 64,
+    "validator": "always_valid"
+  },
+  {
+    "category": "加解密",
+    "subtype": "SM2公钥",
+    "severity": "Critical",
+    "pattern": "04[a-fA-F0-9]{128}",
+    "captureGroup": 0,
+    "minLength": 2,
+    "validator": "always_valid"
+  },
+  {
+    "category": "加解密",
+    "subtype": "硬编码盐值",
+    "severity": "High",
+    "pattern": "(?x) (?: salt|hash[Ss]alt|hash_?salt|password[Ss]alt| password_?salt|crypto[Ss]alt|crypto_?salt| 盐值|加盐|saltKey|salt_?key )\\s*[:：=]\\s* [\"'`]{0,1} ([A-Za-z0-9/+=]{6,64}) [\"'`]{0,1}",
+    "captureGroup": 1,
+    "minLength": 6,
+    "validator": "always_valid"
+  },
+  {
+    "category": "加解密",
+    "subtype": "JWT/MD5/SHA签名Secret",
+    "severity": "Critical",
+    "pattern": "(?x) (?: jwt[Ss]ecret|jwt_?secret|jwt[Kk]ey|jwt_?key| token[Ss]ecret|token_?secret|signing[Kk]ey|signing_?key| secret[Kk]ey|secret_?key|token[Kk]ey|token_?key| app[Ss]ecret|app_?secret|salt.*sign|hmac )\\s*[:：=]\\s* [\"'`] ([A-Za-z0-9_./+=:@$%-]{12,128}) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 8,
+    "validator": "always_valid"
+  },
+  {
+    "category": "加解密",
+    "subtype": "SSH私钥",
+    "severity": "Critical",
+    "pattern": "-----BEGIN\\s+OPENSSH\\s+PRIVATE\\s+KEY-----",
+    "captureGroup": 0,
+    "minLength": 30,
+    "validator": "is_valid_ssh_key"
+  },
+  {
+    "category": "加解密",
+    "subtype": "PKCS8/X509证书",
+    "severity": "Critical",
+    "pattern": "-----BEGIN\\s+(?:CERTIFICATE|PRIVATE\\s+KEY)-----",
+    "captureGroup": 0,
+    "minLength": 20,
+    "validator": "always_valid"
+  },
+  {
+    "category": "加解密",
+    "subtype": "SM4国密密钥",
+    "severity": "Critical",
+    "pattern": "(?x) (?: sm4[Kk]ey|sm4_?key|sm4Key|SM4[_\\-]?KEY| 国密.*key|sm4.*secret )\\s*[:=:]\\s*[\\x22\\x27]?([0-9a-fA-F]{32})[\\x22\\x27]?",
+    "captureGroup": 1,
+    "minLength": 32,
+    "validator": "always_valid"
+  },
+  {
+    "category": "加解密",
+    "subtype": "Base64编码密钥",
+    "severity": "Medium",
+    "pattern": "(?xi) \\b(?:base64(?:[ _\\-]?(?:key|secret|token|value))?|encoded[ _\\-]?(?:key|secret)|encrypted[ _\\-]?(?:key|secret|value)|ciphertext)\\b\\s*[:=]\\s*[\\x22\\x27]([A-Za-z0-9+/]{20,64}={0,2})[\\x22\\x27]",
+    "captureGroup": 1,
+    "minLength": 20,
+    "validator": "is_valid_base64_key"
+  },
+  {
+    "category": "Auth",
+    "subtype": "JWT Token",
+    "severity": "Critical",
+    "pattern": "(?:^|[^A-Za-z0-9_\\-])(eyJ[A-Za-z0-9_\\-]+\\.eyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+)(?:$|[^A-Za-z0-9_\\-])",
+    "captureGroup": 1,
+    "minLength": 30,
+    "validator": "is_valid_jwt"
+  },
+  {
+    "category": "Auth",
+    "subtype": "Bearer Token",
+    "severity": "Critical",
+    "pattern": "(?i) (?: bearer\\s+[A-Za-z0-9_\\-\\.]+| Authorization\\s*[:：]\\s*(?:Bearer\\s+)?[A-Za-z0-9_\\-\\.]+ )",
+    "captureGroup": 0,
+    "minLength": 10,
+    "validator": "always_valid"
+  },
+  {
+    "category": "Auth",
+    "subtype": "GitHub Token",
+    "severity": "Critical",
+    "pattern": "(?xi) (?:\\b(?:github[ _\\-]?(?:token|credential)|gh[ _\\-]?token)\\b\\s*[:＝=]\\s*[\"'`]?)? ((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,255}) [\"'`]?",
+    "captureGroup": 1,
+    "minLength": 20,
+    "validator": "is_valid_github_token"
+  },
+  {
+    "category": "Auth",
+    "subtype": "GitHub认证URL",
+    "severity": "Critical",
+    "pattern": "[a-zA-Z0-9_-]*:[a-zA-Z0-9_\\-]+@github\\.com",
+    "captureGroup": 0,
+    "minLength": 10,
+    "validator": "always_valid"
+  },
+  {
+    "category": "Auth",
+    "subtype": "Stripe Key",
+    "severity": "Critical",
+    "pattern": "(?:sk|pk)_(?:test_|live_)[0-9a-zA-Z]{24,}",
+    "captureGroup": 0,
+    "minLength": 24,
+    "validator": "is_valid_stripe_key"
+  },
+  {
+    "category": "Auth",
+    "subtype": "Slack Token",
+    "severity": "High",
+    "pattern": "(?xi) (?:\\bslack[\\w .\\-]{0,24}(?:token|access[ _\\-]?key)\\b\\s*[:：=]\\s*[\"'`]?)? (xox[apbcsr]-[0-9a-zA-Z\\-]{10,255}) [\"'`]?",
+    "captureGroup": 1,
+    "minLength": 15,
+    "validator": "is_valid_slack_token"
+  },
+  {
+    "category": "Auth",
+    "subtype": "OAuth Client ID",
+    "severity": "High",
+    "pattern": "(?x) (?: client[Ii]d|client_?id|oauth[Cc]lient[Ii]d|oauth_?client_?id|客户端ID )\\s*[:：=]\\s* [\"'`] ([A-Za-z0-9_\\-]{12,64}) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 8,
+    "validator": "always_valid"
+  },
+  {
+    "category": "Auth",
+    "subtype": "OAuth Client Secret",
+    "severity": "Critical",
+    "pattern": "(?x) (?: client[Ss]ecret|client_?secret|oauth[Cc]lient[Ss]ecret| app[Ss]ecret|app_?secret|application[Ss]ecret| appsecret|oauth_?client_?secret| 应用密钥|客户端密钥 )\\s*[:：=]\\s* [\"'`]{0,1} ([A-Za-z0-9_\\-/+=]{16,128}) [\"'`]{0,1}",
+    "captureGroup": 1,
+    "minLength": 16,
+    "validator": "always_valid"
+  },
+  {
+    "category": "Auth",
+    "subtype": "Access Token",
+    "severity": "Critical",
+    "pattern": "(?x) (?: access[Tt]oken|access_?token|auth[Tt]oken|auth_?token| session[Tt]oken|session_?token|id[Tt]oken|id_?token| refresh[Tt]oken|refresh_?token|token[Vv]alue|token_?value| 访问令牌|认证令牌|access_token )\\s*[:：=]\\s* [\"'`] ([A-Za-z0-9_\\-\\.]{20,512}) [\"'`]",
+    "captureGroup": 1,
+    "minLength": 16,
+    "validator": "always_valid"
+  },
+  {
+    "category": "Auth",
+    "subtype": "Session/Cookie密钥",
+    "severity": "Medium",
+    "pattern": "(?x) (?: session[Ss]ecret|session_?secret|cookie[Ss]ecret|cookie_?secret| session[Kk]ey|session_?key|cookie[Kk]ey|cookie_?key| session[Ss]alt|session_?salt|cookie_?salt )\\s*[:：=]\\s* [\"'`]{0,1} ([^\\s\"'`;,}\\]]{8,128}) [\"'`]{0,1}",
+    "captureGroup": 1,
+    "minLength": 8,
+    "validator": "always_valid"
+  },
+  {
+    "category": "Auth",
+    "subtype": "Shiro反序列化特征",
+    "severity": "Critical",
+    "pattern": "(?x) (?: =deleteMe| rememberMe=| \\bshiro\\b| apache.?shiro )",
+    "captureGroup": 0,
+    "minLength": 5,
+    "validator": "always_valid"
+  },
+  {
+    "category": "Auth",
+    "subtype": "微信小程序AppID",
+    "severity": "High",
+    "pattern": "(?xi) (?:\\b(?:wx[ _\\-]?app[ _\\-]?id|app[ _\\-]?id)\\b|小程序[\\w .\\-]{0,16}appid)?\\s*[:：=]?\\s*[\\x22\\x27]? (wx[a-z0-9]{12,30}) [\\x22\\x27]?",
+    "captureGroup": 1,
+    "minLength": 14,
+    "validator": "is_valid_wechat_appid"
+  },
+  {
+    "category": "Auth",
+    "subtype": "微信小程序Secret",
+    "severity": "Critical",
+    "pattern": "(?x) (?: wxappsecret|wxAppSecret|appSecret|wx_secret| 小程序.*secret| secretKey|app_secret )\\s*[:=:]\\s*[\\x22\\x27]?([a-zA-Z0-9]{32})[\\x22\\x27]?",
+    "captureGroup": 1,
+    "minLength": 32,
+    "validator": "is_valid_wechat_secret"
+  },
+  {
+    "category": "Auth",
+    "subtype": "钉钉CorpID",
+    "severity": "Medium",
+    "pattern": "(?xi) (?:\\b(?:dingtalk|dingding|ding)[\\w .\\-]{0,24}corp[ _\\-]?id\\b\\s*[:：=]\\s*[\\x22\\x27]?)? (ding[a-z0-9]{6,36}) [\\x22\\x27]?",
+    "captureGroup": 1,
+    "minLength": 10,
+    "validator": "is_valid_dingtalk_id"
+  },
+  {
+    "category": "Auth",
+    "subtype": "钉钉CorpSecret",
+    "severity": "Critical",
+    "pattern": "(?x) (?: dingtalk.*corp.?secret|dingtalk.*corpsecret|dingCorpSecret|dingcorpsecret| ding.*secret|dingtalk.*secret )\\s*[:=:]\\s*[\\x22\\x27]?([a-zA-Z0-9]{20,64})[\\x22\\x27]?",
+    "captureGroup": 1,
+    "minLength": 20,
+    "validator": "is_valid_dingtalk_secret"
+  },
+  {
+    "category": "URL",
+    "subtype": "Swagger/OpenAPI文档",
+    "severity": "Medium",
+    "pattern": "(?xi) ((?:https?://(?:localhost|(?:\\d{1,3}\\.){3}\\d{1,3}|(?:[a-z0-9](?:[a-z0-9\\-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9\\-]{0,61}[a-z0-9])?)(?::\\d{1,5})?)?(?:/[a-z0-9._~\\-]+){0,4}/(?:v\\d+/api-docs(?:\\.json)?|api-docs(?:\\.json)?|swagger-ui(?:\\.html|/index\\.html|/)?|swagger(?:\\.json|\\.ya?ml|/v\\d+/swagger\\.json)|swagger-resources(?:/configuration/(?:ui|security))?|(?:v\\d+/)?openapi(?:\\.json|\\.ya?ml)?|open-api(?:\\.json|\\.ya?ml)?|doc\\.html|redoc(?:\\.html|/)?|docs(?:/index\\.html|/)?)(?:[?\\#][^\\s\"'`]*)?)",
+    "captureGroup": 1,
+    "minLength": 4,
+    "validator": "is_valid_url_or_path"
+  },
+  {
+    "category": "其他",
+    "subtype": "银行卡号",
+    "severity": "Critical",
+    "pattern": "(?xi) \\b(?:银行卡|card_?no|card_?number|bank_?card|bank_?account|acc_?no|credit_?card|debit_?card|account_?no|acc_?num|bank_?acc|bankcard)\\b\\s*[:：=]\\s*[\"'`]? (\\d{16,19}) (?:[\"'`]|\\b)",
+    "captureGroup": 1,
+    "minLength": 13,
+    "validator": "always_valid"
+  },
+  {
+    "category": "其他",
+    "subtype": "银行卡号裸号",
+    "severity": "Critical",
+    "pattern": "(?x) \\b(?:3[47]\\d{13}|4\\d{12}(?:\\d{3})?|5[1-5]\\d{14}|6\\d{15,18})\\b",
+    "captureGroup": 0,
+    "minLength": 13,
+    "validator": "is_valid_bank_card"
+  },
+  {
+    "category": "其他",
+    "subtype": "SourceMap源码泄露",
+    "severity": "Low",
+    "pattern": "(?x) (?: [\"'`][^\"']*\\.js\\.map[\"'`\\s]| // sourceMappingURL.*\\.map )",
+    "captureGroup": 0,
+    "minLength": 5,
+    "validator": "always_valid"
+  },
+  {
+    "category": "其他",
+    "subtype": "配置特征-公司信息",
+    "severity": "Info",
+    "pattern": "(?x) (?: target\\s*=\\s*[\"\\x27]?_blank[\"\\x27]?\\s*style\\s*=\\s*[\"\\x27]?color:\\\\ 备案号|ICP备案|icp\\.chinaz\\.com| <i\\s+class\\s*=\\s*[\"\\x27]?\"color-63[\"\\x27]?><a\\s+href\\s*=\\s*[\"\\x27]?//ip\\.tool\\.chinaz\\.com )",
+    "captureGroup": 0,
+    "minLength": 10,
+    "validator": "always_valid"
+  },
+  {
+    "category": "其他",
+    "subtype": "短信验证码",
+    "severity": "High",
+    "pattern": "(?x) (?: sms[Cc]ode|sms_?code|verify[Cc]ode|verify_?code| 短信验证码|短信验证码| phone[Cc]ode|mobile[Cc]ode|mobile_code| captcha|验证码|验证码代| mobile_code )\\s*[:=:]\\s*[\\x22\\x27]?([0-9]{4,8})[\\x22\\x27]?",
+    "captureGroup": 1,
+    "minLength": 4,
+    "validator": "is_valid_sms_code"
+  },
+  {
+    "category": "其他",
+    "subtype": "邮箱验证码",
+    "severity": "High",
+    "pattern": "(?x) (?: email[Cc]ode|email_?code|mail[Cc]ode|mail_?code| email_code|邮箱验证码|邮箱验证码 )\\s*[:=:]\\s*[\\x22\\x27]?([0-9A-Za-z]{4,8})[\\x22\\x27]?",
+    "captureGroup": 1,
+    "minLength": 4,
+    "validator": "always_valid"
+  },
+  {
+    "category": "其他",
+    "subtype": "Redis连接串",
+    "severity": "Critical",
+    "pattern": "(?xi) (?:\\b(?:redis|memcached)[ _\\-]?(?:url|uri|connection|dsn)\\b\\s*[:：=]\\s*[\"'`]?)? ((?:redis|rediss|memcached)://[^\\s\"'`]{6,256}) [\"'`]?",
+    "captureGroup": 1,
+    "minLength": 8,
+    "validator": "is_valid_redis"
+  },
+  {
+    "category": "其他",
+    "subtype": "UUID标识",
+    "severity": "Low",
+    "pattern": "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+    "captureGroup": 0,
+    "minLength": 36,
+    "validator": "is_valid_uuid"
+  },
+  {
+    "category": "其他",
+    "subtype": "弱密码",
+    "severity": "Medium",
+    "pattern": "(?x) (?: weak.*pass|weakPassword|test.*pass| 弱密码| simple.*pass| default.*pass|default.*password| hardcode.*pass )\\s*[:=:]\\s*[\\x22\\x27]?([a-zA-Z0-9]{4,16})[\\x22\\x27]?",
+    "captureGroup": 1,
+    "minLength": 4,
+    "validator": "is_valid_weak_password"
+  }
+]

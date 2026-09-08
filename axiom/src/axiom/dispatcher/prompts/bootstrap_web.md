@@ -12,6 +12,15 @@
 - 登录态可用时，访问认证后资源（控制台/后台），补全登录后 JS 资源。
 
 ### 2. 抽取 API 能力树（核心产出）
+**能力树数据底座（jsfinder，先跑）**：
+   ```bash
+   cd "<主提示词给出的运行目录>" && "$AXIOM_PYTHON" "$AXIOM_BOOTSTRAP_TOOLS/jsfinder.py" "<入口URL>"
+   ```
+   工具零参数：读 `AXIOM_RUN_DIR`，产出 `jsfinder_result.json`（九类信息；API接口按域/前缀分组，含 `METHOD path | query/body/header` 调用点注解与前端路由；登录态可用时加 `--cookie "<会话Cookie>"` 补认证后接口）。退出码：0=有结果；2=零命中（换入口或带登录态重跑）；3=入口不可达（在资产清单中如实记录收集失败）。该 JSON 为可选数据底座；资产清单与初始线索清单仍由你基于它结合深度分析撰写。
+   登录态到手后（`browser_get_credentials` 或登录页 Cookie），**必须带 Cookie 重跑一次**并把两次结果合并去重——认证后 chunk 里的接口树是匿名爬取拿不到的：
+   ```bash
+   cd "<运行目录>" && "$AXIOM_PYTHON" "$AXIOM_BOOTSTRAP_TOOLS/jsfinder.py" "<认证后页面URL>" --cookie "<会话Cookie>"
+   ```
 对业务主 JS Bundle（通常 > 200KB）进行深度分析，禁止仅靠简单正则扫零散 URL：
 1. **前缀域**：识别前缀常量（如 `["/api/v1", "/api/automation", "/api/console"]`），全部列出。
 2. **底座拼装函数**：定位 URL 构造函数（如 `const Foo=e=>'/prefix/'+e+'/resource'`），记录参数槽。
@@ -48,4 +57,3 @@
 ## 产物要求
 - 能力树清单：必须含**API 前缀域列表**、**按域展开的能力树**、参数/ID 来源、本租户基线 ID、鉴权矩阵及 JS 收集状态,尽可能收集全；若未能收集全在要在文件中说明。
 - 初始线索清单：整树对象级鉴权可疑点、响应密钥回显、无登录 webhook、短 ID 枚举点（同底座保持一条线索）。
-- 漏洞清单：仅记录由可复现请求确认的漏洞；本阶段无漏洞时写“本阶段未确认漏洞”。

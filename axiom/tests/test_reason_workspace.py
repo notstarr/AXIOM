@@ -769,7 +769,7 @@ def test_reason_todo_can_reference_enabled_project_knowledge(client) -> None:
 
 def test_reason_can_complete_a_new_todo_by_its_draft_ref(client) -> None:
     task, reason_claim, completed = active_reason(client)
-    finding_artifact_id = client.get(f"/api/v1/tasks/{task['id']}/artifacts").json()[2]["id"]
+    finding_artifact_id = client.get(f"/api/v1/tasks/{task['id']}/artifacts").json()[1]["id"]
     workspace = client.post(
         f"/api/v1/tasks/{task['id']}/reason/workspaces",
         json={

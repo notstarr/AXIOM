@@ -778,7 +778,6 @@ def test_bootstrap_prompt_routes_one_target_profile_and_locks_target_identity() 
     assert "whatisvul" in prompt
     assert "asset_inventory.md" in prompt
     assert "initial_leads.md" in prompt
-    assert "findings.md" in prompt
     assert "目标类型：Web / 小程序 / App / 尚未确认" in prompt
     assert "当前目标身份" in prompt
     assert "身份判断依据" in prompt

@@ -75,7 +75,6 @@ def test_bootstrap_closeout_is_atomic_and_materializes_registered_files(client, 
     assert [item["artifact_type"] for item in body["artifacts"]] == [
         "bootstrap.asset_inventory",
         "bootstrap.initial_leads",
-        "bootstrap.findings",
     ]
     assert all(item["summary"] for item in body["artifacts"])
 
@@ -88,10 +87,10 @@ def test_bootstrap_closeout_is_atomic_and_materializes_registered_files(client, 
     assert task_after["active_reason_run"] is None
     assert [item["id"] for item in task_after["queued_reason_runs"]] == ["rr000001"]
     fact = next(fact for fact in graph["facts"] if fact["id"] == "f001")
-    assert all(f"artifact:a00{number}" in fact["description"] for number in (1, 2, 3))
+    assert all(f"artifact:a00{number}" in fact["description"] for number in (1, 2))
 
     artifacts = client.get(f"/api/v1/tasks/{task['id']}/artifacts").json()
-    assert len(artifacts) == 3
+    assert len(artifacts) == 2
     for artifact in artifacts:
         content = client.get(
             f"/api/v1/tasks/{task['id']}/artifacts/{artifact['id']}/content"
@@ -128,7 +127,7 @@ def test_bootstrap_completion_is_idempotent_for_the_same_lease(client) -> None:
     assert first.status_code == 200
     assert second.status_code == 200
     assert second.json() == first.json()
-    assert len(client.get(f"/api/v1/tasks/{task['id']}/artifacts").json()) == 3
+    assert len(client.get(f"/api/v1/tasks/{task['id']}/artifacts").json()) == 2
 
 
 def test_release_counts_failure_class_and_makes_intent_claimable_again(client) -> None:

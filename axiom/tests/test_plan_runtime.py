@@ -721,7 +721,6 @@ def test_plan_accepts_supported_provenance_reference_kinds(client, engine) -> No
         "intent:i001",
         "todo:source-validation",
         f"artifact:{artifact_by_type['bootstrap.asset_inventory']}",
-        f"finding:{artifact_by_type['bootstrap.findings']}",
         f"lead:{artifact_by_type['bootstrap.initial_leads']}",
         "evidence:a-plan-evidence",
         "hint:h-plan-source",

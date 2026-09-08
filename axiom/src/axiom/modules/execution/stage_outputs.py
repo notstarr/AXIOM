@@ -30,8 +30,10 @@ _FINISH_FENCE = re.compile(
 BOOTSTRAP_FILES = (
     "asset_inventory.md",
     "initial_leads.md",
-    "findings.md",
 )
+BOOTSTRAP_OPTIONAL_FILES = {
+    "jsfinder_result.json": ("bootstrap.jsfinder", "JSFinder 能力树"),
+}
 _SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 EXPLORE_FINDINGS_FILE = "findings.md"
 EXPLORE_LEADS_FILE = "leads.md"
@@ -90,7 +92,6 @@ def bootstrap_files(run_dir: str | Path) -> list[StageFile]:
     labels = {
         "asset_inventory.md": ("bootstrap.asset_inventory", "Bootstrap 资产清单"),
         "initial_leads.md": ("bootstrap.initial_leads", "Bootstrap 初始线索"),
-        "findings.md": ("bootstrap.findings", "Bootstrap 已确认问题"),
     }
     errors: list[str] = []
     for filename in BOOTSTRAP_FILES:
@@ -112,6 +113,26 @@ def bootstrap_files(run_dir: str | Path) -> list[StageFile]:
         )
     if errors:
         raise StageOutputError("Bootstrap 产物未就绪：" + "；".join(errors))
+    for filename, (artifact_type, summary) in BOOTSTRAP_OPTIONAL_FILES.items():
+        path = next(
+            (
+                candidate
+                for candidate in (root / filename, root / "workspace" / filename)
+                if candidate.is_file()
+            ),
+            None,
+        )
+        if path is None:
+            continue
+        try:
+            _require_regular_output(path, root)
+            _require_non_empty(path)
+        except StageOutputError:
+            logger.warning("Bootstrap 可选产物无效，已跳过：%s", filename)
+            continue
+        results.append(
+            StageFile(relative_name=filename, path=path, artifact_type=artifact_type, summary=summary)
+        )
     return results
 
 
@@ -403,11 +424,12 @@ def write_bootstrap_index(run_dir: str | Path, artifacts: list[Artifact]) -> Pat
                 "content_hash": by_type[artifact_type].content_hash,
                 "size": by_type[artifact_type].size,
             }
-            for filename, (artifact_type, _summary) in {
-                "asset_inventory.md": ("bootstrap.asset_inventory", ""),
-                "initial_leads.md": ("bootstrap.initial_leads", ""),
-                "findings.md": ("bootstrap.findings", ""),
+            for filename, artifact_type in {
+                "asset_inventory.md": "bootstrap.asset_inventory",
+                "initial_leads.md": "bootstrap.initial_leads",
+                "jsfinder_result.json": "bootstrap.jsfinder",
             }.items()
+            if artifact_type in by_type
         },
     }
     path = Path(run_dir).resolve() / "bootstrap_artifacts.json"

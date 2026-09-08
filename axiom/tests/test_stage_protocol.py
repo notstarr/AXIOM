@@ -64,9 +64,10 @@ def test_explore_finish_marker_rejects_non_terminal_or_changed_markers(value: st
         require_explore_finish(value)
 
 
-def test_bootstrap_collects_only_the_three_fixed_outputs(tmp_path: Path) -> None:
+def test_bootstrap_collects_required_outputs_and_optional_jsfinder(tmp_path: Path) -> None:
     for filename in ("asset_inventory.md", "initial_leads.md", "findings.md"):
         (tmp_path / filename).write_text(f"# {filename}\n", encoding="utf-8")
+    (tmp_path / "jsfinder_result.json").write_text('{"tool":"jsfinder"}', encoding="utf-8")
     (tmp_path / "models.json").write_text('{"secret":"ignored"}', encoding="utf-8")
     (tmp_path / "auth.json").write_text('{"credential":"ignored"}', encoding="utf-8")
     (tmp_path / "sessions").mkdir()
@@ -79,7 +80,21 @@ def test_bootstrap_collects_only_the_three_fixed_outputs(tmp_path: Path) -> None
     assert [item.relative_name for item in outputs] == [
         "asset_inventory.md",
         "initial_leads.md",
-        "findings.md",
+        "jsfinder_result.json",
+    ]
+    assert [item.artifact_type for item in outputs][-1] == "bootstrap.jsfinder"
+
+
+def test_bootstrap_ignores_missing_or_invalid_jsfinder_output(tmp_path: Path) -> None:
+    for filename in ("asset_inventory.md", "initial_leads.md"):
+        (tmp_path / filename).write_text(f"# {filename}\n", encoding="utf-8")
+    (tmp_path / "jsfinder_result.json").write_text("", encoding="utf-8")
+
+    outputs = bootstrap_files(tmp_path)
+
+    assert [item.relative_name for item in outputs] == [
+        "asset_inventory.md",
+        "initial_leads.md",
     ]
 
 

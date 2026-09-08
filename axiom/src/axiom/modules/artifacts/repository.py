@@ -17,12 +17,14 @@ BOOTSTRAP_ARTIFACT_TYPES = {
     "asset_inventory.md": "bootstrap.asset_inventory",
     "initial_leads.md": "bootstrap.initial_leads",
     "findings.md": "bootstrap.findings",
+    "jsfinder_result.json": "bootstrap.jsfinder",
 }
 
 BOOTSTRAP_ARTIFACT_SUMMARIES = {
     "asset_inventory.md": "Bootstrap 资产清单",
     "initial_leads.md": "Bootstrap 初始线索",
     "findings.md": "Bootstrap 已确认问题",
+    "jsfinder_result.json": "JSFinder 能力树",
 }
 
 

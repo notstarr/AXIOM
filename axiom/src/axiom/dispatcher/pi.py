@@ -323,6 +323,7 @@ class PiBootstrapExecutor:
         environment.update(
             {
                 "AXIOM_RUN_DIR": execution_input.run_dir,
+                "AXIOM_BOOTSTRAP_TOOLS": str(Path(__file__).resolve().parent / "tools" / "bootstrap"),
                 "AXIOM_TASK_ID": execution_input.task_id,
                 "AXIOM_PROJECT_ID": execution_input.project_id,
                 "AXIOM_LEASE_ID": execution_input.lease_id,
@@ -552,8 +553,28 @@ class PiBootstrapExecutor:
         """Release browser state after the complete claimed work lifecycle."""
 
         if self._browser_lease is not None and self.browser_broker is not None:
-            self.browser_broker.close_lease(self._browser_lease)
+            self.browser_broker.close_lease(
+                self._browser_lease,
+                save_session_path=self._browser_session_save_path(),
+            )
         self._browser_lease = None
+
+    def _browser_session_save_path(self) -> str:
+        """登录态落盘路径：<session基目录>/<origin域名>.json，供后续 lease 按 origin 注入。"""
+        origin = getattr(self, "_browser_origin", "")
+        run_dir = getattr(self, "_browser_run_dir", "")
+        if not origin or not run_dir:
+            return ""
+        parsed = urlparse(origin if "://" in origin else f"//{origin}")
+        host = (parsed.hostname or "").strip().lower().rstrip(".")
+        if not host:
+            return ""
+        base = self._browser_session_base(run_dir)
+        if not base:
+            return ""
+        path = Path(base) / f"{host}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return str(path)
 
     def _ensure_browser_lease(
         self,
@@ -568,7 +589,11 @@ class PiBootstrapExecutor:
                 )
             return self._browser_lease
         assert self.browser_broker is not None
-        session_path, persistent = self._browser_session_options(execution_input.origin)
+        session_path, persistent = self._browser_session_options(
+            execution_input.origin, run_dir=execution_input.run_dir
+        )
+        self._browser_origin = execution_input.origin
+        self._browser_run_dir = execution_input.run_dir
         handle = self.browser_broker.register_lease(
             lease_id=execution_input.lease_id,
             task_id=execution_input.task_id,
@@ -606,9 +631,21 @@ class PiBootstrapExecutor:
         )
         self._browser_lease = handle
         return handle
-
     @staticmethod
-    def _browser_session_options(origin: str = "") -> tuple[str, bool]:
+    def _browser_session_base(run_dir: str = "") -> str:
+        base = os.environ.get("AXIOM_BROWSER_SESSION_DIR", "").strip()
+        if base:
+            return base
+        data_dir = os.environ.get("AXIOM_DATA_DIR", "").strip()
+        if not data_dir and run_dir:
+            candidate = Path(run_dir).resolve()
+            # run_dir = <data>/sandboxes/<task>/workspace/axiom/runs/<intent>/<lease>
+            if len(candidate.parents) > 6:
+                data_dir = str(candidate.parents[6])
+        return str(Path(data_dir) / "browser-sessions") if data_dir else ""
+    @staticmethod
+
+    def _browser_session_options(origin: str = "", run_dir: str = "") -> tuple[str, bool]:
         """Resolve the session snapshot for this lease.
 
         优先级：AXIOM_BROWSER_PERSISTENT > AXIOM_BROWSER_SESSION 显式名称 >
@@ -618,10 +655,7 @@ class PiBootstrapExecutor:
         persistent = os.environ.get("AXIOM_BROWSER_PERSISTENT", "").strip().lower() in {"1", "true"}
         if persistent:
             return "", True
-        base = os.environ.get("AXIOM_BROWSER_SESSION_DIR", "").strip()
-        if not base:
-            data_dir = os.environ.get("AXIOM_DATA_DIR", "").strip()
-            base = str(Path(data_dir) / "browser-sessions") if data_dir else ""
+        base = PiBootstrapExecutor._browser_session_base(run_dir)
         if not base:
             return "", False
         base_path = Path(base)
