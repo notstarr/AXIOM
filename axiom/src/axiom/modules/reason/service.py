@@ -6,6 +6,7 @@ import logging
 import os
 import re
 from datetime import timedelta
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Engine, exists, func, or_, select, update
 
@@ -57,6 +58,10 @@ from axiom.shared.ids import allocate_id, id_counters
 from axiom.shared.storage import FileStore
 
 
+if TYPE_CHECKING:
+    from axiom.modules.sandboxes.service import TaskSandboxManager
+
+
 logger = logging.getLogger(__name__)
 OPEN_EXPLORE_STATUSES = ("pending", "claimed", "running", "concluding")
 TERMINAL_EXPLORE_STATUSES = ("completed", "failed", "cancelled")
@@ -83,11 +88,12 @@ def _extract_plan_confidence(reason: str) -> str:
 
 
 class ReasonService:
-    def __init__(self, engine: Engine, *, store: FileStore | None = None):
+    def __init__(self, engine: Engine, *, store: FileStore | None = None, sandboxes: TaskSandboxManager | None = None):
         self.engine = engine
         self.store = store
         self.repository = ReasonRepository()
         self.plans = PlanRepository()
+        self.sandboxes = sandboxes
         self.tasks = TaskRepository()
         self.todos = TodoRepository()
         self.goals = GoalRepository()
@@ -1437,7 +1443,7 @@ class ReasonService:
                     .where(workers.c.name == run.worker)
                     .values(cooldown_until=cooldown, updated_at=now)
                 )
-            return ReleasedReasonRun(
+            result = ReleasedReasonRun(
                 task_id=task_id,
                 reason_run_id=reason_run_id,
                 status="failed" if terminal else "pending",
@@ -1446,6 +1452,16 @@ class ReasonService:
                 infrastructure_retry_count=run.infrastructure_retry_count
                 + (1 if failure_class == "transient" else 0),
             )
+        if self.sandboxes is not None:
+            try:
+                self.sandboxes.cleanup_run_directory(
+                    task_id=task_id, owner_id=reason_run_id, lease_id=lease_id,
+                )
+            except OSError:
+                logger.exception(
+                    "failed to clean released run dir: %s/%s", task_id, reason_run_id
+                )
+        return result
 
     def _require_run_lease(self, conn, task_id: str, reason_run_id: str, lease_id: str) -> ReasonRun:
         run = self.repository.get_run(conn, task_id, reason_run_id)
@@ -2305,6 +2321,19 @@ class ReasonService:
                     workspace=committed,
                     created_todo_ids=created_todo_ids,
                     created_intent_ids=created_intent_ids,
+                )
+        if self.sandboxes is not None:
+            try:
+                self.sandboxes.cleanup_run_directory(
+                    task_id=workspace.task_id,
+                    owner_id=workspace.reason_run_id,
+                    lease_id=workspace.lease_id,
+                )
+            except OSError:
+                logger.exception(
+                    "failed to clean committed run dir: %s/%s",
+                    workspace.task_id,
+                    workspace.reason_run_id,
                 )
         self._write_plan_audit(result)
         return result

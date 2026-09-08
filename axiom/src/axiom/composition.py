@@ -90,8 +90,8 @@ class Container:
         vulnerability_reviews = VulnerabilityReviewService(engine, store, sandboxes=sandboxes)
         archives = ArchiveService(engine, store, reviews=vulnerability_reviews)
         context = ContextService(engine, store)
-        reason = ReasonService(engine, store=store)
-        plan = PlanService(engine)
+        reason = ReasonService(engine, store=store, sandboxes=sandboxes)
+        plan = PlanService(engine, sandboxes=sandboxes)
         skills = SkillService(data_dir, engine=engine)
         phase_capabilities = PhaseCapabilityService(
             engine,

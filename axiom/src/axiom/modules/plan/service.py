@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Engine, exists, select, update
 
@@ -50,6 +51,13 @@ from axiom.shared.errors import ConflictError, LeaseInactiveError, NotFoundError
 from axiom.shared.ids import allocate_id, id_counters
 
 
+if TYPE_CHECKING:
+    from axiom.modules.sandboxes.service import TaskSandboxManager
+
+
+logger = logging.getLogger(__name__)
+
+
 MAX_PLAN_INTENTS = 256
 OPEN_EXPLORE_STATUSES = ("pending", "claimed", "running", "concluding")
 TERMINAL_EXPLORE_STATUSES = ("completed", "failed", "cancelled")
@@ -85,10 +93,11 @@ class PlanService:
     shared Todo/Intent repositories when committing a valid Plan draft.
     """
 
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, *, sandboxes: TaskSandboxManager | None = None):
         self.engine = engine
         self.repository = PlanRepository()
         self.tasks = TaskRepository()
+        self.sandboxes = sandboxes
         self.todos = TodoRepository()
         self.audit = AuditService(engine)
 
@@ -1015,7 +1024,17 @@ class PlanService:
                         "next_retry_at": retry_at,
                     },
                 )
-            return ReleasedPlanRun(task_id=task_id, plan_run_id=plan_run_id, status="failed" if terminal else "pending", next_retry_at=retry_at, retry_count=run.retry_count + (1 if failure_class == "execution" else 0), infrastructure_retry_count=run.infrastructure_retry_count + (1 if failure_class == "transient" else 0))
+            result = ReleasedPlanRun(task_id=task_id, plan_run_id=plan_run_id, status="failed" if terminal else "pending", next_retry_at=retry_at, retry_count=run.retry_count + (1 if failure_class == "execution" else 0), infrastructure_retry_count=run.infrastructure_retry_count + (1 if failure_class == "transient" else 0))
+        if self.sandboxes is not None:
+            try:
+                self.sandboxes.cleanup_run_directory(
+                    task_id=task_id, owner_id=plan_run_id, lease_id=lease_id,
+                )
+            except OSError:
+                logger.exception(
+                    "failed to clean released run dir: %s/%s", task_id, plan_run_id
+                )
+        return result
 
     def _require_lease(self, conn, task_id: str, run_id: str, lease_id: str) -> PlanRun:
         run = self.repository.get_run(conn, task_id, run_id)
@@ -1826,7 +1845,21 @@ class PlanService:
                     "phase": next_phase,
                 },
             )
-            return PlanCommitResult(workspace=committed, created_todo_ids=created_todo_ids, updated_todo_ids=updated_todo_ids, deleted_todo_ids=deleted_todo_ids, created_intent_ids=created_intent_ids)
+            result = PlanCommitResult(workspace=committed, created_todo_ids=created_todo_ids, updated_todo_ids=updated_todo_ids, deleted_todo_ids=deleted_todo_ids, created_intent_ids=created_intent_ids)
+        if self.sandboxes is not None:
+            try:
+                self.sandboxes.cleanup_run_directory(
+                    task_id=workspace.task_id,
+                    owner_id=workspace.plan_run_id,
+                    lease_id=lease_id,
+                )
+            except OSError:
+                logger.exception(
+                    "failed to clean committed run dir: %s/%s",
+                    workspace.task_id,
+                    workspace.plan_run_id,
+                )
+        return result
 
     @staticmethod
     def _align_todo_counter(conn, task_id: str) -> None:

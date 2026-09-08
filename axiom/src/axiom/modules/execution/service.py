@@ -178,7 +178,7 @@ class ExecutionService:
                 ),
             )
 
-    def _cleanup_committed_run(self, *, task_id: str, owner_id: str, lease_id: str) -> None:
+    def _cleanup_run_dir(self, *, task_id: str, owner_id: str, lease_id: str) -> None:
         if self.sandboxes is None:
             return
         try:
@@ -980,6 +980,13 @@ class ExecutionService:
                     .where(workers.c.name == row["worker"])
                     .values(cooldown_until=cooldown, updated_at=now)
                 )
+        if self.sandboxes is not None:
+            try:
+                self.sandboxes.cleanup_run_directory(
+                    task_id=task_id, owner_id=intent_id, lease_id=command.lease_id,
+                )
+            except OSError:
+                logger.exception("failed to clean released run dir: %s/%s", task_id, intent_id)
         return ReleasedIntent(
             task_id=task_id,
             intent_id=intent_id,
@@ -1088,7 +1095,7 @@ class ExecutionService:
                 # retaining a worker-run copy is safer than deleting the only
                 # registered file during cleanup.
                 logger.exception("failed to clean Bootstrap run outputs: %s/%s", task_id, intent_id)
-            self._cleanup_committed_run(
+            self._cleanup_run_dir(
                 task_id=task_id, owner_id=intent_id, lease_id=command.lease_id
             )
             result = BootstrapCompleted(
@@ -1280,7 +1287,7 @@ class ExecutionService:
                         task_id,
                         intent_id,
                     )
-                self._cleanup_committed_run(
+                self._cleanup_run_dir(
                     task_id=task_id, owner_id=intent_id, lease_id=command.lease_id
                 )
 
