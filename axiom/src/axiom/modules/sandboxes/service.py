@@ -150,7 +150,7 @@ class TaskSandboxManager:
             elif row is not None and row["status"] in {"creating", "terminating"}:
                 raise ConflictError(f"Task Sandbox is currently {row['status']}: {task_id}")
             else:
-                sandbox_pk = allocate_id(conn, scope=task_id, kind="sandbox", prefix="sb")
+                sandbox_pk = allocate_id(conn, scope="sandbox", kind="sandbox", prefix="sb")
                 backend = self.backend
                 try:
                     handle = backend.create(
@@ -195,6 +195,18 @@ class TaskSandboxManager:
                     "last_healthcheck_error": "",
                 }
                 if row is None:
+                    # 预检查式分配：INSERT 失败会中止整个 PG 事务，重试必须在
+                    # 任何失败语句发生之前完成（历史遗留 sb001 占位问题）。
+                    for _attempt in range(8):
+                        candidate = allocate_id(conn, scope="sandbox", kind="sandbox", prefix="sb")
+                        taken = conn.execute(
+                            select(task_sandboxes.c.id).where(task_sandboxes.c.id == candidate)
+                        ).scalar_one_or_none()
+                        if taken is None:
+                            sandbox_pk = candidate
+                            break
+                    else:
+                        raise ConflictError(f"Task Sandbox id allocation conflicted: {task_id}")
                     self.repository.insert(
                         conn,
                         {
