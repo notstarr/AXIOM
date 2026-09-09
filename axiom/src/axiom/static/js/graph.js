@@ -1418,16 +1418,34 @@ window.AxiomModules.graph = {
       if (!this._factSegmentsCache) this._factSegmentsCache = new Map();
       const cache = this._factSegmentsCache;
       if (cache.has(description)) return cache.get(description);
-      const pattern = /\b(?:artifact:a[0-9A-Za-z_-]+|vulnerability:v[0-9A-Za-z_-]+)\b/g;
+      // 兼容两代事实格式：单数引用（artifact:a001 / vulnerability:v001）
+      // 与一行式复数引用（artifacts:a001/a002、vulns:v001）。
+      const pattern = /\b(?:artifacts:([a0-9][0-9A-Za-z_-]*(?:\/[a0-9][0-9A-Za-z_-]*)*)|vulns:([v0-9][0-9A-Za-z_-]*(?:\/[v0-9][0-9A-Za-z_-]*)*)|artifact:(a[0-9A-Za-z_-]+)|vulnerability:(v[0-9A-Za-z_-]+)|intent:(i[0-9A-Za-z_-]+))\b/g;
       const segments = [];
       let cursor = 0;
       for (const match of description.matchAll(pattern)) {
         if (match.index > cursor) {
           segments.push({ kind:'text', text:description.slice(cursor, match.index) });
         }
-        const [kind, id] = match[0].split(':', 2);
-        segments.push({ kind, id, text:match[0] });
-        cursor = match.index + match[0].length;
+        const [token, artifactList, vulnList, legacyArtifact, legacyVulnerability, legacyIntent] = match;
+        if (artifactList) {
+          artifactList.split('/').forEach((id, index) => {
+            if (index > 0) segments.push({ kind:'text', text:'/' });
+            segments.push({ kind:'artifact', id, text:id });
+          });
+        } else if (vulnList) {
+          vulnList.split('/').forEach((id, index) => {
+            if (index > 0) segments.push({ kind:'text', text:'/' });
+            segments.push({ kind:'vulnerability', id, text:id });
+          });
+        } else if (legacyArtifact) {
+          segments.push({ kind:'artifact', id: legacyArtifact, text: token });
+        } else if (legacyVulnerability) {
+          segments.push({ kind:'vulnerability', id: legacyVulnerability, text: token });
+        } else {
+          segments.push({ kind:'text', text: token });
+        }
+        cursor = match.index + token.length;
       }
       if (cursor < description.length) segments.push({ kind:'text', text:description.slice(cursor) });
       if (segments.length === 0) segments.push({ kind:'text', text:description });

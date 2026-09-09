@@ -854,7 +854,12 @@ window.AxiomModules.human = {
 
     humanFactReferenceIds(fact) {
       const text = String(fact?.description || '');
-      return [...text.matchAll(/\bartifact:(a[0-9A-Za-z_-]+)\b/g)].map(match => match[1]);
+      const ids = [...text.matchAll(/\bartifact:(a[0-9A-Za-z_-]+)\b/g)].map(match => match[1]);
+      // 一行式格式：artifacts:a001/a002（复数引用逐个展开）。
+      for (const match of text.matchAll(/\bartifacts:([a0-9][0-9A-Za-z_/-]*)\b/g)) {
+        ids.push(...match[1].split('/'));
+      }
+      return ids;
     },
 
     humanArtifactForIntent(intentId, type = '') {
