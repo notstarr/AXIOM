@@ -1,0 +1,127 @@
+---
+name: browser-skill
+description: |
+  使用 bsk 命令驱动用户的真实浏览器（已登录态）：访问页面、填表、点击、
+  接口探测、抓取数据。要求本机 bsk CLI 与浏览器扩展已连接。
+  本版本为 axiom 定制：凭据提取是渗透测试的合法产出；scope 外目标禁止访问。
+---
+
+# browser-skill（axiom 定制）
+
+通过 `$AXIOM_BSK` 包装器驱动用户的真实 Chromium 浏览器。自动化在独立的
+**Agent Window** 中进行，使用用户已有的登录态与 Cookie。用户自己的标签页
+受保护——除非显式 borrow，用完必须归还。
+
+**不要**将该 skill 用于：无浏览器场景、扩展安装、或用户只想要操作说明的情况。
+**scope 红线**：wrapper 会校验目标 URL 的域 ∈ `AXIOM_BSK_ALLOWED_HOSTS`
+（任务 origin 域），越界拒绝（exit 40 + `scope_denied`）并记审计。**不要尝试绕过**。
+**凭证卫生**：不得从页面提取/外传与测试无关的凭据；Cookie/凭据数据只写
+`evidence/` 目录（证据完整性优先），不要把凭据明文写进 findings/leads 正文。
+
+## 必需生命周期
+
+```text
+1. "$AXIOM_BSK" session start              # 记下输出的 4 字符 session id
+2. "$AXIOM_BSK" <命令> --session <id>      # 所有会话级命令都要带
+3. "$AXIOM_BSK" session stop <id>          # 成功与失败路径都必须执行
+```
+
+不要依赖空闲超时清理。目标达成即 stop。stop 会归还借用的标签。
+任何命令会自动拉起所需后台服务；不要手工管理守护进程。
+Agent Window 不需要打断用户时，session start 加 `--no-focus`。
+启动/传输问题重试一次仍存在时运行 `bsk doctor`。
+
+## 单一可观察目标
+
+从任务请求推导具体成功条件。走最短路径：观察 → 操作 → 至多一次观察确认。
+成功可见后不再点击/刷新/导航/换 tab。两次尝试无进展或遇到人工步骤 → request-help。
+
+## 观察-操作-观察（默认循环）
+
+```text
+"$AXIOM_BSK" navigate <url> --session <id>
+"$AXIOM_BSK" observe --session <id>
+"$AXIOM_BSK" click|hover|fill|select|press ... --session <id>
+"$AXIOM_BSK" observe --session <id>
+```
+
+优先用新鲜的 `@eN` ref 而非 CSS 选择器。导航会使 ref 失效；大 DOM 变化同样。
+悬停才出现的菜单：observe 不主动悬停；当预期控件缺失且无标记指向触发器时，
+用一次 `observe --probe-hover`；找到触发器后 `hover <ref>` 再 observe 再操作。
+读取升级顺序：observe → probe-hover → snapshot → get-html → screenshot。
+不要一上来就用原始 HTML 或截图找普通控件。
+
+## 借用用户标签（登录态复用）
+
+worker 需要用户已登录的页面时：
+
+```bash
+"$AXIOM_BSK" tab list --scope user --session <id>     # 找到目标标签 id
+"$AXIOM_BSK" tab borrow <tab-id> --session <id>       # 借用（移入 Agent Window）
+"$AXIOM_BSK" evaluate "..." --session <id>            # 在用户会话上下文执行
+"$AXIOM_BSK" tab return <tab-id> --session <id>       # 用完立即归还
+```
+
+借用期间的操作以用户身份进行。用完立即归还，不要跨无关任务保持借用。
+
+## 凭据提取（axiom 定制）
+
+```bash
+"$AXIOM_BSK" credentials --domain <domain> --session <id>
+```
+
+返回该域全部 Cookie（**含 HttpOnly**）+ 已打开页面的 localStorage/sessionStorage，
+以及拼好的 `Cookie` 请求头。渗透测试中会话凭据是合法产出：用于认证后接口探测
+（Authorization/Cookie 头）与对象级越权对照。**结果只写 evidence/ 目录**，
+findings/leads 正文引用 evidence 路径，不要内联明文。
+
+## 人工接管
+
+撞验证码/登录/短信验证码/支付确认时：
+
+```bash
+"$AXIOM_BSK" request-help --session <id> --prompt "请在弹出的页面完成 domery.cn 登录"
+```
+
+outcome：`continued`/`completed` → 恢复控制，先 observe 再继续；
+`cancelled` → 视为拒绝；`timed_out`/`disabled` → 记为阻塞上报，不要蛮力重试。
+
+## 命令清单（封闭，不要发明清单外的命令）
+
+```text
+session start|stop|list   browsers   status   doctor   logs
+navigate   navigate-back   navigate-forward   reload   wait-for-navigation   wait-ms
+observe   snapshot   get-html   screenshot   console   network
+click   hover   fill   select   press   evaluate
+tab list|create|close|select|borrow|return   window resize   emulate
+upload   download   request-help   record start|stop
+credentials --domain <domain> --session <id>   # axiom 定制
+```
+
+常用易错参数：
+
+```text
+"$AXIOM_BSK" fill <ref> --value <text>
+"$AXIOM_BSK" select <ref> --value <option-value>
+"$AXIOM_BSK" screenshot --out <path>
+"$AXIOM_BSK" upload <ref> --file <path>
+"$AXIOM_BSK" download <ref> --out <path>
+```
+
+- `network` 是 DevTools 面板的 worker 版：默认索引只列 API 流量（静态资源与
+  chrome-extension:// 噪音已滤除），响应体/请求头不出现在索引里。
+- 索引 + 详情两段式：`network --clear` 记游标 → 触发功能（click/fill）→
+  `network` 看增量索引（每包一行）→ `network --detail <seq>` 看单包全量
+  （请求头/请求体/响应头/响应体）。禁止无 clear 连续刷 network；响应体全文
+  只经 `--detail` 按需取，截断时用 `--since/--limit/--url` 缩窗。
+- `network --url <子串>`（大小写不敏感）与 `--all`（含静态资源）按需过滤；
+  序号被环形挤出时 detail 返回空——索引行仍在，说明该包发生过。
+- `emulate` 对单个 tab 应用视口/UA/触屏覆盖；新 tab 不继承；`--off` 恢复。
+- `evaluate` 是 observe + 常规交互无法完成时的最后手段；`--json` 时检查 `.ok`。
+- 恢复协议：ref 失效 → observe 一次重试；fill 不一致 → 先观察字段；不可恢复 → 上报并 stop。
+
+## 产物约定（axiom）
+
+- screenshot/download 一律 `--out` 到运行目录 `evidence/` 下；
+- console/network 留证时重定向到 `evidence/` 文件；
+- credentials 结果写 `evidence/credentials-<domain>.json`。
