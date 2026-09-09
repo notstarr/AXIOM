@@ -973,7 +973,8 @@ def test_explore_prompts_prioritize_core_outputs_over_optional_evidence() -> Non
     execute_prompt = PromptRenderer().render("explore.md", values)
     conclude_prompt = PromptRenderer().render("explore_conclude.md", values)
 
-    assert "证据是可选审计材料，不是阶段完成条件" in execute_prompt
+    assert "证据是审计材料，不是阶段完成条件" in execute_prompt
+    assert "未上报漏洞的轮次**不写证据文件**" in execute_prompt
     assert "没有可用证据时直接省略" in execute_prompt
     assert "补齐证据" in execute_prompt
     assert "没做完没有关系" in conclude_prompt
