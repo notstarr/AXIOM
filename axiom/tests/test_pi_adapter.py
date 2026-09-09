@@ -975,8 +975,8 @@ def test_explore_prompts_prioritize_core_outputs_over_optional_evidence() -> Non
 
     assert "证据是审计材料，不是阶段完成条件" in execute_prompt
     assert "未上报漏洞的轮次**不写证据文件**" in execute_prompt
-    assert "没有可用证据时直接省略" in execute_prompt
-    assert "补齐证据" in execute_prompt
+    assert "没有漏洞上报就不写证据文件" in execute_prompt
+    assert "不要为了补齐证据重新运行 Nuclei、SQLMap、浏览器、爬虫" in execute_prompt
     assert "没做完没有关系" in conclude_prompt
     assert "不要为了补证据重新运行 Nuclei、SQLMap、浏览器、爬虫" in conclude_prompt
     assert "`evidence/` 完全可选" in conclude_prompt
