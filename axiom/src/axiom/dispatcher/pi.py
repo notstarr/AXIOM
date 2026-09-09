@@ -419,37 +419,52 @@ class PiBootstrapExecutor:
             for name, value in discovered_environment.items():
                 environment.setdefault(name, value)
         browser_enabled = False
+        browser_stack = os.environ.get("AXIOM_BROWSER_STACK", "skill").strip().lower()
         if enable_browser and phase in {"bootstrap", "explore"}:
-            browser_skill = browser_skill_directory(
-                execution_input.skill_directories,
-                allow_remote=remote_cube,
-            )
-            if browser_skill is not None and self.browser_broker is not None:
+            if browser_stack != "legacy":
+                # BrowserSkill 栈：注入 skill 目录与 wrapper 路径，不创建旧 broker lease。
                 browser_enabled = True
-                try:
-                    browser_lease = self._ensure_browser_lease(
-                        execution_input,
-                        environment,
-                    )
-                except BrowserBrokerError as exc:
-                    raise TransientWorkerError(
-                        f"Browser Broker初始化失败（{exc.code}）：{exc}"
-                    ) from exc
-                environment.update(
-                    {
-                        "AXIOM_BROWSER_SOCKET": browser_lease.socket_path,
-                        "AXIOM_BROWSER_TOKEN": browser_lease.token,
-                        "AXIOM_BROWSER_TRANSPORT": browser_lease.transport,
-                        "AXIOM_BROWSER_ENDPOINT": browser_lease.endpoint,
-                        "AXIOM_BROWSER_LEASE_ID": browser_lease.lease_id,
-                        "AXIOM_BROWSER_SESSION_REF": browser_lease.session_ref,
-                        "AXIOM_BROWSER_GATEWAY_TOKEN": (
-                            getattr(self.browser_broker, "gateway_service_token", "")
-                            or self.service_token
-                        ),
-                    }
+                skill_dir = str(Path(__file__).resolve().parent / "skills" / "browser-skill")
+                if skill_dir not in execution_input.skill_directories:
+                    execution_input.skill_directories.append(skill_dir)
+                environment.setdefault(
+                    "AXIOM_BSK",
+                    str(Path(__file__).resolve().parent / "tools" / "axiom-bsk"),
                 )
-                tool_names = list(dict.fromkeys([*tool_names, *BROWSER_TOOL_NAMES]))
+                hosts = self._origin_hosts(execution_input.origin)
+                if hosts:
+                    environment["AXIOM_BSK_ALLOWED_HOSTS"] = ",".join(hosts)
+            else:
+                browser_skill = browser_skill_directory(
+                    execution_input.skill_directories,
+                    allow_remote=remote_cube,
+                )
+                if browser_skill is not None and self.browser_broker is not None:
+                    browser_enabled = True
+                    try:
+                        browser_lease = self._ensure_browser_lease(
+                            execution_input,
+                            environment,
+                        )
+                    except BrowserBrokerError as exc:
+                        raise TransientWorkerError(
+                            f"Browser Broker初始化失败（{exc.code}）：{exc}"
+                        ) from exc
+                    environment.update(
+                        {
+                            "AXIOM_BROWSER_SOCKET": browser_lease.socket_path,
+                            "AXIOM_BROWSER_TOKEN": browser_lease.token,
+                            "AXIOM_BROWSER_TRANSPORT": browser_lease.transport,
+                            "AXIOM_BROWSER_ENDPOINT": browser_lease.endpoint,
+                            "AXIOM_BROWSER_LEASE_ID": browser_lease.lease_id,
+                            "AXIOM_BROWSER_SESSION_REF": browser_lease.session_ref,
+                            "AXIOM_BROWSER_GATEWAY_TOKEN": (
+                                getattr(self.browser_broker, "gateway_service_token", "")
+                                or self.service_token
+                            ),
+                        }
+                    )
+                    tool_names = list(dict.fromkeys([*tool_names, *BROWSER_TOOL_NAMES]))
         argv = self._build_argv(
             prompt,
             session_dir,
@@ -548,33 +563,72 @@ class PiBootstrapExecutor:
         if tracker is not None and tracker.lease_lost:
             raise LeaseLostError("Intent activity lease is no longer active")
         return result
-
     def close(self) -> None:
         """Release browser state after the complete claimed work lifecycle."""
 
         if self._browser_lease is not None and self.browser_broker is not None:
-            self.browser_broker.close_lease(
-                self._browser_lease,
-                save_session_path=self._browser_session_save_path(),
-            )
+            self.browser_broker.close_lease(self._browser_lease)
         self._browser_lease = None
 
     def _browser_session_save_path(self) -> str:
         """登录态落盘路径：<session基目录>/<origin域名>.json，供后续 lease 按 origin 注入。"""
         origin = getattr(self, "_browser_origin", "")
-        run_dir = getattr(self, "_browser_run_dir", "")
-        if not origin or not run_dir:
+        if not origin:
             return ""
         parsed = urlparse(origin if "://" in origin else f"//{origin}")
         host = (parsed.hostname or "").strip().lower().rstrip(".")
         if not host:
             return ""
-        base = self._browser_session_base(run_dir)
-        if not base:
-            return ""
+        base = self._browser_session_base()
         path = Path(base) / f"{host}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         return str(path)
+
+    def _browser_session_base() -> str:
+        """快照基目录：与 Chrome-SecTest profile 同址，登录态随 profile 持久。"""
+        base = os.environ.get("AXIOM_BROWSER_SESSION_DIR", "").strip()
+        if base:
+            return base
+        if sys.platform == "darwin":
+            return str((Path.home() / "Library/Application Support/Chrome-SecTest/browser-sessions").resolve())
+        return str((Path.home() / ".config/Chrome-SecTest/browser-sessions").resolve())
+
+    @staticmethod
+    def _browser_session_options(origin: str = "") -> tuple[str, bool]:
+        """Resolve the session snapshot for this lease.
+
+        优先级：AXIOM_BROWSER_PERSISTENT > AXIOM_BROWSER_SESSION 显式名称 >
+        按任务 origin 域名自动匹配（<域名>.json，支持后缀回退，如
+        qq.com.json 匹配 tdream.qq.com）> 干净上下文。
+        """
+        persistent = os.environ.get("AXIOM_BROWSER_PERSISTENT", "").strip().lower() in {"1", "true"}
+        if persistent:
+            return "", True
+        base = PiBootstrapExecutor._browser_session_base()
+        if not base:
+            return "", False
+        base_path = Path(base)
+        name = os.environ.get("AXIOM_BROWSER_SESSION", "").strip()
+        if name:
+            return str(base_path / f"{name}.json"), False
+        origin_text = (origin or "").strip()
+        host = ""
+        if origin_text:
+            parsed = urlparse(origin_text if "://" in origin_text else f"//{origin_text}")
+            host = (parsed.hostname or "").strip().lower().rstrip(".")
+        if not host:
+            return "", False
+        exact = base_path / f"{host}.json"
+        if exact.is_file():
+            return str(exact), False
+        matches = [
+            (len(item.stem), item)
+            for item in base_path.glob("*.json")
+            if "." in item.stem and host.endswith(f".{item.stem.lower()}")
+        ]
+        if matches:
+            return str(max(matches)[1]), False
+        return "", False
 
     def _ensure_browser_lease(
         self,
@@ -590,7 +644,7 @@ class PiBootstrapExecutor:
             return self._browser_lease
         assert self.browser_broker is not None
         session_path, persistent = self._browser_session_options(
-            execution_input.origin, run_dir=execution_input.run_dir
+            execution_input.origin
         )
         self._browser_origin = execution_input.origin
         self._browser_run_dir = execution_input.run_dir
@@ -631,55 +685,16 @@ class PiBootstrapExecutor:
         )
         self._browser_lease = handle
         return handle
-    @staticmethod
-    def _browser_session_base(run_dir: str = "") -> str:
-        base = os.environ.get("AXIOM_BROWSER_SESSION_DIR", "").strip()
-        if base:
-            return base
-        data_dir = os.environ.get("AXIOM_DATA_DIR", "").strip()
-        if not data_dir and run_dir:
-            candidate = Path(run_dir).resolve()
-            # run_dir = <data>/sandboxes/<task>/workspace/axiom/runs/<intent>/<lease>
-            if len(candidate.parents) > 6:
-                data_dir = str(candidate.parents[6])
-        return str(Path(data_dir) / "browser-sessions") if data_dir else ""
-    @staticmethod
 
-    def _browser_session_options(origin: str = "", run_dir: str = "") -> tuple[str, bool]:
-        """Resolve the session snapshot for this lease.
-
-        优先级：AXIOM_BROWSER_PERSISTENT > AXIOM_BROWSER_SESSION 显式名称 >
-        按任务 origin 域名自动匹配（<域名>.json，支持后缀回退，如
-        qq.com.json 匹配 tdream.qq.com）> 干净上下文。
-        """
-        persistent = os.environ.get("AXIOM_BROWSER_PERSISTENT", "").strip().lower() in {"1", "true"}
-        if persistent:
-            return "", True
-        base = PiBootstrapExecutor._browser_session_base(run_dir)
-        if not base:
-            return "", False
-        base_path = Path(base)
-        name = os.environ.get("AXIOM_BROWSER_SESSION", "").strip()
-        if name:
-            return str(base_path / f"{name}.json"), False
-        origin_text = (origin or "").strip()
-        host = ""
-        if origin_text:
-            parsed = urlparse(origin_text if "://" in origin_text else f"//{origin_text}")
+    @staticmethod
+    def _origin_hosts(origin: str = "") -> list[str]:
+        hosts: list[str] = []
+        for part in (origin or "").replace(",", " ").split():
+            parsed = urlparse(part if "://" in part else f"//{part}")
             host = (parsed.hostname or "").strip().lower().rstrip(".")
-        if not host:
-            return "", False
-        exact = base_path / f"{host}.json"
-        if exact.is_file():
-            return str(exact), False
-        matches = [
-            (len(item.stem), item)
-            for item in base_path.glob("*.json")
-            if "." in item.stem and host.endswith(f".{item.stem.lower()}")
-        ]
-        if matches:
-            return str(max(matches)[1]), False
-        return "", False
+            if host and host not in hosts:
+                hosts.append(host)
+        return hosts
 
     def _build_argv(
         self,

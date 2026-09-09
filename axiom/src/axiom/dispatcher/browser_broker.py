@@ -1012,6 +1012,11 @@ class BrowserBrokerServer:
         # 再清理 Playwright 连接；Browser.close() 会直接终止进程导致未落盘的登录态丢失。
         if not self.leases and self._chrome_pid is not None:
             async with self._connect_lock:
+                if not getattr(self, "_chrome_headless", True):
+                    # 有头模式空闲不退出：最小化收起，保留登录态与进程，
+                    # 操作者点 Dock 图标即可登录/查看。
+                    await self._minimize_all_windows()
+                    return
                 self._stop_owned_chrome()
                 for _ in range(40):
                     await asyncio.sleep(0.25)
@@ -1439,17 +1444,21 @@ class BrowserBrokerServer:
             "--no-first-run",
             "--no-default-browser-check",
             "--window-size=1280,800",
-            "--ignore-certificate-errors",
-            "--allow-insecure-localhost",
-            *ext_args,
         ]
-        headless_mode = os.environ.get("CHROME_HEADLESS", "1")
-        if headless_mode in {"1", "new"}:
+        headless_mode = os.environ.get("CHROME_HEADLESS", "").strip().lower()
+        if headless_mode in {"1", "new", "true"}:
             args.append("--headless=new")
         elif headless_mode in {"old", "legacy"}:
             args.append("--headless")
-        elif os.environ.get("CHROME_WINDOW") == "minimized":
-            args.append("--start-minimized")
+        else:
+            # 有头模式默认最小化启动：不抢操作者焦点，点 Dock 图标即可
+            # 登录/查看；空闲收起由 idle 分支的最小化逻辑负责。
+            if os.environ.get("CHROME_WINDOW", "minimized") == "minimized":
+                args.append("--start-minimized")
+            # 崩溃恢复会把历史 tab 成 pile 重新拉起，直接禁用恢复提示与恢复行为
+            args.append("--disable-session-crashed-bubble")
+            args.append("--hide-crash-restore-bubble")
+        self._chrome_headless = headless_mode in {"1", "new", "true", "old", "legacy"}
         if os.environ.get("AXIOM_CHROME_NO_SANDBOX", "") in {"1", "true"}:
             # 容器内以 root 运行 Chrome 必需；宿主机默认不开启
             args.append("--no-sandbox")
@@ -1519,6 +1528,12 @@ class BrowserBrokerServer:
         url = str(params.get("url") or "about:blank")
         self._require_target(lease, url)
         context = await self._ensure_browser(lease)
+        # 一个 Intent 一个 Tab：开新页前关闭本 lease 的旧页面。
+        for page_state in list(lease.pages.values()):
+            with contextlib.suppress(Exception):
+                await page_state.page.close()
+            await self._clear_refs(page_state)
+        lease.pages.clear()
         slot = lease.slot
         if (
             slot is not None
@@ -1626,9 +1641,16 @@ class BrowserBrokerServer:
     async def _navigate(
         self, lease: LeaseState, params: dict[str, Any]
     ) -> dict[str, Any]:
-        state = self._page(lease, params)
         url = str(params.get("url") or "")
         self._require_target(lease, url)
+        if not any(not s_.page.is_closed() for s_ in lease.pages.values()):
+            # 一个 Intent 一个 Tab：lease 内没有活页面时自动拉起唯一 tab，
+            # 后续导航复用；intent 结束随 lease 关闭。
+            context = await self._ensure_browser(lease)
+            page, _bg = await self._new_page_background(context, "about:blank")
+            state = await self._register_page(lease, page)
+        else:
+            state = self._page(lease, params)
         wait_until = str(params.get("wait_until") or "domcontentloaded")
         async with state.lock:
             try:
@@ -2529,7 +2551,18 @@ class BrowserBrokerServer:
     def _page(self, lease: LeaseState, params: dict[str, Any]) -> PageState:
         page_id = str(params.get("page_id") or "")
         if not page_id:
-            raise BrowserBrokerError("page_id_required", "该浏览器工具必须提供page_id")
+            # 弱模型常跳过 snapshot/list 直接调用，缺 page_id 时自动采用
+            # 该 lease 最新打开的活页面，避免被参数校验卡死。
+            live = [
+                (pid_, state_)
+                for pid_, state_ in lease.pages.items()
+                if not state_.page.is_closed()
+            ]
+            if not live:
+                raise BrowserBrokerError(
+                    "page_id_required", "当前 Browser Lease 没有已打开的页面；请先 browser_open_page"
+                )
+            page_id = live[-1][0]
         state = lease.pages.get(page_id)
         if state is None or state.page.is_closed():
             raise BrowserBrokerError("page_not_found", f"当前Browser Lease没有页面 {page_id}")

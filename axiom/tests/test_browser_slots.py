@@ -164,7 +164,7 @@ def test_slot_pool_frees_capacity_on_lease_close(tmp_path: Path) -> None:
     assert first_slot.context.closed is True
 
 
-def test_slot_page_limit_blocks_extra_pages(
+def test_open_page_closes_previous_tabs_one_tab_per_lease(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     server, _ = _server(tmp_path, page_limit=2)
@@ -172,13 +172,49 @@ def test_slot_page_limit_blocks_extra_pages(
     lease = server.leases["tok-l1"]
     assert lease.slot is not None
     for index in range(2):
-        lease.pages[f"p{index:03d}"] = PageState(
-            page_id=f"p{index:03d}", page=object(), target_id=f"t{index}"
+        lease.pages[f"legacy-{index}"] = PageState(
+            page_id=f"legacy-{index}", page=object(), target_id=f"t{index}"
         )
+    old_ids = {"legacy-0", "legacy-1"}
+
+    class FakeCDPSession:
+        async def send(self, method, params=None):
+            return {"targetInfo": {"targetId": "t-fake"}}
+
+    class FakePage:
+        url = "https://x.test"
+
+        def __init__(self) -> None:
+            self.context = self
+
+        async def new_cdp_session(self, page):
+            return FakeCDPSession()
+
+        async def new_page(self):
+            return self
+
+        def on(self, event, handler):
+            pass
+
+        async def close(self):
+            pass
+
+        async def goto(self, url, **kwargs):
+            pass
+
+        async def title(self):
+            return "fake"
+
+    async def fake_ensure_browser(lease):
+        return FakePage()
+
+    monkeypatch.setattr(server, "_ensure_browser", fake_ensure_browser)
     monkeypatch.setattr(server, "_require_target", lambda lease, url: None)
-    with pytest.raises(Exception) as raised:
-        asyncio.run(server._open_page(lease, {"url": "https://x.test"}))
-    assert raised.value.code == "slot_page_limit"  # type: ignore[attr-defined]
+    asyncio.run(server._open_page(lease, {"url": "https://x.test"}))
+
+    # 一个 Intent 一个 Tab：开新页时旧页面被关闭，lease 内只保留唯一 tab
+    assert lease.pages.keys().isdisjoint(old_ids)
+    assert len(lease.pages) == 1
 
 
 def test_persistent_slot_is_exclusive(tmp_path: Path) -> None:

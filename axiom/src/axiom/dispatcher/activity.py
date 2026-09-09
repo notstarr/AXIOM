@@ -38,6 +38,7 @@ _TOOL_PURPOSES = {
     "python": "执行分析脚本",
     "python3": "执行分析脚本",
     "node": "执行分析脚本",
+    "bsk": "浏览器自动化",
     "git": "读取代码仓库",
 }
 
@@ -438,6 +439,8 @@ def shell_executable(command: str) -> str:
                 continue
             if "$(" in token:
                 token = token.rsplit("$(", 1)[-1].strip(";&|(){}")
+            if token.startswith("$") and "axiom_bsk" in token.lower():
+                token = "bsk"
             name, separator, _value = token.partition("=")
             if separator and name.replace("_", "a").isalnum() and not name[0].isdigit():
                 continue

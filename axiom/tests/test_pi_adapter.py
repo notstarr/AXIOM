@@ -1145,7 +1145,9 @@ def test_explore_execute_and_conclude_reuse_the_same_pi_session(tmp_path) -> Non
 
 def test_explore_browser_skill_loads_native_tools_and_reuses_one_browser_lease(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("AXIOM_BROWSER_STACK", "legacy")
     rpc = _RecordingRpcSupervisor(tmp_path, invoke_steer=False)
     browser_skill = tmp_path / "browser-control"
     browser_skill.mkdir(parents=True)
@@ -1182,6 +1184,38 @@ def test_explore_browser_skill_loads_native_tools_and_reuses_one_browser_lease(
 
     executor.close()
     assert broker.closed == ["lease_test"]
+
+
+def test_explore_browser_stack_skill_injects_wrapper_without_broker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rpc = _RecordingRpcSupervisor(tmp_path, invoke_steer=False)
+    broker = _FakeBrowserBroker()
+    input_value = execution_input(tmp_path / "run").model_copy(
+        update={
+            "intent_kind": "explore",
+            "intent_description": "验证 BrowserSkill 栈注入",
+            "execute_timeout_seconds": 600,
+            "conclude_timeout_seconds": 180,
+        }
+    )
+    executor = PiExploreExecutor(
+        pi_worker(tmp_path / "unused-pi"),
+        rpc_supervisor=rpc,
+        browser_broker=broker,
+    )
+
+    executor.execute(input_value, lease_active=lambda: True)
+
+    assert broker.registrations == []
+    spec = rpc.specs[0]
+    assert spec.environment["AXIOM_BSK"].endswith("axiom-bsk")
+    assert any("browser-skill" in path for path in input_value.skill_directories)
+    assert set(BROWSER_TOOL_NAMES).isdisjoint(spec.command)
+
+    executor.close()
+    assert broker.closed == []
 
 
 def test_review_prompt_enforces_single_target_decision_and_review_artifact() -> None:
