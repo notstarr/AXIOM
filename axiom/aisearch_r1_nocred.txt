@@ -1,0 +1,7 @@
+--- response headers (rate-limit/quota related) ---
+--- body structure summary ---
+Traceback (most recent call last):
+  File "<string>", line 3, in <module>
+    d=json.load(open('/tmp/r1_body.json'))
+                ~~~~^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/r1_body.json'

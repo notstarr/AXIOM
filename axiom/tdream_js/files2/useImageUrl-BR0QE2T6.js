@@ -1,0 +1,1 @@
+import{a as t}from"./vendor-react-Ra4BYCkX.js";import{getOriginalUrl as n,looksLikeFileId as u}from"./cdnImage-C3FnAgES.js";function o(r){return u(r)}async function i(r,e=!1){return r?o(r)?n(r):r:""}function l(r){const e=t.useMemo(()=>r?o(r)?n(r):r:"",[r]),s=t.useCallback(()=>{},[]);return{url:e,loading:!1,error:null,refresh:s}}export{i as g,o as i,l as u};

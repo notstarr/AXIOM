@@ -175,17 +175,18 @@ def test_explore_completion_atomically_registers_artifact_fact_and_reason(client
 
     assert completed["fact_id"] == "f002"
     assert completed["reason_run_id"] == "rr000002"
+    # Evidence files without a referencing vulnerability stay copied to
+    # storage but no longer get their own index rows.
     assert [item["artifact_type"] for item in completed["artifacts"]] == [
         "explore.findings",
         "explore.leads",
-        "explore.evidence",
     ]
     assert [item["storage_key"].split("/")[-2:] for item in completed["artifacts"][:2]] == [
         [intents[0], "findings.md"],
         [intents[0], "leads.md"],
     ]
-    evidence = completed["artifacts"][2]
-    assert (data_dir / evidence["storage_key"]).read_text(encoding="utf-8").startswith("# 证据")
+    evidence_dir = data_dir / "tasks" / task["id"] / "artifacts" / intents[0] / "evidence"
+    assert evidence_dir.is_dir() and any(evidence_dir.iterdir())
     graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
     explore = next(item for item in graph["intents"] if item["id"] == intents[0])
     assert [item["id"] for item in graph["intents"]] == ["i001", "i002"]
@@ -496,11 +497,9 @@ def test_explore_reports_vulnerability_incrementally_and_fact_keeps_its_referenc
         for item in client.get(f"/api/v1/tasks/{task['id']}/graph").json()["facts"]
         if item["id"] == completed["fact_id"]
     )
-    assert "已完成 Explore Intent" in fact["description"]
-    assert "。。" not in fact["description"]
-    assert "vulnerability:v001" in fact["description"]
-    # The run directory is lease-specific; the durable artifact must be the
-    # only retained copy of the evidence file.
+    assert f"intent:{completed['intent_id']} 完成" in fact["description"]
+    assert "已完成 Explore Intent" not in fact["description"]
+    assert "vulns:v001" in fact["description"]
     assert not any(
         path.name == "response-1.md"
         for path in (data_dir / "runs" / task["id"] / intents[0]).rglob("*")

@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AXIOM Plan 全景声呐扫描动效演示</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --bg-color: #0b0f19;
+      --card-bg: #131b2e;
+      --card-border: #1e293b;
+      --amber-glow: #f59e0b;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: #e2e8f0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    /* 点阵网格背景 */
+    .bg-dot-grid {
+      background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+
+    /* 声呐波纹核心动画 */
+    .sonar-container {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .sonar-emitter {
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      background: #f59e0b;
+      border-radius: 9999px;
+      box-shadow: 0 0 20px 4px rgba(245, 158, 11, 0.8), 0 0 40px 8px rgba(245, 158, 11, 0.4);
+      z-index: 10;
+    }
+
+    .sonar-wave {
+      position: absolute;
+      border-radius: 9999px;
+      border: 1.5px solid rgba(245, 158, 11, 0.5);
+      background: radial-gradient(circle, rgba(245, 158, 11, 0.05) 0%, rgba(245, 158, 11, 0.01) 70%, transparent 100%);
+      box-shadow: 0 0 30px rgba(245, 158, 11, 0.15), inset 0 0 20px rgba(245, 158, 11, 0.1);
+      opacity: 0;
+      transform: scale(0.1);
+      animation: sonar-pulse 6s cubic-bezier(0.1, 0.4, 0.2, 1) infinite;
+    }
+
+    .sonar-wave-1 { animation-delay: 0s; }
+    .sonar-wave-2 { animation-delay: 2s; }
+    .sonar-wave-3 { animation-delay: 4s; }
+
+    @keyframes sonar-pulse {
+      0% {
+        width: 100px;
+        height: 100px;
+        opacity: 0.9;
+        transform: scale(0.1);
+        border-color: rgba(245, 158, 11, 0.8);
+      }
+      50% {
+        opacity: 0.6;
+        border-color: rgba(245, 158, 11, 0.4);
+      }
+      100% {
+        width: 2400px;
+        height: 2400px;
+        opacity: 0;
+        transform: scale(1);
+        border-color: rgba(245, 158, 11, 0);
+      }
+    }
+
+    /* 节点卡片被声呐扫过时的星火唤醒动画 */
+    .node-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      position: relative;
+      transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* 模拟波纹扫过节点时的金色脉冲高亮 */
+    @keyframes node-rekindle {
+      0%, 100% {
+        border-color: #1e293b;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+      }
+      30%, 60% {
+        border-color: #f59e0b;
+        box-shadow: 0 0 25px rgba(245, 158, 11, 0.35), inset 0 0 12px rgba(245, 158, 11, 0.15);
+      }
+    }
+
+    .rekindle-1 { animation: node-rekindle 6s infinite 0.8s; }
+    .rekindle-2 { animation: node-rekindle 6s infinite 1.8s; }
+    .rekindle-3 { animation: node-rekindle 6s infinite 2.8s; }
+    .rekindle-4 { animation: node-rekindle 6s infinite 3.8s; }
+
+    /* 金色呼吸信标 */
+    .beacon-amber {
+      box-shadow: 0 0 10px #f59e0b, 0 0 20px #f59e0b;
+      animation: beacon-pulse 2s infinite ease-in-out;
+    }
+
+    @keyframes beacon-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    /* 战术微光 HUD 边框 */
+    .hud-badge {
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      color: #fbbf24;
+      backdrop-filter: blur(8px);
+    }
+  </style>
+</head>
+<body class="w-screen h-screen relative select-none bg-dot-grid flex flex-col justify-between p-6">
+
+  <!-- 顶部状态栏 -->
+  <header class="flex items-center justify-between z-30">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center font-mono font-bold text-amber-400">
+        PL
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="text-sm font-bold tracking-wider text-slate-100 uppercase">CloudStudio // t_179</h1>
+          <span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse">
+            PHASE: PLAN
+          </span>
+        </div>
+        <p class="text-[11px] text-slate-400">全局常规探索队列已耗尽 · 红队总指挥开启全景深水区复盘</p>
+      </div>
+    </div>
+
+    <!-- 战术声呐状态指示 -->
+    <div class="hud-badge px-4 py-2 rounded-xl flex items-center gap-3 shadow-lg">
+      <span class="w-2.5 h-2.5 rounded-full bg-amber-400 beacon-amber"></span>
+      <div class="text-left font-mono">
+        <div class="text-[11px] font-bold tracking-wider text-amber-300">PANORAMA REVIEWING</div>
+        <div class="text-[9px] text-amber-400/70">SONAR SWEEP RADIUS: 100% · 130 FACTS RETRIEVING</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- 中间声呐动画与图谱视口区域 -->
+  <main class="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+    <!-- 声呐波纹发射中心 -->
+    <div class="sonar-container">
+      <div class="sonar-emitter"></div>
+      <div class="sonar-wave sonar-wave-1"></div>
+      <div class="sonar-wave sonar-wave-2"></div>
+      <div class="sonar-wave sonar-wave-3"></div>
+    </div>
+
+    <!-- 模拟图谱拓扑节点网络 -->
+    <div class="w-full max-w-6xl h-[650px] relative pointer-events-auto">
+
+      <!-- 中心指挥总控节点 (Plan Run) -->
+      <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 node-card w-72 rounded-2xl p-4 border-amber-500/50 shadow-2xl shadow-amber-500/20 bg-slate-900/90 backdrop-blur-md">
+        <div class="flex items-center justify-between border-b border-amber-500/20 pb-2 mb-2">
+          <span class="text-[10px] font-mono font-bold text-amber-400 uppercase">Plan Run // pr000002</span>
+          <span class="w-2 h-2 rounded-full bg-amber-400 beacon-amber"></span>
+        </div>
+        <h3 class="text-xs font-bold text-slate-100">🔥 全景深水区复盘总指挥</h3>
+        <p class="text-[10px] text-slate-400 mt-1 leading-relaxed">正在对全网 130 个 Fact、26 个漏洞证据进行跨域聚合重组与未测端点深挖...</p>
+        <div class="mt-3 flex items-center justify-between text-[9px] text-amber-400/80 font-mono">
+          <span>WORKER: deepseek-v4-flash</span>
+          <span>DISPATCHING...</span>
+        </div>
+      </div>
+
+      <!-- 内圈被扫过的节点 1 (靠近中心) -->
+      <div class="absolute top-[28%] left-[28%] node-card kindle-node rekindle-1 w-64 rounded-xl p-3 shadow-md z-10">
+        <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono mb-1">
+          <span>Fact #f181</span>
+          <span class="text-emerald-400">CONFIRMED</span>
+        </div>
+        <div class="text-xs font-semibold text-slate-200 truncate">v017 admin-cli 任意密码认证</div>
+        <p class="text-[10px] text-slate-400 mt-1 line-clamp-2">获取无密码微信用户有效身份令牌，但 scope 为空...</p>
+      </div>
+
+      <!-- 内圈被扫过的节点 2 -->
+      <div class="absolute top-[68%] left-[32%] node-card kindle-node rekindle-1 w-64 rounded-xl p-3 shadow-md z-10">
+        <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono mb-1">
+          <span>Fact #f170</span>
+          <span class="text-emerald-400">CONFIRMED</span>
+        </div>
+        <div class="text-xs font-semibold text-slate-200 truncate">Keycloak Realm 公开 RSA 公钥</div>
+        <p class="text-[10px] text-slate-400 mt-1 line-clamp-2">确认微服务网关采用 RS256 离线验签机制...</p>
+      </div>
+
+      <!-- 中圈被扫过的节点 3 (衍生出的新 Todo) -->
+      <div class="absolute top-[20%] right-[24%] node-card kindle-node rekindle-2 w-72 rounded-xl p-3 shadow-md z-10">
+        <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono mb-1">
+          <span>Todo #td047</span>
+          <span class="text-amber-400 font-bold">RE-ACTIVATED</span>
+        </div>
+        <div class="text-xs font-semibold text-amber-300 truncate">Keycloak 身份中枢深度突破与网关受众混淆</div>
+        <p class="text-[10px] text-slate-400 mt-1 line-clamp-2">聚合 f181 与 f170，测试网关是否仅验签而不校验 aud 声明...</p>
+      </div>
+
+      <!-- 中圈被扫过的节点 4 (历史已关闭但被声呐唤醒的 Todo) -->
+      <div class="absolute bottom-[22%] right-[26%] node-card kindle-node rekindle-2 w-64 rounded-xl p-3 shadow-md z-10">
+        <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono mb-1">
+          <span>Todo #td041</span>
+          <span class="text-rose-400">PREV: BLOCKED</span>
+        </div>
+        <div class="text-xs font-semibold text-slate-200 truncate">OAuth 回调劫持与 state 绕过</div>
+        <p class="text-[10px] text-slate-400 mt-1 line-clamp-2">重新设计通过 prompt=none 静默换取业务授权码的新路径...</p>
+      </div>
+
+      <!-- 外圈远端节点 5 (深水区新端点) -->
+      <div class="absolute top-[10%] left-[8%] node-card kindle-node rekindle-3 w-60 rounded-xl p-3 shadow-md z-10">
+        <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono mb-1">
+          <span>Fact #f112</span>
+          <span class="text-slate-400">UNTESTED 79 APIS</span>
+        </div>
+        <div class="text-xs font-semibold text-slate-200 truncate">/api/xcamp/* 79个全新端点</div>
+        <p class="text-[10px] text-slate-400 mt-1 line-clamp-1">JS Bundle 提取但前序从未测试的独立命名空间</p>
+      </div>
+
+      <!-- 外圈远端节点 6 (全新派发的 Explore Intent) -->
+      <div class="absolute bottom-[10%] left-[6%] node-card kindle-node rekindle-4 w-64 rounded-xl p-3 shadow-md z-10 border-emerald-500/30">
+        <div class="flex items-center justify-between text-[10px] font-mono mb-1">
+          <span class="text-emerald-400 font-bold">Intent #i195</span>
+          <span class="text-emerald-400 animate-pulse">RUNNING</span>
+        </div>
+        <div class="text-xs font-semibold text-slate-200 truncate">🔥 JWT Audience Confusion 测试</div>
+        <p class="text-[10px] text-slate-400 mt-1 line-clamp-2">向 /api/user/* 发送 Bearer 令牌验证网关穿透性</p>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- 底部战术控制与状态提示 -->
+  <footer class="flex items-center justify-between z-30 text-[11px] text-slate-400 font-mono">
+    <div class="flex items-center gap-4">
+      <span class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full bg-amber-400"></span> 声呐全景波纹扩散中
+      </span>
+      <span class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full border border-amber-400"></span> 节点脉冲点亮回溯
+      </span>
+    </div>
+    <div class="text-slate-500">
+      AXIOM AUTONOMOUS RED TEAM PLATFORM · REASON V3
+    </div>
+  </footer>
+
+</body>
+</html>

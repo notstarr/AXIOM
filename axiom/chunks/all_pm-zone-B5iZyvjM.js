@@ -1,0 +1,1 @@
+const s=["深度分析","职业访谈","实践方案"],c="实践方案",n=["碎片思考","求职面试","圈内八卦","行业动态"],a=[...s,...n],o={all:"全部精选",深度分析:"深度分析",职业访谈:"职业访谈",实践方案:"实践方案"};function t(_){return a.includes(_)}export{c as P,n as a,s as b,o as c,t as i};

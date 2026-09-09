@@ -1,0 +1,1 @@
+import{s,D as a,q as c}from"./index-BcB-ZebW.js";function i(u,n){const r=c(null);let e=null,t=!1;return s(()=>{r.value&&(e=new IntersectionObserver(l=>{for(const o of l)o.isIntersecting&&!t&&(t=!0,u(),e==null||e.disconnect())},{threshold:.5,rootMargin:n==null?void 0:n.rootMargin}),e.observe(r.value))}),a(()=>{e==null||e.disconnect()}),{elRef:r}}export{i as u};

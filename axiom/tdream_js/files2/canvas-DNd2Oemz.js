@@ -1,0 +1,1 @@
+function i(e,n,t){const a=new URLSearchParams,s=n??localStorage.getItem("currentTeamId");s&&a.set("team_id",String(s)),t&&typeof t=="string"&&t.startsWith("/")&&!t.startsWith("//")&&a.set("from",t);const r=a.toString();return r?`/canvas/${e}?${r}`:`/canvas/${e}`}export{i as b};

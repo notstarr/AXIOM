@@ -1,0 +1,1 @@
+import{f as c,Y as r,k as a,o as m,c as n}from"./index-BcB-ZebW.js";const p=c({__name:"index",setup(i){const e=r(),s=a(),t=e.params.code.slice(0,8),o=e.query.source||"";return sessionStorage.setItem("mars_claim_modal_code",t),o&&sessionStorage.setItem("mars_claim_source",o),s.replace("/community/my-shrimp"),(u,_)=>(m(),n("div"))}});export{p as default};

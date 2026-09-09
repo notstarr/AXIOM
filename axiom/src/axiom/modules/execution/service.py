@@ -1166,6 +1166,17 @@ class ExecutionService:
                         raise ConflictError("Intent is not ready for completion")
 
                     prepared.commit()
+                    referenced_evidence = {
+                        path
+                        for report in state.vulnerabilities
+                        for path in report.evidence_paths
+                    }
+                    include_filenames = {
+                        item.relative_name
+                        for item in prepared.files
+                        if specs[item.relative_name][0] != "explore.evidence"
+                        or item.relative_name in referenced_evidence
+                    }
                     records = self.artifacts.create_explore_bundle(
                         conn,
                         task_id=task_id,
@@ -1174,10 +1185,14 @@ class ExecutionService:
                         specs=specs,
                         created_by=row["worker"] or "explore",
                         now=now,
+                        include_filenames=include_filenames,
                     )
+                    included_items = [
+                        item for item in prepared.files if item.relative_name in include_filenames
+                    ]
                     artifact_by_relative = {
                         item.relative_name: record
-                        for item, record in zip(prepared.files, records, strict=True)
+                        for item, record in zip(included_items, records, strict=True)
                     }
                     finding_artifact = artifact_by_relative[EXPLORE_FINDINGS_FILE]
                     vulnerability_records = []
@@ -1238,7 +1253,7 @@ class ExecutionService:
                             id=fact_id,
                             task_id=task_id,
                             description=self._explore_fact(
-                                intent_description=row["intent_description"],
+                                intent_id=intent_id,
                                 artifacts=records,
                                 vulnerability_ids=[item.id for item in vulnerability_records],
                             ),
@@ -1402,44 +1417,19 @@ class ExecutionService:
 
     @staticmethod
     def _bootstrap_fact(records) -> str:
-        labels = {
-            "bootstrap.asset_inventory": "资产清单",
-            "bootstrap.initial_leads": "初始线索",
-            "bootstrap.findings": "已确认问题",
-        }
-        refs = "；".join(
-            f"{labels.get(item.artifact_type, item.artifact_type)} artifact:{item.id}"
-            for item in records
-        )
-        return f"Bootstrap 已完成初始攻击面收集。产物索引：{refs}。"
+        refs = "/".join(item.id for item in records)
+        return f"Bootstrap 初始攻击面收集完成；artifacts:{refs}。"
 
     @staticmethod
     def _explore_fact(
         *,
-        intent_description: str,
+        intent_id: str,
         artifacts,
         vulnerability_ids: list[str],
     ) -> str:
-        intent_summary = intent_description.strip()
-        if not intent_summary.endswith(("。", "！", "？", ".", "!", "?")):
-            intent_summary += "。"
-        by_type = {item.artifact_type: item for item in artifacts}
-        findings = by_type["explore.findings"]
-        leads = by_type["explore.leads"]
-        evidence_count = sum(item.artifact_type == "explore.evidence" for item in artifacts)
-        vulnerability_refs = "、".join(
-            f"vulnerability:{item_id}" for item_id in vulnerability_ids
-        )
-        vulnerability_summary = (
-            f"本轮上报漏洞：{vulnerability_refs}。"
-            if vulnerability_refs
-            else "本轮未上报已确认漏洞。"
-        )
-        return (
-            f"已完成 Explore Intent：{intent_summary}"
-            f"已确认事实：artifact:{findings.id}；待验证线索：artifact:{leads.id}；"
-            f"证据文件：{evidence_count} 个。{vulnerability_summary}"
-        )
+        artifact_refs = "/".join(item.id for item in artifacts)
+        vulnerability_refs = "/".join(vulnerability_ids) if vulnerability_ids else "无"
+        return f"intent:{intent_id} 完成；artifacts:{artifact_refs}；vulns:{vulnerability_refs}。"
 
     @staticmethod
     def _require_row(row, task_id: str, intent_id: str) -> None:

@@ -87,7 +87,7 @@ def test_bootstrap_closeout_is_atomic_and_materializes_registered_files(client, 
     assert task_after["active_reason_run"] is None
     assert [item["id"] for item in task_after["queued_reason_runs"]] == ["rr000001"]
     fact = next(fact for fact in graph["facts"] if fact["id"] == "f001")
-    assert all(f"artifact:a00{number}" in fact["description"] for number in (1, 2))
+    assert "artifacts:a001/a002" in fact["description"]
 
     artifacts = client.get(f"/api/v1/tasks/{task['id']}/artifacts").json()
     assert len(artifacts) == 2

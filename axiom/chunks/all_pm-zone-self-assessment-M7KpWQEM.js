@@ -1,0 +1,1 @@
+import{n as s}from"./index-BcB-ZebW.js";const n={getQuestions(){return s.get("/pm-zone/self-assessment/questions")},submit(e){return s.post("/pm-zone/self-assessment/submit",e)},getLatest(){return s.get("/pm-zone/self-assessment/latest")}};export{n as p};

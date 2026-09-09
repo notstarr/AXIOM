@@ -1,0 +1,1 @@
+import{q as i,s,v as d}from"./index-BcB-ZebW.js";const a=767;function c(){const n=i(typeof window<"u"&&window.matchMedia(`(max-width: ${a}px)`).matches);let e=null;function t(o){n.value=o.matches}return s(()=>{e=window.matchMedia(`(max-width: ${a}px)`),n.value=e.matches,e.addEventListener("change",t)}),d(()=>{e==null||e.removeEventListener("change",t)}),n}export{c as u};

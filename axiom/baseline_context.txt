@@ -1,0 +1,4 @@
+BASELINE: 前端真实发送的X-Workspace-Context(2026-09-02浏览器抓包)
+appcode=metacode-workbench appId=183187873502072836 platformUserId=202732096253333504 externalSubjectId=913508032693940224 organizationCode=000
+accessToken(解码): iss=913508032693940224 exp=1790756127 jti=9529631795515518978 cus.tenant_id=18070700075077
+instanceId=125fa67b-a7a5-4cb0-b85e-c40ec0b3491a

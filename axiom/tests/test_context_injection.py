@@ -46,3 +46,64 @@ def test_injection_is_delimited_hashed_and_keeps_manifest_refs(tmp_path: Path) -
     assert "h001" in injected.text
     assert "hints.json" in injected.source_refs
     assert injected.estimated_tokens > 0
+
+
+def test_injection_renders_catalog_cards_and_drops_removed_indexes(tmp_path: Path) -> None:
+    root = tmp_path / "context"
+    (root / "details" / "intent").mkdir(parents=True)
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "revision": 9,
+                "phase": "reason",
+                "indexes": {
+                    "hints": "hints.json",
+                    "knowledge": "knowledge.json",
+                    "artifacts": "artifacts.json",
+                    "vulnerabilities": "vulnerabilities.json",
+                    "todos": "todos.json",
+                    "graph": "graph.json",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "hints.json").write_text("[]", encoding="utf-8")
+    (root / "knowledge.json").write_text("[]", encoding="utf-8")
+    (root / "artifacts.json").write_text(
+        json.dumps(
+            [
+                {"id": "a001", "type": "explore.findings", "summary": "事实"},
+                {"id": "a002", "type": "explore.leads", "summary": "线索"},
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    # Even large removed-index payloads must never leak into the prompt body.
+    big_rows = [{"id": f"v{i:03d}", "title": "漏" * 200} for i in range(50)]
+    (root / "todos.json").write_text("[]", encoding="utf-8")
+    (root / "graph.json").write_text(json.dumps({"facts": []}), encoding="utf-8")
+    revision = ContextRevision(
+        task_id="t001",
+        revision=9,
+        phase="reason",
+        intent_id=None,
+        manifest_key="contexts/t001/r000009/manifest.json",
+        manifest_path=str(root / "manifest.json"),
+        content_hash="context-hash",
+        created_at="2026-09-09T00:00:00Z",
+    )
+
+    injected = ContextInjectionService().build(revision=revision, phase="reason")
+
+    # Catalog cards replace full index bodies.
+    assert "共 2 行" in injected.text and "a001-a002" in injected.text
+    # Removed indexes: no row bodies, no titles in the prompt body.
+    assert "漏" * 200 not in injected.text
+    assert "## vulnerabilities" not in injected.text
+    assert "## todos" not in injected.text
+    assert "## graph" not in injected.text
+    assert "whatisvul" not in injected.text
+    # Catalog cards stay tiny: whole block far below the 24K-token budget.
+    assert injected.estimated_tokens < 2_000

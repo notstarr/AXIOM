@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Sandbox Probe</title>
+</head>
+<body>
+<h1>Sandbox Security Probe</h1>
+<hr>
+<h2>Test 1: Document Domain</h2>
+<pre id="test1">checking...</pre>
+
+<h2>Test 2: Cookie Access (document.cookie)</h2>
+<pre id="test2">checking...</pre>
+
+<h2>Test 3: localStorage Access</h2>
+<pre id="test3">checking...</pre>
+
+<h2>Test 4: sessionStorage Access</h2>
+<pre id="test4">checking...</pre>
+
+<h2>Test 5: window.parent access</h2>
+<pre id="test5">checking...</pre>
+
+<h2>Test 6: window.top access</h2>
+<pre id="test6">checking...</pre>
+
+<h2>Test 7: window.opener</h2>
+<pre id="test7">checking...</pre>
+
+<h2>Test 8: window.open (popup to main site)</h2>
+<pre id="test8">checking...</pre>
+
+<h2>Test 9: URL Parameters (token)</h2>
+<pre id="test9">checking...</pre>
+
+<h2>Test 10: XMLHttpRequest to main site</h2>
+<pre id="test10">checking...</pre>
+
+<script>
+// Test 1: Document Domain
+document.getElementById('test1').textContent = 'domain: ' + document.domain;
+
+// Test 2: Cookie Access
+try {
+  var cookies = document.cookie;
+  document.getElementById('test2').textContent = cookies.length > 0 ? cookies : 'NO COOKIES (empty)';
+} catch(e) {
+  document.getElementById('test2').textContent = 'Error: ' + e.message;
+}
+
+// Test 3: localStorage
+try {
+  localStorage.setItem('probe_test', 'hello');
+  var ls_val = localStorage.getItem('probe_test');
+  localStorage.removeItem('probe_test');
+  document.getElementById('test3').textContent = 'localStorage ACCESSIBLE, test value: ' + ls_val;
+} catch(e) {
+  document.getElementById('test3').textContent = 'Error: ' + e.message;
+}
+
+// Test 4: sessionStorage
+try {
+  sessionStorage.setItem('probe_test', 'hello');
+  var ss_val = sessionStorage.getItem('probe_test');
+  sessionStorage.removeItem('probe_test');
+  document.getElementById('test4').textContent = 'sessionStorage ACCESSIBLE, test value: ' + ss_val;
+} catch(e) {
+  document.getElementById('test4').textContent = 'Error: ' + e.message;
+}
+
+// Test 5: window.parent
+try {
+  var parentDomain = window.parent.document.domain;
+  document.getElementById('test5').textContent = 'ACCESSIBLE: ' + parentDomain;
+} catch(e) {
+  document.getElementById('test5').textContent = 'BLOCKED: ' + e.message;
+}
+
+// Test 6: window.top
+try {
+  var topDomain = window.top.document.domain;
+  document.getElementById('test6').textContent = 'ACCESSIBLE: ' + topDomain;
+} catch(e) {
+  document.getElementById('test6').textContent = 'BLOCKED: ' + e.message;
+}
+
+// Test 7: window.opener
+if (window.opener) {
+  document.getElementById('test7').textContent = 'opener exists: ' + window.opener;
+} else {
+  document.getElementById('test7').textContent = 'No opener (this is expected for iframe)';
+}
+
+// Test 8: window.open popup
+try {
+  var popup = window.open('https://lexiangla.com/c/ai', '_blank', 'width=400,height=300');
+  if (popup) {
+    document.getElementById('test8').textContent = 'Popup opened successfully (window.open returned object)';
+    // Try to access the popup after a delay
+    setTimeout(function() {
+      try {
+        var popupDomain = popup.document.domain;
+        document.getElementById('test8').textContent = 'Popup ACCESSIBLE, domain: ' + popupDomain;
+      } catch(e2) {
+        document.getElementById('test8').textContent = 'Popup opened but cross-origin BLOCKED: ' + e2.message;
+      }
+    }, 2000);
+  } else {
+    document.getElementById('test8').textContent = 'Popup BLOCKED (popup blocker or sandbox prevents it)';
+  }
+} catch(e) {
+  document.getElementById('test8').textContent = 'Error opening popup: ' + e.message;
+}
+
+// Test 9: URL Parameters
+try {
+  var url = window.location.href;
+  var params = new URLSearchParams(window.location.search);
+  document.getElementById('test9').textContent = 'Full URL: ' + url + '\nHas token param: ' + params.has('token');
+} catch(e) {
+  document.getElementById('test9').textContent = 'Error: ' + e.message;
+}
+
+// Test 10: XHR to main site
+try {
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', 'https://lexiangla.com/c/ai', false);
+  xhr.withCredentials = true;
+  xhr.send();
+  document.getElementById('test10').textContent = 'Status: ' + xhr.status + ', Response length: ' + xhr.responseText.length;
+} catch(e) {
+  document.getElementById('test10').textContent = 'CORS BLOCKED: ' + e.message;
+}
+</script>
+</body>
+</html>

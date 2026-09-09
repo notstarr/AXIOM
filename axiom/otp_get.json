@@ -1,0 +1,3 @@
+{
+    "message": "The GET method is not supported for route api/auth/otp. Supported methods: POST."
+}

@@ -1,0 +1,1 @@
+import{n as e}from"./index-BcB-ZebW.js";const i={list(t={}){return e.get("/creations",{params:t})},detail(t){return e.get(`/creations/${t}`)},categories(){return e.get("/creations/categories")}};export{i as c};

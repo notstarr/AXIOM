@@ -623,7 +623,6 @@ class ContextService:
                     "created_at": row["created_at"],
                     "archived": bool(row.get("archived", False)),
                     **fact_provenance(row["id"]),
-                    "preview": _preview(row["description"]),
                     "ref": f"fact:{row['id']}",
                     "detail": _detail_path(f"fact:{row['id']}"),
                 }
@@ -655,8 +654,6 @@ class ContextService:
                             targets=_json_list(row.get("targets_json")),
                         )
                     ),
-                    "plan_metadata": _json_object(row.get("plan_metadata_json")),
-                    "preview": _preview(row["description"]),
                     "ref": f"intent:{row['id']}",
                     "detail": _detail_path(f"intent:{row['id']}"),
                 }

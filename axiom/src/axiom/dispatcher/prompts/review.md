@@ -11,7 +11,7 @@
 ## 唯一职责与流程
 
 1. **读取上下文与标准**：
-   - `review_target.json` 摘要、`hints.json`、`vulnerabilities.json`、相关 Fact/Intent、Evidence 索引，以及 `whatisvul/SKILL.md` 已由 AXIOM 直接注入；不要重复读取已注入内容。
+   - `review_target.json` 摘要、`hints`、`artifacts` 目录卡与相关 Fact/Intent 摘要已由 AXIOM 注入；不要重复读取已注入内容。**whatisvul 判定标准不再注入**：复核判定与 CVSS 评级前，运行 `axiom skill path whatisvul` 并完整读取 `whatisvul/SKILL.md`。
    - 需要完整 Finding/Evidence 正文时按 Manifest 路径读取。若分配了 `vuln-review`，运行 `axiom skill path vuln-review`，按该 Skill 的“必读附件”规则读取对应状态示例；未分配该 Skill 时不要把它当作缺失依赖。
 2. **独立验证（必须）**：
    - 不创建 Fact、Todo 或 Intent；只提交当前漏洞的审核裁决。

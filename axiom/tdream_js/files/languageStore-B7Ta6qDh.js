@@ -1,0 +1,1 @@
+import{a as s}from"./vendor-state-BZZVt7CA.js";import{p as u}from"./middleware-Bz6aPbJ4.js";const o=["en","zh-CN"],l=s()(u(g=>({language:"zh-CN",setLanguage:a=>g({language:a})}),{name:"language-storage",merge:(g,a)=>{const e=g,n=e?.language&&o.includes(e.language)?e.language:a.language;return{...a,...e,language:n}}}));export{l as u};

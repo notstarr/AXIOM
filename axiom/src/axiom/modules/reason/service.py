@@ -1150,7 +1150,7 @@ class ReasonService:
                     todos.c.archived.is_(False),
                     ~todo_has_open_explore,
                 )
-                .order_by(todos.c.priority.desc(), todos.c.id)
+                .order_by(todos.c.created_at, todos.c.id)
             ).scalars()
         )
         return {
@@ -1964,21 +1964,7 @@ class ReasonService:
                                 if staged_update and staged_update.title
                                 else todo.title
                             ),
-                            category=(
-                                staged_update.category
-                                if staged_update and staged_update.category
-                                else todo.category
-                            ),
-                            theme=(
-                                staged_update.theme
-                                if staged_update and staged_update.theme is not None
-                                else todo.theme
-                            ),
-                            priority=(
-                                staged_update.priority
-                                if staged_update and staged_update.priority is not None
-                                else todo.priority
-                            ),
+                            category="other",
                             status=(
                                 staged_update.status
                                 if staged_update and staged_update.status is not None
@@ -2598,7 +2584,7 @@ class ReasonService:
                     terminal_explore_exists,
                     ~open_explore_exists,
                 )
-                .order_by(todos.c.priority.desc(), todos.c.id)
+                .order_by(todos.c.created_at, todos.c.id)
             ).scalars()
         )
 

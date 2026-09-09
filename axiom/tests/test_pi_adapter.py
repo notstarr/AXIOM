@@ -863,9 +863,9 @@ def test_explore_prompt_prioritizes_injected_context_over_progressive_details() 
         },
     )
 
-    assert "已由 AXIOM 直接注入本轮系统提示词" in prompt
-    assert "不要重复 cat/read 这些已注入内容" in prompt
-    assert "再按 Context Manifest 的路径按需读取" in prompt
+    assert "已由 AXIOM 注入" in prompt
+    assert "按卡内路径按需读取" in prompt
+    assert "严禁无脑全盘读取历史" in prompt
 
 
 @pytest.mark.parametrize(

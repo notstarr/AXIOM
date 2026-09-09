@@ -1,0 +1,1 @@
+import{f as o,c as n,a as s,o as c}from"./index-BcB-ZebW.js";const a={class:"icon-miyo"},t=["xlink:href"],m=o({__name:"MeyoIcon",props:{name:{}},setup(e){return(r,i)=>(c(),n("svg",a,[s("use",{"xlink:href":`#icon-miyo-${e.name}`},null,8,t)]))}});export{m as _};

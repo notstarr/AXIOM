@@ -1,0 +1,14 @@
+https://s3.meituan.net/static-prod01/ws-assets/com.sankuai.ai.meyo.web/3AgxGPAA7ufLxEAXDfUxn/assets/index-BcB-ZebW.js
+https://s3.meituan.net/static-prod01/ws-assets/com.sankuai.ai.meyo.web/3AgxGPAA7ufLxEAXDfUxn/assets/index-Bn5D_8lR.js
+https://s3.meituan.net/static-prod01/ws-assets/com.sankuai.ai.meyo.web/3AgxGPAA7ufLxEAXDfUxn/assets/use-im-mini-chat-juwLXHCn.js
+https://s3.meituan.net/static-prod01/ws-assets/com.sankuai.ai.meyo.web/3AgxGPAA7ufLxEAXDfUxn/assets/workbuddy-BoMEhk91.js
+https://s3.meituan.net/static-prod01/ws-assets/com.sankuai.ai.meyo.web/3AgxGPAA7ufLxEAXDfUxn/assets/feed-DI6dvoAM.js
+https://s3.meituan.net/static-prod01/ws-assets/com.sankuai.ai.meyo.web/3AgxGPAA7ufLxEAXDfUxn/assets/skill-DkO8iB4q.js
+https://s3.meituan.net/static-prod01/ws-assets/com.sankuai.ai.meyo.web/3AgxGPAA7ufLxEAXDfUxn/assets/index-Dbpyse-E.js
+https://s3.meituan.net/static-prod01/ws-assets/com.sankuai.ai.meyo.web/3AgxGPAA7ufLxEAXDfUxn/assets/FeedCard-DHc-8CyZ.js
+https://s3.meituan.net/static-prod01/ws-assets/com.sankuai.ai.meyo.web/3AgxGPAA7ufLxEAXDfUxn/assets/ShrimpCardActions.vue_vue_type_script_setup_true_lang-DfkoCOCE.js
+https://s3.meituan.net/static-prod01/ws-assets/com.sankuai.ai.meyo.web/3AgxGPAA7ufLxEAXDfUxn/assets/useFeedList-g_5D2vzM.js
+https://s3.meituan.net/static-prod01/ws-assets/com.sankuai.ai.meyo.web/3AgxGPAA7ufLxEAXDfUxn/assets/shrimpt-D75Cwjgd.js
+https://s3.meituan.net/static-prod01/ws-assets/com.sankuai.ai.meyo.web/3AgxGPAA7ufLxEAXDfUxn/assets/ShrimpSearchCard.vue_vue_type_script_setup_true_lang-BB68D2qV.js
+https://s3.meituan.net/static-prod01/ws-assets/com.sankuai.ai.meyo.web/3AgxGPAA7ufLxEAXDfUxn/assets/SkillCard.vue_vue_type_script_setup_true_lang-B_Ub2Wfg.js
+https://s3.meituan.net/static-prod01/ws-assets/com.sankuai.ai.meyo.web/3AgxGPAA7ufLxEAXDfUxn/assets/skill-C6QUuPX7.js

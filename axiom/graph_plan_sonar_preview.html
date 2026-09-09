@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AXIOM 图谱界面 Plan 全景声呐与悬停预览效果展示</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+  <style>
+    /* 严格对齐 axiom/src/axiom/static/custom.css 中的色系与动画 */
+    :root {
+      --bg-canvas: #f8fafc;
+      --border-default: #e2e8f0;
+    }
+
+    body {
+      background-color: var(--bg-canvas);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    .plan-beacon {
+      position: relative;
+      width: 10px;
+      height: 10px;
+      border-radius: 9999px;
+      background: #0ea5e9;
+      box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.22), 0 0 16px rgba(14, 165, 233, 0.55);
+    }
+    .plan-beacon::after {
+      content: "";
+      position: absolute;
+      inset: -6px;
+      border-radius: 9999px;
+      border: 1.5px solid rgba(14, 165, 233, 0.55);
+      animation: reasonBeaconPulse 1.8s ease-out infinite;
+    }
+
+    .plan-panel-running::before {
+      content: "";
+      position: absolute;
+      inset: -6px;
+      border-radius: 22px;
+      background: radial-gradient(circle, rgba(14, 165, 233, 0.22), rgba(14, 165, 233, 0));
+      animation: reasonPanelPulse 2.1s ease-out infinite;
+      pointer-events: none;
+    }
+
+    @keyframes reasonBeaconPulse {
+      0% { transform: scale(0.72); opacity: 0.9; }
+      70% { transform: scale(1.45); opacity: 0; }
+      100% { transform: scale(1.45); opacity: 0; }
+    }
+
+    @keyframes reasonPanelPulse {
+      0% { transform: scale(0.96); opacity: 0; }
+      40% { transform: scale(1.02); opacity: 1; }
+      100% { transform: scale(1.08); opacity: 0; }
+    }
+
+    /* Plan 阶段图谱全景天蓝色声呐扩散扫描波纹动效 */
+    .graph-plan-sonar {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+      z-index: 1;
+    }
+    .graph-plan-sonar-wave {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0.05);
+      border-radius: 9999px;
+      border: 1.5px solid rgba(14, 165, 233, 0.45);
+      background: radial-gradient(circle, rgba(14, 165, 233, 0.05) 0%, rgba(14, 165, 233, 0.01) 60%, transparent 100%);
+      box-shadow: 0 0 25px rgba(14, 165, 233, 0.15), inset 0 0 15px rgba(14, 165, 233, 0.1);
+      opacity: 0;
+      animation: graphPlanSonarPulse 5.5s cubic-bezier(0.1, 0.4, 0.2, 1) infinite;
+    }
+    .graph-plan-sonar-wave-1 { animation-delay: 0s; }
+    .graph-plan-sonar-wave-2 { animation-delay: 1.8s; }
+    .graph-plan-sonar-wave-3 { animation-delay: 3.6s; }
+
+    @keyframes graphPlanSonarPulse {
+      0% {
+        width: 80px;
+        height: 80px;
+        opacity: 0.85;
+        transform: translate(-50%, -50%) scale(0.05);
+        border-color: rgba(14, 165, 233, 0.75);
+      }
+      50% {
+        opacity: 0.45;
+        border-color: rgba(14, 165, 233, 0.4);
+      }
+      100% {
+        width: 2200px;
+        height: 2200px;
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(1);
+        border-color: rgba(14, 165, 233, 0);
+      }
+    }
+  </style>
+</head>
+<body class="h-screen w-screen flex flex-col antialiased" x-data="graphMockApp()">
+
+  <!-- 顶部主导航栏 (与线上一致) -->
+  <header class="h-14 shrink-0 bg-white border-b border-slate-200/80 px-4 flex items-center justify-between z-30">
+    <div class="flex items-center gap-4">
+      <a href="javascript:void(0)" class="flex items-center gap-2 text-slate-800 font-bold text-sm">
+        <div class="w-7 h-7 rounded-lg bg-slate-900 text-white flex items-center justify-center font-mono font-bold text-xs">AX</div>
+        <span>cloudstudio</span>
+        <span class="text-xs font-normal text-slate-400 font-mono">t_179</span>
+      </a>
+      <div class="flex items-center rounded-lg bg-slate-100 p-0.5 text-xs font-medium text-slate-600">
+        <button class="px-3 py-1 rounded-md text-slate-500 hover:text-slate-800">概览</button>
+        <button class="px-3 py-1 rounded-md bg-white text-slate-800 shadow-xs font-semibold">图谱</button>
+        <button class="px-3 py-1 rounded-md text-slate-500 hover:text-slate-800">归档</button>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-xs font-medium">
+        <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+        <span>运行中 · 阶段: Plan</span>
+      </div>
+      <button class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50">刷新</button>
+    </div>
+  </header>
+
+  <!-- 图谱主体区域 -->
+  <div class="flex-1 relative flex overflow-hidden">
+
+    <!-- 真实 Cytoscape 图谱画布容器 -->
+    <div class="flex-1 relative bg-slate-50/60 overflow-hidden">
+      
+      <!-- 1. Plan 阶段全图背景声呐扩散扫描动画层 -->
+      <div class="graph-plan-sonar" x-show="isPlanActive">
+        <div class="graph-plan-sonar-wave graph-plan-sonar-wave-1"></div>
+        <div class="graph-plan-sonar-wave-2"></div>
+        <div class="graph-plan-sonar-wave-3"></div>
+      </div>
+
+      <!-- Cytoscape Canvas 挂载点 -->
+      <div id="cy-container" class="absolute inset-0 z-0"></div>
+
+      <!-- 2. 图谱右上角：Plan 运行状态卡片 (天蓝色系) -->
+      <div class="absolute top-4 right-4 z-20 w-80 max-w-[calc(100vw-1.5rem)] select-none">
+        <div class="relative cursor-pointer" @click="planStackExpanded = !planStackExpanded">
+          <!-- 堆叠卡片阴影效果 -->
+          <template x-if="!planStackExpanded">
+            <div class="absolute -bottom-2 left-2 right-2 h-12 rounded-2xl border border-sky-300/40 bg-sky-50/70 shadow-md backdrop-blur -z-10"></div>
+          </template>
+          
+          <!-- 主卡片 -->
+          <div class="plan-panel-running relative overflow-hidden rounded-2xl border border-sky-200/80 bg-white/95 px-4 py-3.5 shadow-lg shadow-sky-100/60 backdrop-blur transition hover:border-sky-300">
+            <div class="flex items-start gap-3">
+              <span class="plan-beacon mt-1 shrink-0"></span>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between gap-2">
+                  <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-600 flex items-center gap-1.5">
+                    <span>PlanRun pr000002</span>
+                    <span class="px-1.5 py-0.5 text-[9px] font-bold rounded-md bg-sky-500 text-white">+1 排队</span>
+                  </div>
+                  <div class="flex items-center gap-1">
+                    <span class="shrink-0 rounded-full border border-sky-100 bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-700">全景深水区复盘</span>
+                    <span class="text-xs text-sky-500" x-text="planStackExpanded ? '▲' : '▼'"></span>
+                  </div>
+                </div>
+                <div class="mt-0.5 text-sm font-semibold text-slate-700 truncate">deepseek-v4-flash</div>
+                <p class="mt-2 text-sm font-medium leading-relaxed text-slate-700">正在进行全景深水区复盘，跨 Fact 聚合线索并深挖未测端点...</p>
+                <div class="mt-2 text-[11px] text-slate-500">
+                  <span class="text-slate-400">正在使用</span>
+                  <span class="ml-2 font-mono font-medium text-slate-600">whatisvul · bash</span>
+                </div>
+                <div class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] text-slate-500 border-t border-slate-100/80 pt-2.5">
+                  <div><span class="block text-slate-400">Plan 轮次</span><span class="mt-0.5 block font-medium text-sky-600">第 2 次</span></div>
+                  <div><span class="block text-slate-400">最后更新</span><span class="mt-0.5 block font-medium text-slate-600">刚刚 (10:52:18)</span></div>
+                  <div><span class="block text-slate-400">触发器</span><span class="mt-0.5 block font-medium text-slate-600">explore_exhaustion</span></div>
+                  <div><span class="block text-slate-400">已派发</span><span class="mt-0.5 block font-medium text-emerald-600">4 Todo / 5 Intent</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 折叠展开的排队列表 -->
+          <div x-show="planStackExpanded" class="mt-2 space-y-2">
+            <div class="text-[11px] font-semibold text-slate-400 px-1 flex items-center justify-between">
+              <span>Plan 排队列表 (FIFO)</span>
+              <span class="font-mono text-sky-600">1 个</span>
+            </div>
+            <div class="rounded-xl border border-sky-200/60 bg-sky-50/90 p-3 shadow-sm backdrop-blur">
+              <div class="flex items-center justify-between">
+                <span class="font-mono text-xs font-bold text-sky-700">pr000003</span>
+                <span class="px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 text-[10px] font-medium">排队 #1</span>
+              </div>
+              <div class="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+                <span>触发源: <strong class="text-slate-700">schedule_reconcile</strong></span>
+                <span>10:45:00</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 图谱控制按钮 -->
+      <div class="absolute bottom-4 left-4 z-20 flex items-center gap-1.5 bg-white/90 backdrop-blur p-1 rounded-xl border border-slate-200 shadow-sm">
+        <button @click="fitGraph()" class="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 text-xs font-medium px-2.5">自适应居中</button>
+        <button @click="isPlanActive = !isPlanActive" class="p-1.5 rounded-lg text-xs font-medium px-2.5" :class="isPlanActive ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'" x-text="isPlanActive ? '声呐动效: 开启' : '声呐动效: 关闭'"></button>
+      </div>
+
+    </div>
+
+    <!-- 右侧 Todo / 节点属性抽屉 (包含 Intent 悬浮 Tooltip 效果) -->
+    <aside class="w-96 shrink-0 bg-white border-l border-slate-200/80 flex flex-col z-20 shadow-lg">
+      <div class="p-4 border-b border-slate-100 flex items-center justify-between">
+        <div>
+          <h3 class="text-sm font-semibold text-slate-800">Todo 覆盖与执行状态</h3>
+          <p class="text-xs text-slate-400 mt-0.5">鼠标移到 Intent 上可查看原始详细描述</p>
+        </div>
+        <span class="px-2 py-0.5 rounded bg-brand-50 text-brand-700 text-[11px] font-semibold text-indigo-600 bg-indigo-50">47/54 完成</span>
+      </div>
+
+      <div class="flex-1 overflow-y-auto p-4 space-y-3.5">
+        
+        <!-- Todo 1: Keycloak 深度突破 (含多个子 Intent) -->
+        <article class="rounded-xl border border-slate-200 bg-white p-3.5 hover:border-slate-300 transition shadow-xs">
+          <div class="flex items-start justify-between gap-2">
+            <span class="font-mono text-xs font-bold text-slate-500">td047</span>
+            <span class="px-1.5 py-0.5 rounded border text-[9px] border-amber-200 bg-amber-50 text-amber-700 font-medium">进行中</span>
+          </div>
+          <h4 class="mt-1.5 text-xs font-semibold text-slate-800 leading-snug">🔥 Keycloak 身份中枢深度突破：Audience 混淆绕过与 Account API 越权</h4>
+          <p class="mt-1 text-[10px] text-slate-400">结合 v017 深入挖掘 JWT 跨受众混淆、Account 控制台凭证写入与静默 OAuth 提权</p>
+
+          <!-- Intent List (带完全对齐的悬浮框) -->
+          <div class="mt-3 space-y-1.5 pl-2 border-l-2 border-slate-200">
+            
+            <!-- i195 -->
+            <div class="relative group/intent rounded-md border border-slate-100 bg-slate-50/80 px-2 py-1.5 text-xs flex items-center justify-between gap-1.5 hover:border-brand-300 hover:bg-brand-50/40 cursor-pointer transition">
+              <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-emerald-500"></span>
+                <span class="font-mono text-[10px] font-semibold text-slate-600 shrink-0">i195</span>
+                <p class="text-[11px] text-slate-700 truncate">🔥 Keycloak JWT 跨受众混淆测试（Audience Confusion）</p>
+              </div>
+              <span class="shrink-0 text-[9px] font-medium text-emerald-600">已完成</span>
+
+              <!-- Hover Tooltip -->
+              <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/intent:block z-[999] w-80 max-w-[90vw] p-3 rounded-xl border border-slate-700/80 bg-slate-900/95 text-slate-100 text-[11px] leading-relaxed shadow-2xl backdrop-blur-sm pointer-events-none transition-all">
+                <div class="flex items-center justify-between gap-2 border-b border-slate-700 pb-1.5 mb-1.5">
+                  <span class="font-mono font-bold text-amber-400 text-[10px]">i195</span>
+                  <span class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-900/80 text-emerald-300 border border-emerald-700/50">已完成</span>
+                </div>
+                <div class="max-h-60 overflow-y-auto whitespace-pre-wrap font-sans break-words text-slate-200">🔥 Keycloak JWT 跨受众混淆测试（Audience Confusion / Confused Deputy）
+
+背景与思路：基于 v017 获取的 admin-cli 签名 JWT（含合法 sub 和 Keycloak RS256 签名），测试 CloudStudio 后端各微服务网关是否犯了'验签不验受众'的漏洞。
+
+执行方案：
+1) 提取由 admin-cli 颁发的无 scope/无 aud 令牌；
+2) 携带 Authorization: Bearer <token> 批量请求云工作空间与用户核心接口：GET /api/user/base-info、GET /api/liteapps/list、POST /api/liteapps/workspace 等；
+3) 重点观察：网关是返回 401（严格校验了 aud），还是放行并按 sub 成功读取对应用户的私有资源。</div>
+                <div class="mt-1.5 pt-1.5 border-t border-slate-800 text-[9px] text-slate-400 truncate">
+                  <span>目标：</span><span class="font-mono text-slate-300">https://cloudstudio.net/api/</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- i196 -->
+            <div class="relative group/intent rounded-md border border-slate-100 bg-slate-50/80 px-2 py-1.5 text-xs flex items-center justify-between gap-1.5 hover:border-brand-300 hover:bg-brand-50/40 cursor-pointer transition">
+              <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                <span class="h-1.5 w-1.5 rounded-full shrink-0 bg-emerald-500"></span>
+                <span class="font-mono text-[10px] font-semibold text-slate-600 shrink-0">i196</span>
+                <p class="text-[11px] text-slate-700 truncate">🔥 Keycloak Account 控制台 REST API 深度越权与会话劫持</p>
+              </div>
+              <span class="shrink-0 text-[9px] font-medium text-emerald-600">已完成</span>
+
+              <!-- Hover Tooltip -->
+              <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/intent:block z-[999] w-80 max-w-[90vw] p-3 rounded-xl border border-slate-700/80 bg-slate-900/95 text-slate-100 text-[11px] leading-relaxed shadow-2xl backdrop-blur-sm pointer-events-none transition-all">
+                <div class="flex items-center justify-between gap-2 border-b border-slate-700 pb-1.5 mb-1.5">
+                  <span class="font-mono font-bold text-amber-400 text-[10px]">i196</span>
+                  <span class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-900/80 text-emerald-300 border border-emerald-700/50">已完成</span>
+                </div>
+                <div class="max-h-60 overflow-y-auto whitespace-pre-wrap font-sans break-words text-slate-200">🔥 Keycloak Account 控制台 REST API 深度越权与会话劫持（Account Console Exploitation）
+
+背景与思路：admin-cli 签发的 Token 虽然没有业务 scope，但在 Keycloak 内部拥有默认的 account 权限。
+
+执行方案：
+1) 携带 Bearer 令牌请求 /auth/realms/cloudstudio/account/ 下所有 REST 子端点：/sessions(活跃会话列表)、/linked-accounts(第三方绑定)、/credentials(凭证管理)；
+2) 测试 linked-accounts 端点是否可发起未授权第三方账号绑定或解绑（测试能否将受害者账号绑定到攻击者的微信/GitHub）；
+3) 验证是否可利用 account REST API 直接为该用户新增密码凭证，实现永久账号接管。</div>
+                <div class="mt-1.5 pt-1.5 border-t border-slate-800 text-[9px] text-slate-400 truncate">
+                  <span>目标：</span><span class="font-mono text-slate-300">https://cloudstudio.net/auth/realms/cloudstudio/account/</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </article>
+
+        <!-- Todo 2: 临时工作空间 DoS -->
+        <article class="rounded-xl border border-slate-200 bg-white p-3.5 hover:border-slate-300 transition shadow-xs">
+          <div class="flex items-start justify-between gap-2">
+            <span class="font-mono text-xs font-bold text-slate-500">td017</span>
+            <span class="px-1.5 py-0.5 rounded border text-[9px] border-emerald-200 bg-emerald-50 text-emerald-700 font-medium">已完成</span>
+          </div>
+          <h4 class="mt-1.5 text-xs font-semibold text-slate-800 leading-snug">临时工作空间(?type=temp)无配额限制并发资源耗尽拒绝服务测试</h4>
+          <p class="mt-1 text-[10px] text-slate-400">已由 i138 验证并发测试，确认无配额限制</p>
+        </article>
+
+      </div>
+    </aside>
+
+  </div>
+
+  <script>
+    function graphMockApp() {
+      return {
+        isPlanActive: true,
+        planStackExpanded: false,
+        init() {
+          this.$nextTick(() => {
+            this.initCytoscape();
+          });
+        },
+        initCytoscape() {
+          const cy = cytoscape({
+            container: document.getElementById('cy-container'),
+            elements: [
+              // 节点
+              { data: { id: 'f001', label: 'f001\nBootstrap 基础资产发现', type: 'fact' } },
+              { data: { id: 'f181', label: 'f181\nv017 admin-cli 任意密码认证', type: 'fact' } },
+              { data: { id: 'f170', label: 'f170\nKeycloak 公开元数据与公钥', type: 'fact' } },
+              { data: { id: 'i195', label: 'i195\nJWT Audience 混淆测试', type: 'intent', status: 'completed' } },
+              { data: { id: 'i196', label: 'i196\nAccount API 越权绑定测试', type: 'intent', status: 'completed' } },
+              { data: { id: 'i197', label: 'i197\n静默 OAuth 授权码提权', type: 'intent', status: 'completed' } },
+              { data: { id: 'f197', label: 'f197\n网关层接受未绑定 aud 令牌', type: 'fact' } },
+              // 边
+              { data: { source: 'f001', target: 'f181' } },
+              { data: { source: 'f001', target: 'f170' } },
+              { data: { source: 'f181', target: 'i195' } },
+              { data: { source: 'f170', target: 'i195' } },
+              { data: { source: 'f181', target: 'i196' } },
+              { data: { source: 'f181', target: 'i197' } },
+              { data: { source: 'i195', target: 'f197' } }
+            ],
+            style: [
+              {
+                selector: 'node[type="fact"]',
+                style: {
+                  'shape': 'round-rectangle',
+                  'background-color': '#ffffff',
+                  'border-width': 1.5,
+                  'border-color': '#cbd5e1',
+                  'label': 'data(label)',
+                  'text-wrap': 'wrap',
+                  'text-max-width': '140px',
+                  'font-size': '11px',
+                  'text-valign': 'center',
+                  'text-halign': 'center',
+                  'color': '#334155',
+                  'width': '160px',
+                  'height': '60px',
+                  'box-shadow': '0 4px 6px -1px rgba(0,0,0,0.05)'
+                }
+              },
+              {
+                selector: 'node[type="intent"]',
+                style: {
+                  'shape': 'diamond',
+                  'background-color': '#10b981',
+                  'border-width': 2,
+                  'border-color': '#059669',
+                  'label': 'data(label)',
+                  'text-wrap': 'wrap',
+                  'text-max-width': '110px',
+                  'font-size': '10px',
+                  'text-valign': 'center',
+                  'text-halign': 'center',
+                  'color': '#ffffff',
+                  'width': '110px',
+                  'height': '110px'
+                }
+              },
+              {
+                selector: 'edge',
+                style: {
+                  'width': 1.5,
+                  'line-color': '#94a3b8',
+                  'target-arrow-color': '#94a3b8',
+                  'target-arrow-shape': 'triangle',
+                  'curve-style': 'bezier',
+                  'line-style': 'dashed',
+                  'line-dash-pattern': [4, 4]
+                }
+              }
+            ],
+            layout: {
+              name: 'dagre',
+              rankDir: 'LR',
+              nodeSep: 50,
+              rankSep: 100,
+              padding: 60
+            }
+          });
+          this.cy = cy;
+        },
+        fitGraph() {
+          if (this.cy) {
+            this.cy.fit(null, 60);
+          }
+        }
+      }
+    }
+  </script>
+</body>
+</html>

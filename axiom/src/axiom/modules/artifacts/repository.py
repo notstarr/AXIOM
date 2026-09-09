@@ -102,10 +102,20 @@ class ArtifactRepository:
         specs: dict[str, tuple[str, str]],
         created_by: str,
         now: str,
+        include_filenames: set[str] | None = None,
     ) -> list[Artifact]:
+        """Register artifact rows for the prepared files.
+
+        `include_filenames=None` registers every file.  Passing an explicit
+        set registers only those files — used to keep evidence-file rows
+        limited to the ones a reported vulnerability actually references;
+        unreferenced evidence stays copied to storage without an index row.
+        """
         records: list[Artifact] = []
         for item in prepared:
             filename = item.relative_name
+            if include_filenames is not None and filename not in include_filenames:
+                continue
             artifact_type, summary = specs[filename]
             values = {
                 "id": allocate_id(conn, scope=task_id, kind="artifact", prefix="a"),

@@ -82,8 +82,6 @@ def test_context_indexes_are_bounded_and_expand_returns_full_content(client, dat
     origin = next(item for item in graph["facts"] if item["id"] == "goal")
 
     assert origin["ref"] == "fact:goal"
-    assert origin["preview"].endswith("…")
-    assert len(origin["preview"][:-1]) == 20
     assert long_origin not in graph_path.read_text(encoding="utf-8")
     assert manifest_path.is_relative_to(data_dir)
 

@@ -2,7 +2,7 @@
 
 当前 Intent 执行已进入收口阶段。**立即停止网络探测与耗时扫描**，仅整理现有材料。中文输出。
 
-执行阶段已经完成 `axiom skill path whatisvul` 的读取，并完整读取 `whatisvul/SKILL.md`（失败时运行 `axiom skill doctor whatisvul`）；收口不重新探测，没做完没有关系，`evidence/` 完全可选；不要为了补证据重新运行 Nuclei、SQLMap、浏览器、爬虫。验证码、真实设备和工具失败都记录为可恢复阻塞。
+执行阶段已经完成 `axiom skill path whatisvul` 的读取并完整读取 `whatisvul/SKILL.md`（若未读取且本轮第 2 步要补报漏洞，先运行 `axiom skill path whatisvul` 读取，失败时运行 `axiom skill doctor whatisvul`）；收口不重新探测，没做完没有关系，`evidence/` 完全可选；不要为了补证据重新运行 Nuclei、SQLMap、浏览器、爬虫。验证码、真实设备和工具失败都记录为可恢复阻塞。
 
 1. **检查与补齐核心产物**：
    - `{run_dir}/artifacts/findings.md`（本轮已确认事实/漏洞，无则写“本轮无新增确认事实”）；

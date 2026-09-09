@@ -1,0 +1,1 @@
+import{n as s}from"./index-BcB-ZebW.js";function i(t={}){return s.get("/wishes",{params:t})}function n(t){return s.post("/wishes",t)}function o(t){return s.post(`/wishes/${t}/vote`)}export{n as c,i as l,o as t};

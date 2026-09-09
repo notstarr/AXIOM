@@ -48,8 +48,6 @@ def test_reason_cli_sends_one_small_todo_operation_with_repeatable_sources(monke
             "authz",
             "--title",
             "验证对象级授权",
-            "--category",
-            "authorization",
             "--source",
             "fact:f001",
             "--source",
@@ -68,9 +66,6 @@ def test_reason_cli_sends_one_small_todo_operation_with_repeatable_sources(monke
                 "todo": {
                     "ref": "authz",
                     "title": "验证对象级授权",
-                    "category": "authorization",
-                    "theme": "",
-                    "priority": 50,
                     "status": "open",
                     "status_reason": "",
                     "sources": [

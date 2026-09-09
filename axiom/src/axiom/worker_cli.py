@@ -106,9 +106,6 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--ref", "todo_ref", required=True)
     @click.option("--title")
     @click.option("--title-file", type=click.Path(path_type=Path, dir_okay=False))
-    @click.option("--category", type=click.Choice(TODO_CATEGORIES), required=True)
-    @click.option("--theme", default="")
-    @click.option("--priority", type=click.IntRange(0, 100), default=50, show_default=True)
     @click.option("--status", type=click.Choice(TODO_STATUSES), default="open")
     @click.option("--status-reason", default="")
     @click.option("--status-reason-file", type=click.Path(path_type=Path, dir_okay=False))
@@ -117,9 +114,6 @@ def register_worker_commands(main: click.Group) -> None:
         todo_ref: str,
         title: str | None,
         title_file: Path | None,
-        category: str,
-        theme: str,
-        priority: int,
         status: str,
         status_reason: str,
         status_reason_file: Path | None,
@@ -129,9 +123,6 @@ def register_worker_commands(main: click.Group) -> None:
             "todo": {
                 "ref": todo_ref,
                 "title": _text_value(title, title_file, "title", required=True),
-                "category": category,
-                "theme": theme,
-                "priority": priority,
                 "status": status,
                 "status_reason": _text_value(
                     status_reason,
@@ -147,9 +138,6 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--todo-id", required=True, help="Existing Todo ID or this Workspace's draft ref.")
     @click.option("--title")
     @click.option("--title-file", type=click.Path(path_type=Path, dir_okay=False))
-    @click.option("--category", type=click.Choice(TODO_CATEGORIES))
-    @click.option("--theme")
-    @click.option("--priority", type=click.IntRange(0, 100))
     @click.option("--status", type=click.Choice(TODO_STATUSES))
     @click.option("--status-reason")
     @click.option("--status-reason-file", type=click.Path(path_type=Path, dir_okay=False))
@@ -158,9 +146,6 @@ def register_worker_commands(main: click.Group) -> None:
         todo_id: str,
         title: str | None,
         title_file: Path | None,
-        category: str | None,
-        theme: str | None,
-        priority: int | None,
         status: str | None,
         status_reason: str | None,
         status_reason_file: Path | None,
@@ -168,12 +153,6 @@ def register_worker_commands(main: click.Group) -> None:
     ) -> None:
         update: dict[str, Any] = {"todo_id": todo_id}
         _set_optional_text(update, "title", title, title_file)
-        if category is not None:
-            update["category"] = category
-        if theme is not None:
-            update["theme"] = theme
-        if priority is not None:
-            update["priority"] = priority
         if status is not None:
             update["status"] = status
         _set_optional_text(

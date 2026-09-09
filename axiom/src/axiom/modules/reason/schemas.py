@@ -9,7 +9,6 @@ from axiom.modules.todos.schemas import (
     LEGACY_TODO_STATUS_MAP,
     LEGACY_TODO_STATUSES,
     TODO_STATUS_REASON_REQUIRED,
-    TodoCategory,
     TodoSource,
     TodoStatus,
 )
@@ -18,9 +17,6 @@ from axiom.modules.todos.schemas import (
 class DraftTodo(BaseModel):
     ref: str
     title: str
-    category: TodoCategory
-    theme: str = ""
-    priority: int = Field(default=50, ge=0, le=100)
     status: TodoStatus = "open"
     status_reason: str = ""
     sources: list[TodoSource]
@@ -33,7 +29,7 @@ class DraftTodo(BaseModel):
             raise ValueError("must not be empty")
         return value
 
-    @field_validator("theme", "status_reason")
+    @field_validator("status_reason")
     @classmethod
     def normalize_optional_text(cls, value: str) -> str:
         return value.strip()
@@ -62,9 +58,6 @@ class DraftTodo(BaseModel):
 class DraftTodoUpdate(BaseModel):
     todo_id: str
     title: str | None = None
-    category: TodoCategory | None = None
-    theme: str | None = None
-    priority: int | None = Field(default=None, ge=0, le=100)
     status: TodoStatus | None = None
     status_reason: str | None = None
     source_adds: list[TodoSource] = Field(default_factory=list, max_length=10)
@@ -120,7 +113,7 @@ class DraftIntent(BaseModel):
     todo_ref: str | None = None
     todo_id: str | None = None
     from_facts: list[str]
-    description: str
+    description: str = Field(max_length=500)
     targets: list[str] = Field(default_factory=list)
     priority: int = Field(default=50, ge=0, le=100)
     # Runtime budgets are assigned by the backend.  Optional fields remain

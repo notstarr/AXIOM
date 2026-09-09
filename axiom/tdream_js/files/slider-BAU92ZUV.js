@@ -1,0 +1,6 @@
+import{F as p}from"./index-DH4vBV0T.js";import{j as e}from"./vendor-canvas-BNKLiRAW.js";import{c as h}from"./utils-IyxL_b2c.js";/**
+ * @license lucide-react v0.562.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */const f=[["path",{d:"M12 10v6",key:"1bos4e"}],["path",{d:"M9 13h6",key:"1uhe8q"}],["path",{d:"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",key:"1kt360"}]],x=p("folder-plus",f);function w({value:l,min:t=0,max:s=100,step:n=1,onValueChange:o,className:c,disabled:d}){const i=u=>{o&&o([parseFloat(u.target.value)])},a=l&&l.length>0?l[0]:t,r=(a-t)/(s-t)*100;return e.jsxs("div",{className:h("relative flex w-full touch-none select-none items-center",c),children:[e.jsx("input",{type:"range",min:t,max:s,step:n,value:a,onChange:i,disabled:d,className:"absolute w-full h-2 opacity-0 cursor-pointer z-10"}),e.jsx("div",{className:"relative w-full h-1.5 bg-gray-200 rounded-full overflow-hidden",children:e.jsx("div",{className:"absolute h-full bg-gradient-to-r from-purple-400 to-purple-600 rounded-full",style:{width:`${r}%`}})}),e.jsx("div",{className:"absolute h-4 w-4 rounded-full bg-purple-500 shadow-sm ring-2 ring-white pointer-events-none",style:{left:`calc(${r}% - 8px)`}})]})}export{x as F,w as S};

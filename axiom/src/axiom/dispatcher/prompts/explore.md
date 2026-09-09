@@ -21,8 +21,9 @@
 ## 执行规则
 
 1. **上下文与判定标准加载**：
-   - `hints.json`、`knowledge.json`、`vulnerabilities.json`、当前 Intent/Todo 摘要、相关 Fact、Findings/Leads 摘要，以及 `whatisvul/SKILL.md` 和漏洞标准已由 AXIOM 直接注入本轮系统提示词；不要重复 cat/read 这些已注入内容；
-   - 需要完整 Artifact、Evidence 或额外历史材料时，再按 Context Manifest 的路径按需读取；注入内容缺失时才运行 `axiom skill path whatisvul`，失败时运行 `axiom skill doctor whatisvul`；
+   - `hints`、`knowledge`、`artifacts` 三张**目录卡**与当前 Intent/Todo 摘要已由 AXIOM 注入；目录卡只含计数与查询路径——需要内容时按卡内路径按需读取。
+   - `vulnerabilities` 全量、`graph`（facts）、todo 全量**不再注入**：历史 findings/leads/evidence 按 storage_key 直接读文件，facts 细节按 Context Manifest 的 `details/` 读。
+   - **whatisvul 判定标准按需读**：上报漏洞前必须运行 `axiom skill path whatisvul` 并完整读取 `whatisvul/SKILL.md` 对齐判定标准（失败则 `axiom skill doctor whatisvul`）；未上报漏洞的轮次无需读取。
    - 按需读取当前所需的其他 Skill（`axiom skill path <name>`）或上游资产（`asset_inventory.md`、上游 Intent 的 `findings.md`），严禁无脑全盘读取历史。
 2. **目标与对象取值规则**：
    - 严格围绕当前 Intent 目标展开；测试所需对象 ID 优先从基线或自身列表响应（`items[].id`）获取，必要时展开联想；未显式披露 Scope 时以当前目标及关联业务为界。
@@ -30,7 +31,16 @@
 3. **核心产物约定**：
    - 将本轮已确认的绝对事实与漏洞发现写入 `{run_dir}/artifacts/findings.md`；
    - 将本次发现但尚未完成或留待后续跟进的方向写入 `{run_dir}/artifacts/leads.md`；
-   - 两个文件必须存在且非空（无内容时写“本轮无新增确认事实”/“本轮无遗留待验证线索”）。
+   - 两个文件必须存在且非空（无内容时写"本轮无新增确认事实"/"本轮无遗留待验证线索"）。
+   - **findings.md 格式（硬约束）**：编号事实（`1.` `2.` ...），每条高效精炼——长度服从内容、讲不清可用多句，但零冗余；文件末尾固定一节：
+     ```
+     ## 证据清单
+     evidence/<file>.txt: <产生动作说明，高效精炼>
+     （例：evidence/anon-probe.txt: 匿名 6 连探测（三接口 GET/POST + 401 指纹））
+     ```
+     一行一文件，`路径: 产生动作`。
+   - **leads.md 格式（硬约束）**：一、二、三编号，每条高效精炼。
+   - **三禁项**：跨 intent/版本对账叙事（"已在上游 iXXX 上报""按 iYYY leads#N 并入"）——去 todo/状态字段；多端点多证据一逗号到底的 jargon 流——一事实一行；请求统计流水（"本轮 N 请求（基线 X + 正控 Y...）"）——留 evidence/。
 4. **证据与审计材料**：
    - 请求(curl)、响应、原始工具输出与证明截图可写入 `{run_dir}/artifacts/evidence/`；证据是可选审计材料，不是阶段完成条件；没有可用证据时直接省略，不要为了补齐证据重新运行 Nuclei、SQLMap、浏览器、爬虫；遇网络/参数拦截不得宣称“方向穷尽”，积极寻求替代利用路径。
 5. **协议探测与状态判定准则**：

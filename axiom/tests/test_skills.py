@@ -237,7 +237,8 @@ def test_execution_input_contains_skill_directories_and_injected_skill_context(c
     assert execution.status_code == 200, execution.text
     body = execution.json()
     assert body["skill_directories"]
-    assert "SKILL.md" in body["injected_system_context"]
+    # whatisvul 判定标准降级为按需读：注入块不再携带 SKILL.md
+    assert "SKILL.md" not in body["injected_system_context"]
     assert body["injected_context_hash"]
 
 

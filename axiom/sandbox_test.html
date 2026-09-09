@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Sandbox Test</title>
+<style>
+body { font-family: monospace; padding: 20px; background: #1a1a2e; color: #e0e0e0; }
+h1 { color: #00ff88; font-size: 18px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+.section { margin: 15px 0; padding: 10px; background: #16213e; border-radius: 5px; }
+.section-title { color: #ffcc00; font-weight: bold; margin-bottom: 8px; }
+.result { color: #aaa; white-space: pre-wrap; word-break: break-all; font-size: 12px; }
+.success { color: #00ff88; }
+.danger { color: #ff4444; }
+.warn { color: #ffaa00; }
+</style>
+</head>
+<body>
+<h1>🔬 Sandbox Security Probe</h1>
+
+<div class="section">
+  <div class="section-title">📝 1. Cookie Access (html-sandbox.lexiang-app.com)</div>
+  <div class="result" id="cookieResult">Testing...</div>
+</div>
+
+<div class="section">
+  <div class="section-title">💾 2. localStorage Access</div>
+  <div class="result" id="storageResult">Testing...</div>
+</div>
+
+<div class="section">
+  <div class="section-title">🌐 3. sessionStorage Access</div>
+  <div class="result" id="sessionResult">Testing...</div>
+</div>
+
+<div class="section">
+  <div class="section-title">🔗 4. window.parent / window.opener</div>
+  <div class="result" id="parentResult">Testing...</div>
+</div>
+
+<div class="section">
+  <div class="section-title">🪟 5. Popup Test (window.open to lexiangla.com)</div>
+  <div class="result" id="popupResult">Testing...</div>
+</div>
+
+<div class="section">
+  <div class="section-title">🌍 6. Origin & Location Info</div>
+  <div class="result" id="originResult">Testing...</div>
+</div>
+
+<div class="section">
+  <div class="section-title">🏷️ 7. URL params (token)</div>
+  <div class="result" id="tokenResult">Testing...</div>
+</div>
+
+<script>
+(function() {
+  const results = {};
+
+  // 1. Cookie access
+  try {
+    results.cookies = document.cookie || '(empty - no cookies)';
+  } catch(e) {
+    results.cookies = 'ERROR: ' + e.message;
+  }
+
+  // 2. localStorage
+  try {
+    const ls = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      ls[k] = localStorage.getItem(k);
+    }
+    results.localStorage = Object.keys(ls).length > 0 ? JSON.stringify(ls, null, 2) : '(empty)';
+  } catch(e) {
+    results.localStorage = 'ERROR: ' + e.message;
+  }
+
+  // 3. sessionStorage
+  try {
+    const ss = {};
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i);
+      ss[k] = sessionStorage.getItem(k);
+    }
+    results.sessionStorage = Object.keys(ss).length > 0 ? JSON.stringify(ss, null, 2) : '(empty)';
+  } catch(e) {
+    results.sessionStorage = 'ERROR: ' + e.message;
+  }
+
+  // 4. window.parent / opener
+  try {
+    if (window.parent !== window) {
+      results.parent = 'window.parent is different from window (we are in an iframe!)';
+      results.parent += '\nwindow.parent.location: ' + (window.parent.location ? window.parent.location.href : '(blocked)');
+    } else {
+      results.parent = 'window.parent === window (not in iframe or same-origin)';
+    }
+  } catch(e) {
+    results.parent = 'window.parent access BLOCKED: ' + e.message;
+  }
+
+  try {
+    results.opener = window.opener ? 'window.opener exists: ' + window.opener : 'window.opener is null';
+  } catch(e) {
+    results.opener = 'window.opener access BLOCKED: ' + e.message;
+  }
+
+  // 5. Popup test
+  results.popup = '';
+  try {
+    const popup = window.open('https://lexiangla.com/c/ai', '_blank', 'width=400,height=300');
+    if (popup) {
+      results.popup += 'SUCCESS: window.open returned a Window object\n';
+      try {
+        results.popup += 'popup.location: ' + popup.location.href + '\n';
+        results.popup += 'popup.document.cookie: ' + popup.document.cookie + '\n';
+      } catch(e2) {
+        results.popup += 'popup access blocked (cross-origin): ' + e2.message + '\n';
+      }
+      setTimeout(function() { try { popup.close(); } catch(e) {} }, 2000);
+    } else {
+      results.popup += 'FAILED: window.open returned null (blocked by popup blocker)';
+    }
+  } catch(e) {
+    results.popup += 'ERROR: ' + e.message;
+  }
+
+  // 6. Origin info
+  results.origin = 'location.origin: ' + location.origin;
+  results.origin += '\nlocation.href: ' + location.href;
+  results.origin += '\nlocation.host: ' + location.host;
+  results.origin += '\nlocation.hostname: ' + location.hostname;
+
+  // 7. URL params
+  try {
+    const params = new URLSearchParams(location.search);
+    const token = params.get('token');
+    results.token = token ? 'TOKEN FOUND: ' + token.substring(0, 50) + '...' : '(no token param)';
+    results.token += '\nFull query string: ' + location.search;
+  } catch(e) {
+    results.token = 'ERROR: ' + e.message;
+  }
+
+  // Display results
+  document.getElementById('cookieResult').textContent = results.cookies;
+  document.getElementById('storageResult').textContent = results.localStorage;
+  document.getElementById('sessionResult').textContent = results.sessionStorage;
+  document.getElementById('parentResult').textContent = results.parent + '\n---\n' + results.opener;
+  document.getElementById('popupResult').textContent = results.popup;
+  document.getElementById('originResult').textContent = results.origin;
+  document.getElementById('tokenResult').textContent = results.token;
+
+  // Also try to send data back via fetch to a logging endpoint
+  // Since we can't easily exfiltrate, we store results in a global var
+  window.__sandboxResults = results;
+})();
+</script>
+</body>
+</html>

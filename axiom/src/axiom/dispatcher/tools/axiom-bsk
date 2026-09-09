@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# axiom-bsk — bsk 包装器：scope 校验 + 审计 + 透传
+#
+# 用法：axiom-bsk <bsk 子命令与参数>（与 bsk 完全同参）
+# 环境依赖：AXIOM_RUN_DIR（审计落盘）、AXIOM_BSK_ALLOWED_HOSTS（逗号分隔域白名单）
+# 退出码：40 = scope 越界拒绝（带 scope_denied 错误）
+set -u
+
+BSK_BIN="${BSK_BIN:-$HOME/.local/bin/bsk}"
+RUN_DIR="${AXIOM_RUN_DIR:-}"
+AUDIT_DIR="$RUN_DIR/evidence"
+AUDIT_LOG="$AUDIT_DIR/bsk_audit.log"
+mkdir -p "$AUDIT_DIR" 2>/dev/null
+
+audit() {
+  [ -n "$AUDIT_LOG" ] && echo "[$(date -u +%FT%TZ)] $*" >> "$AUDIT_LOG"
+  return 0
+}
+
+host_of() {
+  python3 -c 'import sys,urllib.parse;u=urllib.parse.urlparse(sys.argv[1] if "://" in sys.argv[1] else "//"+sys.argv[1]);print((u.hostname or "").lower())' "$1" 2>/dev/null
+}
+
+scope_allow() {
+  # $1 = 待检 host；AXIOM_BSK_ALLOWED_HOSTS 逗号分隔，支持父子域后缀匹配
+  local host="$1" allow=0 h
+  [ -z "$host" ] && return 0
+  [ -z "${AXIOM_BSK_ALLOWED_HOSTS:-}" ] && return 0
+  IFS=',' read -ra _hosts <<< "$AXIOM_BSK_ALLOWED_HOSTS"
+  for h in "${_hosts[@]}"; do
+    h=$(echo "$h" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+    [ -z "$h" ] && continue
+    if [ "$host" = "$h" ] || [ "${host#*$h.}" != "$host" ] || [ "${h#*$host.}" != "$h" ]; then
+      allow=1
+      break
+    fi
+  done
+  return $((1 - allow))
+}
+
+cmd="${1:-}"
+[ -z "$cmd" ] && exec "$BSK_BIN"
+shift || true
+
+case "$cmd" in
+  navigate | open)
+    url=""
+    for a in "$@"; do
+      case "$a" in http://* | https://*) url="$a"; break ;; esac
+    done
+    if [ -n "$url" ]; then
+      host=$(host_of "$url")
+      if ! scope_allow "$host"; then
+        audit "DENY $cmd host=$host url=$url"
+        echo "{\"error\":\"scope_denied\",\"host\":\"$host\"}" >&2
+        exit 40
+      fi
+    fi
+    ;;
+  tab)
+    sub="${1:-}"; shift || true
+    if [ "$sub" = "borrow" ]; then
+      tabid="${1:-}"
+      if [ -n "$tabid" ] && [ -n "${AXIOM_BSK_ALLOWED_HOSTS:-}" ]; then
+        taburl=$("$BSK_BIN" tab list --scope user 2>/dev/null | awk -v id="$tabid" '$1 == id {print $NF}')
+        host=$(host_of "${taburl:-}")
+        if [ -n "$host" ] && ! scope_allow "$host"; then
+          audit "DENY tab borrow host=$host tab=$tabid"
+          echo "{\"error\":\"scope_denied\",\"host\":\"$host\"}" >&2
+          exit 40
+        fi
+      fi
+    fi
+    ;;
+  credentials)
+    domain=""
+    prev=""
+    for a in "$@"; do
+      case "$prev" in --domain) domain="$a" ;; esac
+      prev="$a"
+    done
+    if [ -n "$domain" ] && ! scope_allow "$domain"; then
+      audit "DENY credentials domain=$domain"
+      echo "{\"error\":\"scope_denied\",\"domain\":\"$domain\"}" >&2
+      exit 40
+    fi
+    ;;
+esac
+
+audit "RUN $cmd $*"
+exec "$BSK_BIN" "$cmd" "$@"
