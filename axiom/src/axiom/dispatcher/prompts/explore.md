@@ -22,7 +22,7 @@
 
 1. **上下文与判定标准加载**：
    - `hints`、`knowledge`、`artifacts` 三张**目录卡**与当前 Intent/Todo 摘要已由 AXIOM 注入；目录卡只含计数与查询路径——需要内容时按卡内路径按需读取。
-   - `vulnerabilities` 全量、`graph`（facts）、todo 全量**不再注入**：历史 findings/leads/evidence 按 storage_key 直接读文件，facts 细节按 Context Manifest 的 `details/` 读。
+   - 历史 findings/leads/evidence 按 storage_key 直接读文件，facts 细节按 Context Manifest 的 `details/` 读。
    - **whatisvul 判定标准按需读**：上报漏洞前必须运行 `axiom skill path whatisvul` 并完整读取 `whatisvul/SKILL.md` 对齐判定标准（失败则 `axiom skill doctor whatisvul`）；未上报漏洞的轮次无需读取。
    - 按需读取当前所需的其他 Skill（`axiom skill path <name>`）或上游资产（`asset_inventory.md`、上游 Intent 的 `findings.md`），严禁无脑全盘读取历史。
 2. **目标与对象取值规则**：
@@ -32,7 +32,7 @@
    - 将本轮已确认的绝对事实与漏洞发现写入 `{run_dir}/artifacts/findings.md`；
    - 将本次发现但尚未完成或留待后续跟进的方向写入 `{run_dir}/artifacts/leads.md`；
    - 两个文件必须存在且非空（无内容时写"本轮无新增确认事实"/"本轮无遗留待验证线索"）。
-   - **findings.md 格式（硬约束）**：编号事实（`1.` `2.` ...），每条高效精炼——长度服从内容、讲不清可用多句，但零冗余；文件末尾固定一节：
+   - **findings.md 格式**：编号事实（`1.` `2.` ...），每条高效精炼——长度服从内容、讲不清可用多句，但零冗余；文件末尾固定一节：
      ```
      ## 证据清单
      evidence/<file>.txt: <产生动作说明，高效精炼>
@@ -42,22 +42,24 @@
    - **leads.md 格式（硬约束）**：一、二、三编号，每条高效精炼。
    - **三禁项**：跨 intent/版本对账叙事（"已在上游 iXXX 上报""按 iYYY leads#N 并入"）——去 todo/状态字段；多端点多证据一逗号到底的 jargon 流——一事实一行；请求统计流水（"本轮 N 请求（基线 X + 正控 Y...）"）——留 evidence/。
 4. **证据与审计材料**：
-   - 请求(curl)、响应、原始工具输出与证明截图可写入 `{run_dir}/artifacts/evidence/`；证据是可选审计材料，不是阶段完成条件；没有可用证据时直接省略，不要为了补齐证据重新运行 Nuclei、SQLMap、浏览器、爬虫；遇网络/参数拦截不得宣称“方向穷尽”，积极寻求替代利用路径。
+   - 证据只在**上报漏洞时**写（见第 6 条）：写入 `{run_dir}/artifacts/evidence/` 并用 `--evidence-path` 引用。证据是审计材料，不是阶段完成条件；没有漏洞上报就不写证据文件，也不要为了补齐证据重新运行 Nuclei、SQLMap、浏览器、爬虫；遇网络/参数拦截不得宣称“方向穷尽”，积极寻求替代利用路径。
 5. **协议探测与状态判定准则**：
    - **严禁用单一空 GET 测写接口**：写操作/动作型接口（`/create`, `/generate`, `/submit` 等）若返回 400/404/405，仅代表方法或 Body 不匹配，绝不代表服务未上线；必须构造对应 POST/PUT 及有效 JSON 请求体重新验证；
    - **业务报错（400/422/500）即为存活铁证**：说明已穿透网关触达业务层，必须根据参数报错信息修正入参，继续深挖逻辑/越权/注入；
    - **严禁下达全局未上线的假断言**：单个端点异常不得推广为整树模块下线，只有经多种方法与合规请求体交叉验证均不存在时，方可记录为单个接口不可达。
-6. **漏洞上报标准与 CLI**：
-   - 仅当存在实际影响/危害且可端到端复现时，使用 CLI 上报：
+6. **漏洞上报标准与 CLI（证据随上报一起写）**：
+   - 仅当存在实际影响/危害且可端到端复现时，使用 CLI 上报。
+   - **证据只在此时写**：确定上报漏洞时，把支撑材料（请求/响应/对照输出）写入 `{run_dir}/artifacts/evidence/`，并在 CLI 用 `--evidence-path evidence/<file>` 逐个引用。未上报漏洞的轮次**不写证据文件**（完成时未上报漏洞的 evidence 不会保留）。
    ```bash
    axiom explore vulnerability report \
      --title "漏洞标题" --type "漏洞类型" --severity high \
      --description "漏洞简述" \
      --prerequisites "利用所需条件" \
      --remediation "服务端修复方案" \
-     --impact "实际危害"
+     --impact "实际危害" \
+     --evidence-path "evidence/xxx.txt"
    ```
-   - 记忆口诀：`已确认漏洞/事实 -> findings.md`；`未完成线索 -> leads.md`；`有效漏洞 -> CLI 上报`。
+   - 记忆口诀：`已确认漏洞/事实 -> findings.md`；`未完成线索 -> leads.md`；`有效漏洞 -> 先写证据再 CLI 上报`。findings 的`## 证据清单`仅在确有证据文件（即上报了漏洞）时写。
 7. **人工干预标记**：
    - 仅当必须人类真实支付、提供短信/MFA/扫码等外部物理动作时，调用 `axiom explore human-intervention mark --reason "..."`；验证码、真实设备和工具失败都应记录为可恢复阻塞，不会暂停任务，也不会自动触发 Reason；不要因为工具暂时失败就宣称方向穷尽，原因不得包含凭证、验证码、支付信息或敏感响应正文；当前 Intent 仍必须正常生成两个产物并以 FINISH 收口，随后继续测试可自动化的其他分支并正常收口。
 8. **收口控制与节奏**：

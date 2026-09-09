@@ -185,8 +185,8 @@ def test_explore_completion_atomically_registers_artifact_fact_and_reason(client
         [intents[0], "findings.md"],
         [intents[0], "leads.md"],
     ]
-    evidence_dir = data_dir / "tasks" / task["id"] / "artifacts" / intents[0] / "evidence"
-    assert evidence_dir.is_dir() and any(evidence_dir.iterdir())
+    # 该轮无漏洞上报：evidence 文件整体丢弃，不进存储也不进文件管理。
+    assert not (data_dir / "tasks" / task["id"] / "artifacts" / intents[0] / "evidence").exists()
     graph = client.get(f"/api/v1/tasks/{task['id']}/graph").json()
     explore = next(item for item in graph["intents"] if item["id"] == intents[0])
     assert [item["id"] for item in graph["intents"]] == ["i001", "i002"]

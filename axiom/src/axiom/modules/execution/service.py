@@ -1131,10 +1131,6 @@ class ExecutionService:
 
         run_dir = self._materialize_run_directory(task_id, intent_id, command.lease_id, owner_kind="intent")
         outputs = explore_files(run_dir)
-        prepared = self.store.prepare_existing_files(
-            base_key=f"tasks/{task_id}/artifacts/{intent_id}",
-            files={item.relative_name: item.path for item in outputs},
-        )
         specs = {
             item.relative_name: (item.artifact_type, item.summary)
             for item in outputs
@@ -1145,6 +1141,23 @@ class ExecutionService:
             with explore_state_guard(run_dir):
                 state = load_explore_state(run_dir)
                 available_outputs = {item.relative_name for item in outputs}
+                # 证据文件只在支撑漏洞上报时保留：无漏洞的轮次整体丢弃，
+                # 有漏洞的轮次仅保留被报告引用的证据文件（文件管理只显示登记行）。
+                referenced_evidence = {
+                    path
+                    for report in state.vulnerabilities
+                    for path in report.evidence_paths
+                }
+                kept_files = {
+                    item.relative_name: item.path
+                    for item in outputs
+                    if item.artifact_type != "explore.evidence"
+                    or item.relative_name in referenced_evidence
+                }
+                prepared = self.store.prepare_existing_files(
+                    base_key=f"tasks/{task_id}/artifacts/{intent_id}",
+                    files=kept_files,
+                )
                 with transaction(self.engine) as conn:
                     row = self.repository.input_row(conn, task_id, intent_id)
                     self._require_row(row, task_id, intent_id)
@@ -1166,17 +1179,6 @@ class ExecutionService:
                         raise ConflictError("Intent is not ready for completion")
 
                     prepared.commit()
-                    referenced_evidence = {
-                        path
-                        for report in state.vulnerabilities
-                        for path in report.evidence_paths
-                    }
-                    include_filenames = {
-                        item.relative_name
-                        for item in prepared.files
-                        if specs[item.relative_name][0] != "explore.evidence"
-                        or item.relative_name in referenced_evidence
-                    }
                     records = self.artifacts.create_explore_bundle(
                         conn,
                         task_id=task_id,
@@ -1185,10 +1187,10 @@ class ExecutionService:
                         specs=specs,
                         created_by=row["worker"] or "explore",
                         now=now,
-                        include_filenames=include_filenames,
+                        include_filenames=set(kept_files),
                     )
                     included_items = [
-                        item for item in prepared.files if item.relative_name in include_filenames
+                        item for item in prepared.files if item.relative_name in set(kept_files)
                     ]
                     artifact_by_relative = {
                         item.relative_name: record
