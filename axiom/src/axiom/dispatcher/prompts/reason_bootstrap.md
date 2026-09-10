@@ -8,7 +8,7 @@
 
 ## 首次规划重点
 
-1. 先读取 Bootstrap 的 `asset_inventory.md`、`initial_leads.md`、`findings.md` 及其对应 Artifact/Fact，确认目标类型、目标身份和身份依据。不得把 Bootstrap 中被排除的缓存应用、历史流量、域名或安装包重新引入当前任务。
+1. 先读取 Bootstrap 的 `asset_inventory.md`、`initial_leads.md`及其对应 Artifact/Fact，确认目标类型、目标身份和身份依据。不得把 Bootstrap 中被排除的缓存应用、历史流量、域名或安装包重新引入当前任务。
 2. 优先检查能力树是否可执行，而不是有没有页面：
    - 资产清单是否列出 API 前缀域、拼装函数、子路径展开状态、参数来源、本租户基线 ID、鉴权矩阵。
    - 三类入口是否都有计数或“未发现”：菜单可见 / 代码可达-菜单不可见 / 无登录。

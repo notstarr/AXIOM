@@ -16,7 +16,7 @@
    - 运行 `axiom reason status` 确认工作区状态与待处理输入。
    - `hints`、`knowledge`、`artifacts` 三张**目录卡**与触发快照、当前 Todo、新 Fact 摘要已由 AXIOM 注入；目录卡只含计数与查询路径——需要内容时按卡内路径与 Context Manifest 按需读取。
    - `vulnerabilities`、`todos` 全量、`graph`（facts）**不再注入**：漏洞细节走漏洞库 CLI/钉钉记录，facts 细节按 ref 读 `details/`，todo 全量用 `axiom reason status` 查询。
-   - **whatisvul 判定标准改为按需读**：凡评审漏洞、判定 severity 或写入影响面结论前，运行 `axiom skill path whatisvul` 并完整读取 `whatisvul/SKILL.md`（失败则 `axiom skill doctor whatisvul`）。不要在未读取时臆测判定标准。
+   - 凡评审漏洞、判定 severity 或写入影响面结论前，运行 `axiom skill path whatisvul` 并完整读取 `whatisvul/SKILL.md`（失败则 `axiom skill doctor whatisvul`）。不要在未读取时臆测判定标准。
 2. **评估前序 Intent**：
    - 对 `assessment_status=open` 的已结束 Intent 进行评估：
    ```bash

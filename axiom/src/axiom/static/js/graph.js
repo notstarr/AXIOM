@@ -123,20 +123,36 @@ window.AxiomModules.graph = {
       return `<svg class="node-card__icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${paths[iconType] || paths.doc}</svg>`;
     },
 
+    // 节点状态徽章映射：仅展示既有 status 数据，不新增语义。
+    STATUS_PILL: {
+      completed: ['is-done', '已完成'],
+      running: ['is-run', '进行中'],
+      in_progress: ['is-run', '进行中'],
+      claimed: ['is-run', '进行中'],
+      pending: ['is-queue', '排队'],
+      blocked: ['is-block', '受阻'],
+      failed: ['is-fail', '失败'],
+    },
+
     nodeCardTpl(data) {
       const cardTypes = ['origin','depth_origin','goal','goal_history','fact','depth_plan','depth_fact','bootstrap_pending','bootstrap_running'];
       if (!cardTypes.includes(data.nodeType)) return '';
       const title = this.escapeNodeHtml(data.title || '');
       const icon = this.nodeIconSvg(data.iconType);
       const body = this.escapeNodeHtml(data.label || '');
-      const w = data.width || 60;
-      const h = data.height || 40;
+      const w = data.width || 200;
+      const h = data.height || 76;
       const archivedClass = data.archived ? ' node-card--archived' : '';
       const goalCompleted = data.nodeType === 'goal' && data.goalStatus === 'completed';
       const goalStatusClass = goalCompleted ? ' node-card--goal-completed' : '';
-      const goalStatus = goalCompleted
-        ? '<span class="node-card__status" title="Reason 已判定 Goal 达成">✓ 已完成</span>'
-        : '';
+      const statusKey = data.goalStatus === 'completed' ? 'completed' : (data.status || '');
+      const pill = this.STATUS_PILL[statusKey];
+      const statusPill = goalCompleted
+        ? '<span class="node-card__status is-done" title="Reason 已判定 Goal 达成">✓ 已完成</span>'
+        : (pill
+          ? `<span class="node-card__status ${pill[0]}" title="${pill[1]}">${pill[1]}</span>`
+          : '');
+      const refShort = data.id ? `#${data.id}` : '';
       const interventionLabel = this.escapeNodeHtml(
         `需要人工介入：${data.humanInterventionReason || '未提供原因'}`,
       );
@@ -146,8 +162,9 @@ window.AxiomModules.graph = {
       return `<div id="node-card-${data.id}" class="node-card node-card--${data.nodeType}${goalStatusClass}${archivedClass}" style="width:${w}px;height:${h}px">`
         + interventionDot
         + `<span class="node-card__reason-beacon"></span>`
-        + `<div class="node-card__header">${icon}<span class="node-card__title">${title}</span>${goalStatus}</div>`
+        + `<div class="node-card__header"><span class="node-card__type-icon">${icon}</span><span class="node-card__title">${title}</span>${statusPill}</div>`
         + `<div class="node-card__body">${body}</div>`
+        + (refShort ? `<span class="node-card__ref">${refShort}</span>` : '')
         + `</div>`;
     },
 
@@ -388,22 +405,22 @@ window.AxiomModules.graph = {
           'text-background-padding':'2px', 'arrow-scale':0.85,
         }},
         { selector: 'edge[status="in_progress"]', style: {
-          width:1.5, 'line-color':'#94a3b8', 'line-style':'dashed', 'line-dash-pattern':[5,4],
+          width:1.2, 'line-color':'#94a3b8', 'line-style':'dashed', 'line-dash-pattern':[5,4],
           'target-arrow-color':'#94a3b8', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
           'arrow-scale':0.85,
         }},
         { selector: 'edge[status="unclaimed"]', style: {
-          width:1.5, 'line-color':theme.mutedBorder, 'line-style':'dashed', 'line-dash-pattern':[5,5],
+          width:1.2, 'line-color':theme.mutedBorder, 'line-style':'dashed', 'line-dash-pattern':[5,5],
           'target-arrow-color':theme.mutedBorder, 'target-arrow-shape':'triangle', 'curve-style':'bezier',
           'arrow-scale':0.7,
         }},
         { selector: 'edge[status="intent_completed"]', style: {
-          width:2, 'line-color':'#34d399', 'target-arrow-color':'#34d399',
+          width:2.5, 'line-color':'#34d399', 'target-arrow-color':'#34d399',
           'target-arrow-shape':'triangle', 'curve-style':'bezier',
           'arrow-scale':0.8,
         }},
         { selector: 'edge[status="intent_cancelled"]', style: {
-          width:1.5, 'line-color':'#94a3b8', 'line-style':'dashed', 'line-dash-pattern':[4,5],
+          width:1.2, 'line-color':'#94a3b8', 'line-style':'dashed', 'line-dash-pattern':[4,5],
           'target-arrow-color':theme.mutedBorder, 'target-arrow-shape':'triangle', 'curve-style':'bezier',
           'arrow-scale':0.7,
         }},
@@ -458,6 +475,10 @@ window.AxiomModules.graph = {
         // ── Pulse animation via CSS class (overlay glow, not border) ──
         { selector: 'node.node-pulse', style: {
           'overlay-color':'#cbd5e1', 'overlay-opacity':0.35, 'overlay-padding':5,
+        }},
+        // ── 选中态：莫里斯蓝描边（HTML 卡浮于节点上，border 加粗即透出） ──
+        { selector: 'node:selected', style: {
+          'border-width': 2.5, 'border-color': '#3b82f6',
         }},
       ];
     },
