@@ -131,6 +131,11 @@
       <div x-show="taskDetailSectionError('graph')" class="absolute inset-0 z-30 flex items-center justify-center bg-slate-50/90">
         <div class="rounded-2xl border border-rose-200 bg-white px-5 py-4 text-center shadow-sm"><p class="text-sm text-rose-600">图谱加载失败</p><button @click="retryTaskDetailSection('graph')" class="mt-2 text-xs font-medium text-brand-600 hover:underline">重试图谱</button></div>
       </div>
+      <button @click="toggleSidePanel()" title="折叠/展开侧面板"
+        class="absolute right-0 top-1/2 -translate-y-1/2 z-30 h-24 w-5 rounded-l-lg border border-r-0 border-slate-200/60 bg-white/90 shadow-sm text-slate-400 hover:text-brand-600 hover:bg-brand-50 transition flex items-center justify-center">
+        <svg x-show="!sidePanelCollapsed" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m10 7 5 5-5 5"/><path d="m17 7 5 5-5 5"/></svg>
+        <svg x-show="sidePanelCollapsed" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m14 7-5 5 5 5"/><path d="m7 7-5 5 5 5"/></svg>
+      </button>
       <div class="absolute top-3 left-3 z-10 flex items-center gap-1.5">
         <button @click="fitGraph()" class="h-7 w-7 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-slate-200/60 text-slate-500 hover:text-slate-700 hover:bg-white transition inline-flex items-center justify-center" title="适配图谱" aria-label="适配图谱">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
@@ -324,10 +329,7 @@
       </div>
 
       <div id="cy" class="relative z-0 flex-1 h-full"></div>
-      <button x-show="sidePanelCollapsed" @click="toggleSidePanel()" title="展开侧面板"
-        class="fixed top-1/2 -translate-y-1/2 right-1 z-[60] h-16 w-7 rounded-l-lg border border-slate-200/60 bg-white/95 backdrop-blur shadow-md text-slate-400 hover:text-brand-600 hover:bg-brand-50 transition flex items-center justify-center">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>
-      </button>
+
 
       <template x-if="minimapVisible && cy">
         <canvas id="minimap" width="160" height="96" x-init="$nextTick(() => drawMinimap())"
@@ -397,10 +399,6 @@
         <button @click="sideTab = 'todo'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'todo' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">
           Todo <span class="ml-0.5 text-[10px] opacity-60" x-text="project.todos.length || ''"></span>
-        </button>
-        <button @click="toggleSidePanel()" title="向右折叠面板，扩大图谱"
-          class="px-2 py-2.5 text-slate-400 hover:text-brand-600 hover:bg-brand-50 transition shrink-0">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/><path d="m15 6 6 6-6 6"/></svg>
         </button>
       </div>
 
