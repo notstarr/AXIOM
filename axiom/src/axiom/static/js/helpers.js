@@ -117,7 +117,13 @@ window.AxiomModules.helpers = {
 
     openIntentNodeSize(intent) {
       const nodeType = this.openIntentNodeType(intent);
-      if (['bootstrap_pending', 'bootstrap_running'].includes(nodeType)) return { width: 92, height: 48 };
+      if (nodeType === 'depth_plan') {
+        // 深度意图卡：宽度统一 200，高度按全文自适应（与 fact 卡一致）。
+        const measured = this.measureWrappedText(intent.description || '', 172, 11);
+        const height = Math.min(480, Math.max(84, Math.ceil(measured.height) + 62));
+        return { width: 200, height };
+      }
+      if (['bootstrap_pending', 'bootstrap_running'].includes(nodeType)) return { width: 200, height: 76 };
       if (nodeType === 'in_progress') return { width: 26, height: 26 };
       if (nodeType.startsWith('intent_')) return { width: 24, height: 24 };
       return { width: 22, height: 22 };

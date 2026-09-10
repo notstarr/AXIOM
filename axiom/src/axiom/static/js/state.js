@@ -113,6 +113,7 @@ window.AxiomModules.state = {
     layoutMode: 'elk_tb',
     graphSearch: '',
     sidePanelWidth: 320,
+    sidePanelCollapsed: false,
     isResizingPanel: false,
     minimapVisible: true,
     _minimapRaf: null,

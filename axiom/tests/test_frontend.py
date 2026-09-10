@@ -2350,7 +2350,7 @@ def test_intent_lifecycle_uses_status_instead_of_retained_worker():
 
     assert rows["__goalEdge"] is None
     assert "node-card--goal-completed" in rows["__goalCard"]
-    assert "✓ 已完成" in rows["__goalCard"]
+    assert "已完成" in rows["__goalCard"]  # v3 footer pill（状态点独立 span）
 
     assert rows["completed"]["state"] == "completed"
     assert rows["completed"]["type"] == "intent_completed"

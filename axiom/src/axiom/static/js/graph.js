@@ -123,15 +123,21 @@ window.AxiomModules.graph = {
       return `<svg class="node-card__icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${paths[iconType] || paths.doc}</svg>`;
     },
 
-    // 节点状态徽章映射：仅展示既有 status 数据，不新增语义。
+    // 节点状态徽章映射：仅展示既有 status/nodeType 数据，不新增语义。
     STATUS_PILL: {
       completed: ['is-done', '已完成'],
+      goal_evidence: ['is-done', '已完成'],
+      intent_completed: ['is-done', '已完成'],
       running: ['is-run', '进行中'],
       in_progress: ['is-run', '进行中'],
       claimed: ['is-run', '进行中'],
+      bootstrap_running: ['is-run', '进行中'],
       pending: ['is-queue', '排队'],
+      unclaimed: ['is-queue', '待领取'],
+      bootstrap_pending: ['is-queue', '排队'],
       blocked: ['is-block', '受阻'],
       failed: ['is-fail', '失败'],
+      intent_failed: ['is-fail', '失败'],
     },
 
     nodeCardTpl(data) {
@@ -139,18 +145,20 @@ window.AxiomModules.graph = {
       if (!cardTypes.includes(data.nodeType)) return '';
       const title = this.escapeNodeHtml(data.title || '');
       const icon = this.nodeIconSvg(data.iconType);
-      const body = this.escapeNodeHtml(data.label || '');
+      const body = this.escapeNodeHtml(data.label || data.description || '');
       const w = data.width || 200;
       const h = data.height || 76;
       const archivedClass = data.archived ? ' node-card--archived' : '';
       const goalCompleted = data.nodeType === 'goal' && data.goalStatus === 'completed';
       const goalStatusClass = goalCompleted ? ' node-card--goal-completed' : '';
-      const statusKey = data.goalStatus === 'completed' ? 'completed' : (data.status || '');
+      const statusKey = data.goalStatus === 'completed'
+        ? 'completed'
+        : (data.status || data.nodeType);
       const pill = this.STATUS_PILL[statusKey];
       const statusPill = goalCompleted
-        ? '<span class="node-card__status is-done" title="Reason 已判定 Goal 达成">✓ 已完成</span>'
+        ? '<span class="node-card__status is-done" title="Reason 已判定 Goal 达成"><span class="dot"></span>已完成</span>'
         : (pill
-          ? `<span class="node-card__status ${pill[0]}" title="${pill[1]}">${pill[1]}</span>`
+          ? `<span class="node-card__status ${pill[0]}" title="${pill[1]}"><span class="dot"></span>${pill[1]}</span>`
           : '');
       const refShort = data.id ? `#${data.id}` : '';
       const interventionLabel = this.escapeNodeHtml(
@@ -162,9 +170,9 @@ window.AxiomModules.graph = {
       return `<div id="node-card-${data.id}" class="node-card node-card--${data.nodeType}${goalStatusClass}${archivedClass}" style="width:${w}px;height:${h}px">`
         + interventionDot
         + `<span class="node-card__reason-beacon"></span>`
-        + `<div class="node-card__header"><span class="node-card__type-icon">${icon}</span><span class="node-card__title">${title}</span>${statusPill}</div>`
+        + `<div class="node-card__header"><span class="node-card__type-icon">${icon}</span><span class="node-card__title">${title}</span></div>`
         + `<div class="node-card__body">${body}</div>`
-        + (refShort ? `<span class="node-card__ref">${refShort}</span>` : '')
+        + `<div class="node-card__footer">${statusPill}<span class="node-card__ref">${refShort}</span></div>`
         + `</div>`;
     },
 
@@ -302,6 +310,11 @@ window.AxiomModules.graph = {
         goalGold: '#c58b00', goalGoldText: '#8a6100', historyGold: '#d5b56a',
       };
       return [
+        // ── 默认边：S 形平滑弯（控制点随节点位置重算，见 recomputeEdgeCurves） ──
+        { selector: 'edge', style: {
+          'curve-style': 'unbundled-bezier',
+          'control-points': 'data(cp)',
+        }},
         // ── Card nodes: transparent (visuals via html-label overlay) ──
         { selector: 'node[nodeType="origin"]', style: {
           shape:'round-rectangle', 'background-color':'transparent', 'background-opacity':0,
@@ -384,12 +397,12 @@ window.AxiomModules.graph = {
         // ── Edges: curved bezier with arrows ──
         { selector: 'edge[status="concluded"]', style: {
           width:2, 'line-color':'#22c55e', 'target-arrow-color':'#22c55e',
-          'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          'target-arrow-shape':'triangle', 'curve-style':'unbundled-bezier',
           'arrow-scale':0.9,
         }},
         { selector: 'edge[status="goal_evidence"]', style: {
           width:3, 'line-color':theme.goalGold, 'target-arrow-color':theme.goalGold,
-          'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          'target-arrow-shape':'triangle', 'curve-style':'unbundled-bezier',
           label:'data(label)', 'font-size':'8px', color:theme.goalGoldText,
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.92,
@@ -398,7 +411,7 @@ window.AxiomModules.graph = {
         { selector: 'edge[status="goal_evidence_history"]', style: {
           width:2, 'line-color':theme.historyGold, 'target-arrow-color':theme.historyGold,
           'line-style':'dashed', 'line-dash-pattern':[7,5], opacity:0.7,
-          'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          'target-arrow-shape':'triangle', 'curve-style':'unbundled-bezier',
           label:'data(label)', 'font-size':'7px', color:theme.historyGold,
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.9,
@@ -406,41 +419,41 @@ window.AxiomModules.graph = {
         }},
         { selector: 'edge[status="in_progress"]', style: {
           width:1.2, 'line-color':'#94a3b8', 'line-style':'dashed', 'line-dash-pattern':[5,4],
-          'target-arrow-color':'#94a3b8', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          'target-arrow-color':'#94a3b8', 'target-arrow-shape':'triangle', 'curve-style':'unbundled-bezier',
           'arrow-scale':0.85,
         }},
         { selector: 'edge[status="unclaimed"]', style: {
           width:1.2, 'line-color':theme.mutedBorder, 'line-style':'dashed', 'line-dash-pattern':[5,5],
-          'target-arrow-color':theme.mutedBorder, 'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          'target-arrow-color':theme.mutedBorder, 'target-arrow-shape':'triangle', 'curve-style':'unbundled-bezier',
           'arrow-scale':0.7,
         }},
         { selector: 'edge[status="intent_completed"]', style: {
           width:2.5, 'line-color':'#34d399', 'target-arrow-color':'#34d399',
-          'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          'target-arrow-shape':'triangle', 'curve-style':'unbundled-bezier',
           'arrow-scale':0.8,
         }},
         { selector: 'edge[status="intent_cancelled"]', style: {
           width:1.2, 'line-color':'#94a3b8', 'line-style':'dashed', 'line-dash-pattern':[4,5],
-          'target-arrow-color':theme.mutedBorder, 'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          'target-arrow-color':theme.mutedBorder, 'target-arrow-shape':'triangle', 'curve-style':'unbundled-bezier',
           'arrow-scale':0.7,
         }},
         { selector: 'edge[status="intent_failed"]', style: {
           width:1.8, 'line-color':'#f87171', 'line-style':'dashed', 'line-dash-pattern':[6,4],
-          'target-arrow-color':'#f87171', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          'target-arrow-color':'#f87171', 'target-arrow-shape':'triangle', 'curve-style':'unbundled-bezier',
           'arrow-scale':0.75,
         }},
         { selector: 'edge[status="bootstrap_pending"]', style: {
           width:2, 'line-color':'#fdba74', 'line-style':'dashed', 'line-dash-pattern':[8,4],
-          'target-arrow-color':'#fdba74', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          'target-arrow-color':'#fdba74', 'target-arrow-shape':'triangle', 'curve-style':'unbundled-bezier',
           'arrow-scale':0.85,
         }},
         { selector: 'edge[status="bootstrap_running"]', style: {
           width:2.5, 'line-color':'#fb923c', 'line-style':'dashed', 'line-dash-pattern':[10,4],
-          'target-arrow-color':'#fb923c', 'target-arrow-shape':'triangle', 'curve-style':'bezier',
+          'target-arrow-color':'#fb923c', 'target-arrow-shape':'triangle', 'curve-style':'unbundled-bezier',
           'arrow-scale':0.95,
         }},
         { selector: 'edge[edgeType="bootstrap_scope"]', style: {
-          label:'', width:1.8, 'curve-style':'bezier',
+          label:'', width:1.8, 'curve-style':'unbundled-bezier',
           'line-style':'dotted', 'line-dash-pattern':[2,5],
           'target-arrow-shape':'triangle-backcurve', 'arrow-scale':0.75,
           'target-distance-from-node':2, 'line-color':theme.scopeEdge,
@@ -781,13 +794,26 @@ window.AxiomModules.graph = {
         const run = () => {
           self._minimapThrottleTimer = null;
           self._minimapLastDraw = performance.now();
+          self.recomputeEdgeCurves();
           self.drawMinimap();
         };
         if (elapsed >= 100) requestAnimationFrame(run);
         else self._minimapThrottleTimer = setTimeout(run, 100 - elapsed);
       };
       this.cy.on('pan zoom layoutstop add remove', schedule);
+      this.cy.on('position', 'node', schedule);
       this._minimapSchedule = schedule;
+    },
+
+    /** S 形平滑弯：双控制点取源/目标高度在水平中点上的投影（坐标相对边中点）。 */
+    recomputeEdgeCurves() {
+      if (!this.cy) return;
+      this.cy.edges().forEach(edge => {
+        const s = edge.source().position();
+        const t = edge.target().position();
+        const my = (s.y + t.y) / 2;
+        edge.data('cp', [{ x: 0, y: (s.y - my) * 0.9 }, { x: 0, y: (t.y - my) * 0.9 }]);
+      });
     },
 
     drawMinimap() {
@@ -943,10 +969,7 @@ window.AxiomModules.graph = {
         const d = (fact.description || '').replace(/\s+/g, ' ').trim();
         return d || '目标';
       }
-      const normalized = fact.description.replace(/\s+/g, ' ').trim();
-      const chars = Array.from(normalized);
-      if (chars.length <= 24) return normalized || fact.id;
-      return `${chars.slice(0, 24).join('')}…`;
+      return fact.description.replace(/\s+/g, ' ').trim() || fact.id;
     },
 
     nodeTitle(nodeType) {
@@ -988,16 +1011,11 @@ window.AxiomModules.graph = {
     },
 
     factNodeSize(label, nodeType) {
-      const headerHeight = 17;
-      const preset = (nodeType === 'fact' || nodeType === 'depth_fact' || nodeType === 'depth_origin')
-        ? { fontSize: 10, maxTextWidth: 116, minWidth: 52, minHeight: 48, paddingX: 10, paddingY: 8 }
-        : { fontSize: 11, maxTextWidth: 92, minWidth: 58, minHeight: 52, paddingX: 10, paddingY: 8 };
-
-      const measured = this.measureWrappedText(label, preset.maxTextWidth, preset.fontSize);
-      return {
-        width: Math.max(preset.minWidth, Math.ceil(measured.width + preset.paddingX * 2)),
-        height: Math.max(preset.minHeight, Math.ceil(measured.height + preset.paddingY * 2 + headerHeight)),
-      };
+      // 卡片宽度统一；高度按全文行数自适应（文字显示全，不再截断）。
+      const width = 200;
+      const measured = this.measureWrappedText(label, 172, 11);
+      const height = Math.min(480, Math.max(84, Math.ceil(measured.height) + 62));
+      return { width, height };
     },
 
     measureWrappedText(text, maxWidth, fontSize) {
@@ -1086,6 +1104,14 @@ window.AxiomModules.graph = {
       const min = 260;
       const max = Math.max(min, containerWidth - 260);
       return Math.min(max, Math.max(min, width));
+    },
+
+    toggleSidePanel() {
+      this.sidePanelCollapsed = !this.sidePanelCollapsed;
+      setTimeout(() => {
+        if (this.cy) this.cy.resize();
+        this.drawMinimap();
+      }, 60);
     },
 
     startPanelResize(e) {

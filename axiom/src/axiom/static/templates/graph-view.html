@@ -324,6 +324,10 @@
       </div>
 
       <div id="cy" class="relative z-0 flex-1 h-full"></div>
+      <button x-show="sidePanelCollapsed" @click="toggleSidePanel()" title="展开侧面板"
+        class="absolute top-1/2 -translate-y-1/2 right-1 z-20 h-14 w-6 rounded-l-lg border border-r-0 border-slate-200/60 bg-white/90 backdrop-blur shadow-sm text-slate-400 hover:text-brand-600 hover:bg-brand-50 transition flex items-center justify-center">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
 
       <template x-if="minimapVisible && cy">
         <canvas id="minimap" width="160" height="96" x-init="$nextTick(() => drawMinimap())"
@@ -369,12 +373,12 @@
       </template>
     </div>
 
-    <div @pointerdown.prevent="startPanelResize($event)" class="w-2 shrink-0 cursor-col-resize group flex items-stretch justify-center touch-none relative z-20">
+    <div x-show="!sidePanelCollapsed" @pointerdown.prevent="startPanelResize($event)" class="w-2 shrink-0 cursor-col-resize group flex items-stretch justify-center touch-none relative z-20">
       <div class="w-px bg-slate-200/70 transition group-hover:bg-brand-300" :class="{ 'bg-brand-400': isResizingPanel }"></div>
     </div>
 
     <!-- Side panel -->
-    <div class="border-l border-slate-200/60 bg-white flex flex-col overflow-hidden shrink-0 relative z-20" :style="{ width: sidePanelWidth + 'px', minWidth: sidePanelWidth + 'px', flexBasis: sidePanelWidth + 'px' }">
+    <div x-show="!sidePanelCollapsed" class="border-l border-slate-200/60 bg-white flex flex-col overflow-hidden shrink-0 relative z-20" :style="{ width: sidePanelWidth + 'px', minWidth: sidePanelWidth + 'px', flexBasis: sidePanelWidth + 'px' }">
       <div class="flex border-b border-slate-100 shrink-0">
         <button @click="sideTab = 'detail'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'detail' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">详情</button>
@@ -393,6 +397,10 @@
         <button @click="sideTab = 'todo'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'todo' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">
           Todo <span class="ml-0.5 text-[10px] opacity-60" x-text="project.todos.length || ''"></span>
+        </button>
+        <button @click="toggleSidePanel()" title="向右折叠面板，扩大图谱"
+          class="px-2 py-2.5 text-slate-400 hover:text-brand-600 hover:bg-brand-50 transition shrink-0">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/><path d="m15 6 6 6-6 6"/></svg>
         </button>
       </div>
 
