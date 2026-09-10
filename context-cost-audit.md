@@ -217,3 +217,65 @@
 1. **刀③**（一天量级，零风险）：a→b→c→d→e→f 全部提示词与模板改动 + schema 校验
 2. **刀②**（结构性主刀）：注入目录卡化 + evidence 登记粒度修复 + graph 行去 preview
 3. 附带：todo 字段瘦身（schema+查询）
+
+---
+
+## 七、改造后的上下文流（2026-09-09 实施完毕，当前生效）
+
+> 施工提交：1d605c6（刀②/③+todo 瘦身）、bf74021（evidence 门控）、9cf4465（前端双格式链接）。live 实测：reason fresh input 182-2,361 / explore 194-3,266 tokens/轮。
+
+### 7.1 EXPLORE worker（当前）
+
+**吃进去（注入部分 ≈1-3K tokens/轮）**
+
+| # | 上下文 | 形态 |
+|---|---|---|
+| 1 | 系统提示词 | explore.md（含 findings/leads 纪律、三禁项、whatisvul 按需读提示） |
+| 2 | 头三节 | ① 任务书 = reason 写的四段式（目标/判据/前置/边界，≤500 chars）② 当前目标 = targets ③ 无触发快照 |
+| 3 | 目录卡 ×3 | hints（N 行+details/ 路径）· knowledge（N 行）· artifacts（N 件（a001-aNNNN）+ findings/leads 在 artifacts/\<intent_id\>/ + evidence 说明） |
+| 4 | 按需通道 | run_dir（bootstrap 产物、上游 findings/leads 按 storage_key 读）· manifest details/ · skills（whatisvul 仅上报前读）· bsk 返回 |
+
+**拉出来**
+
+| # | 产物 | 去向 |
+|---|---|---|
+| 1 | findings.md | 编号事实 + 末尾"## 证据清单"（仅上报漏洞时才有证据文件）；下游：目录卡 → 按需读 |
+| 2 | leads.md | 一二三编号；下游同上 |
+| 3 | fact（完成事实） | 一行式审计记录（intent:iXXX 完成；artifacts:…；vulns:…）——只给人看，不进任何 prompt |
+| 4 | vulnerabilities | 六字段不变；evidence 只在被漏洞引用时登记 artifact 行 |
+| 5 | evidence 文件 | 仅上报漏洞时写；无漏洞轮次不拷贝不登记（文件管理不出现） |
+| 6 | activity_summary | UI 实时卡 |
+
+### 7.2 REASON worker（当前）
+
+**吃进去（注入部分 ≈1-2.5K tokens/轮）**
+
+| # | 上下文 | 形态 |
+|---|---|---|
+| 1 | 系统提示词 | reason.md（任务书四段式模板、assessment 一行式、注入说明）+ profile |
+| 2 | 头三节 | ① 任务书 ② 当前目标 ③ 触发快照（fact_batch：source_fact_ids / todo_review_ids / open_explore_ids / coalesced_count——"这轮为什么轮到我+待规划清单"） |
+| 3 | 目录卡 ×3 | 同 explore |
+| 4 | workspace draft | 仅续跑重灌；随任务书/todo 瘦身降至 ~15-20KB（原 61KB），限额待实测 |
+| 5 | 按需通道 | manifest details/（fact/intent 明细）· findings/leads 文件 · skills |
+
+**拉出来**
+
+| # | 产物 | 去向 |
+|---|---|---|
+| 1 | intents.description | 四段式任务书 ≤500（目标/判据/前置/边界；不定义"怎么做"）→ explore 头三节① |
+| 2 | intents.targets_json | explore scope |
+| 3 | todos | title + status_reason（高效精炼）；category/theme/priority 不再产出 |
+| 4 | assessment_reason | 一行式（达成 X/Y；未竟；处置）→ 规划评审闭环 |
+| 5 | fact（commit 结论） | 一行式审计，只给人看 |
+| 6 | draft_json | 自重灌（联动瘦身） |
+| 7 | 调度信号 | explore intent 创建 / 下一轮触发 |
+
+### 7.3 触发与攒批（当前配置：batch=3 / 排队 1 / 最小间隔 90s / 最大等待 360s）
+
+- 电平条件：累积未规划 facts ≥3 → 允许产生 fact_batch 事件（非边沿计数——过线后每个完成的 intent 都会再敲一次门）
+- 忙碌合并：reason 运行/排队期间，后续事件并入排队 run（coalesced_count = 吸收的事件数 ≈ 忙碌窗口内完成的 intent 数）；合并成本 ≈ 0（DB payload 更新）
+- 净效果：N 个 intent 的产出 → 1 轮 reason 消化（快照 union）
+
+### 7.4 前端配套
+
+- fact 文本链接化双格式兼容（graph.js）：历史单数（artifact:aXXX）与新复数（artifacts:a/b/c、vulns:v/w）都可点击跳转；intent:iXXX 为纯文本（详情面板已有意图链接）
