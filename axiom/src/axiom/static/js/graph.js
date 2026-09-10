@@ -500,6 +500,7 @@ window.AxiomModules.graph = {
       if (!this.cy) return;
       this.cy.style().fromJson(this.graphStyles()).update();
       this.refreshGraphDecorations();
+      requestAnimationFrame(() => this.syncCardHeights());
       this.drawMinimap();
     },
 
@@ -794,6 +795,7 @@ window.AxiomModules.graph = {
         const run = () => {
           self._minimapThrottleTimer = null;
           self._minimapLastDraw = performance.now();
+          self.syncCardHeights();
           self.recomputeEdgeCurves();
           self.drawMinimap();
         };
@@ -803,6 +805,17 @@ window.AxiomModules.graph = {
       this.cy.on('pan zoom layoutstop add remove', schedule);
       this.cy.on('position', 'node', schedule);
       this._minimapSchedule = schedule;
+    },
+
+    /** 卡片实际渲染高 → 回写 cy 节点高度：选中蓝框/连线锚点与卡片完全重合。 */
+    syncCardHeights() {
+      if (!this.cy) return;
+      this.cy.nodes().forEach(node => {
+        const el = document.getElementById(`node-card-${node.id()}`);
+        if (!el) return;
+        const h = el.offsetHeight;
+        if (h && Math.abs((node.height() || 0) - h) > 2) node.style({ height: h });
+      });
     },
 
     /** S 形平滑弯：双控制点取源/目标高度在水平中点上的投影（坐标相对边中点）。 */
