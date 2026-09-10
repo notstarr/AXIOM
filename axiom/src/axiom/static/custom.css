@@ -420,7 +420,7 @@
     display: flex; flex-direction: column;
     position: relative; z-index: 5;
     background: #ffffff;
-    border-radius: 10px; overflow: hidden;
+    border-radius: 10px;
     padding: 8px 10px 16px;
     pointer-events: none; user-select: none;
     font-family: -apple-system, BlinkMacSystemFont, Inter, sans-serif;
@@ -432,7 +432,7 @@
     display: inline-flex; align-items: center; justify-content: center;
     width: 18px; height: 18px; flex-shrink: 0;
     border-radius: 6px;
-    color: #fff;
+    color: inherit;
   }
   .node-card__type-icon svg { width: 11px; height: 11px; }
   .node-card__body {
@@ -562,7 +562,7 @@
     border: 1.5px solid #99f6e4; background: #f0fdfa;
   }
   .node-card--origin .node-card__header,
-  .node-card--depth_origin .node-card__header { color: #0d9488;
+  .node-card--depth_origin .node-card__header { color: #059669;
   }
   .node-card--origin .node-card__body,
   .node-card--depth_origin .node-card__body { color: #0f766e; }
@@ -600,8 +600,8 @@
   .node-card--depth_plan .node-card__header { color: #4338ca; }
   .node-card--depth_plan .node-card__body { color: #3730a3; font-size: 10px; }
   .node-card--depth_fact { border: 1.5px solid #fde68a; background: #ffffff; }
-  .node-card--depth_fact .node-card__header { color: #92400e; }
-  .node-card--depth_fact .node-card__body { color: #78350f; font-size: 10px; }
+  .node-card--depth_fact .node-card__header { color: #111827; }
+  .node-card--depth_fact .node-card__body { color: #111827; font-size: 10px; }
   .node-card--bootstrap_pending { border: 1.5px dashed #fdba74; background: #fff7ed; }
   .node-card--bootstrap_pending .node-card__header { color: #c2410c; }
   .node-card--bootstrap_pending .node-card__body { color: #9a3412; font-size: 9px; }

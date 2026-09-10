@@ -167,7 +167,7 @@ window.AxiomModules.graph = {
       const interventionDot = data.humanInterventionRequired
         ? `<span class="node-card__human-dot" title="${interventionLabel}" aria-label="${interventionLabel}"></span>`
         : '';
-      return `<div id="node-card-${data.id}" class="node-card node-card--${data.nodeType}${goalStatusClass}${archivedClass}" style="width:${w}px;height:${h}px">`
+      return `<div id="node-card-${data.id}" class="node-card node-card--${data.nodeType}${goalStatusClass}${archivedClass}" style="width:${w}px">`
         + interventionDot
         + `<span class="node-card__reason-beacon"></span>`
         + `<div class="node-card__header"><span class="node-card__type-icon">${icon}</span><span class="node-card__title">${title}</span></div>`
