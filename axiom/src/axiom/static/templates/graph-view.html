@@ -862,6 +862,13 @@
                       <div x-show="intent.targets?.length" class="mt-1.5 pt-1.5 border-t border-slate-800 text-[9px] text-slate-400 truncate">
                         <span>目标：</span><span class="font-mono text-slate-300" x-text="intent.targets.join(', ')"></span>
                       </div>
+                      <div class="mt-1.5 pt-1.5 border-t border-slate-800 flex items-center justify-between gap-2">
+                        <span class="text-[9px] text-slate-400 shrink-0">评估</span>
+                        <span class="text-[9px] font-bold"
+                          :class="intent.assessment_status === 'completed' ? 'text-emerald-400' : (intent.assessment_status === 'partial' ? 'text-amber-400' : (intent.assessment_status === 'blocked' ? 'text-rose-400' : 'text-slate-500'))"
+                          x-text="intent.assessment_status || '未评估'"></span>
+                      </div>
+                      <div x-show="intent.assessment_reason" class="mt-1 text-[10px] text-slate-300 whitespace-pre-wrap break-words leading-relaxed" x-text="intent.assessment_reason"></div>
                     </div>
                   </div>
                 </template>

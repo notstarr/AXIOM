@@ -1122,7 +1122,14 @@ window.AxiomModules.graph = {
     toggleSidePanel() {
       this.sidePanelCollapsed = !this.sidePanelCollapsed;
       setTimeout(() => {
-        if (this.cy) this.cy.resize();
+        if (this.cy) {
+          // 视口钉住：折叠/展开只改容器宽度，pan/zoom 原样保留 → 图谱内容纹丝不动。
+          const pan = this.cy.pan();
+          const zoom = this.cy.zoom();
+          this.cy.resize();
+          this.cy.zoom(zoom);
+          this.cy.pan(pan);
+        }
         this.drawMinimap();
       }, 60);
     },
