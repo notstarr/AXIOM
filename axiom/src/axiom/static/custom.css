@@ -1306,3 +1306,7 @@
   .sto-statflat > div { cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
   .sto-statflat > div:hover { border-color: var(--sto-fg-3); }
   .sto-statflat > div.stat-active { border-color: var(--sto-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sto-accent) 14%, transparent); }
+
+  /* ── intent 悬浮卡（原生 hover，绕开 Tailwind 预构建缺口） ── */
+  .intent-row .intent-hover-card { display: none; }
+  .intent-row:hover .intent-hover-card { display: block; }
