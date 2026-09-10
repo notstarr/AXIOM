@@ -599,7 +599,11 @@ def _api_path(entry: str) -> str:
 
 def _group_api(values: list[str], targets: list[str]) -> dict:
     """API接口按域分组：域 -> 路径前缀(前两段) -> 排序条目，未分组单列。"""
-    origin = urlparse(targets[0]).netloc if len(targets) == 1 else "_未归属"
+    # 多目标共享同一入口域时，相对路径 API 归属该域；不同域才落入未归属。
+    target_netlocs = {urlparse(t).netloc for t in targets if urlparse(t).netloc}
+    origin = target_netlocs.pop() if len(target_netlocs) == 1 else (
+        urlparse(targets[0]).netloc if len(targets) == 1 else "_未归属"
+    )
     grouped: dict[str, dict[str, list[str]]] = {}
     for entry in values:
         path = _api_path(entry)
@@ -637,7 +641,7 @@ def main() -> int:
     parser.add_argument("--cookie", default="", help="登录态 Cookie 串")
     parser.add_argument("--threads", type=int, default=30)
     parser.add_argument("--delay", type=float, default=0.0, help="每个请求后休眠秒数")
-    parser.add_argument("--max-js", type=int, default=500, dest="max_js")
+    parser.add_argument("--max-js", type=int, default=1500, dest="max_js")
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--retries", type=int, default=1)
     parser.add_argument("--max-seconds", type=float, default=180.0, dest="max_seconds", help="总时限（秒），到点立即产出已有结果")
