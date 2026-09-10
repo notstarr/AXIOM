@@ -279,3 +279,10 @@
 ### 7.4 前端配套
 
 - fact 文本链接化双格式兼容（graph.js）：历史单数（artifact:aXXX）与新复数（artifacts:a/b/c、vulns:v/w）都可点击跳转；intent:iXXX 为纯文本（详情面板已有意图链接）
+
+### 7.5 旧 fact 回顾能力 —— 方案 C 不采纳（2026-09-09 用户裁定）
+
+- 背景：刀② 移除 graph/facts 注入后，"旧 fact + 新 fact 组合挖洞"的回顾通道需确认
+- **已定：不把 facts ref 清单加回目录卡**——理由：评估扫荡（每轮强制评估 unassessed intents = 系统性重读其 findings/leads）+ todo 线程（leads 转化的 todo 未完成前每轮可见）+ artifacts 路径学（随时可读任意历史产出）+ plan 全局复盘（跨 intent 组合推理的归属地）四层已覆盖回顾需求
+- 残余缺口（记录）：两个已完成评估的 intent、组合价值晚期浮现——无自动触发器；兜底链为 leads→todo 线程 + plan 复盘，频率低，接受
+- 前提依赖：leads/todo 纪律（刀③d/e/f）必须执行到位——线程链的强度取决于 leads 质量
