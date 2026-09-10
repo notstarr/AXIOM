@@ -14,6 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from axiom.modules.artifacts.repository import BOOTSTRAP_ARTIFACT_TYPES
 from axiom.modules.artifacts.schemas import Artifact
 from axiom.modules.vulnerabilities.schemas import StoredExploreVulnerability, Vulnerability
 from axiom.shared.errors import ConflictError
@@ -130,10 +131,72 @@ def bootstrap_files(run_dir: str | Path) -> list[StageFile]:
         except StageOutputError:
             logger.warning("Bootstrap 可选产物无效，已跳过：%s", filename)
             continue
-        results.append(
-            StageFile(relative_name=filename, path=path, artifact_type=artifact_type, summary=summary)
-        )
+        results.append(StageFile(relative_name=filename, path=path, artifact_type=artifact_type, summary=summary))
+    results.extend(_collect_bootstrap_extras(root, registered={item.relative_name for item in results}))
     return results
+
+
+BOOTSTRAP_EXTRA_MAX_FILES = 20
+BOOTSTRAP_EXTRA_MAX_BYTES = 10 * 1024 * 1024
+_BOOTSTRAP_SYSTEM_FILES = frozenset(
+    {
+        "bootstrap_artifacts.json",
+        "auth.json",
+        "models.json",
+        "models-store.json",
+        "phase-capabilities.json",
+        "explore_result.json",
+    }
+) | set(BOOTSTRAP_ARTIFACT_TYPES)
+
+
+def _collect_bootstrap_extras(root: Path, *, registered: set[str]) -> list[StageFile]:
+    """保留白名单之外的全部一级常规文件为 bootstrap.file。
+
+    worker 常在核心三件套之外产出有价值的额外材料（如 api_endpoints_all.txt、
+    jsdump/ 摘要）；此前它们不进白名单、随完成清理物理消失。护栏：
+    单文件 ≤10MB、总数 ≤20、文件名必须安全段、子目录与系统文件跳过。
+    """
+    extras: list[StageFile] = []
+    skipped: list[str] = []
+    try:
+        entries = sorted(root.iterdir(), key=lambda item: item.name)
+    except OSError:
+        return extras
+    for path in entries:
+        if len(extras) >= BOOTSTRAP_EXTRA_MAX_FILES:
+            logger.warning("Bootstrap 额外产物超过 %d 个，余者丢弃：%s", BOOTSTRAP_EXTRA_MAX_FILES, path.name)
+            break
+        if path.name in registered or path.name in _BOOTSTRAP_SYSTEM_FILES:
+            continue
+        if path.is_dir():
+            skipped.append(path.name + "/")
+            continue
+        if not path.is_file() or path.is_symlink():
+            continue
+        if not _SAFE_SEGMENT.match(path.name):
+            skipped.append(path.name)
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if size == 0:
+            continue
+        if size > BOOTSTRAP_EXTRA_MAX_BYTES:
+            logger.warning("Bootstrap 额外产物超 10MB，已丢弃：%s（%d bytes）", path.name, size)
+            continue
+        extras.append(
+            StageFile(
+                relative_name=path.name,
+                path=path,
+                artifact_type="bootstrap.file",
+                summary=path.name,
+            )
+        )
+    if skipped:
+        logger.warning("Bootstrap 额外产物中跳过非安全/目录项：%s", "、".join(skipped))
+    return extras
 
 
 def explore_files(

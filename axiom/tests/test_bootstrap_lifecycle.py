@@ -106,6 +106,36 @@ def test_bootstrap_closeout_is_atomic_and_materializes_registered_files(client, 
     assert (run_dir / "bootstrap_artifacts.json").is_file()
 
 
+
+def test_bootstrap_keeps_extra_files_as_bootstrap_file_artifacts(client, data_dir) -> None:
+    task, claim = setup_claimed_bootstrap(client)
+    base = f"/api/v1/dispatch/tasks/{task['id']}/intents/i001"
+    client.post(f"{base}/start", json={"lease_id": claim["lease_id"]})
+    execution_input = client.post(f"{base}/input", json={"lease_id": claim["lease_id"]}).json()
+    payload = bootstrap_payload(claim["lease_id"])
+    write_bootstrap_files(execution_input["run_dir"], bootstrap_files_from_legacy(payload))
+    run_dir = Path(execution_input["run_dir"])
+    (run_dir / "api_endpoints_all.txt").write_text(
+        "/api/v1/example\n/api/v2/example\n", encoding="utf-8"
+    )
+    (run_dir / "jsdump").mkdir()
+    (run_dir / "jsdump" / "chunk.js").write_text("// js", encoding="utf-8")
+    (run_dir / "models.json").write_text("{}", encoding="utf-8")
+
+    completed = client.post(f"{base}/bootstrap-complete", json={"lease_id": claim["lease_id"]})
+    assert completed.status_code == 200, completed.text
+
+    types = [item["artifact_type"] for item in completed.json()["artifacts"]]
+    # findings.md 是已知类型不重复登记；jsdump/ 子目录与 models.json 系统文件跳过
+    assert "bootstrap.file" in types
+    assert types.count("bootstrap.file") == 1
+    extras = client.get(f"/api/v1/tasks/{task['id']}/artifacts").json()
+    extra = next(item for item in extras if item["artifact_type"] == "bootstrap.file")
+    assert extra["summary"] == "api_endpoints_all.txt"
+    content = client.get(f"/api/v1/tasks/{task['id']}/artifacts/{extra['id']}/content")
+    assert content.status_code == 200
+    assert "/api/v1/example" in content.json()["content"]
+    assert (data_dir / extra["storage_key"]).is_file()
 def test_bootstrap_completion_is_idempotent_for_the_same_lease(client) -> None:
     task, claim = setup_claimed_bootstrap(client)
     base = f"/api/v1/dispatch/tasks/{task['id']}/intents/i001"
