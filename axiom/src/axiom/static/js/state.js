@@ -114,6 +114,7 @@ window.AxiomModules.state = {
     graphSearch: '',
     sidePanelWidth: 320,
     sidePanelCollapsed: false,
+    intentHover: null,
     isResizingPanel: false,
     minimapVisible: true,
     _minimapRaf: null,
