@@ -1457,10 +1457,10 @@ window.AxiomModules.projects = {
       this.selectedNode = null;
       this.selectedFacts = [];
       this.selectedTimelineEntryId = null;
-      this.humanTab = 'workspace';
-      this.humanArtifactItems = [];
-      this.humanArtifactPage = 0;
-      this.humanArtifactTotal = 0;
+      // 从文件中心返回同一任务时，恢复跳转前的任务详情页签（如"事实与线索"）
+      const returnTab = this._humanTabReturn?.taskId === id ? this._humanTabReturn?.tab : '';
+      this._humanTabReturn = null;
+      this.humanTab = ['workspace', 'todos', 'facts'].includes(returnTab) ? returnTab : 'workspace';
       this.view = initialView === 'graph' ? 'graph' : 'human';
       this.activePage = 'task-detail';
       this.cleanupMountedPage?.();
@@ -1529,9 +1529,6 @@ window.AxiomModules.projects = {
       this.project = null;
       this.selectedProjectId = '';
       this.resetTaskDetailLoad?.('');
-      this.humanArtifactItems = [];
-      this.humanArtifactPage = 0;
-      this.humanArtifactTotal = 0;
       this.seeEvents = [];
       this.seeLastEventId = 0;
       this.selectedWorkerStream = '';

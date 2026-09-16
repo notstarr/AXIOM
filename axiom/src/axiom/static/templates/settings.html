@@ -54,12 +54,32 @@
           </button>
           <button @click="selectDispatchPreset('turbo')" class="sto-pcard" style="padding:12px; position:relative;" :class="workerPresetName === 'turbo' ? 'active' : ''"><span x-show="workerPresetPending === 'turbo'" style="position:absolute; top:8px; right:8px; font-size:9px; font-weight:650; padding:2px 7px; border-radius:999px; background:var(--sto-warn); color:#fff;">待保存</span>
             <div style="font-size:13px; font-weight:650;">🚀 高效档</div>
-            <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">Reason ≥90s · 30s 退避 · 30s 冷却</div>
+            <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">Reason ≥300s · 30s 退避 · 30s 冷却</div>
             <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">官方 / 高额度 key</div>
           </button>
         </div>
         <p class="sto-muted" style="font-size:10.5px; margin-top:8px;" x-show="workerPresetPending">已选择档位但尚未保存，点右上角「保存系统设置」后生效；手动改动下方参数会作废该选择。</p>
         <p class="sto-muted" style="font-size:10.5px; margin-top:8px;" x-show="!workerPresetPending && workerPresetName === 'custom'">当前为自定义组合，点击任一档位整体套用。</p>
+        <div style="font-size:12px; font-weight:650; margin-top:14px; margin-bottom:6px;">Worker 速度（每阶段时间预算）</div>
+        <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px;">
+          <button @click="selectSpeedPreset('slow-fast')" class="sto-pcard" style="padding:12px; position:relative;" :class="workerSpeedName === 'slow-fast' ? 'active' : ''"><span x-show="workerSpeedPending === 'slow-fast'" style="position:absolute; top:8px; right:8px; font-size:9px; font-weight:650; padding:2px 7px; border-radius:999px; background:var(--sto-warn); color:#fff;">待保存</span>
+            <div style="font-size:13px; font-weight:650;">⚡ 快速</div>
+            <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">Explore 12min · 阶段执行 8min</div>
+            <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">响应快的供应商，快速周转</div>
+          </button>
+          <button @click="selectSpeedPreset('standard')" class="sto-pcard" style="padding:12px; position:relative;" :class="workerSpeedName === 'standard' ? 'active' : ''"><span x-show="workerSpeedPending === 'standard'" style="position:absolute; top:8px; right:8px; font-size:9px; font-weight:650; padding:2px 7px; border-radius:999px; background:var(--sto-warn); color:#fff;">待保存</span>
+            <div style="font-size:13px; font-weight:650;">● 标准</div>
+            <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">Explore 15min · 阶段执行 10min</div>
+            <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">现行默认预算</div>
+          </button>
+          <button @click="selectSpeedPreset('slow-llm')" class="sto-pcard" style="padding:12px; position:relative;" :class="workerSpeedName === 'slow-llm' ? 'active' : ''"><span x-show="workerSpeedPending === 'slow-llm'" style="position:absolute; top:8px; right:8px; font-size:9px; font-weight:650; padding:2px 7px; border-radius:999px; background:var(--sto-warn); color:#fff;">待保存</span>
+            <div style="font-size:13px; font-weight:650;">🐢 慢速</div>
+            <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">Explore 30min · 阶段执行 20min</div>
+            <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">响应慢的供应商；消化率约减半</div>
+          </button>
+        </div>
+        <p class="sto-muted" style="font-size:10.5px; margin-top:8px;" x-show="workerSpeedPending">已选择速度档但尚未保存，点右上角「保存系统设置」后生效；手动改动「阶段预算」内数值会作废该选择。</p>
+        <p class="sto-muted" style="font-size:10.5px; margin-top:8px;" x-show="!workerSpeedPending && workerSpeedName === 'custom'">当前速度为自定义组合，点击任一速度档整体套用。</p>
       </div>
 
       <div class="sto-panel" style="padding:16px 18px;" @input="dispatchSettingsEdited()">

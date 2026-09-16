@@ -24,6 +24,7 @@
    - `hints`、`knowledge`、`artifacts` 三张**目录卡**与当前 Intent/Todo 摘要已由 AXIOM 注入；目录卡只含计数与查询路径——需要内容时按卡内路径按需读取。
    - 历史 findings/leads/evidence 按 storage_key 直接读文件，facts 细节按 Context Manifest 的 `details/` 读。
    - **whatisvul 判定标准按需读**：上报漏洞前必须运行 `axiom skill path whatisvul` 并完整读取 `whatisvul/SKILL.md` 对齐判定标准（失败则 `axiom skill doctor whatisvul`）；未上报漏洞的轮次无需读取。
+   - **攻击面形态手册按需查**：实际探测时，按当前 Intent 的目标形态运行 `axiom skill path web-attack-playbook`，读其 `SKILL.md` 索引对一行，选中对应 `manuals/<名>.md` 读一篇再动手；形态不明确时先读同目录 `cheatsheet.md`。**一次只开一篇，禁止通读 `manuals/`**；索引对不上按现场自己判断，不得因手册没写而漏测。
    - 按需读取当前所需的其他 Skill（`axiom skill path <name>`）或上游资产（`asset_inventory.md`、上游 Intent 的 `findings.md`），严禁无脑全盘读取历史。
 2. **目标与对象取值规则**：
    - 严格围绕当前 Intent 目标展开；测试所需对象 ID 优先从基线或自身列表响应（`items[].id`）获取，必要时展开联想；未显式披露 Scope 时以当前目标及关联业务为界。

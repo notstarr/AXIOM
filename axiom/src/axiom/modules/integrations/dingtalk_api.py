@@ -62,13 +62,13 @@ def _handle_help() -> dict[str, Any]:
         "### 🤖 AXIOM 智能安全渗透控制台 — 指令指南\n\n"
         "**📋【任务监控】**\n"
         "- `/tasks` —— 查看当前所有**正在运行**的任务概览\n"
-        "- `/status <任务ID>` —— 查询指定任务详细进度与阶段（如 `/status 172` 或 `/status t_172`）\n\n"
+        "- `/status <任务ID>` —— 查询任务状态/运行时间/事实/意图/漏洞统计（如 `/status 172`）\n\n"
         "**🎮【任务控制】**\n"
         "- `/pause <任务ID>` —— 暂停指定任务\n"
         "- `/resume <任务ID>` —— 继续/恢复指定任务（默认不限时持续运行）\n\n"
         "**🛡️【漏洞查询】**\n"
-        "- `/vulns <任务ID>` —— 查看指定任务挖掘出的所有漏洞清单与状态\n"
-        "- `/vuln <任务ID> <漏洞ID>` —— 查看单个漏洞的详细复现 Curl 与描述（如 `/vuln 172 v008`）\n\n"
+        "- `/vulns <任务ID> [页码]` —— 漏洞清单，编号从新到旧，每页 10 条（如 `/vulns 172 2`）\n"
+        "- `/vuln <任务ID> <漏洞ID>` —— 漏洞详情：危害等级/审核结果/利用前提/危害/描述（如 `/vuln 172 v008`）\n\n"
         "*提示：指令不区分大小写，任务ID支持纯数字简写。*"
     )
     return _build_markdown_response("AXIOM 指令指南", text)
@@ -98,27 +98,54 @@ def _handle_tasks(container: Container) -> dict[str, Any]:
     return _build_markdown_response("运行中任务", "\n".join(lines))
 
 
+def _task_display_status(task) -> str:
+    """状态归一化四态：运行中 / 暂停 / 完成 / 等待。"""
+    if task.status == "completed":
+        return "✅ 完成"
+    if task.status == "failed":
+        return "❌ 失败"
+    if task.status == "stopped":
+        return "⏸️ 暂停"
+    if task.phase == "waiting":
+        return "🟡 等待"
+    return "🟢 运行中"
+
+
+def _format_run_duration(task) -> str:
+    """真实运行时长：优先 run_duration_seconds（暂停/停止后为累计有效时长）。"""
+    seconds = task.run_duration_seconds or 0
+    if seconds <= 0:
+        return "刚启动"
+    if seconds < 3600:
+        return f"{round(seconds / 60)} 分钟"
+    hours = seconds // 3600
+    minutes = round((seconds % 3600) / 60)
+    return f"{hours} 小时 {minutes} 分钟"
+
+
 def _handle_status(container: Container, task_id: str) -> dict[str, Any]:
     normalized_id = _normalize_task_id(task_id)
     task = container.tasks.get(normalized_id)
     if not task:
         return _build_markdown_response("错误", f"❌ 找不到任务 `{normalized_id}`，请检查 ID 是否正确。")
 
-    duration_min = round((task.run_duration_seconds or 0) / 60, 1)
-    status_emoji = "🟢" if task.status == "running" else ("⏸️" if task.status == "stopped" else "⏹️")
     origin_input = task.origin.original_input if task.origin else "未知"
+    origin_lines = [line.strip() for line in origin_input.split("\n") if line.strip()]
+    origin_display = "、".join(f"`{line}`" for line in origin_lines[:3])
+    if len(origin_lines) > 3:
+        origin_display += f" 等 {len(origin_lines)} 个"
 
     lines = [
-        f"### {status_emoji} 任务 `{task.id}` 状态报告",
-        f"- **任务名称**: {task.title or '未命名'}",
-        f"- **当前状态**: **{task.status}** (阶段: `{task.phase}`)",
-        f"- **已跑时长**: `{duration_min}` 分钟",
-        f"- **目标系统**: `{origin_input}`",
-        f"- **总目标**: {task.goal or '未设置'}",
-        f"- **已发现漏洞**: `{task.vulnerability_count}` 个",
+        f"### 任务 `{task.id}` — {task.title or '未命名'}",
+        f"- **状态**: {_task_display_status(task)}（阶段: `{task.phase}`）",
+        f"- **运行时间**: {_format_run_duration(task)}",
+        f"- **事实**: `{task.fact_count}` | **意图**: `{task.intent_count}` | **运行中意图**: `{task.working_intent_count}` | **漏洞**: `{task.vulnerability_count}`",
+        f"- **目标**: {task.goal or '未设置'}",
+        f"- **起点**: {origin_display}",
     ]
     if task.last_pause_reason:
-        lines.append(f"- **暂停原因**: {task.last_pause_reason}")
+        reason_label = "到达运行时限" if task.last_pause_reason == "run_deadline_reached" else "人工暂停"
+        lines.append(f"- **暂停原因**: {reason_label}")
 
     return _build_markdown_response(f"任务 {task.id} 状态", "\n".join(lines))
 
@@ -148,7 +175,29 @@ def _handle_resume(container: Container, task_id: str) -> dict[str, Any]:
         return _build_markdown_response("恢复失败", f"❌ 恢复任务 `{normalized_id}` 失败: {str(e)}")
 
 
-def _handle_vulns(container: Container, task_id: str) -> dict[str, Any]:
+def _severity_rank(severity: str) -> int:
+    order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+    return order.get((severity or "").lower(), 5)
+
+
+def _severity_label(severity: str) -> str:
+    mapping = {
+        "critical": "🔴 严重",
+        "high": "🟠 高危",
+        "medium": "🟡 中危",
+        "low": "🔵 低危",
+        "info": "⚪ 提示",
+    }
+    return mapping.get((severity or "").lower(), f"⚠️ {severity}")
+
+
+def _vuln_number(v) -> int:
+    """漏洞编号 vNNN 的数字部分；解析失败排最后。"""
+    digits = "".join(ch for ch in (v.id or "") if ch.isdigit())
+    return int(digits) if digits else 10**9
+
+
+def _handle_vulns(container: Container, task_id: str, page: int = 1) -> dict[str, Any]:
     normalized_id = _normalize_task_id(task_id)
     try:
         vulns = container.vulnerabilities.list(normalized_id)
@@ -158,16 +207,25 @@ def _handle_vulns(container: Container, task_id: str) -> dict[str, Any]:
     if not vulns:
         return _build_markdown_response(f"任务 {normalized_id} 漏洞清单", f"🛡️ 任务 `{normalized_id}` 当前暂未发现漏洞。")
 
-    lines = [f"### 🛡️ 任务 `{normalized_id}` 漏洞成果清单 (共 {len(vulns)} 个)\n"]
-    for v in vulns:
-        status_tag = f"【{v.status}】"
-        lines.append(f"- **`{v.id}`** {status_tag} `{v.severity}` | **{v.title}**")
+    # 编号数字从大到小
+    ordered = sorted(vulns, key=_vuln_number, reverse=True)
+    page_size = 10
+    total_pages = (len(ordered) + page_size - 1) // page_size
+    page = max(1, min(page, total_pages))
+    chunk = ordered[(page - 1) * page_size : page * page_size]
 
-    lines.append(f"\n*发送 `/vuln {normalized_id} <漏洞ID>` 可查看该漏洞的复现 Curl 与详细分析*")
-    return _build_markdown_response(f"任务 {normalized_id} 漏洞清单", "\n".join(lines))
+    lines = [f"### 🛡️ 任务 `{normalized_id}` 漏洞清单（共 {len(ordered)} 个，第 {page}/{total_pages} 页）\n"]
+    for v in chunk:
+        lines.append(f"- **`{v.id}`** {_severity_label(v.severity)} | {v.status} | {v.title}")
+    if total_pages > 1:
+        lines.append(f"\n*翻页：`/vulns {normalized_id} <页码>`（如 `/vulns {normalized_id} 2`）*")
+    lines.append(f"*详情：`/vuln {normalized_id} <漏洞ID>`*")
+    return _build_markdown_response(f"任务 {normalized_id} 漏洞清单 {page}/{total_pages}", "\n".join(lines))
 
 
 def _handle_vuln(container: Container, task_id: str, vuln_id: str) -> dict[str, Any]:
+    from axiom.shared.dingtalk import DingTalkNotifier
+
     normalized_task_id = _normalize_task_id(task_id)
     cleaned_vuln_id = vuln_id.strip()
     try:
@@ -180,10 +238,10 @@ def _handle_vuln(container: Container, task_id: str, vuln_id: str) -> dict[str, 
             f"❌ 查询任务 `{normalized_task_id}` 漏洞失败: {str(e)}",
         )
 
-    target = next(
-        (v for v in vulns if v.id == cleaned_vuln_id or v.id == f"v{cleaned_vuln_id}"),
-        None,
-    )
+    candidates = {cleaned_vuln_id, f"v{cleaned_vuln_id}"}
+    if cleaned_vuln_id.isdigit():
+        candidates.add(f"v{int(cleaned_vuln_id):03d}")  # 64 → v064
+    target = next((v for v in vulns if v.id in candidates), None)
     if not target:
         return _build_markdown_response(
             "错误",
@@ -191,31 +249,25 @@ def _handle_vuln(container: Container, task_id: str, vuln_id: str) -> dict[str, 
             f"\n可用 `/vulns {normalized_task_id}` 查看该任务全部漏洞清单。",
         )
 
-    severity_map = {
-        "critical": "🔴 严重 (Critical)",
-        "high": "🟠 高危 (High)",
-        "medium": "🟡 中危 (Medium)",
-        "low": "🔵 低危 (Low)",
-        "info": "⚪ 提示 (Info)",
-    }
-    sev_label = severity_map.get(target.severity.lower(), f"⚠️ {target.severity}")
-
+    fmt = DingTalkNotifier.__new__(DingTalkNotifier)
     lines = [
-        f"### 🔍 漏洞详情: `{target.id}`",
-        f"- **所属任务**: `{target.task_id}`",
-        f"- **漏洞标题**: {target.title}",
-        f"- **危害等级**: {sev_label}",
-        f"- **漏洞类型**: `{target.type}`",
-        f"- **当前状态**: **{target.status}**",
+        f"### 🔍 `{target.id}` — {target.title}",
+        f"- **危害等级**: {_severity_label(target.severity)}",
+        f"- **审核结果**: **{target.status}**",
     ]
     if target.affected_target:
         lines.append(f"- **受影响目标**: `{target.affected_target}`")
+    prereq_text = fmt._format_description(target.prerequisites or "", limit=300)
+    if prereq_text:
+        lines.append(f"\n**利用前提**:\n\n{prereq_text}")
+    impact_text = fmt._format_description(target.impact or "", limit=300)
+    if impact_text:
+        lines.append(f"\n**危害（影响）**:\n\n{impact_text}")
+    desc_text = fmt._format_description(target.description or "", limit=300)
+    if desc_text:
+        lines.append(f"\n**描述**:\n\n{desc_text}")
     if target.status_reason:
-        lines.append(f"- **评审理由**: {target.status_reason}")
-    if target.description:
-        lines.append(f"\n> **描述**: {target.description.strip()[:400]}")
-    if target.curl_command:
-        lines.append(f"\n**复现 Curl**:\n```bash\n{target.curl_command.strip()[:500]}\n```")
+        lines.append(f"\n**裁决理由**: {fmt._format_description(target.status_reason, limit=300)}")
 
     return _build_markdown_response(f"漏洞 {target.id}", "\n".join(lines))
 
@@ -251,8 +303,11 @@ def route_dingtalk_command(container: Container, text_content: str) -> dict[str,
         return _handle_resume(container, args[0])
     if cmd in ("/vulns", "vulns", "/vulnerabilities", "漏洞列表"):
         if not args:
-            return _build_markdown_response("提示", "⚠️ 请指定任务 ID，例如：`/vulns 172`")
-        return _handle_vulns(container, args[0])
+            return _build_markdown_response("提示", "⚠️ 请指定任务 ID，例如：`/vulns 172`（可带页码 `/vulns 172 2`）")
+        page = 1
+        if len(args) > 1 and str(args[1]).isdigit():
+            page = int(args[1])
+        return _handle_vulns(container, args[0], page=page)
     if cmd in ("/vuln", "vuln", "漏洞"):
         if len(args) < 2:
             return _build_markdown_response(

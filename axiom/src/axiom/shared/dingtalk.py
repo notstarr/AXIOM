@@ -152,13 +152,16 @@ class DingTalkNotifier:
         text = text.replace("\n", "<br/>")
         if len(text) <= limit:
             return text
-        # 3. 按 <br/><br/> 段落边界截断
+        # 3. 按 <br/><br/> 段落边界截断;单段超长时按字符硬截,确保不超 limit
         paragraphs = text.split("<br/><br/>")
         chunks: list[str] = []
         total = 0
         for p in paragraphs:
             cost = len(p) + len("<br/><br/>")
-            if chunks and total + cost > limit:
+            if total + cost > limit:
+                remaining = limit - total
+                if remaining > 20:
+                    chunks.append(p[:remaining])
                 break
             chunks.append(p)
             total += cost
@@ -175,6 +178,8 @@ class DingTalkNotifier:
         affected_target: str = "",
         description: str = "",
         curl_command: str = "",
+        prerequisites: str = "",
+        impact: str = "",
     ) -> bool:
         """【第 1 次推送】：漏洞初次发现上报"""
         severity_map = {
@@ -197,7 +202,13 @@ class DingTalkNotifier:
         ]
         if affected_target:
             lines.append(f"**受影响资产**: `{affected_target}`")
-        desc_preview = self._format_description(description)
+        prereq_text = self._format_description(prerequisites, limit=200)
+        if prereq_text:
+            lines.append(f"**利用前提**:\n\n{prereq_text}")
+        impact_text = self._format_description(impact, limit=300)
+        if impact_text:
+            lines.append(f"**影响**:\n\n{impact_text}")
+        desc_preview = self._format_description(description, limit=300)
         if desc_preview:
             lines.append(f"**漏洞描述**:\n\n{desc_preview}")
         if curl_command:

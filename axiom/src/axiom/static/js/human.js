@@ -35,151 +35,8 @@ window.AxiomModules.human = {
     },
 
     switchHumanTab(tab) {
-      const allowed = ['workspace', 'conversation', 'todos', 'intents', 'facts', 'artifacts'];
+      const allowed = ['workspace', 'todos'];
       this.humanTab = allowed.includes(tab) ? tab : 'workspace';
-      if (this.humanTab === 'intents') this.humanIntentLimit = 50;
-      if (this.humanTab === 'facts') this.humanFactLimit = 50;
-      if (this.humanTab === 'artifacts') {
-        this.humanArtifactPage = 0;
-        this.loadHumanArtifactPage?.();
-      }
-      if (this.humanTab === 'conversation') {
-        this.selectExploreConversationIntent(this.exploreConversationIntentId || this.exploreConversationIntents()[0]?.id || '');
-      } else if (this.exploreConversationTimer) {
-        clearTimeout(this.exploreConversationTimer);
-        this.exploreConversationTimer = null;
-      }
-    },
-
-    exploreConversationIntents() {
-      return this.humanSortedIntents((this.project?.intents || []).filter(intent => (
-        !intent.archived && intent.kind === 'explore'
-      )));
-    },
-
-    exploreConversationIntentStatus(intent) {
-      const status = String(intent?.status || '').toLowerCase();
-      if (['running', 'concluding'].includes(status)) return '运行中';
-      if (status === 'claimed') return '已领取';
-      if (status === 'pending') return '等待执行';
-      if (status === 'completed') return '已完成';
-      if (status === 'failed') return '执行失败';
-      if (status === 'cancelled') return '已取消';
-      return status || '未知';
-    },
-
-    exploreConversationIntentClass(intent) {
-      const status = String(intent?.status || '').toLowerCase();
-      if (['running', 'concluding'].includes(status)) return 'border-blue-300 bg-blue-50 text-blue-800 shadow-sm';
-      if (status === 'claimed') return 'border-blue-100 bg-blue-50/50 text-blue-700';
-      if (status === 'pending') return 'border-amber-100 bg-amber-50/50 text-amber-700';
-      if (status === 'failed') return 'border-rose-100 bg-rose-50/50 text-rose-700';
-      return 'border-slate-200 bg-slate-50/60 text-slate-500';
-    },
-
-    exploreConversationEventClass(event) {
-      if (event?.source === 'intervention') return 'border-violet-200 bg-violet-50/70';
-      if (event?.kind === 'tool_call') return 'border-blue-100 bg-blue-50/50';
-      if (event?.kind === 'tool_result') return 'border-slate-200 bg-slate-50';
-      if (event?.kind === 'action_summary') return 'border-emerald-100 bg-emerald-50/50';
-      return 'border-amber-100 bg-amber-50/50';
-    },
-
-    async selectExploreConversationIntent(intentId) {
-      if (!intentId) return;
-      if (this.exploreConversationTimer) clearTimeout(this.exploreConversationTimer);
-      this.exploreConversationTimer = null;
-      this.exploreConversationIntentId = intentId;
-      this.exploreConversationEvents = [];
-      this.exploreConversationCursor = '0';
-      this.exploreConversationHasMore = false;
-      await this.loadExploreConversation(true);
-    },
-
-    async loadExploreConversation(reset = false, latest = false) {
-      const taskId = this.selectedProjectId || this.project?.project?.id || '';
-      const intentId = this.exploreConversationIntentId;
-      if (!taskId || !intentId || this.humanTab !== 'conversation') return;
-      if (this.exploreConversationLoading) return;
-      this.exploreConversationLoading = true;
-      try {
-        const params = new URLSearchParams({ intent_id: intentId, limit: '300' });
-        if (latest) params.set('latest', 'true');
-        else if (!reset && this.exploreConversationCursor && this.exploreConversationCursor !== '0') params.set('after_cursor', this.exploreConversationCursor);
-        const payload = await this.api('GET', `/projects/${taskId}/explore-conversation?${params.toString()}`);
-        if (Array.isArray(payload?.intents) && this.project) {
-          const fresh = new Map(payload.intents.map(item => [item.id, item]));
-          this.project.intents = (this.project.intents || []).map(item => (
-            fresh.has(item.id) ? { ...item, ...fresh.get(item.id) } : item
-          ));
-        }
-        if (reset) this.exploreConversationEvents = [];
-        const seen = new Set((this.exploreConversationEvents || []).map(item => `${item.kind}:${item.created_at}:${item.detail}`));
-        for (const item of (payload?.events || [])) {
-          const key = `${item.kind}:${item.created_at}:${item.detail}`;
-          if (!seen.has(key)) { this.exploreConversationEvents.push(item); seen.add(key); }
-        }
-        this.exploreConversationCursor = payload?.cursor || this.exploreConversationCursor || '0';
-        this.exploreConversationHasMore = !!payload?.has_more;
-        this.exploreConversationIntent = payload?.intent || this.exploreConversationIntent;
-        if (latest) this.$nextTick(() => this.scrollExploreConversationToBottom());
-      } catch (error) {
-        if (!reset) this.showToast?.(error?.message || '读取 Explore 对话失败', 'error');
-      } finally {
-        this.exploreConversationLoading = false;
-        if (this.humanTab === 'conversation' && this.exploreConversationIntentId === intentId) {
-          this.exploreConversationTimer = setTimeout(() => this.loadExploreConversation(false), 1_000);
-        }
-      }
-    },
-
-    scrollExploreConversationToBottom(smooth = true) {
-      const container = this.$refs?.exploreConversationScroll;
-      if (!container) return;
-      container.scrollTo({
-        top: container.scrollHeight,
-        behavior: smooth ? 'smooth' : 'auto',
-      });
-    },
-
-    async jumpExploreConversationToLatest() {
-      if (this.exploreConversationJumping || this.exploreConversationLoading) return;
-      if (this.exploreConversationTimer) clearTimeout(this.exploreConversationTimer);
-      this.exploreConversationTimer = null;
-      this.exploreConversationJumping = true;
-      try {
-        await this.loadExploreConversation(false, true);
-        this.$nextTick(() => this.scrollExploreConversationToBottom());
-      } finally {
-        this.exploreConversationJumping = false;
-      }
-    },
-
-    async sendExploreIntervention() {
-      const taskId = this.selectedProjectId || this.project?.project?.id || '';
-      const intentId = this.exploreConversationIntentId;
-      const message = String(this.exploreConversationDraft || '').trim();
-      const intent = this.exploreConversationIntents().find(item => item.id === intentId);
-      if (!taskId || !intentId || !message || this.exploreConversationSending) return;
-      if (!['claimed', 'running', 'concluding'].includes(String(intent?.status || '').toLowerCase())) {
-        this.showToast?.('只有存在活动 Lease 的 Explore 才能插话', 'error');
-        return;
-      }
-      this.exploreConversationSending = true;
-      try {
-        await this.api('POST', `/projects/${taskId}/intents/${intentId}/interventions`, {
-          message,
-          client_message_id: `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-          actor: this.actorName?.() || 'human.frontend',
-        });
-        this.exploreConversationDraft = '';
-        await this.loadExploreConversation(false, true);
-        this.showToast?.('指导消息已排队，将在下一轮模型调用前发送');
-      } catch (error) {
-        this.showToast?.(error?.message || '发送指导消息失败', 'error');
-      } finally {
-        this.exploreConversationSending = false;
-      }
     },
 
     humanTodoGroups() {
@@ -206,6 +63,96 @@ window.AxiomModules.human = {
         else group.open++;
       }
       return Object.values(groups).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+    },
+
+    // Todo 页左侧总览排序：按子 Intent 数量从大到小
+    humanSortedTodos() {
+      return [...(this.project?.todos || [])]
+        .filter(item => !item.archived)
+        .sort((a, b) => this.getIntentsForTodo(b.id).length - this.getIntentsForTodo(a.id).length
+          || String(a.id).localeCompare(String(b.id)));
+    },
+
+    // 左侧总览树中 Todo 下的子 Intent：按创建时间新到旧
+    navIntentsForTodo(todoId) {
+      return [...this.getIntentsForTodo(todoId)].sort((a, b) => (
+        String(b.created_at || '').localeCompare(String(a.created_at || ''))
+      ));
+    },
+
+    // ── Todo 页主从布局：左侧总览树 + 右侧 Intent 详情 ──
+    // Todo 行悬停浮窗：展示标题、子 Intent 进度与评估说明（status_reason）
+    markTodoHover(event, todo) {
+      this.todoHover = todo ? { d: todo, x: event.clientX, y: event.clientY } : null;
+    },
+
+    todoHoverStyle(el) {
+      const h = this.todoHover;
+      if (!h) return 'display:none';
+      const W = 340;
+      let left = h.x + 14;
+      if (left + W > window.innerWidth - 8) left = Math.max(8, h.x - W - 14);
+      let top = h.y + 14;
+      const eh = (el && el.offsetHeight) || 200;
+      if (eh >= window.innerHeight - 16) return `left:${left}px;top:8px;width:${W}px;`;
+      if (top + eh > window.innerHeight - 8) top = Math.max(8, window.innerHeight - eh - 8);
+      return `left:${left}px;top:${top}px;width:${W}px;`;
+    },
+
+    toggleTodoNav(todoId) {
+      this.todoNavExpandedId = this.todoNavExpandedId === todoId ? '' : todoId;
+    },
+
+    selectTodoNavIntent(intentId) {
+      this.todoNavIntentId = intentId;
+    },
+
+    todoNavIntentRecord() {
+      return this.todoNavIntentId ? this.humanIntentRecord(this.todoNavIntentId) : null;
+    },
+
+    // Intent 的输入来源：from 指向的 Facts
+    intentSourceFacts(intent) {
+      const from = intent?.from || [];
+      const factsById = this.graphEntityIndex().factsById;
+      return from.map(id => factsById.get(id)).filter(Boolean);
+    },
+
+    // Intent 的产出物：由它生产出的 Facts（点击可跳转对应产物文件）
+    intentProducedFacts(intent) {
+      if (!intent?.id) return [];
+      const { intentsByProduced } = this.graphEntityIndex();
+      return (this.project?.facts || []).filter(fact => !fact.archived && intentsByProduced.get(fact.id)?.id === intent.id);
+    },
+
+    // Fact 引用的产物链接列表：引用了几个就给几个，各自独立跳转
+    factArtifactLinks(fact) {
+      if (!fact?.id) return [];
+      const ids = this.humanFactReferenceIds(fact);
+      if (ids.length) return ids.map(id => ({ id, label: id }));
+      const artifact = this.humanFactArtifact(fact);
+      return artifact?.id ? [{ id: artifact.id, label: artifact.id }] : [];
+    },
+
+    // 从 Todo 详情跳转到指定产物，记录返回页签
+    async openFactArtifactLink(taskId, artifactId) {
+      if (!taskId || !artifactId) return;
+      this.markHumanTabReturn(taskId);
+      await this.openArtifactLocation(taskId, artifactId);
+    },
+
+    // Todo 页顶部概览统计：按状态计数，填满页头右侧空间
+    humanTodoStats() {
+      const todos = (this.project?.todos || []).filter(item => !item.archived && !['rejected', 'obsolete'].includes(item.status));
+      const count = (status) => todos.filter(item => item.status === status).length;
+      const open = todos.filter(item => !['completed', 'partial', 'blocked'].includes(item.status)).length;
+      return [
+        { label: '全部 Todo', value: todos.length, dot: 'bg-slate-300', text: 'text-slate-800' },
+        { label: '已完成', value: count('completed'), dot: 'bg-emerald-500', text: 'text-emerald-600' },
+        { label: '部分完成', value: count('partial'), dot: 'bg-brand-500', text: 'text-brand-600' },
+        { label: '阻塞', value: count('blocked'), dot: 'bg-amber-500', text: 'text-amber-600' },
+        { label: '待执行', value: open, dot: 'bg-slate-400', text: 'text-slate-600' },
+      ];
     },
 
     humanTodoProgress() {
@@ -773,10 +720,6 @@ window.AxiomModules.human = {
       return (this.project?.facts || []).filter(fact => !fact.archived && !['goal', 'origin'].includes(fact.id)).length;
     },
 
-    humanIntentCount() {
-      return (this.project?.intents || []).filter(intent => !intent.archived && intent !== this.humanBootstrapIntent()).length;
-    },
-
     humanArtifactCount() {
       const value = this.project?.project?.artifact_count;
       return Number.isFinite(Number(value)) ? Number(value) : (this.project?.artifacts || []).filter(item => !item.archived).length;
@@ -804,7 +747,6 @@ window.AxiomModules.human = {
       const items = [
         ...(this.project?.artifacts || []),
         ...(this.project?.lead_artifacts || []),
-        ...(this.humanArtifactItems || []),
       ];
       return [...new Map(items.filter(item => item?.id).map(item => [item.id, item])).values()];
     },
@@ -881,9 +823,28 @@ window.AxiomModules.human = {
       return this.humanArtifactForIntent(producer.id, 'explore.findings');
     },
 
+    // 从任务详情跳去文件中心前记住当前页签，返回时原样恢复
+    markHumanTabReturn(taskId) {
+      this._humanTabReturn = { taskId, tab: this.humanTab };
+    },
+
+    // 事实/线索卡片 hover：浮窗展示生产 Intent 详情（lite 模式，不带评估块）
+    humanFactHover(event, fact) {
+      const intent = this.humanFactProducer(fact);
+      if (!intent) { this.intentHover = null; return; }
+      this.intentHover = { d: intent, x: event.clientX, y: event.clientY, lite: true };
+    },
+
+    humanLeadHover(event, item) {
+      const intent = this.humanSourceIntent(item);
+      if (!intent) { this.intentHover = null; return; }
+      this.intentHover = { d: intent, x: event.clientX, y: event.clientY, lite: true };
+    },
+
     async openHumanFact(fact) {
       const taskId = this.selectedProjectId || this.project?.project?.id || '';
       if (!taskId || !fact?.id) return;
+      this.markHumanTabReturn(taskId);
       const referencedIds = this.humanFactReferenceIds(fact);
       if (referencedIds.length) {
         await this.openArtifactLocation(taskId, referencedIds[0]);
@@ -905,6 +866,7 @@ window.AxiomModules.human = {
 
     openHumanArtifact(item) {
       const taskId = this.selectedProjectId || this.project?.project?.id || item?.task_id || '';
+      if (taskId) this.markHumanTabReturn(taskId);
       if (taskId && item?.id) this.openArtifactLocation(taskId, item);
     },
 

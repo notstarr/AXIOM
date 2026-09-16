@@ -57,6 +57,8 @@ class AxiomRunner:
         self.heartbeat_interval_seconds = heartbeat
         self.lease_timeout_seconds = lease_timeout_seconds or minimum_lease_timeout
         self.runner_interval_seconds = 3.0
+        # 刷新前的最后一份 RuntimeConfig；网关按后端开关在构造执行器时判定。
+        self._last_runtime_config = None
         self._applied_settings_version = 0
         self._pool = ThreadPoolExecutor(max_workers=128, thread_name_prefix="axiom-runner")
         self.browser_broker = BrowserBrokerManager(
@@ -236,7 +238,7 @@ class AxiomRunner:
             PiReasonExecutor,
             PiReviewExecutor,
         )
-        from axiom.modules.workers.pi_config import validate_pi_worker_runtime
+        from axiom.modules.workers.pi_config import llm_proxy_for, validate_pi_worker_runtime
 
         settings = validate_pi_worker_runtime(worker.config)
         worker = worker.model_copy(update={"config": settings.model_dump(mode="json")})
@@ -253,9 +255,9 @@ class AxiomRunner:
             "activity_reporter": activity_reporter,
             "token_usage_reporter": token_usage_reporter,
             "api_url": getattr(self.control_plane, "api_url", "http://127.0.0.1:8899"),
-            "service_token": getattr(self.control_plane, "service_token", ""),
-            "browser_broker": self.browser_broker,
-            "llm_gateway_enabled": bool(getattr(self, "llm_gateway_enabled", False)),
+            # 网关按后端开关启用：该后端 llm_proxy 开且全局代理可用才改写
+            # base_url/api_key 到 /llm-gateway；关 = 与旧"全局关"完全一致（直连）。
+            "llm_gateway_enabled": llm_proxy_for(self._last_runtime_config, settings) is not None,
         }
         if work.kind == "bootstrap":
             return PiBootstrapExecutor(worker, **common)
@@ -316,6 +318,7 @@ class AxiomRunner:
         except Exception:
             logger.warning("failed to refresh runtime settings; keeping last known values", exc_info=True)
             return self._applied_settings_version
+        self._last_runtime_config = config
         heartbeat = self._heartbeat_override or float(config.heartbeat_interval_seconds)
         lease_timeout = self._lease_timeout_override or int(config.lease_timeout_seconds)
         minimum = max(20, int(heartbeat * 3))
@@ -323,7 +326,6 @@ class AxiomRunner:
         self.heartbeat_interval_seconds = heartbeat
         self.lease_timeout_seconds = max(lease_timeout, minimum)
         self.runner_interval_seconds = float(config.runner_interval_seconds)
-        self.llm_gateway_enabled = config.network_proxy_mode == "http"
         # Browser Broker remains runner-owned, but its private Cube transport
         # is controlled by the same persisted runtime settings as the
         # sandbox.  Apply these before the next lease is registered.

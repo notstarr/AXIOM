@@ -839,8 +839,8 @@ class PiBootstrapExecutor:
             "xhigh",
             "max",
         }:
-            # Pi 0.82.1 intentionally requires explicit model opt-in for the
-            # two levels above high.  Selecting one in AXIOM is that opt-in;
+            # Pi intentionally requires explicit model opt-in for the two
+            # levels above high.  Selecting one in AXIOM is that opt-in;
             # an upstream provider may still reject a level it does not expose.
             model["thinkingLevelMap"] = {
                 self.settings.thinking_level: self.settings.thinking_level

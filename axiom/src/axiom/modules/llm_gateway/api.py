@@ -9,9 +9,8 @@ HTTPS_PROXY，skill 子进程（curl/Go 系工具）会继承代理，渗透目�
 - 上游 worker 的真实 base_url / api_key 只存在于 serve 侧；
 - Pi 的 models.json 由 dispatcher.pi._write_models_file 改写指向本网关，
   apiKey 使用 service token（走统一鉴权中间件）；
-- 代理开关复用 RuntimeConfig.network_proxy_mode / network_proxy_url：
-  mode == "http" 时转发走代理，其余情况直连。
-"""
+- 代理按后端开关决定：PiWorkerConfig.llm_proxy 开且全局 mode==http 时转发走代理，
+  其余情况直连；统一经 pi_config.llm_proxy_for 解析。"""
 
 from __future__ import annotations
 
@@ -23,7 +22,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
-from axiom.modules.workers.pi_config import PiWorkerConfig
+from axiom.modules.workers.pi_config import PiWorkerConfig, llm_proxy_for
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +45,6 @@ _HOP_BY_HOP = {
 _STREAM_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
 
 
-def _llm_proxy_url(container: Container) -> str | None:
-    config = container.settings.get().config
-    if config.network_proxy_mode == "http" and config.network_proxy_url.strip():
-        return config.network_proxy_url.strip()
-    return None
 
 
 @router.api_route("/{worker_name}/{path:path}", methods=_STREAM_METHODS)
@@ -79,7 +73,7 @@ async def llm_gateway(
         headers["authorization"] = f"Bearer {config.api_key}"
 
     body = await request.body()
-    proxy_url = _llm_proxy_url(container)
+    proxy_url = llm_proxy_for(container.settings.get().config, config)
     client = httpx.AsyncClient(
         proxy=proxy_url,
         timeout=httpx.Timeout(connect=15.0, write=60.0, read=None, pool=None),

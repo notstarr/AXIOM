@@ -331,6 +331,12 @@
 
       <div id="cy" class="relative z-0 flex-1 h-full"></div>
 
+      <!-- 大图渐进渲染进度角标（非阻塞，完成后自动消失） -->
+      <div x-show="graphInitStatus" x-cloak class="absolute bottom-3 left-3 z-20 flex items-center gap-2 rounded-lg border border-slate-200/70 bg-white/92 px-2.5 py-1.5 text-[10px] text-slate-500 shadow-sm backdrop-blur">
+        <svg class="h-3 w-3 animate-spin text-brand-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 3a9 9 0 1 0 9 9"/></svg>
+        <span x-text="graphInitStatus"></span>
+      </div>
+
 
       <template x-if="minimapVisible && cy">
         <canvas id="minimap" width="160" height="96" x-init="$nextTick(() => drawMinimap())"
@@ -381,7 +387,7 @@
     </div>
 
     <!-- Side panel -->
-    <div x-show="!sidePanelCollapsed" class="border-l border-slate-200/60 bg-white flex flex-col overflow-hidden shrink-0 relative z-20" :style="{ width: sidePanelWidth + 'px', minWidth: sidePanelWidth + 'px', flexBasis: sidePanelWidth + 'px' }">
+    <div x-show="!sidePanelCollapsed" @mouseleave="intentHover = null" class="border-l border-slate-200/60 bg-white flex flex-col overflow-hidden shrink-0 relative z-20" :style="{ width: sidePanelWidth + 'px', minWidth: sidePanelWidth + 'px', flexBasis: sidePanelWidth + 'px' }">
       <div class="flex border-b border-slate-100 shrink-0">
         <button @click="sideTab = 'detail'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'detail' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">详情</button>
@@ -819,16 +825,14 @@
             <p class="mt-1 text-xs text-slate-300">先覆盖攻击面，再逐步深入。</p>
           </div>
         </template>
-        <template x-for="todo in [...project.todos].sort((a,b) => (b.priority || 0) - (a.priority || 0))" :key="todo.id">
+        <template x-for="todo in [...project.todos].sort((a,b) => (a.status === 'completed') - (b.status === 'completed'))" :key="todo.id">
           <article class="rounded-xl border bg-white p-3 shadow-xs hover:border-slate-300 transition"
             :class="todo.status === 'completed' ? 'border-emerald-100 bg-emerald-50/10' : todo.status === 'blocked' ? 'border-amber-200' : todo.status === 'partial' ? 'border-brand-200' : 'border-slate-200/80'">
-            <!-- Header Row: Meta Badges + Priority + Status -->
+            <!-- Header Row: Meta + Status -->
             <div class="flex items-center gap-2">
               <span class="font-mono text-[10px] font-bold text-slate-500" x-text="todo.id"></span>
-              <span class="px-1.5 py-0.5 rounded bg-slate-100 text-[9px] font-semibold text-slate-500" x-text="todo.category"></span>
               <span x-show="todo.theme" class="px-1.5 py-0.5 rounded bg-violet-50 text-[9px] text-violet-600 truncate max-w-[90px]" x-text="todo.theme"></span>
-              <span class="ml-auto font-mono text-[10px] font-semibold text-slate-400" x-text="'P' + (todo.priority ?? 0)"></span>
-              <span class="px-1.5 py-0.5 rounded border text-[9px]" :class="humanTodoClass(todo.status)" x-text="humanTodoLabel(todo.status)"></span>
+              <span class="ml-auto px-1.5 py-0.5 rounded border text-[9px]" :class="humanTodoClass(todo.status)" x-text="humanTodoLabel(todo.status)"></span>
             </div>
 
             <!-- Title -->
@@ -839,10 +843,16 @@
             <!-- Status Reason if any -->
             <p x-show="todo.status_reason" class="mt-1 text-[10px] text-slate-400" x-text="todo.status_reason"></p>
 
-            <!-- Intent List (if has intents) -->
+            <!-- Intent List (if has intents)：大任务默认折叠，超 15 条截断 -->
             <div x-show="getIntentsForTodo(todo.id).length > 0" class="mt-2.5">
-              <div class="space-y-1 pl-2 border-l-2 border-slate-200/80">
-                <template x-for="intent in getIntentsForTodo(todo.id)" :key="intent.id">
+              <button type="button" @click="toggleTodoExpanded(todo.id)"
+                class="flex w-full items-center gap-1.5 pb-1.5 text-[10px] font-semibold text-slate-400 hover:text-slate-600 transition">
+                <svg class="h-2.5 w-2.5 shrink-0 transition-transform" :class="isTodoExpanded(todo.id) ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 6 6 6-6 6"/></svg>
+                <span x-text="`子 Intent · ${getIntentsForTodo(todo.id).length}`"></span>
+                <span class="ml-auto font-mono font-normal tabular-nums" x-text="`${todoIntentProgress(todo.id).completed}/${getIntentsForTodo(todo.id).length}`"></span>
+              </button>
+              <div x-show="isTodoExpanded(todo.id)" class="space-y-1 pl-2 border-l-2 border-slate-200/80">
+                <template x-for="intent in visibleIntentsForTodo(todo.id)" :key="intent.id">
                   <div @click="centerGraphOnIntent(intent.id); selectIntent(intent.id)"
                     @mouseenter="intentHover = { d: intent, x: $event.clientX, y: $event.clientY }"
                     @mouseleave="intentHover = null"
@@ -853,54 +863,16 @@
                       <span class="text-[11px] text-slate-700 truncate group-hover:text-brand-700" x-text="intent.description"></span>
                     </div>
                     <span class="shrink-0 text-[9px] font-medium" :class="intentStatusClass(intent)" x-text="intentStatusLabel(intent)"></span>
-
-                    <!-- Hover Floating Full Description Tooltip -->
-                    <div class="intent-hover-card absolute left-0 bottom-full mb-1.5 hidden z-[999] w-80 max-w-[90vw] p-3 rounded-xl border border-slate-700/80 bg-slate-900/95 text-slate-100 text-[11px] leading-relaxed shadow-2xl backdrop-blur-sm pointer-events-none transition-all">
-                      <div class="flex items-center justify-between gap-2 border-b border-slate-700 pb-1.5 mb-1.5">
-                        <span class="font-mono font-bold text-amber-400 text-[10px]" x-text="intent.id"></span>
-                        <span class="text-[9px] px-1.5 py-0.5 rounded" :class="intentStatusClass(intent)" x-text="intentStatusLabel(intent)"></span>
-                      </div>
-                      <div class="max-h-60 overflow-y-auto whitespace-pre-wrap font-sans break-words text-slate-200" x-text="intent.description || '暂无详细描述'"></div>
-                      <div x-show="intent.targets?.length" class="mt-1.5 pt-1.5 border-t border-slate-800 text-[9px] text-slate-400 truncate">
-                        <span>目标：</span><span class="font-mono text-slate-300" x-text="intent.targets.join(', ')"></span>
-                      </div>
-                      <div class="mt-1.5 pt-1.5 border-t border-slate-800 flex items-center justify-between gap-2">
-                        <span class="text-[9px] text-slate-400 shrink-0">评估</span>
-                        <span class="text-[9px] font-bold"
-                          :class="intent.assessment_status === 'completed' ? 'text-emerald-400' : (intent.assessment_status === 'partial' ? 'text-amber-400' : (intent.assessment_status === 'blocked' ? 'text-rose-400' : 'text-slate-500'))"
-                          x-text="intent.assessment_status || '未评估'"></span>
-                      </div>
-                      <div x-show="intent.assessment_reason" class="mt-1 text-[10px] text-slate-300 whitespace-pre-wrap break-words leading-relaxed" x-text="intent.assessment_reason"></div>
-                    </div>
                   </div>
                 </template>
+                <button x-show="getIntentsForTodo(todo.id).length > visibleIntentsForTodo(todo.id).length"
+                  @click="showAllIntentsForTodo(todo.id)"
+                  class="w-full rounded-md py-1 text-[10px] text-brand-600 hover:bg-brand-50/60 transition">
+                  显示全部 <span x-text="getIntentsForTodo(todo.id).length"></span> 个 Intent
+                </button>
               </div>
             </div>
 
-            <!-- Intent 悬浮详情卡（fixed，脱离 overflow 裁剪） -->
-            <div x-show="intentHover" x-cloak
-              class="fixed z-[70] w-[26rem] max-w-[90vw] p-3.5 rounded-xl border border-slate-700/80 bg-slate-900/96 text-slate-100 text-[11px] leading-relaxed shadow-2xl pointer-events-none"
-              :style="intentHover ? { left: Math.min(intentHover.x + 14, window.innerWidth - 440) + 'px', top: Math.min(intentHover.y + 12, window.innerHeight - 300) + 'px' } : {}">
-              <template x-if="intentHover">
-                <div>
-                  <div class="flex items-center justify-between gap-2 border-b border-slate-700 pb-1.5 mb-2">
-                    <span class="font-mono font-bold text-amber-400 text-[11px]" x-text="intentHover.d.id"></span>
-                    <span class="text-[9px] px-1.5 py-0.5 rounded font-medium" :class="intentStatusClass(intentHover.d)" x-text="intentStatusLabel(intentHover.d)"></span>
-                  </div>
-                  <div class="max-h-52 overflow-y-auto whitespace-pre-wrap font-sans break-words text-slate-200" x-text="intentHover.d.description || '暂无详细描述'"></div>
-                  <div x-show="intentHover.d.targets?.length" class="mt-2 pt-1.5 border-t border-slate-800 text-[10px] text-slate-400">
-                    <span class="text-slate-500">目标：</span><span class="font-mono text-slate-300 break-all" x-text="intentHover.d.targets.join(', ')"></span>
-                  </div>
-                  <div class="mt-2 pt-1.5 border-t border-slate-800 flex items-center justify-between gap-2">
-                    <span class="text-[10px] text-slate-400 shrink-0">评估</span>
-                    <span class="text-[10px] font-bold"
-                      :class="intentHover.d.assessment_status === 'completed' ? 'text-emerald-400' : (intentHover.d.assessment_status === 'partial' ? 'text-amber-400' : (intentHover.d.assessment_status === 'blocked' ? 'text-rose-400' : 'text-slate-500'))"
-                      x-text="intentHover.d.assessment_status || '未评估'"></span>
-                  </div>
-                  <div x-show="intentHover.d.assessment_reason" class="mt-1 text-[10px] text-slate-300 whitespace-pre-wrap break-words" x-text="intentHover.d.assessment_reason"></div>
-                </div>
-              </template>
-            </div>
             <!-- If 0 Intent: Subtle empty hint -->
             <div x-show="getIntentsForTodo(todo.id).length === 0" class="mt-1.5 text-[10px] text-slate-400 italic">
               待 Reason 派发子 Intent
@@ -918,7 +890,9 @@
             <div class="space-y-1">
               <template x-for="intent in getUnlinkedIntents()" :key="intent.id">
                 <div @click="centerGraphOnIntent(intent.id); selectIntent(intent.id)"
-                  class="group rounded-md border border-slate-200 bg-white p-2 hover:border-brand-300 hover:bg-brand-50/30 cursor-pointer transition shadow-xs flex items-center justify-between gap-1.5">
+                  @mouseenter="intentHover = { d: intent, x: $event.clientX, y: $event.clientY }"
+                  @mouseleave="intentHover = null"
+                  class="intent-row group rounded-md border border-slate-200 bg-white p-2 hover:border-brand-300 hover:bg-brand-50/30 cursor-pointer transition shadow-xs flex items-center justify-between gap-1.5">
                   <div class="flex items-center gap-1.5 min-w-0">
                     <span class="h-1.5 w-1.5 rounded-full shrink-0" :class="intentDotClass(intent)"></span>
                     <span class="font-mono text-[10px] font-semibold text-slate-600" x-text="intent.id"></span>
@@ -934,7 +908,29 @@
 
 
     </div>
-  </div>
 
+    <!-- 全局 Intent 悬浮卡（单实例跟随鼠标，pointer-events:none 不挡交互） -->
+    <div x-show="intentHover" x-cloak class="intent-hover-tip" x-ref="intentTip" :style="intentHoverStyle($refs.intentTip)">
+      <div class="flex items-center justify-between gap-2 pb-1.5 mb-2 border-b border-slate-100">
+        <div class="flex items-center gap-1.5 min-w-0">
+          <span class="h-1.5 w-1.5 rounded-full shrink-0" :class="intentDotClass(intentHover?.d || {})"></span>
+          <span class="tip-id" x-text="intentHover?.d?.id"></span>
+        </div>
+        <span class="tip-chip shrink-0" :class="intentStatusClass(intentHover?.d || {})" x-text="intentHover ? intentStatusLabel(intentHover.d) : ''"></span>
+      </div>
+      <div class="whitespace-pre-wrap break-words text-slate-700" x-text="intentHover?.d?.description || '暂无详细描述'"></div>
+      <div x-show="intentHover?.d?.targets?.length" class="mt-2 pt-1.5 border-t border-slate-100 flex items-baseline gap-1.5">
+        <span class="tip-label shrink-0">目标</span>
+        <span class="font-mono text-[10px] text-slate-500 break-all min-w-0" x-text="intentHover?.d?.targets?.join('  ·  ')"></span>
+      </div>
+      <div class="mt-2 pt-1.5 border-t border-slate-100 flex items-center justify-between gap-2">
+        <span class="tip-label">评估</span>
+        <span class="text-[10px] font-bold tracking-wide"
+          :class="intentHover?.d?.assessment_status === 'completed' ? 'text-emerald-600' : (intentHover?.d?.assessment_status === 'partial' ? 'text-amber-600' : (intentHover?.d?.assessment_status === 'blocked' ? 'text-rose-600' : 'text-slate-400'))"
+          x-text="intentHover?.d?.assessment_status || '未评估'"></span>
+      </div>
+      <div x-show="intentHover?.d?.assessment_reason" class="tip-reason mt-1.5 text-[10px] whitespace-pre-wrap break-words" x-text="intentHover?.d?.assessment_reason"></div>
+    </div>
+  </div>
 </div>
 </template>

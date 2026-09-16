@@ -18,191 +18,121 @@
   </header>
 
   <main class="flex-1 min-h-0 flex overflow-hidden">
-    <!-- 任务侧栏 -->
-    <aside class="w-64 shrink-0 overflow-y-auto" style="border-right:1px solid var(--sto-line); background:var(--sto-inset); padding:12px;">
-      <p class="sto-label" style="margin-bottom:8px;">Tasks · 任务</p>
-      <button
-        @click="selectArtifactCenterTask('')"
-        class="sto-taskrow"
-        :class="!artifactCenterSelectedTask ? 'active' : ''"
-      >全部任务</button>
-      <template x-for="task in (artifactCenterTasks || [])" :key="task.id">
-        <button
-          @click="selectArtifactCenterTask(task.id)"
-          class="sto-taskrow"
-          :class="artifactCenterSelectedTask === task.id ? 'active' : ''"
-          x-text="task.title || task.id"
-        ></button>
-      </template>
+    <!-- ═══ 资源管理器（VS Code 树） ═══ -->
+    <aside class="vsc-sidebar shrink-0 flex flex-col overflow-hidden">
+      <div class="vsc-side-head">
+        <span>资源管理器</span>
+        <span class="vsc-side-count" x-text="`${(artifactCenterTasks || []).length} 任务`"></span>
+      </div>
+      <input
+        x-model="explorerFilter"
+        class="vsc-side-filter"
+        placeholder="筛选已加载节点…"
+      >
+      <div class="vsc-tree flex-1 overflow-y-auto">
+        <!-- 任务节点 -->
+        <template x-for="task in (artifactCenterTasks || [])" :key="task.id">
+          <div x-show="explorerNodeVisible('task', task.id, task.title || task.id)">
+            <button type="button" class="vsc-tree-row lvl0" :class="artifactCenterSelectedTask === task.id ? 'active' : ''"
+              @click="toggleExplorerTask(task.id)">
+              <span class="vsc-chev" :class="explorerExpanded[task.id] ? 'open' : ''">
+                <svg viewBox="0 0 16 16" fill="currentColor"><path d="M6 4l4 4-4 4V4Z"/></svg>
+              </span>
+              <span class="vsc-fileicon dir">
+                <svg style="width:14px; height:14px;" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+              </span>
+              <span class="vsc-label" x-text="task.title || task.id"></span>
+              <span class="vsc-rowmeta" x-show="explorerExpanded[task.id] && (explorerFolders[task.id] || []).length" x-text="`${(explorerFolders[task.id] || []).length}`"></span>
+            </button>
+            <!-- Intent 节点 -->
+            <template x-for="folder in (explorerExpanded[task.id] ? (explorerFolders[task.id] || []) : [])" :key="`${task.id}:${folder.folder_key}`">
+              <div x-show="explorerNodeVisible('intent', `${task.id}:${folder.folder_key}`, artifactFolderLabel(folder) + ' ' + artifactFolderDescription(folder))">
+                <button type="button" class="vsc-tree-row lvl1"
+                  :class="artifactCenterSelectedTask === task.id && artifactCenterFolderKey === folder.folder_key ? 'active' : ''"
+                  @click="toggleExplorerIntent(task.id, folder.folder_key)">
+                  <span class="vsc-chev" :class="explorerExpanded[`${task.id}:${folder.folder_key}`] ? 'open' : ''">
+                    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M6 4l4 4-4 4V4Z"/></svg>
+                  </span>
+                  <span class="vsc-fileicon dir2">
+                    <svg style="width:13px; height:13px;" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+                  </span>
+                  <span class="vsc-label" :title="artifactFolderDescription(folder)" x-text="artifactFolderLabel(folder)"></span>
+                  <span class="vsc-badge" x-text="artifactFolderPhase(folder)"></span>
+                </button>
+                <!-- 文件节点 -->
+                <template x-for="item in (explorerExpanded[`${task.id}:${folder.folder_key}`] ? (explorerFiles[`${task.id}:${folder.folder_key}`] || []) : [])" :key="item.id">
+                  <button type="button" class="vsc-tree-row lvl2"
+                    :class="editorActiveId === item.id ? 'active-file' : ''"
+                    x-show="explorerNodeVisible('file', item.id, artifactFileName(item) + ' ' + (item.summary || ''))"
+                    @click.stop="openEditorTab(item)">
+                    <span class="vsc-fileicon" :style="item.artifact_type === 'explore.findings' ? 'color:#059669;' : item.artifact_type === 'explore.leads' ? 'color:#b45309;' : item.artifact_type === 'explore.evidence' ? 'color:#0071e3;' : item.artifact_type === 'review.report' ? 'color:#7c3aed;' : ''"
+                      x-text="artifactTypeIcon(item.artifact_type)"></span>
+                    <span class="vsc-label" :title="item.summary || ''" x-text="artifactFileName(item)"></span>
+                    <span class="vsc-rowmeta" x-text="formatBytes(item.size)"></span>
+                  </button>
+                </template>
+                <div x-show="explorerExpanded[`${task.id}:${folder.folder_key}`] && (explorerFiles[`${task.id}:${folder.folder_key}`] || []).length === 0 && !artifactCenterLoading" class="vsc-tree-empty lvl2">（空）</div>
+              </div>
+            </template>
+          </div>
+        </template>
+        <div x-show="artifactCenterLoading && !(artifactCenterTasks || []).length" class="sto-empty" style="border:0;">加载中…</div>
+      </div>
+      <div class="vsc-side-foot">
+        <span x-text="`${Object.keys(explorerFiles).length} 个 Intent 已加载`"></span>
+      </div>
     </aside>
 
-    <!-- 内容区 -->
-    <section class="flex-1 min-w-0 overflow-y-auto" style="padding:18px 20px;">
-      <div x-show="artifactCenterSelectedTask" class="mb-3 flex items-center flex-wrap" style="gap:10px;">
-        <button
-          x-show="artifactCenterFolderKey"
-          @click="backArtifactCenterTask()"
-          class="sto-ghost"
-          style="padding:7px 12px;"
-        >
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
-          返回任务
-        </button>
-        <span style="font-size:13px; font-weight:650; color:var(--sto-fg);" x-text="artifactCenterCurrentTask()?.title || artifactCenterSelectedTask"></span>
-        <template x-if="artifactCenterFolderKey">
-          <div class="flex items-center gap-2 min-w-0"><span style="color:var(--sto-fg-3);">/</span><span class="sto-num" style="font-weight:650; color:var(--sto-accent);" x-text="artifactCenterFolderKey === 'task' ? '任务文件' : artifactCenterFolderKey"></span></div>
-        </template>
-      </div>
-
-      <div class="flex flex-wrap items-center" style="gap:8px; margin-bottom:14px;">
-        <input
-          x-model="artifactCenterSearch"
-          @input="scheduleArtifactCenterSearch()"
-          class="sto-input"
-          style="flex:1; min-width:200px; padding:8px 12px; font-size:12px;"
-          :placeholder="artifactCenterMode() === 'task-root' ? '搜索 Intent ID 或描述…' : '搜索名称、摘要、Intent…'"
-        >
-        <template x-if="artifactCenterMode() !== 'task-root'">
-          <div class="flex flex-wrap items-center" style="gap:8px;">
-            <select x-model="artifactCenterType" @change="artifactCenterPage=0; loadArtifactCenter()" class="sto-input" style="width:auto; padding:8px 10px; font-size:12px;">
-              <option value="all">全部类型</option>
-              <template x-for="type in artifactCenterTypes()" :key="type"><option :value="type" x-text="type"></option></template>
-            </select>
-            <select x-model="artifactCenterPhase" @change="artifactCenterPage=0; loadArtifactCenter()" class="sto-input" style="width:auto; padding:8px 10px; font-size:12px;">
-              <option value="all">全部阶段</option>
-              <template x-for="phase in artifactCenterPhases()" :key="phase"><option :value="phase" x-text="phase"></option></template>
-            </select>
-            <select x-model="artifactCenterSource" @change="artifactCenterPage=0; loadArtifactCenter()" class="sto-input" style="width:auto; padding:8px 10px; font-size:12px;">
-              <option value="all">全部来源</option>
-              <option value="upload">人工上传</option>
-              <option value="worker">Worker / 阶段</option>
-            </select>
+    <!-- ═══ 编辑器区（标签页 + 面包屑 + 预览） ═══ -->
+    <section class="flex-1 min-w-0 flex flex-col overflow-hidden">
+      <!-- 标签页 -->
+      <div class="vsc-tabbar">
+        <template x-for="tab in (editorTabs || [])" :key="tab.id">
+          <div class="vsc-tab" :class="editorActiveId === tab.id ? 'active' : ''" @click="activateEditorTab(tab.id)">
+            <span class="vsc-fileicon" :style="tab.artifact_type === 'explore.findings' ? 'color:#059669;' : tab.artifact_type === 'explore.leads' ? 'color:#b45309;' : tab.artifact_type === 'explore.evidence' ? 'color:#0071e3;' : tab.artifact_type === 'review.report' ? 'color:#7c3aed;' : ''"
+              x-text="artifactTypeIcon(tab.artifact_type)"></span>
+            <span class="vsc-tabname" x-text="artifactFileName(tab)"></span>
+            <button type="button" class="vsc-tabclose" @click.stop="closeEditorTab(tab.id)" aria-label="关闭">&times;</button>
           </div>
         </template>
+        <div class="vsc-tab-spacer"></div>
       </div>
 
-      <template x-if="artifactCenterMode() === 'task-root'">
-        <div>
-          <div class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3" style="gap:12px;">
-            <template x-for="folder in (artifactCenterFolders || [])" :key="folder.folder_key">
-              <button type="button" @click="openArtifactFolder(folder)" class="sto-folder">
-                <div class="flex items-start" style="gap:11px;">
-                  <div class="shrink-0 flex items-center justify-center" style="width:38px; height:38px; border-radius:11px; border:1px solid var(--sto-line); background:var(--sto-inset); color:var(--sto-accent);">
-                    <svg style="width:18px; height:18px;" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 7V5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v2"/></svg>
-                  </div>
-                  <div style="min-width:0; flex:1;">
-                    <div class="flex items-center" style="gap:7px; min-width:0;">
-                      <span class="fname" :title="artifactFolderLabel(folder)" x-text="artifactFolderLabel(folder)"></span>
-                      <span class="sto-badge neutral fbadge" style="padding:1px 7px; font-size:9.5px;" x-text="artifactFolderPhase(folder)"></span>
-                      <span x-show="folder.intent_status" class="sto-badge fbadge" style="padding:1px 7px; font-size:9.5px;" :class="folder.intent_status === 'completed' ? 'ok' : 'warn'" x-text="folder.intent_status"></span>
-                    </div>
-                    <p class="sto-muted" style="margin-top:5px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" x-text="artifactFolderDescription(folder)"></p>
-                  </div>
-                </div>
-                <div class="fmeta">
-                  <span x-text="`${folder.artifact_count} 个产物`"></span>
-                  <span class="sto-num" x-text="formatBytes(folder.total_size)"></span>
-                  <span class="right" x-text="formatTime(folder.latest_created_at)"></span>
-                </div>
-              </button>
-            </template>
-            <div x-show="!artifactCenterLoading && artifactCenterFolders.length === 0" class="sto-empty" style="grid-column:1/-1;">该任务暂无正式产物</div>
-            <div x-show="artifactCenterLoading" class="sto-empty" style="grid-column:1/-1; border-style:solid;">加载中…</div>
-          </div>
-          <div class="sto-pager">
-            <span class="sto-num" x-text="`共 ${artifactCenterFolderTotal} 个文件夹`"></span>
-            <div class="pgbtns">
-              <button @click="setArtifactCenterFolderPage(artifactCenterFolderPage - 1)" :disabled="artifactCenterFolderPage <= 0" class="sto-minibtn">上一页</button>
-              <span class="sto-num" x-text="`${artifactCenterFolderPage + 1} / ${artifactCenterFolderPageCount()}`"></span>
-              <button @click="setArtifactCenterFolderPage(artifactCenterFolderPage + 1)" :disabled="artifactCenterFolderPage + 1 >= artifactCenterFolderPageCount()" class="sto-minibtn">下一页</button>
-            </div>
-          </div>
-        </div>
-      </template>
 
-      <template x-if="artifactCenterMode() !== 'task-root'">
-        <div>
-          <div class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3" style="gap:12px;">
-            <template x-for="item in artifactCenterFiltered()" :key="item.id">
-              <article
-                role="button"
-                tabindex="0"
-                :data-artifact-id="item.id"
-                :aria-selected="isArtifactCenterSelected(item)"
-                @click="selectArtifactCenterItem(item)"
-                @keydown.enter.prevent="selectArtifactCenterItem(item)"
-                @keydown.space.prevent="selectArtifactCenterItem(item)"
-                class="sto-artcard"
-                :class="isArtifactCenterSelected(item) ? 'selected' : ''"
-              >
-                <div class="flex items-start" style="gap:11px; min-width:0;">
-                  <div class="shrink-0 flex items-center justify-center text-base" style="width:36px; height:36px; border-radius:11px; border:1px solid var(--sto-line); background:var(--sto-inset);"
-                    :style="item.artifact_type === 'explore.findings' ? 'color:#059669; border-color:color-mix(in srgb, #059669 40%, var(--sto-line)); background:rgba(16,185,129,0.08);' : item.artifact_type === 'explore.leads' ? 'color:#b45309; border-color:color-mix(in srgb, #b45309 40%, var(--sto-line)); background:rgba(180,83,9,0.08);' : item.artifact_type === 'explore.evidence' ? 'color:#0071e3; border-color:color-mix(in srgb, #0071e3 40%, var(--sto-line)); background:rgba(0,113,227,0.08);' : ''"
-                    x-text="artifactTypeIcon(item.artifact_type)"></div>
-                  <div style="min-width:0; flex:1;">
-                    <div class="flex items-center" style="gap:7px; min-width:0;">
-                      <span class="artname" :title="artifactFileName(item)" x-text="artifactFileName(item)"></span>
-                      <span class="sto-badge kindbadge" style="padding:1px 7px; font-size:9.5px;"
-                        :style="item.artifact_type === 'explore.findings' ? 'color:#059669; border-color:color-mix(in srgb, #059669 40%, var(--sto-line)); background:rgba(16,185,129,0.08);' : item.artifact_type === 'explore.leads' ? 'color:#b45309; border-color:color-mix(in srgb, #b45309 40%, var(--sto-line)); background:rgba(180,83,9,0.08);' : item.artifact_type === 'explore.evidence' ? 'color:#0071e3; border-color:color-mix(in srgb, #0071e3 40%, var(--sto-line)); background:rgba(0,113,227,0.08);' : ''"
-                        x-text="artifactKindLabel(item)"></span>
-                    </div>
-                    <p class="sto-muted" style="margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" :title="item.summary || ''" x-text="item.summary || '无摘要'"></p>
-                  </div>
-                </div>
-                <div class="ameta">
-                  <span x-show="artifactCenterMode() === 'global'" x-text="item.task_title"></span>
-                  <span x-text="item.phase || '阶段未知'"></span>
-                  <span class="sto-num" x-text="formatBytes(item.size)"></span>
-                  <span x-text="formatTime(item.created_at)"></span>
-                </div>
-                <div class="apath" x-text="artifactDisplayPath(item)"></div>
-              </article>
-            </template>
-            <div x-show="!artifactCenterLoading && artifactCenterFiltered().length === 0" class="sto-empty" style="grid-column:1/-1;">暂无匹配产物</div>
-            <div x-show="artifactCenterLoading" class="sto-empty" style="grid-column:1/-1; border-style:solid;">加载中…</div>
+      <!-- 内容 -->
+      <div class="flex-1 min-h-0 overflow-auto" style="background:var(--sto-panel);">
+        <!-- 未打开任何文件 -->
+        <div x-show="!artifactCenterSelected" class="vsc-welcome">
+          <div class="vsc-welcome-logo">
+            <svg style="width:26px; height:26px;" fill="none" stroke="currentColor" stroke-width="1.4" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M16 13H8m8 4H8m2-8H8"/></svg>
           </div>
-          <div class="sto-pager">
-            <span class="sto-num" x-text="`共 ${artifactCenterTotal} 个产物`"></span>
-            <div class="pgbtns">
-              <button @click="setArtifactCenterPage(artifactCenterPage - 1)" :disabled="artifactCenterPage <= 0" class="sto-minibtn">上一页</button>
-              <span class="sto-num" x-text="`${artifactCenterPage + 1} / ${artifactCenterPageCount()}`"></span>
-              <button @click="setArtifactCenterPage(artifactCenterPage + 1)" :disabled="artifactCenterPage + 1 >= artifactCenterPageCount()" class="sto-minibtn">下一页</button>
-            </div>
-          </div>
+          <p>在左侧资源管理器中选择文件打开</p>
+          <p class="sub">展开任务 › Intent，点击文件在编辑器中预览</p>
         </div>
-      </template>
+        <!-- 已打开 -->
+        <template x-if="artifactCenterSelected">
+          <div>
+            <div class="vsc-meta-strip">
+              <span x-text="artifactCenterSelected.task_title"></span>
+              <span class="k">来源</span><span x-text="artifactCenterSelected.created_by || '未知'"></span>
+              <span class="k">阶段</span><span x-text="artifactCenterSelected.phase || '未知'"></span>
+              <span class="k">大小</span><span class="sto-num" x-text="formatBytes(artifactCenterSelected.size)"></span>
+            </div>
+            <div class="vsc-content">
+              <template x-if="artifactCenterSelected._previewKind === 'image'"><img :src="artifactDownloadUrl(artifactCenterSelected)" style="max-width:100%; border-radius:10px; border:1px solid var(--sto-line);"></template>
+              <template x-if="artifactCenterSelected._loading"><div class="sto-empty" style="border-style:solid;">读取中…</div></template>
+              <template x-if="artifactCenterSelected._error"><div class="sto-errbox" x-text="artifactCenterSelected._error"></div></template>
+              <template x-if="artifactCenterSelected._notice"><div class="sto-errbox" style="border-color:color-mix(in srgb, var(--sto-warn) 30%, transparent); background:color-mix(in srgb, var(--sto-warn) 6%, transparent); color:var(--sto-warn);" x-text="artifactCenterSelected._notice"></div></template>
+              <template x-if="artifactCenterSelected._previewKind === 'markdown' && !artifactCenterSelected._loading && !artifactCenterSelected._error && !artifactCenterSelected._notice"><div><div x-show="artifactCenterSelected._rendered" class="md-preview text-sm" x-html="artifactCenterSelected._rendered"></div><div x-show="!artifactCenterSelected._rendered" class="sto-empty" style="border-style:solid;">文件为空</div></div></template>
+              <template x-if="(artifactCenterSelected._previewKind === 'text' || artifactCenterSelected._previewKind === 'json') && !artifactCenterSelected._loading && !artifactCenterSelected._error && !artifactCenterSelected._notice"><div class="space-y-3"><div x-show="artifactCenterSelected._warning" class="sto-errbox" style="border-color:color-mix(in srgb, var(--sto-warn) 30%, transparent); background:color-mix(in srgb, var(--sto-warn) 6%, transparent); color:var(--sto-warn);" x-text="artifactCenterSelected._warning"></div><pre data-testid="artifact-preview-text" x-show="artifactCenterSelected._content.length > 0" style="font-size:12px; white-space:pre-wrap; word-break:break-word; font-family:ui-monospace,'SF Mono',Menlo,monospace; color:var(--sto-fg); line-height:1.6;" x-text="artifactCenterSelected._content"></pre></div></template>
+            </div>
+            <footer class="vsc-content-foot">
+              <a :href="artifactDownloadUrl(artifactCenterSelected)" download class="sto-ghost">下载</a>
+              <button @click="archiveArtifactCenter(artifactCenterSelected)" class="sto-minibtn danger" style="padding:7px 12px;">归档</button>
+            </footer>
+          </div>
+        </template>
+      </div>
     </section>
-
-    <!-- 预览抽屉 -->
-    <aside x-show="artifactCenterSelected" x-cloak class="sto-preview w-[min(42vw,560px)] shrink-0 flex flex-col">
-      <template x-if="artifactCenterSelected">
-        <div class="flex flex-col h-full">
-          <header class="sto-preview-head flex items-start" style="gap:10px;">
-            <div style="flex:1; min-width:0;">
-              <h3 style="font-size:13.5px; font-weight:650; color:var(--sto-fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="artifactFileName(artifactCenterSelected)"></h3>
-              <p class="sto-muted" style="margin-top:4px;" x-text="artifactCenterSelected.summary || '无摘要'"></p>
-            </div>
-            <button @click="closeArtifactCenterPreview()" class="sto-ghost" style="padding:4px 10px;" aria-label="关闭预览">×</button>
-          </header>
-          <div class="sto-preview-meta">
-            <div><span class="k">任务</span><span x-text="artifactCenterSelected.task_title"></span></div>
-            <div><span class="k">来源</span><span x-text="artifactCenterSelected.created_by"></span><span class="k" style="margin-left:12px;">阶段</span><span x-text="artifactCenterSelected.phase || '未知'"></span></div>
-            <div><span class="k">路径</span><span class="sto-num" x-text="artifactCenterSelected.path"></span></div>
-          </div>
-          <div class="flex-1 overflow-auto" style="padding:16px;">
-            <template x-if="artifactCenterSelected._previewKind === 'image'"><img :src="artifactDownloadUrl(artifactCenterSelected)" style="max-width:100%; border-radius:10px; border:1px solid var(--sto-line);"></template>
-            <template x-if="artifactCenterSelected._loading"><div class="sto-empty" style="border-style:solid;">读取中…</div></template>
-            <template x-if="artifactCenterSelected._error"><div class="sto-errbox" x-text="artifactCenterSelected._error"></div></template>
-            <template x-if="artifactCenterSelected._notice"><div class="sto-errbox" style="border-color:color-mix(in srgb, var(--sto-warn) 30%, transparent); background:color-mix(in srgb, var(--sto-warn) 6%, transparent); color:var(--sto-warn);" x-text="artifactCenterSelected._notice"></div></template>
-            <template x-if="artifactCenterSelected._previewKind === 'markdown' && !artifactCenterSelected._loading && !artifactCenterSelected._error && !artifactCenterSelected._notice"><div><div x-show="artifactCenterSelected._rendered" class="md-preview text-sm" x-html="artifactCenterSelected._rendered"></div><div x-show="!artifactCenterSelected._rendered" class="sto-empty" style="border-style:solid;">文件为空</div></div></template>
-            <template x-if="(artifactCenterSelected._previewKind === 'text' || artifactCenterSelected._previewKind === 'json') && !artifactCenterSelected._loading && !artifactCenterSelected._error && !artifactCenterSelected._notice"><div class="space-y-3"><div x-show="artifactCenterSelected._warning" class="sto-errbox" style="border-color:color-mix(in srgb, var(--sto-warn) 30%, transparent); background:color-mix(in srgb, var(--sto-warn) 6%, transparent); color:var(--sto-warn);" x-text="artifactCenterSelected._warning"></div><pre data-testid="artifact-preview-text" x-show="artifactCenterSelected._content.length > 0" style="font-size:12px; white-space:pre-wrap; word-break:break-word; font-family:ui-monospace,'SF Mono',Menlo,monospace; color:var(--sto-fg); line-height:1.6;" x-text="artifactCenterSelected._content"></pre><div x-show="artifactCenterSelected._content.length === 0" class="sto-empty" style="border-style:solid;">文件为空</div></div></template>
-          </div>
-          <footer class="sto-foot" style="padding:12px 16px; border-top:1px solid var(--sto-line);">
-            <a :href="artifactDownloadUrl(artifactCenterSelected)" download class="sto-ghost">下载</a>
-            <button @click="archiveArtifactCenter(artifactCenterSelected)" class="sto-minibtn danger" style="padding:7px 12px;">归档</button>
-          </footer>
-        </div>
-      </template>
-    </aside>
   </main>
 </div>

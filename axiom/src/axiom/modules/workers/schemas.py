@@ -61,6 +61,8 @@ class WorkerConnectionRequest(BaseModel):
     api_key: str = ""
     model: str = ""
     provider_api: str = ""
+    # 草稿态开关：未保存也能按该语义测试连通性（持久化后以 worker 配置为准）
+    llm_proxy: bool = False
 
 
 class WorkerConnectionResult(BaseModel):

@@ -55,6 +55,8 @@
     'explore_execute_max_seconds',
     'explore_conclude_min_seconds',
     'explore_conclude_max_seconds',
+    'explore_execute_default_seconds',
+    'explore_conclude_default_seconds',
   ];
   const splitLines = value => String(value || '').split(/[\n,]+/).map(item => item.trim()).filter(Boolean);
   const taskStatus = status => ({ running: 'active', stopped: 'stopped', completed: 'completed', failed: 'failed', draft: 'stopped' }[status] || status);
@@ -707,6 +709,7 @@
       // Keep the old view model readable for index-legacy.html only. New
       // saves persist the independent switch and strength fields below.
       pi_thinking: thinking.enabled ? thinking.level : 'off',
+      llm_proxy: !!config.llm_proxy,
       mcp_enabled: String(env.PI_MCP_ENABLED || 'false') === 'true',
       mcp_profile: env.PI_MCP_PROFILE || '',
       mcp_config_json: env.PI_MCP_CONFIG_JSON || '',
@@ -754,10 +757,22 @@
       throw error;
     }
     const config = { ...current.config };
+    // sandbox/browser 族是枚举、字符串与布尔字段，绝不能走 Number() 强转——
+    // Number('local') 为 NaN，JSON 序列化成 null，直接触发后端 422。
+    const passthroughKeys = new Set([
+      'sandbox_backend', 'sandbox_required', 'sandbox_local_fallback',
+      'sandbox_template', 'sandbox_runtime_revision',
+      'browser_gateway_enabled', 'browser_gateway_bind', 'browser_gateway_base_url',
+    ]);
     for (const key of runtimeConfigKeys) {
+      if (passthroughKeys.has(key)) continue;
       if (body[key] !== undefined && body[key] !== null && body[key] !== '') {
-        config[key] = Number(body[key]);
+        const num = Number(body[key]);
+        if (Number.isFinite(num)) config[key] = num;
       }
+    }
+    for (const key of passthroughKeys) {
+      if (body[key] !== undefined) config[key] = body[key];
     }
     if (body.network_proxy_mode !== undefined) config.network_proxy_mode = body.network_proxy_mode;
     if (body.network_proxy_url !== undefined) config.network_proxy_url = body.network_proxy_url;
@@ -786,7 +801,6 @@
       ? await request('GET', `/workers/${encodeURIComponent(persistedName)}`).catch(() => null)
       : null;
     const oldConfig = existing?.config || {};
-    const legacyThinking = String(body.pi_thinking || 'off').toLowerCase();
     const requestedLevel = String(body.pi_thinking_level || '').toLowerCase();
     const thinkingLevel = piThinkingLevels.includes(requestedLevel)
       ? requestedLevel
@@ -802,6 +816,7 @@
       context_window: Number(body.pi_model_context_window ?? 200000),
       thinking_enabled: thinkingEnabled,
       thinking_level: thinkingLevel,
+      llm_proxy: !!body.llm_proxy,
       environment: { ...(oldConfig.environment || {}) },
     };
     delete nextConfig.env;
@@ -1045,9 +1060,6 @@
     if ((match = path.match(/^\/projects\/([^/]+)\/conversation(?:\/index)?$/)) && method === 'GET') {
       return { project_id: match[1], threads: [], items: [], stats: { workers: [], intents: [], thread_types: {}, timeout_count: 0, thread_count: 0, item_count: 0 }, filters: {} };
     }
-    if ((match = path.match(/^\/projects\/([^/]+)\/explore-conversation$/)) && method === 'GET') {
-      return request('GET', `/tasks/${match[1]}/explore-conversation${url.search}`, null, options);
-    }
     if ((match = path.match(/^\/projects\/([^/]+)\/intents\/([^/]+)\/interventions$/)) && method === 'POST') {
       return request('POST', `/tasks/${match[1]}/intents/${match[2]}/interventions`, body, options);
     }
@@ -1106,7 +1118,7 @@
     }
     if (path === '/settings/test-pi' && method === 'POST') {
       return request('POST', `/workers/${encodeURIComponent(body.worker_name || '')}/test`, {
-        base_url: body.pi_base_url, api_key: body.pi_api_key, model: body.pi_model, provider_api: body.pi_provider_api,
+        base_url: body.pi_base_url, api_key: body.pi_api_key, model: body.pi_model, provider_api: body.pi_provider_api, llm_proxy: !!body.llm_proxy,
       });
     }
     if (path === '/settings/judge' && method === 'GET') return judgeSettings();
@@ -1899,8 +1911,97 @@
     artifactCenterCurrentTask() {
       return (this.artifactCenterTasks || []).find(task => task.id === this.artifactCenterSelectedTask) || null;
     },
-    selectArtifactCenterTask(taskId) {
-      this.navigateArtifactCenter(taskId || '');
+    async toggleExplorerTask(taskId) {
+      this.artifactCenterSelectedTask = taskId;
+      if (this.explorerExpanded[taskId]) {
+        delete this.explorerExpanded[taskId];
+        return;
+      }
+      this.explorerExpanded[taskId] = true;
+      if (!this.explorerFolders[taskId]) await this.loadExplorerFolders(taskId);
+    },
+    async loadExplorerFolders(taskId) {
+      try {
+        const page = await requestPage(`/tasks/${taskId}/artifact-folders?limit=200`, { signal: this._pageAbortController?.signal });
+        this.explorerFolders = { ...this.explorerFolders, [taskId]: page.items };
+      } catch (error) { if (error?.name !== 'AbortError') this.showToast(error.message, 'error'); }
+    },
+    async toggleExplorerIntent(taskId, folderKey) {
+      const key = `${taskId}:${folderKey}`;
+      this.artifactCenterSelectedTask = taskId;
+      this.artifactCenterFolderKey = folderKey;
+      if (this.explorerExpanded[key]) {
+        delete this.explorerExpanded[key];
+        return;
+      }
+      this.explorerExpanded[key] = true;
+      if (!this.explorerFiles[key]) await this.loadExplorerFiles(taskId, folderKey);
+    },
+    async loadExplorerFiles(taskId, folderKey) {
+      const key = `${taskId}:${folderKey}`;
+      try {
+        const params = new URLSearchParams({ limit: '200' });
+        if (folderKey === 'task') params.set('unscoped_only', 'true');
+        else params.set('intent_id', folderKey);
+        const page = await requestPage(`/tasks/${taskId}/artifacts?${params}`, { signal: this._pageAbortController?.signal });
+        const task = (this.artifactCenterTasks || []).find(t => t.id === taskId);
+        const items = page.items.map(item => ({
+          ...mapArtifact(item),
+          task_title: task?.title || item.task_id,
+          phase: this.artifactSourcePhase(item),
+          task_id: taskId,
+        })).filter(item => !item.archived);
+        this.explorerFiles = { ...this.explorerFiles, [key]: items };
+      } catch (error) { if (error?.name !== 'AbortError') this.showToast(error.message, 'error'); }
+    },
+    explorerNodeVisible(kind, key, text) {
+      const q = String(this.explorerFilter || '').trim().toLowerCase();
+      if (!q) return true;
+      return String(text || '').toLowerCase().includes(q);
+    },
+    async openEditorTab(item) {
+      if (!item?.id) return;
+      const taskId = item.task_id || this.artifactCenterSelectedTask;
+      const folderKey = item.intent_id || item.review_run_id || this.artifactCenterFolderKey || 'task';
+      // 同步树展开路径
+      this.explorerExpanded[taskId] = true;
+      if (!this.explorerFolders[taskId]) await this.loadExplorerFolders(taskId);
+      this.explorerExpanded[`${taskId}:${folderKey}`] = true;
+      if (!this.explorerFiles[`${taskId}:${folderKey}`]) await this.loadExplorerFiles(taskId, folderKey);
+      this.navigateArtifactCenter(taskId, folderKey, item.id);
+      if (!(this.editorTabs || []).some(tab => tab.id === item.id)) {
+        this.editorTabs = [...(this.editorTabs || []), item];
+      }
+      this.editorActiveId = item.id;
+      const cached = (this.editorTabs || []).find(tab => tab.id === item.id);
+      if (cached && cached._loaded) {
+        this.artifactCenterSelected = cached;
+        return;
+      }
+      await this.openArtifactCenter(item);
+      const loaded = this.artifactCenterSelected;
+      if (loaded && loaded.id === item.id) {
+        loaded._loaded = true;
+        this.editorTabs = (this.editorTabs || []).map(tab => tab.id === item.id ? loaded : tab);
+      }
+    },
+    activateEditorTab(id) {
+      const tab = (this.editorTabs || []).find(t => t.id === id);
+      if (!tab) return;
+      this.editorActiveId = id;
+      if (tab._loaded) {
+        this.artifactCenterSelected = tab;
+        return;
+      }
+      this.openEditorTab(tab);
+    },
+    closeEditorTab(id) {
+      const tabs = (this.editorTabs || []).filter(tab => tab.id !== id);
+      this.editorTabs = tabs;
+      if (this.editorActiveId !== id) return;
+      const last = tabs[tabs.length - 1] || null;
+      if (last) this.activateEditorTab(last.id);
+      else { this.editorActiveId = ''; this.artifactCenterSelected = null; }
     },
     openArtifactFolder(folder) {
       if (!this.artifactCenterSelectedTask || !folder?.folder_key) return;
@@ -2028,7 +2129,7 @@
           return;
         }
       }
-      await this.openArtifactCenter(target);
+      await this.openEditorTab(target);
       this.$nextTick(() => {
         const selector = `[data-artifact-id="${CSS.escape(String(target.id))}"]`;
         document.querySelector(selector)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -2070,29 +2171,6 @@
       return (this.artifactCenterItems || []).filter(item => {
         return !item.archived;
       });
-    },
-    async loadHumanArtifactPage() {
-      if (!this.selectedProjectId || !this.project) return;
-      const params = new URLSearchParams({
-        limit: String(this.humanArtifactPageSize),
-        offset: String(this.humanArtifactPage * this.humanArtifactPageSize),
-      });
-      try {
-        const page = await requestPage(`/tasks/${this.selectedProjectId}/artifacts?${params}`, {
-          signal: this._pageAbortController?.signal,
-        });
-        this.humanArtifactItems = page.items.map(mapArtifact);
-        this.humanArtifactTotal = page.total;
-      } catch (error) {
-        if (error?.name !== 'AbortError') this.showToast(error.message || String(error), 'error');
-      }
-    },
-    humanArtifactPageCount() { return Math.max(1, Math.ceil((this.humanArtifactTotal || 0) / this.humanArtifactPageSize)); },
-    async setHumanArtifactPage(page) {
-      const next = Math.max(0, Math.min(this.humanArtifactPageCount() - 1, Number(page) || 0));
-      if (next === this.humanArtifactPage) return;
-      this.humanArtifactPage = next;
-      await this.loadHumanArtifactPage();
     },
     artifactFolderLabel(folder) { return folder?.folder_key === 'task' ? '任务文件' : (folder?.folder_key || '未知目录'); },
     artifactFolderDescription(folder) {
@@ -2159,8 +2237,8 @@
       const filename = String(name || '').toLowerCase();
       if (this.isImageFile(filename)) return 'image';
       if (this.isMdFile(filename)) return 'markdown';
-      if (/\.(json|har)$/.test(filename)) return 'json';
-      if (/\.(txt|log|csv|tsv|jsonl|ndjson|xml|ya?ml|js|mjs|cjs|jsx|ts|tsx|py|sh|bash|zsh|fish|html?|css|scss|sql|ini|conf|cfg|env|toml|properties|http)$/.test(filename)) return 'text';
+      if (/\.(json|har)$/.test(filename)) return 'markdown';
+      if (/\.(txt|log|csv|tsv|jsonl|ndjson|xml|ya?ml|js|mjs|cjs|jsx|ts|tsx|py|sh|bash|zsh|fish|html?|css|scss|sql|ini|conf|cfg|env|toml|properties|http)$/.test(filename)) return 'markdown';
       return 'unsupported';
     },
     artifactPreviewUrl(item) { return `${apiRoot}/tasks/${item.task_id}/artifacts/${item.id}/content`; },
@@ -2226,7 +2304,10 @@
       if (!confirm(`归档产物 ${this.artifactFileName(item)}？`)) return;
       try {
         await request('DELETE', `/tasks/${item.task_id}/artifacts/${item.id}`);
+        this.closeEditorTab(item.id);
         this.showToast('产物已归档');
+        const key = `${item.task_id}:${item.intent_id || item.review_run_id || 'task'}`;
+        if (this.explorerFiles[key]) await this.loadExplorerFiles(item.task_id, item.intent_id || item.review_run_id || 'task');
         this.navigateArtifactCenter(item.task_id, item.intent_id || item.review_run_id || 'task');
       }
       catch (error) { this.showToast(error.message, 'error'); }
@@ -2239,6 +2320,8 @@
       try {
         const created = await request('POST', `/tasks/${taskId}/artifacts/upload`, form);
         this.showToast('产物已上传到任务文件');
+        delete this.explorerFolders[taskId];
+        if (this.explorerExpanded[taskId]) await this.loadExplorerFolders(taskId);
         await this.openArtifactLocation(taskId, created);
       }
       catch (error) { this.showToast(error.message, 'error'); }

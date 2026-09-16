@@ -13,7 +13,7 @@ from axiom.modules.reason.tables import reason_runs
 from axiom.modules.plan.tables import plan_runs
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.phase_capabilities.schemas import PhaseBackend, WorkerPhase
-from axiom.modules.workers.pi_config import PiWorkerConfig, canonicalize_pi_worker_config
+from axiom.modules.workers.pi_config import PiWorkerConfig, canonicalize_pi_worker_config, llm_proxy_for
 from axiom.modules.workers.repository import WorkerRepository
 from axiom.modules.workers.schemas import (
     UpsertWorker,
@@ -298,16 +298,14 @@ class WorkerService:
                 raise ConflictError("Worker with active Vulnerability ReviewRuns cannot be deleted")
             self.repository.delete(conn, name)
 
-    def _llm_proxy(self) -> str | None:
-        """LLM key 流量的代理开关（network_proxy_mode == "http" 时生效）。"""
+    def _llm_proxy(self, backend: PiWorkerConfig) -> str | None:
+        """该后端 LLM 出流的代理 URL；None = 直连（llm_proxy_for 统一解析）。"""
         try:
             with self.engine.connect() as conn:
                 config = load_runtime_config(conn)
         except Exception:
             return None
-        if config.network_proxy_mode == "http" and config.network_proxy_url.strip():
-            return config.network_proxy_url.strip()
-        return None
+        return llm_proxy_for(config, backend)
 
     def list_models(
         self,
@@ -327,7 +325,7 @@ class WorkerService:
                 connection.base_url.rstrip("/") + "/models",
                 headers=self._authorization(connection.api_key),
                 timeout=10,
-                proxy=self._llm_proxy(),
+                proxy=self._llm_proxy(PiWorkerConfig(llm_proxy=connection.llm_proxy)),
             )
         except httpx.HTTPError as exc:
             return WorkerModelsResult(error=f"请求失败：{exc}")
@@ -392,7 +390,7 @@ class WorkerService:
                 headers=headers,
                 json=payload,
                 timeout=15,
-                proxy=self._llm_proxy(),
+                proxy=self._llm_proxy(PiWorkerConfig(llm_proxy=connection.llm_proxy)),
             )
         except httpx.HTTPError as exc:
             return WorkerConnectionResult(ok=False, message=f"连接失败：{exc}")
@@ -413,7 +411,10 @@ class WorkerService:
         except NotFoundError:
             if command.base_url:
                 return command.model_copy(
-                    update={"provider_api": command.provider_api or "openai-completions"}
+                    update={
+                        "provider_api": command.provider_api or "openai-completions",
+                        "llm_proxy": command.llm_proxy,
+                    }
                 )
             raise
         if worker.worker_type != "pi":
@@ -424,6 +425,8 @@ class WorkerService:
             api_key=command.api_key.strip() or config.api_key,
             model=command.model.strip() or config.model,
             provider_api=command.provider_api.strip() or config.provider_api,
+            # 草稿开关优先（编辑器测试未保存配置）；持久化语义以 worker 配置为准
+            llm_proxy=command.llm_proxy or config.llm_proxy,
         )
 
     @staticmethod

@@ -219,6 +219,47 @@ window.AxiomModules.graph = {
       setTimeout(() => { if (this.cy) this.cullNodeCards(); }, 150);
     },
 
+    // ── 分级渲染（LOD）──
+    // 缩小时同屏卡片可达数百张，box-shadow + 全文排版的重绘是拖拽/缩放卡顿主因。
+    // zoom 低于阈值时给容器打 is-far：CSS 把卡片折叠成紧凑头部（隐藏正文/页脚/阴影），
+    // 同时批量关掉边标签（canvas 文本），视距拉远后只剩骨架轮廓，交互恢复顺滑。
+    setupRenderLOD() {
+      const container = document.getElementById('cy');
+      if (!container || !this.cy) return;
+      this._lodTier = null;
+      const FAR_ZOOM = 0.55;
+      const apply = () => {
+        if (!this.cy) return;
+        const tier = this.cy.zoom() < FAR_ZOOM ? 'far' : 'near';
+        if (tier === this._lodTier) return;
+        this._lodTier = tier;
+        container.classList.toggle('is-far', tier === 'far');
+        this.cy.batch(() => {
+          if (tier === 'far') this.cy.edges().style('text-opacity', 0);
+          else this.cy.edges().removeStyle('text-opacity');
+        });
+      };
+      let timer = null;
+      this.cy.on('zoom', () => {
+        if (timer) return;
+        timer = setTimeout(() => { timer = null; apply(); }, 120);
+      });
+      apply();
+    },
+
+    // ── 鼠标手型 ──
+    // 画布空白处=grab（抓住感），按住拖动=grabbing，悬停节点/边=pointer（可点提示）。
+    // 卡片本身 pointer-events:none，悬停命中由 Cytoscape 的 canvas 命中检测完成。
+    setupGraphCursors() {
+      const container = document.getElementById('cy');
+      if (!container || !this.cy || container.__cursorBound) return;
+      container.__cursorBound = true;
+      this.cy.on('mouseover', 'node, edge', () => container.classList.add('is-interactive'));
+      this.cy.on('mouseout', 'node, edge', () => container.classList.remove('is-interactive'));
+      container.addEventListener('mousedown', () => container.classList.add('is-panning'));
+      window.addEventListener('mouseup', () => container.classList.remove('is-panning'));
+    },
+
     rebuildCardIndex() {
       const map = new Map();
       const container = document.getElementById('cy');
@@ -268,9 +309,22 @@ window.AxiomModules.graph = {
       const container = document.getElementById('cy');
       if (!container) return;
       const { nodes, edges } = this.buildElements();
+      // 大图（数百节点以上）：骨架优先渐进渲染。一次性对千级节点跑 ELK 会把主线程
+      // 冻结数秒（表现为"图谱打不开"）。这里先用 origin/goal/plan 骨架建图布局，
+      // 其余 fact 节点按依赖拓扑分批追加（就近落位，不触发全图重排）。
+      const PROGRESSIVE_THRESHOLD = 350;
+      let initialNodes = nodes;
+      let initialEdges = edges;
+      const progressive = nodes.length > PROGRESSIVE_THRESHOLD;
+      if (progressive) {
+        const skeleton = this.graphSkeletonSubset(nodes, edges);
+        initialNodes = skeleton.nodes;
+        initialEdges = skeleton.edges;
+        this._pendingGraph = skeleton;
+      }
       const rawCy = cytoscape({
         container,
-        elements: [...nodes, ...edges],
+        elements: [...initialNodes, ...initialEdges],
         style: this.graphStyles(),
         layout: this.layoutOpts(false),
         minZoom: 0.35, maxZoom: 3.5,
@@ -288,11 +342,177 @@ window.AxiomModules.graph = {
       this.pulseActive();
       this.setupAutoFit();
       this.setupMinimapListeners();
+      this.setupRenderLOD();
+      this.setupGraphCursors();
+      if (progressive) {
+        this.graphInitStatus = `骨架完成，正在渲染其余 ${this._pendingGraph.pending.length} 个节点…`;
+        this.drainPendingGraphElements();
+      }
       // Ensure readable zoom after initial fit
       setTimeout(() => {
         if (this.cy && this.cy.zoom() < 0.5) this.cy.zoom(0.5);
         this.drawMinimap();
       }, 100);
+    },
+
+    // 从全量元素中划出骨架子集：origin/goal/plan 类节点 + 两端都在骨架内的边。
+    // 剩余节点按"父节点已放置"的拓扑顺序排队，边挂到端点上随节点一起加。
+    graphSkeletonSubset(nodes, edges) {
+      const skeletonTypes = new Set(['origin', 'goal', 'depth_origin', 'depth_plan', 'goal_history']);
+      const skeletonIds = new Set(nodes.filter(n => skeletonTypes.has(n.data.nodeType)).map(n => n.data.id));
+      const allIds = new Set(nodes.map(n => n.data.id));
+      const pending = nodes.filter(n => !skeletonIds.has(n.data.id));
+      const pendingIds = new Set(pending.map(n => n.data.id));
+      // 依赖父节点：占位 intent 节点看 intent.from，fact 节点看生产 intent 的 from。
+      const { intentsById, intentsByProduced } = this.graphEntityIndex();
+      const parentsOf = (data) => {
+        if (data.intentId) return (intentsById.get(data.intentId)?.from || []).filter(pid => allIds.has(pid));
+        return (intentsByProduced.get(data.id)?.from || []).filter(pid => allIds.has(pid));
+      };
+      // 拓扑排序：父节点全部脱离 pending 后即可入列。环/悬空依赖直接兜底入列。
+      const ordered = [];
+      const placed = new Set(skeletonIds);
+      const remaining = [...pending];
+      let guard = remaining.length + 1;
+      while (remaining.length && guard-- > 0) {
+        let progressed = false;
+        for (let i = remaining.length - 1; i >= 0; i--) {
+          const node = remaining[i];
+          const ready = parentsOf(node.data).every(pid => placed.has(pid) || !pendingIds.has(pid));
+          if (ready) {
+            placed.add(node.data.id);
+            ordered.push(node);
+            remaining.splice(i, 1);
+            progressed = true;
+          }
+        }
+        if (!progressed) { ordered.push(...remaining); break; } // 环兜底
+      }
+      // 骨架边：两端都在骨架内；其余边挂到端点，节点入图时补齐。
+      const skelEdges = edges.filter(e => skeletonIds.has(e.data.source) && skeletonIds.has(e.data.target));
+      const deferredEdges = edges.filter(e => !skelEdges.includes(e));
+      const parentIdsOf = new Map();
+      for (const n of pending) parentIdsOf.set(n.data.id, parentsOf(n.data));
+      return {
+        nodes: nodes.filter(n => skeletonIds.has(n.data.id)),
+        edges: skelEdges,
+        pending: ordered,
+        deferredEdges,
+        pendingIds,
+        placed: new Set(placed),
+        skeletonIds,
+        parentIdsOf,
+      };
+    },
+
+    // 分批消费 pending 节点：每批最多 80 个，批间让出主线程（setTimeout 0），
+    // 位置用 initialPositionForNode 就近父节点落位，全程不触发 ELK。
+    drainPendingGraphElements() {
+      const plan = this._pendingGraph;
+      if (!plan || !this.cy) return;
+      this._progressiveInitActive = true;
+      const BATCH = 80;
+      const byEndpoint = new Map();
+      for (const e of plan.deferredEdges) {
+        for (const ep of [e.data.source, e.data.target]) {
+          if (!byEndpoint.has(ep)) byEndpoint.set(ep, []);
+          byEndpoint.get(ep).push(e);
+        }
+      }
+      // 分层网格落位：level = 父层 + 1（骨架为 0 层），同层沿交叉轴按卡片尺寸排队，
+      // 保证不重叠、层级走向与全图布局方向一致。
+      const dir = this.layoutDirection();
+      const bb = this.cy.nodes().boundingBox();
+      const LEVEL_GAP = dir === 'TB' ? 232 : 200; // 层间距：列宽 / 行高
+      const CROSS_GAP = 24;
+      const levelOriginX = dir === 'TB' ? bb.x2 + 160 : bb.x1;
+      const levelOriginY = dir === 'TB' ? bb.y1 : bb.y2 + 160;
+      const levelCounters = new Map();
+      const levelOf = new Map();
+      for (const id of plan.skeletonIds) levelOf.set(id, 0);
+      const levelFor = (data) => {
+        let lvl = 1;
+        for (const p of plan.parentIdsOf.get(data.id) || []) {
+          const pl = levelOf.get(p);
+          if (pl !== undefined && pl + 1 > lvl) lvl = pl + 1;
+        }
+        return lvl;
+      };
+      const total = plan.pending.length;
+      const step = () => {
+        if (!this.cy) { this._progressiveInitActive = false; return; }
+        const batch = plan.pending.splice(0, BATCH);
+        if (batch.length === 0) {
+          // 分批补齐完成：网格位置只是过渡占位。这里再跑一次与旧版完全一致的
+          // 全图 ELK 布局做精排，最终效果与原布局相同——区别只是打开时先看到
+          // 骨架和节点逐步补齐，而不是白屏冻结数秒。
+          this._progressiveInitActive = false;
+          this._pendingGraph = null;
+          this.cullNodeCards();
+          this.pulseActive();
+          this.drawMinimap();
+          this.graphInitStatus = '节点就绪，正在精排全图布局…';
+          setTimeout(() => {
+            if (!this.cy) { this.graphInitStatus = ''; return; }
+            // 精排前把所有卡片实测高度同步给布局器（含被裁剪隐藏的卡片），
+            // 避免"按估算尺寸布局、按真实尺寸渲染"的错位重叠
+            this.syncCardHeights(true);
+            this.cy.once('layoutstop', () => {
+              this.graphInitStatus = '';
+              if (!this.cy) return;
+              this.cy.fit(undefined, 50);
+              if (this.cy.zoom() < 0.5) this.cy.zoom(0.5);
+              this.cullNodeCards();
+              this.drawMinimap();
+              this.updateGraph(); // 与期间到达的轮询数据对账
+            });
+            this.cy.layout(this.layoutOpts(false)).run();
+          }, 80); // 让角标先绘制一帧
+          return;
+        }
+        this.cy.batch(() => {
+          for (const node of batch) {
+            const lvl = levelFor(node.data);
+            levelOf.set(node.data.id, lvl);
+            const k = Math.max(0, lvl - 1);
+            const cur = levelCounters.get(lvl) || 0;
+            let pos;
+            if (dir === 'TB') {
+              pos = { x: levelOriginX + k * LEVEL_GAP, y: levelOriginY + cur };
+            } else {
+              pos = { x: levelOriginX + cur, y: levelOriginY + k * LEVEL_GAP };
+            }
+            this.cy.add({ ...node, position: pos });
+            plan.placed.add(node.data.id);
+            for (const e of byEndpoint.get(node.data.id) || []) {
+              if (this._drainedEdgeIds.has(e.data.id)) continue;
+              const src = this.cy.getElementById(e.data.source);
+              const dst = this.cy.getElementById(e.data.target);
+              if (src.length && dst.length) {
+                this.cy.add(e);
+                this._drainedEdgeIds.add(e.data.id);
+              }
+            }
+            // 同列防重叠：卡片真实尺寸以 DOM 渲染为准（估算高度偏小时会堆叠），
+            // 实测后同步修正节点尺寸，交叉轴游标按真实尺寸推进。
+            let cross = dir === 'TB' ? (node.data.height || 76) : (node.data.width || 200);
+            const cardEl = document.getElementById(`node-card-${node.data.id}`);
+            const actual = cardEl ? (dir === 'TB' ? cardEl.offsetHeight : cardEl.offsetWidth) : 0;
+            if (actual && Math.abs(actual - cross) > 2) {
+              cross = actual;
+              this.cy.getElementById(node.data.id).style(dir === 'TB' ? { height: actual } : { width: actual });
+            }
+            levelCounters.set(lvl, cur + cross + CROSS_GAP);
+          }
+        });
+        const done = total - plan.pending.length;
+        this.graphInitStatus = `正在渲染大图谱 ${done}/${total}…`;
+        this.cullNodeCards();
+        this.drawMinimap();
+        setTimeout(step, 0);
+      };
+      this._drainedEdgeIds = new Set();
+      setTimeout(step, 0);
     },
 
     graphStyles() {
@@ -467,7 +687,7 @@ window.AxiomModules.graph = {
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'80px', 'text-wrap':'ellipsis',
           'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.92,
-          'text-background-padding':'2px', 'text-events':'yes',
+          'text-background-padding':'2px', 'text-events':'no',
         }},
         { selector: 'node.focus', style: {
           'overlay-color':'#3b82f6', 'overlay-opacity':0.18, 'overlay-padding':4, 'z-index':1000,
@@ -478,7 +698,7 @@ window.AxiomModules.graph = {
           'text-rotation':'autorotate', 'text-margin-y':-9,
           'text-max-width':'80px', 'text-wrap':'ellipsis',
           'text-background-color':theme.edgeLabelBackground, 'text-background-opacity':0.92,
-          'text-background-padding':'2px', 'text-events':'yes',
+          'text-background-padding':'2px', 'text-events':'no',
         }},
         { selector: 'node.selected-fact', style: {
           'overlay-color':'#3b82f6', 'overlay-opacity':0.25, 'overlay-padding':6, 'z-index':1001,
@@ -506,23 +726,28 @@ window.AxiomModules.graph = {
 
     layoutOpts(animate = true) {
       const direction = this.layoutDirection();
+      // 大图收紧间距：卡片本身已占主要面积，50/80 的大间距会把边拉得极长、
+      // 密度过低（"排得太开"）；aspectRatio 1.5 也会强迫布局横向摊开。
+      // 小图维持原有宽松参数不变。
+      const total = (this.project?.facts?.length || 0) + (this.project?.intents?.length || 0);
+      const compact = total > 350;
       if (this.layoutEngine() === 'elk') {
         const elkDirection = direction === 'TB' ? 'DOWN' : 'RIGHT';
         return {
           name: 'elk',
           fit: true,
-          padding: 50,
+          padding: compact ? 30 : 50,
           animate,
           animationDuration: 350,
           animationEasing: 'ease-in-out-cubic',
           elk: {
             algorithm: 'layered',
             'elk.direction': elkDirection,
-            'elk.aspectRatio': '1.5',
+            ...(compact ? {} : { 'elk.aspectRatio': '1.5' }),
             'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
-            'elk.spacing.nodeNode': '50',
-            'elk.layered.spacing.nodeNodeBetweenLayers': '80',
-            'elk.spacing.edgeNode': '25',
+            'elk.spacing.nodeNode': compact ? '26' : '50',
+            'elk.layered.spacing.nodeNodeBetweenLayers': compact ? '48' : '80',
+            'elk.spacing.edgeNode': compact ? '16' : '25',
             'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
             'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED',
           },
@@ -531,9 +756,9 @@ window.AxiomModules.graph = {
       return {
         name: 'dagre',
         rankDir: direction,
-        nodeSep: 60,
-        rankSep: 80,
-        padding: 50,
+        nodeSep: compact ? 30 : 60,
+        rankSep: compact ? 52 : 80,
+        padding: compact ? 30 : 50,
         fit: true,
         animate,
         animationDuration: 400,
@@ -607,6 +832,8 @@ window.AxiomModules.graph = {
 
     updateGraph() {
       if (!this.cy || !this.project) return;
+      // 渐进初始化进行中：diff 结果会和分批队列重复，等队列排完再对账。
+      if (this._progressiveInitActive) return;
       const { nodes, edges } = this.buildElements();
       const wantNodes = new Set(nodes.map(n => n.data.id));
       const wantEdges = new Set(edges.map(e => e.data.id));
@@ -743,6 +970,7 @@ window.AxiomModules.graph = {
 
     startGraphActivityAnimation() {
       if (this._graphActivityRaf || !this.cy || document.hidden) return;
+      let last = 0;
       const tick = timestamp => {
         if (!this.cy || this.activePage !== 'task-detail' || this.view !== 'graph' || document.hidden) {
           this.stopGraphActivityAnimation();
@@ -753,8 +981,12 @@ window.AxiomModules.graph = {
           this.stopGraphActivityAnimation();
           return;
         }
-        const offset = -((timestamp / 45) % 16);
-        activeEdges.style('line-dash-offset', offset);
+        // 每帧 style() 写入会导致整层重绘；虚线流动 25fps 足够顺滑，砍掉多余帧
+        if (timestamp - last >= 40) {
+          last = timestamp;
+          const offset = -((timestamp / 45) % 16);
+          activeEdges.style('line-dash-offset', offset);
+        }
         this._graphActivityRaf = requestAnimationFrame(tick);
       };
       this._graphActivityRaf = requestAnimationFrame(tick);
@@ -768,7 +1000,8 @@ window.AxiomModules.graph = {
 
     fitGraph() {
       if (this.cy) {
-        this.cy.elements().removeClass('highlight faded');
+        this.cy.elements().removeClass('highlight faded focus');
+        this._prevHighlightSets = null;
         this.cy.fit(undefined, 50);
         if (this.cy.zoom() < 0.5) this.cy.zoom(0.5);
       }
@@ -789,33 +1022,55 @@ window.AxiomModules.graph = {
     setupMinimapListeners() {
       if (!this.cy) return;
       const self = this;
-      const schedule = () => {
-        if (self._minimapThrottleTimer) return;
-        const elapsed = performance.now() - (self._minimapLastDraw || 0);
-        const run = () => {
-          self._minimapThrottleTimer = null;
-          self._minimapLastDraw = performance.now();
-          self.syncCardHeights();
-          self.recomputeEdgeCurves();
-          self.drawMinimap();
+      const throttled = (fn) => {
+        return () => {
+          if (self._minimapThrottleTimer) return;
+          const elapsed = performance.now() - (self._minimapLastDraw || 0);
+          const run = () => {
+            self._minimapThrottleTimer = null;
+            self._minimapLastDraw = performance.now();
+            fn();
+          };
+          if (elapsed >= 100) requestAnimationFrame(run);
+          else self._minimapThrottleTimer = setTimeout(run, 100 - elapsed);
         };
-        if (elapsed >= 100) requestAnimationFrame(run);
-        else self._minimapThrottleTimer = setTimeout(run, 100 - elapsed);
       };
-      this.cy.on('pan zoom layoutstop add remove', schedule);
-      this.cy.on('position', 'node', schedule);
-      this._minimapSchedule = schedule;
+      // pan/zoom 只重画小地图。曲线控制点（cp）是相对边中点的模型坐标，对平移缩放
+      // 完全不变；syncCardHeights 读 offsetHeight 会强制回流——都不该挂在这条高频路径上。
+      this.cy.on('pan zoom', throttled(() => self.drawMinimap()));
+      // 只有节点位置/数量变化才需要重算 S 弯控制点和卡片高度。
+      const scheduleDeep = throttled(() => {
+        self.syncCardHeights();
+        self.recomputeEdgeCurves();
+        self.drawMinimap();
+      });
+      this.cy.on('layoutstop add remove', scheduleDeep);
+      this.cy.on('position', 'node', scheduleDeep);
+      this._minimapSchedule = scheduleDeep;
     },
 
     /** 卡片实际渲染高 → 回写 cy 节点高度：选中蓝框/连线锚点与卡片完全重合。 */
-    syncCardHeights() {
+    syncCardHeights(force = false) {
       if (!this.cy) return;
+      const updates = [];
       this.cy.nodes().forEach(node => {
         const el = document.getElementById(`node-card-${node.id()}`);
         if (!el) return;
+        // 被视口裁剪（display:none）的卡片 offsetHeight 恒为 0，量不到真实高度，
+        // 布局器就会按偏小的估算值排版 → 最终重叠。force 模式（精排前）临时
+        // 取消隐藏逐卡实测；卡片是绝对定位，显隐不影响其它元素布局。
+        const hidden = el.style.display === 'none';
+        if (hidden && !force) return;
+        if (hidden) el.style.display = '';
         const h = el.offsetHeight;
-        if (h && Math.abs((node.height() || 0) - h) > 2) node.style({ height: h });
+        if (hidden) el.style.display = 'none';
+        if (h && Math.abs((node.height() || 0) - h) > 2) updates.push([node, h]);
       });
+      if (updates.length) {
+        this.cy.batch(() => {
+          for (const [node, h] of updates) node.style({ height: h });
+        });
+      }
     },
 
     /** S 形平滑弯：双控制点取源/目标高度在水平中点上的投影（坐标相对边中点）。 */
@@ -825,7 +1080,11 @@ window.AxiomModules.graph = {
         const s = edge.source().position();
         const t = edge.target().position();
         const my = (s.y + t.y) / 2;
-        edge.data('cp', [{ x: 0, y: (s.y - my) * 0.9 }, { x: 0, y: (t.y - my) * 0.9 }]);
+        const y1 = (s.y - my) * 0.9, y2 = (t.y - my) * 0.9;
+        // 值没变就不写：写 data 会触发 control-points 样式失效与整层边重绘
+        const old = edge.data('cp');
+        if (old && old.length === 2 && old[0].y === y1 && old[1].y === y2) return;
+        edge.data('cp', [{ x: 0, y: y1 }, { x: 0, y: y2 }]);
       });
     },
 
@@ -1083,6 +1342,20 @@ window.AxiomModules.graph = {
       this._resizeObserver = new ResizeObserver(() => {
         clearTimeout(fitTimer);
         fitTimer = setTimeout(() => {
+          // 折叠/展开侧面板触发的尺寸变化：只 resize 并钉住 pan/zoom，不重新 fit，
+          // 否则 fit 会把视图拉回全图，表现为图谱"动一下"。
+          if (this._skipNextAutoFit) {
+            this._skipNextAutoFit = false;
+            if (this.cy) {
+              const pan = this.cy.pan();
+              const zoom = this.cy.zoom();
+              this.cy.resize();
+              this.cy.zoom(zoom);
+              this.cy.pan(pan);
+              this.drawMinimap();
+            }
+            return;
+          }
           if (this.cy) {
             const clampedWidth = this.clampPanelWidth(this.sidePanelWidth);
             if (clampedWidth !== this.sidePanelWidth) {
@@ -1121,6 +1394,7 @@ window.AxiomModules.graph = {
 
     toggleSidePanel() {
       this.sidePanelCollapsed = !this.sidePanelCollapsed;
+      this._skipNextAutoFit = true;
       setTimeout(() => {
         if (this.cy) {
           // 视口钉住：折叠/展开只改容器宽度，pan/zoom 原样保留 → 图谱内容纹丝不动。
@@ -1157,7 +1431,10 @@ window.AxiomModules.graph = {
       this.selectedNode = null;
       this.selectedFacts = [];
       if (!preserveTimeline) this.selectedTimelineEntryId = null;
-      if (this.cy) this.cy.elements().removeClass('highlight focus faded selected-fact');
+      if (this.cy) {
+        this.applyHighlightSets({ highlight: new Set(), focus: new Set(), faded: new Set() });
+        this.syncFactSelections();
+      }
     },
 
     clearSelection() {
@@ -1234,9 +1511,12 @@ window.AxiomModules.graph = {
       if (!this.cy) return;
       const node = e.target;
       const sub = node.predecessors().add(node.successors()).add(node);
-      this.cy.elements().removeClass('highlight focus faded');
-      sub.addClass('highlight');
-      this.cy.elements().not(sub).addClass('faded');
+      const highlight = new Set(sub.map(el => el.id()));
+      this.applyHighlightSets({
+        highlight,
+        focus: new Set(),
+        faded: this.buildFadedSet([highlight]),
+      });
       this.cy.fit(sub, 60);
       if (this.cy.zoom() < 0.5) this.cy.zoom(0.5);
     },
@@ -1299,10 +1579,13 @@ window.AxiomModules.graph = {
 
     syncFactSelections() {
       if (!this.cy) return;
-      this.cy.nodes().removeClass('selected-fact');
+      const want = new Set(this.selectedFacts);
+      this.cy.nodes('.selected-fact').forEach(node => {
+        if (!want.has(node.id())) node.removeClass('selected-fact');
+      });
       for (const fid of this.selectedFacts) {
         const node = this.cy.getElementById(fid);
-        if (node.length > 0) node.addClass('selected-fact');
+        if (node.length > 0 && !node.hasClass('selected-fact')) node.addClass('selected-fact');
       }
     },
 
@@ -1367,24 +1650,56 @@ window.AxiomModules.graph = {
       }
     },
 
+    // ── 高亮差量切换 ──
+    // 旧实现对全图 ~3000 个元素做"全清 + 全加"，每次点击都触发整体重样式 + 全画布
+    // 重绘，这是点击卡片延迟的主因。这里记录上一轮的 class 集合，只对真正发生
+    // 变化的元素做增删——连续点相邻节点时差量极小，几乎零成本。
+    applyHighlightSets(next) {
+      if (!this.cy) return;
+      const prev = this._prevHighlightSets || { highlight: new Set(), focus: new Set(), faded: new Set() };
+      const swap = (key, cls) => {
+        const p = prev[key], n = next[key] || new Set();
+        for (const id of p) {
+          if (n.has(id)) continue;
+          const el = this.cy.getElementById(id);
+          if (el.length) el.removeClass(cls);
+        }
+        for (const id of n) {
+          if (p.has(id)) continue;
+          const el = this.cy.getElementById(id);
+          if (el.length) el.addClass(cls);
+        }
+      };
+      this.cy.batch(() => {
+        swap('highlight', 'highlight');
+        swap('focus', 'focus');
+        swap('faded', 'faded');
+      });
+      this._prevHighlightSets = next;
+    },
+
+    buildFadedSet(keepSets) {
+      const keep = new Set();
+      for (const s of keepSets) for (const id of s) keep.add(id);
+      const faded = new Set();
+      this.cy.elements().forEach(el => {
+        const id = el.id();
+        if (!keep.has(id)) faded.add(id);
+      });
+      return faded;
+    },
+
     applyLineageHighlightForIntent(intentId) {
       if (!this.cy || !this.project) return;
       const intent = this.graphEntityIndex().intentsById.get(intentId);
       if (!intent) return;
-      this.cy.batch(() => {
-        this.cy.elements().removeClass('highlight focus faded');
-
-        const nodeIds = new Set();
-        const edgeIds = new Set();
-        this.collectIntentElements(intent, nodeIds, edgeIds);
-        const highlightNodes = this.cy.nodes().filter(n => nodeIds.has(n.id()));
-        const focusEdges = this.cy.edges().filter(e => edgeIds.has(e.id()));
-
-        highlightNodes.addClass('highlight');
-        focusEdges.addClass('focus');
-
-        const visible = highlightNodes.add(focusEdges);
-        this.cy.elements().not(visible).addClass('faded');
+      const nodeIds = new Set();
+      const edgeIds = new Set();
+      this.collectIntentElements(intent, nodeIds, edgeIds);
+      this.applyHighlightSets({
+        highlight: nodeIds,
+        focus: edgeIds,
+        faded: this.buildFadedSet([nodeIds, edgeIds]),
       });
       this.syncFactSelections();
     },
@@ -1401,25 +1716,19 @@ window.AxiomModules.graph = {
         if (intent) this.collectIntentElements(intent, nodeIds, edgeIds);
       }
 
-      this.cy.batch(() => {
-        this.cy.elements().removeClass('highlight focus faded');
-        const highlightNodes = this.cy.nodes().filter(n => nodeIds.has(n.id()));
-        const highlightEdges = this.cy.edges().filter(e => edgeIds.has(e.id()));
-        const focusNode = this.cy.getElementById(factId);
-
-        highlightNodes.addClass('highlight');
-        highlightEdges.addClass('highlight');
-        focusNode.addClass('focus');
-
-        const visible = highlightNodes.add(highlightEdges).add(focusNode);
-        this.cy.elements().not(visible).addClass('faded');
+      const highlight = new Set([...nodeIds, ...edgeIds]);
+      const focus = new Set([factId]);
+      this.applyHighlightSets({
+        highlight,
+        focus,
+        faded: this.buildFadedSet([highlight, focus]),
       });
       this.syncFactSelections();
     },
 
     applyMultiFactSelectionHighlight() {
       if (!this.cy) return;
-      this.cy.elements().removeClass('highlight focus faded selected-fact');
+      this.applyHighlightSets({ highlight: new Set(), focus: new Set(), faded: new Set() });
       this.syncFactSelections();
     },
 
@@ -1430,20 +1739,19 @@ window.AxiomModules.graph = {
 
       const historyNodeId = `_goal_history_${goalCycleId}`;
       const evidenceFactIds = new Set(history.evidence_fact_ids || []);
-      const historyNode = this.cy.getElementById(historyNodeId);
-      const evidenceNodes = this.cy.nodes().filter(node => evidenceFactIds.has(node.id()));
       const evidenceEdges = this.cy.edges().filter(edge => (
         edge.data('edgeType') === 'goal_evidence_history'
         && edge.data('target') === historyNodeId
       ));
 
-      this.cy.elements().removeClass('highlight focus faded selected-fact');
-      historyNode.addClass('highlight focus');
-      evidenceNodes.addClass('highlight');
-      evidenceEdges.addClass('highlight');
-
-      const visible = historyNode.add(evidenceNodes).add(evidenceEdges);
-      this.cy.elements().not(visible).addClass('faded');
+      const highlight = new Set([...evidenceFactIds, ...evidenceEdges.map(e => e.id())]);
+      const focus = new Set([historyNodeId]);
+      this.applyHighlightSets({
+        highlight,
+        focus,
+        faded: this.buildFadedSet([highlight, focus]),
+      });
+      this.syncFactSelections();
     },
 
     getProducingIntent(fid) {

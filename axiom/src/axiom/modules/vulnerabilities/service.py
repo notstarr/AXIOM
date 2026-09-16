@@ -58,6 +58,8 @@ def dispatch_vulnerability_reported_notification(
                 affected_target=vulnerability.affected_target or "",
                 description=vulnerability.description or "",
                 curl_command=curl_command,
+                prerequisites=getattr(vulnerability, "prerequisites", "") or "",
+                impact=getattr(vulnerability, "impact", "") or "",
             )
             if not ok:
                 logger.warning(

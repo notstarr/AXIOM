@@ -609,7 +609,12 @@ def _group_api(values: list[str], targets: list[str]) -> dict:
         path = _api_path(entry)
         if path.startswith(("http://", "https://")):
             parsed = urlparse(path)
-            host, rest = parsed.netloc, path.split(parsed.netloc, 1)[1]
+            # 畸形绝对 URL 可能无权威段（如 https:///a/b）：netloc 为空时
+            # str.split("") 抛 ValueError，会炸掉整个分组阶段丢失全部爬取结果。
+            if parsed.netloc:
+                host, rest = parsed.netloc, path.split(parsed.netloc, 1)[1]
+            else:
+                host, rest = "_未归属", parsed.path
         else:
             host, rest = origin, path
         clean = rest.split("?")[0].lstrip("/")

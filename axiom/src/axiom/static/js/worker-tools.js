@@ -934,6 +934,16 @@ window.AxiomModules.workerTools = {
         (worker.persisted_name || worker.name) === name
       ));
       this.axiomWorkerEditor = source ? JSON.parse(JSON.stringify(source)) : null;
+      this.refreshRuntimeProxyAvailability();
+    },
+
+    async refreshRuntimeProxyAvailability() {
+      // 全局代理可用性（mode==http 且 URL 非空）——供"LLM 走代理"开关的黄条提示
+      try {
+        const data = await this.settingsRuntimeRequest('GET');
+        const config = data.config || data;
+        this.runtimeProxyUnavailable = !(config.network_proxy_mode === 'http' && String(config.network_proxy_url || '').trim());
+      } catch (_) { this.runtimeProxyUnavailable = false; }
     },
 
     newAxiomWorker() {
@@ -959,6 +969,7 @@ window.AxiomModules.workerTools = {
         pi_api_key_masked: '',
         pi_thinking_enabled: false,
         pi_thinking_level: 'medium',
+        llm_proxy: false,
         disabled: false,
         testing: false,
         test_result: null,
@@ -1022,8 +1033,19 @@ window.AxiomModules.workerTools = {
       // 每个档位至少保留一个 Reason pending 槽位，避免触发输入丢失。
       snail:    { label: '蜗牛档', per_task_explore_concurrency: 1, per_task_review_concurrency: 1, global_max_active_runs: 3,  global_max_active_tasks: 1, per_task_max_active_runs: 2,  runner_interval_seconds: 5, execution_retry_limit: 4, infrastructure_retry_limit: 2, retry_base_seconds: 90, retry_max_seconds: 900, worker_failure_cooldown_seconds: 120, reason_min_interval_seconds: 300, reason_batch_size: 6, reason_max_wait_seconds: 900, reason_queue_limit: 1, reason_low_watermark: 1 },
       balanced: { label: '均衡档', per_task_explore_concurrency: 2, per_task_review_concurrency: 2, global_max_active_runs: 8,  global_max_active_tasks: 2, per_task_max_active_runs: 4,  runner_interval_seconds: 3, execution_retry_limit: 6, infrastructure_retry_limit: 3, retry_base_seconds: 60, retry_max_seconds: 600, worker_failure_cooldown_seconds: 60, reason_min_interval_seconds: 150, reason_batch_size: 4, reason_max_wait_seconds: 600, reason_queue_limit: 1, reason_low_watermark: 1 },
-      turbo:    { label: '高效档', per_task_explore_concurrency: 4, per_task_review_concurrency: 4, global_max_active_runs: 15, global_max_active_tasks: 3, per_task_max_active_runs: 10, runner_interval_seconds: 2, execution_retry_limit: 6, infrastructure_retry_limit: 3, retry_base_seconds: 30, retry_max_seconds: 300, worker_failure_cooldown_seconds: 30, reason_min_interval_seconds: 90, reason_batch_size: 3, reason_max_wait_seconds: 360, reason_queue_limit: 1, reason_low_watermark: 1 },
+      turbo:    { label: '高效档', per_task_explore_concurrency: 4, per_task_review_concurrency: 4, global_max_active_runs: 15, global_max_active_tasks: 3, per_task_max_active_runs: 10, runner_interval_seconds: 2, execution_retry_limit: 6, infrastructure_retry_limit: 3, retry_base_seconds: 30, retry_max_seconds: 300, worker_failure_cooldown_seconds: 30, reason_min_interval_seconds: 300, reason_batch_size: 4, reason_max_wait_seconds: 900, reason_queue_limit: 1, reason_low_watermark: 1 },
     },
+    // 速度预设：每阶段 Worker 时间预算（执行/收口秒数），与吞吐档位正交。
+    // 场景：部分 LLM 供应商响应慢，标准预算内做不完一个阶段。
+    // standard = 现行全局默认；slow-llm ≈ ×2 给慢供应商；slow-fast ≈ ×0.75 快速周转。
+    // Explore 的 min/max 边界键是护栏不是预算，不随速度档切换。
+    speedPresets: {
+      'slow-fast': { label: '快速', bootstrap_execute_seconds: 480, bootstrap_conclude_seconds: 240, reason_execute_seconds: 480, reason_conclude_seconds: 240, plan_execute_seconds: 480, plan_conclude_seconds: 240, explore_execute_default_seconds: 720, explore_conclude_default_seconds: 240, review_execute_seconds: 300, review_conclude_seconds: 180 },
+      standard:   { label: '标准', bootstrap_execute_seconds: 600, bootstrap_conclude_seconds: 300, reason_execute_seconds: 600, reason_conclude_seconds: 300, plan_execute_seconds: 600, plan_conclude_seconds: 300, explore_execute_default_seconds: 900, explore_conclude_default_seconds: 300, review_execute_seconds: 400, review_conclude_seconds: 180 },
+      'slow-llm': { label: '慢速', bootstrap_execute_seconds: 1200, bootstrap_conclude_seconds: 600, reason_execute_seconds: 1200, reason_conclude_seconds: 600, plan_execute_seconds: 1200, plan_conclude_seconds: 600, explore_execute_default_seconds: 1800, explore_conclude_default_seconds: 600, review_execute_seconds: 800, review_conclude_seconds: 300 },
+    },
+    speedKeys: ['bootstrap_execute_seconds', 'bootstrap_conclude_seconds', 'reason_execute_seconds', 'reason_conclude_seconds', 'plan_execute_seconds', 'plan_conclude_seconds', 'explore_execute_default_seconds', 'explore_conclude_default_seconds', 'review_execute_seconds', 'review_conclude_seconds'],
+
 
     async syncDispatchPresetName() {
       // 档位识别只看运行时参数；Worker 的 max_running 是 Worker 页单体配置，
@@ -1055,6 +1077,30 @@ window.AxiomModules.workerTools = {
       // 手动改任何受档位覆盖的字段 → 待保存档位作废，回到自定义识别
       this.workerPresetPending = '';
       if (typeof this.syncDispatchPresetName === 'function') this.syncDispatchPresetName();
+      // 时间预算字段同时参与速度档识别；手改后速度档同样回自定义
+      if (typeof this.syncSpeedPresetName === 'function') this.syncSpeedPresetName();
+    },
+
+    syncSpeedPresetName() {
+      try {
+        this.workerSpeedName = this.detectSpeedPreset(this.dispatchSettings || {});
+      } catch (_) { this.workerSpeedName = 'custom'; }
+    },
+
+    detectSpeedPreset(config) {
+      for (const [name, preset] of Object.entries(this.speedPresets)) {
+        if (this.speedKeys.every(key => Number(config[key]) === preset[key])) return name;
+      }
+      return 'custom';
+    },
+
+    selectSpeedPreset(name) {
+      // 与吞吐档位同语义：点卡片只填表单草稿，「保存系统设置」才落库。
+      const preset = this.speedPresets[name];
+      if (!preset) return;
+      for (const key of this.speedKeys) this.dispatchSettings[key] = preset[key];
+      this.workerSpeedPending = name;
+      this.syncSpeedPresetName();
     },
 
     async openWorkerProxyModal() {
@@ -1106,6 +1152,7 @@ window.AxiomModules.workerTools = {
           pi_model: worker.pi_model,
           pi_provider_api: worker.pi_provider_api || 'openai-completions',
           pi_api_key: worker.pi_api_key || '',
+          llm_proxy: !!worker.llm_proxy,
         });
         const latencyMs = Math.round(performance.now() - started);
         worker.test_result = { ...result, latency_ms: latencyMs };

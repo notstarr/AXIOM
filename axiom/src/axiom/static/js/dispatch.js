@@ -292,6 +292,8 @@ window.AxiomModules.dispatch = {
       this.settingsForm.proxy_username = data.proxy_username || '';
       this.settingsForm.proxy_password = data.proxy_password || '';
       this.settingsForm.proxy_enabled = !!data.proxy_enabled;
+      // 载入后重识别速度档（workerSpeedName 供卡片高亮）
+      if (typeof this.syncSpeedPresetName === 'function') this.syncSpeedPresetName();
     },
 
     nextWorkerDraftId() {
@@ -622,6 +624,7 @@ window.AxiomModules.dispatch = {
         pi_api_key_masked: worker.pi_api_key_masked || '',
         pi_thinking_enabled: !!worker.pi_thinking_enabled,
         pi_thinking_level: normalizedThinkingLevel,
+        llm_proxy: !!worker.llm_proxy,
         mcp_enabled: !!worker.mcp_enabled,
         mcp_profile: (worker.mcp_profile || '').trim(),
         mcp_config_json: (worker.mcp_config_json || '').trim(),
@@ -796,6 +799,8 @@ window.AxiomModules.dispatch = {
         const updated = await this.api('PUT', '/settings/dispatch', this.dispatchPayload());
         this.applyDispatchSettings(updated);
         this.workerPresetPending = '';
+        this.workerSpeedPending = '';
+        if (typeof this.syncSpeedPresetName === 'function') this.syncSpeedPresetName();
         this.showToast('系统配置已保存');
         this.waitForRuntimeSettingsApplied(updated.config_version);
       } catch(e) {

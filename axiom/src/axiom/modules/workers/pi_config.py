@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-PI_RUNTIME_VERSION = "0.82.1"
+PI_RUNTIME_VERSION = "0.85.1"
 PI_NODE_VERSION = "v22.22.2"
 PI_RUNTIME_BINARY = (
     Path(__file__).resolve().parents[4] / "runtime" / "pi" / PI_RUNTIME_VERSION / "bin" / "pi"
@@ -84,6 +85,9 @@ class PiWorkerConfig(BaseModel):
     context_window: int = Field(default=200_000, ge=1)
     thinking_enabled: bool = False
     thinking_level: PiThinkingLevel = "medium"
+    # 该后端的 LLM 请求是否经 serve 网关代理（网关跳挂全局代理）。
+    # 默认 False：直连 provider，与旧"全局关代理"路径完全一致。
+    llm_proxy: bool = False
     tools: list[str] = Field(default_factory=lambda: ["read", "write", "bash", "edit"])
     skill_paths: list[str] = Field(default_factory=list)
     session_dir: str = ""
@@ -124,7 +128,7 @@ class PiWorkerConfig(BaseModel):
 
     @property
     def effective_thinking_level(self) -> str:
-        """Return the exact Pi 0.82.1 CLI level for this Worker."""
+        """Return the exact Pi CLI thinking level for this Worker."""
 
         return self.thinking_level if self.thinking_enabled else "off"
 
@@ -169,6 +173,13 @@ def canonicalize_pi_worker_config(config: dict[str, Any] | None) -> dict[str, An
     binary = str(source.get("binary") or "").strip()
     if binary in _LEGACY_PI_BINARIES:
         source["binary"] = str(PI_RUNTIME_BINARY)
+    else:
+        # 版本化运行时路径自动迁移：worker 配置在创建时固化了当时的
+        # runtime/pi/<version>/bin/pi 绝对路径；底座升级后旧路径必然失效。
+        # 指向旧版本化运行时的一律重写到当前钉定版本（自定义路径不受影响）。
+        match = re.search(r"[\\/]runtime[\\/]pi[\\/][^\\/]+[\\/]bin[\\/]pi$", binary)
+        if match and Path(binary).resolve() != PI_RUNTIME_BINARY.resolve():
+            source["binary"] = str(PI_RUNTIME_BINARY)
 
     if "context_window" in source:
         try:
@@ -276,3 +287,19 @@ def _require_runtime_version(binary: Path, expected: str, *, label: str) -> None
         raise PiRuntimeError(
             f"{label} 运行时版本错误：期望 {expected}，实际 {actual_version or '未知'}"
         )
+
+
+def llm_proxy_for(config: Any, backend: PiWorkerConfig) -> str | None:
+    """该后端 LLM 出流的代理 URL；None = 直连。
+
+    开关（backend.llm_proxy）表达意图，全局配置表达可用性：
+    开且全局 mode==http 且 URL 非空 → 代理 URL；其余一律 None（直连）。
+    三个消费点（llm-gateway 转发、测试连接、获取模型）必须统一走本函数。
+    """
+    if not backend.llm_proxy:
+        return None
+    if getattr(config, "network_proxy_mode", "off") == "http":
+        url = (getattr(config, "network_proxy_url", "") or "").strip()
+        if url:
+            return url
+    return None

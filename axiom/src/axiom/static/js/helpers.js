@@ -513,6 +513,20 @@ window.AxiomModules.helpers = {
       return this.intentIndex().unlinked;
     },
 
+    // 全局 Intent 悬浮卡定位：跟随鼠标，靠边时自动翻转；用浮窗实际高度做底部夹取。
+    intentHoverStyle(el) {
+      const h = this.intentHover;
+      if (!h) return 'display:none';
+      const W = 416;      // 26rem
+      let left = h.x + 14;
+      if (left + W > window.innerWidth - 8) left = Math.max(8, h.x - W - 14);
+      let top = h.y + 14;
+      const eh = (el && el.offsetHeight) || 320; // 首帧无测量值时用估算兜底
+      if (eh >= window.innerHeight - 16) return `left:${left}px;top:8px;width:${W}px;`;
+      if (top + eh > window.innerHeight - 8) top = Math.max(8, window.innerHeight - eh - 8);
+      return `left:${left}px;top:${top}px;width:${W}px;`;
+    },
+
     todoIntentProgress(todoId) {
       const list = this.getIntentsForTodo(todoId);
       if (!list.length) return { total: 0, completed: 0, running: 0, pending: 0, failed: 0, percent: 0 };
@@ -533,13 +547,30 @@ window.AxiomModules.helpers = {
         return this.todoExpandedState[todoId];
       }
       if (defaultExpanded !== null) return defaultExpanded;
-      // 默认策略：如果该 Todo 下面有子 Intent，则默认展开方便查看；如果为 0 则默认收起保持紧凑
-      return this.getIntentsForTodo(todoId).length > 0;
+      // 默认策略：Intent 少（≤15）默认展开方便查看；大任务下默认收起保持紧凑、避免侧栏渲染千级行
+      return this.getIntentsForTodo(todoId).length <= 15;
     },
 
     toggleTodoExpanded(todoId) {
       if (!this.todoExpandedState) this.todoExpandedState = {};
       this.todoExpandedState[todoId] = !this.isTodoExpanded(todoId);
+    },
+
+    // Todo 下 Intent 行截断：超过上限只渲染前 N 条，点"显示全部"再放开。
+    intentLimitFor(todoId) {
+      return (this.todoIntentLimitState && this.todoIntentLimitState[todoId]) || 15;
+    },
+
+    visibleIntentsForTodo(todoId) {
+      const list = this.getIntentsForTodo(todoId);
+      return list.slice(0, this.intentLimitFor(todoId));
+    },
+
+    showAllIntentsForTodo(todoId) {
+      this.todoIntentLimitState = {
+        ...(this.todoIntentLimitState || {}),
+        [todoId]: this.getIntentsForTodo(todoId).length,
+      };
     },
   }
 };
