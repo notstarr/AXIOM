@@ -258,6 +258,8 @@ class AxiomRunner:
             # 网关按后端开关启用：该后端 llm_proxy 开且全局代理可用才改写
             # base_url/api_key 到 /llm-gateway；关 = 与旧"全局关"完全一致（直连）。
             "llm_gateway_enabled": llm_proxy_for(self._last_runtime_config, settings) is not None,
+            # worker_cli 只认 env 里的 AXIOM_SERVICE_TOKEN（无文件兜底），缺失 = 全部 401。
+            "service_token": getattr(self.control_plane, "service_token", ""),
         }
         if work.kind == "bootstrap":
             return PiBootstrapExecutor(worker, **common)
