@@ -306,6 +306,27 @@ def test_intent_release_removes_run_directory_non_terminal(client) -> None:
     assert not run_dir.exists()
 
 
+def test_intent_release_preserves_evidence_and_review_artifacts(client) -> None:
+    _register_worker(client)
+    task = _new_task(client, title="证据抢救清理")
+    lease_id = _claim_and_start_intent(client, task["id"])
+    run_dir = _materialize(client, task["id"], "i001", lease_id)
+    evidence = run_dir / "evidence"
+    evidence.mkdir(parents=True, exist_ok=True)
+    (evidence / "open-redirect.txt").write_text("GET /toggle-login?rdUri=https://evil.test\n", encoding="utf-8")
+    review_artifacts = run_dir / "artifacts"
+    review_artifacts.mkdir(parents=True, exist_ok=True)
+    (review_artifacts / "review.md").write_text("# 审核结论\n", encoding="utf-8")
+
+    response = _release_intent(client, task["id"], "i001", lease_id, failure_class="execution")
+    assert response.status_code == 200, response.text
+    assert not run_dir.exists()
+    manager = client.app.state.container.sandboxes
+    preserved = manager.store.root / "tasks" / task["id"] / "evidence" / "i001" / lease_id
+    assert (preserved / "evidence" / "open-redirect.txt").read_text(encoding="utf-8").startswith("GET /toggle-login")
+    assert (preserved / "artifacts" / "review.md").read_text(encoding="utf-8") == "# 审核结论\n"
+
+
 def test_intent_release_removes_run_directory_when_terminal(client) -> None:
     update_runtime_settings(client, execution_retry_limit=1)
     _register_worker(client)

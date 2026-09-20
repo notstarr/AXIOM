@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+import logging
 import os
 import shutil
 import tempfile
@@ -25,6 +26,8 @@ from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError
 from axiom.shared.ids import allocate_id
 from axiom.shared.storage import FileStore
+
+logger = logging.getLogger(__name__)
 
 
 class TaskSandboxManager:
@@ -360,9 +363,42 @@ class TaskSandboxManager:
             resolved = path.resolve()
             if root not in resolved.parents or resolved == root:
                 raise ConflictError("Invalid sandbox cleanup path")
+            self._preserve_run_outputs(
+                run_dir=resolved, task_id=task_id, owner_id=owner_id, lease_id=lease_id
+            )
             shutil.rmtree(resolved, ignore_errors=True)
         else:
+            logger.warning(
+                "cube run dir removed without output preservation: %s/%s", task_id, owner_id
+            )
             self._backend_for_handle(handle).remove_path(handle, path=relative)
+
+    _PRESERVED_RUN_SUBDIRS = ("evidence", "artifacts")
+
+    def _preserve_run_outputs(
+        self, *, run_dir: Path, task_id: str, owner_id: str, lease_id: str
+    ) -> None:
+        """Rescue small durable outputs before the run directory is removed.
+
+        Workers write ``evidence/`` (pen-test evidence files) and reviewers write
+        ``artifacts/`` (review conclusions + minimal retests) inside the run
+        directory. Those must outlive the run: sessions, model snapshots and
+        process logs are the bloat cleanup targets, these subdirectories are not.
+        """
+        for name in self._PRESERVED_RUN_SUBDIRS:
+            source = run_dir / name
+            if not source.is_dir():
+                continue
+            destination = self.store.root / "tasks" / task_id / "evidence" / owner_id / lease_id / name
+            try:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if destination.exists():
+                    shutil.rmtree(destination)
+                shutil.move(str(source), str(destination))
+            except OSError:
+                logger.exception(
+                    "failed to preserve run %s for %s/%s; cleanup continues", name, task_id, owner_id
+                )
 
     def file_read(self, *, task_id: str, owner_id: str, lease_id: str, path: str) -> bytes:
         handle, sandbox = self._file_handle(task_id)
