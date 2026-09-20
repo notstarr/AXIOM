@@ -57,15 +57,11 @@
           :class="[`sto-sev-${(v.severity || 'info').toLowerCase()}`, selectedVulnerabilityKey === vulnerabilityKey(v) ? 'active' : '']">
           <div class="flex items-center" style="gap:7px;">
             <span class="sto-sevdot" x-text="''"></span>
-            <span role="button" @click.stop="toggleVulnReviewed(v)"
-              :title="v.human_reviewed ? '人工已阅（点击取消）' : '标记人工已阅'"
-              :style="v.human_reviewed
-                ? 'width:14px;height:14px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:#10b981;flex-shrink:0;cursor:pointer;'
-                : 'width:14px;height:14px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;border:1.5px solid var(--sto-line);flex-shrink:0;cursor:pointer;'">
-              <svg x-show="v.human_reviewed" style="width:9px;height:9px;" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-            </span>
             <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);" x-text="v.id"></span>
             <span style="flex:1;"></span>
+            <span x-show="v.human_reviewed" role="button" @click.stop="toggleVulnReviewed(v)"
+              title="人工已阅（点击取消）"
+              style="font-size:9.5px; color:var(--sto-fg-3); flex-shrink:0; cursor:pointer; letter-spacing:0.02em;">已阅</span>
             <span class="sto-status" style="font-size:10px;" :class="({verified:'ok',pending:'warn',duplicate:'err',ignored:'off'})[vulnStatusKey(v.status)] || 'off'"><i></i><span x-text="vulnStatusLabel(v.status)"></span></span>
           </div>
           <p style="margin-top:5px; font-size:12.5px; font-weight:600; color:var(--sto-fg); line-height:1.45; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" x-text="v.title"></p>
@@ -115,7 +111,7 @@
               <button @click="toggleVulnReviewed(selectedVulnerability())" class="sto-minibtn"
                 :class="selectedVulnerability().human_reviewed ? 'acc' : ''"
                 :title="selectedVulnerability().human_reviewed ? '人工已阅，点击取消' : '标记人工已阅'">
-                <span x-text="selectedVulnerability().human_reviewed ? '✓ 已阅' : '○ 未阅'"></span>
+                <span x-text="selectedVulnerability().human_reviewed ? '已阅' : '标记已阅'"></span>
               </button>
               <button @click="editVuln(selectedVulnerability())" class="sto-minibtn">编辑</button>
               <button @click="deleteVuln(selectedVulnerability())" class="sto-minibtn danger">删除</button>
