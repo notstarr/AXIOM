@@ -76,9 +76,15 @@ def list_worker_models(
     name: str,
     base_url: str = "",
     api_key: str = "",
+    provider_api: str = "",
     container: Container = Depends(get_container),
 ) -> WorkerModelsResult:
-    return container.workers.list_models(name, base_url=base_url, api_key=api_key)
+    return container.workers.list_models(
+        name,
+        base_url=base_url,
+        api_key=api_key,
+        provider_api=provider_api,
+    )
 
 
 @router.post("/{name}/test", response_model=WorkerConnectionResult)

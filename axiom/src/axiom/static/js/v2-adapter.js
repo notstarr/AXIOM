@@ -690,6 +690,9 @@
     const env = workerEnv(worker);
     const config = worker?.config || {};
     const thinking = workerThinkingConfig(config);
+    const providerApi = config.provider_api === 'responses'
+      ? 'openai-responses'
+      : (config.provider_api || 'openai-completions');
     return {
       name: worker.name,
       persisted_name: worker.name,
@@ -700,7 +703,7 @@
       pi_model: config.model || '',
       model: config.model || '',
       pi_base_url: config.base_url || '',
-      pi_provider_api: config.provider_api || 'openai-completions',
+      pi_provider_api: providerApi,
       pi_model_context_window: String(config.context_window || '200000'),
       pi_api_key: '',
       pi_api_key_masked: config.api_key ? '••••••••' : '',
@@ -1114,7 +1117,7 @@
     }
     if (path === '/settings/dispatch/models' && method === 'GET') {
       const worker = query.get('worker_name') || '';
-      return request('GET', `/workers/${encodeURIComponent(worker)}/models?base_url=${encodeURIComponent(query.get('base_url') || '')}&api_key=${encodeURIComponent(query.get('api_key') || '')}`);
+      return request('GET', `/workers/${encodeURIComponent(worker)}/models?base_url=${encodeURIComponent(query.get('base_url') || '')}&api_key=${encodeURIComponent(query.get('api_key') || '')}&provider_api=${encodeURIComponent(query.get('provider_api') || '')}`);
     }
     if (path === '/settings/test-pi' && method === 'POST') {
       return request('POST', `/workers/${encodeURIComponent(body.worker_name || '')}/test`, {
@@ -1920,11 +1923,22 @@
       this.explorerExpanded[taskId] = true;
       if (!this.explorerFolders[taskId]) await this.loadExplorerFolders(taskId);
     },
-    async loadExplorerFolders(taskId) {
+    async loadExplorerFolders(taskId, page = 0) {
       try {
-        const page = await requestPage(`/tasks/${taskId}/artifact-folders?limit=200`, { signal: this._pageAbortController?.signal });
-        this.explorerFolders = { ...this.explorerFolders, [taskId]: page.items };
+        const params = new URLSearchParams({ limit: '50', offset: String(page * 50) });
+        const resp = await requestPage(`/tasks/${taskId}/artifact-folders?${params}`, { signal: this._pageAbortController?.signal });
+        const prev = page > 0 ? (this.explorerFolders[taskId] || []) : [];
+        this.explorerFolders = { ...this.explorerFolders, [taskId]: [...prev, ...resp.items] };
+        this.explorerFolderMeta = { ...this.explorerFolderMeta, [taskId]: { page, total: resp.total, hasMore: (page + 1) * 50 < resp.total } };
       } catch (error) { if (error?.name !== 'AbortError') this.showToast(error.message, 'error'); }
+    },
+    explorerFolderHasMore(taskId) {
+      const meta = (this.explorerFolderMeta || {})[taskId];
+      return meta ? meta.hasMore : false;
+    },
+    async loadMoreExplorerFolders(taskId) {
+      const meta = (this.explorerFolderMeta || {})[taskId];
+      if (meta && meta.hasMore) await this.loadExplorerFolders(taskId, meta.page + 1);
     },
     async toggleExplorerIntent(taskId, folderKey) {
       const key = `${taskId}:${folderKey}`;
@@ -2214,6 +2228,42 @@
       }
     },
     artifactTypeIcon(type) { return type === 'upload' ? '↑' : /finding|vuln/i.test(type || '') ? '!' : /lead/i.test(type || '') ? '↗' : /evidence/i.test(type || '') ? '◈' : /api|asset|inventory/i.test(type || '') ? '◫' : '▤'; },
+    openTabContextMenu(event, tabId) {
+      const section = event.target.closest('section');
+      const rect = (section || document.body).getBoundingClientRect();
+      // 菜单 absolute 挂在 section(定位上下文),坐标按 section 原点计算并钳在其可视范围内
+      const x = Math.max(0, Math.min(event.clientX - rect.left, rect.width - 170));
+      const y = Math.max(0, Math.min(event.clientY - rect.top, rect.height - 130));
+      this.tabContextMenu = { open: true, x, y, tabId: tabId || this.editorActiveId };
+    },
+    tabContextMenuClose(action) {
+      const anchor = this.tabContextMenu.tabId;
+      this.tabContextMenu.open = false;
+      const tabs = this.editorTabs || [];
+      if (action === 'all') {
+        this.editorTabs = [];
+        this.editorActiveId = '';
+        this.artifactCenterSelected = null;
+        return;
+      }
+      if (action === 'others') {
+        const keep = tabs.filter(tab => tab.id === anchor);
+        this.editorTabs = keep;
+        if (keep.length) this.activateEditorTab(keep[0].id);
+        else { this.editorActiveId = ''; this.artifactCenterSelected = null; }
+        return;
+      }
+      if (action === 'right') {
+        const index = tabs.findIndex(tab => tab.id === anchor);
+        if (index < 0) return;
+        const keep = tabs.slice(0, index + 1);
+        this.editorTabs = keep;
+        if (!keep.some(tab => tab.id === this.editorActiveId)) {
+          if (keep.length) this.activateEditorTab(keep[keep.length - 1].id);
+          else { this.editorActiveId = ''; this.artifactCenterSelected = null; }
+        }
+      }
+    },
     artifactKindLabel(item) {
       const type = String(item?.artifact_type || '').toLowerCase();
       if (type === 'explore.findings') return 'Findings';

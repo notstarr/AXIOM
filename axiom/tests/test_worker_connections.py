@@ -28,7 +28,7 @@ def test_pi_worker_config_is_stored_in_one_canonical_shape(client) -> None:
     config = response.json()["config"]
     assert "env" not in config
     assert config["model"] == "model-a"
-    assert config["base_url"] == "https://models.example/v1"
+    assert config["base_url"] == "https://models.example"
     assert config["api_key"] == "secret"
     assert config["thinking_enabled"] is True
     assert config["thinking_level"] == "high"
@@ -133,4 +133,88 @@ def test_worker_connection_supports_responses_api_and_unsaved_guard(client, monk
         "model": "guard-model",
         "input": "ping",
         "max_output_tokens": 8,
+    }
+
+
+def test_worker_connection_supports_anthropic_messages(client, monkeypatch) -> None:
+    captured = {}
+
+    def fake_post(url, *, headers, json, timeout, proxy=None):
+        captured.update(url=url, headers=headers, json=json, timeout=timeout)
+        return httpx.Response(200, json={"id": "message"})
+
+    monkeypatch.setattr("axiom.modules.workers.service.httpx.post", fake_post)
+    response = client.post(
+        "/api/v1/workers/__guard__/test",
+        json={
+            "base_url": "https://models.example",
+            "api_key": "anthropic-secret",
+            "model": "claude-test",
+            "provider_api": "anthropic-messages",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"ok": True, "message": "连接成功，模型可用"}
+    assert captured["url"] == "https://models.example/v1/messages"
+    assert captured["headers"]["x-api-key"] == "anthropic-secret"
+    assert captured["headers"]["anthropic-version"] == "2023-06-01"
+    assert "authorization" not in {key.lower() for key in captured["headers"]}
+    assert captured["json"] == {
+        "model": "claude-test",
+        "max_tokens": 8,
+        "messages": [{"role": "user", "content": "ping"}],
+    }
+
+
+def test_anthropic_base_url_with_v1_uses_relative_messages_path(client, monkeypatch) -> None:
+    captured = {}
+
+    def fake_post(url, *, headers, json, timeout, proxy=None):
+        captured.update(url=url, headers=headers, json=json)
+        return httpx.Response(200, json={"id": "message"})
+
+    monkeypatch.setattr("axiom.modules.workers.service.httpx.post", fake_post)
+    response = client.post(
+        "/api/v1/workers/__guard__/test",
+        json={
+            "base_url": "https://models.example/v1",
+            "api_key": "anthropic-secret",
+            "model": "claude-test",
+            "provider_api": "anthropic-messages",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"ok": True, "message": "连接成功，模型可用"}
+    assert captured["url"] == "https://models.example/v1/messages"
+
+
+def test_anthropic_worker_models_use_v1_models_and_api_key(client, monkeypatch) -> None:
+    client.put(
+        "/api/v1/workers/anthropic-worker",
+        json={
+            "config": {
+                "model": "claude-test",
+                "base_url": "https://models.example",
+                "provider_api": "anthropic-messages",
+                "api_key": "anthropic-secret",
+            }
+        },
+    )
+    captured = {}
+
+    def fake_get(url, *, headers, timeout, proxy=None):
+        captured.update(url=url, headers=headers, timeout=timeout)
+        return httpx.Response(200, json={"data": [{"id": "claude-test"}]})
+
+    monkeypatch.setattr("axiom.modules.workers.service.httpx.get", fake_get)
+    response = client.get("/api/v1/workers/anthropic-worker/models")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["models"][0]["id"] == "claude-test"
+    assert captured["url"] == "https://models.example/v1/models"
+    assert captured["headers"] == {
+        "x-api-key": "anthropic-secret",
+        "anthropic-version": "2023-06-01",
     }

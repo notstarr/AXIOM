@@ -1833,6 +1833,10 @@ def test_frontend_and_static_assets_are_served(client):
     assert "pi_thinking_enabled" in workers.text
     assert "pi_thinking_level" in workers.text
     assert '<option value="max">max</option>' in workers.text
+    assert '<option value="openai-completions">Chat Completions</option>' in workers.text
+    assert '<option value="openai-responses">Responses</option>' in workers.text
+    assert '<option value="anthropic-messages">Anthropic Messages</option>' in workers.text
+    assert "填写服务根地址（不含 /v1），系统按 API 格式自动拼接路径" in workers.text
     assert "thinkingBadgeClass" not in settings.text
 
     skills = client.get("/static/templates/skills.html")

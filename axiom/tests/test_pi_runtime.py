@@ -92,6 +92,63 @@ def test_pi_thinking_level_rejects_values_not_supported_by_pi() -> None:
         )
 
 
+def test_sdk_base_url_follows_per_provider_sdk_conventions() -> None:
+    # Anthropic SDK appends /v1/messages itself: it needs the bare root.
+    assert (
+        pi_config.sdk_base_url("anthropic-messages", "https://api.anthropic.com")
+        == "https://api.anthropic.com"
+    )
+    # OpenAI-family SDKs post bare resource paths: /v1 belongs in the baseURL.
+    assert (
+        pi_config.sdk_base_url("openai-completions", "https://api.openai.com")
+        == "https://api.openai.com/v1"
+    )
+    assert (
+        pi_config.sdk_base_url("openai-responses", "https://api.openai.com")
+        == "https://api.openai.com/v1"
+    )
+    # Legacy /v1-suffixed input is idempotent, never doubled.
+    assert (
+        pi_config.sdk_base_url("openai-completions", "https://api.openai.com/v1")
+        == "https://api.openai.com/v1"
+    )
+    assert (
+        pi_config.sdk_base_url("anthropic-messages", "https://api.anthropic.com/v1")
+        == "https://api.anthropic.com"
+    )
+
+
+def test_upstream_request_url_yields_single_v1_prefix() -> None:
+    assert (
+        pi_config.upstream_request_url("anthropic-messages", "https://h.test", "v1/messages")
+        == "https://h.test/v1/messages"
+    )
+    assert (
+        pi_config.upstream_request_url("openai-completions", "https://h.test", "chat/completions")
+        == "https://h.test/v1/chat/completions"
+    )
+    assert (
+        pi_config.upstream_request_url("openai-responses", "https://h.test", "/responses")
+        == "https://h.test/v1/responses"
+    )
+    assert (
+        pi_config.upstream_request_url("openai-completions", "https://h.test", "/models")
+        == "https://h.test/v1/models"
+    )
+    # A /v1-suffixed base_url does not double the prefix.
+    assert (
+        pi_config.upstream_request_url("anthropic-messages", "https://h.test/v1", "v1/messages")
+        == "https://h.test/v1/messages"
+    )
+
+
+def test_pi_worker_config_persists_provider_root_without_v1() -> None:
+    settings = pi_config.PiWorkerConfig.model_validate(
+        {"base_url": "https://api.example.com/v1/", "provider_api": "anthropic-messages"}
+    )
+    assert settings.base_url == "https://api.example.com"
+
+
 def test_validate_pi_worker_runtime_checks_pinned_pi_and_node(monkeypatch, tmp_path) -> None:
     runtime = _pi_runtime(tmp_path / "runtime")
     node = _version_script(tmp_path / "node", pi_config.PI_NODE_VERSION)

@@ -13,7 +13,15 @@ from axiom.modules.reason.tables import reason_runs
 from axiom.modules.plan.tables import plan_runs
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.phase_capabilities.schemas import PhaseBackend, WorkerPhase
-from axiom.modules.workers.pi_config import PiWorkerConfig, canonicalize_pi_worker_config, llm_proxy_for
+from axiom.modules.workers.pi_config import (
+    PiWorkerConfig,
+    canonical_provider_api,
+    canonicalize_pi_worker_config,
+    is_anthropic_messages,
+    llm_proxy_for,
+    provider_auth_headers,
+    upstream_request_url,
+)
 from axiom.modules.workers.repository import WorkerRepository
 from axiom.modules.workers.schemas import (
     UpsertWorker,
@@ -313,17 +321,23 @@ class WorkerService:
         *,
         base_url: str = "",
         api_key: str = "",
+        provider_api: str = "",
     ) -> WorkerModelsResult:
         connection = self._connection(
             name,
-            WorkerConnectionRequest(base_url=base_url, api_key=api_key),
+            WorkerConnectionRequest(
+                base_url=base_url,
+                api_key=api_key,
+                provider_api=provider_api,
+            ),
         )
         if not connection.base_url:
             return WorkerModelsResult(error="base_url 未配置")
+        provider_api = canonical_provider_api(connection.provider_api)
         try:
             response = httpx.get(
-                connection.base_url.rstrip("/") + "/models",
-                headers=self._authorization(connection.api_key),
+                upstream_request_url(provider_api, connection.base_url, "/models"),
+                headers=provider_auth_headers(provider_api, connection.api_key),
                 timeout=10,
                 proxy=self._llm_proxy(PiWorkerConfig(llm_proxy=connection.llm_proxy)),
             )
@@ -371,22 +385,32 @@ class WorkerService:
         connection = self._connection(name, command)
         if not connection.base_url or not connection.model:
             return WorkerConnectionResult(ok=False, message="base_url 和 model 必填")
-        responses_api = connection.provider_api in {"responses", "openai-responses"}
-        endpoint = "/responses" if responses_api else "/chat/completions"
-        payload = (
-            {"model": connection.model, "input": "ping", "max_output_tokens": 8}
-            if responses_api
-            else {
+        provider_api = canonical_provider_api(connection.provider_api)
+        if is_anthropic_messages(provider_api):
+            endpoint = "/messages"
+            payload = {
+                "model": connection.model,
+                "max_tokens": 8,
+                "messages": [{"role": "user", "content": "ping"}],
+            }
+        elif provider_api == "openai-responses":
+            endpoint = "/responses"
+            payload = {"model": connection.model, "input": "ping", "max_output_tokens": 8}
+        else:
+            endpoint = "/chat/completions"
+            payload = {
                 "model": connection.model,
                 "messages": [{"role": "user", "content": "ping"}],
                 "max_tokens": 8,
                 "temperature": 0,
             }
-        )
-        headers = {"Content-Type": "application/json", **self._authorization(connection.api_key)}
+        headers = {
+            "Content-Type": "application/json",
+            **provider_auth_headers(provider_api, connection.api_key),
+        }
         try:
             response = httpx.post(
-                connection.base_url.rstrip("/") + endpoint,
+                upstream_request_url(provider_api, connection.base_url, endpoint),
                 headers=headers,
                 json=payload,
                 timeout=15,
@@ -414,6 +438,7 @@ class WorkerService:
                     update={
                         "provider_api": command.provider_api or "openai-completions",
                         "llm_proxy": command.llm_proxy,
+                        "base_url": command.base_url,
                     }
                 )
             raise

@@ -46,7 +46,7 @@ from axiom.modules.phase_capabilities.builtins import native_tool_names
 from axiom.modules.plan.schemas import PlanWorkspace
 from axiom.modules.reason.schemas import ReasonWorkspace
 from axiom.modules.token_usage.schemas import TokenUsageBatchCommand
-from axiom.modules.workers.pi_config import PiWorkerConfig
+from axiom.modules.workers.pi_config import PiWorkerConfig, canonical_provider_api, sdk_base_url
 from axiom.modules.workers.schemas import Worker
 from axiom.modules.sandboxes.backend import CubeSandboxExecutionBackend
 from axiom.modules.sandboxes.schemas import SandboxHandle
@@ -380,9 +380,11 @@ class PiBootstrapExecutor:
         if extra_environment:
             environment.update(extra_environment)
         if self.settings.base_url:
-            environment["PI_BASE_URL"] = self.settings.base_url
+            environment["PI_BASE_URL"] = sdk_base_url(
+                self.settings.provider_api, self.settings.base_url
+            )
         if self.settings.provider_api:
-            environment["PI_PROVIDER_API"] = self.settings.provider_api
+            environment["PI_PROVIDER_API"] = canonical_provider_api(self.settings.provider_api)
         if self.settings.api_key:
             environment["PI_API_KEY"] = self.settings.api_key
         if self.llm_gateway_enabled and self.service_token:
@@ -846,8 +848,8 @@ class PiBootstrapExecutor:
                 self.settings.thinking_level: self.settings.thinking_level
             }
         provider: dict[str, Any] = {
-            "baseUrl": self.settings.base_url,
-            "api": self.settings.provider_api,
+            "baseUrl": sdk_base_url(self.settings.provider_api, self.settings.base_url),
+            "api": canonical_provider_api(self.settings.provider_api),
             "apiKey": self.settings.api_key or "none",
             "models": [model],
         }

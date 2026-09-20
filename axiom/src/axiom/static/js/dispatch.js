@@ -387,6 +387,19 @@ window.AxiomModules.dispatch = {
       return level;
     },
 
+    normalizeWorkerProviderApi(worker) {
+      const providerApi = String(worker.pi_provider_api || 'openai-completions').trim();
+      const normalized = providerApi === 'responses' ? 'openai-responses' : providerApi;
+      worker.pi_provider_api = normalized || 'openai-completions';
+      return worker.pi_provider_api;
+    },
+
+    normalizeWorkerBaseUrl(worker) {
+      const root = String(worker.pi_base_url || '').trim().replace(/\/+$/, '');
+      worker.pi_base_url = root.toLowerCase().endsWith('/v1') ? root.slice(0, -3) : root;
+      return worker.pi_base_url;
+    },
+
     async fetchPiModels(worker) {
       try {
         worker.models_loading = true;
@@ -394,6 +407,7 @@ window.AxiomModules.dispatch = {
         worker.show_model_dropdown = false;
         const params = new URLSearchParams();
         params.set('base_url', (worker.pi_base_url || '').trim());
+        params.set('provider_api', worker.pi_provider_api || 'openai-completions');
         if ((worker.pi_api_key || '').trim()) params.set('api_key', worker.pi_api_key.trim());
         if ((worker.name || '').trim()) params.set('worker_name', worker.name.trim());
         const data = await this.api('GET', `/settings/dispatch/models?${params.toString()}`);
@@ -611,14 +625,15 @@ window.AxiomModules.dispatch = {
       }
       const normalizedContextWindow = this.normalizeWorkerContextWindow(worker);
       const normalizedThinkingLevel = this.normalizeWorkerThinkingLevel(worker);
+      const normalizedProviderApi = this.normalizeWorkerProviderApi(worker);
       return {
         name: worker.name,
         task_types: taskTypes,
         max_running: Number(worker.max_running || 1),
         priority: Number(worker.priority || 0),
         pi_model: worker.pi_model || '',
-        pi_base_url: worker.pi_base_url || '',
-        pi_provider_api: 'openai-completions',
+        pi_base_url: this.normalizeWorkerBaseUrl(worker),
+        pi_provider_api: normalizedProviderApi,
         pi_model_context_window: normalizedContextWindow,
         pi_api_key: worker.pi_api_key || '',
         pi_api_key_masked: worker.pi_api_key_masked || '',
@@ -781,8 +796,9 @@ window.AxiomModules.dispatch = {
           worker_name: worker.name,
           pi_base_url: worker.pi_base_url,
           pi_model: worker.pi_model,
-          pi_provider_api: 'openai-completions',
+          pi_provider_api: worker.pi_provider_api || 'openai-completions',
           pi_api_key: worker.pi_api_key || '',
+          llm_proxy: !!worker.llm_proxy,
         });
         worker.test_result = result;
         this.showToast(result.message, result.ok ? 'info' : 'error');

@@ -22,7 +22,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
-from axiom.modules.workers.pi_config import PiWorkerConfig, llm_proxy_for
+from axiom.modules.workers.pi_config import (
+    PiWorkerConfig,
+    is_anthropic_messages,
+    llm_proxy_for,
+    provider_auth_headers,
+    upstream_request_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,15 +68,23 @@ async def llm_gateway(
             content={"error": {"code": "gateway_no_base_url", "message": f"Worker {worker_name} 未配置 base_url"}},
         )
 
-    upstream_url = config.base_url.rstrip("/") + "/" + path
+    upstream_url = upstream_request_url(config.provider_api, config.base_url, path)
     if request.url.query:
         upstream_url += "?" + request.url.query
 
-    headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP and k.lower() != "authorization"}
-    if config.api_key:
-        # Starlette 头键为小写；必须先剔除再小写写入，否则会出现大小写两个
-        # Authorization 头（dict 大小写敏感），上游 ELB 直接 400。
-        headers["authorization"] = f"Bearer {config.api_key}"
+    headers = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() not in _HOP_BY_HOP
+        and k.lower() not in {"authorization", "x-api-key"}
+    }
+    auth_headers = provider_auth_headers(config.provider_api, config.api_key)
+    if is_anthropic_messages(config.provider_api):
+        # Keep a caller-supplied Anthropic version/beta header, but never let
+        # the Pi service token or an incoming API key reach the upstream.
+        auth_headers.pop("anthropic-version", None)
+        headers.setdefault("anthropic-version", "2023-06-01")
+    headers.update(auth_headers)
 
     body = await request.body()
     proxy_url = llm_proxy_for(container.settings.get().config, config)

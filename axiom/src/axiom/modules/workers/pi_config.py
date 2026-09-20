@@ -59,6 +59,78 @@ _PI_PACKAGE_RELATIVE_PATH = Path(
 _PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent"
 PiThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh", "max"]
 _PI_THINKING_LEVELS = frozenset({"minimal", "low", "medium", "high", "xhigh", "max"})
+ANTHROPIC_API_VERSION = "2023-06-01"
+
+
+def canonical_provider_api(provider_api: str | None) -> str:
+    """Return the Pi API identifier used by AXIOM's standard providers.
+
+    ``responses`` was accepted by older configurations.  Keep it readable
+    while using Pi's current provider identifier at request boundaries.
+    Unknown values remain untouched for custom Pi provider extensions.
+    """
+
+    value = str(provider_api or "").strip()
+    if not value:
+        return "openai-completions"
+    if value == "responses":
+        return "openai-responses"
+    return value
+
+
+def is_anthropic_messages(provider_api: str | None) -> bool:
+    return canonical_provider_api(provider_api) == "anthropic-messages"
+
+
+def _root_base_url(base_url: str | None) -> str:
+    """Normalize any worker base_url spelling to the provider root."""
+
+    root = (base_url or "").strip().rstrip("/")
+    if root.lower().endswith("/v1"):
+        return root[: -len("/v1")]
+    return root
+
+
+def sdk_base_url(provider_api: str | None, base_url: str) -> str:
+    """Base URL handed to the worker-side SDK (pi ``models.json`` / env).
+
+    AXIOM persists the provider root (``https://host``) for every provider
+    API.  The Anthropic SDK appends ``/v1/messages`` itself, so it must
+    receive the root unchanged; OpenAI-family SDKs post bare resource paths
+    (``/chat/completions`` / ``/responses``) and therefore expect ``/v1``
+    inside the baseURL — matching the official ``api.openai.com/v1`` form.
+    """
+
+    root = _root_base_url(base_url)
+    if not root or is_anthropic_messages(provider_api):
+        return root
+    return root + "/v1"
+
+
+def upstream_request_url(provider_api: str | None, base_url: str, path: str) -> str:
+    """Full upstream URL for a worker-relative request path.
+
+    Every provider upstream serves under ``/v1/``.  Pi-bound SDK paths carry
+    the ``v1/`` prefix for anthropic (SDK-baked ``/v1/messages``) but not for
+    openai (bare ``/chat/completions``); normalize to exactly one prefix.
+    """
+
+    root = _root_base_url(base_url)
+    p = (path or "").strip().lstrip("/")
+    if p and not p.startswith("v1/"):
+        p = "v1/" + p
+    return f"{root}/{p}" if p else root
+
+
+def provider_auth_headers(provider_api: str | None, api_key: str) -> dict[str, str]:
+    """Build the provider-specific authentication headers for a request."""
+
+    if is_anthropic_messages(provider_api):
+        headers = {"anthropic-version": ANTHROPIC_API_VERSION}
+        if api_key:
+            headers["x-api-key"] = api_key
+        return headers
+    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
 
 class PiRuntimeError(RuntimeError):
@@ -109,6 +181,12 @@ class PiWorkerConfig(BaseModel):
         if not isinstance(value, dict):
             return value
         source = dict(value)
+        base_url = str(source.get("base_url", "") or "").strip().rstrip("/")
+        if base_url.lower().endswith("/v1"):
+            # Persist the provider root; /v1 is derived per provider API at
+            # the SDK/gateway boundary (sdk_base_url / upstream_request_url).
+            base_url = base_url[: -len("/v1")]
+        source["base_url"] = base_url
         legacy = str(source.pop("thinking", "") or "").strip().lower()
         source.pop("thinking_capable", None)
         source.pop("thinking_tested_at", None)
