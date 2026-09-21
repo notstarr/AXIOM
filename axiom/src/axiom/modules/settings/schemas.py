@@ -78,7 +78,7 @@ class RuntimeConfig(BaseModel):
     explore_conclude_min_seconds: int = Field(default=180, ge=180, le=7_200)
     explore_conclude_max_seconds: int = Field(default=600, ge=10, le=7_200)
     explore_conclude_default_seconds: int = Field(default=300, ge=10, le=7_200)
-    explore_no_progress_seconds: int = Field(default=300, ge=30, le=7_200)
+    explore_no_progress_seconds: int = Field(default=600, ge=30, le=7_200)
     sandbox_backend: Literal["local", "cube"] = "local"
     sandbox_required: bool = False
     sandbox_local_fallback: bool = True
