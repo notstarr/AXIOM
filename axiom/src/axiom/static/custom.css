@@ -1241,7 +1241,7 @@
   /* 侧栏阵容卡 */
   .sto-pcard {
     position: relative; display: block; width: 100%; text-align: left; cursor: pointer;
-    background: transparent; border: 1px solid transparent; border-radius: 11px;
+    background: transparent; border: 1px solid var(--sto-line); border-radius: 11px;
     padding: 10px 11px; transition: background 0.15s ease, box-shadow 0.2s ease, border-color 0.15s ease;
   }
   .sto-pcard:hover { background: var(--sto-panel); }
