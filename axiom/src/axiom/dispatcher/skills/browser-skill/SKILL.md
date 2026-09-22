@@ -13,8 +13,9 @@ description: |
 受保护——除非显式 borrow，用完必须归还。
 
 **不要**将该 skill 用于：无浏览器场景、扩展安装、或用户只想要操作说明的情况。
-**scope 红线**：wrapper 会校验目标 URL 的域 ∈ `AXIOM_BSK_ALLOWED_HOSTS`
-（任务 origin 域），越界拒绝（exit 40 + `scope_denied`）并记审计。**不要尝试绕过**。
+**scope 边界**:Intent 的目标范围在**派发时**由 AXIOM 校验(声明即边界);浏览器工具
+执行期不做域拦截,本 skill 的所有命令对任何目标照常可用。目标选择仍须遵守任务书
+与 scope 约定——越界测试不会被工具拦截,但会出现在审计日志与 findings 审查里。
 **凭证卫生**：不得从页面提取/外传与测试无关的凭据；Cookie/凭据数据只写
 `evidence/` 目录（证据完整性优先），不要把凭据明文写进 findings/leads 正文。
 
@@ -92,7 +93,7 @@ outcome：`continued`/`completed` → 恢复控制，先 observe 再继续；
 session start|stop|list   browsers   status   doctor   logs
 navigate   navigate-back   navigate-forward   reload   wait-for-navigation   wait-ms
 observe   snapshot   get-html   screenshot   console   network
-click   hover   fill   select   press   evaluate
+click   hover   wheel   scroll-to   focus   blur   fill   select   press   evaluate
 tab list|create|close|select|borrow|return   window resize   emulate
 upload   download   request-help   record start|stop
 credentials --domain <domain> --session <id>   # axiom 定制
@@ -103,10 +104,12 @@ credentials --domain <domain> --session <id>   # axiom 定制
 ```text
 "$AXIOM_BSK" fill <ref> --value <text>
 "$AXIOM_BSK" select <ref> --value <option-value>
-"$AXIOM_BSK" screenshot --out <path>
+"$AXIOM_BSK" screenshot --full-page --out <path>          # 整页拼接(懒加载页用 --scope current)
+"$AXIOM_BSK" scroll-to <ref> --session <id>               # 滚动到指定元素(触发懒加载)
+"$AXIOM_BSK" wheel --session <id>                         # 原生滚轮事件
+"$AXIOM_BSK" click <ref> --capture <capture-id> --image-x <x> --image-y <y>
 "$AXIOM_BSK" upload <ref> --file <path>
 "$AXIOM_BSK" download <ref> --out <path>
-```
 
 - `network` 是 DevTools 面板的 worker 版：默认索引只列 API 流量（静态资源与
   chrome-extension:// 噪音已滤除），响应体/请求头不出现在索引里。
@@ -117,6 +120,14 @@ credentials --domain <domain> --session <id>   # axiom 定制
 - `network --url <子串>`（大小写不敏感）与 `--all`（含静态资源）按需过滤；
   序号被环形挤出时 detail 返回空——索引行仍在，说明该包发生过。
 - `emulate` 对单个 tab 应用视口/UA/触屏覆盖；新 tab 不继承；`--off` 恢复。
+- `scroll-to`/`wheel` 用于无限滚动与懒加载页：滚一段 → observe/network 看增量，
+  不要用 `evaluate window.scrollTo`（会绕过页面自己的滚动监听）。
+- `screenshot --full-page` 拼接整页证据（默认 --scope follow 跟随追加内容；
+  loading_stalled 30s 会报错，不要盲目加 --timeout）；`--scope current` 只截已加载区间。
+- Canvas 页面（图形验证码区域、绘图应用）：observe 返回 `@eN canvas [visual:screenshot]`
+  文本引用。先 `screenshot --ref @eN` 看图，再用 `click --capture <capture-id>
+  --image-x --image-y` 以**原图坐标**点击；capture_id 一次性、2 分钟过期，
+  observe 刷新后失效。坐标用 PNG 原始尺寸，不是缩放后的显示尺寸。
 - `evaluate` 是 observe + 常规交互无法完成时的最后手段；`--json` 时检查 `.ok`。
 - 恢复协议：ref 失效 → observe 一次重试；fill 不一致 → 先观察字段；不可恢复 → 上报并 stop。
 

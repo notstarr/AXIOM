@@ -433,9 +433,6 @@ class PiBootstrapExecutor:
                     "AXIOM_BSK",
                     str(Path(__file__).resolve().parent / "tools" / "axiom-bsk"),
                 )
-                hosts = self._origin_hosts(execution_input.origin)
-                if hosts:
-                    environment["AXIOM_BSK_ALLOWED_HOSTS"] = ",".join(hosts)
             else:
                 browser_skill = browser_skill_directory(
                     execution_input.skill_directories,
@@ -687,16 +684,6 @@ class PiBootstrapExecutor:
         )
         self._browser_lease = handle
         return handle
-
-    @staticmethod
-    def _origin_hosts(origin: str = "") -> list[str]:
-        hosts: list[str] = []
-        for part in (origin or "").replace(",", " ").split():
-            parsed = urlparse(part if "://" in part else f"//{part}")
-            host = (parsed.hostname or "").strip().lower().rstrip(".")
-            if host and host not in hosts:
-                hosts.append(host)
-        return hosts
 
     def _build_argv(
         self,
