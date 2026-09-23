@@ -39,6 +39,7 @@ Cookie 沙箱 = **独立的登录身份**，登录态持久保存在实例内，
 
 - 任务书指定了浏览器实例/身份时：`session start --browser <instance-id> --no-focus`，该 session 的全部操作发生在该身份的登录态下。
 - 多实例在线且任务书未指定时，`session start` 会报 "more than one browser is online"——按任务书语义选择对应实例，不要盲选。
+- 阶段或任务要求覆盖多个身份时（如 bootstrap 需要各身份基线）：对每个实例分别 `session start --browser <id>` → 取证/操作 → `session stop <id>`，逐个走完再收口；不得只用一个实例的登录态代表全部，也不得凭推断合并身份。
 - 目标实例从 `bsk browsers` 列表消失 = 扩展休眠掉线：在该实例窗口点一下 BrowserSkill 扩展图标唤醒重连，再重试 start。
 - session 存活期间心跳会保活扩展连接；同一身份的后续 intent 复用同一实例。
 
