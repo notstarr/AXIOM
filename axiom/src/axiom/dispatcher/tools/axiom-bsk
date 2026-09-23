@@ -6,6 +6,10 @@
 # Scope 在 Intent 派发时校验（声明即边界）；浏览器工具执行期不拦截。
 set -u
 
+# 锁死 bsk 版本：axiom 依赖 fork 的 `credentials` 子命令，上游 0.3.1 起已移除。
+# bsk 默认自动升级（发现新版本会替换二进制并重启 daemon），必须关掉。
+export BSK_AUTO_UPDATE=off
+
 BSK_BIN="${BSK_BIN:-$HOME/.local/bin/bsk}"
 RUN_DIR="${AXIOM_RUN_DIR:-}"
 AUDIT_DIR="$RUN_DIR/evidence"
