@@ -50,10 +50,11 @@
 - 多个在线实例：**逐个实例各取一份基线，不得只取一个就收口**。每个实例是独立 Cookie 沙箱（独立登录身份）：
   ```bash
   "$AXIOM_BSK" session start --no-focus --browser <instance-id>   # 记下返回的 4 字符 session id
+  "$AXIOM_BSK" navigate <入口URL> --session <id>                  # 必须先打开目标页：credentials 只读“已打开页面”的 storage
   "$AXIOM_BSK" credentials --domain <入口域名> --session <id>     # 该身份的 Cookie/Storage，写入 evidence/
   "$AXIOM_BSK" session stop <id>
   ```
-  对每个实例重复“start → 取证 → stop”；各自身份的租户/用户 ID 是后续越权对照的素材。
+  对每个实例重复“start → **navigate** → 取证 → stop”；**取到就当场把该身份的组织/用户 ID 记进产物**，不要留到后面补——session 空闲过久会被自动回收，那时再读就取不到了。
 - 取证后确认多个实例是**同一身份**（同一账号）时，注明“实例 A 与 B 同身份”即可，不必重复罗列；**未真正打开取证过的实例不得凭推断合并**。
 - 实例打不开或取不到身份时，如实写“实例 `<id>` 未取证（原因）”，不得猜。
 
