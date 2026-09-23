@@ -22,15 +22,25 @@ description: |
 ## 必需生命周期
 
 ```text
-1. "$AXIOM_BSK" session start              # 记下输出的 4 字符 session id
-2. "$AXIOM_BSK" <命令> --session <id>      # 所有会话级命令都要带
-3. "$AXIOM_BSK" session stop <id>          # 成功与失败路径都必须执行
+1. "$AXIOM_BSK" session start [--browser <instance-id>]   # 记下输出的 4 字符 session id
+2. "$AXIOM_BSK" <命令> --session <id>                     # 所有会话级命令都要带
+3. "$AXIOM_BSK" session stop <id>                         # 成功与失败路径都必须执行
 ```
 
 不要依赖空闲超时清理。目标达成即 stop。stop 会归还借用的标签。
 任何命令会自动拉起所需后台服务；不要手工管理守护进程。
 Agent Window 不需要打断用户时，session start 加 `--no-focus`。
 启动/传输问题重试一次仍存在时运行 `bsk doctor`。
+
+## 多浏览器实例（多身份）
+
+本机可能同时在线多个浏览器实例（`bsk browsers` 查看）。每个实例是独立的
+Cookie 沙箱 = **独立的登录身份**，登录态持久保存在实例内，session 重开不丢。
+
+- 任务书指定了浏览器实例/身份时：`session start --browser <instance-id> --no-focus`，该 session 的全部操作发生在该身份的登录态下。
+- 多实例在线且任务书未指定时，`session start` 会报 "more than one browser is online"——按任务书语义选择对应实例，不要盲选。
+- 目标实例从 `bsk browsers` 列表消失 = 扩展休眠掉线：在该实例窗口点一下 BrowserSkill 扩展图标唤醒重连，再重试 start。
+- session 存活期间心跳会保活扩展连接；同一身份的后续 intent 复用同一实例。
 
 ## 单一可观察目标
 
