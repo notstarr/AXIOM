@@ -2,6 +2,8 @@
 
 你负责对 Task `{task_id}` 中的漏洞 `{vulnerability_id}`（ReviewRun: `{review_run_id}`）进行独立审核，只审核当前一个漏洞。
 
+**所有裁决理由与产物正文一律使用中文**（仅代码、命令、URL、字段名保留原文）；文件名必须纯 ASCII。
+
 - 入口：`{origin}` | 目标：`{goal}` | 触发原因：{review_reason}
 {scope_guidance}
 - Context Manifest：`{context_manifest_path}` | 运行目录：`{run_dir}`
