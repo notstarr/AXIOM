@@ -153,7 +153,7 @@ def _handle_status(container: Container, task_id: str) -> dict[str, Any]:
 def _handle_pause(container: Container, task_id: str) -> dict[str, Any]:
     normalized_id = _normalize_task_id(task_id)
     try:
-        task = container.tasks.pause(normalized_id, reason="由钉钉机器人指令暂停")
+        task = container.tasks.pause_manual(normalized_id)
         return _build_markdown_response(
             "任务已暂停",
             f"⏸️ **任务 `{task.id}` 已成功暂停**\n\n当前阶段: `{task.phase}`。如需恢复，请发送 `/resume {task.id}`。"

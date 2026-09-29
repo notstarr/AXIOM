@@ -590,6 +590,12 @@
     padding: 2px 5px; line-height: 1.3;
     box-sizing: border-box; background: transparent;
   }
+  /* 统一卡片高度后，正文最多 3 行，超出省略（完整内容在右侧详情面板） */
+  .node-card__clamp {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+    overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap;
+    width: 100%; text-align: center;
+  }
   /* Card border + body background by node type */
   .node-card--origin, .node-card--depth_origin {
     border: 1.5px solid #99f6e4; background: #f0fdfa;
@@ -1076,6 +1082,13 @@
   .vsc-tree-row.active { background: var(--sto-accent-soft); color: var(--sto-fg); }
   .vsc-tree-row.active-file { background: var(--sto-accent-soft); }
   .vsc-tree-row.lvl0 { padding-left: 10px; font-weight: 600; color: var(--sto-fg); }
+  .vsc-tree-row.vsc-sticky-head {
+    position: sticky; top: 0; z-index: 3; background: var(--sto-panel);
+    border-bottom: 1px solid var(--sto-line);
+  }
+  .vsc-tree-pager {
+    display: flex; justify-content: center; padding: 4px 10px 6px 48px;
+  }
   .vsc-tree-row.lvl1 { padding-left: 26px; }
   .vsc-tree-row.lvl2 { padding-left: 42px; }
   .vsc-tree-row .vsc-chev {
@@ -1083,7 +1096,11 @@
     color: var(--sto-fg-3); transition: transform 0.12s ease;
   }
   .vsc-tree-row .vsc-chev svg { width: 11px; height: 11px; }
-  .vsc-tree-row .vsc-chev.open { transform: rotate(90deg); }
+  .vsc-tree-row.lvl1 { padding-left: 26px; }
+  .vsc-tree-row.lvl1.vsc-sticky-sub {
+    position: sticky; top: 33px; z-index: 2; background: var(--sto-panel);
+    border-bottom: 1px solid var(--sto-line);
+  }
   .vsc-tree-row .vsc-fileicon {
     flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
     width: 15px; color: var(--sto-accent); font-size: 12px;
@@ -1098,9 +1115,46 @@
   }
   .vsc-tree-row .vsc-rowmeta { flex-shrink: 0; font-size: 10px; color: var(--sto-fg-3); font-variant-numeric: tabular-nums; }
   .vsc-tree-empty { padding: 2px 12px 6px 68px; font-size: 10.5px; color: var(--sto-fg-3); }
+  /* 模式切换（总览 / 时间轴） */
+  .vsc-mode-switch {
+    display: inline-flex; background: var(--sto-inset); border: 1px solid var(--sto-line);
+    border-radius: 7px; padding: 2px; gap: 2px;
+  }
+  .vsc-mode-switch button {
+    border: 0; background: transparent; cursor: pointer; font-size: 10px;
+    padding: 2px 8px; border-radius: 5px; color: var(--sto-fg-3); font-weight: 600;
+    transition: all 0.12s ease;
+  }
+  .vsc-mode-switch button.on { background: var(--sto-panel); color: var(--sto-fg); box-shadow: 0 1px 2px rgba(0,0,0,0.10); }
+  /* 时间轴胶囊（紫 intent / 绿 fact 连体，占满整行） */
+  .vsc-timeline { display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
+  .vsc-timeline .sto-pager {
+    position: sticky; bottom: 0; margin: 10px -6px 0; padding: 8px 12px;
+    border-top: 1px solid var(--sto-line); background: var(--sto-panel); z-index: 5;
+  }
+  .vsc-pill {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    border: 0; cursor: pointer; padding: 6px 12px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px; font-weight: 700; letter-spacing: 0.02em;
+    transition: filter 0.12s ease;
+  }
+  .vsc-pill:hover { filter: brightness(0.96); }
+  .vsc-pill.fact { background: #dcfce7; color: #15803d; }
+  .vsc-pill.intent { background: #ede9fe; color: #6d28d9; }
+  .vsc-pill.intent .pill-art { font-size: 10px; font-weight: 700; opacity: 0.85; }
+  .vsc-pill-group {
+    display: flex; align-items: stretch; width: 100%; cursor: pointer;
+    border-radius: 10px; overflow: hidden;
+  }
+  .vsc-pill-group:hover { filter: brightness(0.96); }
+  .vsc-pill-group.active { box-shadow: 0 0 0 2px var(--sto-accent); }
+  .vsc-pill-group .vsc-pill.intent { flex: 1; border-radius: 0; }
+  .vsc-pill-group .vsc-pill.fact { flex: 1; border-radius: 0; border-left: 1px solid rgba(255,255,255,0.55); }
+  .vsc-pill-group .vsc-pill:only-child { border-radius: 0; }
   /* 编辑器标签页 */
   .vsc-tabbar {
-    display: flex; align-items: stretch; overflow-x: auto; flex-shrink: 0;
+    position: relative; display: flex; align-items: stretch; flex-shrink: 0;
     background: var(--sto-inset); border-bottom: 1px solid var(--sto-line);
   }
   .vsc-tab {
@@ -1129,10 +1183,17 @@
   }
   .vsc-meta-strip .k { color: var(--sto-fg-3); margin-left: 6px; }
   .vsc-content { padding: 16px 18px; }
-  .vsc-content-foot {
-    display: flex; gap: 8px; padding: 10px 18px; border-top: 1px solid var(--sto-line);
-    position: sticky; bottom: 0; background: var(--sto-panel);
+  /* 标签右键菜单 */
+  .vsc-ctxmenu {
+    position: absolute; z-index: 80; min-width: 150px;
+    background: var(--sto-panel); border: 1px solid var(--sto-line); border-radius: 8px;
+    box-shadow: var(--sto-shadow, 0 8px 24px rgba(15,23,42,0.12)); padding: 4px;
   }
+  .vsc-ctxmenu button {
+    display: block; width: 100%; text-align: left; border: 0; background: transparent;
+    padding: 6px 10px; font-size: 12px; color: var(--sto-fg-2); cursor: pointer; border-radius: 5px;
+  }
+  .vsc-ctxmenu button:hover { background: var(--sto-accent-soft); color: var(--sto-fg); }
   .vsc-welcome {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     min-height: 60vh; gap: 6px; color: var(--sto-fg-3); font-size: 12.5px;
@@ -1454,17 +1515,110 @@
     font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
     color: #4f46e5;
   }
-  .intent-hover-tip .tip-chip {
-    font-size: 9px; font-weight: 600; letter-spacing: 0.04em;
-    padding: 2px 8px; border-radius: 9999px;
-    background: #f1f5f9;
+
+  /* ═══════════ 漏洞编辑弹窗（vm-*，作用域限定在 .sto-vmodal 内） ═══════════ */
+  .sto-vmodal {
+    width: 100%; max-width: 720px; max-height: 86vh; margin: 0 16px;
+    display: flex; flex-direction: column; overflow: hidden;
   }
-  .intent-hover-tip .tip-label {
-    font-size: 9px; font-weight: 600; letter-spacing: 0.12em;
-    text-transform: uppercase; color: #94a3b8;
+  .sto-vmodal .vm-head {
+    display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+    padding: 15px 20px; border-bottom: 1px solid var(--sto-line); background: var(--sto-panel);
   }
-  .intent-hover-tip .tip-reason {
-    border-left: 2px solid #e2e8f0;
-    padding-left: 0.55rem;
-    color: #475569;
+  .sto-vmodal .vm-title { font-size: 14px; font-weight: 650; letter-spacing: 0.01em; color: var(--sto-fg); }
+  .sto-vmodal .vm-sub { margin-top: 3px; font-size: 11px; color: var(--sto-fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sto-vmodal .vm-x {
+    margin-left: auto; flex-shrink: 0; width: 28px; height: 28px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 17px; line-height: 1; color: var(--sto-fg-3);
+    background: transparent; border: 1px solid transparent; border-radius: 8px; cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
   }
+  .sto-vmodal .vm-x:hover { color: var(--sto-fg); background: var(--sto-inset); border-color: var(--sto-line); }
+
+  .sto-vmodal .vm-body {
+    flex: 1; min-height: 0; overflow-y: auto;
+    padding: 18px 20px 22px; display: flex; flex-direction: column; gap: 20px;
+  }
+  .sto-vmodal .vm-sec { display: flex; flex-direction: column; gap: 12px; }
+  .sto-vmodal .vm-sec + .vm-sec { padding-top: 18px; border-top: 1px solid var(--sto-line); }
+  .sto-vmodal .vm-seclabel {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sto-fg-3);
+  }
+  .sto-vmodal .vm-seclabel::after { content: ""; flex: 1; height: 1px; background: var(--sto-line); }
+  .sto-vmodal .vm-foot {
+    display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-shrink: 0;
+    padding: 14px 20px; border-top: 1px solid var(--sto-line); background: var(--sto-panel);
+  }
+
+  /* 弹窗内标签提高一档可读性：小写、加深、去掉字距（仅本弹窗，不影响其他表单） */
+  .sto-vmodal .sto-field { gap: 7px; }
+  .sto-vmodal .sto-field > label {
+    font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--sto-fg-2);
+  }
+  .sto-vmodal .sto-input { padding: 8px 11px; }
+  .sto-vmodal textarea.sto-input { min-height: 78px; line-height: 1.7; }
+  .sto-vmodal .vm-req { color: var(--sto-danger); margin-left: 2px; }
+  .sto-vmodal .vm-hint { font-size: 10.5px; line-height: 1.5; color: var(--sto-fg-3); }
+
+  /* 严重程度：横向分段选择器（原先误用 .sto-listbtn，被拉成整行列表） */
+  .sto-sevpicker { display: flex; flex-wrap: wrap; gap: 6px; }
+  .sto-sevopt {
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+    padding: 7px 13px; border-radius: 9px; font-size: 12px; font-weight: 600;
+    color: var(--sto-fg-2); background: var(--sto-panel); border: 1px solid var(--sto-line);
+    transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .sto-sevopt .vm-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    background: var(--sto-line); transition: background 0.15s ease;
+  }
+  .sto-sevopt:hover { color: var(--sto-fg); border-color: color-mix(in srgb, var(--sev, var(--sto-fg-3)) 45%, var(--sto-line)); }
+  .sto-sevopt.active {
+    color: var(--sev); background: var(--sev-soft);
+    border-color: color-mix(in srgb, var(--sev) 45%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--sev) 12%, transparent);
+  }
+  .sto-sevopt.active .vm-dot { background: var(--sev); }
+
+  /* 多选证据列表：更像列表而不是输入框 */
+  .sto-vmodal select.sto-input[multiple] { padding: 6px; min-height: 110px; line-height: 1.5; }
+  .sto-vmodal select.sto-input[multiple] option { padding: 4px 7px; border-radius: 6px; font-size: 11.5px; }
+  .sto-vmodal select.sto-input[multiple] option:checked { background: var(--sto-accent-soft); color: var(--sto-fg); }
+
+  /* ═══════════ 图谱节点：按需展开徽标 ═══════════
+     卡片本身是 pointer-events:none，所以徽标只作视觉提示；
+     实际交互是「⌥ / Cmd + 点击节点」或工具栏的「展开一层」。 */
+  .node-card__expand {
+    position: absolute; top: 6px; right: 6px; z-index: 7;
+    display: inline-flex; align-items: center;
+    padding: 1px 6px; border-radius: 999px;
+    font-size: 10px; font-weight: 700; line-height: 1.5;
+    color: #4f46e5; background: #eef2ff; border: 1px solid #c7d2fe;
+    font-variant-numeric: tabular-nums;
+    /* 一次点击即可展开/折叠（卡片本身 pointer-events:none，按钮单独打开） */
+    pointer-events: auto; cursor: pointer; user-select: none;
+    transition: filter 0.15s ease, background 0.15s ease;
+  }
+  .node-card__expand:hover { filter: brightness(1.06); }
+  .node-card__expand.is-open { color: #0f766e; background: #ecfdf5; border-color: #99f6e4; }
+  /* 选中该卡片后：徽标变成真正可点的「展开 / 折叠」按钮。
+     卡片本身是 pointer-events:none，这里单独打开，才能收到点击。 */
+  .node-card__expand.is-btn {
+    pointer-events: auto; cursor: pointer;
+    padding: 2px 9px; font-size: 10.5px;
+    color: #fff; background: #4f46e5; border-color: #4f46e5;
+    box-shadow: 0 1px 3px rgba(79, 70, 229, 0.35);
+    transition: filter 0.15s ease, background 0.15s ease;
+  }
+  .node-card__expand.is-btn:hover { filter: brightness(1.08); }
+  .node-card__expand.is-btn.is-open { color: #fff; background: #0f766e; border-color: #0f766e; box-shadow: 0 1px 3px rgba(15, 118, 110, 0.35); }
+  /* 出现按钮时给标题让位，避免压字 */
+  .node-card--has-expand-btn .node-card__header { padding-right: 54px; }
+  :root.dark .node-card__expand { color: #a5b4fc; background: #262b3a; border-color: #3b4260; }
+  :root.dark .node-card__expand.is-open { color: #5eead4; background: #1c2b2b; border-color: #2f4f4a; }
+  :root.dark .node-card__expand.is-btn { color: #fff; background: #4f46e5; border-color: #4f46e5; }
+  :root.dark .node-card__expand.is-btn.is-open { color: #fff; background: #0f766e; border-color: #0f766e; }
+
+

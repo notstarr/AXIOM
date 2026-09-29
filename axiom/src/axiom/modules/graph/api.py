@@ -4,15 +4,43 @@ from fastapi import APIRouter, Depends, Response, status
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
-from axiom.modules.graph.schemas import Fact, Intent, TaskGraph, UpdateFact, UpdateIntent
+from axiom.modules.graph.schemas import (
+    Fact,
+    GraphChildren,
+    GraphCounts,
+    Intent,
+    TaskGraph,
+    UpdateFact,
+    UpdateIntent,
+)
 
 
 router = APIRouter(prefix="/tasks", tags=["graph"])
 
 
 @router.get("/{task_id}/graph", response_model=TaskGraph)
-def get_graph(task_id: str, container: Container = Depends(get_container)) -> TaskGraph:
-    return container.graph.get(task_id)
+def get_graph(
+    task_id: str,
+    scope: str = "full",
+    container: Container = Depends(get_container),
+) -> TaskGraph:
+    """scope=skeleton 只回 origin/goal 骨架，其余节点走 /graph/children 按需展开。"""
+    return container.graph.get(task_id, scope=scope)
+
+
+@router.get("/{task_id}/graph/counts", response_model=GraphCounts)
+def get_graph_counts(task_id: str, container: Container = Depends(get_container)) -> GraphCounts:
+    return container.graph.counts(task_id)
+
+
+@router.get("/{task_id}/graph/children", response_model=GraphChildren)
+def get_graph_children(
+    task_id: str,
+    node: str,
+    limit: int = 100,
+    container: Container = Depends(get_container),
+) -> GraphChildren:
+    return container.graph.children(task_id, node, limit=limit)
 
 
 @router.get("/{task_id}/facts/{fact_id}", response_model=Fact)

@@ -230,9 +230,9 @@
           </div>
           <div class="mt-3 flex items-center gap-2.5">
             <div class="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
-              <div class="h-full rounded-full bg-brand-500 transition-all" :style="`width:${humanTodoProgress().percent}%`"></div>
+              <div class="h-full rounded-full bg-brand-500 transition-all" :style="`width:${humanIntentCoverage().percent}%`"></div>
             </div>
-            <span class="text-sm font-bold text-brand-600 tabular-nums" x-text="`${humanTodoProgress().percent}%`"></span>
+            <span class="text-sm font-bold text-brand-600 tabular-nums" x-text="`${humanIntentCoverage().percent}%`"></span>
           </div>
         </section>
         <template x-if="humanAttentionItems().length">
@@ -345,32 +345,22 @@
     <div class="max-w-[1600px] mx-auto space-y-5">
 
       <!-- 页头：标题 + 状态统计 -->
-      <div class="sto-panel" style="padding:18px 20px;">
-        <div class="flex items-start justify-between gap-3">
-          <div class="shrink-0">
-            <p class="text-[10px] uppercase tracking-[0.16em] text-slate-400 font-medium">Reason workspace</p>
-            <h3 class="mt-1 text-base font-semibold text-slate-800">Todo 覆盖与执行清单</h3>
-            <p class="mt-0.5 text-xs text-slate-400">展开 Todo 查看子 Intent，点击 Intent 查看详情与产出物。</p>
-          </div>
-          <div class="hidden md:flex items-stretch gap-2.5 flex-wrap justify-end pt-1">
-            <template x-for="stat in humanTodoStats()" :key="`todo-stat-${stat.label}`">
-              <div class="flex items-center gap-2 rounded-xl border border-slate-200/80 bg-slate-50/70 px-3.5 py-2">
-                <span class="h-2 w-2 rounded-full" :class="stat.dot"></span>
-                <span class="text-lg font-bold tabular-nums leading-none" :class="stat.text" x-text="stat.value"></span>
-                <span class="text-[10px] text-slate-500" x-text="stat.label"></span>
-              </div>
-            </template>
-          </div>
-        </div>
-      </div>
 
       <!-- 主从布局：左总览树（固定宽，自带滚动） + 右详情（等高对齐） -->
       <div class="flex gap-4 items-stretch">
-        <section class="sto-panel shrink-0 overflow-y-auto" style="padding:12px; width:320px; max-height:calc(100vh - 220px);">
-          <div class="flex items-center justify-between px-2 pb-2">
+        <section class="sto-panel shrink-0 flex flex-col" style="padding:12px; width:380px; max-height:calc(100vh - 220px); overflow:hidden;">
+          <div class="flex items-center justify-between px-2 pb-2 shrink-0">
             <p class="sto-label">Todo 总览</p>
-            <span class="text-[10px] font-mono text-slate-400 tabular-nums" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total}`"></span>
+            <div class="flex items-center" style="gap:6px;">
+              <span class="text-[10px] font-mono text-slate-400 tabular-nums" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total}`"></span>
+              <div class="vsc-mode-switch">
+                <button type="button" :class="humanNavMode === 'tree' ? 'on' : ''" @click="humanNavMode = 'tree'">总览</button>
+                <button type="button" :class="humanNavMode === 'timeline' ? 'on' : ''" @click="humanNavMode = 'timeline'">时间轴</button>
+              </div>
+            </div>
           </div>
+          <div class="flex-1 min-h-0 overflow-y-auto" style="margin:0 -6px; padding:0 6px;">
+          <div x-show="humanNavMode === 'tree'" class="space-y-1.5">
           <div class="space-y-1.5">
             <template x-for="todo in humanSortedTodos()" :key="`nav-${todo.id}`">
               <div class="rounded-xl border transition"
@@ -436,9 +426,33 @@
             <p x-show="taskDetailSectionError('todos')" class="py-8 text-center text-xs text-rose-500">Todo 加载失败。<button @click="retryTaskDetailSection('todos')" class="ml-1 text-brand-600 hover:underline">重试</button></p>
             <p x-show="taskDetailSectionReady('todos') && project.todos.length === 0" class="py-8 text-center text-xs text-slate-400">Reason 尚未生成 Todo。</p>
           </div>
+          </div>
+          <!-- 时间轴模式 -->
+          <div x-show="humanNavMode === 'timeline'" class="vsc-timeline">
+            <template x-for="entry in humanTimelinePageEntries()" :key="`tl-${entry.intent.id}`">
+              <button type="button" class="vsc-pill-group"
+                :class="todoNavIntentId === entry.intent.id ? 'active' : ''"
+                @click="selectTodoNavIntent(entry.intent.id)"
+                :title="entry.intent.description || ''">
+                <span class="vsc-pill intent">
+                  <span class="pill-art" x-show="entry.artCount > 0" x-text="`🖼 #${entry.artCount}`"></span>
+                  <span class="pill-id" x-text="entry.intent.id"></span>
+                </span>
+                <span class="vsc-pill fact" x-show="entry.fact">
+                  <span class="pill-id" x-text="entry.fact ? entry.fact.id : ''"></span>
+                </span>
+              </button>
+            </template>
+            <div class="sto-pager" style="margin-top:10px; padding-top:8px; border-top:1px solid var(--sto-line);">
+              <button @click="setHumanTimelinePage(humanTimelinePage - 1)" :disabled="humanTimelinePage <= 0" class="sto-minibtn">上一页</button>
+              <span class="sto-num" x-text="`${humanTimelinePage + 1} / ${humanTimelinePageCount()}`"></span>
+              <button @click="setHumanTimelinePage(humanTimelinePage + 1)" :disabled="humanTimelinePage + 1 >= humanTimelinePageCount()" class="sto-minibtn">下一页</button>
+            </div>
+          </div>
+          </div>
         </section>
 
-        <section class="sto-panel min-h-[420px]" style="padding:18px 20px; flex:1 1 0; min-width:0;">
+        <section class="sto-panel min-h-[420px]" style="padding:12px 16px; flex:1 1 0; min-width:0;">
           <template x-if="!todoNavIntentRecord()">
             <div class="min-h-[380px] grid place-items-center text-center">
               <div>
@@ -474,7 +488,10 @@
                 <div class="mt-1.5 space-y-1.5">
                   <template x-for="fact in intentSourceFacts(todoNavIntentRecord())" :key="`src-${fact.id}`">
                     <div class="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2 flex items-baseline gap-2">
-                      <span class="font-mono text-[10px] text-slate-400 shrink-0" x-text="fact.id"></span>
+                      <span class="font-mono text-[10px] shrink-0 cursor-pointer text-brand-600 hover:text-brand-700 hover:underline transition"
+                        @click="(() => { const p = humanFactProducer(fact); if (p) selectTodoNavIntent(p.id); })()"
+                        :title="'上一步：跳转到 ' + (humanFactProducer(fact) ? humanFactProducer(fact).id : '')"
+                        x-text="fact.id"></span>
                       <span class="text-[11px] text-slate-600 truncate" x-text="fact.description"></span>
                     </div>
                   </template>
@@ -516,6 +533,24 @@
                   </div>
                 </div>
               </div>
+              <template x-if="humanNextStepIntents(todoNavIntentRecord().id).length > 0">
+                <div class="rounded-xl border border-brand-200 bg-brand-50/10 p-4">
+                  <p class="tip-label">下一步 · 派发 Intent</p>
+                  <div class="mt-2 space-y-1.5">
+                    <template x-for="next in humanNextStepIntents(todoNavIntentRecord().id)" :key="`next-${next.id}`">
+                      <div class="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                        <div class="flex items-baseline gap-2">
+                          <span class="font-mono text-[10px] shrink-0 cursor-pointer text-brand-600 hover:text-brand-700 hover:underline transition"
+                            @click="selectTodoNavIntent(next.id)"
+                            :title="'下一步：跳转到 ' + next.id"
+                            x-text="next.id"></span>
+                          <span class="text-[11px] text-slate-600 truncate" x-text="next.description || '未命名 Intent'"></span>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
             </div>
           </template>
         </section>

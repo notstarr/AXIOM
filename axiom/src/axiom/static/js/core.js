@@ -59,6 +59,74 @@ window.AxiomModules.core = {
       if (!window.marked) await this.loadScriptOnce('/static/vendor/marked.min.js');
     },
 
+    // 产物预览消毒。
+    // markdown 允许内联 HTML，但预览是把渲染结果 x-html 注入主文档的：
+    // 产物里只要带一个 <style>，它的选择器就会作用到整个界面
+    // （实测产物内嵌 body{width:60vw;margin:15vh auto} + div{opacity:.8}
+    //   把整个 GUI 压成中间窄列并层层压淡，几乎不可读）。
+    // 渲染后必须剥掉会外溢的标签与事件属性，再交给 x-html。
+    //
+    // 注意：必须用 <template> 做「片段」解析。用 DOMParser 按整篇文档解析时，
+    // 产物里若内嵌 <html>/<head>/<body>，解析器会重构文档结构并把后面的正文丢掉
+    // （实测 SSRF 证据里内嵌的 example.com 正文被整段吞掉）。
+    sanitizePreviewHtml(html) {
+      if (typeof html !== 'string' || !html) return '';
+      const blocked = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'BASE', 'TITLE',
+        'IFRAME', 'FRAME', 'FRAMESET', 'OBJECT', 'EMBED', 'APPLET', 'FORM']);
+      let tpl;
+      try {
+        tpl = document.createElement('template');
+        tpl.innerHTML = html;
+      } catch (_) {
+        return html.replace(
+          /<\s*(style|script|link|meta|base|title|iframe|object|embed|form)\b[\s\S]*?(<\s*\/\s*\1\s*>|$)/gi, '');
+      }
+      const root = tpl.content || tpl;
+      root.querySelectorAll('*').forEach((el) => {
+        if (blocked.has(el.tagName)) { el.remove(); return; }
+        for (const attr of [...el.attributes]) {
+          const name = attr.name.toLowerCase();
+          const value = String(attr.value || '').replace(/[\u0000-\u0020]/g, '').toLowerCase();
+          if (name.startsWith('on')) { el.removeAttribute(attr.name); continue; }
+          if ((name === 'href' || name === 'src' || name === 'xlink:href')
+            && (value.startsWith('javascript:') || value.startsWith('data:text/html'))) {
+            el.removeAttribute(attr.name);
+          }
+        }
+      });
+      return tpl.innerHTML;
+    },
+
+    // markdown 里的原始 HTML 一律按「文本」输出，不当 HTML 执行。
+    // 预览是把渲染结果 x-html 注入主文档的：产物里只要有 <style>（未闭合更糟）
+    // 就会污染整个界面；有 <img onerror> 更会直接执行脚本。
+    // 这里覆盖 marked 的 html renderer，把 HTML 转义成可见文本。
+    markdownEscapeHtml() {
+      if (!window.marked || this._mdHtmlEscaped) return;
+      this._mdHtmlEscaped = true;
+      window.marked.use({
+        renderer: {
+          html(token) {
+            const raw = (token && typeof token === 'object')
+              ? (token.text != null ? token.text : token.raw)
+              : token;
+            return String(raw == null ? '' : raw)
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;');
+          },
+        },
+      });
+    },
+
+    // 统一的预览渲染入口：确保 marked 就绪 → 转义原始 HTML → 再消毒兜底。
+    renderMarkdown(content) {
+      if (typeof marked === 'undefined') return '';
+      this.markdownEscapeHtml();
+      return this.sanitizePreviewHtml(marked.parse(content || ''));
+    },
+
     showPageSkeleton() {
       const host = document.getElementById('page-host');
       if (!host) return;

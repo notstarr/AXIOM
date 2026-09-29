@@ -24,16 +24,11 @@
         <span>资源管理器</span>
         <span class="vsc-side-count" x-text="`${(artifactCenterTasks || []).length} 任务`"></span>
       </div>
-      <input
-        x-model="explorerFilter"
-        class="vsc-side-filter"
-        placeholder="筛选已加载节点…"
-      >
       <div class="vsc-tree flex-1 overflow-y-auto">
         <!-- 任务节点 -->
         <template x-for="task in (artifactCenterTasks || [])" :key="task.id">
           <div x-show="explorerNodeVisible('task', task.id, task.title || task.id)">
-            <button type="button" class="vsc-tree-row lvl0" :class="artifactCenterSelectedTask === task.id ? 'active' : ''"
+            <button type="button" class="vsc-tree-row lvl0 vsc-sticky-head" :class="artifactCenterSelectedTask === task.id ? 'active' : ''"
               @click="toggleExplorerTask(task.id)">
               <span class="vsc-chev" :class="explorerExpanded[task.id] ? 'open' : ''">
                 <svg viewBox="0 0 16 16" fill="currentColor"><path d="M6 4l4 4-4 4V4Z"/></svg>
@@ -47,7 +42,7 @@
             <!-- Intent 节点 -->
             <template x-for="folder in (explorerExpanded[task.id] ? (explorerFolders[task.id] || []) : [])" :key="`${task.id}:${folder.folder_key}`">
               <div x-show="explorerNodeVisible('intent', `${task.id}:${folder.folder_key}`, artifactFolderLabel(folder) + ' ' + artifactFolderDescription(folder))">
-                <button type="button" class="vsc-tree-row lvl1"
+                <button type="button" class="vsc-tree-row lvl1 vsc-sticky-sub"
                   :class="artifactCenterSelectedTask === task.id && artifactCenterFolderKey === folder.folder_key ? 'active' : ''"
                   @click="toggleExplorerIntent(task.id, folder.folder_key)">
                   <span class="vsc-chev" :class="explorerExpanded[`${task.id}:${folder.folder_key}`] ? 'open' : ''">
@@ -74,6 +69,12 @@
                 <div x-show="explorerExpanded[`${task.id}:${folder.folder_key}`] && (explorerFiles[`${task.id}:${folder.folder_key}`] || []).length === 0 && !artifactCenterLoading" class="vsc-tree-empty lvl2">（空）</div>
               </div>
             </template>
+            <!-- 文件夹翻页 -->
+            <div x-show="explorerExpanded[task.id] && explorerFolderHasMore(task.id)" class="vsc-tree-pager">
+              <button type="button" @click.stop="loadMoreExplorerFolders(task.id)" class="sto-minibtn" style="font-size:10px; padding:3px 10px;">
+                加载更多 <span class="sto-num" x-text="`(共 ${(explorerFolderMeta[task.id] || {}).total || '…'})`"></span>
+              </button>
+            </div>
           </div>
         </template>
         <div x-show="artifactCenterLoading && !(artifactCenterTasks || []).length" class="sto-empty" style="border:0;">加载中…</div>
@@ -84,20 +85,26 @@
     </aside>
 
     <!-- ═══ 编辑器区（标签页 + 面包屑 + 预览） ═══ -->
-    <section class="flex-1 min-w-0 flex flex-col overflow-hidden">
+    <section class="flex-1 min-w-0 flex flex-col overflow-hidden" style="position:relative;">
       <!-- 标签页 -->
-      <div class="vsc-tabbar">
+      <div class="vsc-tabbar" @contextmenu.self.prevent="openTabContextMenu($event, editorActiveId)">
         <template x-for="tab in (editorTabs || [])" :key="tab.id">
-          <div class="vsc-tab" :class="editorActiveId === tab.id ? 'active' : ''" @click="activateEditorTab(tab.id)">
+          <div class="vsc-tab" :class="editorActiveId === tab.id ? 'active' : ''" @click="activateEditorTab(tab.id)" @contextmenu.prevent="openTabContextMenu($event, tab.id)">
             <span class="vsc-fileicon" :style="tab.artifact_type === 'explore.findings' ? 'color:#059669;' : tab.artifact_type === 'explore.leads' ? 'color:#b45309;' : tab.artifact_type === 'explore.evidence' ? 'color:#0071e3;' : tab.artifact_type === 'review.report' ? 'color:#7c3aed;' : ''"
               x-text="artifactTypeIcon(tab.artifact_type)"></span>
             <span class="vsc-tabname" x-text="artifactFileName(tab)"></span>
             <button type="button" class="vsc-tabclose" @click.stop="closeEditorTab(tab.id)" aria-label="关闭">&times;</button>
           </div>
         </template>
-        <div class="vsc-tab-spacer"></div>
+        <div class="vsc-tab-spacer" @contextmenu.prevent="openTabContextMenu($event, '')"></div>
       </div>
-
+      <!-- 标签右键菜单 -->
+      <div x-show="tabContextMenu.open" x-cloak class="vsc-ctxmenu" :style="`left:${tabContextMenu.x}px; top:${tabContextMenu.y}px;`"
+        @click.outside="tabContextMenu.open = false" @keydown.escape.window="tabContextMenu.open = false">
+        <button type="button" @click="tabContextMenuClose('others')">关闭其他标签</button>
+        <button type="button" @click="tabContextMenuClose('right')">关闭右侧全部</button>
+        <button type="button" @click="tabContextMenuClose('all')">关闭全部标签</button>
+      </div>
 
       <!-- 内容 -->
       <div class="flex-1 min-h-0 overflow-auto" style="background:var(--sto-panel);">
@@ -126,10 +133,6 @@
               <template x-if="artifactCenterSelected._previewKind === 'markdown' && !artifactCenterSelected._loading && !artifactCenterSelected._error && !artifactCenterSelected._notice"><div><div x-show="artifactCenterSelected._rendered" class="md-preview text-sm" x-html="artifactCenterSelected._rendered"></div><div x-show="!artifactCenterSelected._rendered" class="sto-empty" style="border-style:solid;">文件为空</div></div></template>
               <template x-if="(artifactCenterSelected._previewKind === 'text' || artifactCenterSelected._previewKind === 'json') && !artifactCenterSelected._loading && !artifactCenterSelected._error && !artifactCenterSelected._notice"><div class="space-y-3"><div x-show="artifactCenterSelected._warning" class="sto-errbox" style="border-color:color-mix(in srgb, var(--sto-warn) 30%, transparent); background:color-mix(in srgb, var(--sto-warn) 6%, transparent); color:var(--sto-warn);" x-text="artifactCenterSelected._warning"></div><pre data-testid="artifact-preview-text" x-show="artifactCenterSelected._content.length > 0" style="font-size:12px; white-space:pre-wrap; word-break:break-word; font-family:ui-monospace,'SF Mono',Menlo,monospace; color:var(--sto-fg); line-height:1.6;" x-text="artifactCenterSelected._content"></pre></div></template>
             </div>
-            <footer class="vsc-content-foot">
-              <a :href="artifactDownloadUrl(artifactCenterSelected)" download class="sto-ghost">下载</a>
-              <button @click="archiveArtifactCenter(artifactCenterSelected)" class="sto-minibtn danger" style="padding:7px 12px;">归档</button>
-            </footer>
           </div>
         </template>
       </div>

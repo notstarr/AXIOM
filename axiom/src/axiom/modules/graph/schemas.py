@@ -92,6 +92,23 @@ class GoalHistory(BaseModel):
     evidence_fact_ids: list[str] = Field(default_factory=list)
 
 
+class GraphCounts(BaseModel):
+    """轻量计数（不依赖完整数组）。"""
+
+    facts: int = 0
+    intents: int = 0
+
+
+class GraphChildren(BaseModel):
+    """按需展开：某个节点的直接下游（消费它的意图 + 这些意图产出的事实）。"""
+
+    node_id: str
+    facts: list[Fact] = Field(default_factory=list)
+    intents: list[Intent] = Field(default_factory=list)
+    child_count: int = 0
+    has_more: bool = False
+
+
 class UpdateFact(BaseModel):
     description: str | None = None
     archived: bool | None = None

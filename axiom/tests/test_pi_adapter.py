@@ -1244,22 +1244,20 @@ def test_review_prompt_enforces_single_target_decision_and_review_artifact() -> 
     assert "axiom skill path vuln-review" in prompt
     assert "按该 Skill 的“必读附件”规则读取对应状态示例" in prompt
     assert "未分配该 Skill 时不要把它当作缺失依赖" in prompt
-    assert "artifacts/review.md" in prompt
+    assert "vuln_report-" in prompt
     assert "axiom review decision submit verified" in prompt
     assert "needs-human" in prompt
     assert "默认必须进行至少一次新的独立验证" in prompt
     assert "不得只复述文件内容后直接裁决" in prompt
     assert "至少一个关键对照结果" in prompt
-    assert "VC/VI/VA" in prompt
-    assert "不得猜测分数" in prompt
+    assert "不再要求 CVSS 向量" in prompt
     assert "精炼、专业、直击裁决要害" in prompt
-    assert "详细过程只写入 `review.md`" in prompt
+    assert "只允许能证明漏洞存在的关键证据" in prompt
     assert "最后一条 assistant 消息必须只包含 6 个 ASCII 字符" in prompt
     assert "不修改漏洞原始正文" in conclude
     assert "不得仅根据旧 Finding/Evidence 强行提交" in conclude
     assert "references/*-example.md" in conclude
-    assert "AV/AC/AT/PR/UI" in conclude
-    assert "完整过程留在 `review.md`" in conclude
+    assert "vuln_report-" in conclude
     assert "axiom review status" in conclude
 
 

@@ -1,6 +1,23 @@
 window.AxiomModules = window.AxiomModules || {};
 window.AxiomModules.timeline = {
   methods: {
+    // 时间轴条只渲染窗口内的条目。
+    // 全量渲染（t_220 有 2200+ 事件 → 4400+ DOM 节点）会让「选中/滚动到某个条目」
+    // 的代价随其在条中的位置线性增长（实测早期 1.1s、晚期 4.1s）。
+    timelineEventsWindow(limit = 200) {
+      const all = this.timelineEvents();
+      if (all.length <= limit) return all;
+      let center = all.length - 1;
+      const sel = this.selectedTimelineEntryId;
+      if (sel) {
+        const idx = all.findIndex(e => e.id === sel);
+        if (idx >= 0) center = idx;
+      }
+      const half = Math.floor(limit / 2);
+      const start = Math.max(0, Math.min(center - half, all.length - limit));
+      return all.slice(start, start + limit);
+    },
+
     timelineEvents() {
       if (this.replay.active) return this.replay.visibleEvents;
       if (!this.project) return [];

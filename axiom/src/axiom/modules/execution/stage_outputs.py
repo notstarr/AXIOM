@@ -32,6 +32,11 @@ BOOTSTRAP_FILES = (
     "asset_inventory.md",
     "initial_leads.md",
 )
+# jsfinder 每轮/每目标产出独立文件（jsfinder_result-<host>-<path>-<rand4>.json），
+# 所以这里按规则发现全部匹配文件，而不是只认一个固定文件名。
+BOOTSTRAP_OPTIONAL_PATTERNS = (
+    ("jsfinder_result*.json", "bootstrap.jsfinder", "JSFinder 能力树"),
+)
 BOOTSTRAP_OPTIONAL_FILES = {
     "jsfinder_result.json": ("bootstrap.jsfinder", "JSFinder 能力树"),
 }
@@ -39,7 +44,8 @@ _SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 EXPLORE_FINDINGS_FILE = "findings.md"
 EXPLORE_LEADS_FILE = "leads.md"
 EXPLORE_MAX_EVIDENCE_FILES = 48
-REVIEW_REPORT_FILE = "review.md"
+REVIEW_REPORT_FILE = "review.md"  # 旧格式，仅过渡期兼容
+REVIEW_VULN_REPORT_PREFIX = "vuln_report-"
 REVIEW_MAX_EVIDENCE_FILES = 48
 
 
@@ -114,24 +120,35 @@ def bootstrap_files(run_dir: str | Path) -> list[StageFile]:
         )
     if errors:
         raise StageOutputError("Bootstrap 产物未就绪：" + "；".join(errors))
-    for filename, (artifact_type, summary) in BOOTSTRAP_OPTIONAL_FILES.items():
-        path = next(
-            (
-                candidate
-                for candidate in (root / filename, root / "workspace" / filename)
-                if candidate.is_file()
-            ),
-            None,
-        )
-        if path is None:
-            continue
-        try:
-            _require_regular_output(path, root)
-            _require_non_empty(path)
-        except StageOutputError:
-            logger.warning("Bootstrap 可选产物无效，已跳过：%s", filename)
-            continue
-        results.append(StageFile(relative_name=filename, path=path, artifact_type=artifact_type, summary=summary))
+    for glob_pattern, artifact_type, summary in BOOTSTRAP_OPTIONAL_PATTERNS:
+        seen: set[str] = set()
+        for base in (root, root / "workspace"):
+            if not base.is_dir():
+                continue
+            for path in sorted(base.glob(glob_pattern)):
+                if not path.is_file() or path.name in seen:
+                    continue
+                seen.add(path.name)
+                filename = path.name
+                try:
+                    _require_regular_output(path, root)
+                    _require_non_empty(path)
+                except StageOutputError:
+                    logger.warning("Bootstrap 可选产物无效，已跳过：%s", filename)
+                    continue
+                tag = (
+                    filename[len("jsfinder_result-"):-len(".json")]
+                    if filename.startswith("jsfinder_result-") and filename.endswith(".json")
+                    else ""
+                )
+                results.append(
+                    StageFile(
+                        relative_name=filename,
+                        path=path,
+                        artifact_type=artifact_type,
+                        summary=f"{summary} · {tag}" if tag else summary,
+                    )
+                )
     results.extend(_collect_bootstrap_extras(root, registered={item.relative_name for item in results}))
     return results
 
@@ -249,22 +266,59 @@ def review_files(run_dir: str | Path, *, emit_warnings: bool = True) -> list[Sta
     run_root = Path(run_dir).resolve()
     root = run_root / "artifacts"
     if not root.is_dir() or root.is_symlink():
-        raise StageOutputError("Reviewer 必须在 artifacts/ 中写入 review.md")
+        raise StageOutputError("Reviewer 必须在 artifacts/ 中写入产物（漏洞报告与/或证据）")
 
-    report_path = root / REVIEW_REPORT_FILE
-    _require_regular_output(report_path, root)
-    _require_non_empty(report_path)
-    results = [
-        StageFile(
-            relative_name=REVIEW_REPORT_FILE,
-            path=report_path,
-            artifact_type="review.report",
-            summary="Reviewer 漏洞审核记录",
-        )
-    ]
+    # 审核报告废除：改为「每个「已验证」漏洞一份漏洞报告」。
+    # 允许零份（本轮无有效漏洞是合法结果），裁决本身存在漏洞记录的 status + reason 里。
+    allowed_root_names: set[str] = set()
+    results: list[StageFile] = []
+    for path in sorted(root.iterdir(), key=lambda item: item.name):
+        if not path.is_file():
+            continue
+        name = path.name
+        if name.startswith(REVIEW_VULN_REPORT_PREFIX) and name.endswith(".md"):
+            # 新：漏洞报告（每漏洞一份）。文件名必须是纯 ASCII，
+            # 否则存储/引用链路会出问题（提示词里已要求 <slug> 只用 [A-Za-z0-9-]）。
+            if not _safe_explore_relative(Path(name)):
+                if emit_warnings:
+                    logger.warning("漏洞报告文件名非法（须纯 ASCII），已跳过：%s", name)
+                continue
+            try:
+                _require_regular_output(path, root)
+                _require_non_empty(path)
+            except StageOutputError:
+                if emit_warnings:
+                    logger.warning("审核漏洞报告无效，已跳过：%s", name)
+                continue
+            vuln_id = name[len(REVIEW_VULN_REPORT_PREFIX):-len(".md")].split("-")[0]
+            results.append(
+                StageFile(
+                    relative_name=name,
+                    path=path,
+                    artifact_type="review.vuln_report",
+                    summary=f"漏洞报告 · {vuln_id}" if vuln_id else "漏洞报告",
+                )
+            )
+            allowed_root_names.add(name)
+        elif name == REVIEW_REPORT_FILE:
+            # 过渡期兼容：旧的 review.md 仍收（不再强制要求）
+            try:
+                _require_regular_output(path, root)
+                _require_non_empty(path)
+            except StageOutputError:
+                continue
+            results.append(
+                StageFile(
+                    relative_name=name,
+                    path=path,
+                    artifact_type="review.report",
+                    summary="Reviewer 漏洞审核记录（旧格式）",
+                )
+            )
+            allowed_root_names.add(name)
     evidence, skipped = _collect_optional_evidence(
         root,
-        required={REVIEW_REPORT_FILE},
+        required=allowed_root_names,
         artifact_type="review.evidence",
         summary_prefix="Reviewer 复测证据",
     )
@@ -477,22 +531,37 @@ def append_explore_vulnerability_locked(
 
 def write_bootstrap_index(run_dir: str | Path, artifacts: list[Artifact]) -> Path:
     by_type = {item.artifact_type: item for item in artifacts}
+    # 同类型可能有多份（jsfinder 每轮/每目标一个文件）。只保留"最后一份"会让
+    # 其余产物在清单里静默消失（DB 行还在，但下游读不到）。
+    by_type_multi: dict[str, list[Artifact]] = {}
+    for item in artifacts:
+        by_type_multi.setdefault(item.artifact_type, []).append(item)
+
+    def _entry(item: Artifact) -> dict[str, object]:
+        return {
+            "id": item.id,
+            "type": item.artifact_type,
+            "storage_key": item.storage_key,
+            "content_hash": item.content_hash,
+            "size": item.size,
+            "summary": item.summary,
+        }
     payload = {
         "completed": True,
+        # 兼容旧读法：文件名 -> 该类型的最后一份
         "artifacts": {
-            filename: {
-                "id": by_type[artifact_type].id,
-                "type": artifact_type,
-                "storage_key": by_type[artifact_type].storage_key,
-                "content_hash": by_type[artifact_type].content_hash,
-                "size": by_type[artifact_type].size,
-            }
+            filename: _entry(by_type[artifact_type])
             for filename, artifact_type in {
                 "asset_inventory.md": "bootstrap.asset_inventory",
                 "initial_leads.md": "bootstrap.initial_leads",
                 "jsfinder_result.json": "bootstrap.jsfinder",
             }.items()
             if artifact_type in by_type
+        },
+        # 新读法：类型 -> 全部（同类型多份不再被压成一条）
+        "artifacts_multi": {
+            artifact_type: [_entry(item) for item in items]
+            for artifact_type, items in by_type_multi.items()
         },
     }
     path = Path(run_dir).resolve() / "bootstrap_artifacts.json"

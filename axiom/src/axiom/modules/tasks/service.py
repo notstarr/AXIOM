@@ -387,6 +387,26 @@ class TaskService:
             )
         return self._decorate(resumed)
 
+    def pause_manual(self, task_id: str) -> Task:
+        """人工暂停运行中的任务（钉钉指令/人工操作入口）。"""
+        now = utcnow()
+        with self.engine.begin() as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.status != "running":
+                raise ConflictError("Only a running Task can be paused")
+            stopped = self._pause_in(
+                conn,
+                task=task,
+                pause_reason="manual",
+                failure_kind="manual",
+                now=now,
+            )
+            if stopped is None:
+                raise ConflictError("Task is not running")
+            return stopped
+
     def reconcile_run_deadlines(self) -> RunDeadlineReconcileReport:
         checked_at = utcnow()
         with self.engine.connect() as conn:

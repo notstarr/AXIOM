@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 
-from sqlalchemy import Connection, select, update
+from sqlalchemy import Connection, func, select, update
 
-from axiom.modules.graph.schemas import Fact, Intent, TaskGraph
+from axiom.modules.graph.schemas import Fact, GraphChildren, GraphCounts, Intent, TaskGraph
 from axiom.modules.graph.tables import facts, intent_sources, intents
 from axiom.modules.goals.tables import goal_evaluations, task_goal_cycles
 from axiom.modules.tasks.schemas import Task
@@ -142,7 +142,10 @@ class GraphRepository:
             is not None
         )
 
-    def graph(self, conn: Connection, task_id: str) -> TaskGraph:
+    def graph(self, conn: Connection, task_id: str, scope: str = "full") -> TaskGraph:
+        # scope=skeleton：只回 origin/goal 两个骨架节点（外加任务级 Goal 元信息）。
+        # 其余节点由前端按需调 children() 展开，避免首屏传输整张图。
+        skeleton_only = scope == "skeleton"
         task_row = conn.execute(
             select(
                 tasks.c.current_goal_cycle_id,
@@ -151,18 +154,19 @@ class GraphRepository:
         ).mappings().one_or_none()
         current_goal_cycle_id = task_row["current_goal_cycle_id"] if task_row else None
         task_status = task_row["status"] if task_row else "running"
+        fact_query = select(facts).where(facts.c.task_id == task_id, facts.c.archived.is_(False))
+        if skeleton_only:
+            fact_query = fact_query.where(facts.c.id.in_(("origin", "goal")))
         fact_rows = conn.execute(
-            select(facts)
-            .where(facts.c.task_id == task_id, facts.c.archived.is_(False))
-            .order_by(facts.c.created_at, facts.c.id)
+            fact_query.order_by(facts.c.created_at, facts.c.id)
         ).mappings().all()
         visible_fact_ids = {row["id"] for row in fact_rows}
-        intent_rows = conn.execute(
+        intent_rows = [] if skeleton_only else conn.execute(
             select(intents)
             .where(intents.c.task_id == task_id, intents.c.archived.is_(False))
             .order_by(intents.c.created_at, intents.c.id)
         ).mappings().all()
-        source_rows = conn.execute(
+        source_rows = [] if skeleton_only else conn.execute(
             select(intent_sources.c.intent_id, intent_sources.c.fact_id)
             .join(
                 facts,
@@ -295,6 +299,82 @@ class GraphRepository:
             # payloads never derive completion edges from Fact evidence.
             goal_from_fact_ids=[],
             goal_history=history,
+        )
+
+    def counts(self, conn: Connection, task_id: str) -> GraphCounts:
+        """轻量计数：图谱走骨架/按需加载后，头部「N 事实 / M 意图」不再依赖完整数组。"""
+        fact_total = conn.execute(
+            select(func.count())
+            .select_from(facts)
+            .where(facts.c.task_id == task_id, facts.c.archived.is_(False))
+        ).scalar_one()
+        intent_total = conn.execute(
+            select(func.count())
+            .select_from(intents)
+            .where(intents.c.task_id == task_id, intents.c.archived.is_(False))
+        ).scalar_one()
+        return GraphCounts(facts=int(fact_total), intents=int(intent_total))
+
+    def children(
+        self,
+        conn: Connection,
+        task_id: str,
+        node_id: str,
+        *,
+        limit: int = 100,
+    ) -> GraphChildren:
+        """按需展开：返回 node_id 的直接下游 —— 消费它的意图，以及这些意图产出的事实。
+
+        与 graph() 全量路径共用同一套装配（_intent + Fact），保证前端「按需展开拼出来的图」
+        与「全量加载的图」逐元素一致。
+        """
+        source_rows = conn.execute(
+            select(intent_sources.c.intent_id)
+            .where(
+                intent_sources.c.task_id == task_id,
+                intent_sources.c.fact_id == node_id,
+                intent_sources.c.intent_id.in_(
+                    select(intents.c.id).where(
+                        intents.c.task_id == task_id,
+                        intents.c.archived.is_(False),
+                    )
+                ),
+            )
+            .order_by(intent_sources.c.intent_id)
+            .limit(limit + 1)
+        ).mappings().all()
+        intent_ids = [row["intent_id"] for row in source_rows]
+        has_more = len(intent_ids) > limit
+        intent_ids = intent_ids[:limit]
+        if not intent_ids:
+            return GraphChildren(node_id=node_id)
+        intent_rows = conn.execute(
+            select(intents)
+            .where(
+                intents.c.task_id == task_id,
+                intents.c.archived.is_(False),
+                intents.c.id.in_(intent_ids),
+            )
+            .order_by(intents.c.created_at, intents.c.id)
+        ).mappings().all()
+        produced_ids = {row["to_fact_id"] for row in intent_rows if row["to_fact_id"]}
+        fact_rows = []
+        if produced_ids:
+            fact_rows = conn.execute(
+                select(facts)
+                .where(
+                    facts.c.task_id == task_id,
+                    facts.c.archived.is_(False),
+                    facts.c.id.in_(produced_ids),
+                )
+                .order_by(facts.c.created_at, facts.c.id)
+            ).mappings().all()
+        return GraphChildren(
+            node_id=node_id,
+            facts=[Fact.model_validate(row) for row in fact_rows],
+            intents=[self._intent(conn, row) for row in intent_rows],
+            child_count=len(intent_rows),
+            has_more=has_more,
         )
 
     @staticmethod

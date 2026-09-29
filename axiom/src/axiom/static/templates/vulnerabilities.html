@@ -251,66 +251,90 @@
 
 <!-- Vuln Editor Modal -->
 <div x-show="vulnEditor.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="vulnEditor.open = false">
-  <div class="sto" style="width:100%; max-width:640px; max-height:85vh; overflow-y:auto; margin:0 16px;">
-    <div class="sto-panel" @click.stop>
-      <div style="position:sticky; top:0; z-index:10; background:var(--sto-panel); padding:14px 18px; border-bottom:1px solid var(--sto-line); display:flex; align-items:center; gap:10px;">
-        <h3 style="font-size:13.5px; font-weight:650; color:var(--sto-fg);" x-text="vulnEditor.isNew ? '新增漏洞' : '编辑漏洞'"></h3>
-        <span style="flex:1;"></span>
-        <button @click="vulnEditor.open = false" class="sto-ghost" style="padding:4px 10px;">×</button>
+  <div class="sto sto-vmodal">
+    <div class="sto-panel" style="display:flex; flex-direction:column; min-height:0; overflow:hidden;" @click.stop>
+
+      <div class="vm-head">
+        <div style="min-width:0;">
+          <div class="vm-title" x-text="vulnEditor.isNew ? '新增漏洞' : '编辑漏洞'"></div>
+          <div class="vm-sub" x-text="vulnEditor.project_id ? (vulnEditor.project_id + (vulnEditor.isNew ? ' · 填好后可加载已有产物' : '')) : '尚未绑定任务'"></div>
+        </div>
+        <button type="button" class="vm-x" @click="vulnEditor.open = false" aria-label="关闭">×</button>
       </div>
-      <div style="padding:16px 18px; display:flex; flex-direction:column; gap:12px;">
-        <div class="flex" style="gap:8px;">
-          <input x-model="vulnEditor.project_id" placeholder="任务 ID（如 t_042）" class="sto-input" style="flex:1;" :disabled="!vulnEditor.isNew">
-          <button type="button" @click="loadVulnEditorArtifacts()" :disabled="!vulnEditor.project_id || vulnEditor.artifacts_loading" class="sto-minibtn" style="flex-shrink:0;" x-text="vulnEditor.artifacts_loading ? '加载中…' : '加载产物'"></button>
-        </div>
-        <div class="sto-field"><label>标题 *</label><input x-model="vulnEditor.title" placeholder="标题 *" class="sto-input"></div>
-        <div class="sto-grid2">
-          <div class="sto-field"><label>漏洞类型</label><input x-model="vulnEditor.type" placeholder="如 IDOR / SQLi / JWT" class="sto-input"></div>
-          <div class="sto-field"><label>受影响目标 / 接口</label><input x-model="vulnEditor.affected_target" placeholder="受影响目标 / 接口" class="sto-input"></div>
-        </div>
-        <div class="sto-field"><label>严重程度</label>
-          <div class="flex flex-wrap" style="gap:7px;">
-            <template x-for="sev in ['critical','high','medium','low','info']" :key="sev">
-              <button type="button" @click="vulnEditor.severity = sev" class="sto-sevbadge sto-listbtn" style="padding:5px 12px;"
-                :class="[`sto-sev-${sev}`, vulnEditor.severity === sev ? 'active' : '']"
-                x-text="vulnSeverityLabel(sev)"></button>
-            </template>
+
+      <div class="vm-body">
+
+        <div class="vm-sec">
+          <div class="vm-seclabel">基本信息</div>
+          <div class="flex" style="gap:8px;">
+            <input x-model="vulnEditor.project_id" placeholder="任务 ID（如 t_042）" class="sto-input sto-num" style="flex:1;" :disabled="!vulnEditor.isNew">
+            <button type="button" @click="loadVulnEditorArtifacts()" :disabled="!vulnEditor.project_id || vulnEditor.artifacts_loading" class="sto-minibtn" style="flex-shrink:0;" x-text="vulnEditor.artifacts_loading ? '加载中…' : '加载产物'"></button>
+          </div>
+          <div class="sto-field"><label>标题<span class="vm-req">*</span></label><input x-model="vulnEditor.title" placeholder="一句话说清：谁 · 在哪个接口 · 能干什么" class="sto-input"></div>
+          <div class="sto-grid2">
+            <div class="sto-field"><label>漏洞类型</label><input x-model="vulnEditor.type" placeholder="如 IDOR / SQLi / JWT" class="sto-input"></div>
+            <div class="sto-field"><label>受影响目标 / 接口</label><input x-model="vulnEditor.affected_target" placeholder="如 POST /api/v1/xxx" class="sto-input"></div>
           </div>
         </div>
-        <div class="sto-grid2">
-          <div class="sto-field"><label>状态</label>
-            <select x-model="vulnEditor.status" class="sto-input">
-              <option value="待验证">待验证</option>
-              <option value="已验证">已验证</option>
-              <option value="忽略">忽略</option>
-              <option value="重复">重复</option>
+
+        <div class="vm-sec">
+          <div class="vm-seclabel">定级与关联</div>
+          <div class="sto-field"><label>严重程度</label>
+            <div class="sto-sevpicker">
+              <template x-for="sev in ['critical','high','medium','low','info']" :key="sev">
+                <button type="button" @click="vulnEditor.severity = sev" class="sto-sevopt"
+                  :class="[`sto-sev-${sev}`, vulnEditor.severity === sev ? 'active' : '']">
+                  <span class="vm-dot"></span><span x-text="vulnSeverityLabel(sev)"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+          <div class="sto-grid2">
+            <div class="sto-field"><label>状态</label>
+              <select x-model="vulnEditor.status" class="sto-input">
+                <option value="待验证">待验证</option>
+                <option value="已验证">已验证</option>
+                <option value="忽略">忽略</option>
+                <option value="重复">重复</option>
+              </select>
+            </div>
+            <div class="sto-field"><label>关联 Findings</label>
+              <select x-model="vulnEditor.finding_artifact_id" class="sto-input">
+                <option value="">不关联</option>
+                <template x-for="artifact in (vulnEditor.available_artifacts || []).filter(item => item.artifact_type === 'explore.findings' || item.artifact_type === 'bootstrap.findings' || item.artifact_type === 'upload')" :key="`finding-${artifact.id}`"><option :value="artifact.id" x-text="`${artifact.path} · ${artifact.artifact_type}`"></option></template>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="vm-sec">
+          <div class="vm-seclabel">内容</div>
+          <div class="sto-field"><label>描述<span class="vm-req">*</span></label><textarea x-model="vulnEditor.description" rows="6" placeholder="漏洞成因 + 触发条件" class="sto-input"></textarea></div>
+          <div class="sto-field"><label>利用前提</label><textarea x-model="vulnEditor.prerequisites" rows="3" placeholder="需要什么身份 / 前置条件" class="sto-input"></textarea></div>
+          <div class="sto-field"><label>影响<span class="vm-req">*</span></label><textarea x-model="vulnEditor.impact" rows="5" placeholder="能造成什么后果" class="sto-input"></textarea></div>
+          <div class="sto-field"><label>修复建议</label><textarea x-model="vulnEditor.remediation" rows="6" placeholder="建议怎么修" class="sto-input"></textarea></div>
+        </div>
+
+        <div class="vm-sec">
+          <div class="vm-seclabel">证据</div>
+          <div class="sto-field"><label>证据文件（可多选）</label>
+            <select multiple size="5" x-model="vulnEditor.evidence_artifact_ids" class="sto-input">
+              <template x-for="artifact in (vulnEditor.available_artifacts || []).filter(item => item.artifact_type === 'explore.evidence' || item.artifact_type === 'review.evidence' || item.artifact_type === 'upload')" :key="`evidence-${artifact.id}`"><option :value="artifact.id" x-text="`${artifact.path} · ${formatBytes(artifact.size)}`"></option></template>
             </select>
+            <p class="vm-hint">按住 Command / Ctrl 可多选已有 Artifact。</p>
           </div>
-          <div class="sto-field"><label>关联 Findings</label>
-            <select x-model="vulnEditor.finding_artifact_id" class="sto-input">
-              <option value="">不关联</option>
-              <template x-for="artifact in (vulnEditor.available_artifacts || []).filter(item => item.artifact_type === 'explore.findings' || item.artifact_type === 'bootstrap.findings' || item.artifact_type === 'upload')" :key="`finding-${artifact.id}`"><option :value="artifact.id" x-text="`${artifact.path} · ${artifact.artifact_type}`"></option></template>
-            </select>
+          <div class="sto-field"><label>状态原因</label>
+            <textarea x-model="vulnEditor.status_reason" rows="2" placeholder="状态为「忽略」时必填，不少于 4 字" class="sto-input"></textarea>
           </div>
         </div>
-        <div class="sto-field"><label>描述 *</label><textarea x-model="vulnEditor.description" rows="3" placeholder="描述 *" class="sto-input"></textarea></div>
-        <div class="sto-field"><label>利用前提</label><textarea x-model="vulnEditor.prerequisites" rows="2" placeholder="利用前提" class="sto-input"></textarea></div>
-        <div class="sto-field"><label>影响 *</label><textarea x-model="vulnEditor.impact" rows="2" placeholder="影响 *" class="sto-input"></textarea></div>
-        <div class="sto-field"><label>修复建议</label><textarea x-model="vulnEditor.remediation" rows="3" placeholder="修复建议" class="sto-input"></textarea></div>
-        <div class="sto-field"><label>证据文件（可多选）</label>
-          <select multiple size="5" x-model="vulnEditor.evidence_artifact_ids" class="sto-input">
-            <template x-for="artifact in (vulnEditor.available_artifacts || []).filter(item => item.artifact_type === 'explore.evidence' || item.artifact_type === 'review.evidence' || item.artifact_type === 'upload')" :key="`evidence-${artifact.id}`"><option :value="artifact.id" x-text="`${artifact.path} · ${formatBytes(artifact.size)}`"></option></template>
-          </select>
-          <p class="sto-desc">按住 Command / Ctrl 可选择多个已有 Artifact。</p>
-        </div>
-        <div class="sto-field"><label>状态原因（状态为「忽略」时必填，不少于 4 字）</label>
-          <textarea x-model="vulnEditor.status_reason" rows="2" placeholder="可记录人工裁决或忽略原因" class="sto-input"></textarea>
-        </div>
+
       </div>
-      <div class="sto-foot" style="padding:13px 18px; border-top:1px solid var(--sto-line); position:sticky; bottom:0; background:var(--sto-panel);">
+
+      <div class="vm-foot">
         <button @click="vulnEditor.open = false" class="sto-ghost">取消</button>
         <button @click="saveVuln()" class="sto-btn">保存</button>
       </div>
+
     </div>
   </div>
 </div>

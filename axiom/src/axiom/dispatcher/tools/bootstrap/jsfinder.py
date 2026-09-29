@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""jsfinder — 给一个 URL，抓取 JS 并提取九类信息，输出单个 JSON。
+"""jsfinder — 给一个 URL，抓取 JS 并提取前端路由、API 等十类信息。
 
 独立实现 mitan 2.x JSFinder：109 条分类正则（jsrules.json，随工具分发，
 可 --rules 替换）+ 提取后校验器（is_api_route / 各云 AK / JWT / 身份证等），
@@ -9,7 +9,7 @@
   python3 jsfinder.py https://target/
   python3 jsfinder.py https://target/ --out /path/to/jsfinder_result.json
 
-输出: 单个 JSON，九类固定键（无命中为空数组）；进度打印在 stderr。
+输出: 单个 JSON，十类固定键（无命中为空数组）；进度打印在 stderr。
 退出码: 0=有结果, 2=抓取成功但零命中, 3=入口全部不可达。
 """
 from __future__ import annotations
@@ -45,7 +45,7 @@ UA_POOL = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/118.0",
 ]
 
-CATEGORIES = ["API接口", "URL", "域名IP", "用户相关", "账号密码", "云Key", "Auth", "加解密", "其他"]
+CATEGORIES = ["前端路由", "API接口", "URL", "域名IP", "用户相关", "账号密码", "云Key", "Auth", "加解密", "其他"]
 
 CTX = ssl.create_default_context()
 CTX.check_hostname = False
@@ -334,10 +334,42 @@ def is_binary_type(content_type: str) -> bool:
 
 
 ROUTER_PATH_RE = re.compile(
-    r"""path\s*:\s*["'`]([A-Za-z0-9_$\-][A-Za-z0-9_$\-/:*{}.\[\]]{0,150})["'`]"""
+    r"""\bpath\s*:\s*["'`](?P<path>[^"'`\s,]{1,151})["'`]"""
+)
+JSX_ROUTE_RE = re.compile(
+    r"""<(?:Route|RouterLink|Link|NavLink)\b[^>]{0,500}?\b(?:path|to)\s*=\s*["'`](?P<path>[^"'`\s]{1,151})["'`]""",
+    re.I,
+)
+JSX_ROUTE_EXPR_RE = re.compile(
+    r"""<(?:Route|RouterLink|Link|NavLink)\b[^>]{0,500}?\b(?:path|to)\s*=\s*\{\s*["'`](?P<path>[^"'`\s]{1,151})["'`]\s*\}""",
+    re.I,
+)
+ROUTER_CALL_RE = re.compile(
+    r"""(?:\b(?:router|history)\s*\.\s*(?:push|replace)|\b(?:navigate|redirect))\s*\(\s*["'`](?P<path>[^"'`\s]{1,151})["'`]""",
+    re.I,
+)
+ROUTER_LINK_RE = re.compile(
+    r"""<router-link\b[^>]{0,500}?\b:?to\s*=\s*(?:["'`](?P<path>[^"'`\s]{1,151})["'`]|\{\s*["'`](?P<expr>[^"'`\s]{1,151})["'`]\s*\})""",
+    re.I,
+)
+ANGULAR_ROUTE_RE = re.compile(
+    r"""\[routerLink\]\s*=\s*["'`]\s*\[\s*["'`](?P<path>/[^"'`\s]{1,151})["'`]""",
+    re.I,
 )
 CALL_SITE_RE = re.compile(
     r"""\.\s*(?P<method>get|post|put|delete|patch)\s*\(\s*["'`](?P<url>[^"'`\s]{3,300})["'`]""",
+    re.I,
+)
+FETCH_SITE_RE = re.compile(
+    r"""\bfetch\s*\(\s*["'`](?P<url>[^"'`\s]{2,300})["'`]""",
+    re.I,
+)
+ROUTER_CONTEXT_RE = re.compile(
+    r"""\b(?:component|components|loadComponent|loadChildren|redirect|redirectTo|children|childRoutes|element|loader|lazy|meta|beforeEnter|canActivate|outlet|createRouter|createBrowserRouter|createHashRouter|useRoutes|addRoute|routerModule|routerLink|routes?)\b|<Route\b""",
+    re.I,
+)
+ROUTE_STATIC_RE = re.compile(
+    r"\.(?:js|mjs|css|map|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot|mp[34]|webm|pdf|zip)(?:[?#]|$)",
     re.I,
 )
 
@@ -377,16 +409,55 @@ def extract_call_sites(body: str) -> set[str]:
         if re.search(r"content-type", tail, re.I):
             parts.append("header:Content-Type")
         out.add(" | ".join(parts))
+    for match in FETCH_SITE_RE.finditer(body):
+        url = match.group("url")
+        if not url.startswith(("/", "${", "http")):
+            continue
+        tail = body[match.end():match.end() + 500]
+        method_match = re.search(r"\bmethod\s*:\s*[\"'`](GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)[\"'`]", tail, re.I)
+        method = method_match.group(1).upper() if method_match else "GET"
+        parts = [f"{method} {url}"]
+        query = sorted(set(re.findall(r"[?&]([A-Za-z_][A-Za-z0-9_]*)=", url)))
+        if query:
+            parts.append("query:" + ",".join(query))
+        if re.search(r"content-type", tail, re.I):
+            parts.append("header:Content-Type")
+        out.add(" | ".join(parts))
     return out
 
 
 def extract_router_paths(body: str) -> set[str]:
-    """vue/react-router 的 path: '...' 声明（相对路径、:param、* 通配）。"""
+    """提取 Vue/React/Angular 的路由声明与页面导航调用。"""
     out: set[str] = set()
+
+    def add(value: str) -> None:
+        if not value or value.lower().startswith(("http://", "https://", "mailto:", "tel:", "javascript:")):
+            return
+        if ROUTE_STATIC_RE.search(value):
+            return
+        out.add(value)
+
+    def has_route_context(match: re.Match[str]) -> bool:
+        # 只在同一个对象/数组片段内检查 component、children 等路由字段，
+        # 避免把相邻请求配置里的 path 误判为前端路由。
+        before = max(body.rfind("{", 0, match.start()), body.rfind("[", 0, match.start()))
+        after_brace = body.find("}", match.end())
+        after_bracket = body.find("]", match.end())
+        after_candidates = [index for index in (after_brace, after_bracket) if index >= 0]
+        after = min(after_candidates) if after_candidates else len(body)
+        if before >= 0 and before < after:
+            return bool(ROUTER_CONTEXT_RE.search(body[before:after + 1]))
+        return bool(ROUTER_CONTEXT_RE.search(body[max(0, match.start() - 80):match.end() + 160]))
+
     for match in ROUTER_PATH_RE.finditer(body):
-        value = match.group(1)
-        if "/" in value or ":" in value or "*" in value:
-            out.add(value)
+        # 单独的 path 字段也可能属于请求配置；附近出现路由专用字段时才收录。
+        if has_route_context(match):
+            add(match.group("path"))
+    for pattern in (JSX_ROUTE_RE, JSX_ROUTE_EXPR_RE, ROUTER_CALL_RE, ROUTER_LINK_RE):
+        for match in pattern.finditer(body):
+            add(match.groupdict().get("path") or match.groupdict().get("expr") or "")
+    for match in ANGULAR_ROUTE_RE.finditer(body):
+        add(match.group("path"))
     return out
 
 
@@ -486,6 +557,7 @@ def run_rules(text: str, rules):
 
 def mine(opener, entries: list[str], cfg, rules):
     total: dict[str, set] = {c: set() for c in CATEGORIES}
+    confirmed_api: set[str] = set()
     stats = {"js_files": 0, "pages": 0, "errors": 0, "maps": 0}
     deadline = time.monotonic() + cfg.max_seconds
     done = 0
@@ -542,10 +614,13 @@ def mine(opener, entries: list[str], cfg, rules):
                     with lock:
                         for category, values in hits.items():
                             total.setdefault(category, {}).update(values)
-                extra = extract_call_sites(body) | extract_router_paths(body)
-                if extra:
+                api_calls = extract_call_sites(body)
+                router_paths = extract_router_paths(body)
+                if api_calls or router_paths:
                     with lock:
-                        total.setdefault("API接口", {}).update(extra)
+                        total["API接口"].update(api_calls)
+                        total["前端路由"].update(router_paths)
+                        confirmed_api.update(api_calls)
                 for map_url in sourcemap_candidates(url, body):
                     with lock:
                         if map_url in maps_seen:
@@ -553,12 +628,14 @@ def mine(opener, entries: list[str], cfg, rules):
                         maps_seen.add(map_url)
                     for text in load_sourcemap(opener, map_url, cfg):
                         sm_hits = run_rules(text, rules)
-                        sm_extra = extract_call_sites(text) | extract_router_paths(text)
+                        sm_api_calls = extract_call_sites(text)
+                        sm_router_paths = extract_router_paths(text)
                         with lock:
                             for category, values in sm_hits.items():
                                 total.setdefault(category, {}).update(values)
-                            if sm_extra:
-                                total.setdefault("API接口", {}).update(sm_extra)
+                            total["API接口"].update(sm_api_calls)
+                            total["前端路由"].update(sm_router_paths)
+                            confirmed_api.update(sm_api_calls)
                             stats["maps"] += 1
                 if looks_like_html(url, content_type) or url.rstrip("/") in entry_set:
                     for match in SCRIPT_RE.findall(body) + CSS_LINK_RE.findall(body):
@@ -585,7 +662,7 @@ def mine(opener, entries: list[str], cfg, rules):
         thread.start()
     for thread in threads:
         thread.join()
-    return total, stats
+    return total, stats, confirmed_api
 
 
 _HTTP_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
@@ -597,13 +674,63 @@ def _api_path(entry: str) -> str:
     return remainder if verb in _HTTP_METHODS else first
 
 
+def _target_origin(targets: list[str]) -> str:
+    """单站扫描时返回站点域；多站扫描无法确定相对路径归属时返回占位组。"""
+    target_netlocs = {urlparse(target).netloc.lower() for target in targets if urlparse(target).netloc}
+    if len(target_netlocs) == 1:
+        return next(iter(target_netlocs))
+    return "_未归属"
+
+
+def _entry_location(entry: str, targets: list[str]) -> tuple[str, str]:
+    """把 API/路由条目归一为 (站点, 路径)，用于跨类别去重。"""
+    value = _api_path(entry)
+    parsed = urlparse(value)
+    if parsed.scheme in ("http", "https") and parsed.netloc:
+        host = parsed.netloc.lower()
+        path = parsed.path or "/"
+    else:
+        host = _target_origin(targets)
+        if value.startswith("#"):
+            path = "/" + value.split("?", 1)[0]
+        elif value.startswith("/#"):
+            path = value.split("?", 1)[0]
+        else:
+            path = value.split("?", 1)[0].split("#", 1)[0] or "/"
+    if not path.startswith("/"):
+        path = "/" + path
+    if len(path) > 1:
+        path = path.rstrip("/")
+    return host, path
+
+
+def _separate_routes_and_api(
+    routes: set[str], api_values: set[str], confirmed_api: set[str], targets: list[str]
+) -> tuple[list[str], list[str]]:
+    """按提取上下文消除交叉项：真实请求调用优先，其次是明确路由声明。"""
+    confirmed_keys = {_entry_location(entry, targets) for entry in confirmed_api}
+
+    # 同一路径既出现在请求调用又出现在路由上下文时，保留为 API；否则路由优先，
+    # 用来清理“JSFinder多段接口路径”等通用字符串规则造成的重复命中。
+    clean_routes = {
+        route for route in routes if _entry_location(route, targets) not in confirmed_keys
+    }
+    route_keys = {_entry_location(route, targets) for route in clean_routes}
+
+    clean_api: set[str] = set()
+    for entry in api_values:
+        key = _entry_location(entry, targets)
+        if key in confirmed_keys and entry not in confirmed_api:
+            continue
+        if key in route_keys:
+            continue
+        clean_api.add(entry)
+    return sorted(clean_routes), sorted(clean_api)
+
+
 def _group_api(values: list[str], targets: list[str]) -> dict:
     """API接口按域分组：域 -> 路径前缀(前两段) -> 排序条目，未分组单列。"""
-    # 多目标共享同一入口域时，相对路径 API 归属该域；不同域才落入未归属。
-    target_netlocs = {urlparse(t).netloc for t in targets if urlparse(t).netloc}
-    origin = target_netlocs.pop() if len(target_netlocs) == 1 else (
-        urlparse(targets[0]).netloc if len(targets) == 1 else "_未归属"
-    )
+    origin = _target_origin(targets)
     grouped: dict[str, dict[str, list[str]]] = {}
     for entry in values:
         path = _api_path(entry)
@@ -627,6 +754,15 @@ def _group_api(values: list[str], targets: list[str]) -> dict:
     }
 
 
+def _group_routes(values: list[str], targets: list[str]) -> dict[str, list[str]]:
+    """前端路由按其所属站点分组。"""
+    grouped: dict[str, list[str]] = {}
+    for entry in values:
+        host, _path = _entry_location(entry, targets)
+        grouped.setdefault(host, []).append(entry)
+    return {host: sorted(set(entries)) for host, entries in sorted(grouped.items())}
+
+
 def _count_entries(value) -> int:
     if isinstance(value, dict):
         return sum(_count_entries(v) for v in value.values())
@@ -636,11 +772,37 @@ def _count_entries(value) -> int:
 # ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
+def _slugify(value: str, limit: int) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", value or "").strip("-").lower()
+    return slug[:limit].strip("-")
+
+
+def _default_output_path(run_dir: Path, urls: list[str], tag: str = "") -> Path:
+    """默认产物路径：一次运行一个独立文件，保证不覆盖。
+
+    形如 jsfinder_result-<host>-<path>-<rand4>.json。
+    同域同路径重复运行也不会撞名（4 位随机后缀 + 存在性兜底）。
+    """
+    if tag:
+        stem = f"jsfinder_result-{_slugify(tag, 40)}"
+    else:
+        parsed = urlparse(urls[0]) if urls else None
+        host = _slugify((parsed.hostname or "") if parsed else "", 20) or "target"
+        seg = ((parsed.path or "").strip("/").split("/")[0]) if parsed else ""
+        path_slug = _slugify(seg, 12)
+        stem = f"jsfinder_result-{host}" + (f"-{path_slug}" if path_slug else "")
+    for _ in range(5):
+        candidate = run_dir / f"{stem}-{os.urandom(2).hex()}.json"
+        if not candidate.exists():
+            return candidate
+    return run_dir / f"{stem}-{datetime.now(timezone.utc).strftime('%H%M%S')}.json"
+
+
 def main() -> int:
     script_dir = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(
         prog=TOOL,
-        description="给一个 URL，抓取 JS 并提取九类信息，输出单个 JSON（mitan JSFinder 独立实现）。",
+        description="给一个 URL，抓取 JS 并分别提取前端路由、API 等十类信息。",
     )
     parser.add_argument("urls", nargs="+", help="目标 URL（一个或多个）")
     parser.add_argument("--cookie", default="", help="登录态 Cookie 串")
@@ -651,8 +813,10 @@ def main() -> int:
     parser.add_argument("--retries", type=int, default=1)
     parser.add_argument("--max-seconds", type=float, default=180.0, dest="max_seconds", help="总时限（秒），到点立即产出已有结果")
     parser.add_argument("--rules", default=str(script_dir / "jsrules.json"))
-    parser.add_argument("--only", default="", help="只提取这些类别（逗号分隔），默认九类全跑")
+    parser.add_argument("--only", default="", help="只提取这些类别（逗号分隔），默认十类全跑")
     parser.add_argument("--proxy", default="")
+    parser.add_argument("--out", default="", help="显式指定产物路径（默认按目标自动命名，不覆盖）")
+    parser.add_argument("--tag", default="", help="产物名标签（默认由目标域名/路径推导）")
     args = parser.parse_args()
 
     only = {c.strip() for c in args.only.split(",") if c.strip()} or None
@@ -665,17 +829,27 @@ def main() -> int:
 
     opener = build_opener(args.proxy)
     started = time.monotonic()
-    total, stats = mine(opener, args.urls, args, rules)
+    total, stats, confirmed_api = mine(opener, args.urls, args, rules)
     elapsed = round(time.monotonic() - started, 1)
 
     categories = {c: sorted(total.get(c, set())) for c in CATEGORIES}
+    categories["前端路由"], categories["API接口"] = _separate_routes_and_api(
+        total["前端路由"], total["API接口"], confirmed_api, args.urls
+    )
     for value in (*categories["API接口"], *categories["URL"]):
         if value.startswith(("http://", "https://")):
             netloc = urlparse(value).netloc
             if netloc and "." in netloc:
                 categories["域名IP"].append(netloc)
     categories["域名IP"] = sorted(set(categories["域名IP"]))
-    categories["API接口"] = _group_api(categories["API接口"], args.urls)
+    if not only or "前端路由" in only:
+        categories["前端路由"] = _group_routes(categories["前端路由"], args.urls)
+    else:
+        categories["前端路由"] = []
+    if not only or "API接口" in only:
+        categories["API接口"] = _group_api(categories["API接口"], args.urls)
+    else:
+        categories["API接口"] = []
     hits_total = sum(_count_entries(v) for v in categories.values())
     result = {
         "tool": TOOL,
@@ -687,7 +861,11 @@ def main() -> int:
     }
     run_dir = Path(os.environ.get("AXIOM_RUN_DIR") or ".")
     run_dir.mkdir(parents=True, exist_ok=True)
-    out_path = run_dir / "jsfinder_result.json"
+    # 每次运行产出独立文件：默认名带 host/path/随机后缀，绝不覆盖上一轮。
+    # 同一 bootstrap intent 内会跑多轮（匿名轮 / 登录态轮 / 补跑新路由轮），
+    # 固定写一个名字会让后一轮把前一轮整个盖掉。
+    out_path = Path(args.out) if args.out else _default_output_path(run_dir, list(args.urls), args.tag)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"[*] JS {stats['js_files']} 个 / 页面 {stats['pages']} 个 / sourcemap {stats['maps']} 个 / 请求失败 {stats['errors']} / 耗时 {elapsed}s", file=sys.stderr)
@@ -702,7 +880,7 @@ def main() -> int:
     if stats["js_files"] == 0 and stats["errors"] >= max(1, len(args.urls)):
         print("[✗] jsfinder 失败：入口不可达，未产出有效结果", file=sys.stderr)
         return 3
-    print(f"[✓] jsfinder 完成：九类共 {hits_total} 条，结果文件 {out_path.resolve()}")
+    print(f"[✓] jsfinder 完成：十类共 {hits_total} 条，结果文件 {out_path.resolve()}")
     return 0 if hits_total else 2
 
 

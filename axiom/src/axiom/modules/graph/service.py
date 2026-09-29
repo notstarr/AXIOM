@@ -6,7 +6,15 @@ from sqlalchemy import Engine
 
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.graph.repository import GraphRepository
-from axiom.modules.graph.schemas import Fact, Intent, TaskGraph, UpdateFact, UpdateIntent
+from axiom.modules.graph.schemas import (
+    Fact,
+    GraphChildren,
+    GraphCounts,
+    Intent,
+    TaskGraph,
+    UpdateFact,
+    UpdateIntent,
+)
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.tasks.tables import tasks
 from axiom.shared.clock import utcnow
@@ -31,14 +39,30 @@ class GraphService:
         self.archives = archives
         self.audit = audit
 
-    def get(self, task_id: str) -> TaskGraph:
+    def get(self, task_id: str, scope: str = "full") -> TaskGraph:
         with self.engine.connect() as conn:
             task = self.tasks.get(conn, task_id)
             if task is None:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.archived:
                 raise ConflictError("已归档任务的图谱不可见，请先恢复任务")
-            return self.repository.graph(conn, task_id)
+            return self.repository.graph(conn, task_id, scope=scope)
+
+    def counts(self, task_id: str) -> GraphCounts:
+        with self.engine.connect() as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            return self.repository.counts(conn, task_id)
+
+    def children(self, task_id: str, node_id: str, limit: int = 100) -> GraphChildren:
+        with self.engine.connect() as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            if task.archived:
+                raise ConflictError("已归档任务的图谱不可见，请先恢复任务")
+            return self.repository.children(conn, task_id, node_id, limit=limit)
 
     def fact(self, task_id: str, fact_id: str) -> Fact:
         with self.engine.connect() as conn:

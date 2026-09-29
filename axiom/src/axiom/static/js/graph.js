@@ -167,11 +167,23 @@ window.AxiomModules.graph = {
       const interventionDot = data.humanInterventionRequired
         ? `<span class="node-card__human-dot" title="${interventionLabel}" aria-label="${interventionLabel}"></span>`
         : '';
-      return `<div id="node-card-${data.id}" class="node-card node-card--${data.nodeType}${goalStatusClass}${archivedClass}" style="width:${w}px">`
+      // 按需展开：可展开的节点右上角给个计数；选中时变成真正可点的「展开 / 折叠」按钮。
+      // 注意 .node-card 有 contain:paint，元素必须放在卡片内部，否则会被裁掉。
+      const childCount = Number(data.childCount || 0);
+      const showBtn = childCount > 0 && data.selected;
+      // 徽标始终可点：一次点击展开、再点收起（选中时样式更醒目并加宽）
+      const expandEl = childCount > 0
+        ? `<button type="button" class="node-card__expand${showBtn ? ' is-btn' : ''}${data.expanded ? ' is-open' : ''}"`
+          + ` data-expand-node="${this.escapeNodeHtml(data.id)}"`
+          + ` title="${data.expanded ? '折叠该节点的下游' : '展开该节点的下游'}">`
+          + `${data.expanded ? '折叠' : '展开'} ${childCount}</button>`
+        : '';
+      return `<div id="node-card-${data.id}" class="node-card node-card--${data.nodeType}${goalStatusClass}${archivedClass}${childCount > 0 ? ' node-card--has-expand-btn' : ''}" style="width:${w}px;height:${h}px">`
         + interventionDot
+        + expandEl
         + `<span class="node-card__reason-beacon"></span>`
         + `<div class="node-card__header"><span class="node-card__type-icon">${icon}</span><span class="node-card__title">${title}</span></div>`
-        + `<div class="node-card__body">${body}</div>`
+        + `<div class="node-card__body"><span class="node-card__clamp">${body}</span></div>`
         + `<div class="node-card__footer">${statusPill}<span class="node-card__ref">${refShort}</span></div>`
         + `</div>`;
     },
@@ -339,14 +351,33 @@ window.AxiomModules.graph = {
       rawCy.on('dbltap', 'node', e => self.onNodeDblTap(e));
       rawCy.on('tap', 'edge', e => self.onEdgeTap(e));
       rawCy.on('tap', e => { if (e.target === rawCy) self.clearSelection(); });
+      // 卡片右上角「展开 / 折叠」按钮的点击代理。
+      // .node-card 是 pointer-events:none，但按钮自身置为 auto 仍能收到点击。
+      if (!container._axiomExpandBound) {
+        container._axiomExpandBound = true;
+        container.addEventListener('click', ev => {
+          const btn = ev.target && ev.target.closest ? ev.target.closest('.node-card__expand[data-expand-node]') : null;
+          if (!btn) return;
+          ev.preventDefault();
+          ev.stopPropagation();
+          const id = btn.getAttribute('data-expand-node');
+          if (id) self.toggleNodeExpansion(id);
+        }, true);
+      }
       this.pulseActive();
       this.setupAutoFit();
       this.setupMinimapListeners();
       this.setupRenderLOD();
       this.setupGraphCursors();
       if (progressive) {
-        this.graphInitStatus = `骨架完成，正在渲染其余 ${this._pendingGraph.pending.length} 个节点…`;
-        this.drainPendingGraphElements();
+        // 按需展开：不再自动把其余节点灌入画布（否则最终仍会堆到千级节点 + 全图 ELK）。
+        this.markExpandable();
+        const rest = this._pendingGraph.pending.length;
+        this.graphInitStatus = `骨架已就绪，点击节点展开邻居（其余 ${rest} 个节点未渲染）`;
+        this._graphHintTimer = setTimeout(() => {
+          this._graphHintTimer = null;
+          if (this.graphInitStatus) this.graphInitStatus = '';
+        }, 5000);
       }
       // Ensure readable zoom after initial fit
       setTimeout(() => {
@@ -448,6 +479,10 @@ window.AxiomModules.graph = {
           // 骨架和节点逐步补齐，而不是白屏冻结数秒。
           this._progressiveInitActive = false;
           this._pendingGraph = null;
+          // 全量加载完成：退出按需模式，后续轮询按「数据全量」维护画布
+          this._visibleIds = null;
+          this._childIndex = null;
+          this._expandedBy = null;
           this.cullNodeCards();
           this.pulseActive();
           this.drawMinimap();
@@ -513,6 +548,167 @@ window.AxiomModules.graph = {
       };
       this._drainedEdgeIds = new Set();
       setTimeout(step, 0);
+    },
+
+    // ═══ 按需展开（人工触发） ═══════════════════════════════════
+    // 进入按需模式：建「父 → 子」索引与画布可见集合，给可展开节点打子节点计数徽标。
+    markExpandable() {
+      const plan = this._pendingGraph;
+      if (!plan || !this.cy) return;
+      this._childIndex = new Map();
+      this._pendingById = new Map();
+      for (const node of plan.pending) {
+        this._pendingById.set(node.data.id, node);
+        for (const pid of plan.parentIdsOf.get(node.data.id) || []) {
+          if (!this._childIndex.has(pid)) this._childIndex.set(pid, []);
+          this._childIndex.get(pid).push(node);
+        }
+      }
+      this._edgeByEndpoint = new Map();
+      for (const e of plan.deferredEdges) {
+        for (const ep of [e.data.source, e.data.target]) {
+          if (!this._edgeByEndpoint.has(ep)) this._edgeByEndpoint.set(ep, []);
+          this._edgeByEndpoint.get(ep).push(e);
+        }
+      }
+      this._expandedBy = new Map(); // 子节点 id -> 展开它的父节点 id
+      this._drainedEdgeIds = new Set();
+      this._visibleIds = new Set(plan.skeletonIds);
+      this._refreshExpandBadges();
+    },
+
+    _expandRoots() {
+      return new Set(this._expandedBy ? this._expandedBy.values() : []);
+    },
+
+    // 刷新可展开节点的计数徽标 / 选中态（选中时徽标会变成可点的展开按钮）
+    _refreshExpandBadges() {
+      if (!this.cy || !this._childIndex) return;
+      const roots = this._expandRoots();
+      const sel = new Set(this.selectedFacts || []);
+      this.cy.batch(() => {
+        this.cy.nodes().forEach(n => {
+          const total = (this._childIndex.get(n.id()) || []).length;
+          const open = total > 0 && roots.has(n.id());
+          const isSel = sel.has(n.id()) || sel.has(String(n.data('intentId') || ''));
+          if (n.data('childCount') !== total) n.data('childCount', total);
+          if (n.data('expanded') !== open) n.data('expanded', open);
+          if (n.data('selected') !== isSel) n.data('selected', isSel);
+        });
+      });
+      this.refreshGraphDecorations?.();
+    },
+
+    // 展开一个节点的直接子节点：就近落位，不触发全图 ELK
+    expandNode(nodeId) {
+      if (!this.cy || !this._childIndex) return 0;
+      const parent = this.cy.getElementById(nodeId);
+      if (!parent || parent.length === 0) return 0;
+      const kids = (this._childIndex.get(nodeId) || [])
+        .filter(n => this.cy.getElementById(n.data.id).length === 0);
+      if (!kids.length) return 0;
+      const batch = kids.slice(0, 100); // 单次展开上限
+      const dir = this.layoutDirection();
+      const pb = parent.boundingBox();
+      this._suppressAutoFullLayout = true;
+      let cursor = 0;
+      this.cy.batch(() => {
+        for (const node of batch) {
+          const off = cursor;
+          // 子节点沿「交叉轴」铺开（TB 沿 X / LR 沿 Y），流动方向只偏移一个层间距，
+          // 避免同层子节点沿流动轴堆叠造成重叠。
+          const pos = dir === 'TB'
+            ? { x: pb.x1 + off, y: pb.y2 + 120 }
+            : { x: pb.x2 + 120, y: pb.y1 + off };
+          this.cy.add({ ...node, position: pos });
+          this._visibleIds.add(node.data.id);
+          this._expandedBy.set(node.data.id, nodeId);
+          const cardEl = document.getElementById(`node-card-${node.data.id}`);
+          cursor += (dir === 'TB'
+            ? (node.data.width || 200) + 24
+            : (cardEl ? cardEl.offsetHeight : node.data.height || 76) + 24);
+          for (const e of this._edgeByEndpoint.get(node.data.id) || []) {
+            if (this._drainedEdgeIds.has(e.data.id)) continue;
+            const s = this.cy.getElementById(e.data.source);
+            const t = this.cy.getElementById(e.data.target);
+            if (s.length && t.length) { this.cy.add(e); this._drainedEdgeIds.add(e.data.id); }
+          }
+        }
+      });
+      this._suppressAutoFullLayout = false;
+      this.cullNodeCards();
+      this.drawMinimap();
+      this._refreshExpandBadges();
+      // 只对「当前可见子集」跑一次 ELK 精排：子集小的时候很便宜，
+      // 既能得到可读布局，又不会像全量加载那样对上万节点跑布局。
+      const visible = this.cy.nodes().length;
+      if (visible <= 400) {
+        this.syncCardHeights?.(true);
+        this.relayoutPreservingViewport(400);
+      }
+      return batch.length;
+    },
+
+    toggleNodeExpansion(nodeId) {
+      if (this._expandRoots().has(nodeId)) return -this.collapseNode(nodeId);
+      return this.expandNode(nodeId);
+    },
+
+    // 收起：级联移除「由该节点展开出来」的整棵子树
+    collapseNode(nodeId) {
+      if (!this.cy || !this._expandedBy) return 0;
+      const doomed = new Set();
+      const collect = (root) => {
+        for (const [child, p] of this._expandedBy) {
+          if (p === root && !doomed.has(child)) { doomed.add(child); collect(child); }
+        }
+      };
+      collect(nodeId);
+      if (!doomed.size) return 0;
+      this.cy.batch(() => {
+        for (const id of doomed) {
+          const el = this.cy.getElementById(id);
+          if (el.length) el.remove();
+          this._visibleIds?.delete(id);
+          this._expandedBy.delete(id);
+        }
+      });
+      this._drainedEdgeIds = new Set(
+        [...this._drainedEdgeIds].filter(id => this.cy.getElementById(id).length > 0));
+      this.cullNodeCards();
+      this.drawMinimap();
+      this._refreshExpandBadges();
+      return doomed.size;
+    },
+
+    // 工具栏：从当前可见节点各展开一层
+    expandSkeletonOneLevel() {
+      if (!this.cy || !this._childIndex) return 0;
+      let added = 0;
+      for (const id of [...(this._visibleIds || [])]) added += this.expandNode(id);
+      if (added) this.fitGraph?.();
+      return added;
+    },
+
+    collapseAllExpanded() {
+      if (!this.cy || !this._expandedBy) return 0;
+      let removed = 0;
+      for (const root of [...this._expandRoots()]) {
+        if (this.cy.getElementById(root).length) removed += this.collapseNode(root);
+      }
+      return removed;
+    },
+
+    // 显式「加载全部」：走原有全量路径（含全图 ELK 精排）
+    loadFullGraph() {
+      if (!this._pendingGraph) {
+        this.graphInitStatus = '图谱已全部加载';
+        setTimeout(() => { if (this.graphInitStatus) this.graphInitStatus = ''; }, 2500);
+        return;
+      }
+      const rest = this._pendingGraph.pending.length;
+      this.graphInitStatus = `正在加载全部节点（${rest} 个，可能卡顿）…`;
+      this.drainPendingGraphElements();
     },
 
     graphStyles() {
@@ -837,6 +1033,10 @@ window.AxiomModules.graph = {
       const { nodes, edges } = this.buildElements();
       const wantNodes = new Set(nodes.map(n => n.data.id));
       const wantEdges = new Set(edges.map(e => e.data.id));
+      // 按需展开模式：只维护「骨架 + 已展开」集合内的元素，未展开的节点一律不画，
+      // 否则每轮轮询都会把全部节点重新加回画布，按需展开形同虚设。
+      const onDemand = !!this._visibleIds;
+      const isVisible = (id) => !onDemand || this._visibleIds.has(id);
       const previousPositions = this.snapshotNodePositions();
       let topologyChanged = false;
       let geometryChanged = false;
@@ -848,6 +1048,7 @@ window.AxiomModules.graph = {
         this.cy.edges().forEach(e => { if (!wantEdges.has(e.id())) { e.remove(); topologyChanged = true; } });
 
         for (const n of nodes) {
+          if (!isVisible(n.data.id)) continue;
           const ex = this.cy.getElementById(n.data.id);
           if (ex.length === 0) {
             const initialPosition = this.initialPositionForNode(n.data, previousPositions);
@@ -867,6 +1068,7 @@ window.AxiomModules.graph = {
           }
         }
         for (const e of edges) {
+          if (!isVisible(e.data.source) || !isVisible(e.data.target)) continue;
           const ex = this.cy.getElementById(e.data.id);
           if (ex.length === 0) {
             this.cy.add(e);
@@ -885,7 +1087,9 @@ window.AxiomModules.graph = {
       if (topologyChanged) {
         // 新节点已就近落位（initialPositionForNode）；只有大批量新增或强制时才全图重排，
         // 避免任务运行期间反复触发秒级 ELK 布局冻结主线程。
-        if (this._forceFullLayout || addedNodes > 30) {
+        // 按需模式下不做自动全图布局：轮询每 10s 触发一次带 fit 的布局，
+        // 会让画布周期性"瞬移"，也会造成秒级卡顿。新节点由就近落位安置。
+        if (!onDemand && !this._suppressAutoFullLayout && (this._forceFullLayout || addedNodes > 30)) {
           this._forceFullLayout = false;
           this.scheduleFullLayout();
         }
@@ -893,6 +1097,26 @@ window.AxiomModules.graph = {
       this.cullNodeCards();
       this.pulseActive();
       if (topologyChanged || geometryChanged || visualChanged) this.refreshGraphDecorations();
+    },
+
+    // 布局但保持当前视野：展开/折叠不该改变用户的缩放与平移
+    // （layoutOpts 里带 fit:true，会把视图拉回全图；这里在 layoutstop 后还原）。
+    relayoutPreservingViewport(delay = 400) {
+      if (!this.cy) return;
+      const zoom = this.cy.zoom();
+      const pan = { ...this.cy.pan() };
+      if (this._layoutDebounceTimer) clearTimeout(this._layoutDebounceTimer);
+      this._layoutDebounceTimer = setTimeout(() => {
+        this._layoutDebounceTimer = null;
+        if (!this.cy) return;
+        this.cy.one('layoutstop', () => {
+          if (!this.cy) return;
+          this.cy.zoom(zoom);
+          this.cy.pan(pan);
+          this.drawMinimap();
+        });
+        this.cy.layout(this.layoutOpts(false)).run();
+      }, delay);
     },
 
     scheduleFullLayout(delay = 800) {
@@ -970,20 +1194,26 @@ window.AxiomModules.graph = {
 
     startGraphActivityAnimation() {
       if (this._graphActivityRaf || !this.cy || document.hidden) return;
-      let last = 0;
+      let lastAnim = 0;
+      let lastQuery = 0;
+      let activeEdges = null;
       const tick = timestamp => {
         if (!this.cy || this.activePage !== 'task-detail' || this.view !== 'graph' || document.hidden) {
           this.stopGraphActivityAnimation();
           return;
         }
-        const activeEdges = this.cy.edges('[status="in_progress"], [status="bootstrap_running"]');
-        if (!activeEdges.length) {
-          this.stopGraphActivityAnimation();
-          return;
+        // cytoscape 选择器查询很贵：60fps 每帧查一次会让任何图谱操作都发涩。
+        // 这里把查询降到 ~2.5 次/秒，样式写入保持 25fps，视觉基本无差别。
+        if (!activeEdges || timestamp - lastQuery >= 400) {
+          lastQuery = timestamp;
+          activeEdges = this.cy.edges('[status="in_progress"], [status="bootstrap_running"]');
+          if (!activeEdges.length) {
+            this.stopGraphActivityAnimation();
+            return;
+          }
         }
-        // 每帧 style() 写入会导致整层重绘；虚线流动 25fps 足够顺滑，砍掉多余帧
-        if (timestamp - last >= 40) {
-          last = timestamp;
+        if (timestamp - lastAnim >= 40) {
+          lastAnim = timestamp;
           const offset = -((timestamp / 45) % 16);
           activeEdges.style('line-dash-offset', offset);
         }
@@ -1282,12 +1512,14 @@ window.AxiomModules.graph = {
       }
     },
 
+    // 图谱卡片统一尺寸：所有"有卡片"的节点同宽同高，形状一致、网格对齐。
+    // 正文超出部分由 .node-card__clamp 截断，完整内容在右侧详情面板看。
+    uniformCardSize() {
+      return { width: 200, height: 104 };
+    },
+
     factNodeSize(label, nodeType) {
-      // 卡片宽度统一；高度按全文行数自适应（文字显示全，不再截断）。
-      const width = 200;
-      const measured = this.measureWrappedText(label, 172, 11);
-      const height = Math.min(480, Math.max(84, Math.ceil(measured.height) + 62));
-      return { width, height };
+      return this.uniformCardSize();
     },
 
     measureWrappedText(text, maxWidth, fontSize) {
@@ -1439,6 +1671,7 @@ window.AxiomModules.graph = {
 
     clearSelection() {
       this.clearGraphSelection(false);
+      this._refreshExpandBadges?.();
     },
 
     toggleFactSelection(fid) {
@@ -1480,6 +1713,14 @@ window.AxiomModules.graph = {
       const id = node.data('id');
       const nt = node.data('nodeType');
       const keepLogFocus = this.sideTab === 'log';
+
+      // ⌥/Cmd + 点击：展开 / 收起该节点的子节点（按需展开模式专用）
+      const native = e.originalEvent || {};
+      if (this._childIndex && (native.altKey || native.metaKey)) {
+        this.toggleNodeExpansion(id);
+        if (keepLogFocus) this.scrollTimelineToSelection();
+        return;
+      }
 
       if (['in_progress', 'unclaimed', 'bootstrap_pending', 'bootstrap_running', 'intent_completed', 'intent_cancelled', 'intent_failed'].includes(nt)) {
         this.selectIntent(node.data('intentId'));
@@ -1536,6 +1777,7 @@ window.AxiomModules.graph = {
       this.selectedTimelineEntryId = null;
       this.selectedNode = { type:'intent', id: intentId };
       this.applyLineageHighlightForIntent(intentId);
+      this._refreshExpandBadges?.();
     },
 
     selectFact(fact) {
@@ -1544,6 +1786,7 @@ window.AxiomModules.graph = {
       if (!this.selectedFacts.includes(factId)) this.selectedFacts = [factId];
       this.selectedTimelineEntryId = null;
       this.selectedNode = { type:'fact', id: factId };
+      this._refreshExpandBadges?.();
       if (this.selectedFacts.length > 1) {
         this.applyMultiFactSelectionHighlight();
         return;

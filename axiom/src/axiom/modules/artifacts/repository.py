@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from collections.abc import Iterable
 
 from sqlalchemy import Connection, case, func, literal, or_, select, update
@@ -26,6 +28,30 @@ BOOTSTRAP_ARTIFACT_SUMMARIES = {
     "findings.md": "Bootstrap 已确认问题",
     "jsfinder_result.json": "JSFinder 能力树",
 }
+
+
+# jsfinder 现在每轮/每目标产出一个独立文件
+# （jsfinder_result-<host>-<path>-<rand4>.json），所以不能只按精确名匹配，
+# 否则新名字会退化成通用 bootstrap.file、在产物中心失去类型与名称。
+BOOTSTRAP_ARTIFACT_PATTERNS = (
+    (re.compile(r"^jsfinder_result.*\.json$"), "bootstrap.jsfinder", "JSFinder 能力树"),
+)
+
+
+def bootstrap_artifact_type(filename: str) -> str:
+    for pattern, artifact_type, _ in BOOTSTRAP_ARTIFACT_PATTERNS:
+        if pattern.match(filename):
+            return artifact_type
+    return BOOTSTRAP_ARTIFACT_TYPES.get(filename, "bootstrap.file")
+
+
+def bootstrap_artifact_summary(filename: str) -> str:
+    for pattern, _, summary in BOOTSTRAP_ARTIFACT_PATTERNS:
+        if pattern.match(filename):
+            prefix, suffix = "jsfinder_result-", ".json"
+            tag = filename[len(prefix):-len(suffix)] if filename.startswith(prefix) and filename.endswith(suffix) else ""
+            return f"{summary} · {tag}" if tag else summary
+    return BOOTSTRAP_ARTIFACT_SUMMARIES.get(filename, filename)
 
 
 class ArtifactRepository:
@@ -79,9 +105,9 @@ class ArtifactRepository:
                 "task_id": task_id,
                 "intent_id": intent_id,
                 "review_run_id": None,
-                "artifact_type": BOOTSTRAP_ARTIFACT_TYPES.get(filename, "bootstrap.file"),
+                "artifact_type": bootstrap_artifact_type(filename),
                 "storage_key": item.storage_key,
-                "summary": BOOTSTRAP_ARTIFACT_SUMMARIES.get(filename, filename),
+                "summary": bootstrap_artifact_summary(filename),
                 "content_hash": item.content_hash,
                 "size": item.size,
                 "created_by": created_by,

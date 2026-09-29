@@ -65,6 +65,59 @@ window.AxiomModules.human = {
       return Object.values(groups).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
     },
 
+    // ── 时间轴模式：i/f 按创建时间交错排序，intent 汇聚产物数与产出 fact ──
+    toggleHumanNavMode() {
+      this.humanNavMode = this.humanNavMode === 'tree' ? 'timeline' : 'tree';
+    },
+    humanIntentArtifactCount(intentId) {
+      return (this.humanAllKnownArtifacts() || []).filter(item => !item.archived && item.intent_id === intentId).length;
+    },
+    humanIntentFirstFact(intentId) {
+      return this.intentProducedFacts({ id: intentId })[0] || null;
+    },
+    humanTimelineIntents() {
+      // 按上下文版本缓存,避免每颗胶囊都重算 O(artifacts) 的产物计数
+      const rev = this.project?._timelineRev || 0;
+      if (this._tlCacheRev === rev && this._tlCache) return this._tlCache;
+      const intents = (this.project?.intents || []).filter(item => !item.archived);
+      const facts = (this.project?.facts || []).filter(f => !f.archived);
+      const producedByIntent = {};
+      for (const fact of facts) {
+        const producer = this.graphEntityIndex().intentsByProduced.get(fact.id);
+        if (producer?.id) (producedByIntent[producer.id] = producedByIntent[producer.id] || []).push(fact);
+      }
+      const artifactCount = {};
+      for (const a of (this.project?.artifacts || [])) {
+        if (a.archived || !a.intent_id) continue;
+        artifactCount[a.intent_id] = (artifactCount[a.intent_id] || 0) + 1;
+      }
+      const num = (id) => parseInt(String(id).replace(/\D/g, ''), 10) || 0;
+      const entries = intents.map(intent => ({
+        intent,
+        fact: (producedByIntent[intent.id] || [])[0] || null,
+        artCount: artifactCount[intent.id] || 0,
+        n: num(intent.id),
+      }));
+      entries.sort((a, b) => ((b.fact ? 1 : 0) - (a.fact ? 1 : 0)) || (a.n - b.n));
+      this._tlCacheRev = rev;
+      this._tlCache = entries;
+      return entries;
+    },
+    humanTimelinePageSize() { return 50; },
+    humanTimelinePageCount() {
+      return Math.max(1, Math.ceil(this.humanTimelineIntents().length / this.humanTimelinePageSize()));
+    },
+    async setHumanTimelinePage(page) {
+      const next = Math.max(0, Math.min(this.humanTimelinePageCount() - 1, Number(page) || 0));
+      if (next === this.humanTimelinePage) return;
+      this.humanTimelinePage = next;
+    },
+    humanTimelinePageEntries() {
+      const all = this.humanTimelineIntents();
+      const start = this.humanTimelinePage * this.humanTimelinePageSize();
+      return all.slice(start, start + this.humanTimelinePageSize());
+    },
+
     // Todo 页左侧总览排序：按子 Intent 数量从大到小
     humanSortedTodos() {
       return [...(this.project?.todos || [])]
@@ -159,6 +212,13 @@ window.AxiomModules.human = {
       const todos = (this.project?.todos || []).filter(item => !item.archived && !['rejected', 'obsolete'].includes(item.status));
       const completed = todos.filter(item => item.status === 'completed').length;
       return { total: todos.length, completed, percent: todos.length ? Math.round(completed / todos.length * 100) : 0 };
+    },
+
+    // 任务目标覆盖率：已完成 Intent / 全部 Intent（替代原先按 Todo 完成度计算）
+    humanIntentCoverage() {
+      const intents = (this.project?.intents || []).filter(item => !item.archived);
+      const completed = intents.filter(item => item.status === 'completed').length;
+      return { total: intents.length, completed, percent: intents.length ? Math.round(completed / intents.length * 100) : 0 };
     },
 
     humanTodoLabel(status) {
@@ -788,6 +848,16 @@ window.AxiomModules.human = {
       return intentId ? this.humanIntentRecord(intentId) : null;
     },
 
+    humanNextStepIntents(intentId) {
+      const intent = this.humanIntentRecord(intentId);
+      if (!intent) return [];
+      const producedIds = this.intentProducedFacts(intent).map(f => f.id);
+      if (!producedIds.length) return [];
+      return (this.project?.intents || []).filter(item =>
+        !item.archived && item.id !== intentId &&
+        (item.from || []).some(fid => producedIds.includes(fid))
+      );
+    },
     humanSourceLabel(item, fallback = '任务级') {
       const intent = item?.id?.startsWith?.('f') ? this.humanFactProducer(item) : this.humanSourceIntent(item);
       if (!intent) return fallback;

@@ -1610,6 +1610,18 @@ window.AxiomModules.projects = {
       return true;
     },
 
+    // 图谱刷新节流 + 可见性判断。
+    // 图谱视图不可见时不刷新；可见时最小间隔 8s，避免任务运行期间每轮轮询都重建图谱。
+    _graphRefreshDue(minMs = 8000) {
+      if (typeof document !== 'undefined' && document.hidden) return false;
+      const el = document.getElementById('cy');
+      if (!el || el.offsetParent === null) return false;
+      const now = Date.now();
+      if (now - Number(this._lastGraphRefreshAt || 0) < minMs) return false;
+      this._lastGraphRefreshAt = now;
+      return true;
+    },
+
     async pollCurrentRoute() {
       const signal = this._pageAbortController?.signal;
       if (this.activePage === 'task-detail' && this.selectedProjectId) {
@@ -1619,7 +1631,7 @@ window.AxiomModules.projects = {
         const hydrating = this.taskDetailLoad?.taskId === this.selectedProjectId
           && !!this.taskDetailLoad?.hydrating;
         if (!hydrating) await this.refreshTaskDetailSections?.(events, force);
-        if (!hydrating && this.view === 'graph' && (force || events.length)) this.updateGraph();
+        if (!hydrating && this.view === 'graph' && (force || events.length) && this._graphRefreshDue()) this.updateGraph();
         if (this.view === 'archive' && (force || events.length)) await this.loadArchives(this.selectedArchiveId);
         return;
       }

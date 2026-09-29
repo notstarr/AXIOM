@@ -956,7 +956,7 @@ global.window = {{ AxiomModules: {{
 }} }};
 global.location = {{ origin: 'http://testserver' }};
 eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
-const methods = window.AxiomModules.files.methods;
+const methods = Object.assign({{}}, window.AxiomModules.core.methods, window.AxiomModules.files.methods);
 const items = [
   {{ path:'i002/findings.md', artifact_type:'explore.findings' }},
   {{ path:'i002/leads.md', artifact_type:'explore.leads' }},
@@ -1228,6 +1228,7 @@ def _run_artifact_preview_fixture() -> dict[str, object]:
         pytest.skip("node is required for frontend behavior tests")
 
     adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
+    core = ROOT / "src/axiom/static/js/core.js"
     program = f"""
 const fs = require('fs');
 const calls = [];
@@ -1258,6 +1259,7 @@ global.fetch = async (url, init = {{}}) => {{
     text: async () => JSON.stringify({{ artifact: {{}}, content: payloads[url] }}),
   }};
 }};
+eval(fs.readFileSync({json.dumps(str(core))}, 'utf8'));
 eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
 const methods = window.AxiomModules.files.methods;
 const ctx = Object.assign({{

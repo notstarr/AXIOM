@@ -2334,7 +2334,7 @@
         current._content = content;
         if (previewKind === 'markdown') {
           if (typeof marked === 'undefined') await this.ensureMarkdownRuntime?.();
-          current._rendered = marked.parse(content);
+          current._rendered = this.renderMarkdown(content);
         } else if (previewKind === 'json' && content.trim()) {
           try {
             current._content = JSON.stringify(JSON.parse(content), null, 2);
@@ -2422,7 +2422,7 @@
       const content = await response.text();
       const isMarkdown = this.isMdFile(name);
       if (isMarkdown && typeof marked === 'undefined') await this.ensureMarkdownRuntime?.();
-      this.filePreview = { open: true, name, path, content, isMarkdown, isImage: false, rawUrl, rendered: isMarkdown ? marked.parse(content) : '' };
+      this.filePreview = { open: true, name, path, content, isMarkdown, isImage: false, rawUrl, rendered: isMarkdown ? this.renderMarkdown(content) : '' };
     },
     async deleteCurrentFile(path) {
       const artifact = this.fileArtifactMap[path];
