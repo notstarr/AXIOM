@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+import random
+import time
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 import httpx
 
@@ -74,6 +77,84 @@ def is_transient_control_plane_error(exc: ControlPlaneError) -> bool:
     """Return whether a control-plane failure is safe to retry as infrastructure."""
 
     return exc.status_code == 0 or exc.status_code in {408, 429} or exc.status_code >= 500
+
+
+# PostgreSQL lock_timeout / deadlock / serialization failure 通常会在 500 的
+# 响应体里带上这些特征串。它们的共同点是「自限性」——稍等片刻重试即可成功，
+# 与真正的服务端故障不同，不该立刻原样重投（那会造成惊群热循环）。
+_LOCK_CONTENTION_MARKERS = (
+    "lock timeout",
+    "locknotavailable",
+    "canceling statement due to lock timeout",
+    "deadlock detected",
+    "could not serialize access",
+    "40p01",
+    "40001",
+)
+
+
+def is_lock_contention_error(exc: ControlPlaneError) -> bool:
+    """Return whether a 5xx failure is really just database lock contention."""
+
+    if exc.status_code != 500:
+        return False
+    text = str(exc).lower()
+    return any(marker in text for marker in _LOCK_CONTENTION_MARKERS)
+
+
+# 锁争用退避参数：抖动指数退避，避免多个 worker 同步重试再次惊群。
+LOCK_CONTENTION_MAX_ATTEMPTS = 4
+LOCK_CONTENTION_BASE_DELAY_SECONDS = 1.0
+LOCK_CONTENTION_MAX_DELAY_SECONDS = 15.0
+
+T = TypeVar("T")
+
+
+def input_with_lock_backoff(
+    fetch: Callable[[], T],
+    *,
+    ensure_active: Callable[[], None],
+    describe: str,
+) -> T:
+    """Fetch execution input, retrying database lock contention in place.
+
+    Lock contention is self-limiting: concurrent workers claiming intents
+    queue on the same ``id_counters`` row.  Releasing the lease and
+    immediately re-claiming reproduces the stampede, so back off with jitter
+    and keep the lease instead of charging an infrastructure retry.
+    """
+
+    delay = LOCK_CONTENTION_BASE_DELAY_SECONDS
+    for attempt in range(1, LOCK_CONTENTION_MAX_ATTEMPTS + 1):
+        ensure_active()
+        try:
+            return fetch()
+        except ControlPlaneError as exc:
+            if not is_lock_contention_error(exc):
+                raise
+            if attempt >= LOCK_CONTENTION_MAX_ATTEMPTS:
+                logging.getLogger(__name__).warning(
+                    "giving up after repeated lock contention while loading "
+                    "execution input for %s",
+                    describe,
+                )
+                raise
+            sleep_for = min(
+                LOCK_CONTENTION_MAX_DELAY_SECONDS,
+                delay * (2 ** (attempt - 1)),
+            )
+            sleep_for += random.uniform(0, sleep_for * 0.25)
+            logging.getLogger(__name__).info(
+                "lock contention loading execution input for %s, "
+                "retrying in %.1fs (attempt %d/%d)",
+                describe,
+                sleep_for,
+                attempt,
+                LOCK_CONTENTION_MAX_ATTEMPTS,
+            )
+            time.sleep(sleep_for)
+            delay = sleep_for
+    raise RuntimeError("unreachable lock-contention retry state")
 
 
 class HttpControlPlane:

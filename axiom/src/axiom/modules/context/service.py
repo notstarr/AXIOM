@@ -14,7 +14,7 @@ from axiom.modules.context.repository import ContextRepository
 from axiom.modules.context.schemas import ContextRevision, ExpandedContext
 from axiom.modules.context.injection import ContextInjectionService, InjectedSystemContext
 from axiom.modules.graph.repository import GraphRepository
-from axiom.modules.graph.tables import facts, intents
+from axiom.modules.graph.tables import facts, intents, intent_sources
 from axiom.modules.goals.tables import goal_evaluations
 from axiom.modules.knowledge.tables import project_knowledge
 from axiom.modules.reason.tables import reason_run_sources, reason_runs
@@ -175,6 +175,15 @@ class ContextService:
                         return self._revision(existing)
 
                 revision = allocate_sequence(conn, scope=task_id, kind="context_revision")
+            # ── 阶段一事务在此提交，id_counters 行锁立即释放 ──
+            # 旧实现把 revision 分配与全部重活（_index_files / 文件落盘 / 落库）
+            # 放在同一个事务里，导致这行的行锁被持有数秒~十几秒；并发的
+            # /input 请求（per_task_explore_concurrency 个 worker 同时领取）
+            # 会互相等锁，超过 lock_timeout 后报 LockNotAvailable → 500。
+            # 拆成两段后锁只持有亚毫秒，争用窗口基本消失。
+
+            # ── 阶段二：无锁状态下执行全部重活 ──
+            with transaction(self.engine) as conn:
                 base_key = f"contexts/{task_id}/r{revision:06d}"
                 include_goal_history = phase not in {"reason", "review"}
                 include_archived = phase == "plan"
@@ -350,13 +359,22 @@ class ContextService:
         source_intents_by_fact: dict[str, list[str]] = {}
         intent_sources_by_id: dict[str, list[str]] = {}
         intent_rows_by_id = {row["id"]: row for row in intent_rows}
+        # 一次性取出本任务全部 intent_sources，避免逐条 intent 查询
+        # （旧实现对每条 intent 调用 get_intent()，内部再查一次
+        #   intent_sources，1937 条 intent 会产生约 3900 次串行往返，
+        #   且整个过程都发生在持有 id_counters 行锁的事务内）
+        sources_by_intent: dict[str, list[str]] = {}
+        for source_row in conn.execute(
+            select(intent_sources.c.intent_id, intent_sources.c.fact_id)
+            .where(intent_sources.c.task_id == task["id"])
+            .order_by(intent_sources.c.intent_id, intent_sources.c.fact_id)
+        ):
+            sources_by_intent.setdefault(source_row[0], []).append(source_row[1])
         for row in intent_rows:
-            intent = self.graph.get_intent(conn, task["id"], row["id"])
-            if intent is None:
-                continue
-            intent_sources_by_id[row["id"]] = list(intent.from_facts)
-            if intent.to_fact_id in visible_fact_ids:
-                source_intents_by_fact.setdefault(intent.to_fact_id, []).append(row["id"])
+            intent_sources_by_id[row["id"]] = sources_by_intent.get(row["id"], [])
+            to_fact_id = row["to_fact_id"]
+            if to_fact_id is not None and to_fact_id in visible_fact_ids:
+                source_intents_by_fact.setdefault(to_fact_id, []).append(row["id"])
         artifacts_by_intent: dict[str, list[str]] = {}
         for row in artifact_rows:
             if row.get("intent_id") in visible_intent_ids:
@@ -464,6 +482,15 @@ class ContextService:
                     item for item in active_consumption if item["owner_kind"] == "plan"
                 ],
             }
+        goal_visible_refs = (
+            self._visible_ref_ids(
+                conn,
+                task["id"],
+                include_archived=include_archived,
+            )
+            if goal_rows
+            else {}
+        )
         visible_goal_rows = [
             row
             for row in goal_rows
@@ -472,6 +499,7 @@ class ContextService:
                 task["id"],
                 row,
                 include_archived=include_archived,
+                visible_refs=goal_visible_refs,
             )
         ]
         todo_change_runs = self._todo_change_runs(conn, task["id"])
@@ -1146,6 +1174,7 @@ class ContextService:
         row,
         *,
         include_archived: bool = False,
+        visible_refs: dict[str, set[str]] | None = None,
     ) -> bool:
         table_map = {
             "fact": facts,
@@ -1159,6 +1188,11 @@ class ContextService:
             table = table_map.get(kind)
             if not separator or table is None:
                 continue
+            if visible_refs is not None:
+                # 批量模式：直接查内存集合，避免每条 ref 一次 SQL
+                if item_id not in visible_refs.get(kind, set()):
+                    return False
+                continue
             query = select(table.c.id).where(
                 table.c.task_id == task_id,
                 table.c.id == item_id,
@@ -1169,6 +1203,30 @@ class ContextService:
             if visible is None:
                 return False
         return True
+
+    @staticmethod
+    def _visible_ref_ids(
+        conn,
+        task_id: str,
+        *,
+        include_archived: bool = False,
+    ) -> dict[str, set[str]]:
+        """一次性取出 goal_evaluations evidence_refs 可能引用的可见 id 集合。"""
+
+        table_map = {
+            "fact": facts,
+            "artifact": artifacts,
+            "vulnerability": vulnerabilities,
+            "todo": todos,
+            "hint": task_hints,
+        }
+        visible: dict[str, set[str]] = {}
+        for kind, table in table_map.items():
+            query = select(table.c.id).where(table.c.task_id == task_id)
+            if not include_archived:
+                query = query.where(table.c.archived.is_(False))
+            visible[kind] = set(conn.execute(query).scalars())
+        return visible
 
 
 def _preview(value: str, limit: int = PREVIEW_CHARS) -> str:

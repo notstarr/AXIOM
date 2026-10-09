@@ -8,7 +8,11 @@ from typing import Protocol
 from axiom.dispatcher.bootstrap import AxiomToolLoadError, TransientWorkerError
 from axiom.dispatcher.closeout import bounded_closeout, make_closeout_progress
 from axiom.dispatcher.heartbeat import LeaseHeartbeat, LeaseLostError
-from axiom.dispatcher.http import ControlPlaneError, is_transient_control_plane_error
+from axiom.dispatcher.http import (
+    ControlPlaneError,
+    input_with_lock_backoff,
+    is_transient_control_plane_error,
+)
 from axiom.modules.execution.schemas import ActivityCommand, PlanExecutionInput, ReleaseIntentCommand
 from axiom.modules.execution.stage_outputs import StageOutputError, require_finish
 from axiom.modules.plan.schemas import (
@@ -133,7 +137,11 @@ class PlanRunner:
         try:
             self.control_plane.start(work)
             heartbeat.start()
-            execution_input = self.control_plane.input(work)
+            execution_input = input_with_lock_backoff(
+                lambda: self.control_plane.input(work),
+                ensure_active=heartbeat.ensure_active,
+                describe=f"{work.task_id}/{work.plan_run_id}",
+            )
             if execution_input.context_revision is None:
                 raise RuntimeError("Plan execution requires a Context revision")
             workspace = self.control_plane.open_plan_workspace(

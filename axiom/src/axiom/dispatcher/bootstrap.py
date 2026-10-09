@@ -7,7 +7,11 @@ from typing import Protocol
 
 from axiom.dispatcher.closeout import bounded_closeout, make_closeout_progress
 from axiom.dispatcher.heartbeat import LeaseHeartbeat, LeaseLostError
-from axiom.dispatcher.http import ControlPlaneError, is_transient_control_plane_error
+from axiom.dispatcher.http import (
+    ControlPlaneError,
+    input_with_lock_backoff,
+    is_transient_control_plane_error,
+)
 from axiom.dispatcher.schemas import ClaimedIntent
 from axiom.modules.execution.schemas import (
     BootstrapCompleted,
@@ -107,7 +111,11 @@ class BootstrapRunner:
         try:
             self.control_plane.start(work)
             heartbeat.start()
-            execution_input = self.control_plane.input(work)
+            execution_input = input_with_lock_backoff(
+                lambda: self.control_plane.input(work),
+                ensure_active=heartbeat.ensure_active,
+                describe=f"{work.task_id}/{work.intent_id}",
+            )
             try:
                 raw_output = executor.execute(
                     execution_input,
