@@ -77,6 +77,34 @@ worker 需要用户已登录的页面时：
 
 借用期间的操作以用户身份进行。用完立即归还，不要跨无关任务保持借用。
 
+## 多标签与可见范围
+
+Agent Window 内可以有多个标签；后台标签不用选中也能被操作：
+
+```bash
+"$AXIOM_BSK" tab create --url <url> --no-active --session <id>   # 后台开 tab，记下返回的 tab_id
+"$AXIOM_BSK" observe --tab-id <tab_id> --session <id>            # 后续命令都带 --tab-id 指向它
+"$AXIOM_BSK" navigate <url> --tab-id <tab_id> --session <id>
+"$AXIOM_BSK" tab select <tab_id> --session <id>                  # 需要用户看见时才切到前台
+```
+
+`--tab-id` 可加在 observe / snapshot / get-html / screenshot / console / network /
+navigate / click / fill / select / press / evaluate 等命令上；不加时默认作用于 Agent
+Window 的当前活动标签。后台标签里的页面继续运行，viewport 与整页截图在后台也可用。
+不要自己编 tab id，也不要跨无关任务一直占着用户的标签。
+
+`tab list` 的可见范围——**判断"是否有别的 agent 在动这个浏览器"时必须知道**：
+
+- `--scope user`：用户自己的标签（任何非 Agent Window 的窗口）；
+- `--scope agent`：**本次查询所用 session** 的 Agent Window 内标签；
+- `--scope all`（默认）：上面两者之和。
+
+也就是说，用**自己**的 session 查 `--scope all` **看不到其他 session 的 Agent Window**。
+这不是隔离保证：用对方的 session id 查 `tab list --session <other-id> --scope agent`
+就能看到对方在开哪些页面（session id 从 `session list` 可得，不是秘密）。
+同一浏览器实例共享 Cookie，所以"我这边 `tab list` 很干净"不等于没人并行在同一
+登录态上操作——`session list` 里有几个 session，就有几个可能的并行动作者。
+
 ## 凭据提取（axiom 定制）
 
 ```bash
@@ -130,7 +158,7 @@ credentials --domain <domain> --session <id>   # axiom 定制
 ```text
 "$AXIOM_BSK" fill <ref> --value <text>
 "$AXIOM_BSK" select <ref> --value <option-value>
-"$AXIOM_BSK" screenshot --full-page --out <path>          # 整页拼接(懒加载页用 --scope current)
+"$AXIOM_BSK" screenshot --full-page --out <path>          # 整页拼接(默认 --scope follow 跟随追加内容)
 "$AXIOM_BSK" scroll-to <ref> --session <id>               # 滚动到指定元素(触发懒加载)
 "$AXIOM_BSK" wheel --session <id>                         # 原生滚轮事件
 "$AXIOM_BSK" click <ref> --capture <capture-id> --image-x <x> --image-y <y>
@@ -163,10 +191,16 @@ credentials --domain <domain> --session <id>   # axiom 定制
   `rules` / `replay`（请求规则与重放）、`console` / `pages` / `operations`
   （与操作关联的证据）。收口前 `debug stop` 结束采集；历史记录会保留，可 `debug export` 导出。
 - `emulate` 对单个 tab 应用视口/UA/触屏覆盖；新 tab 不继承；`--off` 恢复。
-- `scroll-to`/`wheel` 用于无限滚动与懒加载页：滚一段 → observe/network 看增量，
-  不要用 `evaluate window.scrollTo`（会绕过页面自己的滚动监听）。
-- `screenshot --full-page` 拼接整页证据（默认 --scope follow 跟随追加内容；
-  loading_stalled 30s 会报错，不要盲目加 --timeout）；`--scope current` 只截已加载区间。
+- `scroll-to`/`wheel` 用于无限滚动与懒加载页：滚一段 → observe/network 看增量。
+  优先走这两个原生输入路径；`wheel` 的 `--delta-x`/`--delta-y` 是输入量、
+  **不保证滚动距离**，滚完必须 observe 确认真实结果。`evaluate window.scrollTo`
+  只是退路：它同样会触发页面自己的 scroll 监听，但走的是 JS 捷径而非真实输入
+  路径，虚拟列表一类组件可能只认真实输入；确有必要才用，并同样 observe 核实。
+- `screenshot --full-page` 拼接整页证据。**默认 `--scope follow` 跟随追加内容**；
+  `--scope current` 只截初始文档高度，之后追加的内容**全部丢弃**——只在「已加载
+  区间本身就满足需求」时用它，且必须如实上报截取范围，不能声称把整页/整个 feed
+  都截到了。`loading_stalled` 表示底部持续 30s 挂着 loading 指示且高度不增长，
+  不要盲目加 `--timeout`；`--timeout` 只在整页模式生效（默认 2m），失败不留下半张图。
 - Canvas 页面（图形验证码区域、绘图应用）：observe 返回 `@eN canvas [visual:screenshot]`
   文本引用。先 `screenshot --ref @eN` 看图，再用 `click --capture <capture-id>
   --image-x --image-y` 以**原图坐标**点击；capture_id 一次性、2 分钟过期，
