@@ -29,7 +29,7 @@ LEGACY_SQLITE_REVISION = "20260805_0035"
 # this aligned with the latest migration whenever a schema change is added;
 # otherwise a database that has successfully upgraded cannot accept a legacy
 # SQLite import.
-POSTGRESQL_TARGET_REVISION = "20260907_pg0016"
+POSTGRESQL_TARGET_REVISION = "20260908_pg0017"
 DEFAULT_BATCH_SIZE = 1_000
 
 # A 20260805 SQLite export predates the independent Plan runtime.  These
@@ -59,6 +59,9 @@ LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
         "human_reviewed_at": None,
         "human_reviewed_by": None,
     },
+    # The source SQLite export predates the probed developer-role capability.
+    # Imported Workers stay unprobed, which keeps Pi on its default role.
+    "workers": {"developer_role_supported": None},
     "intents": {
         "human_intervention_required": False,
         "human_intervention_reason": "",

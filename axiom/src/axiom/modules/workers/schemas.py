@@ -44,6 +44,9 @@ class Worker(BaseModel):
     config: dict[str, Any]
     disabled: bool
     cooldown_until: str | None = None
+    # Whether the gateway accepts OpenAI's ``developer`` message role.
+    # NULL = not probed yet, FALSE = confirmed refused (fall back to ``system``).
+    developer_role_supported: bool | None = None
     created_at: str
     updated_at: str
 
@@ -54,6 +57,12 @@ class WorkerRename(BaseModel):
 
 class WorkerCooldown(BaseModel):
     cooldown_until: str | None = None
+
+
+class WorkerCapabilityReport(BaseModel):
+    """A probed gateway capability reported by the Runner."""
+
+    developer_role_supported: bool | None = None
 
 
 class WorkerConnectionRequest(BaseModel):

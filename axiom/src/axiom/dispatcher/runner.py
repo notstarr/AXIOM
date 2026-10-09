@@ -6,6 +6,8 @@ import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 
+from pydantic import ValidationError
+
 from axiom.dispatcher.bootstrap import BootstrapRunner
 from axiom.dispatcher.browser_broker import BrowserBrokerManager
 from axiom.dispatcher.explore import ExploreRunner
@@ -21,6 +23,11 @@ from axiom.modules.reason.schemas import ClaimedReasonRun
 from axiom.modules.plan.schemas import ClaimedPlanRun
 from axiom.modules.vulnerability_reviews.schemas import ClaimedVulnerabilityReviewRun
 from axiom.modules.workers.schemas import Worker
+from axiom.modules.workers.pi_config import (
+    PiWorkerConfig,
+    llm_proxy_for,
+    probe_developer_role,
+)
 from axiom.modules.token_usage.schemas import TokenUsageBatchCommand
 
 
@@ -157,9 +164,48 @@ class AxiomRunner:
         self._pool.shutdown(wait=wait, cancel_futures=not wait)
         self.browser_broker.close()
 
+    def _probe_worker_capability(self, worker: Worker) -> Worker:
+        """Learn gateway capabilities this Worker has not been probed for yet.
+
+        Runs before Pi starts so a gateway that rejects OpenAI's ``developer``
+        message role costs one small probe instead of an entire released Lease.
+        Only a conclusive verdict is persisted: ``None`` leaves the Worker
+        untouched so a gateway outage is never mistaken for a role refusal.
+        """
+
+        if worker.worker_type != "pi" or worker.developer_role_supported is not None:
+            return worker
+        try:
+            settings = PiWorkerConfig.model_validate(worker.config)
+        except ValidationError:
+            return worker
+        if not settings.base_url or not settings.model:
+            return worker
+        verdict = probe_developer_role(
+            settings.base_url,
+            settings.api_key,
+            settings.model,
+            settings.provider_api,
+            proxy=llm_proxy_for(self._last_runtime_config, settings),
+        )
+        if verdict is None:
+            return worker
+        setter = getattr(self.control_plane, "set_worker_capability", None)
+        if setter is not None:
+            try:
+                setter(worker.name, verdict)
+            except Exception:
+                logger.warning(
+                    "failed to persist developer-role verdict for %s",
+                    worker.name,
+                    exc_info=True,
+                )
+        return worker.model_copy(update={"developer_role_supported": verdict})
+
     def _execute_claim(self, work: ClaimedWork, cancellation: threading.Event) -> None:
         try:
             worker = self.control_plane.worker(work.worker_name)
+            worker = self._probe_worker_capability(worker)
             executor = self.executor_factory(worker, work)
         except BaseException:
             logger.exception("failed to initialize work runner: %s", self._work_label(work))

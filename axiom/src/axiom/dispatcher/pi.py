@@ -834,6 +834,12 @@ class PiBootstrapExecutor:
             model["thinkingLevelMap"] = {
                 self.settings.thinking_level: self.settings.thinking_level
             }
+        if self.settings.developer_role_supported is False:
+            # The gateway refused OpenAI's ``developer`` message role, so Pi
+            # must send the system prompt as ``system``.  Only a confirmed
+            # refusal emits this: an unprobed capability keeps Pi's default
+            # (``developer``), which is the modern spelling of the same role.
+            model["compat"] = {"supportsDeveloperRole": False}
         provider: dict[str, Any] = {
             "baseUrl": sdk_base_url(self.settings.provider_api, self.settings.base_url),
             "api": canonical_provider_api(self.settings.provider_api),

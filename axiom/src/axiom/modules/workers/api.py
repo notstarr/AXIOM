@@ -9,6 +9,7 @@ from axiom.modules.phase_capabilities.schemas import PhaseBackendsUpdate, Worker
 from axiom.modules.workers.schemas import (
     UpsertWorker,
     Worker,
+    WorkerCapabilityReport,
     WorkerConnectionRequest,
     WorkerConnectionResult,
     WorkerCooldown,
@@ -112,6 +113,17 @@ def set_worker_cooldown(
     container: Container = Depends(get_container),
 ) -> Worker:
     return container.workers.set_cooldown(name, body.cooldown_until)
+
+
+@router.post("/{name}/capability", response_model=Worker)
+def set_worker_capability(
+    name: str,
+    body: WorkerCapabilityReport,
+    container: Container = Depends(get_container),
+) -> Worker:
+    """Persist a probed gateway capability (currently the developer role)."""
+
+    return container.workers.set_capability(name, body.developer_role_supported)
 
 
 @router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)

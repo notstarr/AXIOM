@@ -111,6 +111,15 @@ class HttpControlPlane:
     def worker(self, name: str) -> Worker:
         return Worker.model_validate(self._request("GET", f"/workers/{name}"))
 
+    def set_worker_capability(self, name: str, developer_role_supported: bool | None) -> None:
+        """Persist a probed gateway capability for a Worker."""
+
+        self._request(
+            "POST",
+            f"/workers/{name}/capability",
+            {"developer_role_supported": developer_role_supported},
+        )
+
     def runtime_settings(self) -> RuntimeSettings:
         return RuntimeSettings.model_validate(self._request("GET", "/settings/runtime"))
 

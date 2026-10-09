@@ -8,6 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -133,6 +134,113 @@ def provider_auth_headers(provider_api: str | None, api_key: str) -> dict[str, s
     return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
 
+DEVELOPER_ROLE_PROBE_TIMEOUT_SECONDS = 15.0
+
+
+def _probe_role_accepted(
+    base_url: str,
+    api_key: str,
+    model: str,
+    provider_api: str,
+    role: str,
+    *,
+    proxy: str | None = None,
+    timeout: float = DEVELOPER_ROLE_PROBE_TIMEOUT_SECONDS,
+) -> bool | None:
+    """Ask the gateway to accept one system-level ``role``.
+
+    Returns ``True`` when the request is accepted, ``False`` when the gateway
+    refuses it, and ``None`` when the outcome says nothing about the role
+    (transport failure or an unhelpful status).  Callers must treat ``None``
+    as "unknown" rather than "unsupported".
+    """
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": role, "content": "ping"},
+            {"role": "user", "content": "ping"},
+        ],
+        "max_tokens": 1,
+    }
+    headers = {
+        "Content-Type": "application/json",
+        **provider_auth_headers(provider_api, api_key),
+    }
+    try:
+        response = httpx.post(
+            upstream_request_url(provider_api, base_url, "chat/completions"),
+            headers=headers,
+            json=payload,
+            timeout=timeout,
+            proxy=proxy,
+        )
+    except httpx.HTTPError:
+        return None
+    if 200 <= response.status_code < 300:
+        return True
+    return False
+
+
+def probe_developer_role(
+    base_url: str,
+    api_key: str,
+    model: str,
+    provider_api: str,
+    *,
+    proxy: str | None = None,
+    timeout: float = DEVELOPER_ROLE_PROBE_TIMEOUT_SECONDS,
+) -> bool | None:
+    """Decide whether a gateway accepts OpenAI's ``developer`` message role.
+
+    Pi sends the system prompt as ``role: "developer"`` whenever the model
+    advertises reasoning, which many OpenAI-compatible gateways still reject.
+    A single rejection is not evidence: the same status surfaces for quota,
+    routing and model-name problems.  So probe twice with the role as the only
+    variable and only claim unsupported when ``developer`` fails while
+    ``system`` succeeds.
+
+    ``True``  - the gateway accepts ``developer``; Pi may keep using it.
+    ``False`` - ``developer`` refused but ``system`` accepted: use ``system``.
+    ``None``  - inconclusive (both refused, or transport failure); change nothing.
+    """
+
+    if not base_url or not model:
+        return None
+    api = canonical_provider_api(provider_api)
+    # Only the OpenAI chat-completions shape carries the developer role here;
+    # Anthropic has no such role and the responses API needs a different probe.
+    if api != "openai-completions":
+        return None
+
+    developer = _probe_role_accepted(
+        base_url,
+        api_key,
+        model,
+        api,
+        "developer",
+        proxy=proxy,
+        timeout=timeout,
+    )
+    if developer:
+        return True
+    if developer is None:
+        return None
+
+    system = _probe_role_accepted(
+        base_url,
+        api_key,
+        model,
+        api,
+        "system",
+        proxy=proxy,
+        timeout=timeout,
+    )
+    if system:
+        return False
+    return None
+
+
 class PiRuntimeError(RuntimeError):
     """The configured Pi runtime does not match AXIOM's supported runtime."""
 
@@ -160,6 +268,11 @@ class PiWorkerConfig(BaseModel):
     # 该后端的 LLM 请求是否经 serve 网关代理（网关跳挂全局代理）。
     # 默认 False：直连 provider，与旧"全局关代理"路径完全一致。
     llm_proxy: bool = False
+    # 网关是否接受 OpenAI 的 ``developer`` 消息角色（``system`` 的新名字）。
+    # ``None`` 未知：不下发 compat，Pi 按默认走 developer；
+    # ``False`` 已确证不支持：下发 ``compat.supportsDeveloperRole=false``，Pi 改用 system；
+    # ``True``  已确证支持：同样不下发 compat，行为与未知一致但不再重复探测。
+    developer_role_supported: bool | None = None
     tools: list[str] = Field(default_factory=lambda: ["read", "write", "bash", "edit"])
     skill_paths: list[str] = Field(default_factory=list)
     session_dir: str = ""

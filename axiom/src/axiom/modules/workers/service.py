@@ -19,6 +19,7 @@ from axiom.modules.workers.pi_config import (
     canonicalize_pi_worker_config,
     is_anthropic_messages,
     llm_proxy_for,
+    probe_developer_role,
     provider_auth_headers,
     upstream_request_url,
 )
@@ -230,6 +231,20 @@ class WorkerService:
             raise NotFoundError(f"Worker not found: {name}")
         return self._normalize_worker(worker)
 
+    def set_capability(self, name: str, developer_role_supported: bool | None) -> Worker:
+        """Persist a probed gateway capability reported by the Runner."""
+
+        with self.engine.begin() as conn:
+            worker = self.repository.set_capability(
+                conn,
+                name=name,
+                developer_role_supported=developer_role_supported,
+                now=utcnow(),
+            )
+        if worker is None:
+            raise NotFoundError(f"Worker not found: {name}")
+        return self._normalize_worker(worker)
+
     def rename(self, name: str, new_name: str) -> Worker:
         old_name = self._normalize_name(name)
         target = self._normalize_name(new_name or "")
@@ -419,11 +434,48 @@ class WorkerService:
         except httpx.HTTPError as exc:
             return WorkerConnectionResult(ok=False, message=f"连接失败：{exc}")
         if 200 <= response.status_code < 300:
-            return WorkerConnectionResult(ok=True, message="连接成功，模型可用")
+            return WorkerConnectionResult(
+                ok=True,
+                message="连接成功，模型可用"
+                + self._probe_and_store_developer_role(name, connection, provider_api),
+            )
         return WorkerConnectionResult(
             ok=False,
             message=f"HTTP {response.status_code}: {response.text[:500]}",
         )
+
+    def _probe_and_store_developer_role(
+        self,
+        name: str,
+        connection: WorkerConnectionRequest,
+        provider_api: str,
+    ) -> str:
+        """Probe the ``developer`` role and persist the verdict for this Worker.
+
+        The plain connectivity probe above sends only a ``user`` message, so it
+        passes on gateways that reject the system-level role Pi actually uses.
+        Probe that separately and return a display note for the UI.
+        """
+
+        if provider_api != "openai-completions":
+            return ""
+        role_supported = probe_developer_role(
+            connection.base_url,
+            connection.api_key,
+            connection.model,
+            provider_api,
+            proxy=self._llm_proxy(PiWorkerConfig(llm_proxy=connection.llm_proxy)),
+        )
+        if role_supported is None:
+            return ""
+        try:
+            self.set_capability(name, role_supported)
+        except NotFoundError:
+            # Connectivity may be tested on an unsaved draft; nothing to store.
+            pass
+        if role_supported:
+            return "（支持 developer 角色）"
+        return "（网关不接受 developer 角色，已自动切换为 system）"
 
     def _connection(
         self,

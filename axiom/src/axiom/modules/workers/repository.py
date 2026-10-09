@@ -18,6 +18,7 @@ class WorkerRepository:
         command: UpsertWorker,
         now: str,
     ) -> Worker:
+        previous = self.get(conn, name)
         values = {
             "name": name,
             "worker_type": command.worker_type,
@@ -26,6 +27,7 @@ class WorkerRepository:
             "priority": command.priority,
             "config_json": json.dumps(command.config, ensure_ascii=False),
             "disabled": command.disabled,
+            "developer_role_supported": self._carried_developer_role(previous, command.config),
             "created_at": now,
             "updated_at": now,
         }
@@ -67,8 +69,47 @@ class WorkerRepository:
         )
         return self.get(conn, name) if result.rowcount else None
 
+    def set_capability(
+        self,
+        conn: Connection,
+        *,
+        name: str,
+        developer_role_supported: bool | None,
+        now: str,
+    ) -> Worker | None:
+        result = conn.execute(
+            workers.update()
+            .where(workers.c.name == name)
+            .values(developer_role_supported=developer_role_supported, updated_at=now)
+        )
+        return self.get(conn, name) if result.rowcount else None
+
     def delete(self, conn: Connection, name: str) -> bool:
         return bool(conn.execute(delete(workers).where(workers.c.name == name)).rowcount)
+
+    @classmethod
+    def _carried_developer_role(cls, previous: Worker | None, config: dict) -> bool | None:
+        """Keep a probed role capability only while the provider is unchanged.
+
+        A probe result describes one ``(base_url, api_key, model, provider_api)``
+        tuple.  Saving the Worker with any of those edited invalidates it, so the
+        stale answer must not silence the next probe.
+        """
+
+        if previous is None:
+            return None
+        if cls._connection_identity(previous.config) != cls._connection_identity(config):
+            return None
+        return previous.developer_role_supported
+
+    @staticmethod
+    def _connection_identity(config: dict) -> tuple[str, str, str, str]:
+        return (
+            str(config.get("base_url", "") or "").strip().rstrip("/"),
+            str(config.get("api_key", "") or ""),
+            str(config.get("model", "") or ""),
+            str(config.get("provider_api", "") or ""),
+        )
 
     @staticmethod
     def _worker(row) -> Worker:
@@ -81,6 +122,7 @@ class WorkerRepository:
             config=json.loads(row["config_json"] or "{}"),
             disabled=bool(row["disabled"]),
             cooldown_until=row["cooldown_until"],
+            developer_role_supported=row["developer_role_supported"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
