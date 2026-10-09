@@ -69,8 +69,8 @@ def _worker(config: dict, *, verdict: bool | None = None) -> Worker:
     )
 
 
-def _models_payload(config: dict) -> dict:
-    executor = PiBootstrapExecutor(_worker(config))
+def _models_payload(config: dict, *, verdict: bool | None = None) -> dict:
+    executor = PiBootstrapExecutor(_worker(config, verdict=verdict))
     payload = executor._models_payload()
     assert payload is not None
     return payload
@@ -143,6 +143,27 @@ def test_models_payload_pins_system_when_probe_confirmed_refusal() -> None:
     config = _pi_config(developer_role_supported=False)
     model = _models_payload(config)["providers"]["axiom"]["models"][0]
     assert model["compat"] == {"supportsDeveloperRole": False}
+
+
+def test_models_payload_reads_the_worker_column_not_only_the_config() -> None:
+    """The probed verdict is a Worker column; config_json never carries it.
+
+    Production stores it via ``set_capability``, so a payload built only from
+    ``worker.config`` would silently keep Pi on ``developer``.
+    """
+
+    model = _models_payload(_pi_config(), verdict=False)["providers"]["axiom"]["models"][0]
+    assert model["compat"] == {"supportsDeveloperRole": False}
+
+
+def test_models_payload_keeps_developer_when_the_column_confirms_support() -> None:
+    model = _models_payload(_pi_config(), verdict=True)["providers"]["axiom"]["models"][0]
+    assert "compat" not in model
+
+
+def test_models_payload_keeps_developer_when_the_column_is_unprobed() -> None:
+    model = _models_payload(_pi_config(), verdict=None)["providers"]["axiom"]["models"][0]
+    assert "compat" not in model
 
 
 # ------------------------------------------------------------------- repository

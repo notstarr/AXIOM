@@ -181,6 +181,14 @@ class PiBootstrapExecutor:
     ):
         self.worker = worker
         self.settings = PiSettings.model_validate(worker.config)
+        if worker.developer_role_supported is not None:
+            # The probed developer-role verdict is a Worker column, not part of
+            # config_json, so it has to be merged in here.  Reading it straight
+            # off ``worker.config`` left it NULL and Pi kept sending
+            # ``developer`` to gateways that reject it.
+            self.settings = self.settings.model_copy(
+                update={"developer_role_supported": worker.developer_role_supported}
+            )
         self.supervisor = supervisor or ProcessSupervisor()
         self.rpc_supervisor = rpc_supervisor or RpcProcessSupervisor()
         self.prompts = prompt_renderer or PromptRenderer()
