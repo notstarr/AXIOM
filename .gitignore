@@ -39,3 +39,13 @@ axiom/real_test.mp4
 axiom/goal_assess_reason.txt
 axiom/intent_i087_desc.txt
 axiom/td076_completed_reason.txt
+
+# Worker 在仓库根留下的测试碎屑（无凭据，但会被 git add -A 带走）
+axiom/err_b.txt
+axiom/list.txt
+axiom/js/
+axiom/index_super.html
+axiom/ops.html
+axiom/nologin.txt
+ws_probe_i195.js
+
