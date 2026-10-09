@@ -6,6 +6,7 @@ from datetime import timedelta
 from sqlalchemy import Engine, select
 
 from axiom.dispatcher.schemas import ClaimAction, ClaimedIntent, ClaimedWork, DispatcherSnapshot
+from axiom.modules.dispatch.retry import retry_outcome
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
 from axiom.modules.dispatch.repository import DispatchRepository
@@ -743,12 +744,10 @@ class DispatchService:
 
     @staticmethod
     def _retry_outcome(config, attempt: int, now) -> tuple[bool, str | None]:
-        # Infrastructure failures never become terminal domain failures. At
-        # the limit the row remains pending with no retry timestamp and claim
-        # validation pauses it until an explicit recovery action.
-        retry_blocked = attempt >= config.infrastructure_retry_limit
-        delay = min(
-            config.retry_max_seconds,
-            config.retry_base_seconds * (2 ** min(max(0, attempt - 1), 30)),
+        # Stale recovery is always an infrastructure failure: the row stays
+        # pending at its limit instead of becoming terminal, and claim
+        # validation parks it until an explicit recovery action.
+        outcome = retry_outcome(
+            config, attempt=attempt, failure_class="transient", now=format_utc(now)
         )
-        return False, None if retry_blocked else format_utc(now + timedelta(seconds=delay))
+        return outcome.terminal, outcome.next_retry_at

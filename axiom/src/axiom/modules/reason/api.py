@@ -59,6 +59,17 @@ def open_workspace(
     )
 
 
+@router.post("/tasks/{task_id}/reason-runs/{reason_run_id}/reset-retries", response_model=ReasonRun)
+def reset_reason_run_retries(
+    task_id: str,
+    reason_run_id: str,
+    container: Container = Depends(get_container),
+) -> ReasonRun:
+    """Release a ReasonRun parked by an exhausted infrastructure retry budget."""
+
+    return container.reason.reset_run_retries(task_id, reason_run_id)
+
+
 @router.get("/tasks/{task_id}/reason-runs/{reason_run_id}", response_model=ReasonRun)
 def get_reason_run(
     task_id: str,

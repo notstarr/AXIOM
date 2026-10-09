@@ -771,6 +771,29 @@ class TaskService:
             return []
         task_ids = [task.id for task in tasks_to_decorate]
 
+        def blocked_count_query(table, metric: str):
+            """Count work parked after exhausting its infrastructure retries.
+
+            Keyed on the ``retry_blocked`` activity marker the release paths
+            write, not on ``infrastructure_retry_count >= limit``: that keeps
+            this counter accurate if the limit is later reconfigured, and it
+            needs no extra read of the runtime settings.
+            """
+
+            return (
+                select(
+                    table.c.task_id.label("task_id"),
+                    literal(metric).label("metric"),
+                    func.count().label("count"),
+                )
+                .where(
+                    table.c.task_id.in_(task_ids),
+                    table.c.status == "pending",
+                    table.c.activity_kind == "retry_blocked",
+                )
+                .group_by(table.c.task_id)
+            )
+
         def count_query(table, metric: str, *conditions):
             return (
                 select(
@@ -801,6 +824,19 @@ class TaskService:
                         intents.c.kind == "explore",
                         intents.c.status.in_(["claimed", "running", "concluding"]),
                     ),
+                    # Work parked after exhausting its infrastructure retry
+                    # budget.  Only intents carry ``archived``; the run tables
+                    # do not, so each gets its own metric and the totals are
+                    # summed below.
+                    count_query(
+                        intents,
+                        "blocked_intents",
+                        intents.c.status == "pending",
+                        intents.c.activity_kind == "retry_blocked",
+                    ),
+                    blocked_count_query(reason_runs, "blocked_reason_runs"),
+                    blocked_count_query(plan_runs, "blocked_plan_runs"),
+                    blocked_count_query(vulnerability_review_runs, "blocked_reviews"),
                 )
             ).mappings()
             counts: dict[str, dict[str, int]] = {}
@@ -959,6 +995,15 @@ class TaskService:
                         "todo_count": counts.get("todos", {}).get(task.id, 0),
                         "vulnerability_count": counts.get("vulnerabilities", {}).get(task.id, 0),
                         "artifact_count": counts.get("artifacts", {}).get(task.id, 0),
+                        "blocked_work_count": sum(
+                            counts.get(metric, {}).get(task.id, 0)
+                            for metric in (
+                                "blocked_intents",
+                                "blocked_reason_runs",
+                                "blocked_plan_runs",
+                                "blocked_reviews",
+                            )
+                        ),
                         "reason_worker": legacy_reason["worker"] if legacy_reason_present else None,
                         "reason_heartbeat_at": legacy_reason["last_heartbeat_at"] if legacy_reason_present else None,
                         "reason_activity_kind": legacy_reason["activity_kind"] if legacy_reason_present else "",

@@ -445,6 +445,44 @@ class ReasonRepository:
         return bool(result.rowcount)
 
     @staticmethod
+    def reset_retry_budget(
+        conn: Connection,
+        *,
+        task_id: str,
+        run_id: str,
+        now: str,
+    ) -> bool:
+        """Re-arm a parked ReasonRun so the dispatcher may claim it again.
+
+        Infrastructure failures park at their limit with no retry timestamp;
+        this is the explicit recovery action that releases them.
+        """
+
+        result = conn.execute(
+            update(reason_runs)
+            .where(
+                reason_runs.c.task_id == task_id,
+                reason_runs.c.id == run_id,
+                reason_runs.c.status == "pending",
+                reason_runs.c.trigger != "plan",
+            )
+            .values(
+                retry_count=0,
+                infrastructure_retry_count=0,
+                next_retry_at=None,
+                last_failure_kind="",
+                failure_class="",
+                activity_kind="",
+                activity_summary="",
+                activity_tool="",
+                activity_started_at=None,
+                activity_updated_at=None,
+                updated_at=now,
+            )
+        )
+        return bool(result.rowcount)
+
+    @staticmethod
     def update_activity(
         conn: Connection,
         *,

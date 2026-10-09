@@ -18,6 +18,8 @@ from axiom.modules.credentials.schemas import (
     WorkerCredentialRefresh,
     WorkerCredentialSummary,
 )
+from axiom.modules.dispatch.pool import json_list, narrow_pool_after_failure
+from axiom.modules.dispatch.retry import retry_blocked_event, retry_outcome
 from axiom.modules.execution.repository import ExecutionRepository
 from axiom.modules.execution.schemas import (
     ActivityCommand,
@@ -37,6 +39,7 @@ from axiom.modules.execution.schemas import (
     ReleasedIntent,
     StartedIntent,
 )
+from axiom.modules.graph.tables import intents
 from axiom.modules.execution.stage_outputs import (
     EXPLORE_FINDINGS_FILE,
     append_explore_vulnerability_locked,
@@ -914,30 +917,13 @@ class ExecutionService:
             self._require_row(row, task_id, intent_id)
             self._require_lease(row, command.lease_id)
             config = load_runtime_config(conn)
-            next_count = (
+            attempt = (
                 row["retry_count"] + 1
                 if command.failure_class == "execution"
                 else row["infrastructure_retry_count"] + 1
             )
-            limit = (
-                config.execution_retry_limit
-                if command.failure_class == "execution"
-                else config.infrastructure_retry_limit
-            )
-            # Execution failures are terminal at their configured limit.
-            # Infrastructure failures remain pending at the limit, but are
-            # deliberately blocked from automatic re-claim until an
-            # operator/system recovery clears the condition.
-            terminal = command.failure_class == "execution" and next_count >= limit
-            retry_blocked = command.failure_class == "transient" and next_count >= limit
-            delay = min(
-                config.retry_max_seconds,
-                config.retry_base_seconds * (2 ** max(0, next_count - 1)),
-            )
-            next_retry_at = (
-                format_utc(parse_utc(now) + timedelta(seconds=delay))
-                if not terminal and not retry_blocked
-                else None
+            outcome = retry_outcome(
+                config, attempt=attempt, failure_class=command.failure_class, now=now
             )
             if not self.repository.release(
                 conn,
@@ -946,11 +932,25 @@ class ExecutionService:
                 lease_id=command.lease_id,
                 failure_kind=command.failure_kind,
                 failure_class=command.failure_class,
-                next_retry_at=next_retry_at,
-                terminal=terminal,
+                next_retry_at=outcome.next_retry_at,
+                terminal=outcome.terminal,
                 now=now,
             ):
                 raise ConflictError("Intent lease is no longer active")
+            worker_pool = (
+                narrow_pool_after_failure(
+                    conn,
+                    table=intents,
+                    run_id=intent_id,
+                    task_id=task_id,
+                    pool_json=row["intent_worker_pool_json"],
+                    failed_worker=row["worker"],
+                    kind=row["kind"],
+                    now=now,
+                )
+                if command.failure_class == "transient"
+                else json_list(row["intent_worker_pool_json"])
+            )
             self.audit.record_in(
                 conn,
                 RecordAuditEvent(
@@ -965,12 +965,28 @@ class ExecutionService:
                         "phase": row["kind"],
                         "failure_kind": command.failure_kind,
                         "failure_class": command.failure_class,
-                        "terminal": terminal,
-                        "retry_blocked": retry_blocked,
-                        "next_retry_at": next_retry_at,
+                        "terminal": outcome.terminal,
+                        "retry_blocked": outcome.retry_blocked,
+                        "next_retry_at": outcome.next_retry_at,
+                        "worker_pool": worker_pool,
                     },
                 ),
             )
+            if outcome.retry_blocked:
+                self.audit.record_in(
+                    conn,
+                    retry_blocked_event(
+                        phase="intent",
+                        event_type="intent.retry_blocked",
+                        task_id=task_id,
+                        project_id=row["project_id"],
+                        failure_kind=command.failure_kind,
+                        outcome=outcome,
+                        failed_worker=row["worker"],
+                        worker_pool=worker_pool,
+                        intent_id=intent_id,
+                    ),
+                )
             if command.failure_class == "transient" and row["worker"]:
                 cooldown = format_utc(
                     parse_utc(now) + timedelta(seconds=config.worker_failure_cooldown_seconds)
@@ -990,8 +1006,8 @@ class ExecutionService:
         return ReleasedIntent(
             task_id=task_id,
             intent_id=intent_id,
-            status="failed" if terminal else "pending",
-            next_retry_at=next_retry_at,
+            status="failed" if outcome.terminal else "pending",
+            next_retry_at=outcome.next_retry_at,
             retry_count=row["retry_count"] + (1 if command.failure_class == "execution" else 0),
             infrastructure_retry_count=row["infrastructure_retry_count"]
             + (1 if command.failure_class == "transient" else 0),

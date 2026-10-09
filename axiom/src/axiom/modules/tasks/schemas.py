@@ -192,6 +192,9 @@ class Task(BaseModel):
     todo_count: int = 0
     vulnerability_count: int = 0
     artifact_count: int = 0
+    # Work items parked after exhausting their infrastructure retry budget:
+    # they stay pending but are no longer claim candidates until recovered.
+    blocked_work_count: int = 0
     reason_worker: str | None = None
     reason_heartbeat_at: str | None = None
     reason_activity_kind: str = ""

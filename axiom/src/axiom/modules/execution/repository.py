@@ -35,6 +35,9 @@ class ExecutionRepository:
                 intents.c.conclude_timeout_seconds,
                 intents.c.retry_count,
                 intents.c.infrastructure_retry_count,
+                # The dispatcher selects workers from the Intent's own pool,
+                # so release-time narrowing must read that one (not the task's).
+                intents.c.worker_pool_json.label("intent_worker_pool_json"),
                 intents.c.human_intervention_required,
                 intents.c.human_intervention_reason,
                 intents.c.human_intervention_marked_at,

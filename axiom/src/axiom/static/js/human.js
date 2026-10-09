@@ -745,6 +745,14 @@ window.AxiomModules.human = {
       if (ts && (ts.complete === false || ts.incomplete_sources > 0)) {
         items.push({ level: 'warn', label: `${ts.incomplete_sources || 0} 个 Session 来源不完整，Token 统计偏低` });
       }
+      // 基础设施重试耗尽的条目会一直停在 pending 且不再被派发；不显式提示的话，
+      // 界面上只表现为"再也没有进展"。
+      if ((p.blocked_work_count || 0) > 0) {
+        items.unshift({
+          level: 'danger',
+          label: `${p.blocked_work_count} 项工作因基础设施重试耗尽已暂停自动重试，需人工恢复`,
+        });
+      }
       return items.slice(0, 5);
     },
 

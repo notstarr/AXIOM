@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import Engine, exists, func, or_, select, update
 
+from axiom.modules.dispatch.pool import json_list, narrow_pool_after_failure
+from axiom.modules.dispatch.retry import retry_blocked_event, retry_outcome
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
 from axiom.modules.context.tables import context_revisions
@@ -1353,6 +1355,65 @@ class ReasonService:
             ):
                 raise ConflictError("ReasonRun is not running under this lease")
 
+    def reset_run_retries(self, task_id: str, reason_run_id: str) -> ReasonRun:
+        """Clear an exhausted retry budget so a parked queue head becomes claimable.
+
+        A ReasonRun whose infrastructure retries hit the limit stays ``pending``
+        with no retry timestamp and is skipped by every dispatch tick.  Without
+        this action a blocked run has no exit at all: the task keeps coalescing
+        new triggers into it and never plans again.
+        """
+
+        now = utcnow()
+        with transaction(self.engine) as conn:
+            task = self.tasks.get(conn, task_id)
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            run = self.repository.get_run(conn, task_id, reason_run_id)
+            if run is None:
+                raise NotFoundError(f"ReasonRun not found: {task_id}/{reason_run_id}")
+            if run.trigger == "plan":
+                raise ConflictError(
+                    "Legacy ReasonRun(trigger=plan) is read-only; use the independent PlanRun API"
+                )
+            if run.status != "pending":
+                raise ConflictError(
+                    f"ReasonRun is not pending: {reason_run_id} (status={run.status})"
+                )
+            has_retry_debris = bool(
+                run.infrastructure_retry_count > 0
+                or run.retry_count > 0
+                or run.failure_class
+                or run.last_failure_kind
+                or run.next_retry_at is not None
+            )
+            if not has_retry_debris:
+                return run
+            if not self.repository.reset_retry_budget(
+                conn, task_id=task_id, run_id=reason_run_id, now=now
+            ):
+                raise ConflictError(f"ReasonRun changed while resetting: {reason_run_id}")
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=task.project_id,
+                    task_id=task_id,
+                    reason_run_id=reason_run_id,
+                    worker="",
+                    event_type="reason_run.retry_budget_reset",
+                    message="ReasonRun 重试预算已由人工重置，可重新领取",
+                    payload={
+                        "phase": "reason",
+                        "previous_infrastructure_retry_count": run.infrastructure_retry_count,
+                        "previous_retry_count": run.retry_count,
+                        "previous_failure_kind": run.last_failure_kind,
+                    },
+                ),
+            )
+            refreshed = self.repository.get_run(conn, task_id, reason_run_id)
+            assert refreshed is not None
+            return refreshed
+
     def release_run(
         self,
         task_id: str,
@@ -1366,27 +1427,15 @@ class ReasonService:
         with transaction(self.engine) as conn:
             run = self._require_run_lease(conn, task_id, reason_run_id, lease_id)
             config = load_runtime_config(conn)
-            next_count = (
+            attempt = (
                 run.retry_count + 1
                 if failure_class == "execution"
                 else run.infrastructure_retry_count + 1
             )
-            limit = (
-                config.execution_retry_limit
-                if failure_class == "execution"
-                else config.infrastructure_retry_limit
+            outcome = retry_outcome(
+                config, attempt=attempt, failure_class=failure_class, now=now
             )
-            terminal = failure_class == "execution" and next_count >= limit
-            retry_blocked = failure_class == "transient" and next_count >= limit
-            delay = min(
-                config.retry_max_seconds,
-                config.retry_base_seconds * (2 ** min(max(0, next_count - 1), 30)),
-            )
-            next_retry_at = (
-                format_utc(parse_utc(now) + timedelta(seconds=delay))
-                if not terminal and not retry_blocked
-                else None
-            )
+            terminal = outcome.terminal
             if not self.repository.release(
                 conn,
                 task_id=task_id,
@@ -1394,11 +1443,25 @@ class ReasonService:
                 lease_id=lease_id,
                 failure_kind=failure_kind,
                 failure_class=failure_class,
-                next_retry_at=next_retry_at,
-                terminal=terminal,
+                next_retry_at=outcome.next_retry_at,
+                terminal=outcome.terminal,
                 now=now,
             ):
                 raise LeaseInactiveError("ReasonRun lease is no longer active")
+            worker_pool = (
+                narrow_pool_after_failure(
+                    conn,
+                    table=reason_runs,
+                    run_id=reason_run_id,
+                    task_id=task_id,
+                    pool_json=run.worker_pool,
+                    failed_worker=run.worker,
+                    kind="reason",
+                    now=now,
+                )
+                if failure_class == "transient"
+                else json_list(run.worker_pool)
+            )
             if failure_kind == "reason_plan_invalid" and not terminal:
                 # Workspace 延续：规划类失败且仍可重试时保留 draft，下一次
                 # 尝试认领孤儿工作区续用；终态（重试预算耗尽）照常弃置。
@@ -1427,12 +1490,28 @@ class ReasonService:
                         "phase": "plan" if run.trigger == "plan" else "reason",
                         "failure_kind": failure_kind,
                         "failure_class": failure_class,
-                        "terminal": terminal,
-                        "retry_blocked": retry_blocked,
-                        "next_retry_at": next_retry_at,
+                        "terminal": outcome.terminal,
+                        "retry_blocked": outcome.retry_blocked,
+                        "next_retry_at": outcome.next_retry_at,
+                        "worker_pool": worker_pool,
                     },
                 ),
             )
+            if outcome.retry_blocked:
+                self.audit.record_in(
+                    conn,
+                    retry_blocked_event(
+                        phase="reason",
+                        event_type="reason_run.retry_blocked",
+                        task_id=task_id,
+                        project_id=task.project_id if task else None,
+                        failure_kind=failure_kind,
+                        outcome=outcome,
+                        failed_worker=run.worker,
+                        worker_pool=worker_pool,
+                        reason_run_id=reason_run_id,
+                    ),
+                )
             if failure_class == "transient" and run.worker:
                 cooldown = format_utc(
                     parse_utc(now)
@@ -1447,7 +1526,7 @@ class ReasonService:
                 task_id=task_id,
                 reason_run_id=reason_run_id,
                 status="failed" if terminal else "pending",
-                next_retry_at=next_retry_at,
+                next_retry_at=outcome.next_retry_at,
                 retry_count=run.retry_count + (1 if failure_class == "execution" else 0),
                 infrastructure_retry_count=run.infrastructure_retry_count
                 + (1 if failure_class == "transient" else 0),

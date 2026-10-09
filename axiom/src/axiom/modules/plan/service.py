@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Engine, exists, select, update
 
 from axiom.modules.artifacts.tables import artifacts
+from axiom.modules.dispatch.pool import json_list, narrow_pool_after_failure
+from axiom.modules.dispatch.retry import retry_blocked_message, retry_outcome
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
 from axiom.modules.context.tables import context_revisions
@@ -45,7 +46,7 @@ from axiom.modules.todos.schemas import (
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.tables import vulnerability_artifacts
 from axiom.modules.tasks.origin import parse_intent_network_target, scope_entry_matches_host
-from axiom.shared.clock import format_utc, parse_utc, utcnow
+from axiom.shared.clock import utcnow
 from axiom.shared.database import run_transaction, transaction
 from axiom.shared.errors import ConflictError, LeaseInactiveError, NotFoundError
 from axiom.shared.ids import allocate_id, id_counters
@@ -205,6 +206,7 @@ class PlanService:
         workspace_id: str | None = None,
         worker: str = "",
         payload: dict[str, Any] | None = None,
+        level: str = "info",
     ) -> None:
         self.audit.record_in(
             conn,
@@ -215,6 +217,7 @@ class PlanService:
                 workspace_id=workspace_id,
                 worker=worker,
                 event_type=event_type,
+                level=level,
                 message=message,
                 payload=payload or {},
             ),
@@ -995,17 +998,25 @@ class PlanService:
             run = self._require_lease(conn, task_id, plan_run_id, lease_id)
             config = load_runtime_config(conn)
             count = run.retry_count + 1 if failure_class == "execution" else run.infrastructure_retry_count + 1
-            limit = getattr(config, "execution_retry_limit", 3) if failure_class == "execution" else getattr(config, "infrastructure_retry_limit", 3)
-            terminal = failure_class == "execution" and count >= limit
-            retry_blocked = failure_class == "transient" and count >= limit
-            delay = min(getattr(config, "retry_max_seconds", 300), getattr(config, "retry_base_seconds", 5) * (2 ** min(max(0, count - 1), 30)))
-            retry_at = (
-                format_utc(parse_utc(now) + timedelta(seconds=delay))
-                if not terminal and not retry_blocked
-                else None
-            )
+            outcome = retry_outcome(config, attempt=count, failure_class=failure_class, now=now)
+            terminal = outcome.terminal
+            retry_at = outcome.next_retry_at
             if not self.repository.release(conn, task_id=task_id, run_id=plan_run_id, lease_id=lease_id, failure_kind=failure_kind, failure_class=failure_class, next_retry_at=retry_at, terminal=terminal, now=now):
                 raise LeaseInactiveError("PlanRun lease is no longer active")
+            worker_pool = (
+                narrow_pool_after_failure(
+                    conn,
+                    table=plan_runs,
+                    run_id=plan_run_id,
+                    task_id=task_id,
+                    pool_json=run.worker_pool,
+                    failed_worker=run.worker,
+                    kind="plan",
+                    now=now,
+                )
+                if failure_class == "transient"
+                else json_list(run.worker_pool)
+            )
             self.repository.abandon_open(conn, task_id=task_id, plan_run_id=plan_run_id, lease_id=lease_id, failure_reason=failure_kind or "plan_run_released", now=now)
             task = self.tasks.get(conn, task_id)
             if task is not None:
@@ -1019,11 +1030,29 @@ class PlanService:
                     payload={
                         "failure_kind": failure_kind,
                         "failure_class": failure_class,
-                        "terminal": terminal,
-                        "retry_blocked": retry_blocked,
+                        "terminal": outcome.terminal,
+                        "retry_blocked": outcome.retry_blocked,
                         "next_retry_at": retry_at,
+                        "worker_pool": worker_pool,
                     },
                 )
+                if outcome.retry_blocked:
+                    self._audit_in(
+                        conn,
+                        task=task,
+                        plan_run_id=plan_run_id,
+                        worker=run.worker or "",
+                        level="warning",
+                        event_type="plan_run.retry_blocked",
+                        message=retry_blocked_message("plan", failure_kind),
+                        payload={
+                            "failure_kind": failure_kind,
+                            "infrastructure_retry_count": outcome.attempt,
+                            "limit": outcome.limit,
+                            "failed_worker": run.worker or "",
+                            "worker_pool": worker_pool,
+                        },
+                    )
             result = ReleasedPlanRun(task_id=task_id, plan_run_id=plan_run_id, status="failed" if terminal else "pending", next_retry_at=retry_at, retry_count=run.retry_count + (1 if failure_class == "execution" else 0), infrastructure_retry_count=run.infrastructure_retry_count + (1 if failure_class == "transient" else 0))
         if self.sandboxes is not None:
             try:
