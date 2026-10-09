@@ -88,6 +88,20 @@ worker 需要用户已登录的页面时：
 （Authorization/Cookie 头）与对象级越权对照。**结果只写 evidence/ 目录**，
 findings/leads 正文引用 evidence 路径，不要内联明文。
 
+**域匹配是后缀精确的，且不含父域。** `--domain` 直接透传给
+`chrome.cookies.getAll({ domain })`，只返回「域恰好等于该值」或「其**子域**」的
+cookie；**设在父域上的会话 cookie 不会返回**：
+
+```bash
+"$AXIOM_BSK" credentials --domain wedata.example.com --session <id>   # 漏掉 .example.com 上的会话 cookie
+"$AXIOM_BSK" credentials --domain example.com --session <id>          # 优先：传可注册父域，再按 cookie 名自筛
+```
+
+「只回了一个无关 cookie」通常就是这个原因，**不是 HttpOnly 限制**——
+读 HttpOnly 正是本工具存在的意义（`chrome.cookies` 能读，页面 JS 不能），
+结果里每个 cookie 都带 `http_only` 标记。**只有用父域重试后仍找不到会话
+cookie，才可以判定会话不在 cookie 里**（可能在 localStorage，或属于另一个域）。
+
 ## 人工接管
 
 撞验证码/登录/短信验证码/支付确认时：
