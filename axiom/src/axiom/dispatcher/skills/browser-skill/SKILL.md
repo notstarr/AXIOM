@@ -4,6 +4,7 @@ description: |
   使用 bsk 命令驱动用户的真实浏览器（已登录态）：访问页面、填表、点击、
   接口探测、抓取数据。要求本机 bsk CLI 与浏览器扩展已连接。
   本版本为 axiom 定制：凭据提取是渗透测试的合法产出；scope 外目标禁止访问。
+  命令面与上游 bsk 0.3.2 对齐（网站调试用 debug；network 仅索引）。
 ---
 
 # browser-skill（axiom 定制）
@@ -103,7 +104,7 @@ outcome：`continued`/`completed` → 恢复控制，先 observe 再继续；
 ```text
 session start|stop|list   browsers   status   doctor   logs
 navigate   navigate-back   navigate-forward   reload   wait-for-navigation   wait-ms
-observe   snapshot   get-html   screenshot   console   network
+observe   snapshot   get-html   screenshot   console   network   debug
 click   hover   wheel   scroll-to   focus   blur   fill   select   press   evaluate
 tab list|create|close|select|borrow|return   window resize   emulate
 upload   download   request-help   record start|stop
@@ -122,14 +123,31 @@ credentials --domain <domain> --session <id>   # axiom 定制
 "$AXIOM_BSK" upload <ref> --file <path>
 "$AXIOM_BSK" download <ref> --out <path>
 
-- `network` 是 DevTools 面板的 worker 版：默认索引只列 API 流量（静态资源与
-  chrome-extension:// 噪音已滤除），响应体/请求头不出现在索引里。
-- 索引 + 详情两段式：`network --clear` 记游标 → 触发功能（click/fill）→
-  `network` 看增量索引（每包一行）→ `network --detail <seq>` 看单包全量
-  （请求头/请求体/响应头/响应体）。禁止无 clear 连续刷 network；响应体全文
-  只经 `--detail` 按需取，截断时用 `--since/--limit/--url` 缩窗。
-- `network --url <子串>`（大小写不敏感）与 `--all`（含静态资源）按需过滤；
-  序号被环形挤出时 detail 返回空——索引行仍在，说明该包发生过。
+- `network` 是 DevTools 面板的 worker 版，**只返回索引**：每条一行（method / url /
+  status / mime_type / resource_type / 失败原因），游标式取增量——先记 `--since`
+  游标（或用返回的 `next_since`）再触发功能，然后按游标读增量。默认 50 条，
+  扩展上限 200；`--max-text-chars` 截断 URL 与错误文本。
+  **索引不含请求头、请求体、响应体。**
+- **需要请求头 / 请求体 / 响应体时用 `debug`**（上游网站调试能力；不要再指望
+  `network` 给出正文——它只有索引）。网站调试必须在导航/复现**之前**开启采集：
+
+  ```bash
+  "$AXIOM_BSK" debug start --session <id> --name "<任务名>"
+  "$AXIOM_BSK" navigate <url> --session <id>
+  # …用常规命令操作页面…
+  "$AXIOM_BSK" debug requests --session <id>                      # 请求列表(游标)
+  "$AXIOM_BSK" debug request <request-id> --session <id> --part response
+  "$AXIOM_BSK" debug request <request-id> --session <id> --part headers
+  "$AXIOM_BSK" debug request <request-id> --session <id> --part response --pointer /error/code
+  "$AXIOM_BSK" debug export --session <id> --output "<运行目录>/evidence/debug.json"
+  "$AXIOM_BSK" debug stop --session <id>
+  ```
+
+  `--part` 取值 `metadata|request|response|headers|timing`；长正文用 `--offset` /
+  `--max-chars` 分片，`--pointer` 按 RFC 6901 JSON pointer 直接取字段。
+- `debug` 还提供 `aggregate`（慢请求）、`duplicates`（重复请求分析）、`performance`、
+  `rules` / `replay`（请求规则与重放）、`console` / `pages` / `operations`
+  （与操作关联的证据）。收口前 `debug stop` 结束采集；历史记录会保留，可 `debug export` 导出。
 - `emulate` 对单个 tab 应用视口/UA/触屏覆盖；新 tab 不继承；`--off` 恢复。
 - `scroll-to`/`wheel` 用于无限滚动与懒加载页：滚一段 → observe/network 看增量，
   不要用 `evaluate window.scrollTo`（会绕过页面自己的滚动监听）。

@@ -9,3 +9,20 @@ __pycache__/
 logs/
 runtime/
 node_modules/
+
+# ── 本地测试产物与凭据（勿入库）────────────────────────────
+# 这些是 Worker 在仓库根目录留下的测试凭据/令牌与临时工作目录
+/cred_b.json
+/tok*.txt
+/tokens_*.txt
+/sess.json
+/wh.json
+/private/
+/*work/
+/.i*/
+/i*work/
+*.bak_*
+/work_*/
+/index_super.html
+/ops.html
+/nologin.txt
