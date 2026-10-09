@@ -26,7 +26,6 @@
           <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" :class="projectStatusBadgeClass(project.project.status)" x-text="projectStatusLabel(project.project.status)"></span>
           <span x-show="project?.project?.archived" class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-slate-200 text-slate-600">已归档</span>
         </div>
-        <p class="text-xs text-slate-400 mt-0.5 truncate" x-text="project?.project?.origin"></p>
       </div>
       <div class="sto-seg" role="group" aria-label="任务视图">
         <button type="button" @click="switchTaskView('human')" :class="view === 'human' ? 'on' : ''" :aria-pressed="view === 'human'">概览</button>
@@ -207,10 +206,14 @@
 
       <div class="min-w-0 space-y-4">
         <section class="sto-panel" style="padding:16px 20px;">
-          <div class="flex items-center gap-4 flex-wrap">
+          <div class="flex items-start gap-4 flex-wrap">
             <div class="min-w-0 flex-1" style="min-width:260px;">
               <p class="sto-label">任务目标</p>
               <p class="mt-1 text-sm font-semibold text-slate-800" :title="project?.project?.goal" x-text="project?.project?.goal || '未设置任务目标'"></p>
+            </div>
+            <div class="min-w-0 flex-1" style="min-width:260px;">
+              <p class="sto-label">任务起点</p>
+              <p class="mt-1 text-sm font-semibold text-slate-800 whitespace-pre-wrap break-all" :title="project?.project?.origin" x-text="project?.project?.origin || '未设置任务起点'"></p>
             </div>
             <div class="hidden md:flex items-center gap-2.5 flex-wrap justify-end">
               <div class="flex items-center gap-2 rounded-xl border border-slate-200/80 bg-slate-50/70 px-3.5 py-2">

@@ -27,7 +27,6 @@
           <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold shrink-0" :class="projectStatusBadgeClass(project.project.status)" x-text="projectStatusLabel(project.project.status)"></span>
           <span x-show="project.project.archived" class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-slate-200 text-slate-600 shrink-0">已归档</span>
         </div>
-        <p class="text-xs text-slate-400 mt-0.5 truncate" x-text="project.project.origin"></p>
       </div>
       <div class="sto-seg" role="group" aria-label="任务视图">
         <button type="button" @click="switchTaskView('human')" :class="view === 'human' ? 'on' : ''" :aria-pressed="view === 'human'">概览</button>
