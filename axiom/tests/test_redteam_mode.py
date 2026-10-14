@@ -155,6 +155,121 @@ def test_chain_staging_requires_red_team_task(client) -> None:
     assert "red_team tasks" in response.text
 
 
+def test_result_review_points_rules(client) -> None:
+    """核定规则：verified 必须带分；duplicate 强制 0 分。"""
+
+    task, claim, completed = _active_reason(client, red_team=True)
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    committed = apply_reason_draft(
+        client, workspace["id"], claim["lease_id"], _chain_draft(completed)
+    )
+    assert committed.status_code == 200, committed.text
+    chain_id = committed.json()["created_chain_ids"][0]
+    intent_id = committed.json()["created_intent_ids"][0]
+
+    claim_body, _execution = _claim_explore(client, task["id"], intent_id)
+    uploaded = client.post(
+        f"/api/v1/tasks/{task['id']}/artifacts/upload",
+        files={"file": ("evidence.txt", b"permission transition proof")},
+        data={"actor": "worker-a", "summary": "权限跃迁证据"},
+    )
+    report = {
+        "chain_id": chain_id,
+        "result_type": "permission",
+        "title": "取得成员管理能力",
+        "description": "复用普通成员会话调用成员管理接口成功",
+        "principal": "user:member",
+        "capabilities_gained": ["tenant:admin"],
+        "target_asset": "member-management",
+        "evidence_refs": [f"artifact:{uploaded.json()['id']}"],
+        "points_declared": 40,
+    }
+    accepted = client.post(
+        f"/api/v1/tasks/{task['id']}/intents/{intent_id}/red-team-results",
+        json={"lease_id": claim_body["lease_id"], "report": report},
+    )
+    assert accepted.status_code == 201, accepted.text
+    result_id = accepted.json()["id"]
+
+    # verified 不带核定分 → 拒绝
+    no_points = client.post(
+        f"/api/v1/tasks/{task['id']}/red-team/results/{result_id}/review",
+        json={"status": "verified", "reason": "证据充分，符合垂直提权档位", "reviewed_by": "reviewer-a"},
+    )
+    assert no_points.status_code == 409, no_points.text
+
+    # duplicate 即使给了分也强制 0
+    duplicated = client.post(
+        f"/api/v1/tasks/{task['id']}/red-team/results/{result_id}/review",
+        json={"status": "duplicate", "reason": "与既有成果为同一能力，重复计分", "reviewed_by": "reviewer-a", "points_awarded": 30},
+    )
+    assert duplicated.status_code == 200, duplicated.text
+    assert duplicated.json()["status"] == "duplicate"
+    assert duplicated.json()["points_awarded"] == 0
+
+
+def test_redteam_goal_requires_target_points(client, engine) -> None:
+    """Goal 达成判定：verified 核定分之和必须达到 target_points。"""
+
+    import pytest as _pytest
+    from sqlalchemy import insert, update
+
+    from axiom.modules.goals.service import GoalService
+    from axiom.modules.redteam.tables import red_team_chains, red_team_results
+    from axiom.shared.errors import ConflictError
+
+    project = client.post("/api/v1/projects", json={"title": "积分门槛"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "积分门槛任务",
+            "origin": "a.example.com",
+            "goal": "对该系统进行渗透测试，并取得100积分",
+            "worker_pool": ["worker-a"],
+            "engagement_mode": "red_team",
+        },
+    ).json()
+
+    service = GoalService(engine)
+    with engine.connect() as conn:
+        loaded = service.tasks.get(conn, task["id"])
+        assert loaded is not None and loaded.red_team_objective is not None
+        assert loaded.red_team_objective.target_points == 100
+        now = "2026-10-14T00:00:00Z"
+        conn.execute(
+            insert(red_team_chains).values(
+                id="chGOAL01", task_id=task["id"], title="链",
+                initial_principal_json={"id": "user:initial", "label": "初始身份", "tenant": "", "credential_id": None},
+                target_capabilities_json=[], target_assets_json=[], current_state_json={},
+                source_fact_ids_json=[], source_intent_ids_json=[],
+                status="planned", created_by="worker.reason", created_at=now, updated_at=now,
+            )
+        )
+        base_result = dict(
+            id="rrGOAL01", task_id=task["id"], chain_id="chGOAL01", intent_id="i001",
+            result_type="permission", title="成果", description="desc", principal="user:initial", tenant="",
+            capabilities_before_json=[], capabilities_gained_json=["tenant:admin"], capabilities_after_json=["tenant:admin"],
+            target_asset="member-management", data_target_id=None, sample_count=None, sample_bytes=None,
+            data_fields_json=[], data_summary="", credential_ref=None, evidence_refs_json=[],
+            status="verified", reported_by="worker-a", reviewed_by="reviewer-a", review_reason="ok",
+            points_declared=30, points_awarded=30, created_at=now, updated_at=now,
+        )
+        conn.execute(insert(red_team_results).values(**base_result))
+
+        # 30 分 < 目标 100 → 拒绝
+        with _pytest.raises(ConflictError, match="verified points"):
+            service._validate_red_team_completion(conn, task["id"], loaded.red_team_objective)
+
+        # 补到 100 分 → 通过
+        conn.execute(
+            update(red_team_results)
+            .where(red_team_results.c.id == "rrGOAL01")
+            .values(points_awarded=100)
+        )
+        service._validate_red_team_completion(conn, task["id"], loaded.red_team_objective)
+
+
 def test_red_team_default_objective_is_permissive(client) -> None:
     """只切模式不填结构化目标：后端合成宽松默认，链可自由声明能力/资产。"""
 
@@ -342,6 +457,7 @@ def test_result_report_enforces_bound_chain(client) -> None:
         "capabilities_gained": ["tenant:admin"],
         "target_asset": "member-management",
         "evidence_refs": [f"artifact:{artifact_id}"],
+        "points_declared": 30,
     }
 
     misplaced = client.post(
@@ -404,6 +520,7 @@ def test_redteam_result_review_lifecycle(client, engine) -> None:
         "capabilities_gained": ["tenant:admin"],
         "target_asset": "member-management",
         "evidence_refs": [f"artifact:{uploaded.json()['id']}"],
+        "points_declared": 30,
     }
     accepted = client.post(
         f"/api/v1/tasks/{task['id']}/intents/{intent_id}/red-team-results",
@@ -441,7 +558,7 @@ def test_redteam_result_review_lifecycle(client, engine) -> None:
     assert started.status_code == 200, started.text
     decided = client.post(
         f"{review_base}/decision",
-        json={**review_lease, "decision": "verified", "reason": "证据充分：权限跃迁可复现，链归属与目标一致"},
+        json={**review_lease, "decision": "verified", "reason": "证据充分：权限跃迁可复现，链归属与目标一致", "points_awarded": 30},
     )
     assert decided.status_code == 200, decided.text
     assert decided.json()["decision"] == "verified"
@@ -455,6 +572,7 @@ def test_redteam_result_review_lifecycle(client, engine) -> None:
     assert body["review_subject_type"] == "redteam_result"
     assert body["red_team_result_id"] == result_id
     assert body["vulnerability_status"] == "verified"
+    assert body["points_awarded"] == 30
 
     results = client.get(
         f"/api/v1/tasks/{task['id']}/red-team/results", params={"chain_id": chain_id}
@@ -463,6 +581,8 @@ def test_redteam_result_review_lifecycle(client, engine) -> None:
     [verified] = results.json()
     assert verified["id"] == result_id
     assert verified["status"] == "verified"
+    assert verified["points_declared"] == 30
+    assert verified["points_awarded"] == 30
     assert verified["reviewed_by"]
 
 
@@ -494,6 +614,7 @@ def test_cross_task_result_and_chain_listing(client) -> None:
         "capabilities_gained": ["tenant:admin"],
         "target_asset": "member-management",
         "evidence_refs": [f"artifact:{uploaded.json()['id']}"],
+        "points_declared": 30,
     }
     accepted = client.post(
         f"/api/v1/tasks/{task['id']}/intents/{intent_id}/red-team-results",
@@ -538,6 +659,7 @@ def test_vulnerability_task_rejects_redteam_result(client) -> None:
                 "description": "漏洞任务不得上报红队成果",
                 "principal": "user:member",
                 "evidence_refs": ["artifact:x"],
+                "points_declared": 10,
             },
         },
     )

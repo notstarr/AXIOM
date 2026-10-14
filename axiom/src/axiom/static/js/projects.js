@@ -1043,6 +1043,19 @@ window.AxiomModules.projects = {
       }
     },
 
+    setEngagementMode(mode) {
+      this.newProject.engagement_mode = mode === 'red_team' ? 'red_team' : 'vulnerability';
+      // 任务目标仍是默认文案（未被用户改过）时，随模式切换默认话术
+      const defaults = {
+        vulnerability: '对该系统进行渗透测试，并挖掘10个高置信度的漏洞',
+        red_team: '对该系统进行渗透测试，并取得100积分',
+      };
+      const current = String(this.newProject.goal || '').trim();
+      if (!current || current === defaults.vulnerability || current === defaults.red_team) {
+        this.newProject.goal = defaults[this.newProject.engagement_mode] || '';
+      }
+    },
+
     async createProject() {
       try {
         if (this.projectGroups.length === 0) await this.loadProjectGroups();

@@ -1514,6 +1514,11 @@
     toggleRtResultExpand(resultId) {
       this.rtResultExpanded = this.rtResultExpanded === resultId ? '' : (resultId || '');
     },
+    rtVerifiedPoints() {
+      return (this.rtResultItems || [])
+        .filter(item => item.status === 'verified')
+        .reduce((sum, item) => sum + (Number(item.points_awarded) || 0), 0);
+    },
     _rtChainQuery() {
       // 任务与关键字筛选与成果列表共用；状态筛选按子视图独立
       const params = new URLSearchParams({ limit: '100', offset: '0' });

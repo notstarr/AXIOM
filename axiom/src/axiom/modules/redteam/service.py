@@ -441,16 +441,23 @@ class RedTeamService:
                 raise NotFoundError(f"RedTeam Result not found: {result_id}")
             if current.status not in {"reported", "reviewing", "needs-human"}:
                 raise ConflictError("Result is already terminal")
+            # 积分核定：verified 必须给出核定分；其余状态一律 0 分
+            points_awarded = 0
+            if command.status == "verified":
+                if command.points_awarded is None or command.points_awarded < 1:
+                    raise ConflictError("Verified Result requires awarded points (1-50)")
+                points_awarded = int(command.points_awarded)
             updated = self.repository.set_result_status(
                 conn, task_id=task_id, result_id=result_id, status=command.status,
-                reviewed_by=command.reviewed_by, review_reason=command.reason, now=utcnow()
+                reviewed_by=command.reviewed_by, review_reason=command.reason,
+                points_awarded=points_awarded, now=utcnow()
             )
             assert updated is not None
             task = conn.execute(select(tasks).where(tasks.c.id == task_id)).mappings().one()
             self.audit.record_in(conn, RecordAuditEvent(
                 project_id=task["project_id"], task_id=task_id, worker=command.reviewed_by,
                 event_type="redteam.result.reviewed", message="红队成果已完成审核",
-                payload={"result_id": result_id, "status": command.status},
+                payload={"result_id": result_id, "status": command.status, "points_awarded": points_awarded},
             ))
             return updated
         return run_transaction(self.engine, work)

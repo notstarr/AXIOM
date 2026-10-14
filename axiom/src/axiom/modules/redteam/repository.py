@@ -244,6 +244,8 @@ class RedTeamRepository:
             # considered complete.
             "status": "reviewing",
             "reported_by": reported_by,
+            "points_declared": command.points_declared,
+            "points_awarded": 0,
             "reviewed_by": None,
             "review_reason": "",
             "created_at": now,
@@ -261,20 +263,24 @@ class RedTeamRepository:
         status: str,
         reviewed_by: str,
         review_reason: str,
+        points_awarded: int | None = None,
         now: str,
     ) -> RedTeamResult | None:
+        values = {
+            "status": status,
+            "reviewed_by": reviewed_by,
+            "review_reason": review_reason,
+            "updated_at": now,
+        }
+        if points_awarded is not None:
+            values["points_awarded"] = int(points_awarded)
         result = conn.execute(
             update(red_team_results)
             .where(
                 red_team_results.c.task_id == task_id,
                 red_team_results.c.id == result_id,
             )
-            .values(
-                status=status,
-                reviewed_by=reviewed_by,
-                review_reason=review_reason,
-                updated_at=now,
-            )
+            .values(**values)
         )
         if not result.rowcount:
             return None
@@ -324,6 +330,8 @@ class RedTeamRepository:
             evidence_refs=_json_list(row.get("evidence_refs_json")),
             status=row["status"],
             reported_by=row["reported_by"],
+            points_declared=int(row.get("points_declared") or 0),
+            points_awarded=int(row.get("points_awarded") or 0),
             reviewed_by=row.get("reviewed_by"),
             review_reason=row.get("review_reason") or "",
             created_at=str(row["created_at"]),

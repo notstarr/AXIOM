@@ -887,6 +887,12 @@ def register_worker_commands(main: click.Group) -> None:
         default=None,
         help="Chain ID; defaults to the Intent's bound Chain (AXIOM_CHAIN_ID) when omitted.",
     )
+    @click.option(
+        "--points",
+        type=click.IntRange(1, 50),
+        required=True,
+        help="Self-assessed score from the redteam-scoring rubric (1-50).",
+    )
     @click.option("--type", "result_type", type=click.Choice(("permission", "data", "credential", "pivot")), required=True)
     @click.option("--title", required=True)
     @click.option("--description", required=True)
@@ -904,7 +910,7 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--credential-ref", default=None)
     @click.option("--evidence-path", "evidence_refs", multiple=True, required=True)
     def explore_result_report(
-        chain_id: str | None, result_type: str, title: str, description: str, principal: str,
+        chain_id: str | None, points: int, result_type: str, title: str, description: str, principal: str,
         tenant: str, capabilities_gained: tuple[str, ...], capabilities_before: tuple[str, ...],
         capabilities_after: tuple[str, ...], target_asset: str, data_target_id: str | None,
         sample_count: int | None, sample_bytes: int | None, data_fields: tuple[str, ...],
@@ -926,7 +932,7 @@ def register_worker_commands(main: click.Group) -> None:
             "data_target_id": data_target_id, "sample_count": sample_count,
             "sample_bytes": sample_bytes, "data_fields": list(data_fields),
             "data_summary": data_summary, "credential_ref": credential_ref,
-            "evidence_refs": list(evidence_refs),
+            "evidence_refs": list(evidence_refs), "points_declared": points,
         }
         _echo(_request("POST", f"/tasks/{task_id}/intents/{intent_id}/red-team-results", {
             "lease_id": _lease_id(), "report": report,
@@ -977,28 +983,33 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--reason")
     @click.option("--reason-file", type=click.Path(path_type=Path, dir_okay=False))
     @click.option("--duplicate-of")
+    @click.option(
+        "--points",
+        type=click.IntRange(1, 50),
+        default=None,
+        help="Awarded score for a verified RedTeam Result (redteam-scoring rubric).",
+    )
     def review_decision_submit(
         decision: str,
         reason: str | None,
         reason_file: Path | None,
         duplicate_of: str | None,
+        points: int | None,
     ) -> None:
         duplicate_of = (duplicate_of or "").strip() or None
         if decision == "duplicate" and not duplicate_of:
             raise click.UsageError("duplicate requires --duplicate-of vXXX")
         if decision != "duplicate" and duplicate_of:
             raise click.UsageError("--duplicate-of is only valid for duplicate")
-        _echo(
-            _review_request(
-                "decision",
-                {
-                    "lease_id": _lease_id(),
-                    "decision": decision,
-                    "reason": _text_value(reason, reason_file, "reason", required=True),
-                    "duplicate_of": duplicate_of,
-                },
-            )
-        )
+        payload: dict[str, Any] = {
+            "lease_id": _lease_id(),
+            "decision": decision,
+            "reason": _text_value(reason, reason_file, "reason", required=True),
+            "duplicate_of": duplicate_of,
+        }
+        if points is not None:
+            payload["points_awarded"] = points
+        _echo(_review_request("decision", payload))
 
 
 def _workspace_request(method: str, action: str, payload: dict[str, Any]) -> Any:

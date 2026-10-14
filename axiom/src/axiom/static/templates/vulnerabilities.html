@@ -276,7 +276,7 @@
             <option value="abandoned">已放弃</option>
           </select>
         </template>
-        <span class="sto-muted sto-num" style="font-size:10.5px;" x-text="rtResultView === 'chains' ? `共 ${rtChainTotal} 条链` : `共 ${rtResultTotal} 条成果`"></span>
+        <span class="sto-muted sto-num" style="font-size:10.5px;" x-text="rtResultView === 'chains' ? `共 ${rtChainTotal} 条链` : `共 ${rtResultTotal} 条成果 · 核定 ${rtVerifiedPoints()} 分`"></span>
       </div>
     </div>
 
@@ -291,6 +291,8 @@
             <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);" x-text="r.id"></span>
             <span class="sto-status" :class="rtTypeClass(r.result_type)" style="font-size:10px;"><i></i><span x-text="rtTypeLabel(r.result_type)"></span></span>
             <span class="sto-status" :class="rtStatusClass(r.status)" style="font-size:10px;"><i></i><span x-text="rtStatusLabel(r.status)"></span></span>
+            <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);"
+              x-text="r.status === 'verified' ? `+${r.points_awarded || 0} 分` : (r.points_declared ? `自评 ${r.points_declared}` : '')"></span>
             <span style="flex:1;"></span>
             <span class="sto-muted" style="font-size:10.5px;" x-text="rtTaskTitle(r.task_id)"></span>
           </div>

@@ -38,6 +38,8 @@ _MCP_NAME_PART = re.compile(r"[^a-z0-9_]+")
 _DEFAULT_SKILL_SCOPES = {
     "vuln-review": ("review",),
     "browser-control": ("bootstrap", "explore"),
+    "redteam-scoring": ("explore",),
+    "redteam-review": ("review",),
 }
 
 

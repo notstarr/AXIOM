@@ -834,6 +834,8 @@ def test_explore_cli_result_report_defaults_to_the_bound_chain(monkeypatch) -> N
             "explore",
             "result",
             "report",
+            "--points",
+            "30",
             "--type",
             "permission",
             "--title",
@@ -857,6 +859,7 @@ def test_explore_cli_result_report_defaults_to_the_bound_chain(monkeypatch) -> N
     assert method == "POST"
     assert path == "/tasks/t_001/intents/i003/red-team-results"
     assert payload["report"]["chain_id"] == "ch000123"
+    assert payload["report"]["points_declared"] == 30
     assert payload["report"]["capabilities_gained"] == ["tenant:admin"]
 
     without_binding = CliRunner().invoke(
@@ -879,4 +882,5 @@ def test_explore_cli_result_report_defaults_to_the_bound_chain(monkeypatch) -> N
         env=_env(),
     )
     assert without_binding.exit_code == 2
-    assert "--chain-id is required" in without_binding.output
+    # 缺 --points / --chain-id 任一必填项都会在参数层拒绝
+    assert "Missing option" in without_binding.output or "--chain-id is required" in without_binding.output

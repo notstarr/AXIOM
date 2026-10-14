@@ -859,18 +859,23 @@ class ContextService:
             for row in knowledge_rows
         ]
         if task.get("engagement_mode", "vulnerability") == "red_team":
+            red_team_objective_payload = (
+                json.loads(task["red_team_objective_json"])
+                if isinstance(task.get("red_team_objective_json"), str)
+                else (task.get("red_team_objective_json") or {})
+            )
+            verified_rows = [row for row in red_team_result_rows if row.get("status") == "verified"]
             files.update(
                 {
-                    "red_team_objective.json": _json(
-                        json.loads(task["red_team_objective_json"])
-                        if isinstance(task.get("red_team_objective_json"), str)
-                        else (task.get("red_team_objective_json") or {})
-                    ),
+                    "red_team_objective.json": _json(red_team_objective_payload),
                     "red_team_chains.json": _json([dict(row) for row in red_team_chain_rows]),
                     "red_team_results.json": _json([dict(row) for row in red_team_result_rows]),
                     "red_team_current_state.json": _json(
                         {"chains": len(red_team_chain_rows), "results": len(red_team_result_rows),
-                         "verified_results": sum(1 for row in red_team_result_rows if row.get("status") == "verified")}
+                         "verified_results": len(verified_rows),
+                         # 积分进度：Reason/Plan 据此判断距离目标还差多少分
+                         "points_awarded_total": sum(int(row.get("points_awarded") or 0) for row in verified_rows),
+                         "points_target": int(red_team_objective_payload.get("target_points") or 100)}
                     ),
                 }
             )

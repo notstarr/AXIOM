@@ -69,6 +69,8 @@ red_team_results = Table(
     Column("evidence_refs_json", JSONText, nullable=False, default="[]"),
     Column("status", String, nullable=False, default="reported"),
     Column("reported_by", String, nullable=False),
+    Column("points_declared", Integer, nullable=False, default=0),
+    Column("points_awarded", Integer, nullable=False, default=0),
     Column("reviewed_by", String),
     Column("review_reason", Text, nullable=False, default=""),
     Column("created_at", UTCDateTimeText, nullable=False),

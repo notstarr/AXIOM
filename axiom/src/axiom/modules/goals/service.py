@@ -100,6 +100,13 @@ class GoalService:
         verified = [row for row in results if row["status"] == "verified"]
         if not verified:
             raise ConflictError("Red-team Goal requires verified Results")
+        # 积分门槛：verified 成果核定分之和须达到目标分（默认 100）。
+        total_points = sum(int(row.get("points_awarded") or 0) for row in verified)
+        target_points = int(getattr(objective, "target_points", 100) or 100)
+        if total_points < target_points:
+            raise ConflictError(
+                f"Red-team Goal has {total_points} verified points, target is {target_points}"
+            )
         gained = set()
         assets = set()
         for row in verified:

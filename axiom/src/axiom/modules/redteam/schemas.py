@@ -56,6 +56,7 @@ class RedTeamObjective(BaseModel):
     target_capabilities: list[str] = Field(default_factory=list, max_length=200)
     target_assets: list[str] = Field(default_factory=list, max_length=200)
     data_targets: list[RedTeamDataTarget] = Field(default_factory=list, max_length=100)
+    target_points: int = Field(default=100, ge=1, le=10_000)
 
     @field_validator("target_capabilities", "target_assets")
     @classmethod
@@ -109,6 +110,8 @@ class RedTeamResultReport(BaseModel):
     data_summary: str = ""
     credential_ref: str | None = None
     evidence_refs: list[str] = Field(default_factory=list, max_length=20)
+    # 上报者按评分表自评的申报分（1-50）；落库以审核核定分为准
+    points_declared: int = Field(ge=1, le=50)
 
     @field_validator("title", "description", "principal")
     @classmethod
@@ -181,6 +184,8 @@ class RedTeamResult(BaseModel):
     evidence_refs: list[str] = Field(default_factory=list)
     status: ResultStatus
     reported_by: str
+    points_declared: int = 0
+    points_awarded: int = 0
     reviewed_by: str | None = None
     review_reason: str = ""
     created_at: str
@@ -191,6 +196,8 @@ class RedTeamResultReview(BaseModel):
     status: Literal["verified", "rejected", "duplicate", "needs-human"]
     reason: str = Field(min_length=4, max_length=8_000)
     reviewed_by: str = "reviewer"
+    # 核定分：verified 时必填（1-50），其余状态忽略并置 0
+    points_awarded: int | None = Field(default=None, ge=0, le=50)
 
 
 # A Worker may only move a Chain into one of these states.  ``achieved`` and

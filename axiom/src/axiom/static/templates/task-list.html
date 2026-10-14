@@ -81,14 +81,13 @@
             <div>
               <label class="text-xs font-semibold text-slate-500 mb-1 block">任务模式</label>
               <div class="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs">
-                <button type="button" @click="newProject.engagement_mode = 'vulnerability'"
+                <button type="button" @click="setEngagementMode('vulnerability')"
                   class="px-3 py-1.5 rounded-md transition"
                   :class="newProject.engagement_mode !== 'red_team' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">漏洞挖掘</button>
-                <button type="button" @click="newProject.engagement_mode = 'red_team'"
+                <button type="button" @click="setEngagementMode('red_team')"
                   class="px-3 py-1.5 rounded-md transition"
-                  :class="newProject.engagement_mode === 'red_team' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">红队（目标达成）</button>
+                  :class="newProject.engagement_mode === 'red_team' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">红队</button>
               </div>
-              <p class="mt-1 text-[11px] text-slate-400" x-show="newProject.engagement_mode === 'red_team'">红队模式以攻击链成果（权限 / 数据 / 凭证 / 横向）判定完成，不统计漏洞数量。攻击目标与链路由 Reason 依据任务目标自动规划，无需手动填写。</p>
             </div>
           </div>
 
