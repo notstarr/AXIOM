@@ -6,14 +6,17 @@ from axiom.api.dependencies import get_container
 from axiom.composition import Container
 from axiom.modules.reason.schemas import (
     AbandonWorkspace,
+    AddWorkspaceChain,
     AddWorkspaceTodo,
     AssessWorkspaceGoal,
     AssessWorkspaceIntent,
     CommitResult,
     DeleteWorkspaceTodo,
+    LinkWorkspaceChainIntent,
     OpenWorkspace,
     ProposeWorkspaceIntent,
     ReasonWorkspace,
+    UpdateWorkspaceChain,
     UpdateWorkspaceTodo,
     WorkspaceStatus,
     WorkspaceWorkerCommand,
@@ -275,6 +278,41 @@ def assess_workspace_goal(
     return container.reason.assess_goal(
         workspace_id,
         body.assessment,
+        lease_id=body.lease_id,
+    )
+
+
+@router.post("/reason-workspaces/{workspace_id}/chains", response_model=ReasonWorkspace)
+def add_workspace_chain(
+    workspace_id: str,
+    body: AddWorkspaceChain,
+    container: Container = Depends(get_container),
+) -> ReasonWorkspace:
+    return container.reason.add_chain(workspace_id, body.chain, lease_id=body.lease_id)
+
+
+@router.post("/reason-workspaces/{workspace_id}/chain-updates", response_model=ReasonWorkspace)
+def update_workspace_chain(
+    workspace_id: str,
+    body: UpdateWorkspaceChain,
+    container: Container = Depends(get_container),
+) -> ReasonWorkspace:
+    return container.reason.update_chain(
+        workspace_id,
+        body.update,
+        lease_id=body.lease_id,
+    )
+
+
+@router.post("/reason-workspaces/{workspace_id}/chain-links", response_model=ReasonWorkspace)
+def link_workspace_chain_intent(
+    workspace_id: str,
+    body: LinkWorkspaceChainIntent,
+    container: Container = Depends(get_container),
+) -> ReasonWorkspace:
+    return container.reason.link_chain_intent(
+        workspace_id,
+        body.link,
         lease_id=body.lease_id,
     )
 

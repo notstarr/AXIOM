@@ -4,6 +4,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from axiom.modules.redteam.schemas import (
+    DraftChain,
+    DraftChainIntentLink,
+    DraftChainUpdate,
+)
 from axiom.modules.todos.schemas import (
     LEGACY_TODO_STATUS_MAP,
     LEGACY_TODO_STATUSES,
@@ -119,6 +124,9 @@ class DraftPlanIntent(BaseModel):
 
     todo_ref: str | None = None
     todo_id: str | None = None
+    # Optional Workspace-local handle so a staged RedTeam Chain can link this
+    # Intent before either side has a persisted ID.
+    ref: str | None = None
     from_facts: list[str] = Field(default_factory=list)
     description: str
     targets: list[str] = Field(default_factory=list)
@@ -147,6 +155,13 @@ class DraftPlanIntent(BaseModel):
     @classmethod
     def normalize_optional_text(cls, value: str) -> str:
         return value.strip()
+
+    @field_validator("ref")
+    @classmethod
+    def normalize_ref(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
 
     @field_validator("from_facts", "source_refs", "targets")
     @classmethod
@@ -198,6 +213,13 @@ class PlanWorkspaceDraft(BaseModel):
     todo_deletions: list[DraftPlanTodoDelete] = Field(default_factory=list, max_length=100)
     intent_proposals: list[DraftPlanIntent] = Field(default_factory=list, max_length=256)
     decision: PlanDecision | None = None
+    # Red-team staging.  Only valid for red_team tasks; Chains are persisted
+    # when the Workspace commits, never at staging time.
+    chain_adds: list[DraftChain] = Field(default_factory=list, max_length=20)
+    chain_updates: list[DraftChainUpdate] = Field(default_factory=list, max_length=50)
+    chain_intent_links: list[DraftChainIntentLink] = Field(
+        default_factory=list, max_length=100
+    )
 
 
 PlanRunStatus = Literal[
@@ -288,6 +310,10 @@ class PlanWorkspaceStatus(BaseModel):
     todo_add_count: int = 0
     todo_update_count: int = 0
     intent_proposal_count: int = 0
+    chain_add_count: int = 0
+    chain_update_count: int = 0
+    chain_link_count: int = 0
+    chain_refs: list[str] = Field(default_factory=list)
     decision: PlanDecision | None = None
     ready: bool = False
     errors: list[str] = Field(default_factory=list)
@@ -299,6 +325,7 @@ class PlanCommitResult(BaseModel):
     updated_todo_ids: list[str] = Field(default_factory=list)
     deleted_todo_ids: list[str] = Field(default_factory=list)
     created_intent_ids: list[str] = Field(default_factory=list)
+    created_chain_ids: list[str] = Field(default_factory=list)
 
 
 class TriggerPlanRun(BaseModel):
@@ -339,6 +366,18 @@ class DeletePlanTodo(PlanWorkspaceCommand):
 
 class ProposePlanIntent(PlanWorkspaceCommand):
     intent: DraftPlanIntent
+
+
+class AddPlanChain(PlanWorkspaceCommand):
+    chain: DraftChain
+
+
+class UpdatePlanChain(PlanWorkspaceCommand):
+    update: DraftChainUpdate
+
+
+class LinkPlanChainIntent(PlanWorkspaceCommand):
+    link: DraftChainIntentLink
 
 
 class SubmitPlanDecision(PlanWorkspaceCommand):

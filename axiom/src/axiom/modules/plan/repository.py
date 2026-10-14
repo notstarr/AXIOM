@@ -342,8 +342,8 @@ class PlanRepository:
         assert workspace is not None
         return workspace
 
-    def mark_committed(self, conn: Connection, workspace_id: str, *, created_todo_ids: list[str], updated_todo_ids: list[str], deleted_todo_ids: list[str], created_intent_ids: list[str], decision: dict, now: str) -> PlanWorkspace:
-        result_json = json.dumps({"created_todo_ids": created_todo_ids, "updated_todo_ids": updated_todo_ids, "deleted_todo_ids": deleted_todo_ids, "created_intent_ids": created_intent_ids}, ensure_ascii=False)
+    def mark_committed(self, conn: Connection, workspace_id: str, *, created_todo_ids: list[str], updated_todo_ids: list[str], deleted_todo_ids: list[str], created_intent_ids: list[str], created_chain_ids: list[str] | None = None, decision: dict, now: str) -> PlanWorkspace:
+        result_json = json.dumps({"created_todo_ids": created_todo_ids, "updated_todo_ids": updated_todo_ids, "deleted_todo_ids": deleted_todo_ids, "created_intent_ids": created_intent_ids, "created_chain_ids": list(created_chain_ids or [])}, ensure_ascii=False)
         result = conn.execute(update(plan_workspaces).where(plan_workspaces.c.id == workspace_id, plan_workspaces.c.status == "open").values(status="committed", result_json=result_json, decision_json=json.dumps(decision, ensure_ascii=False), updated_at=now, committed_at=now))
         if not result.rowcount:
             raise ValueError("Plan Workspace is not open")

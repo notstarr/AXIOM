@@ -5,6 +5,11 @@ from typing import Any, Literal
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 from axiom.modules.goals.schemas import GoalAssessment
+from axiom.modules.redteam.schemas import (
+    DraftChain,
+    DraftChainIntentLink,
+    DraftChainUpdate,
+)
 from axiom.modules.todos.schemas import (
     LEGACY_TODO_STATUS_MAP,
     LEGACY_TODO_STATUSES,
@@ -112,6 +117,9 @@ class DraftTodoDelete(BaseModel):
 class DraftIntent(BaseModel):
     todo_ref: str | None = None
     todo_id: str | None = None
+    # Optional Workspace-local handle so a staged RedTeam Chain can link this
+    # Intent before either side has a persisted ID.
+    ref: str | None = None
     from_facts: list[str]
     description: str = Field(max_length=500)
     targets: list[str] = Field(default_factory=list)
@@ -120,6 +128,13 @@ class DraftIntent(BaseModel):
     # accepted for rolling compatibility with older workers.
     execute_seconds: int | None = None
     conclude_seconds: int | None = None
+
+    @field_validator("ref")
+    @classmethod
+    def normalize_ref(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
 
     @field_validator("description")
     @classmethod
@@ -214,6 +229,13 @@ class WorkspaceDraft(BaseModel):
         default_factory=list, max_length=256
     )
     goal_assessment: GoalAssessment | None = None
+    # Red-team staging.  Only valid for red_team tasks; Chains are persisted
+    # when the Workspace commits, never at staging time.
+    chain_adds: list[DraftChain] = Field(default_factory=list, max_length=20)
+    chain_updates: list[DraftChainUpdate] = Field(default_factory=list, max_length=50)
+    chain_intent_links: list[DraftChainIntentLink] = Field(
+        default_factory=list, max_length=100
+    )
 
 
 class ReasonWorkspace(BaseModel):
@@ -279,6 +301,18 @@ class AssessWorkspaceGoal(WorkspaceWorkerCommand):
     assessment: GoalAssessment
 
 
+class AddWorkspaceChain(WorkspaceWorkerCommand):
+    chain: DraftChain
+
+
+class UpdateWorkspaceChain(WorkspaceWorkerCommand):
+    update: DraftChainUpdate
+
+
+class LinkWorkspaceChainIntent(WorkspaceWorkerCommand):
+    link: DraftChainIntentLink
+
+
 class WorkspaceStatus(BaseModel):
     workspace_id: str
     status: Literal["open", "committed", "abandoned"]
@@ -290,6 +324,10 @@ class WorkspaceStatus(BaseModel):
     todo_refs: list[str] = Field(default_factory=list)
     updated_todo_ids: list[str] = Field(default_factory=list)
     todo_review_ids: list[str] = Field(default_factory=list)
+    chain_add_count: int = 0
+    chain_update_count: int = 0
+    chain_link_count: int = 0
+    chain_refs: list[str] = Field(default_factory=list)
     goal_assessed: bool = False
     goal_achieved: bool = False
     open_explore_intents: int = 0
@@ -303,6 +341,7 @@ class CommitResult(BaseModel):
     workspace: ReasonWorkspace
     created_todo_ids: list[str]
     created_intent_ids: list[str]
+    created_chain_ids: list[str] = Field(default_factory=list)
 
 
 ReasonRunStatus = Literal[

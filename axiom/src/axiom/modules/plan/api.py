@@ -12,8 +12,10 @@ from axiom.modules.execution.schemas import (
 )
 from axiom.modules.plan.schemas import (
     AbandonPlanWorkspace,
+    AddPlanChain,
     AddPlanTodo,
     DeletePlanTodo,
+    LinkPlanChainIntent,
     PlanCommitResult,
     PlanReconcileReport,
     PlanRun,
@@ -26,6 +28,7 @@ from axiom.modules.plan.schemas import (
     StartedPlanRun,
     SubmitPlanDecision,
     TriggerPlanRun,
+    UpdatePlanChain,
     UpdatePlanTodo,
 )
 
@@ -125,6 +128,21 @@ def delete_plan_todo(workspace_id: str, body: DeletePlanTodo, container: Contain
 @router.post("/plan-workspaces/{workspace_id}/intents", response_model=PlanWorkspace)
 def propose_plan_intent(workspace_id: str, body: ProposePlanIntent, container: Container = Depends(get_container)) -> PlanWorkspace:
     return container.plan.propose_intent(workspace_id, body.intent, lease_id=body.lease_id)
+
+
+@router.post("/plan-workspaces/{workspace_id}/chains", response_model=PlanWorkspace)
+def add_plan_chain(workspace_id: str, body: AddPlanChain, container: Container = Depends(get_container)) -> PlanWorkspace:
+    return container.plan.add_chain(workspace_id, body.chain, lease_id=body.lease_id)
+
+
+@router.post("/plan-workspaces/{workspace_id}/chain-updates", response_model=PlanWorkspace)
+def update_plan_chain(workspace_id: str, body: UpdatePlanChain, container: Container = Depends(get_container)) -> PlanWorkspace:
+    return container.plan.update_chain(workspace_id, body.update, lease_id=body.lease_id)
+
+
+@router.post("/plan-workspaces/{workspace_id}/chain-links", response_model=PlanWorkspace)
+def link_plan_chain_intent(workspace_id: str, body: LinkPlanChainIntent, container: Container = Depends(get_container)) -> PlanWorkspace:
+    return container.plan.link_chain_intent(workspace_id, body.link, lease_id=body.lease_id)
 
 
 @router.post("/plan-workspaces/{workspace_id}/decision", response_model=PlanWorkspace)

@@ -20,6 +20,9 @@ from axiom.modules.knowledge.tables import project_knowledge
 from axiom.modules.plan.repository import LEASED_PLAN_STATUSES, PlanRepository
 from axiom.modules.plan.tables import plan_run_sources, plan_runs, plan_workspaces
 from axiom.modules.plan.schemas import (
+    DraftChain,
+    DraftChainIntentLink,
+    DraftChainUpdate,
     DraftPlanIntent,
     DraftPlanTodo,
     DraftPlanTodoDelete,
@@ -34,6 +37,7 @@ from axiom.modules.plan.schemas import (
     StartedPlanRun,
 )
 from axiom.modules.reason.tables import reason_runs, reason_run_sources
+from axiom.modules.redteam.schemas import RedTeamChainCreate
 from axiom.modules.settings.service import load_runtime_config
 from axiom.modules.settings.tables import runtime_settings
 from axiom.modules.tasks.repository import TaskRepository
@@ -42,6 +46,7 @@ from axiom.modules.todos.repository import TodoRepository
 from axiom.modules.todos.schemas import (
     CreateTodo,
     TODO_STATUS_REASON_REQUIRED,
+    TodoSource,
 )
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.tables import vulnerability_artifacts
@@ -94,12 +99,13 @@ class PlanService:
     shared Todo/Intent repositories when committing a valid Plan draft.
     """
 
-    def __init__(self, engine: Engine, *, sandboxes: TaskSandboxManager | None = None):
+    def __init__(self, engine: Engine, *, sandboxes: TaskSandboxManager | None = None, red_team=None):
         self.engine = engine
         self.repository = PlanRepository()
         self.tasks = TaskRepository()
         self.sandboxes = sandboxes
         self.todos = TodoRepository()
+        self.red_team = red_team
         self.audit = AuditService(engine)
 
     @staticmethod
@@ -1214,6 +1220,8 @@ class PlanService:
                 raise ConflictError(f"Plan Workspace Intent infrastructure limit reached: {MAX_PLAN_INTENTS}")
             proposal = proposal.model_copy(update={"dedup_fingerprint": computed})
             self._validate_intent_proposal(conn, workspace, proposal)
+            if proposal.ref and any(item.ref == proposal.ref for item in workspace.draft.intent_proposals):
+                raise ConflictError(f"Intent draft ref already exists: {proposal.ref}")
             result = self.repository.save_draft(conn, workspace_id, workspace.draft.model_copy(update={"intent_proposals": [*workspace.draft.intent_proposals, proposal]}), now=utcnow())
             task = self.tasks.get(conn, workspace.task_id)
             if task is not None:
@@ -1652,6 +1660,113 @@ class PlanService:
                     )
         return list(dict.fromkeys(errors))
 
+    def add_chain(self, workspace_id: str, chain: DraftChain, *, lease_id: str) -> PlanWorkspace:
+        with transaction(self.engine) as conn:
+            workspace = self._active_workspace(conn, workspace_id, lease_id)
+            task = self._require_red_team(conn, workspace)
+            self._validate_chain_facts(conn, workspace.task_id, chain.source_fact_ids)
+            self._validate_chain_targets(task, chain)
+            existing = next(
+                (item for item in workspace.draft.chain_adds if item.ref == chain.ref),
+                None,
+            )
+            if existing is not None:
+                if existing == chain:
+                    return workspace
+                raise ConflictError(
+                    f"Chain draft ref already exists with different content: {chain.ref}"
+                )
+            draft = workspace.draft.model_copy(
+                update={"chain_adds": [*workspace.draft.chain_adds, chain]}
+            )
+            return self.repository.save_draft(conn, workspace_id, draft, now=utcnow())
+
+    def update_chain(
+        self,
+        workspace_id: str,
+        update_command: DraftChainUpdate,
+        *,
+        lease_id: str,
+    ) -> PlanWorkspace:
+        with transaction(self.engine) as conn:
+            workspace = self._active_workspace(conn, workspace_id, lease_id)
+            self._require_red_team(conn, workspace)
+            # Updates target an already persisted Chain; staged refs are
+            # resolved only by chain_intent_links at commit time.
+            self.red_team.get_chain(workspace.task_id, update_command.chain_id)
+            updates = [
+                item
+                for item in workspace.draft.chain_updates
+                if item.chain_id != update_command.chain_id
+            ]
+            previous = next(
+                (
+                    item
+                    for item in workspace.draft.chain_updates
+                    if item.chain_id == update_command.chain_id
+                ),
+                None,
+            )
+            if previous is not None:
+                merged = previous.model_dump()
+                merged.update(update_command.model_dump(exclude_unset=True))
+                update_command = DraftChainUpdate.model_validate(merged)
+            updates.append(update_command)
+            draft = workspace.draft.model_copy(update={"chain_updates": updates})
+            return self.repository.save_draft(conn, workspace_id, draft, now=utcnow())
+
+    def link_chain_intent(
+        self,
+        workspace_id: str,
+        link: DraftChainIntentLink,
+        *,
+        lease_id: str,
+    ) -> PlanWorkspace:
+        with transaction(self.engine) as conn:
+            workspace = self._active_workspace(conn, workspace_id, lease_id)
+            self._require_red_team(conn, workspace)
+            draft = workspace.draft
+            if link.chain_ref:
+                if not any(item.ref == link.chain_ref for item in draft.chain_adds):
+                    raise NotFoundError(f"Chain draft ref not found: {link.chain_ref}")
+            else:
+                self.red_team.get_chain(workspace.task_id, link.chain_id)
+            if not any(item.ref for item in draft.intent_proposals if item.ref == link.intent_ref):
+                raise NotFoundError(f"Intent draft ref not found: {link.intent_ref}")
+            if any(item == link for item in draft.chain_intent_links):
+                return workspace
+            draft = draft.model_copy(
+                update={"chain_intent_links": [*draft.chain_intent_links, link]}
+            )
+            return self.repository.save_draft(conn, workspace_id, draft, now=utcnow())
+
+    def _require_red_team(self, conn, workspace: PlanWorkspace):
+        task = self.tasks.get(conn, workspace.task_id)
+        if task is None:
+            raise NotFoundError(f"Task not found: {workspace.task_id}")
+        if task.engagement_mode != "red_team":
+            raise ConflictError("RedTeam Chains are only available for red_team tasks")
+        if self.red_team is None:
+            raise ConflictError("Red-team service is not configured")
+        return task
+
+    @staticmethod
+    def _validate_chain_targets(task, chain: DraftChain) -> None:
+        objective = task.red_team_objective
+        allowed_capabilities = set(objective.target_capabilities if objective else [])
+        allowed_assets = set(objective.target_assets if objective else [])
+        if not set(chain.target_capabilities).issubset(allowed_capabilities):
+            raise ConflictError("Chain capability target exceeds the task objective")
+        if not set(chain.target_assets).issubset(allowed_assets):
+            raise ConflictError("Chain asset target exceeds the task objective")
+
+    def _validate_chain_facts(self, conn, task_id: str, fact_ids: list[str]) -> None:
+        for fact_id in fact_ids:
+            if fact_id == "goal" or not self.todos.source_exists(
+                conn, task_id=task_id, source=TodoSource(type="fact", id=fact_id)
+            ):
+                raise ConflictError(f"Chain source Fact not found: {fact_id}")
+
     def status(self, workspace_id: str, *, lease_id: str) -> PlanWorkspaceStatus:
         with transaction(self.engine) as conn:
             workspace = self.repository.get(conn, workspace_id)
@@ -1667,7 +1782,7 @@ class PlanService:
                 if workspace.status == "open"
                 else []
             )
-            return PlanWorkspaceStatus(workspace_id=workspace.id, status=workspace.status, todo_add_count=len(workspace.draft.todo_adds), todo_update_count=len(workspace.draft.todo_updates), intent_proposal_count=len(workspace.draft.intent_proposals), decision=workspace.draft.decision, ready=workspace.status == "committed" or not errors, errors=errors)
+            return PlanWorkspaceStatus(workspace_id=workspace.id, status=workspace.status, todo_add_count=len(workspace.draft.todo_adds), todo_update_count=len(workspace.draft.todo_updates), intent_proposal_count=len(workspace.draft.intent_proposals), chain_add_count=len(workspace.draft.chain_adds), chain_update_count=len(workspace.draft.chain_updates), chain_link_count=len(workspace.draft.chain_intent_links), chain_refs=[item.ref for item in workspace.draft.chain_adds], decision=workspace.draft.decision, ready=workspace.status == "committed" or not errors, errors=errors)
 
     def commit(self, workspace_id: str, *, lease_id: str) -> PlanCommitResult:
         with transaction(self.engine) as conn:
@@ -1676,7 +1791,7 @@ class PlanService:
                 raise NotFoundError(f"Plan Workspace not found: {workspace_id}")
             if workspace.status == "committed":
                 result = self.repository.commit_result(conn, workspace)
-                return PlanCommitResult(workspace=workspace, **{key: result.get(key, []) for key in ("created_todo_ids", "updated_todo_ids", "deleted_todo_ids", "created_intent_ids")})
+                return PlanCommitResult(workspace=workspace, **{key: result.get(key, []) for key in ("created_todo_ids", "updated_todo_ids", "deleted_todo_ids", "created_intent_ids", "created_chain_ids")})
             # A Plan commit is the hand-off point between the global review
             # phase and the normal Reason/Explore state machine.  Lock the
             # Task before validating the workspace or inspecting any queue so
@@ -1736,6 +1851,7 @@ class PlanService:
                 deleted_todo_ids.append(target)
             self._align_intent_counter(conn, workspace.task_id)
             created_intent_ids: list[str] = []
+            intent_refs: dict[str, str] = {}
             for proposal in draft.intent_proposals:
                 requested_execute_seconds = proposal.execute_seconds
                 requested_conclude_seconds = proposal.conclude_seconds
@@ -1794,6 +1910,77 @@ class PlanService:
                         raise ConflictError(f"Intent source Fact not found: {fact_id}")
                     conn.execute(intent_sources.insert().values(task_id=workspace.task_id, intent_id=intent_id, fact_id=fact_id))
                 created_intent_ids.append(intent_id)
+                if proposal.ref:
+                    if proposal.ref in intent_refs:
+                        raise ConflictError(f"Duplicate Intent draft ref: {proposal.ref}")
+                    intent_refs[proposal.ref] = intent_id
+            # Red-team staging is applied after the Intent loop so
+            # ``chain_intent_links`` can resolve staged Intent refs to the IDs
+            # created above.  Chains are only persisted here, at commit time,
+            # with the same objective/scope checks as the direct RedTeam API.
+            created_chain_ids: list[str] = []
+            chain_refs: dict[str, str] = {}
+            if draft.chain_adds or draft.chain_updates or draft.chain_intent_links:
+                if task.engagement_mode != "red_team":
+                    raise ConflictError(
+                        "RedTeam Chains are only available for red_team tasks"
+                    )
+                if self.red_team is None:
+                    raise ConflictError("Red-team service is not configured")
+                objective = task.red_team_objective
+                for chain in draft.chain_adds:
+                    initial_principal = chain.initial_principal
+                    if initial_principal is None:
+                        initial_principal = getattr(objective, "initial_principal", None)
+                    if initial_principal is None:
+                        raise ConflictError(
+                            "Chain requires an initial principal and the task objective has none"
+                        )
+                    created_chain = self.red_team.create_chain_in(
+                        conn,
+                        workspace.task_id,
+                        RedTeamChainCreate(
+                            title=chain.title,
+                            initial_principal=initial_principal,
+                            target_capabilities=chain.target_capabilities,
+                            target_assets=chain.target_assets,
+                            source_fact_ids=chain.source_fact_ids,
+                        ),
+                        created_by=f"plan.{workspace.worker}",
+                        goal_cycle_id=run.goal_cycle_id if run else None,
+                        now=now,
+                    )
+                    chain_refs[chain.ref] = created_chain.id
+                    created_chain_ids.append(created_chain.id)
+                for chain_update in draft.chain_updates:
+                    self.red_team.apply_chain_update_in(
+                        conn,
+                        workspace.task_id,
+                        chain_update.chain_id,
+                        status=chain_update.status,
+                        title=chain_update.title,
+                        actor=workspace.worker,
+                        now=now,
+                    )
+                for chain_link in draft.chain_intent_links:
+                    chain_id = chain_refs.get(chain_link.chain_ref) if chain_link.chain_ref else chain_link.chain_id
+                    if chain_id is None:
+                        raise ConflictError(
+                            f"Chain link references unknown Chain: {chain_link.chain_ref or chain_link.chain_id}"
+                        )
+                    linked_intent_id = intent_refs.get(chain_link.intent_ref)
+                    if linked_intent_id is None:
+                        raise ConflictError(
+                            f"Chain link references unknown Intent: {chain_link.intent_ref}"
+                        )
+                    self.red_team.link_intent_in(
+                        conn,
+                        workspace.task_id,
+                        chain_id,
+                        linked_intent_id,
+                        actor=workspace.worker,
+                        now=now,
+                    )
             decision = draft.decision.model_dump(mode="json")
             baseline_snapshot = self._snapshot_from_run(run)
             post_snapshot = self._current_snapshot(conn, workspace.task_id)
@@ -1855,7 +2042,7 @@ class PlanService:
                 else "waiting"
             )
             conn.execute(update(tasks).where(tasks.c.id == workspace.task_id).values(phase=next_phase, updated_at=now))
-            committed = self.repository.mark_committed(conn, workspace_id, created_todo_ids=created_todo_ids, updated_todo_ids=updated_todo_ids, deleted_todo_ids=deleted_todo_ids, created_intent_ids=created_intent_ids, decision=decision, now=now)
+            committed = self.repository.mark_committed(conn, workspace_id, created_todo_ids=created_todo_ids, updated_todo_ids=updated_todo_ids, deleted_todo_ids=deleted_todo_ids, created_intent_ids=created_intent_ids, created_chain_ids=created_chain_ids, decision=decision, now=now)
             self._audit_in(
                 conn,
                 task=task,
@@ -1870,11 +2057,12 @@ class PlanService:
                     "updated_todo_ids": updated_todo_ids,
                     "deleted_todo_ids": deleted_todo_ids,
                     "created_intent_ids": created_intent_ids,
+                    "created_chain_ids": created_chain_ids,
                     "new_post_inputs": new_post_inputs,
                     "phase": next_phase,
                 },
             )
-            result = PlanCommitResult(workspace=committed, created_todo_ids=created_todo_ids, updated_todo_ids=updated_todo_ids, deleted_todo_ids=deleted_todo_ids, created_intent_ids=created_intent_ids)
+            result = PlanCommitResult(workspace=committed, created_todo_ids=created_todo_ids, updated_todo_ids=updated_todo_ids, deleted_todo_ids=deleted_todo_ids, created_intent_ids=created_intent_ids, created_chain_ids=created_chain_ids)
         if self.sandboxes is not None:
             try:
                 self.sandboxes.cleanup_run_directory(

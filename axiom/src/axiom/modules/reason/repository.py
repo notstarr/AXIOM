@@ -854,12 +854,14 @@ class ReasonRepository:
         *,
         created_todo_ids: list[str],
         created_intent_ids: list[str],
+        created_chain_ids: list[str] | None = None,
         now: str,
     ) -> ReasonWorkspace:
         result_json = json.dumps(
             {
                 "created_todo_ids": created_todo_ids,
                 "created_intent_ids": created_intent_ids,
+                "created_chain_ids": list(created_chain_ids or []),
             },
             ensure_ascii=False,
         )
@@ -883,7 +885,7 @@ class ReasonRepository:
         self,
         conn: Connection,
         workspace: ReasonWorkspace,
-    ) -> tuple[list[str], list[str]]:
+    ) -> tuple[list[str], list[str], list[str]]:
         row = conn.execute(
             select(reason_workspaces.c.result_json).where(reason_workspaces.c.id == workspace.id)
         ).scalar_one()
@@ -891,6 +893,7 @@ class ReasonRepository:
         return (
             list(payload.get("created_todo_ids", [])),
             list(payload.get("created_intent_ids", [])),
+            list(payload.get("created_chain_ids", [])),
         )
 
     def abandon(
