@@ -319,7 +319,7 @@ def test_effective_tools_are_snapshotted_per_worker_and_phase(
     capability_payload = json.loads(
         (tmp_path / "run" / "phase-capabilities.json").read_text(encoding="utf-8")
     )
-    assert capability_payload["schema_version"] == 2
+    assert capability_payload["schema_version"] == 3
     assert not {
         "search_text",
         "find_files",

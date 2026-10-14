@@ -328,6 +328,36 @@ def test_pi_adapter_merges_only_snapshotted_mcp_tools_into_the_stage_allowlist(
     ]
 
 
+def test_pi_adapter_loads_native_mcp_extension_and_hides_auxiliary_tools(tmp_path: Path) -> None:
+    executor = PiBootstrapExecutor(pi_worker(tmp_path / "unused-pi"))
+    argv = executor._build_argv(
+        "测试提示",
+        tmp_path / "sessions",
+        ["read", "write"],
+        mode="json",
+        mcp_mode="pi_native",
+        mcp_tool_names=["mcp__demo__selected"],
+        mcp_server_names=["demo"],
+    )
+
+    extensions = [
+        argv[index + 1]
+        for index, value in enumerate(argv)
+        if value == "--extension"
+    ]
+    assert extensions == [
+        str(
+            Path(__file__).parents[1]
+            / "src/axiom/dispatcher/extensions/axiom-native-mcp/index.ts"
+        )
+    ]
+    assert argv[argv.index("--exclude-tools") + 1] == (
+        "codemode,tool_search,list_mcp_resources,list_mcp_resource_templates,read_mcp_resource"
+    )
+    assert "mcp__demo__*" in argv[argv.index("--tools") + 1].split(",")
+    assert "--no-approve" in argv
+
+
 def test_pi_adapter_does_not_load_activation_without_selected_tools(tmp_path: Path) -> None:
     executor = PiBootstrapExecutor(pi_worker(tmp_path / "unused-pi"))
 

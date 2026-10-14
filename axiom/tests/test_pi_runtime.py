@@ -83,6 +83,9 @@ def test_canonicalize_pi_worker_config_splits_legacy_thinking_setting() -> None:
     disabled = pi_config.canonicalize_pi_worker_config({"thinking": "off"})
     assert disabled["thinking_enabled"] is False
     assert disabled["thinking_level"] == "medium"
+    assert pi_config.canonicalize_pi_worker_config(
+        {"provider_api": "azure-openai-responses"}
+    )["provider_api"] == "azure"
 
 
 def test_pi_thinking_level_rejects_values_not_supported_by_pi() -> None:
@@ -115,6 +118,12 @@ def test_sdk_base_url_follows_per_provider_sdk_conventions() -> None:
     assert (
         pi_config.sdk_base_url("anthropic-messages", "https://api.anthropic.com/v1")
         == "https://api.anthropic.com"
+    )
+    # Pi 1.1 owns Azure Responses under the native ``azure`` provider API.
+    assert pi_config.canonical_provider_api("azure-openai-responses") == "azure"
+    assert (
+        pi_config.sdk_base_url("azure-openai-responses", "https://resource.openai.azure.com")
+        == "https://resource.openai.azure.com/openai/v1"
     )
 
 

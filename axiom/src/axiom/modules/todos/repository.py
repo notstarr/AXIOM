@@ -247,3 +247,8 @@ class TodoRepository:
             )
             for row in rows
         ]
+
+    def from_rows(self, conn: Connection, rows: list) -> dict[str, Todo]:
+        """Build todos and their sources with one relation query."""
+
+        return {todo.id: todo for todo in self._todos(conn, rows)}

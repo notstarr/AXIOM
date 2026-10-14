@@ -14,6 +14,11 @@ from sqlalchemy import Engine, text
 
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
+from axiom.modules.context.retention import (
+    ContextRetentionService,
+    RetentionPlan,
+    RetentionRunResult,
+)
 from axiom.shared.clock import utcnow
 from axiom.shared.errors import ConflictError, DomainError
 from axiom.shared.storage import FileStore
@@ -129,6 +134,84 @@ class StorageAdminService:
         self._refreshing = False
         self._cleanup_refresh_lock = threading.Lock()
         self._cleanup_refreshing = False
+        self.context_retention = ContextRetentionService(engine, store)
+        self._context_retention_thread: threading.Thread | None = None
+        self._context_retention_stop = threading.Event()
+
+    def start_context_retention_loop(self) -> bool:
+        """Start the optional hourly GC without putting work on request paths."""
+        if not self.context_retention.config.enabled:
+            return False
+        if self._context_retention_thread is not None and self._context_retention_thread.is_alive():
+            return False
+        try:
+            interval = max(60, int(os.getenv("AXIOM_CONTEXT_GC_INTERVAL_SECONDS", "3600")))
+        except ValueError:
+            interval = 3600
+
+        def loop() -> None:
+            while not self._context_retention_stop.wait(interval):
+                try:
+                    self.context_retention_run(dry_run=False, actor="system.context-gc")
+                except Exception:
+                    LOGGER.warning("background Context retention failed", exc_info=True)
+
+        self._context_retention_thread = threading.Thread(
+            target=loop,
+            name="axiom-context-retention",
+            daemon=True,
+        )
+        self._context_retention_thread.start()
+        return True
+
+    def stop_context_retention_loop(self) -> None:
+        self._context_retention_stop.set()
+
+    def context_retention_plan(self) -> RetentionPlan:
+        return self.context_retention.plan()
+
+    def context_retention_run(
+        self,
+        *,
+        dry_run: bool,
+        actor: str,
+        max_revisions: int | None = None,
+        max_bytes: int | None = None,
+    ) -> RetentionRunResult:
+        result = self.context_retention.run(
+            dry_run=dry_run,
+            actor=actor,
+            max_revisions=max_revisions,
+            max_bytes=max_bytes,
+        )
+        self._audit.record(
+            RecordAuditEvent(
+                event_type="storage.context_retention.executed",
+                level="info",
+                message=(
+                    f"dry_run={dry_run} removed={len(result.removed)} "
+                    f"freed={result.freed_bytes} actor={actor}"
+                ),
+                payload={
+                    "dry_run": dry_run,
+                    "paused": result.paused,
+                    "candidate_paths": [
+                        *[item.path for item in result.removed],
+                        *[item["path"] for item in result.skipped if item.get("path")],
+                    ],
+                    "removed": [item.path for item in result.removed],
+                    "freed_bytes": result.freed_bytes,
+                    "skipped": result.skipped,
+                },
+            )
+        )
+        return result
+
+    def pause_context_retention(self) -> None:
+        self.context_retention.pause()
+
+    def resume_context_retention(self) -> None:
+        self.context_retention.resume()
 
     # ---------- 请求路径（毫秒级） ----------
 
@@ -838,8 +921,12 @@ class StorageAdminService:
         if key.startswith("t2_task_contexts:"):
             task_id = key.split(":", 1)[1]
             state = task_states.get(task_id) or {"status": "stopped", "archived": True}
-            if state["status"] == "running":
-                raise ConflictError(f"task {task_id} is running; cleanup is locked")
+            if state["status"] == "running" or self._task_has_active_lease(task_id):
+                raise ConflictError(f"task {task_id} has an active Worker lease; cleanup is locked")
+            if not state["archived"]:
+                raise ConflictError(
+                    f"task {task_id} is not archived; use revision-level Context retention"
+                )
             path = self._root / "contexts" / task_id
             if not path.is_dir():
                 return [], 0, ""
@@ -917,6 +1004,16 @@ class StorageAdminService:
             ], 0, ""
 
         raise DomainError(f"unknown cleanup key: {key}")
+
+    def _task_has_active_lease(self, task_id: str) -> bool:
+        statuses = ", ".join(f"'{status}'" for status in ACTIVE_LEASE_STATUSES)
+        query = " UNION ".join(
+            f"SELECT 1 FROM axiom.{table} WHERE task_id = :task_id "
+            f"AND lease_id IS NOT NULL AND status IN ({statuses})"
+            for table in ("intents", "reason_runs", "plan_runs", "vulnerability_review_runs")
+        )
+        with self.engine.connect() as conn:
+            return conn.execute(text(f"SELECT EXISTS ({query})"), {"task_id": task_id}).scalar_one()
 
     # ---------- API 入口 ----------
 
@@ -1139,7 +1236,7 @@ class StorageAdminService:
                     description="runs/ 下已完结租约的产物文件（findings、资产清单等）与会话记录。",
                     bytes=bucket["clean_lease_bytes"], count=bucket["clean_lease_count"],
                 ))
-            if context_tasks.get(task_id, {}).get('bytes', 0) > 0:
+            if state["archived"] and context_tasks.get(task_id, {}).get('bytes', 0) > 0:
                 tier2.append(CleanupItem(
                     key=f"t2_task_contexts:{task_id}",
                     title=f"任务 {task_id} 上下文快照",

@@ -382,6 +382,11 @@ class VulnerabilityRepository:
             )
         return result
 
+    def from_rows(self, conn: Connection, rows: list) -> dict[str, Vulnerability]:
+        """Build vulnerability models and linked artifacts in batch."""
+
+        return {vulnerability.id: vulnerability for vulnerability in self._models(conn, rows)}
+
     def set_human_reviewed(
         self,
         conn: Connection,

@@ -310,7 +310,11 @@ Pi RPC 的会话完成边界是 `agent_settled`，不是 `agent_end`。一次会
 
 `process/stdout.log` 在 RPC 模式下是过滤后的协议诊断日志，不再是完整事件镜像。Pi 的 `message_update`、`tool_execution_update` 和 `bash_execution_update` 都会携带累计内容，逐行原样保存会使日志随生成长度近似 O(n²) 增长；Reader 因此只保留响应、生命周期、重试、Compaction、工具开始/结束等诊断事件，并在 EOF 追加 `axiom_rpc_log_summary` 记录各类省略数量。控制队列也只接收 Supervisor 真正需要的 `response`、`agent_settled` 和 EOF。完整消息、Tool Call、Tool Result 与流式历史仍以 Pi Session JSONL 为唯一权威审计源，实时活动也继续增量读取 Session，不依赖被过滤的进程日志。
 
-生产 Pi 运行时固定在忽略版本控制的 `runtime/pi/0.82.1/`，启动器 `runtime/pi/0.82.1/bin/pi` 明确使用 `/Users/hexin/.workbuddy/binaries/node/versions/22.22.2/bin/node`，不依赖 `/usr/local/bin/pi` 的 shebang 或 LaunchAgent PATH。所有 Pi Worker 的既有 `config.binary` 均指向该启动器；Bootstrap、Reason 只升级运行时，仍使用 JSON 模式。
+生产 Pi 运行时固定在忽略版本控制的 `runtime/pi/1.1.0/`，启动器 `runtime/pi/1.1.0/bin/pi` 明确使用仓库随附的 Node 22.22.2，不依赖 `/usr/local/bin/pi` 的 shebang 或 LaunchAgent PATH。所有 Pi Worker 的既有 `config.binary` 均指向该启动器；Bootstrap、Reason 仍使用 JSON 模式，Explore 使用 RPC 模式。
+
+Pi 1.1.0 的 MCP 连接由原生 `pi.registerMcpServer()` 承载。AXIOM 仍在每个 Lease 生成 schema 3 能力快照，并以 hidden Server + 精确 `toolExposure` 只披露已绑定的 MCP Tool；不读取全局或项目 `mcp.json`，不允许 SSE、未解析的环境变量或命令插值进入 Worker。schema 1/2 快照继续由 legacy adapter 读取，待旧 Lease 排空后再移除兼容路径。
+
+Pi 旧版 `azure-openai-responses` provider API 在运行时统一映射到 Pi 1.1.0 的原生 `azure`，只调整 API 标识和 Azure `/openai/v1` 派生路径，不改 Worker 中保存的模型、密钥或 base URL。
 
 Runner 创建阶段 Executor 前仍强制校验固定 Pi/Node 路径和版本，但生产 Pi 版本从安装目录的 `@earendil-works/pi-coding-agent/package.json` 本地元数据读取，不再执行可能触发完整 CLI 初始化的 `pi --version`。这避免冷启动超过 5 秒时把健康 Bootstrap Lease 错误释放为 `runner_dispatch_failed`。校验同时确认包名、版本、`bin.pi` 和包内可执行 CLI 入口；不提供 `--offline` 或其它启动式回退。Node 的固定绝对路径继续使用轻量 `--version` 校验。成功结果在 Runner 进程内缓存，不影响阶段预算、Lease 或 Pi JSON/RPC 协议。
 

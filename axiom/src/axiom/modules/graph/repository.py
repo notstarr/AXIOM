@@ -82,6 +82,12 @@ class GraphRepository:
         ).mappings().one_or_none()
         return self._intent(conn, row) if row is not None else None
 
+    @staticmethod
+    def from_row(row, *, sources: list[str]) -> Intent:
+        """Build an Intent from an already-loaded row and source relation list."""
+
+        return GraphRepository._intent(None, row, sources=sources)
+
     def get_fact(self, conn: Connection, task_id: str, fact_id: str) -> Fact | None:
         row = conn.execute(
             select(facts).where(facts.c.task_id == task_id, facts.c.id == fact_id)
@@ -416,7 +422,7 @@ class GraphRepository:
 
     @staticmethod
     def _intent(
-        conn: Connection,
+        conn: Connection | None,
         row,
         *,
         visible_relations_only: bool = False,

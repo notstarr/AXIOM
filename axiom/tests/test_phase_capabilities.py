@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
+
+import pytest
+
+from axiom.modules.phase_capabilities.service import PhaseCapabilityService
+from axiom.shared.errors import ConflictError
 
 
 RETIRED_PLACEHOLDER_TOOLS = {
@@ -377,7 +383,7 @@ def test_skill_snapshot_is_filtered_by_phase(client, tmp_path: Path) -> None:
     payload = json.loads(
         Path(explore.capability_snapshot_path).read_text(encoding="utf-8")
     )
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["worker_backend"] == "skill-backend"
     assert payload["phase"] == "explore"
     assert payload["builtin_tools"]
@@ -386,6 +392,38 @@ def test_skill_snapshot_is_filtered_by_phase(client, tmp_path: Path) -> None:
         RETIRED_PLACEHOLDER_TOOLS
         & {item["key"] for item in payload["axiom_tools"]}
     )
+
+
+def test_pi_native_mcp_names_match_pi_sanitization_and_collision_hash() -> None:
+    rows = [
+        {"id": "one", "server_id": "server", "server_name": "my-server", "name": "do-thing"},
+        {"id": "two", "server_id": "server", "server_name": "my-server", "name": "do_thing"},
+    ]
+
+    names = PhaseCapabilityService._native_mcp_names(rows)
+    for row in rows:
+        base = f"mcp__{row['server_name']}__{row['name']}".replace("-", "_")
+        suffix = hashlib.sha256(
+            f"{row['server_name']}\0{row['name']}".encode()
+        ).hexdigest()[:8]
+        assert names[row["id"]] == f"{base[:55]}_{suffix}"
+    assert names["server:server"] == "my-server"
+
+
+def test_pi_native_mcp_rejects_legacy_sse_runtime_config() -> None:
+    row = {
+        "name": "legacy",
+        "server_name": "legacy",
+        "transport": "sse",
+        "url": "https://mcp.example/sse",
+        "command": "",
+        "args_json": "[]",
+        "env_json": "{}",
+        "raw_config_json": "{}",
+    }
+    with pytest.raises(ConflictError, match="SSE"):
+        PhaseCapabilityService._mcp_runtime_config(row)
+    assert PhaseCapabilityService._mcp_runtime_config(row, allow_sse=True)["transport"] == "sse"
 
 
 def test_new_skill_snapshot_hash_tracks_support_file_updates(client, tmp_path: Path) -> None:

@@ -106,7 +106,9 @@ def test_cleanup_plan_classifies_tiers_and_protects_active(client, engine, data_
 
     assert "t1_lease_process" in tier1
     assert f"t2_task_runs:{stopped}" in tier2
-    assert f"t2_task_contexts:{stopped}" in tier2
+    # Whole-task Context deletion requires archive; unarchived Tasks use the
+    # revision-level retention path instead.
+    assert f"t2_task_contexts:{stopped}" not in tier2
     # 活跃任务整体进三档
     assert f"t3_task_active:{running}" in tier3
     assert not any(key.endswith(running) for key in tier2)

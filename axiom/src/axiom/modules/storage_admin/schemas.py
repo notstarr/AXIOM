@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DiskStats(BaseModel):
@@ -132,3 +132,45 @@ class CleanupExecuteResult(BaseModel):
     removed: list[CleanupRemovedItem]
     skipped: list[CleanupSkippedItem]
     actor: str
+
+
+class ContextRetentionTarget(BaseModel):
+    path: str
+    task_id: str
+    revision: int | None = None
+    bytes: int
+    kind: str
+    reason: str
+    phase: str | None = None
+
+
+class ContextRetentionPlan(BaseModel):
+    generated_at: str
+    targets: list[ContextRetentionTarget]
+    database_records: int = 0
+    reclaimable_count: int = 0
+    protected_count: int
+    orphan_count: int
+    total_bytes: int
+
+
+class ContextRetentionPreviewRequest(BaseModel):
+    limit: int = Field(default=100, ge=1, le=10_000)
+
+
+class ContextRetentionRunRequest(BaseModel):
+    dry_run: bool = True
+    actor: str = "human.frontend"
+    max_revisions: int | None = Field(default=None, ge=1, le=10_000)
+    max_bytes: int | None = Field(default=None, ge=1)
+
+
+class ContextRetentionRunResult(BaseModel):
+    generated_at: str
+    dry_run: bool
+    paused: bool
+    removed: list[ContextRetentionTarget]
+    skipped: list[dict[str, str]]
+    freed_bytes: int
+    protected_count: int
+    orphan_count: int

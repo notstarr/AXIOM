@@ -221,6 +221,36 @@ settle("FINISH")
     assert "STALE" in result.stdout
 
 
+def test_rpc_process_supervisor_rejects_aborted_agent_settled(tmp_path) -> None:
+    command_log = tmp_path / "commands.jsonl"
+    script = _rpc_script(
+        tmp_path,
+        """
+prompt = read_command()
+record(prompt)
+emit({"id": prompt["id"], "type": "response", "command": "prompt", "success": True})
+emit({"type": "agent_settled", "aborted": True})
+""",
+    )
+
+    result = RpcProcessSupervisor().run(
+        RpcProcessSpec(
+            command=[sys.executable, str(script)],
+            log_dir=tmp_path / "logs",
+            timeout_seconds=1,
+            poll_interval_seconds=0.01,
+            environment={"COMMAND_LOG": str(command_log)},
+            prompt="执行测试",
+        )
+    )
+
+    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
+    assert [command["type"] for command in commands] == ["prompt"]
+    assert result.returncode != 0
+    assert result.last_assistant_text is None
+    assert "agent aborted" in result.stderr
+
+
 def test_rpc_process_supervisor_sends_multiple_human_interventions(tmp_path) -> None:
     command_log = tmp_path / "commands.jsonl"
     script = _rpc_script(

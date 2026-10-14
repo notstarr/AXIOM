@@ -18,10 +18,15 @@ cd "$REPO_ROOT"
 
 PY="${REPO_ROOT}/.venv/bin/python"
 [ -x "$PY" ] || PY="$(command -v python3)"
-PI_BINARY="${REPO_ROOT}/runtime/pi/0.85.1/bin/pi"
+# Keep the smoke test aligned with the runtime selected by the worker config.
+# The override is useful when validating a side-by-side runtime during a
+# rollback/canary; production defaults to the pinned Pi version.
+PI_RUNTIME_VERSION="${AXIOM_PI_RUNTIME_VERSION:-1.1.0}"
+PI_BINARY="${REPO_ROOT}/runtime/pi/${PI_RUNTIME_VERSION}/bin/pi"
 
 echo "仓库:      $REPO_ROOT"
 echo "Python:    $PY"
+echo "Pi 版本:   $PI_RUNTIME_VERSION"
 if [ -x "$PI_BINARY" ]; then
   echo "Pi 二进制: $PI_BINARY"
 else

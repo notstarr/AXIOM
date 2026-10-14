@@ -115,6 +115,13 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
         data_dir=data_dir,
         allow_startup_writes=initial_maintenance.state != "frozen",
     )
+    app.state.container.storage_admin.start_context_retention_loop()
+
+    def _stop_context_retention_loop() -> None:
+        app.state.container.storage_admin.stop_context_retention_loop()
+
+    app.router.on_shutdown.append(_stop_context_retention_loop)
+
     app.state.service_token = _read_service_token(data_dir)
     app.include_router(router)
 
@@ -271,7 +278,7 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
                 app.state.index_authed, app.state.index_unauth = _build_index_variants(index_file)
                 app.state.index_source_mtime = mtime
             except (OSError, UnicodeDecodeError):
-                LOGGER.warning("index.html 热重建失败，沿用当前缓存", exc_info=True)
+                logger.warning("index.html 热重建失败，沿用当前缓存", exc_info=True)
 
     def _serve_index(request: Request) -> HTMLResponse:
         """按登录态返回 index.html：未登录精简版（仅 login.js）or 已登录完整版。"""

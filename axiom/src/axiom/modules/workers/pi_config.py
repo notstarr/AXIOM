@@ -12,7 +12,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-PI_RUNTIME_VERSION = "0.85.1"
+PI_RUNTIME_VERSION = "1.1.0"
 PI_NODE_VERSION = "v22.22.2"
 PI_RUNTIME_BINARY = (
     Path(__file__).resolve().parents[4] / "runtime" / "pi" / PI_RUNTIME_VERSION / "bin" / "pi"
@@ -76,6 +76,12 @@ def canonical_provider_api(provider_api: str | None) -> str:
         return "openai-completions"
     if value == "responses":
         return "openai-responses"
+    # Pi 0.85 exposed Azure's Responses implementation under this internal
+    # API name.  Pi 1.1 owns the implementation and expects the provider API
+    # identifier ``azure``; keep old Worker rows readable without changing
+    # their model, key, or endpoint values.
+    if value == "azure-openai-responses":
+        return "azure"
     return value
 
 
@@ -105,6 +111,12 @@ def sdk_base_url(provider_api: str | None, base_url: str) -> str:
     root = _root_base_url(base_url)
     if not root or is_anthropic_messages(provider_api):
         return root
+    if canonical_provider_api(provider_api) == "azure":
+        if root.endswith("/openai"):
+            return f"{root}/v1"
+        if root.endswith("/openai/v1"):
+            return root
+        return f"{root}/openai/v1"
     return root + "/v1"
 
 
@@ -118,6 +130,8 @@ def upstream_request_url(provider_api: str | None, base_url: str, path: str) -> 
 
     root = _root_base_url(base_url)
     p = (path or "").strip().lstrip("/")
+    if canonical_provider_api(provider_api) == "azure" and not root.endswith("/openai"):
+        root = f"{root}/openai"
     if p and not p.startswith("v1/"):
         p = "v1/" + p
     return f"{root}/{p}" if p else root
@@ -131,6 +145,8 @@ def provider_auth_headers(provider_api: str | None, api_key: str) -> dict[str, s
         if api_key:
             headers["x-api-key"] = api_key
         return headers
+    if canonical_provider_api(provider_api) == "azure":
+        return {"api-key": api_key} if api_key else {}
     return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
 
@@ -377,6 +393,9 @@ def canonicalize_pi_worker_config(config: dict[str, Any] | None) -> dict[str, An
             source["context_window"] = int(source["context_window"])
         except (TypeError, ValueError):
             source["context_window"] = 200_000
+
+    if str(source.get("provider_api") or "").strip() == "azure-openai-responses":
+        source["provider_api"] = "azure"
 
     source["environment"] = environment
     return PiWorkerConfig.model_validate(source).model_dump(mode="json", exclude_none=True)

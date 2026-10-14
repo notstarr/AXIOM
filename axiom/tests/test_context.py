@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from sqlalchemy import update
 
 from axiom.modules.artifacts.tables import artifacts
+from axiom.modules.context.tables import context_revisions
 from axiom.modules.knowledge.tables import project_knowledge
 from axiom.modules.tasks.tables import task_hints
 from axiom.modules.todos.tables import todos
+from axiom.shared.storage import PreparedFiles
 from protocol_helpers import write_bootstrap_files
 
 
@@ -473,3 +476,93 @@ def test_plan_context_reuses_existing_indexes_and_includes_archived_history(
     assert "archived-plan-lead" in expanded_plan.json()["entries"][
         f"artifact:{artifact['id']}"
     ]["content"]
+
+
+def test_context_indexing_does_not_call_per_row_getters(client, monkeypatch) -> None:
+    task = _create_task(client)
+    context = client.app.state.container.context
+
+    for repository, method_name in (
+        (context.graph, "get_intent"),
+        (context.todos, "get"),
+        (context.artifacts, "get"),
+        (context.artifacts, "get_any"),
+        (context.vulnerabilities, "get"),
+    ):
+        monkeypatch.setattr(
+            repository,
+            method_name,
+            lambda *args, _method_name=method_name, **kwargs: pytest.fail(
+                f"per-row getter called: {_method_name}"
+            ),
+        )
+
+    response = client.post(
+        f"/api/v1/tasks/{task['id']}/context",
+        json={"phase": "bootstrap", "intent_id": "i001"},
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_context_file_io_runs_without_checked_out_database_connection(
+    client,
+    monkeypatch,
+) -> None:
+    task = _create_task(client)
+    engine = client.app.state.container.engine
+    baseline = engine.pool.checkedout()
+    observed: list[int] = []
+
+    original_prepare = client.app.state.container.store.prepare_named_text_files
+
+    def prepare(*args, **kwargs):
+        observed.append(engine.pool.checkedout())
+        return original_prepare(*args, **kwargs)
+
+    original_commit = PreparedFiles.commit
+
+    def commit(prepared: PreparedFiles) -> None:
+        observed.append(engine.pool.checkedout())
+        original_commit(prepared)
+
+    monkeypatch.setattr(
+        client.app.state.container.store,
+        "prepare_named_text_files",
+        prepare,
+    )
+    monkeypatch.setattr(PreparedFiles, "commit", commit)
+
+    response = client.post(
+        f"/api/v1/tasks/{task['id']}/context",
+        json={"phase": "bootstrap", "intent_id": "i001"},
+    )
+    assert response.status_code == 200, response.text
+    assert observed == [baseline, baseline]
+
+
+def test_context_revision_insert_failure_rolls_back_prepared_files(client, monkeypatch) -> None:
+    task = _create_task(client)
+    context = client.app.state.container.context
+
+    def fail_insert(*args, **kwargs):
+        raise RuntimeError("revision insert failed")
+
+    monkeypatch.setattr(context.repository, "insert_revision", fail_insert)
+
+    with pytest.raises(RuntimeError, match="revision insert failed"):
+        context.build(task_id=task["id"], phase="bootstrap", intent_id="i001")
+
+    with client.app.state.container.engine.connect() as conn:
+        assert (
+            conn.execute(
+                context_revisions.select().where(context_revisions.c.task_id == task["id"])
+            ).first()
+            is None
+        )
+    assert not (
+        client.app.state.container.store.root
+        / "contexts"
+        / task["id"]
+        / "r000001"
+        / "manifest.json"
+    ).exists()

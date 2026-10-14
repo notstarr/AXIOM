@@ -734,6 +734,9 @@ class RpcProcessSupervisor(ProcessSupervisor):
                                 rpc_stream_stalled = True
                                 protocol_error = recovery_error
                             continue
+                        if event.get("aborted") is True:
+                            protocol_error = "Pi RPC agent aborted before completion"
+                            break
                         if provider_error:
                             protocol_error = f"Pi RPC provider failed: {provider_error}"
                             break
@@ -1584,6 +1587,8 @@ class CubePtySupervisor:
                 if recovery_deadline is not None:
                     recovery_settled = True
                     send_recovery_prompt()
+                elif event.get("aborted") is True:
+                    protocol_error = "Pi RPC agent aborted before completion"
                 elif provider_error:
                     protocol_error = f"Pi RPC provider failed: {provider_error}"
                 elif not final_text_requested:

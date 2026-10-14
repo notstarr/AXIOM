@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -49,6 +50,7 @@ class LeaseCapabilitySnapshot:
     axiom_tool_extensions: list[str]
     axiom_tool_snapshot_path: str | None
     capability_snapshot_path: str
+    mcp_mode: str = "legacy"
 
 
 class PhaseCapabilityService:
@@ -405,18 +407,28 @@ class PhaseCapabilityService:
         snapshot_servers: dict[str, dict[str, Any]] = {}
         mcp_items: list[dict[str, Any]] = []
         allowed_mcp_tools: list[str] = []
+        mcp_mode = os.environ.get("AXIOM_PI_MCP_MODE", "pi_native").strip().lower() or "pi_native"
+        if mcp_mode not in {"pi_native", "legacy"}:
+            raise ConflictError(f"AXIOM_PI_MCP_MODE 无效：{mcp_mode}")
+        native_names = self._native_mcp_names(mcp_rows) if mcp_mode == "pi_native" else {}
         for row in mcp_rows:
-            allowed_name = self.mcp_runtime_tool_name(row["server_name"], row["name"], row["id"])
+            legacy_name = self.mcp_runtime_tool_name(row["server_name"], row["name"], row["id"])
+            allowed_name = native_names[row["id"]] if mcp_mode == "pi_native" else legacy_name
             allowed_mcp_tools.append(allowed_name)
             runtime_config = self._mcp_runtime_config(row)
-            server_configs[row["server_name"]] = runtime_config
-            snapshot_servers[row["server_name"]] = {
+            native_server_name = native_names.get(f"server:{row['server_id']}", row["server_name"])
+            server_key = native_server_name if mcp_mode == "pi_native" else row["server_name"]
+            server_configs[server_key] = runtime_config
+            server_entry = snapshot_servers.setdefault(server_key, {
                 "id": row["server_id"],
                 "name": row["server_name"],
+                "native_name": native_server_name,
                 "transport": row["transport"],
                 "config": runtime_config,
                 "config_hash": self._json_hash(runtime_config),
-            }
+                "tool_exposure": {},
+            })
+            server_entry["tool_exposure"][row["name"]] = "direct"
             input_schema = public_input_schema(json.loads(row["input_schema_json"] or "{}"))
             output_schema = json.loads(row["output_schema_json"] or "{}")
             mcp_items.append(
@@ -427,8 +439,11 @@ class PhaseCapabilityService:
                     ),
                     "server_id": row["server_id"],
                     "server_name": row["server_name"],
+                    "native_server_name": native_server_name,
                     "tool_name": row["name"],
                     "active_name": allowed_name,
+                    "native_name": allowed_name,
+                    "legacy_name": legacy_name,
                     "title": row["title"] or row["name"],
                     "description": row["description"],
                     "input_schema": input_schema,
@@ -456,9 +471,10 @@ class PhaseCapabilityService:
             for row in axiom_rows
         ]
         payload = {
-            "schema_version": 2,
+            "schema_version": 3,
             "worker_backend": worker_name,
             "phase": phase,
+            "mcp_mode": mcp_mode,
             "created_at": utcnow(),
             "builtin_tools": builtin_tool_payloads(phase=phase),
             "skills": skill_items,
@@ -478,7 +494,7 @@ class PhaseCapabilityService:
                     "tools": axiom_items,
                 },
             )
-        environment = self._mcp_environment(server_configs, allowed_mcp_tools)
+        environment = self._mcp_environment(server_configs, allowed_mcp_tools, mode=mcp_mode)
         return LeaseCapabilitySnapshot(
             skill_directories=[item["directory"] for item in skill_items],
             mcp_tool_names=allowed_mcp_tools,
@@ -490,6 +506,7 @@ class PhaseCapabilityService:
             ],
             axiom_tool_snapshot_path=str(axiom_path) if axiom_items else None,
             capability_snapshot_path=str(path),
+            mcp_mode=mcp_mode,
         )
 
     def _snapshot_from_file(
@@ -505,7 +522,7 @@ class PhaseCapabilityService:
             raise ConflictError(f"Lease capability snapshot is unreadable: {path}") from exc
         if (
             not isinstance(payload, dict)
-            or payload.get("schema_version") not in {1, 2}
+            or payload.get("schema_version") not in {1, 2, 3}
             or payload.get("worker_backend") != worker_name
             or payload.get("phase") != phase
         ):
@@ -513,19 +530,35 @@ class PhaseCapabilityService:
         skills = payload.get("skills") if isinstance(payload.get("skills"), list) else []
         mcp_items = payload.get("mcp_tools") if isinstance(payload.get("mcp_tools"), list) else []
         axiom_items = payload.get("axiom_tools") if isinstance(payload.get("axiom_tools"), list) else []
+        schema_version = int(payload.get("schema_version") or 1)
+        mcp_mode = str(payload.get("mcp_mode") or "legacy").strip().lower()
+        if mcp_mode not in {"pi_native", "legacy"}:
+            raise ConflictError(f"Lease capability snapshot has invalid MCP mode: {mcp_mode}")
+        if schema_version < 3:
+            # Pre-native snapshots never carried an execution mode and must
+            # stay on the legacy adapter during the drain window.
+            mcp_mode = "legacy"
         snapshot_servers = payload.get("mcp_servers")
         server_configs: dict[str, dict[str, Any]] = {}
         if isinstance(snapshot_servers, list):
             for item in snapshot_servers:
                 if not isinstance(item, dict):
                     continue
-                name = str(item.get("name") or "")
+                name = str(
+                    (item.get("native_name") if mcp_mode == "pi_native" else item.get("name"))
+                    or item.get("native_name")
+                    or ""
+                )
                 config = item.get("config")
                 if name and isinstance(config, dict):
                     server_configs[name] = config
         # Lease snapshots created before phase-capability server configs were
         # persisted are still readable.  New snapshots never take this path,
         # so a restart cannot silently replace their MCP credentials/config.
+        if not server_configs and mcp_items and schema_version >= 3:
+            raise ConflictError(
+                "Lease capability snapshot is missing immutable MCP server configuration"
+            )
         if not server_configs and mcp_items:
             with self.engine.connect() as conn:
                 selected_rows = self._selected_mcp_rows(
@@ -537,13 +570,22 @@ class PhaseCapabilityService:
                     ],
                 )
             server_configs = {
-                row["server_name"]: self._mcp_runtime_config(row)
+                row["server_name"]: self._mcp_runtime_config(row, allow_sse=True)
                 for row in selected_rows
             }
         allowed = [
-            str(item.get("active_name") or "")
+            str(
+                (item.get("native_name") if mcp_mode == "pi_native" else item.get("active_name"))
+                or item.get("active_name")
+                or ""
+            )
             for item in mcp_items
-            if isinstance(item, dict) and str(item.get("active_name") or "")
+            if isinstance(item, dict)
+            and str(
+                (item.get("native_name") if mcp_mode == "pi_native" else item.get("active_name"))
+                or item.get("active_name")
+                or ""
+            )
         ]
         axiom_path = path.with_name("axiom-tools.json")
         return LeaseCapabilitySnapshot(
@@ -553,7 +595,7 @@ class PhaseCapabilityService:
                 if isinstance(item, dict) and str(item.get("directory") or "")
             ],
             mcp_tool_names=allowed,
-            mcp_environment=self._mcp_environment(server_configs, allowed),
+            mcp_environment=self._mcp_environment(server_configs, allowed, mode=mcp_mode),
             axiom_tool_keys=[
                 str(item.get("key") or "")
                 for item in axiom_items
@@ -568,6 +610,7 @@ class PhaseCapabilityService:
             ],
             axiom_tool_snapshot_path=str(axiom_path) if axiom_items else None,
             capability_snapshot_path=str(path),
+            mcp_mode=mcp_mode,
         )
 
     def _initialize_existing_skills_once(self) -> None:
@@ -770,33 +813,142 @@ class PhaseCapabilityService:
         return f"mcp__{part(server_name)}__{part(tool_name)}__{suffix}"
 
     @staticmethod
-    def _mcp_runtime_config(row) -> dict[str, Any]:
+    def _native_mcp_names(rows) -> dict[str, str]:
+        """Build the exact Pi 1.1 MCP tool names for this snapshot.
+
+        Pi sanitizes the complete ``mcp__<server>__<tool>`` name and appends
+        the first eight SHA-256 hex digits of ``server + NUL + tool`` when a
+        sanitized name collides or exceeds 64 characters.  Keeping that logic
+        here makes the immutable Lease snapshot agree with the names Pi will
+        actually register; a mismatch is therefore detected before a Worker
+        can run.  Server names are intentionally left intact: Pi performs the
+        same sanitization after ``registerMcpServer`` receives them.
+        """
+
+        rows = list(rows)
+        result: dict[str, str] = {}
+        server_ids_by_name: dict[str, str] = {}
+        server_by_id: dict[str, str] = {}
+        for row in rows:
+            server_id = str(row["server_id"])
+            server_name = str(row["server_name"])
+            previous = server_ids_by_name.get(server_name)
+            if previous is not None and previous != server_id:
+                raise ConflictError(
+                    f"MCP Server 名称与 Pi 原生注册冲突：{server_name}"
+                )
+            server_ids_by_name[server_name] = server_id
+            server_by_id[server_id] = server_name
+
+        def pi_base(server_name: str, tool_name: str) -> str:
+            return re.sub(
+                r"[^A-Za-z0-9_]", "_", f"mcp__{server_name}__{tool_name}"
+            )
+
+        bases = [
+            pi_base(server_by_id[str(row["server_id"])], str(row["name"]))
+            for row in rows
+        ]
+        base_counts: dict[str, int] = defaultdict(int)
+        for base in bases:
+            base_counts[base] += 1
+
+        for row, base in zip(rows, bases, strict=True):
+            server_name = server_by_id[str(row["server_id"])]
+            tool_name = str(row["name"])
+            if len(base) <= 64 and base_counts[base] == 1:
+                native_name = base
+            else:
+                suffix = hashlib.sha256(
+                    f"{server_name}\0{tool_name}".encode("utf-8")
+                ).hexdigest()[:8]
+                native_name = f"{base[:55]}_{suffix}"
+            result[str(row["id"])] = native_name
+            result[f"server:{row['server_id']}"] = server_name
+        return result
+
+    @staticmethod
+    def _mcp_runtime_config(row, *, allow_sse: bool = False) -> dict[str, Any]:
+        transport = str(row["transport"] or "").strip().lower()
+        url = str(row["url"] or "").strip()
+        is_sse = transport == "sse" or url.lower().endswith("/sse")
+        if is_sse and not allow_sse:
+            raise ConflictError(
+                f"MCP Server {row.get('server_name', row.get('name', 'unknown'))} 仍使用 legacy SSE，不能切换到 Pi 原生 MCP"
+            )
         if row["command"]:
+            if transport and transport != "stdio":
+                raise ConflictError(
+                    f"MCP Server {row.get('server_name', row.get('name', 'unknown'))} 使用了不支持的 transport：{transport}"
+                )
+            try:
+                args = json.loads(row["args_json"] or "[]")
+                env = json.loads(row["env_json"] or "{}")
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ConflictError("MCP Server stdio 配置不是合法 JSON") from exc
+            if not isinstance(args, list) or not isinstance(env, dict):
+                raise ConflictError("MCP Server stdio args/env 类型无效")
             return {
                 "command": row["command"],
-                "args": json.loads(row["args_json"] or "[]"),
-                "env": json.loads(row["env_json"] or "{}"),
+                "args": args,
+                "env": {
+                    str(key): str(value)
+                    for key, value in env.items()
+                },
             }
-        config: dict[str, Any] = {"url": row["url"], "transport": row["transport"]}
-        raw = json.loads(row["raw_config_json"] or "{}")
-        if isinstance(raw, dict) and raw.get("headers"):
-            config["headers"] = raw["headers"]
+        if is_sse and allow_sse:
+            config: dict[str, Any] = {"url": url, "transport": "sse"}
+        elif transport not in {"", "http", "streamable_http", "streamable-http"}:
+            raise ConflictError(
+                f"MCP Server {row.get('server_name', row.get('name', 'unknown'))} 使用了不支持的 transport：{transport}"
+            )
+        else:
+            config = {"url": url, "type": "http"}
+        try:
+            raw = json.loads(row["raw_config_json"] or "{}")
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ConflictError("MCP Server HTTP 配置不是合法 JSON") from exc
+        if not isinstance(raw, dict):
+            raise ConflictError("MCP Server HTTP raw_config 类型无效")
+        if "headers" in raw and not isinstance(raw["headers"], dict):
+            raise ConflictError("MCP Server HTTP headers 类型无效")
+        if isinstance(raw, dict) and isinstance(raw.get("headers"), dict) and raw.get("headers"):
+            config["headers"] = {
+                str(key): str(value) for key, value in raw["headers"].items()
+            }
         return config
 
     @staticmethod
     def _mcp_environment(
         server_configs: dict[str, dict[str, Any]],
         allowed_tools: list[str],
+        *,
+        mode: str = "legacy",
     ) -> dict[str, str]:
         enabled = bool(server_configs and allowed_tools)
+        # Native Pi MCP reads the immutable snapshot directly.  Do not copy
+        # server credentials into an environment variable where an unrelated
+        # extension could observe them; the legacy adapter still receives the
+        # historical JSON payload during its drain window.
+        config_payload = (
+            {"mcpServers": server_configs if enabled else {}}
+            if mode == "legacy"
+            else {"mcpServers": {}}
+        )
         return {
             "PI_MCP_ENABLED": "true" if enabled else "false",
+            "AXIOM_MCP_MODE": mode if enabled else "legacy",
             "PI_MCP_CONFIG_JSON": json.dumps(
-                {"mcpServers": server_configs if enabled else {}},
+                config_payload,
                 ensure_ascii=False,
                 separators=(",", ":"),
             ),
             "PI_MCP_ALLOWED_SERVERS": ",".join(server_configs) if enabled else "",
+            "PI_MCP_ALLOWED_SERVERS_JSON": json.dumps(
+                list(server_configs) if enabled else [],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
             "PI_MCP_ALLOWED_TOOLS": ",".join(allowed_tools) if enabled else "",
             # AXIOM registers only the selected concrete MCP Tools itself.
             # Clear the community adapter's optional direct-tool override so a
