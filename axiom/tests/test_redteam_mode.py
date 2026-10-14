@@ -332,6 +332,100 @@ def test_result_report_enforces_bound_chain(client) -> None:
     assert [item["id"] for item in results.json()] == [created["id"]]
 
 
+def test_redteam_result_review_lifecycle(client, engine) -> None:
+    """成果全链路：上报 → 审核入队 → Reviewer 领取 → 裁决 → 状态映射。"""
+
+    from sqlalchemy import select
+
+    from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
+
+    task, claim, completed = _active_reason(client, red_team=True)
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    committed = apply_reason_draft(
+        client, workspace["id"], claim["lease_id"], _chain_draft(completed)
+    )
+    assert committed.status_code == 200, committed.text
+    chain_id = committed.json()["created_chain_ids"][0]
+    intent_id = committed.json()["created_intent_ids"][0]
+
+    claim_body, _execution = _claim_explore(client, task["id"], intent_id)
+    uploaded = client.post(
+        f"/api/v1/tasks/{task['id']}/artifacts/upload",
+        files={"file": ("evidence.txt", b"permission transition proof")},
+        data={"actor": "worker-a", "summary": "权限跃迁证据"},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    report = {
+        "chain_id": chain_id,
+        "result_type": "permission",
+        "title": "取得成员管理能力",
+        "description": "复用普通成员会话调用成员管理接口成功",
+        "principal": "user:member",
+        "capabilities_gained": ["tenant:admin"],
+        "target_asset": "member-management",
+        "evidence_refs": [f"artifact:{uploaded.json()['id']}"],
+    }
+    accepted = client.post(
+        f"/api/v1/tasks/{task['id']}/intents/{intent_id}/red-team-results",
+        json={"lease_id": claim_body["lease_id"], "report": report},
+    )
+    assert accepted.status_code == 201, accepted.text
+    result_id = accepted.json()["id"]
+    # 上报即进入审核（enqueue_redteam_in）
+    assert accepted.json()["status"] == "reviewing"
+
+    with engine.connect() as conn:
+        review_run_id = conn.execute(
+            select(vulnerability_review_runs.c.id).where(
+                vulnerability_review_runs.c.task_id == task["id"],
+                vulnerability_review_runs.c.red_team_result_id == result_id,
+            )
+        ).scalar_one()
+
+    client.put(
+        "/api/v1/workers/worker-a",
+        json={"capabilities": ["bootstrap", "reason", "explore", "review"], "max_running": 1},
+    )
+    # 释放 Explore 租约，腾出 Worker 容量供 Reviewer 领取
+    released = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/intents/{intent_id}/release",
+        json={"lease_id": claim_body["lease_id"], "failure_kind": "test_release"},
+    )
+    assert released.status_code == 200, released.text
+    review_base = f"/api/v1/dispatch/tasks/{task['id']}/vulnerability-review-runs/{review_run_id}"
+    claimed = client.post(f"{review_base}/claim", json={"worker_name": "worker-a"})
+    assert claimed.status_code == 200, claimed.text
+    review_lease = {"lease_id": claimed.json()["lease_id"]}
+
+    started = client.post(f"{review_base}/start", json=review_lease)
+    assert started.status_code == 200, started.text
+    decided = client.post(
+        f"{review_base}/decision",
+        json={**review_lease, "decision": "verified", "reason": "证据充分：权限跃迁可复现，链归属与目标一致"},
+    )
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["decision"] == "verified"
+    assert decided.json()["review_subject_type"] == "redteam_result"
+
+    concluded = client.post(f"{review_base}/conclude", json=review_lease)
+    assert concluded.status_code == 204, concluded.text
+    completed_review = client.post(f"{review_base}/complete", json=review_lease)
+    assert completed_review.status_code == 200, completed_review.text
+    body = completed_review.json()
+    assert body["review_subject_type"] == "redteam_result"
+    assert body["red_team_result_id"] == result_id
+    assert body["vulnerability_status"] == "verified"
+
+    results = client.get(
+        f"/api/v1/tasks/{task['id']}/red-team/results", params={"chain_id": chain_id}
+    )
+    assert results.status_code == 200, results.text
+    [verified] = results.json()
+    assert verified["id"] == result_id
+    assert verified["status"] == "verified"
+    assert verified["reviewed_by"]
+
+
 def test_cross_task_result_and_chain_listing(client) -> None:
     """重要事实·成果视图的全局列表（分页 + 筛选 + X-Total-Count）。"""
 
