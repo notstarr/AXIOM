@@ -6,7 +6,7 @@ from pathlib import Path
 
 from datetime import timedelta
 
-from sqlalchemy import Engine, update
+from sqlalchemy import Engine, select, update
 
 from axiom.modules.artifacts.repository import ArtifactRepository
 from axiom.modules.audit.schemas import RecordAuditEvent
@@ -62,6 +62,7 @@ from axiom.modules.skills.service import SkillService
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
 from axiom.modules.vulnerabilities.schemas import StoredExploreVulnerability, VulnerabilityReport
 from axiom.modules.vulnerability_reviews.service import VulnerabilityReviewService
+from axiom.modules.redteam.tables import red_team_results
 from axiom.shared.clock import format_utc, parse_utc, utcnow
 from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, LeaseInactiveError, NotFoundError
@@ -91,6 +92,20 @@ def reason_prompt_profile_for_trigger(trigger: str) -> str:
 
 def _scope_payload(scope: TaskScope) -> dict[str, object]:
     return scope.model_dump(mode="json") if scope.enabled else {}
+
+
+def chain_id_from_plan_metadata(value) -> str | None:
+    """Read the bound RedTeam Chain from an Intent's plan metadata."""
+
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(value, dict):
+        return None
+    chain_id = value.get("chain_id")
+    return chain_id.strip() if isinstance(chain_id, str) and chain_id.strip() else None
 
 
 class ExecutionService:
@@ -291,6 +306,13 @@ class ExecutionService:
                 if execute_timeout is None or conclude_timeout is None:
                     raise ConflictError("Bootstrap budget snapshot is missing; release and reclaim it")
             values = {
+                "engagement_mode": row.get("engagement_mode", "vulnerability") or "vulnerability",
+                "red_team_objective": (
+                    json.loads(row.get("red_team_objective_json") or "{}")
+                    if isinstance(row.get("red_team_objective_json"), str)
+                    else (row.get("red_team_objective_json") or {})
+                ),
+                "chain_id": chain_id_from_plan_metadata(row.get("plan_metadata_json")),
                 "worker_name": row["worker"] or "",
                 "intent_kind": row["kind"],
                 "intent_description": row["intent_description"],
@@ -337,6 +359,9 @@ class ExecutionService:
         assets = self._prepare_worker_assets(task_id=task_id, context=context, capabilities=capabilities)
         return ExecutionInput(
             task_id=task_id,
+            engagement_mode=values["engagement_mode"],
+            red_team_objective=values["red_team_objective"],
+            chain_id=values["chain_id"],
             project_id=row["project_id"],
             intent_id=intent_id,
             lease_id=command.lease_id,
@@ -499,6 +524,8 @@ class ExecutionService:
         return ExecutionInput(
             task_id=task_id,
             project_id=task.project_id,
+            engagement_mode=task.engagement_mode,
+            red_team_objective=(task.red_team_objective.model_dump(mode="json") if task.red_team_objective else {}),
             intent_id=None,
             reason_run_id=reason_run_id,
             lease_id=command.lease_id,
@@ -599,6 +626,8 @@ class ExecutionService:
         return PlanExecutionInput(
             task_id=task_id,
             project_id=task.project_id,
+            engagement_mode=task.engagement_mode,
+            red_team_objective=(task.red_team_objective.model_dump(mode="json") if task.red_team_objective else {}),
             plan_run_id=plan_run_id,
             lease_id=command.lease_id,
             worker_name=run.worker or "",
@@ -653,9 +682,16 @@ class ExecutionService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.legacy_readonly:
                 raise LeaseInactiveError("Legacy Task is read-only")
-            vulnerability = self.vulnerabilities.get(conn, task_id, run.vulnerability_id)
-            if vulnerability is None or vulnerability.archived:
-                raise LeaseInactiveError("Vulnerability is no longer reviewable")
+            vulnerability = None
+            red_result = None
+            if run.review_subject_type == "redteam_result":
+                red_result = conn.execute(select(red_team_results).where(red_team_results.c.task_id == task_id, red_team_results.c.id == run.red_team_result_id)).mappings().one_or_none()
+                if red_result is None:
+                    raise LeaseInactiveError("RedTeam Result is no longer reviewable")
+            else:
+                vulnerability = self.vulnerabilities.get(conn, task_id, run.vulnerability_id)
+                if vulnerability is None or vulnerability.archived:
+                    raise LeaseInactiveError("Vulnerability is no longer reviewable")
             hints = self.repository.hints(conn, task_id)
 
         context = self.context.build(
@@ -675,7 +711,10 @@ class ExecutionService:
         manual_reason = str(run.trigger_payload.get("reason") or "").strip()
         if manual_reason:
             trigger_summary += f"。人工说明：{manual_reason}"
-        targets = [vulnerability.affected_target] if vulnerability.affected_target else []
+        targets = (
+            [vulnerability.affected_target] if vulnerability is not None and vulnerability.affected_target
+            else ([str(red_result.get("target_asset") or "")] if red_result is not None and red_result.get("target_asset") else [])
+        )
         injected = self.context.build_system_context(
             revision=context,
             phase="review",
@@ -702,8 +741,11 @@ class ExecutionService:
         return ExecutionInput(
             task_id=task_id,
             project_id=task.project_id,
+            engagement_mode=task.engagement_mode,
+            red_team_objective=(task.red_team_objective.model_dump(mode="json") if task.red_team_objective else {}),
             review_run_id=review_run_id,
-            vulnerability_id=vulnerability.id,
+            vulnerability_id=vulnerability.id if vulnerability is not None else None,
+            red_team_result_id=run.red_team_result_id,
             lease_id=command.lease_id,
             worker_name=run.worker or "",
             intent_kind="review",
@@ -1375,6 +1417,8 @@ class ExecutionService:
                 self._require_lease(row, command.lease_id)
                 if row["task_status"] != "running":
                     raise LeaseInactiveError("Task is not running")
+                if row.get("engagement_mode", "vulnerability") == "red_team":
+                    raise ConflictError("Red-team tasks must report red-team Results, not Vulnerabilities")
                 if row["kind"] != "explore":
                     raise ConflictError("Intent is not an Explore Intent")
                 if row["intent_status"] not in {"running", "concluding"}:

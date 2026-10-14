@@ -269,6 +269,14 @@ _CORE_BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = (
         availability=_all_modes("explore"),
     ),
     BuiltinToolDefinition(
+        key="axiom.explore.result.report",
+        title="上报红队成果",
+        description="在当前 Explore Chain 上报权限、数据、凭证或横向控制成果。",
+        source="axiom_internal",
+        invocation="axiom explore result report --chain-id ... --type ...",
+        availability=_all_modes("explore"),
+    ),
+    BuiltinToolDefinition(
         key="axiom.explore.human_intervention.mark",
         title="需要人工介入",
         description="标记当前 Explore Intent 中必须由人类完成才能继续验证的方向。",

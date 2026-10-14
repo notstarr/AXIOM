@@ -24,6 +24,7 @@ from axiom.modules.mcp.api import router as mcp_router
 from axiom.modules.phase_capabilities.api import router as phase_capabilities_router
 from axiom.modules.plan.api import router as plan_router
 from axiom.modules.reason.api import router as reason_router
+from axiom.modules.redteam.api import router as red_team_router
 from axiom.modules.settings.api import router as settings_router
 from axiom.modules.storage_admin.api import router as storage_router
 from axiom.modules.sandboxes.api import router as sandboxes_router
@@ -43,6 +44,7 @@ router = APIRouter(prefix="/api/v1")
 router.include_router(projects_router)
 router.include_router(dashboard_router)
 router.include_router(reason_router)
+router.include_router(red_team_router)
 router.include_router(plan_router)
 router.include_router(tasks_router)
 router.include_router(graph_router)

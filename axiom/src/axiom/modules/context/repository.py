@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Connection, select
+from sqlalchemy import Connection, select, update
 
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.context.tables import context_revisions
@@ -10,6 +10,7 @@ from axiom.modules.knowledge.tables import project_knowledge
 from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.tables import vulnerabilities
+from axiom.modules.redteam.tables import red_team_chains, red_team_results
 
 
 class ContextRepository:
@@ -58,6 +59,16 @@ class ContextRepository:
             query.order_by(vulnerabilities.c.updated_at, vulnerabilities.c.id)
         ).mappings().all()
 
+    def red_team_chains(self, conn: Connection, task_id: str):
+        return conn.execute(
+            select(red_team_chains).where(red_team_chains.c.task_id == task_id).order_by(red_team_chains.c.created_at, red_team_chains.c.id)
+        ).mappings().all()
+
+    def red_team_results(self, conn: Connection, task_id: str):
+        return conn.execute(
+            select(red_team_results).where(red_team_results.c.task_id == task_id).order_by(red_team_results.c.created_at, red_team_results.c.id)
+        ).mappings().all()
+
     def knowledge(self, conn: Connection, project_id: str, *, include_archived: bool = False):
         query = select(project_knowledge).where(
             project_knowledge.c.project_id == project_id,
@@ -85,6 +96,18 @@ class ContextRepository:
 
     def insert_revision(self, conn: Connection, values: dict) -> None:
         conn.execute(context_revisions.insert().values(**values))
+
+    def mark_reclaimed(self, conn: Connection, task_id: str, revision: int, deleted_at: str) -> bool:
+        result = conn.execute(
+            update(context_revisions)
+            .where(
+                context_revisions.c.task_id == task_id,
+                context_revisions.c.revision == revision,
+                context_revisions.c.storage_state == "present",
+            )
+            .values(storage_state="reclaimed", deleted_at=deleted_at)
+        )
+        return bool(result.rowcount)
 
     def for_lease(
         self,

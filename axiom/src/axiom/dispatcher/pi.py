@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -208,21 +209,24 @@ class PiBootstrapExecutor:
         if not execution_input.context_manifest_path:
             raise TransientWorkerError("Bootstrap Context manifest is unavailable")
         self._session_id = self._session_id or uuid.uuid4().hex
+        bootstrap_prompt = self.prompts.render(
+            "bootstrap.md",
+            {
+                "task_id": execution_input.task_id,
+                "intent_id": execution_input.intent_id,
+                "origin": execution_input.origin,
+                "goal": execution_input.goal,
+                "scope_guidance": _scope_guidance(execution_input.scope),
+                "context_manifest_path": execution_input.context_manifest_path,
+                "run_dir": execution_input.run_dir,
+                "skill_directories": _format_skill_directories(execution_input.skill_directories),
+            },
+        )
+        if execution_input.engagement_mode == "red_team":
+            bootstrap_prompt += "\n\n---\n\n" + self.prompts.render("bootstrap_redteam.md", {})
         result = self._run(
             execution_input,
-            self.prompts.render(
-                "bootstrap.md",
-                {
-                    "task_id": execution_input.task_id,
-                    "intent_id": execution_input.intent_id,
-                    "origin": execution_input.origin,
-                    "goal": execution_input.goal,
-                    "scope_guidance": _scope_guidance(execution_input.scope),
-                    "context_manifest_path": execution_input.context_manifest_path,
-                    "run_dir": execution_input.run_dir,
-                    "skill_directories": _format_skill_directories(execution_input.skill_directories),
-                },
-            ),
+            bootstrap_prompt,
             lease_active=lease_active,
             timeout_seconds=execution_input.execute_timeout_seconds or 900,
             tool_names=native_tool_names("bootstrap", "execute"),
@@ -383,6 +387,9 @@ class PiBootstrapExecutor:
             environment["AXIOM_PLAN_RUN_ID"] = plan_run_id
         if vulnerability_id:
             environment["AXIOM_VULNERABILITY_ID"] = vulnerability_id
+        chain_id = getattr(execution_input, "chain_id", None)
+        if chain_id:
+            environment["AXIOM_CHAIN_ID"] = chain_id
         if self.service_token:
             environment["AXIOM_SERVICE_TOKEN"] = self.service_token
         if extra_environment:
@@ -472,6 +479,24 @@ class PiBootstrapExecutor:
                         }
                     )
                     tool_names = list(dict.fromkeys([*tool_names, *BROWSER_TOOL_NAMES]))
+        raw_mcp_servers = execution_input.capability_environment.get(
+            "PI_MCP_ALLOWED_SERVERS_JSON"
+        )
+        try:
+            parsed_mcp_servers = json.loads(str(raw_mcp_servers or "[]"))
+        except (TypeError, json.JSONDecodeError):
+            parsed_mcp_servers = []
+        if not isinstance(parsed_mcp_servers, list):
+            parsed_mcp_servers = []
+        mcp_server_names = [str(item) for item in parsed_mcp_servers if str(item)]
+        if not mcp_server_names:
+            mcp_server_names = [
+                item
+                for item in str(
+                    execution_input.capability_environment.get("PI_MCP_ALLOWED_SERVERS") or ""
+                ).split(",")
+                if item
+            ]
         argv = self._build_argv(
             prompt,
             session_dir,
@@ -486,6 +511,8 @@ class PiBootstrapExecutor:
                 execution_input.axiom_tool_keys if enable_axiom_tools else []
             ),
             mcp_tool_names=execution_input.mcp_tool_names,
+            mcp_mode=str(execution_input.capability_environment.get("AXIOM_MCP_MODE") or "legacy"),
+            mcp_server_names=mcp_server_names,
             browser_enabled=browser_enabled,
             binary="pi" if remote_cube else None,
             runtime_extension_paths=runtime_extension_paths,
@@ -705,6 +732,8 @@ class PiBootstrapExecutor:
         axiom_tool_extensions: list[str] | None = None,
         axiom_tool_keys: list[str] | None = None,
         mcp_tool_names: list[str] | None = None,
+        mcp_mode: str = "legacy",
+        mcp_server_names: list[str] | None = None,
         browser_enabled: bool = False,
         injected_system_context: str = "",
         binary: str | None = None,
@@ -744,9 +773,16 @@ class PiBootstrapExecutor:
         # keys; unrelated AXIOM Tools remain neither loaded nor exposed.
         selected_keys = list(dict.fromkeys(axiom_tool_keys or []))
         selected_mcp_tools = list(dict.fromkeys(mcp_tool_names or []))
-        allowed_tools = list(
-            dict.fromkeys([*tool_names, *selected_mcp_tools, *selected_keys])
+        native_mcp_patterns = [
+            f"mcp__{re.sub(r'[^A-Za-z0-9_]', '_', server)}__*"
+            for server in dict.fromkeys(mcp_server_names or [])
+        ]
+        mcp_allowlist = (
+            native_mcp_patterns
+            if mcp_mode == "pi_native" and native_mcp_patterns
+            else selected_mcp_tools
         )
+        allowed_tools = list(dict.fromkeys([*tool_names, *mcp_allowlist, *selected_keys]))
         if allowed_tools:
             argv.extend(["--tools", ",".join(allowed_tools)])
         # Skill exposure is stage-scoped.  ``settings.skill_paths`` is a
@@ -759,7 +795,21 @@ class PiBootstrapExecutor:
                 Path(__file__).with_name("extensions") / "axiom-guard" / "index.ts"
             )
             argv.extend(["--extension", str(extension)])
-        if selected_mcp_tools:
+        if selected_mcp_tools and mcp_mode == "pi_native":
+            extension = runtime_paths.get("axiom-native-mcp") or str(
+                Path(__file__).with_name("extensions")
+                / "axiom-native-mcp"
+                / "index.ts"
+            )
+            argv.extend(["--extension", str(extension)])
+            argv.extend(
+                [
+                    "--exclude-tools",
+                    "codemode,tool_search,list_mcp_resources,list_mcp_resource_templates,read_mcp_resource",
+                    "--no-approve",
+                ]
+            )
+        elif selected_mcp_tools:
             extension = runtime_paths.get("axiom-mcp-tools") or str(
                 Path(__file__).with_name("extensions")
                 / "axiom-mcp-tools"
@@ -904,6 +954,7 @@ class PiBootstrapExecutor:
             for name in (
                 "axiom-guard",
                 "axiom-mcp-tools",
+                "axiom-native-mcp",
                 "axiom-browser",
                 "axiom-tool-activation",
             )
@@ -931,6 +982,7 @@ class PiBootstrapExecutor:
             for name in (
                 "axiom-guard",
                 "axiom-mcp-tools",
+                "axiom-native-mcp",
                 "axiom-browser",
                 "axiom-tool-activation",
             )
@@ -1034,6 +1086,11 @@ class PiReasonExecutor(PiBootstrapExecutor):
             + "\n\n---\n\n"
             + f"# 本轮 Reason 场景策略（由 AXIOM 代码固定注入：{profile}）\n\n"
             + self.prompts.render(profile_file, {})
+            + (
+                "\n\n---\n\n" + self.prompts.render("reason_redteam.md", {})
+                if execution_input.engagement_mode == "red_team"
+                else ""
+            )
         )
 
     def conclude(
@@ -1115,7 +1172,7 @@ class PiPlanExecutor(PiBootstrapExecutor):
         return self._last_assistant_text(result)
 
     def _build_plan_prompt(self, execution_input: PlanExecutionInput) -> str:
-        return self.prompts.render(
+        prompt = self.prompts.render(
             "plan.md",
             {
                 "task_id": execution_input.task_id,
@@ -1129,6 +1186,9 @@ class PiPlanExecutor(PiBootstrapExecutor):
                 ),
             },
         )
+        if execution_input.engagement_mode == "red_team":
+            prompt += "\n\n---\n\n" + self.prompts.render("plan_redteam.md", {})
+        return prompt
 
     def conclude(
         self,
@@ -1185,24 +1245,27 @@ class PiExploreExecutor(PiBootstrapExecutor):
             execution_input.explore_no_progress_seconds,
             start_armed=False,
         )
+        explore_prompt = self.prompts.render(
+            "explore.md",
+            {
+                "task_id": execution_input.task_id,
+                "intent_id": execution_input.intent_id,
+                "todo_id": execution_input.todo_id or "无",
+                "intent_description": execution_input.intent_description,
+                "intent_targets": _intent_targets_text(execution_input.intent_targets),
+                "origin": execution_input.origin,
+                "goal": execution_input.goal,
+                "scope_guidance": _scope_guidance(execution_input.scope),
+                "context_manifest_path": execution_input.context_manifest_path,
+                "run_dir": execution_input.run_dir,
+                "skill_directories": _format_skill_directories(execution_input.skill_directories),
+            },
+        )
+        if execution_input.engagement_mode == "red_team":
+            explore_prompt += "\n\n---\n\n" + self.prompts.render("explore_redteam.md", {})
         result = self._run(
             execution_input,
-            self.prompts.render(
-                "explore.md",
-                {
-                    "task_id": execution_input.task_id,
-                    "intent_id": execution_input.intent_id,
-                    "todo_id": execution_input.todo_id or "无",
-                    "intent_description": execution_input.intent_description,
-                    "intent_targets": _intent_targets_text(execution_input.intent_targets),
-                    "origin": execution_input.origin,
-                    "goal": execution_input.goal,
-                    "scope_guidance": _scope_guidance(execution_input.scope),
-                    "context_manifest_path": execution_input.context_manifest_path,
-                    "run_dir": execution_input.run_dir,
-                    "skill_directories": _format_skill_directories(execution_input.skill_directories),
-                },
-            ),
+            explore_prompt,
             lease_active=lease_active,
             timeout_seconds=timeout_seconds,
             tool_names=native_tool_names("explore", "execute"),
@@ -1265,7 +1328,9 @@ class PiReviewExecutor(PiBootstrapExecutor):
     def execute(self, execution_input: ExecutionInput, *, lease_active) -> object:
         if not execution_input.context_manifest_path:
             raise TransientWorkerError("Reviewer Context manifest is unavailable")
-        if not execution_input.review_run_id or not execution_input.vulnerability_id:
+        if not execution_input.review_run_id or (
+            not execution_input.vulnerability_id and not execution_input.red_team_result_id
+        ):
             raise TransientWorkerError("Reviewer execution identity is incomplete")
         self._session_id = self._session_id or uuid.uuid4().hex
         result = self._run(
@@ -1275,7 +1340,7 @@ class PiReviewExecutor(PiBootstrapExecutor):
                 {
                     "task_id": execution_input.task_id,
                     "review_run_id": execution_input.review_run_id,
-                    "vulnerability_id": execution_input.vulnerability_id,
+                    "vulnerability_id": execution_input.vulnerability_id or execution_input.red_team_result_id,
                     "review_reason": execution_input.intent_description,
                     "origin": execution_input.origin,
                     "goal": execution_input.goal,
@@ -1286,6 +1351,9 @@ class PiReviewExecutor(PiBootstrapExecutor):
                         execution_input.skill_directories
                     ),
                 },
+            ) + (
+                "\n\n---\n\n" + self.prompts.render("review_redteam.md", {})
+                if execution_input.red_team_result_id else ""
             ),
             lease_active=lease_active,
             timeout_seconds=execution_input.execute_timeout_seconds or 300,

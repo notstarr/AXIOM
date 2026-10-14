@@ -71,6 +71,8 @@ REQUIRED_TABLES = frozenset(
         "llm_token_usage_sources",
         "intent_interventions",
         "task_sandboxes",
+        "red_team_chains",
+        "red_team_results",
     }
 )
 

@@ -30,6 +30,8 @@ context_revisions = Table(
     Column("manifest_key", Text, nullable=False),
     Column("content_hash", String, nullable=False),
     Column("created_at", UTCDateTimeText, nullable=False),
+    Column("storage_state", String, nullable=False, server_default="present"),
+    Column("deleted_at", UTCDateTimeText),
     PrimaryKeyConstraint("task_id", "revision"),
     UniqueConstraint("task_id", "intent_id", "lease_id"),
     UniqueConstraint("task_id", "reason_run_id", "lease_id"),

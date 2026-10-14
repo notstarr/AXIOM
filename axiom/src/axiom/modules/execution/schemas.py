@@ -89,11 +89,17 @@ class ReleaseIntentCommand(LeaseCommand):
 
 class ExecutionInput(BaseModel):
     task_id: str
+    engagement_mode: Literal["vulnerability", "red_team"] = "vulnerability"
+    red_team_objective: dict[str, object] = Field(default_factory=dict)
+    # Bound RedTeam Chain for red-team Explore intents; runs on the Intent's
+    # plan metadata and reaches the Worker as AXIOM_CHAIN_ID.
+    chain_id: str | None = None
     project_id: str = ""
     intent_id: str | None = None
     reason_run_id: str | None = None
     review_run_id: str | None = None
     vulnerability_id: str | None = None
+    red_team_result_id: str | None = None
     lease_id: str
     worker_name: str
     intent_kind: Literal["bootstrap", "reason", "explore", "review"] = "bootstrap"
@@ -157,6 +163,8 @@ class PlanExecutionInput(BaseModel):
     """
 
     task_id: str
+    engagement_mode: Literal["vulnerability", "red_team"] = "vulnerability"
+    red_team_objective: dict[str, object] = Field(default_factory=dict)
     project_id: str = ""
     plan_run_id: str
     lease_id: str

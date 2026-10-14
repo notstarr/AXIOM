@@ -96,7 +96,9 @@ class PlanRunSnapshot(BaseModel):
 class ReviewRunSnapshot(BaseModel):
     task_id: str
     id: str
-    vulnerability_id: str
+    vulnerability_id: str | None = None
+    review_subject_type: str = "vulnerability"
+    red_team_result_id: str | None = None
     kind: Literal["review"] = "review"
     status: Literal[
         "pending",

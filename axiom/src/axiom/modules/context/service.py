@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import Engine, select
 
 from axiom.modules.artifacts.repository import ArtifactRepository
+from axiom.modules.artifacts.schemas import Artifact
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.audit.tables import audit_events
 from axiom.modules.context.repository import ContextRepository
@@ -27,6 +28,7 @@ from axiom.modules.todos.repository import TodoRepository
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
 from axiom.modules.vulnerabilities.tables import vulnerabilities
+from axiom.modules.redteam.tables import red_team_results
 from axiom.shared.clock import utcnow
 from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, NotFoundError
@@ -102,6 +104,7 @@ class ContextService:
         if lease_id is not None and len(owners) != 1:
             raise ConflictError("A leased Context requires exactly one execution owner")
         prepared = None
+        revision_committed = False
         try:
             with transaction(self.engine) as conn:
                 task = self.repository.task(conn, task_id)
@@ -172,6 +175,10 @@ class ContextService:
                         lease_id=lease_id,
                     )
                     if existing is not None:
+                        if existing.get("storage_state", "present") != "present":
+                            raise ConflictError(
+                                "Context revision has been reclaimed; retry with a new lease"
+                            )
                         return self._revision(existing)
 
                 revision = allocate_sequence(conn, scope=task_id, kind="context_revision")
@@ -182,7 +189,7 @@ class ContextService:
             # 会互相等锁，超过 lock_timeout 后报 LockNotAvailable → 500。
             # 拆成两段后锁只持有亚毫秒，争用窗口基本消失。
 
-            # ── 阶段二：无锁状态下执行全部重活 ──
+            # ── 阶段二：在短读事务中生成内存中的 Context 文件 ──
             with transaction(self.engine) as conn:
                 base_key = f"contexts/{task_id}/r{revision:06d}"
                 include_goal_history = phase not in {"reason", "review"}
@@ -192,6 +199,7 @@ class ContextService:
                     task,
                     include_goal_history=include_goal_history,
                     include_archived=include_archived,
+                    active_intent_id=intent_id,
                 )
                 manifest_key = f"{base_key}/manifest.json"
                 indexes = {
@@ -202,29 +210,37 @@ class ContextService:
                     "vulnerabilities": f"{base_key}/vulnerabilities.json",
                     "knowledge": f"{base_key}/knowledge.json",
                 }
+                if task.get("engagement_mode", "vulnerability") == "red_team":
+                    indexes.update(
+                        {
+                            "red_team_objective": f"{base_key}/red_team_objective.json",
+                            "red_team_chains": f"{base_key}/red_team_chains.json",
+                            "red_team_results": f"{base_key}/red_team_results.json",
+                            "red_team_current_state": f"{base_key}/red_team_current_state.json",
+                        }
+                    )
                 if review_run_id is not None:
                     review_row = conn.execute(
-                        select(vulnerability_review_runs.c.vulnerability_id).where(
+                        select(vulnerability_review_runs.c.vulnerability_id, vulnerability_review_runs.c.review_subject_type, vulnerability_review_runs.c.red_team_result_id).where(
                             vulnerability_review_runs.c.task_id == task_id,
                             vulnerability_review_runs.c.id == review_run_id,
                         )
                     ).mappings().one()
-                    target = self.vulnerabilities.get(
-                        conn,
-                        task_id,
-                        review_row["vulnerability_id"],
-                    )
-                    if target is None or target.archived:
-                        raise ConflictError("Review target is no longer visible")
-                    target_payload = target.model_dump(mode="json")
-                    if target.finding_artifact is not None:
-                        target_payload["finding_artifact"]["content_path"] = str(
-                            self.store.resolve(target.finding_artifact.storage_key)
-                        )
-                    for artifact in target_payload.get("evidence_artifacts", []):
-                        artifact["content_path"] = str(
-                            self.store.resolve(artifact["storage_key"])
-                        )
+                    if review_row.get("review_subject_type", "vulnerability") == "redteam_result":
+                        target_payload = conn.execute(select(red_team_results).where(red_team_results.c.task_id == task_id, red_team_results.c.id == review_row["red_team_result_id"])).mappings().one_or_none()
+                        if target_payload is None:
+                            raise ConflictError("Review Result is no longer visible")
+                        target_payload = dict(target_payload)
+                        target_payload["review_subject_type"] = "redteam_result"
+                    else:
+                        target = self.vulnerabilities.get(conn, task_id, review_row["vulnerability_id"])
+                        if target is None or target.archived:
+                            raise ConflictError("Review target is no longer visible")
+                        target_payload = target.model_dump(mode="json")
+                        if target.finding_artifact is not None:
+                            target_payload["finding_artifact"]["content_path"] = str(self.store.resolve(target.finding_artifact.storage_key))
+                        for artifact in target_payload.get("evidence_artifacts", []):
+                            artifact["content_path"] = str(self.store.resolve(artifact["storage_key"]))
                     files["review_target.json"] = _json(target_payload)
                     indexes["review_target"] = f"{base_key}/review_target.json"
                 if include_goal_history:
@@ -244,6 +260,7 @@ class ContextService:
                     "review_run_id": review_run_id,
                     "lease_id": lease_id,
                     "goal": task["goal"],
+                    "engagement_mode": task.get("engagement_mode", "vulnerability"),
                     "origin": task["origin_input"],
                     "indexes": indexes,
                     "detail_resolution": "将索引条目的 detail 与 manifest 所在目录拼接后读取",
@@ -256,10 +273,15 @@ class ContextService:
                 if scope.enabled:
                     manifest["scope"] = scope.model_dump(mode="json")
                 files["manifest.json"] = _json(manifest)
-                prepared = self.store.prepare_named_text_files(base_key=base_key, files=files)
-                prepared.commit()
-                content_hash = _manifest_hash(prepared.files)
-                now = utcnow()
+
+            # ── 阶段三：数据库事务外执行文件 IO ──
+            prepared = self.store.prepare_named_text_files(base_key=base_key, files=files)
+            prepared.commit()
+            content_hash = _manifest_hash(prepared.files)
+            now = utcnow()
+
+            # ── 阶段四：只在短事务中登记 revision ──
+            with transaction(self.engine) as conn:
                 self.repository.insert_revision(
                     conn,
                     {
@@ -274,8 +296,11 @@ class ContextService:
                         "manifest_key": manifest_key,
                         "content_hash": content_hash,
                         "created_at": now,
+                        "storage_state": "present",
+                        "deleted_at": None,
                     },
                 )
+            revision_committed = True
             prepared.finish()
             return ContextRevision(
                 task_id=task_id,
@@ -293,7 +318,15 @@ class ContextService:
             )
         except BaseException:
             if prepared is not None:
-                prepared.rollback()
+                if revision_committed:
+                    # The revision is durable; never remove its files as a
+                    # response to a post-commit staging cleanup failure.
+                    try:
+                        prepared.finish()
+                    except BaseException:
+                        pass
+                else:
+                    prepared.rollback()
             raise
 
     def expand(
@@ -331,6 +364,7 @@ class ContextService:
         *,
         include_goal_history: bool,
         include_archived: bool = False,
+        active_intent_id: str | None = None,
     ) -> dict[str, str]:
         files: dict[str, str] = {}
         fact_rows = self.repository.facts(conn, task["id"], include_archived=include_archived)
@@ -341,6 +375,23 @@ class ContextService:
         vulnerability_rows = self.repository.vulnerabilities(
             conn, task["id"], include_archived=include_archived
         )
+        red_team_chain_rows = self.repository.red_team_chains(conn, task["id"]) if task.get("engagement_mode", "vulnerability") == "red_team" else []
+        red_team_result_rows = self.repository.red_team_results(conn, task["id"]) if task.get("engagement_mode", "vulnerability") == "red_team" else []
+        if active_intent_id:
+            def chain_visible(row):
+                raw = row.get("source_intent_ids_json")
+                if isinstance(raw, str):
+                    try:
+                        raw = json.loads(raw)
+                    except (TypeError, ValueError):
+                        raw = []
+                return not raw or active_intent_id in raw
+            red_team_chain_rows = [row for row in red_team_chain_rows if chain_visible(row)]
+            visible_chain_ids = {row["id"] for row in red_team_chain_rows}
+            red_team_result_rows = [
+                row for row in red_team_result_rows
+                if row.get("intent_id") == active_intent_id or row.get("chain_id") in visible_chain_ids
+            ]
         knowledge_rows = self.repository.knowledge(
             conn, task["project_id"], include_archived=include_archived
         )
@@ -356,13 +407,23 @@ class ContextService:
         )
         visible_fact_ids = {row["id"] for row in fact_rows}
         visible_intent_ids = {row["id"] for row in intent_rows}
+        todos_by_id = self.todos.from_rows(conn, todo_rows)
+        artifacts_by_id = {
+            row["id"]: Artifact.model_validate(row)
+            for row in artifact_rows
+        }
+        vulnerabilities_by_id = self.vulnerabilities.from_rows(conn, vulnerability_rows)
+        visible_source_ids = {
+            "fact": visible_fact_ids,
+            "hint": {row["id"] for row in hint_rows},
+            "artifact": set(artifacts_by_id),
+            "vulnerability": set(vulnerabilities_by_id),
+            "knowledge": {row["id"] for row in knowledge_rows},
+        }
         source_intents_by_fact: dict[str, list[str]] = {}
         intent_sources_by_id: dict[str, list[str]] = {}
         intent_rows_by_id = {row["id"]: row for row in intent_rows}
-        # 一次性取出本任务全部 intent_sources，避免逐条 intent 查询
-        # （旧实现对每条 intent 调用 get_intent()，内部再查一次
-        #   intent_sources，1937 条 intent 会产生约 3900 次串行往返，
-        #   且整个过程都发生在持有 id_counters 行锁的事务内）
+        # 一次性取出本任务全部 intent_sources，供下面的内存装配使用。
         sources_by_intent: dict[str, list[str]] = {}
         for source_row in conn.execute(
             select(intent_sources.c.intent_id, intent_sources.c.fact_id)
@@ -525,8 +586,10 @@ class ContextService:
             fact_detail.update(fact_provenance(row["id"]))
             self._add_detail(files, f"fact:{row['id']}", fact_detail)
         for row in intent_rows:
-            intent = self.graph.get_intent(conn, task["id"], row["id"])
-            assert intent is not None
+            intent = self.graph.from_row(
+                row,
+                sources=sources_by_intent.get(row["id"], []),
+            )
             intent = intent.model_copy(
                 update={
                     "from_facts": [
@@ -539,15 +602,18 @@ class ContextService:
             )
             self._add_detail(files, f"intent:{row['id']}", intent.model_dump(mode="json"))
         for row in todo_rows:
-            todo = self.todos.get(conn, task["id"], row["id"])
-            assert todo is not None
+            todo = todos_by_id[row["id"]]
             if not include_archived:
                 todo = todo.model_copy(
                     update={
                         "sources": [
                             source
                             for source in todo.sources
-                            if self.todos.source_exists(conn, task_id=task["id"], source=source)
+                            if self._todo_source_visible(
+                                source,
+                                visible_source_ids=visible_source_ids,
+                                origin_visible="origin" in visible_fact_ids,
+                            )
                         ]
                     }
                 )
@@ -575,12 +641,7 @@ class ContextService:
             )
             self._add_detail(files, f"todo:{row['id']}", todo_detail)
         for row in artifact_rows:
-            artifact = (
-                self.artifacts.get_any(conn, task["id"], row["id"])
-                if include_archived
-                else self.artifacts.get(conn, task["id"], row["id"])
-            )
-            assert artifact is not None
+            artifact = artifacts_by_id[row["id"]]
             artifact = artifact.model_copy(
                 update={
                     "intent_id": (
@@ -621,8 +682,7 @@ class ContextService:
                 )
             self._add_detail(files, f"hint:{row['id']}", hint_detail)
         for row in vulnerability_rows:
-            vulnerability = self.vulnerabilities.get(conn, task["id"], row["id"])
-            assert vulnerability is not None
+            vulnerability = vulnerabilities_by_id[row["id"]]
             vulnerability = vulnerability.model_copy(
                 update={
                     "intent_id": (
@@ -798,6 +858,22 @@ class ContextService:
             }
             for row in knowledge_rows
         ]
+        if task.get("engagement_mode", "vulnerability") == "red_team":
+            files.update(
+                {
+                    "red_team_objective.json": _json(
+                        json.loads(task["red_team_objective_json"])
+                        if isinstance(task.get("red_team_objective_json"), str)
+                        else (task.get("red_team_objective_json") or {})
+                    ),
+                    "red_team_chains.json": _json([dict(row) for row in red_team_chain_rows]),
+                    "red_team_results.json": _json([dict(row) for row in red_team_result_rows]),
+                    "red_team_current_state.json": _json(
+                        {"chains": len(red_team_chain_rows), "results": len(red_team_result_rows),
+                         "verified_results": sum(1 for row in red_team_result_rows if row.get("status") == "verified")}
+                    ),
+                }
+            )
         goal_index = [
             {
                 "id": row["id"],
@@ -1004,6 +1080,8 @@ class ContextService:
             manifest_path=str(self.store.resolve(row["manifest_key"])),
             content_hash=row["content_hash"],
             created_at=row["created_at"],
+            storage_state=row.get("storage_state", "present"),
+            deleted_at=row.get("deleted_at"),
         )
 
     def _expand_one(
@@ -1148,6 +1226,17 @@ class ContextService:
             ):
                 return dict(row)
         raise NotFoundError(f"Context entry not found: {kind}:{item_id}")
+
+    @staticmethod
+    def _todo_source_visible(
+        source,
+        *,
+        visible_source_ids: dict[str, set[str]],
+        origin_visible: bool,
+    ) -> bool:
+        if source.type == "origin":
+            return source.id == "origin" and origin_visible
+        return source.id in visible_source_ids.get(source.type, set())
 
     @staticmethod
     def _visible_intent_id(

@@ -29,19 +29,23 @@ LEGACY_SQLITE_REVISION = "20260805_0035"
 # this aligned with the latest migration whenever a schema change is added;
 # otherwise a database that has successfully upgraded cannot accept a legacy
 # SQLite import.
-POSTGRESQL_TARGET_REVISION = "20260908_pg0017"
+POSTGRESQL_TARGET_REVISION = "20261013_pg0019"
 DEFAULT_BATCH_SIZE = 1_000
 
 # A 20260805 SQLite export predates the independent Plan runtime.  These
 # tables are represented as empty target tables during import; all other
 # historical rows remain byte-for-byte migratable.
 LEGACY_SQLITE_OMIT_TABLES = frozenset(
-    {"plan_runs", "plan_run_sources", "plan_workspaces", "task_sandboxes"}
+    {"plan_runs", "plan_run_sources", "plan_workspaces", "task_sandboxes", "red_team_chains", "red_team_results"}
 )
 
 LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
     "audit_events": {"plan_run_id": None},
-    "context_revisions": {"plan_run_id": None},
+    "context_revisions": {
+        "plan_run_id": None,
+        "storage_state": "present",
+        "deleted_at": None,
+    },
     # The legacy 20260805 SQLite export already contains the Review owner,
     # but predates the independent Plan runtime.  Treat Plan ownership as a
     # target-only nullable column during import, just like the other newly
@@ -51,7 +55,7 @@ LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
     # The source SQLite export may predate the independent Plan pool.  The
     # target schema backfills it to the compatibility value (inherit the
     # ordinary Task Worker pool).
-    "tasks": {"plan_worker_pool_json": "[]"},
+    "tasks": {"plan_worker_pool_json": "[]", "engagement_mode": "vulnerability", "red_team_objective_json": None},
     # The source SQLite export predates the vulnerability human-review
     # toggle.  Imported rows keep the unreviewed default.
     "vulnerabilities": {

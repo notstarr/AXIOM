@@ -21,6 +21,7 @@ from axiom.modules.graph.service import GraphService
 from axiom.modules.projects.service import ProjectService
 from axiom.modules.plan.service import PlanService
 from axiom.modules.reason.service import ReasonService
+from axiom.modules.redteam.service import RedTeamService
 from axiom.modules.mcp.service import MCPService
 from axiom.modules.phase_capabilities.service import PhaseCapabilityService
 from axiom.modules.knowledge.service import KnowledgeService
@@ -56,6 +57,7 @@ class Container:
     execution: ExecutionService
     todos: TodoService
     reason: ReasonService
+    red_team: RedTeamService
     plan: PlanService
     context: ContextService
     settings: RuntimeSettingsService
@@ -90,8 +92,9 @@ class Container:
         vulnerability_reviews = VulnerabilityReviewService(engine, store, sandboxes=sandboxes)
         archives = ArchiveService(engine, store, reviews=vulnerability_reviews)
         context = ContextService(engine, store)
-        reason = ReasonService(engine, store=store, sandboxes=sandboxes)
-        plan = PlanService(engine, sandboxes=sandboxes)
+        red_team = RedTeamService(engine, reviews=vulnerability_reviews)
+        reason = ReasonService(engine, store=store, sandboxes=sandboxes, red_team=red_team)
+        plan = PlanService(engine, sandboxes=sandboxes, red_team=red_team)
         skills = SkillService(data_dir, engine=engine)
         phase_capabilities = PhaseCapabilityService(
             engine,
@@ -136,6 +139,7 @@ class Container:
             ),
             todos=TodoService(engine),
             reason=reason,
+            red_team=red_team,
             plan=plan,
             context=context,
             settings=settings,

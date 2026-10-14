@@ -13,6 +13,7 @@ from axiom.modules.tasks.schemas import (
     UpdateTask,
     UpdateTaskHint,
 )
+from axiom.modules.redteam.schemas import RedTeamObjective
 from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.shared.ids import allocate_id, initialize_counter
 
@@ -51,6 +52,8 @@ class TaskRepository:
         title: str,
         origin: Origin,
         goal: str,
+        engagement_mode: str,
+        red_team_objective: RedTeamObjective | None,
         scope: TaskScope,
         worker_pool: list[str],
         guard_enabled: bool,
@@ -75,6 +78,10 @@ class TaskRepository:
             "origin_port": origin.port,
             "origin_input": origin.original_input,
             "goal": goal,
+            "engagement_mode": engagement_mode,
+            "red_team_objective_json": (
+                red_team_objective.model_dump(mode="json") if red_team_objective else None
+            ),
             "current_goal_cycle_id": None,
             "status": "running",
             "phase": "bootstrap",
@@ -301,6 +308,16 @@ class TaskRepository:
 
     @staticmethod
     def _task(row) -> Task:
+        objective = None
+        raw_objective = row.get("red_team_objective_json")
+        if raw_objective:
+            try:
+                objective = RedTeamObjective.model_validate(
+                    json.loads(raw_objective) if isinstance(raw_objective, str) else raw_objective
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                # Keep historical/malformed rows readable; creation validates this shape.
+                objective = None
         return Task(
             id=row["id"],
             project_id=row["project_id"],
@@ -312,6 +329,8 @@ class TaskRepository:
                 original_input=row["origin_input"],
             ),
             goal=row["goal"],
+            engagement_mode=row.get("engagement_mode", "vulnerability") or "vulnerability",
+            red_team_objective=objective,
             current_goal_cycle_id=row.get("current_goal_cycle_id"),
             status=row["status"],
             phase=row["phase"],

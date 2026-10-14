@@ -102,6 +102,8 @@ class TaskService:
                 title=command.title,
                 origin=origin,
                 goal=command.goal,
+                engagement_mode=command.engagement_mode,
+                red_team_objective=command.red_team_objective,
                 scope=scope,
                 worker_pool=command.worker_pool,
                 guard_enabled=command.guard_enabled,

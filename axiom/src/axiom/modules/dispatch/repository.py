@@ -184,6 +184,8 @@ class DispatchRepository:
                 vulnerability_review_runs.c.task_id,
                 vulnerability_review_runs.c.id,
                 vulnerability_review_runs.c.vulnerability_id,
+                vulnerability_review_runs.c.review_subject_type,
+                vulnerability_review_runs.c.red_team_result_id,
                 vulnerability_review_runs.c.status,
                 vulnerability_review_runs.c.worker_pool_json,
                 vulnerability_review_runs.c.next_retry_at,
@@ -203,6 +205,8 @@ class DispatchRepository:
                     task_id=row["task_id"],
                     id=row["id"],
                     vulnerability_id=row["vulnerability_id"],
+                    review_subject_type=row.get("review_subject_type", "vulnerability"),
+                    red_team_result_id=row.get("red_team_result_id"),
                     status=row["status"],
                     worker_pool=json.loads(row["worker_pool_json"] or "[]"),
                     next_retry_at=(

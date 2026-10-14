@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from sqlalchemy import Engine, select, update
 
 from axiom.modules.artifacts.tables import artifacts
@@ -13,6 +14,7 @@ from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.tables import vulnerabilities
+from axiom.modules.redteam.tables import red_team_chains, red_team_results
 from axiom.shared.clock import utcnow
 from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, NotFoundError
@@ -57,6 +59,8 @@ class GoalService:
                 command.evidence_refs,
                 achieved=command.achieved,
             )
+            if command.achieved and task.engagement_mode == "red_team":
+                self._validate_red_team_completion(conn, task_id, task.red_team_objective)
             now = utcnow()
             evaluation = self.repository.create(
                 conn,
@@ -74,6 +78,48 @@ class GoalService:
                     goal_cycle_id=task.current_goal_cycle_id,
                 )
             return evaluation
+
+    @staticmethod
+    def _json_list(value) -> set[str]:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (TypeError, ValueError):
+                value = []
+        return {str(item) for item in (value or []) if str(item).strip()}
+
+    def _validate_red_team_completion(self, conn, task_id: str, objective) -> None:
+        if objective is None:
+            raise ConflictError("Red-team task has no objective")
+        chains = conn.execute(select(red_team_chains).where(red_team_chains.c.task_id == task_id)).mappings().all()
+        results = conn.execute(select(red_team_results).where(red_team_results.c.task_id == task_id)).mappings().all()
+        if not chains or not results:
+            raise ConflictError("Red-team Goal requires at least one Chain and Result")
+        if any(row["status"] == "reviewing" for row in results):
+            raise ConflictError("Red-team Goal has Results awaiting review")
+        verified = [row for row in results if row["status"] == "verified"]
+        if not verified:
+            raise ConflictError("Red-team Goal requires verified Results")
+        gained = set()
+        assets = set()
+        for row in verified:
+            gained |= self._json_list(row.get("capabilities_gained_json"))
+            if row.get("target_asset"):
+                assets.add(row["target_asset"])
+            for ref in self._json_list(row.get("evidence_refs_json")):
+                self.validate_evidence(conn, task_id, [ref], achieved=True)
+        target_caps = set(objective.target_capabilities)
+        target_assets = set(objective.target_assets)
+        if not target_caps.issubset(gained):
+            raise ConflictError("Red-team Goal has not reached all target capabilities")
+        if not target_assets.issubset(assets):
+            raise ConflictError("Red-team Goal has not reached all target assets")
+        for target in objective.data_targets:
+            matches = [row for row in verified if row.get("result_type") == "data" and row.get("data_target_id") == target.id]
+            if not matches:
+                raise ConflictError(f"Missing verified data Result for target: {target.id}")
+            if any((row.get("sample_count") or 0) > target.max_records or (row.get("sample_bytes") or 0) > target.max_bytes for row in matches):
+                raise ConflictError(f"Data Result exceeds objective limits: {target.id}")
 
     @staticmethod
     def complete_task(

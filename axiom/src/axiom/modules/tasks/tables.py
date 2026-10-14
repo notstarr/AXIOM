@@ -29,6 +29,8 @@ tasks = Table(
     Column("origin_port", String),
     Column("origin_input", Text, nullable=False),
     Column("goal", Text, nullable=False),
+    Column("engagement_mode", String, nullable=False, server_default="vulnerability"),
+    Column("red_team_objective_json", JSONText, nullable=True),
     Column("current_goal_cycle_id", String),
     Column("status", String, nullable=False),
     Column("phase", String, nullable=False),
@@ -72,6 +74,7 @@ tasks = Table(
     Column("run_deadline_at", UTCDateTimeText),
     Column("last_pause_reason", String),
     CheckConstraint("status IN ('running','stopped','completed','failed')", name="status"),
+    CheckConstraint("engagement_mode IN ('vulnerability','red_team')", name="engagement_mode"),
     CheckConstraint(
         "phase IN ('bootstrap','reason','explore','plan','waiting','none')",
         name="phase",

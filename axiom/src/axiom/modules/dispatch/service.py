@@ -466,6 +466,8 @@ class DispatchService:
             task_id=task_id,
             review_run_id=review_run_id,
             vulnerability_id=run["vulnerability_id"],
+            review_subject_type=run.get("review_subject_type", "vulnerability"),
+            red_team_result_id=run.get("red_team_result_id"),
             worker_name=worker_name,
             claimed_at=now,
             lease_id=lease_id,

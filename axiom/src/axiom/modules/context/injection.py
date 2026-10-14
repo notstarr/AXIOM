@@ -98,6 +98,15 @@ class ContextInjectionService:
             wanted = ["hints", "knowledge", "vulnerabilities", "graph"]
             sections.extend(self._index_sections(root, indexes, wanted, source_refs))
 
+        if "red_team_objective" in indexes:
+            red_team_cards = [
+                "red_team_objective",
+                "red_team_chains",
+                "red_team_results",
+                "red_team_current_state",
+            ]
+            sections.extend(self._index_sections(root, indexes, red_team_cards, source_refs))
+
         body = self._fit(sections, phase)
         text = (
             f"{_BEGIN}\n"
@@ -205,6 +214,10 @@ _CARD_DESCRIPTORS = {
     "review_target": "本轮审核目标摘要",
     "goal_evaluations": "目标评估记录；明细按 manifest details/ 按需读取",
     "goal_cycles": "目标周期记录；明细按 manifest details/ 按需读取",
+    "red_team_objective": "红队目标与数据边界；不包含凭证正文",
+    "red_team_chains": "红队攻击链及当前能力状态",
+    "red_team_results": "红队成果及审核状态；敏感数据仅保留摘要",
+    "red_team_current_state": "红队当前成果计数与状态",
 }
 
 

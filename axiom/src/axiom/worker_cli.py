@@ -189,6 +189,12 @@ def register_worker_commands(main: click.Group) -> None:
     @reason_intent_group.command("propose")
     @click.option("--todo-ref")
     @click.option("--todo-id")
+    @click.option(
+        "--ref",
+        "intent_ref",
+        default=None,
+        help="Workspace-local handle so a staged RedTeam Chain can link this Intent.",
+    )
     @click.option("--from-fact", multiple=True, required=True)
     @click.option("--description")
     @click.option("--title", help="Alias for --description to support resilient model calls.")
@@ -214,6 +220,7 @@ def register_worker_commands(main: click.Group) -> None:
     def reason_intent_propose(
         todo_ref: str | None,
         todo_id: str | None,
+        intent_ref: str | None,
         from_fact: tuple[str, ...],
         description: str | None,
         title: str | None,
@@ -239,6 +246,8 @@ def register_worker_commands(main: click.Group) -> None:
             "targets": list(target),
             "priority": priority,
         }
+        if intent_ref and intent_ref.strip():
+            proposal["ref"] = intent_ref.strip()
         if execute_seconds is not None:
             proposal["execute_seconds"] = execute_seconds
         if conclude_seconds is not None:
@@ -318,6 +327,79 @@ def register_worker_commands(main: click.Group) -> None:
         _echo_workspace(
             _workspace_request("POST", "goal-assessment", {"assessment": assessment})
         )
+
+    @reason_group.group("chain")
+    def reason_chain_group() -> None:
+        """Stage RedTeam Chains for the active Reason Workspace (red_team tasks only)."""
+
+    @reason_chain_group.command("add")
+    @click.option("--ref", "chain_ref", required=True, help="Workspace-local handle for this Chain.")
+    @click.option("--title")
+    @click.option("--title-file", type=click.Path(path_type=Path, dir_okay=False))
+    @click.option("--principal", default="", help="Initial principal ID; defaults to the task objective.")
+    @click.option("--principal-label", default="")
+    @click.option("--tenant", default="")
+    @click.option("--credential-id", default=None)
+    @click.option("--capability", multiple=True, help="Target capability gained by this Chain.")
+    @click.option("--asset", multiple=True, help="Target asset reached by this Chain.")
+    @click.option("--from-fact", multiple=True, help="Provenance Fact IDs for this Chain.")
+    def reason_chain_add(
+        chain_ref: str,
+        title: str | None,
+        title_file: Path | None,
+        principal: str,
+        principal_label: str,
+        tenant: str,
+        credential_id: str | None,
+        capability: tuple[str, ...],
+        asset: tuple[str, ...],
+        from_fact: tuple[str, ...],
+    ) -> None:
+        chain: dict[str, Any] = {
+            "ref": chain_ref,
+            "title": _text_value(title, title_file, "title", required=True),
+            "target_capabilities": list(capability),
+            "target_assets": list(asset),
+            "source_fact_ids": list(from_fact),
+        }
+        if principal.strip():
+            chain["initial_principal"] = {
+                "id": principal.strip(),
+                "label": principal_label.strip(),
+                "tenant": tenant.strip(),
+                "credential_id": (credential_id or "").strip() or None,
+            }
+        elif principal_label.strip() or tenant.strip() or (credential_id or "").strip():
+            raise click.UsageError("--principal is required when principal attributes are provided")
+        _echo_workspace(_workspace_request("POST", "chains", {"chain": chain}))
+
+    @reason_chain_group.command("update")
+    @click.option("--chain-id", required=True, help="Persisted Chain ID (chXXX).")
+    @click.option("--status", type=click.Choice(("planned", "blocked", "abandoned")), default=None)
+    @click.option("--title", default=None)
+    def reason_chain_update(chain_id: str, status: str | None, title: str | None) -> None:
+        update: dict[str, Any] = {"chain_id": chain_id}
+        if status is not None:
+            update["status"] = status
+        if title is not None and title.strip():
+            update["title"] = title.strip()
+        if len(update) == 1:
+            raise click.UsageError("chain update requires at least one changed field")
+        _echo_workspace(_workspace_request("POST", "chain-updates", {"update": update}))
+
+    @reason_chain_group.command("link")
+    @click.option("--chain-ref", default=None, help="Chain draft ref created in this Workspace.")
+    @click.option("--chain-id", default=None, help="Persisted Chain ID from context.")
+    @click.option("--intent-ref", required=True, help="Draft ref of this Workspace's Intent proposal.")
+    def reason_chain_link(chain_ref: str | None, chain_id: str | None, intent_ref: str) -> None:
+        if bool(chain_ref) == bool(chain_id):
+            raise click.UsageError("exactly one of --chain-ref or --chain-id is required")
+        link: dict[str, Any] = {"intent_ref": intent_ref.strip()}
+        if chain_ref:
+            link["chain_ref"] = chain_ref.strip()
+        else:
+            link["chain_id"] = chain_id.strip()
+        _echo_workspace(_workspace_request("POST", "chain-links", {"link": link}))
 
     @main.group("plan")
     def plan_group() -> None:
@@ -451,6 +533,12 @@ def register_worker_commands(main: click.Group) -> None:
     @plan_intent_group.command("propose")
     @click.option("--todo-ref")
     @click.option("--todo-id")
+    @click.option(
+        "--ref",
+        "intent_ref",
+        default=None,
+        help="Workspace-local handle so a staged RedTeam Chain can link this Intent.",
+    )
     @click.option("--from-fact", multiple=True)
     @click.option("--source-ref", multiple=True)
     @click.option("--description")
@@ -478,6 +566,7 @@ def register_worker_commands(main: click.Group) -> None:
     def plan_intent_propose(
         todo_ref: str | None,
         todo_id: str | None,
+        intent_ref: str | None,
         from_fact: tuple[str, ...],
         source_ref: tuple[str, ...],
         description: str | None,
@@ -517,6 +606,8 @@ def register_worker_commands(main: click.Group) -> None:
             "targets": list(target),
             "priority": priority,
         }
+        if intent_ref and intent_ref.strip():
+            intent["ref"] = intent_ref.strip()
         if execute_seconds is not None:
             intent["execute_seconds"] = execute_seconds
         if conclude_seconds is not None:
@@ -527,6 +618,79 @@ def register_worker_commands(main: click.Group) -> None:
                 {"intent": intent},
             )
         )
+
+    @plan_group.group("chain")
+    def plan_chain_group() -> None:
+        """Stage RedTeam Chains for the active Plan Workspace (red_team tasks only)."""
+
+    @plan_chain_group.command("add")
+    @click.option("--ref", "chain_ref", required=True, help="Workspace-local handle for this Chain.")
+    @click.option("--title")
+    @click.option("--title-file", type=click.Path(path_type=Path, dir_okay=False))
+    @click.option("--principal", default="", help="Initial principal ID; defaults to the task objective.")
+    @click.option("--principal-label", default="")
+    @click.option("--tenant", default="")
+    @click.option("--credential-id", default=None)
+    @click.option("--capability", multiple=True, help="Target capability gained by this Chain.")
+    @click.option("--asset", multiple=True, help="Target asset reached by this Chain.")
+    @click.option("--from-fact", multiple=True, help="Provenance Fact IDs for this Chain.")
+    def plan_chain_add(
+        chain_ref: str,
+        title: str | None,
+        title_file: Path | None,
+        principal: str,
+        principal_label: str,
+        tenant: str,
+        credential_id: str | None,
+        capability: tuple[str, ...],
+        asset: tuple[str, ...],
+        from_fact: tuple[str, ...],
+    ) -> None:
+        chain: dict[str, Any] = {
+            "ref": chain_ref,
+            "title": _text_value(title, title_file, "title", required=True),
+            "target_capabilities": list(capability),
+            "target_assets": list(asset),
+            "source_fact_ids": list(from_fact),
+        }
+        if principal.strip():
+            chain["initial_principal"] = {
+                "id": principal.strip(),
+                "label": principal_label.strip(),
+                "tenant": tenant.strip(),
+                "credential_id": (credential_id or "").strip() or None,
+            }
+        elif principal_label.strip() or tenant.strip() or (credential_id or "").strip():
+            raise click.UsageError("--principal is required when principal attributes are provided")
+        _echo_plan_workspace(_plan_workspace_request("chains", {"chain": chain}))
+
+    @plan_chain_group.command("update")
+    @click.option("--chain-id", required=True, help="Persisted Chain ID (chXXX).")
+    @click.option("--status", type=click.Choice(("planned", "blocked", "abandoned")), default=None)
+    @click.option("--title", default=None)
+    def plan_chain_update(chain_id: str, status: str | None, title: str | None) -> None:
+        update: dict[str, Any] = {"chain_id": chain_id}
+        if status is not None:
+            update["status"] = status
+        if title is not None and title.strip():
+            update["title"] = title.strip()
+        if len(update) == 1:
+            raise click.UsageError("chain update requires at least one changed field")
+        _echo_plan_workspace(_plan_workspace_request("chain-updates", {"update": update}))
+
+    @plan_chain_group.command("link")
+    @click.option("--chain-ref", default=None, help="Chain draft ref created in this Workspace.")
+    @click.option("--chain-id", default=None, help="Persisted Chain ID from context.")
+    @click.option("--intent-ref", required=True, help="Draft ref of this Workspace's Intent proposal.")
+    def plan_chain_link(chain_ref: str | None, chain_id: str | None, intent_ref: str) -> None:
+        if bool(chain_ref) == bool(chain_id):
+            raise click.UsageError("exactly one of --chain-ref or --chain-id is required")
+        link: dict[str, Any] = {"intent_ref": intent_ref.strip()}
+        if chain_ref:
+            link["chain_ref"] = chain_ref.strip()
+        else:
+            link["chain_id"] = chain_id.strip()
+        _echo_plan_workspace(_plan_workspace_request("chain-links", {"link": link}))
 
     @plan_group.group("decision")
     def plan_decision_group() -> None:
@@ -712,6 +876,61 @@ def register_worker_commands(main: click.Group) -> None:
         intent_id = _environment("AXIOM_INTENT_ID")
         path = f"/dispatch/tasks/{task_id}/intents/{intent_id}/explore-vulnerabilities"
         _echo(_request("POST", path, {"lease_id": _lease_id(), "report": report}))
+
+    @explore_group.group("result")
+    def explore_result_group() -> None:
+        """Report a verified red-team goal transition (never a Vulnerability)."""
+
+    @explore_result_group.command("report")
+    @click.option(
+        "--chain-id",
+        default=None,
+        help="Chain ID; defaults to the Intent's bound Chain (AXIOM_CHAIN_ID) when omitted.",
+    )
+    @click.option("--type", "result_type", type=click.Choice(("permission", "data", "credential", "pivot")), required=True)
+    @click.option("--title", required=True)
+    @click.option("--description", required=True)
+    @click.option("--principal", required=True)
+    @click.option("--tenant", default="")
+    @click.option("--capability-gained", "capabilities_gained", multiple=True)
+    @click.option("--capability-before", "capabilities_before", multiple=True)
+    @click.option("--capability-after", "capabilities_after", multiple=True)
+    @click.option("--target-asset", default="")
+    @click.option("--data-target-id", default=None)
+    @click.option("--sample-count", type=int, default=None)
+    @click.option("--sample-bytes", type=int, default=None)
+    @click.option("--data-field", "data_fields", multiple=True)
+    @click.option("--data-summary", default="")
+    @click.option("--credential-ref", default=None)
+    @click.option("--evidence-path", "evidence_refs", multiple=True, required=True)
+    def explore_result_report(
+        chain_id: str | None, result_type: str, title: str, description: str, principal: str,
+        tenant: str, capabilities_gained: tuple[str, ...], capabilities_before: tuple[str, ...],
+        capabilities_after: tuple[str, ...], target_asset: str, data_target_id: str | None,
+        sample_count: int | None, sample_bytes: int | None, data_fields: tuple[str, ...],
+        data_summary: str, credential_ref: str | None, evidence_refs: tuple[str, ...],
+    ) -> None:
+        chain_id = (chain_id or os.environ.get("AXIOM_CHAIN_ID", "")).strip()
+        if not chain_id:
+            raise click.UsageError(
+                "--chain-id is required (or rely on the Intent's bound Chain via AXIOM_CHAIN_ID)"
+            )
+        task_id = _environment("AXIOM_TASK_ID")
+        intent_id = _environment("AXIOM_INTENT_ID")
+        report = {
+            "chain_id": chain_id, "result_type": result_type, "title": title,
+            "description": description, "principal": principal, "tenant": tenant,
+            "capabilities_gained": list(capabilities_gained),
+            "capabilities_before": list(capabilities_before),
+            "capabilities_after": list(capabilities_after), "target_asset": target_asset,
+            "data_target_id": data_target_id, "sample_count": sample_count,
+            "sample_bytes": sample_bytes, "data_fields": list(data_fields),
+            "data_summary": data_summary, "credential_ref": credential_ref,
+            "evidence_refs": list(evidence_refs),
+        }
+        _echo(_request("POST", f"/tasks/{task_id}/intents/{intent_id}/red-team-results", {
+            "lease_id": _lease_id(), "report": report,
+        }))
 
     @explore_group.group("human-intervention")
     def explore_human_intervention_group() -> None:

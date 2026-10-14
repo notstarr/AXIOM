@@ -27,6 +27,8 @@ class ContextRevision(BaseModel):
     manifest_path: str
     content_hash: str
     created_at: str
+    storage_state: Literal["present", "reclaiming", "reclaimed"] = "present"
+    deleted_at: str | None = None
 
 
 class ExpandContext(BaseModel):

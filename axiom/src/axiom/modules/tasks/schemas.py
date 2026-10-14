@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from axiom.shared.clock import parse_utc
 from axiom.modules.goals.schemas import GoalCycle
+from axiom.modules.redteam.schemas import EngagementMode, RedTeamObjective
 
 
 DEFAULT_GOAL = "对该系统进行渗透测试，并挖掘10个高置信度的漏洞"
@@ -60,6 +61,8 @@ class CreateTask(BaseModel):
     scope: TaskScope | None = None
     worker_pool: list[str] = Field(default_factory=list)
     guard_enabled: bool = False
+    engagement_mode: EngagementMode = "vulnerability"
+    red_team_objective: RedTeamObjective | None = None
     run_duration_seconds: int | None = Field(
         default=None,
         ge=MIN_RUN_DURATION_SECONDS,
@@ -80,6 +83,14 @@ class CreateTask(BaseModel):
         return list(dict.fromkeys(value.strip() for value in values if value.strip()))
 
     _whole_minute_duration = field_validator("run_duration_seconds")(_validate_run_duration)
+
+    @model_validator(mode="after")
+    def validate_engagement(self) -> "CreateTask":
+        if self.engagement_mode == "red_team" and self.red_team_objective is None:
+            raise ValueError("red_team tasks require red_team_objective")
+        if self.engagement_mode != "red_team" and self.red_team_objective is not None:
+            raise ValueError("red_team_objective is only valid for red_team tasks")
+        return self
 
 
 class ResumeTask(BaseModel):
@@ -170,6 +181,8 @@ class Task(BaseModel):
     title: str
     origin: Origin
     goal: str
+    engagement_mode: EngagementMode = "vulnerability"
+    red_team_objective: RedTeamObjective | None = None
     current_goal_cycle_id: str | None = None
     status: Literal["running", "stopped", "completed", "failed"]
     phase: Literal["bootstrap", "reason", "explore", "plan", "waiting", "none"]
