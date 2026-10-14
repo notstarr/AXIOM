@@ -332,6 +332,63 @@ def test_result_report_enforces_bound_chain(client) -> None:
     assert [item["id"] for item in results.json()] == [created["id"]]
 
 
+def test_cross_task_result_and_chain_listing(client) -> None:
+    """重要事实·成果视图的全局列表（分页 + 筛选 + X-Total-Count）。"""
+
+    task, claim, completed = _active_reason(client, red_team=True)
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    committed = apply_reason_draft(
+        client, workspace["id"], claim["lease_id"], _chain_draft(completed)
+    )
+    assert committed.status_code == 200, committed.text
+    chain_id = committed.json()["created_chain_ids"][0]
+    intent_id = committed.json()["created_intent_ids"][0]
+
+    claim_body, _execution = _claim_explore(client, task["id"], intent_id)
+    uploaded = client.post(
+        f"/api/v1/tasks/{task['id']}/artifacts/upload",
+        files={"file": ("evidence.txt", b"permission transition proof")},
+        data={"actor": "worker-a", "summary": "权限跃迁证据"},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    report = {
+        "chain_id": chain_id,
+        "result_type": "permission",
+        "title": "取得成员管理能力",
+        "description": "复用普通成员会话调用成员管理接口成功",
+        "principal": "user:member",
+        "capabilities_gained": ["tenant:admin"],
+        "target_asset": "member-management",
+        "evidence_refs": [f"artifact:{uploaded.json()['id']}"],
+    }
+    accepted = client.post(
+        f"/api/v1/tasks/{task['id']}/intents/{intent_id}/red-team-results",
+        json={"lease_id": claim_body["lease_id"], "report": report},
+    )
+    assert accepted.status_code == 201, accepted.text
+
+    results = client.get("/api/v1/red-team/results")
+    assert results.status_code == 200, results.text
+    assert results.headers["X-Total-Count"] == "1"
+    [item] = results.json()
+    assert item["chain_id"] == chain_id
+
+    filtered = client.get(
+        "/api/v1/red-team/results",
+        params={"task_id": task["id"], "status": "reviewing", "type": "permission"},
+    )
+    assert filtered.headers["X-Total-Count"] == "1"
+    by_search = client.get("/api/v1/red-team/results", params={"search": "成员管理"})
+    assert by_search.headers["X-Total-Count"] == "1"
+    by_status = client.get("/api/v1/red-team/results", params={"status": "verified"})
+    assert by_status.headers["X-Total-Count"] == "0"
+
+    chains = client.get("/api/v1/red-team/chains")
+    assert chains.status_code == 200, chains.text
+    assert chains.headers["X-Total-Count"] == "1"
+    assert chains.json()[0]["id"] == chain_id
+
+
 def test_vulnerability_task_rejects_redteam_result(client) -> None:
     """RedTeam endpoints stay closed for vulnerability-mode tasks."""
 
