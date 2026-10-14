@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import Connection, select, update
+from sqlalchemy import Connection, func, or_, select, update
 
 from axiom.modules.redteam.schemas import (
     RedTeamChain,
@@ -131,6 +131,81 @@ class RedTeamRepository:
             query = query.where(red_team_results.c.chain_id == chain_id)
         rows = conn.execute(query.order_by(red_team_results.c.created_at, red_team_results.c.id)).mappings()
         return [self._result(row) for row in rows]
+
+    def list_results_page(
+        self,
+        conn: Connection,
+        *,
+        task_id: str | None = None,
+        chain_id: str | None = None,
+        status: str | None = None,
+        result_type: str | None = None,
+        search: str = "",
+        limit: int,
+        offset: int,
+    ) -> tuple[list[RedTeamResult], int]:
+        """Cross-task Result listing for the management console (重要事实·成果视图)."""
+
+        conditions = []
+        if task_id:
+            conditions.append(red_team_results.c.task_id == task_id)
+        if chain_id:
+            conditions.append(red_team_results.c.chain_id == chain_id)
+        if status:
+            conditions.append(red_team_results.c.status == status)
+        if result_type:
+            conditions.append(red_team_results.c.result_type == result_type)
+        if search:
+            like = f"%{search}%"
+            conditions.append(
+                or_(
+                    red_team_results.c.title.ilike(like),
+                    red_team_results.c.description.ilike(like),
+                    red_team_results.c.principal.ilike(like),
+                )
+            )
+        total = conn.execute(
+            select(func.count()).select_from(red_team_results).where(*conditions)
+        ).scalar_one()
+        rows = conn.execute(
+            select(red_team_results)
+            .where(*conditions)
+            .order_by(red_team_results.c.created_at.desc(), red_team_results.c.id.desc())
+            .offset(offset)
+            .limit(limit)
+        ).mappings()
+        return [self._result(row) for row in rows], int(total)
+
+    def list_chains_page(
+        self,
+        conn: Connection,
+        *,
+        task_id: str | None = None,
+        status: str | None = None,
+        search: str = "",
+        limit: int,
+        offset: int,
+    ) -> tuple[list[RedTeamChain], int]:
+        """Cross-task Chain listing for the management console (成果·攻击链视图)."""
+
+        conditions = []
+        if task_id:
+            conditions.append(red_team_chains.c.task_id == task_id)
+        if status:
+            conditions.append(red_team_chains.c.status == status)
+        if search:
+            conditions.append(red_team_chains.c.title.ilike(f"%{search}%"))
+        total = conn.execute(
+            select(func.count()).select_from(red_team_chains).where(*conditions)
+        ).scalar_one()
+        rows = conn.execute(
+            select(red_team_chains)
+            .where(*conditions)
+            .order_by(red_team_chains.c.created_at.desc(), red_team_chains.c.id.desc())
+            .offset(offset)
+            .limit(limit)
+        ).mappings()
+        return [self._chain(row) for row in rows], int(total)
 
     def create_result(
         self,

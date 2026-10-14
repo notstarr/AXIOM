@@ -2,15 +2,23 @@
 <div x-show="activePage === 'vulnerabilities'" x-cloak class="sto flex-1 flex flex-col overflow-hidden min-w-0">
   <header class="app-page-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
     <div>
-      <h2 class="text-base font-semibold text-slate-800 tracking-tight">漏洞管理</h2>
-      <p class="text-xs text-slate-400 mt-0.5">跨任务聚合漏洞，按列表查看证据、影响和修复建议</p>
+      <h2 class="text-base font-semibold text-slate-800 tracking-tight" x-text="factViewMode === 'result' ? '红队成果' : '漏洞管理'"></h2>
+      <p class="text-xs text-slate-400 mt-0.5" x-text="factViewMode === 'result' ? '红队攻击链与成果（权限 / 数据 / 凭证 / 横向），不计入漏洞数量' : '跨任务聚合漏洞，按列表查看证据、影响和修复建议'"></p>
+    </div>
+    <div class="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs ml-2">
+      <button type="button" @click="switchFactView('vulnerability')"
+        class="px-3 py-1.5 rounded-md transition"
+        :class="factViewMode !== 'result' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">漏洞</button>
+      <button type="button" @click="switchFactView('result')"
+        class="px-3 py-1.5 rounded-md transition"
+        :class="factViewMode === 'result' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">成果</button>
     </div>
     <div class="flex-1"></div>
     <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="sto-ghost" style="padding:7px 13px;">刷新</button>
   </header>
 
-  <!-- 筛选 + 统计 -->
-  <div class="shrink-0 px-5 py-3 border-b border-slate-100" style="background:var(--sto-panel);">
+  <!-- 筛选 + 统计（漏洞视图） -->
+  <div x-show="factViewMode !== 'result'" class="shrink-0 px-5 py-3 border-b border-slate-100" style="background:var(--sto-panel);">
     <div class="flex items-center" style="gap:9px;">
       <input x-model="vulnFilter.keyword" @input="scheduleVulnerabilitySearch()" placeholder="搜索标题、类型、描述" class="sto-input" style="flex:1;">
       <select x-model="vulnFilter.projectId" @change="applyVulnerabilityFilters()" class="sto-input" style="width:auto;">
@@ -46,7 +54,7 @@
     </div>
   </div>
 
-  <main class="flex-1 min-h-0 grid grid-cols-[340px_minmax(0,1fr)] gap-4" style="padding:14px 16px; background:var(--sto-inset);">
+  <main x-show="factViewMode !== 'result'" class="flex-1 min-h-0 grid grid-cols-[340px_minmax(0,1fr)] gap-4" style="padding:14px 16px; background:var(--sto-inset);">
     <!-- 列表 -->
     <aside class="sto-panel sto-vlist overflow-y-auto overflow-x-hidden" style="padding:10px;">
       <template x-if="filteredVulnerabilities().length === 0">
@@ -217,6 +225,116 @@
       </template>
     </section>
   </main>
+
+  <!-- ═══════════ 成果视图（红队） ═══════════ -->
+  <div x-show="factViewMode === 'result'" x-cloak class="flex-1 min-h-0 flex flex-col" style="padding:14px 16px; background:var(--sto-inset);">
+    <div class="shrink-0 px-4 py-3 rounded-xl border border-slate-100" style="background:var(--sto-panel);">
+      <div class="flex items-center" style="gap:9px;">
+        <div class="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs">
+          <button type="button" @click="switchRtResultView('results')"
+            class="px-3 py-1.5 rounded-md transition"
+            :class="rtResultView !== 'chains' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">成果列表</button>
+          <button type="button" @click="switchRtResultView('chains')"
+            class="px-3 py-1.5 rounded-md transition"
+            :class="rtResultView === 'chains' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">攻击链</button>
+        </div>
+        <input x-model="rtResultFilter.keyword" @keydown.enter="loadRedTeamResultPage()" placeholder="搜索标题、描述、身份" class="sto-input" style="flex:1;">
+        <select x-model="rtResultFilter.projectId" @change="loadRedTeamResultPage()" class="sto-input" style="width:auto;">
+          <option value="">全部任务</option>
+          <template x-for="p in projects.filter(item => !item.archived)" :key="`rt-filter-${p.id}`">
+            <option :value="p.id" x-text="`${p.id} ${p.title}`"></option>
+          </template>
+        </select>
+        <template x-if="rtResultView !== 'chains'">
+          <div class="flex items-center" style="gap:9px;">
+            <select x-model="rtResultFilter.status" @change="loadRedTeamResultPage()" class="sto-input" style="width:auto;">
+              <option value="">全部状态</option>
+              <option value="reported">已上报</option>
+              <option value="reviewing">审核中</option>
+              <option value="verified">已验证</option>
+              <option value="rejected">已驳回</option>
+              <option value="duplicate">重复</option>
+              <option value="needs-human">需人工</option>
+            </select>
+            <select x-model="rtResultFilter.type" @change="loadRedTeamResultPage()" class="sto-input" style="width:auto;">
+              <option value="">全部类型</option>
+              <option value="permission">权限跃迁</option>
+              <option value="data">数据获取</option>
+              <option value="credential">凭证获取</option>
+              <option value="pivot">横向控制</option>
+            </select>
+          </div>
+        </template>
+        <template x-if="rtResultView === 'chains'">
+          <select x-model="rtChainFilter.status" @change="loadRedTeamResultPage()" class="sto-input" style="width:auto;">
+            <option value="">全部状态</option>
+            <option value="planned">已规划</option>
+            <option value="active">进行中</option>
+            <option value="blocked">受阻</option>
+            <option value="achieved">已达成</option>
+            <option value="failed">已失败</option>
+            <option value="abandoned">已放弃</option>
+          </select>
+        </template>
+        <span class="sto-muted sto-num" style="font-size:10.5px;" x-text="rtResultView === 'chains' ? `共 ${rtChainTotal} 条链` : `共 ${rtResultTotal} 条成果`"></span>
+      </div>
+    </div>
+
+    <!-- 成果列表 -->
+    <div x-show="rtResultView !== 'chains'" class="flex-1 min-h-0 overflow-y-auto mt-3 space-y-2.5">
+      <template x-if="!rtResultLoading && rtResultItems.length === 0">
+        <div class="sto-muted" style="text-align:center; padding:48px 0;">暂无红队成果——跑一个红队任务并上报成果后，这里会聚合展示</div>
+      </template>
+      <template x-for="r in rtResultItems" :key="r.id">
+        <div class="sto-panel" style="padding:13px 15px;">
+          <div class="flex items-center" style="gap:8px; cursor:pointer;" @click="toggleRtResultExpand(r.id)">
+            <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);" x-text="r.id"></span>
+            <span class="sto-status" :class="rtTypeClass(r.result_type)" style="font-size:10px;"><i></i><span x-text="rtTypeLabel(r.result_type)"></span></span>
+            <span class="sto-status" :class="rtStatusClass(r.status)" style="font-size:10px;"><i></i><span x-text="rtStatusLabel(r.status)"></span></span>
+            <span style="flex:1;"></span>
+            <span class="sto-muted" style="font-size:10.5px;" x-text="rtTaskTitle(r.task_id)"></span>
+          </div>
+          <p style="margin-top:6px; font-size:13px; font-weight:600; color:var(--sto-fg);" x-text="r.title"></p>
+          <p style="margin-top:3px; font-size:12px; color:var(--sto-fg-2); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" x-text="r.description"></p>
+          <div x-show="rtResultExpanded === r.id" x-cloak class="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-x-6 gap-y-2 text-xs" style="color:var(--sto-fg-2);">
+            <div><span class="sto-muted">攻击链</span> <span class="sto-num" x-text="r.chain_id"></span></div>
+            <div><span class="sto-muted">初始身份</span> <span x-text="r.principal"></span><span x-show="r.tenant" x-text="` @ ${r.tenant}`"></span></div>
+            <div><span class="sto-muted">能力变化</span> <span class="sto-num" x-text="(r.capabilities_before || []).join(', ') || '—'"></span> → <span class="sto-num" style="color:var(--sto-fg);" x-text="(r.capabilities_gained || []).join(', ') || '—'"></span></div>
+            <div><span class="sto-muted">目标资产</span> <span x-text="r.target_asset || '—'"></span></div>
+            <div x-show="r.result_type === 'data'"><span class="sto-muted">数据样本</span> <span class="sto-num" x-text="`${r.sample_count ?? '—'} 条 / ${r.sample_bytes ?? '—'} 字节，字段 ${(r.data_fields || []).join(', ') || '—'}`"></span></div>
+            <div x-show="r.result_type === 'credential'"><span class="sto-muted">凭证引用</span> <span class="sto-num" x-text="r.credential_ref || '—'"></span></div>
+            <div class="col-span-2"><span class="sto-muted">证据引用</span> <span class="sto-num" x-text="(r.evidence_refs || []).join('，') || '—'"></span></div>
+            <div x-show="r.reviewed_by"><span class="sto-muted">审核</span> <span x-text="`${r.reviewed_by}：${r.review_reason || '—'}`"></span></div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- 攻击链列表 -->
+    <div x-show="rtResultView === 'chains'" x-cloak class="flex-1 min-h-0 overflow-y-auto mt-3 space-y-2.5">
+      <template x-if="!rtResultLoading && rtChainItems.length === 0">
+        <div class="sto-muted" style="text-align:center; padding:48px 0;">暂无攻击链</div>
+      </template>
+      <template x-for="c in rtChainItems" :key="c.id">
+        <div class="sto-panel" style="padding:13px 15px;">
+          <div class="flex items-center" style="gap:8px;">
+            <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);" x-text="c.id"></span>
+            <span class="sto-status" :class="rtChainStatusClass(c.status)" style="font-size:10px;"><i></i><span x-text="rtChainStatusLabel(c.status)"></span></span>
+            <span style="flex:1;"></span>
+            <span class="sto-muted" style="font-size:10.5px;" x-text="rtTaskTitle(c.task_id)"></span>
+          </div>
+          <p style="margin-top:6px; font-size:13px; font-weight:600; color:var(--sto-fg);" x-text="c.title"></p>
+          <div class="mt-2 flex flex-wrap items-center text-xs" style="gap:14px; color:var(--sto-fg-2);">
+            <span><span class="sto-muted">初始身份</span> <span x-text="c.initial_principal?.id || '—'"></span></span>
+            <span><span class="sto-muted">已获能力</span> <span class="sto-num" x-text="(c.current_state?.capabilities || []).join(', ') || '—'"></span></span>
+            <span><span class="sto-muted">已达资产</span> <span class="sto-num" x-text="(c.current_state?.assets || []).join(', ') || '—'"></span></span>
+            <span><span class="sto-muted">关联 Intent</span> <span class="sto-num" x-text="(c.source_intent_ids || []).length"></span></span>
+            <span><span class="sto-muted">创建</span> <span x-text="c.created_by"></span></span>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
 </div>
 
 <!-- Quick Status Modal -->

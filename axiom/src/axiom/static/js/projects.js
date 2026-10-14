@@ -1060,6 +1060,40 @@ window.AxiomModules.projects = {
         }
         const taskScopeTargets = String(this.newProject.task_scope_targets || '').split(/\n|,/).map(x => x.trim()).filter(Boolean);
         const taskScopeExclude = String(this.newProject.task_scope_exclude || '').split(/\n|,/).map(x => x.trim()).filter(Boolean);
+        const engagementMode = this.newProject.engagement_mode === 'red_team' ? 'red_team' : 'vulnerability';
+        let redTeamObjective = null;
+        if (engagementMode === 'red_team') {
+          const principalId = String(this.newProject.rt_principal_id || '').trim();
+          const capabilities = String(this.newProject.rt_capabilities || '').split(/\n|,/).map(x => x.trim()).filter(Boolean);
+          const assets = String(this.newProject.rt_assets || '').split(/\n|,/).map(x => x.trim()).filter(Boolean);
+          const dataTargets = (Array.isArray(this.newProject.rt_data_targets) ? this.newProject.rt_data_targets : [])
+            .filter(item => String(item.id || '').trim())
+            .map(item => ({
+              id: String(item.id).trim(),
+              max_records: Math.max(1, Number(item.max_records) || 10),
+              max_bytes: Math.max(1, Number(item.max_bytes) || 1048576),
+              allowed_fields: String(item.allowed_fields || '').split(/\n|[,，]/).map(x => x.trim()).filter(Boolean),
+            }));
+          if (!principalId) {
+            this.showToast('红队任务需要填写初始身份 ID', 'error');
+            return;
+          }
+          if (capabilities.length === 0 && assets.length === 0 && dataTargets.length === 0) {
+            this.showToast('红队任务至少需要一个目标能力、目标资产或数据目标', 'error');
+            return;
+          }
+          redTeamObjective = {
+            initial_principal: {
+              id: principalId,
+              label: String(this.newProject.rt_principal_label || '').trim(),
+              tenant: String(this.newProject.rt_principal_tenant || '').trim(),
+              credential_id: String(this.newProject.rt_credential_id || '').trim() || null,
+            },
+            target_capabilities: capabilities,
+            target_assets: assets,
+            data_targets: dataTargets,
+          };
+        }
         const body = {
           parent_project_id: parentProjectId,
           title: this.newProject.title,
@@ -1077,6 +1111,8 @@ window.AxiomModules.projects = {
             notes: this.newProject.task_scope_notes || '',
           },
           run_duration_seconds: runDurationSeconds,
+          engagement_mode: engagementMode,
+          red_team_objective: redTeamObjective,
         };
         const data = await this.api('POST', '/projects', body);
         const pid = data.project.id;
@@ -1088,6 +1124,7 @@ window.AxiomModules.projects = {
           bootstrap: true, depth_mode: false, guard_enabled: !!this.judgeSettings?.enabled_default, hints: '',
           task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '',
           depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false,
+          engagement_mode: 'vulnerability', rt_principal_id: '', rt_principal_label: '', rt_principal_tenant: '', rt_credential_id: '', rt_capabilities: '', rt_assets: '', rt_data_targets: [],
         };
         await this.loadProjectGroups();
         await this.loadProjects();

@@ -981,6 +981,8 @@
         worker_pool: body.worker_pool || [],
         scope: body.task_scope || null,
         run_duration_seconds: body.run_duration_seconds ?? null,
+        engagement_mode: body.engagement_mode || 'vulnerability',
+        red_team_objective: body.red_team_objective || null,
       });
       return { project: mapTask(task) };
     }
@@ -1468,6 +1470,90 @@
       const selected = this.selectedVulnerability();
       if (!selected?.project_id || !run?.duplicate_of_vulnerability_id) return;
       this.openVulnerabilityLocation(selected.project_id, run.duplicate_of_vulnerability_id);
+    },
+    switchFactView(mode) {
+      this.factViewMode = mode === 'result' ? 'result' : 'vulnerability';
+      if (this.factViewMode === 'result') {
+        this.loadRedTeamResultPage();
+      } else {
+        this.loadVulnerabilityPage({ selectFirst: false });
+      }
+    },
+    switchRtResultView(view) {
+      this.rtResultView = view === 'chains' ? 'chains' : 'results';
+      this.loadRedTeamResultPage();
+    },
+    rtTaskTitle(taskId) {
+      const task = (this.projects || []).find(item => item.id === taskId);
+      return task ? `${taskId} ${task.title || ''}`.trim() : taskId || '-';
+    },
+    rtTypeLabel(type) {
+      return ({ permission: '权限跃迁', data: '数据获取', credential: '凭证获取', pivot: '横向控制' })[type] || type || '-';
+    },
+    rtTypeClass(type) {
+      return ({ permission: 'ok', data: 'info', credential: 'warn', pivot: 'warn' })[type] || 'off';
+    },
+    rtStatusLabel(status) {
+      return ({
+        reported: '已上报', reviewing: '审核中', verified: '已验证',
+        rejected: '已驳回', duplicate: '重复', 'needs-human': '需人工',
+      })[status] || status || '-';
+    },
+    rtStatusClass(status) {
+      return ({ reported: 'info', reviewing: 'warn', verified: 'ok', rejected: 'err', duplicate: 'off', 'needs-human': 'warn' })[status] || 'off';
+    },
+    rtChainStatusLabel(status) {
+      return ({
+        planned: '已规划', active: '进行中', blocked: '受阻',
+        achieved: '已达成', failed: '已失败', abandoned: '已放弃',
+      })[status] || status || '-';
+    },
+    rtChainStatusClass(status) {
+      return ({ planned: 'info', active: 'warn', blocked: 'err', achieved: 'ok', failed: 'err', abandoned: 'off' })[status] || 'off';
+    },
+    toggleRtResultExpand(resultId) {
+      this.rtResultExpanded = this.rtResultExpanded === resultId ? '' : (resultId || '');
+    },
+    _rtChainQuery() {
+      // 任务与关键字筛选与成果列表共用；状态筛选按子视图独立
+      const params = new URLSearchParams({ limit: '100', offset: '0' });
+      const keyword = String(this.rtResultFilter.keyword || '').trim();
+      if (keyword) params.set('search', keyword);
+      if (this.rtResultFilter.projectId) params.set('task_id', this.rtResultFilter.projectId);
+      if (this.rtChainFilter.status) params.set('status', this.rtChainFilter.status);
+      return params.toString();
+    },
+    async loadRedTeamResultPage() {
+      const requestId = ++this._rtResultListRequestId;
+      this.rtResultLoading = true;
+      try {
+        const params = new URLSearchParams({ limit: '100', offset: '0' });
+        const keyword = String(this.rtResultFilter.keyword || '').trim();
+        if (keyword) params.set('search', keyword);
+        if (this.rtResultFilter.projectId) params.set('task_id', this.rtResultFilter.projectId);
+        if (this.rtResultFilter.status) params.set('status', this.rtResultFilter.status);
+        if (this.rtResultFilter.type) params.set('type', this.rtResultFilter.type);
+        const resultPage = await requestPage(`/red-team/results?${params}`, {
+          signal: this._pageAbortController?.signal,
+        });
+        const chainPage = this.rtResultView === 'chains'
+          ? await requestPage(`/red-team/chains?${this._rtChainQuery()}`, {
+              signal: this._pageAbortController?.signal,
+            })
+          : null;
+        if (requestId !== this._rtResultListRequestId) return;
+        this.rtResultItems = resultPage.items;
+        this.rtResultTotal = resultPage.total;
+        if (chainPage) {
+          this.rtChainItems = chainPage.items;
+          this.rtChainTotal = chainPage.total;
+        }
+      } catch (error) {
+        if (error?.name === 'AbortError') return;
+        this.showToast(error?.message || '红队成果加载失败', 'error');
+      } finally {
+        this.rtResultLoading = false;
+      }
     },
     async loadVulnerabilityPage(options = {}) {
       const requestId = ++this._vulnerabilityListRequestId;

@@ -78,6 +78,70 @@
               <textarea x-model="newProject.goal" rows="3"
                 class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400"></textarea>
             </div>
+            <div>
+              <label class="text-xs font-semibold text-slate-500 mb-1 block">任务模式</label>
+              <div class="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs">
+                <button type="button" @click="newProject.engagement_mode = 'vulnerability'"
+                  class="px-3 py-1.5 rounded-md transition"
+                  :class="newProject.engagement_mode !== 'red_team' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">漏洞挖掘</button>
+                <button type="button" @click="newProject.engagement_mode = 'red_team'"
+                  class="px-3 py-1.5 rounded-md transition"
+                  :class="newProject.engagement_mode === 'red_team' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">红队（目标达成）</button>
+              </div>
+              <p class="mt-1 text-[11px] text-slate-400" x-show="newProject.engagement_mode === 'red_team'">红队模式以攻击链成果（权限 / 数据 / 凭证 / 横向）判定完成，不统计漏洞数量。</p>
+            </div>
+            <div x-show="newProject.engagement_mode === 'red_team'" x-cloak class="rounded-xl border border-rose-100 bg-rose-50/40 p-4 space-y-3">
+              <p class="text-xs font-semibold text-rose-600">红队结构化目标</p>
+              <div class="grid grid-cols-3 gap-3">
+                <label class="text-[11px] text-slate-500">初始身份 ID
+                  <input x-model="newProject.rt_principal_id" placeholder="user:member"
+                    class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100">
+                </label>
+                <label class="text-[11px] text-slate-500">身份名称
+                  <input x-model="newProject.rt_principal_label" placeholder="普通成员"
+                    class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100">
+                </label>
+                <label class="text-[11px] text-slate-500">租户
+                  <input x-model="newProject.rt_principal_tenant" placeholder="tenant-a"
+                    class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100">
+                </label>
+              </div>
+              <label class="block text-[11px] text-slate-500">凭证引用（只填引用 ID，不填明文）
+                <input x-model="newProject.rt_credential_id" placeholder="cred_xxx（可留空）"
+                  class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100">
+              </label>
+              <div class="grid grid-cols-2 gap-3">
+                <label class="text-[11px] text-slate-500">目标能力（每行一个，如 tenant:admin）
+                  <textarea x-model="newProject.rt_capabilities" rows="3"
+                    class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100"></textarea>
+                </label>
+                <label class="text-[11px] text-slate-500">目标资产（每行一个，如 member-management）
+                  <textarea x-model="newProject.rt_assets" rows="3"
+                    class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100"></textarea>
+                </label>
+              </div>
+              <div>
+                <div class="flex items-center justify-between">
+                  <p class="text-[11px] font-medium text-slate-500">数据目标（可选，限制可读取的样本规模）</p>
+                  <button type="button" @click="newProject.rt_data_targets.push({ id: '', max_records: 10, max_bytes: 1048576, allowed_fields: '' })"
+                    class="text-brand-600 hover:underline text-[11px]">+ 添加数据目标</button>
+                </div>
+                <template x-for="(target, index) in newProject.rt_data_targets" :key="`rt-data-${index}`">
+                  <div class="mt-2 grid grid-cols-12 gap-2 items-center">
+                    <input x-model="target.id" placeholder="ID（如 customer-records）"
+                      class="col-span-4 px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white text-xs focus:outline-none focus:ring-2 focus:ring-brand-100">
+                    <input type="number" min="1" x-model.number="target.max_records" placeholder="记录数"
+                      class="col-span-2 px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white text-xs tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-100">
+                    <input type="number" min="1" x-model.number="target.max_bytes" placeholder="字节数"
+                      class="col-span-2 px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white text-xs tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-100">
+                    <input x-model="target.allowed_fields" placeholder="允许字段，逗号分隔"
+                      class="col-span-3 px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white text-xs focus:outline-none focus:ring-2 focus:ring-brand-100">
+                    <button type="button" @click="newProject.rt_data_targets.splice(index, 1)"
+                      class="col-span-1 text-slate-300 hover:text-rose-500 text-sm justify-self-center" aria-label="删除数据目标">&times;</button>
+                  </div>
+                </template>
+              </div>
+            </div>
           </div>
 
           <!-- Step 2: optional and operational settings -->

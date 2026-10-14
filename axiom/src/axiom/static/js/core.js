@@ -173,7 +173,8 @@ window.AxiomModules.core = {
         this.$nextTick(() => this.restoreProjectListScroll?.());
       } else if (name === 'vulnerabilities') {
         await Promise.all([this.loadProjectGroups(), this.loadProjects()]);
-        await this.loadVulnerabilityPage?.();
+        if (this.factViewMode === 'result') await this.loadRedTeamResultPage?.();
+        else await this.loadVulnerabilityPage?.();
       } else if (name === 'project-mgmt') {
         await Promise.all([this.loadProjectGroups(), this.loadProjects()]);
         if (this.selectedProjectManagementId) await this.loadProjectCredentials(this.selectedProjectManagementId);
@@ -647,7 +648,8 @@ window.AxiomModules.core = {
           if (this.view === 'graph') this.updateGraph();
         } else if (this.activePage === 'vulnerabilities') {
           await Promise.all([this.loadProjectGroups(), this.loadProjects()]);
-          await this.loadVulnerabilityPage();
+          if (this.factViewMode === 'result') await this.loadRedTeamResultPage?.();
+          else await this.loadVulnerabilityPage();
         } else if (this.activePage === 'projects') {
           await Promise.all([this.loadProjectGroups(), this.loadProjects()]);
           if (this.selectedProjectManagementTaskId) await this.loadProjectDetailForManagement(this.selectedProjectManagementTaskId);

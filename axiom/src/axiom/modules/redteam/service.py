@@ -287,6 +287,50 @@ class RedTeamService:
             self._task(conn, task_id)
             return self.repository.list_results(conn, task_id, chain_id=chain_id)
 
+    def list_results_page(
+        self,
+        *,
+        task_id: str | None = None,
+        chain_id: str | None = None,
+        status: str | None = None,
+        result_type: str | None = None,
+        search: str = "",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[RedTeamResult], int]:
+        """Cross-task listing for the 重要事实·成果 view (management console)."""
+
+        with self.engine.connect() as conn:
+            return self.repository.list_results_page(
+                conn,
+                task_id=task_id,
+                chain_id=chain_id,
+                status=status,
+                result_type=result_type,
+                search=search,
+                limit=limit,
+                offset=offset,
+            )
+
+    def list_chains_page(
+        self,
+        *,
+        task_id: str | None = None,
+        status: str | None = None,
+        search: str = "",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[RedTeamChain], int]:
+        with self.engine.connect() as conn:
+            return self.repository.list_chains_page(
+                conn,
+                task_id=task_id,
+                status=status,
+                search=search,
+                limit=limit,
+                offset=offset,
+            )
+
     def report_result(
         self,
         task_id: str,
