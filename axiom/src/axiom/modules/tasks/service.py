@@ -27,6 +27,7 @@ from axiom.modules.projects.repository import ProjectRepository
 from axiom.modules.reason.repository import ReasonRepository
 from axiom.modules.reason.service import ReasonService
 from axiom.modules.reason.tables import reason_runs
+from axiom.modules.redteam.schemas import RedTeamObjective, RedTeamPrincipal
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.tasks.schemas import (
     ActivePlanRun,
@@ -90,6 +91,14 @@ class TaskService:
         scope = command.scope or TaskScope(enabled=False)
         now = utcnow()
         deadline_at = self._deadline_at(now, command.run_duration_seconds)
+        # 模式即接口：红队任务未显式声明结构化目标时合成宽松默认——
+        # 不设能力/资产/数据上限，Reason 依任务目标自行规划，
+        # 由成果审核与 Goal 校验兜底。
+        red_team_objective = command.red_team_objective
+        if command.engagement_mode == "red_team" and red_team_objective is None:
+            red_team_objective = RedTeamObjective(
+                initial_principal=RedTeamPrincipal(id="user:initial", label="初始身份"),
+            )
         with self.engine.begin() as conn:
             project = self.projects.get(conn, command.project_id)
             if project is None:
@@ -103,7 +112,7 @@ class TaskService:
                 origin=origin,
                 goal=command.goal,
                 engagement_mode=command.engagement_mode,
-                red_team_objective=command.red_team_objective,
+                red_team_objective=red_team_objective,
                 scope=scope,
                 worker_pool=command.worker_pool,
                 guard_enabled=command.guard_enabled,

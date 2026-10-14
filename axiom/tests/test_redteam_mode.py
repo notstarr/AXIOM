@@ -155,6 +155,46 @@ def test_chain_staging_requires_red_team_task(client) -> None:
     assert "red_team tasks" in response.text
 
 
+def test_red_team_default_objective_is_permissive(client) -> None:
+    """只切模式不填结构化目标：后端合成宽松默认，链可自由声明能力/资产。"""
+
+    project = client.post("/api/v1/projects", json={"title": "默认目标"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "只切模式",
+            "origin": "a.example.com",
+            "goal": "取得目标能力并读取限定数据",
+            "worker_pool": ["worker-a"],
+            "engagement_mode": "red_team",
+        },
+    )
+    assert task.status_code == 201, task.text
+    task = task.json()
+
+    detail = client.get(f"/api/v1/tasks/{task['id']}")
+    assert detail.status_code == 200, detail.text
+    objective = detail.json().get("red_team_objective")
+    assert objective, "红队任务应合成默认目标"
+    assert objective["initial_principal"]["id"] == "user:initial"
+    assert objective["target_capabilities"] == []
+
+    # 未声明能力/资产上限 → 链可自由声明任意目标
+    chain = client.post(
+        f"/api/v1/tasks/{task['id']}/red-team/chains",
+        params={"created_by": "worker.reason"},
+        json={
+            "title": "自由声明的链",
+            "initial_principal": {"id": "user:initial", "label": "初始身份"},
+            "target_capabilities": ["anything:admin"],
+            "target_assets": ["any-asset"],
+            "source_fact_ids": [],
+        },
+    )
+    assert chain.status_code == 201, chain.text
+
+
 def test_chain_target_must_stay_within_objective(client) -> None:
     """A staged Chain may not exceed the Objective capability set."""
 

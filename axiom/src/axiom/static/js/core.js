@@ -525,8 +525,10 @@ window.AxiomModules.core = {
         return;
       }
       const page = routePath.split('/')[0];
-      const allowed = ['dashboard', 'tasks', 'vulnerabilities', 'projects', 'guard-audit', 'skills', 'files', 'mcp', 'settings', 'prompts', 'workers', 'tools'];
-      const newPage = allowed.includes(page) ? page : 'dashboard';
+      // 「重要事实」路由：#/facts 为新地址，#/vulnerabilities 保留兼容旧书签
+      const normalizedPage = page === 'facts' ? 'vulnerabilities' : page;
+      const allowed = ['dashboard', 'tasks', 'vulnerabilities', 'facts', 'projects', 'guard-audit', 'skills', 'files', 'mcp', 'settings', 'prompts', 'workers', 'tools'];
+      const newPage = allowed.includes(normalizedPage) ? normalizedPage : 'dashboard';
       const sameMountedFilesPage = newPage === 'files'
         && this.activePage === 'files'
         && this.mountedPageTemplate === 'files';
@@ -560,7 +562,7 @@ window.AxiomModules.core = {
       const routes = {
         dashboard: '#/dashboard',
         tasks: '#/tasks',
-        vulnerabilities: '#/vulnerabilities',
+        vulnerabilities: '#/facts',
         projects: '#/projects',
         'guard-audit': '#/guard-audit',
         skills: '#/skills',

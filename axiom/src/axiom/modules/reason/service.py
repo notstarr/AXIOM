@@ -2061,9 +2061,10 @@ class ReasonService:
         objective = task.red_team_objective
         allowed_capabilities = set(objective.target_capabilities if objective else [])
         allowed_assets = set(objective.target_assets if objective else [])
-        if not set(chain.target_capabilities).issubset(allowed_capabilities):
+        # 未声明结构化目标（空列表）= 不设上限；显式声明则锁死边界。
+        if allowed_capabilities and not set(chain.target_capabilities).issubset(allowed_capabilities):
             raise ConflictError("Chain capability target exceeds the task objective")
-        if not set(chain.target_assets).issubset(allowed_assets):
+        if allowed_assets and not set(chain.target_assets).issubset(allowed_assets):
             raise ConflictError("Chain asset target exceeds the task objective")
 
     def _validate_chain_facts(self, conn, task_id: str, fact_ids: list[str]) -> None:

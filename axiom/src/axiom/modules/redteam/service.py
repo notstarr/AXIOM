@@ -126,9 +126,11 @@ class RedTeamService:
         objective = self._objective(task)
         allowed_capabilities = set(objective.get("target_capabilities", []))
         allowed_assets = set(objective.get("target_assets", []))
-        if not set(command.target_capabilities).issubset(allowed_capabilities):
+        # 未声明结构化目标（空列表）= 不设上限，Reason 可自由声明能力/资产；
+        # 显式声明了目标则锁死边界（fail closed）。
+        if allowed_capabilities and not set(command.target_capabilities).issubset(allowed_capabilities):
             raise ConflictError("Chain capability target exceeds the task objective")
-        if not set(command.target_assets).issubset(allowed_assets):
+        if allowed_assets and not set(command.target_assets).issubset(allowed_assets):
             raise ConflictError("Chain asset target exceeds the task objective")
         if command.source_fact_ids:
             found = set(
@@ -380,13 +382,20 @@ class RedTeamService:
             if command.result_type == "data":
                 if command.sample_count is None or command.sample_bytes is None:
                     raise ConflictError("Data Result requires sample_count and sample_bytes")
-                target = next((item for item in objective.get("data_targets", []) if item.get("id") == command.data_target_id), None)
-                if target is None:
-                    raise ConflictError("Data Result must reference a task data target")
-                if (command.sample_count or 0) > int(target.get("max_records", 10)) or (command.sample_bytes or 0) > int(target.get("max_bytes", 1_048_576)):
-                    raise ConflictError("Data Result exceeds the task objective limit")
-                if not set(command.data_fields).issubset(set(target.get("allowed_fields", []))):
-                    raise ConflictError("Data Result contains fields outside the objective")
+                # 任务声明了数据目标时锁死上限与字段白名单；未声明则不做
+                # 结构化限制（样本数/字节数仍必填，审核与 Goal 校验兜底）。
+                data_targets = [
+                    item for item in objective.get("data_targets", [])
+                    if isinstance(item, dict) and str(item.get("id") or "").strip()
+                ]
+                if data_targets:
+                    target = next((item for item in data_targets if item.get("id") == command.data_target_id), None)
+                    if target is None:
+                        raise ConflictError("Data Result must reference a task data target")
+                    if (command.sample_count or 0) > int(target.get("max_records", 10)) or (command.sample_bytes or 0) > int(target.get("max_bytes", 1_048_576)):
+                        raise ConflictError("Data Result exceeds the task objective limit")
+                    if not set(command.data_fields).issubset(set(target.get("allowed_fields", []))):
+                        raise ConflictError("Data Result contains fields outside the objective")
             if command.result_type == "credential" and not command.credential_ref:
                 raise ConflictError("Credential Result requires a reference, never plaintext credentials")
             if command.result_type in {"permission", "pivot"} and not command.capabilities_gained and not command.target_asset:

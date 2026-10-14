@@ -65,8 +65,8 @@ class RedTeamObjective(BaseModel):
 
     @model_validator(mode="after")
     def require_target(self) -> "RedTeamObjective":
-        if not self.target_capabilities and not self.target_assets and not self.data_targets:
-            raise ValueError("red-team objective requires a capability, asset or data target")
+        # 空目标列表是合法语义：不设结构化上限，Reason 依任务目标自由
+        # 规划，由成果审核与 Goal 校验兜底（用于"只切模式"的默认目标）。
         return self
 
 

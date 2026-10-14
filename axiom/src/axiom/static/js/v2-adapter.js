@@ -1334,7 +1334,7 @@
       if (taskId) params.set('task', taskId);
       if (taskId && vulnerabilityId) params.set('vulnerability', vulnerabilityId);
       const query = params.toString();
-      return `#/vulnerabilities${query ? `?${query}` : ''}`;
+      return `#/facts${query ? `?${query}` : ''}`;
     },
     openVulnerabilityLocation(taskId, vulnerabilityId) {
       if (!taskId || !vulnerabilityId) return;

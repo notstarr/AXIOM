@@ -86,8 +86,8 @@ class CreateTask(BaseModel):
 
     @model_validator(mode="after")
     def validate_engagement(self) -> "CreateTask":
-        if self.engagement_mode == "red_team" and self.red_team_objective is None:
-            raise ValueError("red_team tasks require red_team_objective")
+        # red_team 未声明结构化目标是合法输入：服务层合成宽松默认目标
+        # （不设能力/资产/数据上限），由成果审核与 Goal 校验兜底。
         if self.engagement_mode != "red_team" and self.red_team_objective is not None:
             raise ValueError("red_team_objective is only valid for red_team tasks")
         return self
