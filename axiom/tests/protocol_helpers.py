@@ -108,6 +108,18 @@ def apply_reason_draft(client, workspace_id: str, lease_id: str, draft: dict):
         response = client.post(f"{base}/intents", json={**lease, "intent": intent})
         if response.is_error:
             return response
+    for chain in draft.get("chain_adds", []):
+        response = client.post(f"{base}/chains", json={**lease, "chain": chain})
+        if response.is_error:
+            return response
+    for update in draft.get("chain_updates", []):
+        response = client.post(f"{base}/chain-updates", json={**lease, "update": update})
+        if response.is_error:
+            return response
+    for link in draft.get("chain_intent_links", []):
+        response = client.post(f"{base}/chain-links", json={**lease, "link": link})
+        if response.is_error:
+            return response
     assessment = draft.get("goal_assessment")
     if assessment is None:
         assessment = {

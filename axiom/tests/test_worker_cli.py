@@ -698,3 +698,185 @@ def test_credential_cli_supports_review_run_identity(monkeypatch) -> None:
         "lease_id": "lease-1",
         "review_run_id": "vr000001",
     }
+
+
+def _plan_env() -> dict[str, str]:
+    environment = _env()
+    environment.pop("AXIOM_REASON_RUN_ID", None)
+    environment.pop("AXIOM_REASON_WORKSPACE_ID", None)
+    environment["AXIOM_PLAN_RUN_ID"] = "pr000001"
+    environment["AXIOM_PLAN_WORKSPACE_ID"] = "pw_000001"
+    return environment
+
+
+def test_reason_cli_stages_chain_with_objective_bounded_targets(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return {"id": "rw_000001", "status": "open", "draft": {}}
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+    result = CliRunner().invoke(
+        main,
+        [
+            "reason",
+            "chain",
+            "add",
+            "--ref",
+            "ch-1",
+            "--title",
+            "从普通成员到租户管理员",
+            "--capability",
+            "tenant:admin",
+            "--asset",
+            "member-management",
+            "--from-fact",
+            "f001",
+        ],
+        env=_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        (
+            "POST",
+            "/reason-workspaces/rw_000001/chains",
+            {
+                "lease_id": "lease-1",
+                "chain": {
+                    "ref": "ch-1",
+                    "title": "从普通成员到租户管理员",
+                    "target_capabilities": ["tenant:admin"],
+                    "target_assets": ["member-management"],
+                    "source_fact_ids": ["f001"],
+                },
+            },
+        )
+    ]
+
+
+def test_reason_cli_chain_link_requires_exactly_one_chain_reference(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return {}
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+    both = CliRunner().invoke(
+        main,
+        [
+            "reason",
+            "chain",
+            "link",
+            "--chain-ref",
+            "ch-1",
+            "--chain-id",
+            "ch000001",
+            "--intent-ref",
+            "i1",
+        ],
+        env=_env(),
+    )
+    neither = CliRunner().invoke(
+        main,
+        ["reason", "chain", "link", "--intent-ref", "i1"],
+        env=_env(),
+    )
+
+    assert both.exit_code == 2
+    assert "exactly one of --chain-ref or --chain-id is required" in both.output
+    assert neither.exit_code == 2
+    assert calls == []
+
+
+def test_plan_cli_stages_chain_link_against_workspace_draft(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return {"id": "pw_000001", "status": "open", "draft": {}}
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+    result = CliRunner().invoke(
+        main,
+        ["plan", "chain", "link", "--chain-ref", "ch-1", "--intent-ref", "i1"],
+        env=_plan_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        (
+            "POST",
+            "/plan-workspaces/pw_000001/chain-links",
+            {
+                "lease_id": "lease-1",
+                "link": {"chain_ref": "ch-1", "intent_ref": "i1"},
+            },
+        )
+    ]
+
+
+def test_explore_cli_result_report_defaults_to_the_bound_chain(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return {"id": "rr000001", "status": "reviewing"}
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+    environment = _env()
+    environment["AXIOM_CHAIN_ID"] = "ch000123"
+    result = CliRunner().invoke(
+        main,
+        [
+            "explore",
+            "result",
+            "report",
+            "--type",
+            "permission",
+            "--title",
+            "取得成员管理能力",
+            "--description",
+            "复用普通成员会话调用成员管理接口成功。",
+            "--principal",
+            "user:member",
+            "--capability-gained",
+            "tenant:admin",
+            "--target-asset",
+            "member-management",
+            "--evidence-path",
+            "evidence/result.txt",
+        ],
+        env=environment,
+    )
+
+    assert result.exit_code == 0, result.output
+    method, path, payload = calls[0]
+    assert method == "POST"
+    assert path == "/tasks/t_001/intents/i003/red-team-results"
+    assert payload["report"]["chain_id"] == "ch000123"
+    assert payload["report"]["capabilities_gained"] == ["tenant:admin"]
+
+    without_binding = CliRunner().invoke(
+        main,
+        [
+            "explore",
+            "result",
+            "report",
+            "--type",
+            "permission",
+            "--title",
+            "取得成员管理能力",
+            "--description",
+            "复用普通成员会话调用成员管理接口成功。",
+            "--principal",
+            "user:member",
+            "--evidence-path",
+            "evidence/result.txt",
+        ],
+        env=_env(),
+    )
+    assert without_binding.exit_code == 2
+    assert "--chain-id is required" in without_binding.output
