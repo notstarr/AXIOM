@@ -5,14 +5,15 @@
 ARG BASE_IMAGE=python:3.12-slim
 ARG NODE_VERSION=22.22.2
 ARG NODE_DIST_MIRROR=https://nodejs.org/dist
+# ffuf 构建阶段版本（全局 ARG：FROM 前声明才对所有 stage 生效）
+ARG GOLANG_IMAGE=golang:1.24-bookworm
+ARG FFUF_VERSION=2.1.0
 FROM --platform=linux/amd64 ${BASE_IMAGE}
 ARG NODE_VERSION
 ARG NODE_DIST_MIRROR
 
 # ffuf 构建阶段：官方 GitHub releases/tags 已清空，改走 Go module proxy
 # 安装固定版本（proxy 缓存了历史版本，不依赖 GitHub tags 存续）
-ARG GOLANG_IMAGE=golang:1.24-bookworm
-ARG FFUF_VERSION=2.1.0
 FROM --platform=linux/amd64 ${GOLANG_IMAGE} AS ffuf-builder
 ARG FFUF_VERSION
 RUN CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" \
