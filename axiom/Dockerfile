@@ -57,16 +57,18 @@ RUN uv sync --frozen --no-dev \
  && uv run --no-sync playwright install --with-deps chromium
 
 # Pi Worker 运行时：runtime/pi 被 gitignore，从 GitHub 干净 clone 构建时
-# 本目录为空。这里按 pi_config.py 的版本常量从 npm 自动拉取并生成与
-# 生产机同构的 bin/pi wrapper（本机构建若已 vendored 则自动跳过）。
+# 本目录为空。这里用与本机一致的锁文件（deploy/pi-runtime/package-lock.json，
+# 钉死 pi-coding-agent 与 pi-codemode 的兼容版本组合）执行 npm ci 并生成
+# 与生产机同构的 bin/pi wrapper（本机构建若已 vendored 则自动跳过）。
+COPY deploy/pi-runtime/package.json deploy/pi-runtime/package-lock.json /tmp/pi-runtime/
 RUN set -eux; \
     PI_VERSION=$(.venv/bin/python -c "from axiom.modules.workers.pi_config import PI_RUNTIME_VERSION as v; print(v)"); \
     PI_DIR=/app/runtime/pi/${PI_VERSION}; \
     PKG_JSON="$PI_DIR/node_modules/@earendil-works/pi-coding-agent/package.json"; \
     if [ ! -f "$PKG_JSON" ]; then \
       mkdir -p "$PI_DIR/bin"; \
-      printf '{"name":"axiom-pi-runtime","version":"0.0.0","private":true,"dependencies":{"@earendil-works/pi-coding-agent":"%s"}}\n' "$PI_VERSION" > "$PI_DIR/package.json"; \
-      (cd "$PI_DIR" && /app/runtime/node/v${NODE_VERSION}/bin/npm install --omit=dev --no-audit --no-fund); \
+      cp /tmp/pi-runtime/package.json /tmp/pi-runtime/package-lock.json "$PI_DIR/"; \
+      (cd "$PI_DIR" && /app/runtime/node/v${NODE_VERSION}/bin/npm ci --omit=dev --no-audit --no-fund); \
       printf '#!/bin/sh\nset -eu\nHERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$HERE/../../../node/v%s/bin/node" "$HERE/../node_modules/@earendil-works/pi-coding-agent/dist/cli.js" "$@"\n' "${NODE_VERSION}" > "$PI_DIR/bin/pi"; \
       chmod 0755 "$PI_DIR/bin/pi"; \
       ln -sfn "v${NODE_VERSION}" /app/runtime/node/${NODE_VERSION}; \
