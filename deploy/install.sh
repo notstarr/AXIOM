@@ -3,7 +3,13 @@
 set -Eeuo pipefail
 
 AXIOM_VERSION="${AXIOM_VERSION:-}"
-AXIOM_INSTALL_DIR="${AXIOM_INSTALL_DIR:-/opt/axiom}"
+if [[ -z "$AXIOM_INSTALL_DIR" ]]; then
+  if [[ "$(uname -s)" == Darwin ]]; then
+    AXIOM_INSTALL_DIR="$HOME/.axiom"
+  else
+    AXIOM_INSTALL_DIR="/opt/axiom"
+  fi
+fi
 AXIOM_PUBLISH_HOST="${AXIOM_PUBLISH_HOST:-127.0.0.1}"
 AXIOM_PORT="${AXIOM_PORT:-8888}"
 AXIOM_MIN_FREE_KB="${AXIOM_MIN_FREE_KB:-10485760}"
@@ -23,13 +29,31 @@ on_error() {
 }
 trap on_error ERR
 
-if [[ "$(uname -s)" != Linux ]]; then
-  fail "only Linux is supported; detected $(uname -s)"
+OS="$(uname -s)"
+ARCH="$(uname -m)"
+if [[ "$OS" != Linux && "$OS" != Darwin ]]; then
+  fail "only Linux and macOS are supported; detected $OS"
 fi
-case "$(uname -m)" in
-  x86_64|amd64) ;;
-  *) fail "only Linux x86_64 is supported; detected $(uname -m)" ;;
-esac
+if [[ "$OS" == Linux ]]; then
+  case "$ARCH" in
+    x86_64|amd64|aarch64|arm64) ;;
+    *) fail "unsupported Linux architecture: $ARCH" ;;
+  esac
+fi
+
+# 私有仓库：GH_TOKEN 同时用于 raw 资产下载与 ghcr.io 镜像拉取
+# 代理隔离：raw.githubusercontent.com 通常被墙需走代理，但 Docker/Compose
+# 的 ghcr.io 流量必须直连（企业代理会劫持证书）。代理只作用于本脚本的
+# curl 下载（AXIOM_CURL_PROXY），并强制清除继承的全局代理变量。
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy
+CURL_AUTH=()
+CURL_PROXY_ARGS=()
+if [[ -n "${GH_TOKEN:-}" ]]; then
+  CURL_AUTH=(-H "Authorization: Bearer $GH_TOKEN")
+fi
+if [[ -n "${AXIOM_CURL_PROXY:-}" ]]; then
+  CURL_PROXY_ARGS=(-x "$AXIOM_CURL_PROXY")
+fi
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v docker >/dev/null 2>&1 || fail "Docker Engine is required; install Docker before running this installer"
@@ -48,9 +72,10 @@ if [[ -z "$AXIOM_RELEASE_BASE_URL" ]]; then
   bootstrap_base="https://raw.githubusercontent.com/notstarr/AXIOM/${AXIOM_RELEASE_REF}/deploy"
   if [[ -z "$AXIOM_VERSION" ]]; then
     AXIOM_VERSION="$(curl --fail --location --silent --show-error --retry 3 --retry-delay 1 \
+      ${CURL_AUTH[@]+"${CURL_AUTH[@]}"} ${CURL_PROXY_ARGS[@]+"${CURL_PROXY_ARGS[@]}"} \
       "$bootstrap_base/VERSION" | tr -d '\r\n' || true)"
   fi
-  if [[ -z "$RELEASE_REF_WAS_SET" && -n "$AXIOM_VERSION" ]]; then
+  if [[ -z "$RELEASE_REF_WAS_SET" && -n "$AXIOM_VERSION" && "$AXIOM_VERSION" != "latest" ]]; then
     AXIOM_RELEASE_REF="v$AXIOM_VERSION"
   fi
   AXIOM_RELEASE_BASE_URL="https://raw.githubusercontent.com/notstarr/AXIOM/${AXIOM_RELEASE_REF}/deploy"
@@ -117,6 +142,7 @@ download() {
   mkdir -p "$(dirname "$target")"
   log "downloading $path from $AXIOM_RELEASE_REF"
   curl --fail --location --silent --show-error --retry 3 --retry-delay 1 \
+    ${CURL_AUTH[@]+"${CURL_AUTH[@]}"} ${CURL_PROXY_ARGS[@]+"${CURL_PROXY_ARGS[@]}"} \
     "$AXIOM_RELEASE_BASE_URL/$path" -o "$target" \
     || fail "could not download $path from $AXIOM_RELEASE_BASE_URL"
 }
@@ -163,6 +189,7 @@ if [[ ! -f "$AXIOM_INSTALL_DIR/.env" ]]; then
   set_env AXIOM_VERSION "$AXIOM_VERSION" "$AXIOM_INSTALL_DIR/.env"
   set_env AXIOM_COMPOSE_PROJECT "$AXIOM_COMPOSE_PROJECT" "$AXIOM_INSTALL_DIR/.env"
   set_env AXIOM_IMAGE "$AXIOM_IMAGE" "$AXIOM_INSTALL_DIR/.env"
+  set_env AXIOM_PLATFORM "${AXIOM_PLATFORM:-linux/amd64}" "$AXIOM_INSTALL_DIR/.env"
   set_env AXIOM_POSTGRES_IMAGE "$AXIOM_POSTGRES_IMAGE" "$AXIOM_INSTALL_DIR/.env"
   set_env AXIOM_PUBLISH_HOST "$AXIOM_PUBLISH_HOST" "$AXIOM_INSTALL_DIR/.env"
   set_env AXIOM_PORT "$AXIOM_PORT" "$AXIOM_INSTALL_DIR/.env"
@@ -186,6 +213,7 @@ if [[ ! -f "$AXIOM_INSTALL_DIR/.env" ]]; then
 else
   ensure_env AXIOM_VERSION "$AXIOM_VERSION" "$AXIOM_INSTALL_DIR/.env"
   ensure_env AXIOM_IMAGE "$AXIOM_IMAGE" "$AXIOM_INSTALL_DIR/.env"
+  ensure_env AXIOM_PLATFORM "${AXIOM_PLATFORM:-linux/amd64}" "$AXIOM_INSTALL_DIR/.env"
   ensure_env AXIOM_POSTGRES_IMAGE "$AXIOM_POSTGRES_IMAGE" "$AXIOM_INSTALL_DIR/.env"
   ensure_env AXIOM_PUBLISH_HOST "$AXIOM_PUBLISH_HOST" "$AXIOM_INSTALL_DIR/.env"
   ensure_env AXIOM_PORT "$AXIOM_PORT" "$AXIOM_INSTALL_DIR/.env"
@@ -232,6 +260,11 @@ link_control_script() {
   fi
 }
 link_control_script
+
+if [[ -n "${GH_TOKEN:-}" ]]; then
+  printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "${GH_TOKEN_USER:-notstarr}" --password-stdin \
+    || log "ghcr.io login failed; continuing (image may already be pulled)"
+fi
 
 log "pulling the pinned AXIOM image"
 if ! (cd "$AXIOM_INSTALL_DIR" && docker compose --env-file .env -f compose.yaml pull postgres migrator api runner); then

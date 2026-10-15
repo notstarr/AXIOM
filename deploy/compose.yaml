@@ -2,6 +2,7 @@ name: ${AXIOM_COMPOSE_PROJECT:-axiom}
 
 services:
   postgres:
+    platform: ${AXIOM_PLATFORM:-linux/amd64}
     image: ${AXIOM_POSTGRES_IMAGE:-postgres:18.4-bookworm@sha256:882236b897e39051d2368c5ccc6cda944904723506b2dfc97f2a8f5bc9afa382}
     restart: unless-stopped
     environment:
@@ -24,6 +25,7 @@ services:
       - axiom
 
   migrator:
+    platform: ${AXIOM_PLATFORM:-linux/amd64}
     image: ${AXIOM_IMAGE}
     restart: "no"
     environment:
@@ -41,6 +43,7 @@ services:
       - axiom
 
   api:
+    platform: ${AXIOM_PLATFORM:-linux/amd64}
     image: ${AXIOM_IMAGE}
     restart: unless-stopped
     environment:
@@ -75,6 +78,7 @@ services:
       - axiom
 
   runner:
+    platform: ${AXIOM_PLATFORM:-linux/amd64}
     image: ${AXIOM_IMAGE}
     restart: unless-stopped
     environment:
