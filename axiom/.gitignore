@@ -26,3 +26,7 @@ node_modules/
 /index_super.html
 /ops.html
 /nologin.txt
+
+# Pi 运行时锁文件是部署物料（钉死 pi-coding-agent/pi-codemode 兼容组合）
+!axiom/deploy/pi-runtime/package-lock.json
+!axiom/deploy/pi-runtime/package.json
