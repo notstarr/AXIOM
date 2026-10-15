@@ -36,6 +36,12 @@ command -v docker >/dev/null 2>&1 || fail "Docker Engine is required; install Do
 docker compose version >/dev/null 2>&1 || fail "Docker Compose Plugin is required (run: docker compose version)"
 docker info >/dev/null 2>&1 || fail "Docker daemon is not reachable for the current user"
 
+# 默认跟踪最新分支构建镜像（latest，随每次 push 自动更新）；
+# 要安装固定 release：AXIOM_VERSION=0.2.0（部署物料与镜像同时锁定到该版本）
+if [[ -z "$AXIOM_VERSION" && -z "${AXIOM_IMAGE+x}" ]]; then
+  AXIOM_VERSION="latest"
+fi
+
 # Resolve the release metadata before downloading the remaining deployment assets.
 # A custom base URL is useful for an audited mirror or an isolated test registry.
 if [[ -z "$AXIOM_RELEASE_BASE_URL" ]]; then
@@ -52,8 +58,9 @@ elif [[ -z "$AXIOM_VERSION" ]]; then
   AXIOM_VERSION="$(curl --fail --location --silent --show-error --retry 3 --retry-delay 1 \
     "$AXIOM_RELEASE_BASE_URL/VERSION" | tr -d '\r\n' || true)"
 fi
-AXIOM_VERSION="${AXIOM_VERSION:-0.1.0}"
+AXIOM_VERSION="${AXIOM_VERSION:-latest}"
 AXIOM_IMAGE="${AXIOM_IMAGE:-ghcr.io/notstarr/axiom:${AXIOM_VERSION}}"
+log "image: $AXIOM_IMAGE"
 AXIOM_POSTGRES_IMAGE="${AXIOM_POSTGRES_IMAGE:-postgres:18.4-bookworm@sha256:882236b897e39051d2368c5ccc6cda944904723506b2dfc97f2a8f5bc9afa382}"
 
 # Keep the historical Compose project name for /opt/axiom, but make custom
