@@ -90,17 +90,17 @@ RUN set -eux; \
  && rm -rf /var/lib/apt/lists/*; \
     dl() { curl -fsSL --retry 3 -o /tmp/tool.dl "https://github.com/$1/releases/download/$2/$3"; }; \
     unzip_tool() { local d; d="$(mktemp -d)"; unzip -o -q /tmp/tool.dl -d "$d"; \
-      find "$d" -type f -name "$4" -exec mv {} "$5" \; ; chmod 0755 "$5"; rm -rf "$d" /tmp/tool.dl; }; \
+      find "$d" -type f -name "$1" -exec mv {} "$2" \; ; chmod 0755 "$2"; rm -rf "$d" /tmp/tool.dl; }; \
     dl projectdiscovery/subfinder "${SUBFINDER_VERSION}" "subfinder_${SUBFINDER_VERSION#v}_linux_amd64.zip" \
- && unzip_tool projectdiscovery/subfinder "${SUBFINDER_VERSION}" subfinder /usr/local/bin/subfinder; \
+ && unzip_tool subfinder /usr/local/bin/subfinder; \
     dl projectdiscovery/httpx "${HTTPX_VERSION}" "httpx_${HTTPX_VERSION#v}_linux_amd64.zip" \
- && unzip_tool projectdiscovery/httpx "${HTTPX_VERSION}" httpx /usr/local/bin/httpx; \
+ && unzip_tool httpx /usr/local/bin/httpx; \
     dl projectdiscovery/nuclei "${NUCLEI_VERSION}" "nuclei_${NUCLEI_VERSION#v}_linux_amd64.zip" \
- && unzip_tool projectdiscovery/nuclei "${NUCLEI_VERSION}" nuclei /usr/local/bin/nuclei; \
+ && unzip_tool nuclei /usr/local/bin/nuclei; \
     dl projectdiscovery/katana "${KATANA_VERSION}" "katana_${KATANA_VERSION#v}_linux_amd64.zip" \
- && unzip_tool projectdiscovery/katana "${KATANA_VERSION}" katana /usr/local/bin/katana; \
+ && unzip_tool katana /usr/local/bin/katana; \
     dl projectdiscovery/naabu "${NAABU_VERSION}" "naabu_${NAABU_VERSION#v}_linux_amd64.zip" \
- && unzip_tool projectdiscovery/naabu "${NAABU_VERSION}" naabu /usr/local/bin/naabu; \
+ && unzip_tool naabu /usr/local/bin/naabu; \
     dl joohoi/ffuf "${FFUF_VERSION}" "ffuf_${FFUF_VERSION}_linux_amd64.tar.gz" \
  && tar -xzf /tmp/tool.dl -C /tmp && mv /tmp/ffuf /usr/local/bin/ffuf && rm -f /tmp/tool.dl; \
     git clone --depth 1 --branch "${SQLMAP_VERSION}" https://github.com/sqlmapproject/sqlmap.git /opt/sqlmap; \
