@@ -73,7 +73,7 @@ if [[ -z "$AXIOM_RELEASE_BASE_URL" ]]; then
   if [[ -z "$AXIOM_VERSION" ]]; then
     AXIOM_VERSION="$(curl --fail --location --silent --show-error --retry 3 --retry-delay 1 \
       ${CURL_AUTH[@]+"${CURL_AUTH[@]}"} ${CURL_PROXY_ARGS[@]+"${CURL_PROXY_ARGS[@]}"} \
-      "$bootstrap_base/VERSION" | tr -d '\r\n' || true)"
+      "$bootstrap_base/VERSION?cb=$(date +%s)" | tr -d '\r\n' || true)"
   fi
   if [[ -z "$RELEASE_REF_WAS_SET" && -n "$AXIOM_VERSION" && "$AXIOM_VERSION" != "latest" ]]; then
     AXIOM_RELEASE_REF="v$AXIOM_VERSION"
@@ -143,7 +143,7 @@ download() {
   log "downloading $path from $AXIOM_RELEASE_REF"
   curl --fail --location --silent --show-error --retry 3 --retry-delay 1 \
     ${CURL_AUTH[@]+"${CURL_AUTH[@]}"} ${CURL_PROXY_ARGS[@]+"${CURL_PROXY_ARGS[@]}"} \
-    "$AXIOM_RELEASE_BASE_URL/$path" -o "$target" \
+    "$AXIOM_RELEASE_BASE_URL/$path?cb=$(date +%s)" -o "$target" \
     || fail "could not download $path from $AXIOM_RELEASE_BASE_URL"
 }
 for path in compose.yaml .env.example axiomctl postgres-init/001-axiom-roles.sh; do
