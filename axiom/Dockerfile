@@ -9,6 +9,15 @@ FROM --platform=linux/amd64 ${BASE_IMAGE}
 ARG NODE_VERSION
 ARG NODE_DIST_MIRROR
 
+# ffuf 构建阶段：官方 GitHub releases/tags 已清空，改走 Go module proxy
+# 安装固定版本（proxy 缓存了历史版本，不依赖 GitHub tags 存续）
+ARG GOLANG_IMAGE=golang:1.24-bookworm
+ARG FFUF_VERSION=2.1.0
+FROM --platform=linux/amd64 ${GOLANG_IMAGE} AS ffuf-builder
+ARG FFUF_VERSION
+RUN CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" \
+      github.com/ffuf/ffuf/v2@v${FFUF_VERSION}
+
 ARG APT_MIRROR=deb.debian.org
 ARG PIP_INDEX_URL=https://pypi.org/simple
 ARG UV_DEFAULT_INDEX=https://pypi.org/simple
@@ -75,6 +84,9 @@ RUN set -eux; \
     fi; \
     "$PI_DIR/bin/pi" --version
 
+# ffuf：从 Go builder 阶段拷入（GitHub releases 已清空，走 module proxy 固定版本）
+COPY --from=ffuf-builder /go/bin/ffuf /usr/local/bin/ffuf
+
 # Worker 安全工具链：版本与生产 Mac 实测对齐（2026-10-14 抓取）。
 # GitHub Actions 构建机上直接下载 release 资产不受本地网络限制。
 ARG SUBFINDER_VERSION=v2.14.0
@@ -82,8 +94,6 @@ ARG HTTPX_VERSION=v1.9.0
 ARG NUCLEI_VERSION=v3.8.0
 ARG KATANA_VERSION=v1.6.1
 ARG NAABU_VERSION=v2.6.1
-ARG FFUF_VERSION=2.1.0
-ARG SQLMAP_VERSION=1.10.5.3
 RUN set -eux; \
     apt-get update \
  && apt-get install -y --no-install-recommends nmap unzip \
@@ -101,9 +111,7 @@ RUN set -eux; \
  && unzip_tool katana /usr/local/bin/katana; \
     dl projectdiscovery/naabu "${NAABU_VERSION}" "naabu_${NAABU_VERSION#v}_linux_amd64.zip" \
  && unzip_tool naabu /usr/local/bin/naabu; \
-    dl joohoi/ffuf "${FFUF_VERSION}" "ffuf_${FFUF_VERSION}_linux_amd64.tar.gz" \
- && tar -xzf /tmp/tool.dl -C /tmp && mv /tmp/ffuf /usr/local/bin/ffuf && rm -f /tmp/tool.dl; \
-    git clone --depth 1 --branch "${SQLMAP_VERSION}" https://github.com/sqlmapproject/sqlmap.git /opt/sqlmap; \
+    git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git /opt/sqlmap; \
     printf '#!/bin/sh\nexec /app/.venv/bin/python /opt/sqlmap/sqlmap.py "$@"\n' > /usr/local/bin/sqlmap; \
     chmod 0755 /usr/local/bin/sqlmap; \
     nmap --version | head -2; subfinder -version 2>&1 | head -1; nuclei -version 2>&1 | head -1
