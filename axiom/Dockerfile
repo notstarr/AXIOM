@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # AXIOM 一体化镜像：API/控制台 + 调度 Runner + pi Worker 运行时 + Chromium + 安全工具链
 # 国内网络可用 build-args 切镜像源（见 compose.deploy.yaml 注释），默认官方源
-# 平台钉死 amd64：Pi 运行时为 linux x86_64 构建（npm ci 按本机锁文件安装）
+# 架构自适应：Mac Apple Silicon 构建 arm64 原生镜像，CI/服务器构建 amd64
 
 # ── 全局 ARG（必须在第一个 FROM 之前声明，对所有 stage 生效）────────
 ARG BASE_IMAGE=python:3.12-slim
@@ -12,13 +12,13 @@ ARG FFUF_VERSION=2.1.0
 
 # ── ffuf 构建阶段：官方 GitHub releases/tags 已清空，改走 Go module
 #    proxy 安装固定版本（proxy 缓存历史版本，不依赖 GitHub tags 存续）──
-FROM --platform=linux/amd64 ${GOLANG_IMAGE} AS ffuf-builder
+FROM ${GOLANG_IMAGE} AS ffuf-builder
 ARG FFUF_VERSION
 RUN CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" \
       github.com/ffuf/ffuf/v2@v${FFUF_VERSION}
 
 # ── 主阶段：API/控制台 + Runner + pi + Chromium + 工具链 ────────────
-FROM --platform=linux/amd64 ${BASE_IMAGE}
+FROM ${BASE_IMAGE}
 ARG NODE_VERSION
 ARG NODE_DIST_MIRROR
 ARG SUBFINDER_VERSION=v2.14.0
@@ -50,13 +50,14 @@ RUN uv sync --frozen --no-dev --no-install-project
 # 代码 + vendored 运行时（runtime/node 为 linux x86_64，镜像内强制替换官方发行版）
 COPY . .
 RUN set -eux; \
+    case "$(uname -m)" in x86_64) NDIST=linux-x64 ;; aarch64) NDIST=linux-arm64 ;; *) NDIST=linux-x64 ;; esac; \
     cd /tmp \
- && curl -fsSLO "${NODE_DIST_MIRROR}/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+ && curl -fsSLO "${NODE_DIST_MIRROR}/v${NODE_VERSION}/node-v${NODE_VERSION}-${NDIST}.tar.xz" \
  && rm -rf /app/runtime/node/v${NODE_VERSION} \
  && mkdir -p /app/runtime/node \
- && tar -xJf node-v${NODE_VERSION}-linux-x64.tar.xz -C /app/runtime/node \
- && mv /app/runtime/node/node-v${NODE_VERSION}-linux-x64 /app/runtime/node/v${NODE_VERSION} \
- && rm -f node-v${NODE_VERSION}-linux-x64.tar.xz \
+ && tar -xJf node-v${NODE_VERSION}-${NDIST}.tar.xz -C /app/runtime/node \
+ && mv /app/runtime/node/node-v${NODE_VERSION}-${NDIST} /app/runtime/node/v${NODE_VERSION} \
+ && rm -f node-v${NODE_VERSION}-${NDIST}.tar.xz \
  && ln -sf /app/runtime/node/v${NODE_VERSION}/bin/node /usr/local/bin/node \
  && /usr/local/bin/node --version
 RUN uv sync --frozen --no-dev \
