@@ -28,5 +28,5 @@ node_modules/
 /nologin.txt
 
 # Pi 运行时锁文件是部署物料（钉死 pi-coding-agent/pi-codemode 兼容组合）
-!axiom/deploy/pi-runtime/package-lock.json
-!axiom/deploy/pi-runtime/package.json
+!deploy/pi-runtime/package-lock.json
+!deploy/pi-runtime/package.json
