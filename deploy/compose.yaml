@@ -38,7 +38,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: ["axiom", "db", "upgrade"]
+    command: ["axiom", "db", "upgrade", "postgresql@head"]
     networks:
       - axiom
 
