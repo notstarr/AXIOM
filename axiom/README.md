@@ -6,6 +6,50 @@ AXIOM 是一个多智能体协同的自动化渗透测试编排平台：以 Post
 
 ---
 
+---
+
+## 0. 快速部署（新设备，从 GitHub）
+
+两条路线，按需选择：
+
+### 路线 A：容器化一键部署（推荐，需要 Docker）
+
+```bash
+git clone -b feat/reason-queue-050a20a https://github.com/notstarr/AXIOM.git && cd AXIOM
+docker compose -f compose.deploy.yaml up -d --build
+# 就绪后访问 http://127.0.0.1:18888
+```
+
+三件套（PostgreSQL + API + Runner）全自动：建库、迁移、首次管理员由 `AXIOM_ADMIN_USER/AXIOM_ADMIN_PASSWORD` 环境变量播种（不设则首次登录前 `docker exec axiom-deploy-app-1` 查看 data 目录）。Pi Worker 运行时在镜像构建阶段按 `pi_config.py` 的版本常量自动从 npm 拉取——干净 clone 也能构建。
+
+### 路线 B：宿主机原生部署（macOS launchd / Linux nohup）
+
+```bash
+git clone -b feat/reason-queue-050a20a https://github.com/notstarr/AXIOM.git && cd AXIOM
+
+# 1. Python 依赖（uv 或 venv）
+uv sync --frozen          # 或: python3 -m venv .venv && .venv/bin/pip install -e .
+
+# 2. Pi Worker 运行时（按 pi_config.py 常量自动下载 node + npm 包）
+./deploy/install-pi-runtime.sh
+
+# 3. Worker 安全工具链（nmap/subfinder/httpx/nuclei/katana/ffuf/naabu/sqlmap/fscan，
+#    版本基准见 deploy/tools-versions.env，走 GitHub API 资产流下载）
+./deploy/install-worker-tools.sh
+
+# 4. 首次管理员（启动前设置，启动时自动播种）
+export AXIOM_ADMIN_USER=axiom
+export AXIOM_ADMIN_PASSWORD='你的强密码'
+
+# 5. 启动（自动拉起 PostgreSQL 容器、跑迁移、生成 launchd plist / nohup 进程）
+./deploy/start.sh          # macOS: launchd 托管；Linux: nohup + pid 文件
+./deploy/restart.sh        # 日常重启 API + Runner
+```
+
+版本对齐基准见 `deploy/tools-versions.env` 与 `src/axiom/modules/workers/pi_config.py`（`PI_RUNTIME_VERSION` 是 Pi 运行时的唯一真相源）。健康检查：`curl http://127.0.0.1:8888/health`。
+
+---
+
 ## 1. 系统架构
 
 AXIOM 由两个宿主机常驻进程与一个 PostgreSQL 实例组成，API 是唯一的通信总线：

@@ -56,6 +56,23 @@ RUN uv sync --frozen --no-dev \
  && if [ -n "$PLAYWRIGHT_DOWNLOAD_HOST" ]; then export PLAYWRIGHT_DOWNLOAD_HOST; fi \
  && uv run --no-sync playwright install --with-deps chromium
 
+# Pi Worker 运行时：runtime/pi 被 gitignore，从 GitHub 干净 clone 构建时
+# 本目录为空。这里按 pi_config.py 的版本常量从 npm 自动拉取并生成与
+# 生产机同构的 bin/pi wrapper（本机构建若已 vendored 则自动跳过）。
+RUN set -eux; \
+    PI_VERSION=$(.venv/bin/python -c "from axiom.modules.workers.pi_config import PI_RUNTIME_VERSION as v; print(v)"); \
+    PI_DIR=/app/runtime/pi/${PI_VERSION}; \
+    PKG_JSON="$PI_DIR/node_modules/@earendil-works/pi-coding-agent/package.json"; \
+    if [ ! -f "$PKG_JSON" ]; then \
+      mkdir -p "$PI_DIR/bin"; \
+      printf '{"name":"axiom-pi-runtime","version":"0.0.0","private":true,"dependencies":{"@earendil-works/pi-coding-agent":"%s"}}\n' "$PI_VERSION" > "$PI_DIR/package.json"; \
+      (cd "$PI_DIR" && /app/runtime/node/v${NODE_VERSION}/bin/npm install --omit=dev --no-audit --no-fund); \
+      printf '#!/bin/sh\nset -eu\nHERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$HERE/../../../node/v%s/bin/node" "$HERE/../node_modules/@earendil-works/pi-coding-agent/dist/cli.js" "$@"\n' "${NODE_VERSION}" > "$PI_DIR/bin/pi"; \
+      chmod 0755 "$PI_DIR/bin/pi"; \
+      ln -sfn "v${NODE_VERSION}" /app/runtime/node/${NODE_VERSION}; \
+    fi; \
+    "$PI_DIR/bin/pi" --version
+
 # 浏览器 broker 通过 CHROME_BIN/PATH 启动 Chromium
 RUN ln -s "$(find /ms-playwright -maxdepth 3 -path '*chromium*/chrome-linux*/chrome' | head -n 1)" /usr/local/bin/chrome \
  && chmod 0755 /usr/local/bin/chrome
