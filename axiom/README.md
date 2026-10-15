@@ -57,6 +57,8 @@ export AXIOM_ADMIN_PASSWORD='你的强密码'
 
 版本对齐基准见 `deploy/tools-versions.env` 与 `src/axiom/modules/workers/pi_config.py`（`PI_RUNTIME_VERSION` 是 Pi 运行时的唯一真相源）。健康检查：`curl http://127.0.0.1:8888/health`。
 
+> **Linux 服务器正式部署**请用仓库根的 `deploy/install.sh`（一行安装 Docker Compose 发行版）+ `axiomctl update <version>`（拉取 GHCR 镜像、迁移、滚动重启，支持回滚）——与 ARL 的「构建完 → 更新器拉取重建」同款体验。push 到集成分支即自动构建镜像（`.github/workflows/docker-image.yml`），无需打 tag。本目录的 `deploy/` 是 macOS 开发机路线脚本；Linux 发行版体系在仓库根 `deploy/`。
+
 ---
 
 ## 1. 系统架构
