@@ -1,42 +1,41 @@
 # syntax=docker/dockerfile:1
-# AXIOM 一体化镜像：API/控制台 + 调度 Runner + pi Worker 运行时 + Chromium
+# AXIOM 一体化镜像：API/控制台 + 调度 Runner + pi Worker 运行时 + Chromium + 安全工具链
 # 国内网络可用 build-args 切镜像源（见 compose.deploy.yaml 注释），默认官方源
-# 平台钉死 amd64：vendored runtime/node + runtime/pi 为 linux x86_64 构建
+# 平台钉死 amd64：Pi 运行时为 linux x86_64 构建（npm ci 按本机锁文件安装）
+
+# ── 全局 ARG（必须在第一个 FROM 之前声明，对所有 stage 生效）────────
 ARG BASE_IMAGE=python:3.12-slim
 ARG NODE_VERSION=22.22.2
 ARG NODE_DIST_MIRROR=https://nodejs.org/dist
-# ffuf 构建阶段版本（全局 ARG：FROM 前声明才对所有 stage 生效）
 ARG GOLANG_IMAGE=golang:1.24-bookworm
 ARG FFUF_VERSION=2.1.0
-FROM --platform=linux/amd64 ${BASE_IMAGE}
-ARG NODE_VERSION
-ARG NODE_DIST_MIRROR
 
-# ffuf 构建阶段：官方 GitHub releases/tags 已清空，改走 Go module proxy
-# 安装固定版本（proxy 缓存了历史版本，不依赖 GitHub tags 存续）
+# ── ffuf 构建阶段：官方 GitHub releases/tags 已清空，改走 Go module
+#    proxy 安装固定版本（proxy 缓存历史版本，不依赖 GitHub tags 存续）──
 FROM --platform=linux/amd64 ${GOLANG_IMAGE} AS ffuf-builder
 ARG FFUF_VERSION
 RUN CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" \
       github.com/ffuf/ffuf/v2@v${FFUF_VERSION}
 
-ARG APT_MIRROR=deb.debian.org
-ARG PIP_INDEX_URL=https://pypi.org/simple
-ARG UV_DEFAULT_INDEX=https://pypi.org/simple
-ARG PLAYWRIGHT_DOWNLOAD_HOST=
+# ── 主阶段：API/控制台 + Runner + pi + Chromium + 工具链 ────────────
+FROM --platform=linux/amd64 ${BASE_IMAGE}
+ARG NODE_VERSION
+ARG NODE_DIST_MIRROR
+ARG SUBFINDER_VERSION=v2.14.0
+ARG HTTPX_VERSION=v1.9.0
+ARG NUCLEI_VERSION=v3.8.0
+ARG KATANA_VERSION=v1.6.1
+ARG NAABU_VERSION=v2.6.1
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_INDEX_URL=${PIP_INDEX_URL} \
-    UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX} \
+    UV_DEFAULT_INDEX=https://pypi.org/simple \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     CHROME_HEADLESS=1 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN set -eux; \
-    if [ "$APT_MIRROR" != "deb.debian.org" ]; then \
-      sed -ri "s|http://deb.debian.org|http://${APT_MIRROR}|g; s|https://deb.debian.org|https://${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null || true; \
-    fi; \
     apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl git xz-utils \
  && rm -rf /var/lib/apt/lists/* \
@@ -48,10 +47,8 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-# 代码 + vendored 运行时（runtime/node + runtime/pi 为 linux x86_64 构建，容器内原生可用）
+# 代码 + vendored 运行时（runtime/node 为 linux x86_64，镜像内强制替换官方发行版）
 COPY . .
-# 仓库 vendored 的 runtime/node 可能是构建机本地产物（macOS 二进制），
-# 镜像内强制替换为官方 linux-x64 发行版，保证 pi Worker 可执行
 RUN set -eux; \
     cd /tmp \
  && curl -fsSLO "${NODE_DIST_MIRROR}/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
@@ -63,13 +60,11 @@ RUN set -eux; \
  && ln -sf /app/runtime/node/v${NODE_VERSION}/bin/node /usr/local/bin/node \
  && /usr/local/bin/node --version
 RUN uv sync --frozen --no-dev \
- && if [ -n "$PLAYWRIGHT_DOWNLOAD_HOST" ]; then export PLAYWRIGHT_DOWNLOAD_HOST; fi \
  && uv run --no-sync playwright install --with-deps chromium
 
-# Pi Worker 运行时：runtime/pi 被 gitignore，从 GitHub 干净 clone 构建时
-# 本目录为空。这里用与本机一致的锁文件（deploy/pi-runtime/package-lock.json，
-# 钉死 pi-coding-agent 与 pi-codemode 的兼容版本组合）执行 npm ci 并生成
-# 与生产机同构的 bin/pi wrapper（本机构建若已 vendored 则自动跳过）。
+# Pi Worker 运行时：runtime/pi 被 gitignore，干净 clone 构建时用与本机
+# 一致的锁文件（deploy/pi-runtime/package-lock.json，钉死 pi-coding-agent
+# 与 pi-codemode 兼容组合）执行 npm ci（本机构建若已 vendored 则自动跳过）。
 COPY deploy/pi-runtime/package.json deploy/pi-runtime/package-lock.json /tmp/pi-runtime/
 RUN set -eux; \
     PI_VERSION=$(.venv/bin/python -c "from axiom.modules.workers.pi_config import PI_RUNTIME_VERSION as v; print(v)"); \
@@ -85,16 +80,11 @@ RUN set -eux; \
     fi; \
     "$PI_DIR/bin/pi" --version
 
-# ffuf：从 Go builder 阶段拷入（GitHub releases 已清空，走 module proxy 固定版本）
+# ffuf：从 Go builder 阶段拷入
 COPY --from=ffuf-builder /go/bin/ffuf /usr/local/bin/ffuf
 
 # Worker 安全工具链：版本与生产 Mac 实测对齐（2026-10-14 抓取）。
 # GitHub Actions 构建机上直接下载 release 资产不受本地网络限制。
-ARG SUBFINDER_VERSION=v2.14.0
-ARG HTTPX_VERSION=v1.9.0
-ARG NUCLEI_VERSION=v3.8.0
-ARG KATANA_VERSION=v1.6.1
-ARG NAABU_VERSION=v2.6.1
 RUN set -eux; \
     apt-get update \
  && apt-get install -y --no-install-recommends nmap unzip \
