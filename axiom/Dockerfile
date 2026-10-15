@@ -75,6 +75,39 @@ RUN set -eux; \
     fi; \
     "$PI_DIR/bin/pi" --version
 
+# Worker 安全工具链：版本与生产 Mac 实测对齐（2026-10-14 抓取）。
+# GitHub Actions 构建机上直接下载 release 资产不受本地网络限制。
+ARG SUBFINDER_VERSION=v2.14.0
+ARG HTTPX_VERSION=v1.9.0
+ARG NUCLEI_VERSION=v3.8.0
+ARG KATANA_VERSION=v1.6.1
+ARG NAABU_VERSION=v2.6.1
+ARG FFUF_VERSION=2.1.0
+ARG SQLMAP_VERSION=1.10.5.3
+RUN set -eux; \
+    apt-get update \
+ && apt-get install -y --no-install-recommends nmap unzip \
+ && rm -rf /var/lib/apt/lists/*; \
+    dl() { curl -fsSL --retry 3 -o /tmp/tool.dl "https://github.com/$1/releases/download/$2/$3"; }; \
+    unzip_tool() { local d; d="$(mktemp -d)"; unzip -o -q /tmp/tool.dl -d "$d"; \
+      find "$d" -type f -name "$4" -exec mv {} "$5" \; ; chmod 0755 "$5"; rm -rf "$d" /tmp/tool.dl; }; \
+    dl projectdiscovery/subfinder "${SUBFINDER_VERSION}" "subfinder_${SUBFINDER_VERSION#v}_linux_amd64.zip" \
+ && unzip_tool projectdiscovery/subfinder "${SUBFINDER_VERSION}" subfinder /usr/local/bin/subfinder; \
+    dl projectdiscovery/httpx "${HTTPX_VERSION}" "httpx_${HTTPX_VERSION#v}_linux_amd64.zip" \
+ && unzip_tool projectdiscovery/httpx "${HTTPX_VERSION}" httpx /usr/local/bin/httpx; \
+    dl projectdiscovery/nuclei "${NUCLEI_VERSION}" "nuclei_${NUCLEI_VERSION#v}_linux_amd64.zip" \
+ && unzip_tool projectdiscovery/nuclei "${NUCLEI_VERSION}" nuclei /usr/local/bin/nuclei; \
+    dl projectdiscovery/katana "${KATANA_VERSION}" "katana_${KATANA_VERSION#v}_linux_amd64.zip" \
+ && unzip_tool projectdiscovery/katana "${KATANA_VERSION}" katana /usr/local/bin/katana; \
+    dl projectdiscovery/naabu "${NAABU_VERSION}" "naabu_${NAABU_VERSION#v}_linux_amd64.zip" \
+ && unzip_tool projectdiscovery/naabu "${NAABU_VERSION}" naabu /usr/local/bin/naabu; \
+    dl joohoi/ffuf "${FFUF_VERSION}" "ffuf_${FFUF_VERSION}_linux_amd64.tar.gz" \
+ && tar -xzf /tmp/tool.dl -C /tmp && mv /tmp/ffuf /usr/local/bin/ffuf && rm -f /tmp/tool.dl; \
+    git clone --depth 1 --branch "${SQLMAP_VERSION}" https://github.com/sqlmapproject/sqlmap.git /opt/sqlmap; \
+    printf '#!/bin/sh\nexec /app/.venv/bin/python /opt/sqlmap/sqlmap.py "$@"\n' > /usr/local/bin/sqlmap; \
+    chmod 0755 /usr/local/bin/sqlmap; \
+    nmap --version | head -2; subfinder -version 2>&1 | head -1; nuclei -version 2>&1 | head -1
+
 # 浏览器 broker 通过 CHROME_BIN/PATH 启动 Chromium
 RUN ln -s "$(find /ms-playwright -maxdepth 3 -path '*chromium*/chrome-linux*/chrome' | head -n 1)" /usr/local/bin/chrome \
  && chmod 0755 /usr/local/bin/chrome

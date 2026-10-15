@@ -10,13 +10,6 @@ permissions:
   contents: read
   packages: write
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: notstarr/axiom
-  PI_RUNTIME_URL: ${{ secrets.AXIOM_PI_RUNTIME_URL }}
-  PI_RUNTIME_SHA256: ${{ secrets.AXIOM_PI_RUNTIME_SHA256 }}
-  PI_RUNTIME_TOKEN: ${{ secrets.AXIOM_PI_RUNTIME_TOKEN }}
-
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -32,65 +25,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 工具版本与生产 Mac 实测对齐（deploy/tools.env）
-      - name: Load pinned tool versions
-        run: grep -E '^AXIOM_[A-Z0-9_]+=' deploy/tools.env >> "$GITHUB_ENV"
-
-      # Pi 运行时：与正式发布同源（Linux x86_64 bundle，sha256 校验）
-      - name: Download and verify Pi runtime bundle
-        env:
-          TOKEN: ${{ env.PI_RUNTIME_TOKEN }}
-        run: |
-          set -euxo pipefail
-          test -n "$PI_RUNTIME_URL" || { echo 'AXIOM_PI_RUNTIME_URL is required'; exit 1; }
-          test -n "$PI_RUNTIME_SHA256" || { echo 'AXIOM_PI_RUNTIME_SHA256 is required'; exit 1; }
-          mkdir -p /tmp/pi-runtime
-          if [ -n "${TOKEN:-}" ]; then
-            curl --fail --location --retry 3 -H "Authorization: Bearer $TOKEN" \
-              "$PI_RUNTIME_URL" -o /tmp/pi-runtime.tar.gz
-          else
-            curl --fail --location --retry 3 "$PI_RUNTIME_URL" -o /tmp/pi-runtime.tar.gz
-          fi
-          echo "$PI_RUNTIME_SHA256  /tmp/pi-runtime.tar.gz" | sha256sum --check -
-          tar -xzf /tmp/pi-runtime.tar.gz -C /tmp/pi-runtime
-          test -f /tmp/pi-runtime/runtime/manifest.json
-          cp -a /tmp/pi-runtime/runtime/. runtime/
-
-      - name: Resolve pinned base image digests
-        id: bases
-        run: |
-          set -euo pipefail
-          resolve() {
-            local ref="$1" digest
-            digest="$(docker buildx imagetools inspect "$ref" | awk '$1 == "Digest:" {print $2; exit}')"
-            test -n "$digest"
-            printf '%s@%s\n' "$ref" "$digest"
-          }
-          {
-            echo "node=$(resolve node:22.22.2-bookworm-slim)"
-            echo "golang=$(resolve golang:1.24-bookworm)"
-            echo "python=$(resolve python:3.12-slim-bookworm)"
-          } >> "$GITHUB_OUTPUT"
-
+      # axiom/Dockerfile：uv 依赖 + npm ci 安装 Pi（本机锁文件钉版本）
+      # + 安全工具链（版本与生产 Mac 实测对齐，见 Dockerfile ARG 段）
       - uses: docker/build-push-action@v6
         with:
-          context: .
-          file: ./Dockerfile
+          context: ./axiom
+          file: ./axiom/Dockerfile
           platforms: linux/amd64
           push: true
           tags: |
             ghcr.io/notstarr/axiom:feat-reason-queue-050a20a
             ghcr.io/notstarr/axiom:latest
-          build-args: |
-            AXIOM_NODE_BASE_IMAGE=${{ steps.bases.outputs.node }}
-            AXIOM_GOLANG_BASE_IMAGE=${{ steps.bases.outputs.golang }}
-            AXIOM_PYTHON_BASE_IMAGE=${{ steps.bases.outputs.python }}
-            AXIOM_VERSION=0.0.0-branch
-            AXIOM_REVISION=${{ github.sha }}
-            AXIOM_FFUF_VERSION=${{ env.AXIOM_FFUF_VERSION }}
-            AXIOM_KATANA_VERSION=${{ env.AXIOM_KATANA_VERSION }}
-            AXIOM_HTTPX_VERSION=${{ env.AXIOM_HTTPX_VERSION }}
-            AXIOM_SUBFINDER_VERSION=${{ env.AXIOM_SUBFINDER_VERSION }}
-            AXIOM_NUCLEI_VERSION=${{ env.AXIOM_NUCLEI_VERSION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
