@@ -14,13 +14,22 @@ AXIOM 是一个多智能体协同的自动化渗透测试编排平台：以 Post
 
 ### 路线 A：容器化一键部署（推荐，需要 Docker）
 
+**最快方式：拉 GHCR 预构建镜像（GitHub Actions 每次 push 自动构建发布），不用本地构建：**
+
 ```bash
 git clone -b feat/reason-queue-050a20a https://github.com/notstarr/AXIOM.git && cd AXIOM
-docker compose -f compose.deploy.yaml up -d --build
-# 就绪后访问 http://127.0.0.1:18888
+make pull-up        # = 拉镜像 + 起三件套 + 健康检查；就绪后访问 http://127.0.0.1:18888
+make upgrade        # 日常升级：git pull + 换最新镜像（秒级，数据卷不受影响）
 ```
 
-三件套（PostgreSQL + API + Runner）全自动：建库、迁移、首次管理员由 `AXIOM_ADMIN_USER/AXIOM_ADMIN_PASSWORD` 环境变量播种（不设则首次登录前 `docker exec axiom-deploy-app-1` 查看 data 目录）。Pi Worker 运行时在镜像构建阶段按 `pi_config.py` 的版本常量自动从 npm 拉取——干净 clone 也能构建。
+**或本地构建：**
+
+```bash
+git clone -b feat/reason-queue-050a20a https://github.com/notstarr/AXIOM.git && cd AXIOM
+make up             # = docker compose -f compose.deploy.yaml up -d --build
+```
+
+三件套（PostgreSQL + API + Runner）全自动：建库、迁移、首次管理员由 `AXIOM_ADMIN_USER/AXIOM_ADMIN_PASSWORD` 环境变量播种。Pi Worker 运行时在镜像构建阶段按 `pi_config.py` 的版本常量自动从 npm 拉取——干净 clone 也能构建。升级语义与云上应用一致：**镜像不可变替换，数据卷持久**（`make upgrade` 即可）。
 
 ### 路线 B：宿主机原生部署（macOS launchd / Linux nohup）
 

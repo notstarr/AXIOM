@@ -29,7 +29,9 @@ services:
 
   app:
     build: .
-    image: axiom-app:latest
+    # 本地构建默认 axiom-app:latest；也可指向 GHCR 预构建镜像：
+    #   AXIOM_APP_IMAGE=ghcr.io/notstarr/axiom:feat-reason-queue-050a20a
+    image: ${AXIOM_APP_IMAGE:-axiom-app:latest}
     restart: unless-stopped
     init: true
     depends_on:
@@ -66,7 +68,7 @@ services:
       - axiom
 
   runner:
-    image: axiom-app:latest
+    image: ${AXIOM_APP_IMAGE:-axiom-app:latest}
     restart: unless-stopped
     init: true
     depends_on:
