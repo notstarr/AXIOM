@@ -39,6 +39,8 @@ BOOTSTRAP_ARTIFACT_PATTERNS = (
 
 
 def bootstrap_artifact_type(filename: str) -> str:
+    if filename.startswith("evidence/"):
+        return "bootstrap.evidence"
     for pattern, artifact_type, _ in BOOTSTRAP_ARTIFACT_PATTERNS:
         if pattern.match(filename):
             return artifact_type
@@ -46,6 +48,8 @@ def bootstrap_artifact_type(filename: str) -> str:
 
 
 def bootstrap_artifact_summary(filename: str) -> str:
+    if filename.startswith("evidence/"):
+        return f"Bootstrap 证据：{filename}"
     for pattern, _, summary in BOOTSTRAP_ARTIFACT_PATTERNS:
         if pattern.match(filename):
             prefix, suffix = "jsfinder_result-", ".json"

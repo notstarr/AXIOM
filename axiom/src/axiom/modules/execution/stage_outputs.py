@@ -150,11 +150,21 @@ def bootstrap_files(run_dir: str | Path) -> list[StageFile]:
                     )
                 )
     results.extend(_collect_bootstrap_extras(root, registered={item.relative_name for item in results}))
+    results.extend(_collect_bootstrap_evidence(root, registered={item.relative_name for item in results}))
     return results
 
 
 BOOTSTRAP_EXTRA_MAX_FILES = 20
 BOOTSTRAP_EXTRA_MAX_BYTES = 10 * 1024 * 1024
+BOOTSTRAP_MAX_EVIDENCE_FILES = 48
+# worker 留证习惯不统一：技能脚本写 `{run_dir}/evidence/`，提示词约定写
+# `{run_dir}/artifacts/evidence/`。两处都收，登记名统一为 evidence/<rel>。
+BOOTSTRAP_EVIDENCE_DIRS = ("evidence", "artifacts/evidence")
+# 凭证正文不进产物中心：产物会被导出报告引用，登记等于把会话凭证写进交付物。
+BOOTSTRAP_EVIDENCE_SECRET_PATTERN = re.compile(
+    r"(?:^|[-_.])(?:credentials?|creds?|tokens?|cookies?|secrets?|sessions?|sids?)(?:[-_.]|$)",
+    re.IGNORECASE,
+)
 _BOOTSTRAP_SYSTEM_FILES = frozenset(
     {
         "bootstrap_artifacts.json",
@@ -200,6 +210,9 @@ def _collect_bootstrap_extras(root: Path, *, registered: set[str]) -> list[Stage
             continue
         if size == 0:
             continue
+        if size <= _PLACEHOLDER_MAX_BYTES and _is_placeholder_content(path):
+            logger.warning("Bootstrap 额外产物是空占位内容，已丢弃：%s", path.name)
+            continue
         if size > BOOTSTRAP_EXTRA_MAX_BYTES:
             logger.warning("Bootstrap 额外产物超 10MB，已丢弃：%s（%d bytes）", path.name, size)
             continue
@@ -214,6 +227,97 @@ def _collect_bootstrap_extras(root: Path, *, registered: set[str]) -> list[Stage
     if skipped:
         logger.warning("Bootstrap 额外产物中跳过非安全/目录项：%s", "、".join(skipped))
     return extras
+
+
+_PLACEHOLDER_MAX_BYTES = 64
+_PLACEHOLDER_CONTENT = frozenset(
+    {"", "{}", "[]", "null", "none", "nil", "n/a", "na", "-", "not found", "404 not found"}
+)
+
+
+def _is_placeholder_content(path: Path) -> bool:
+    """`{}`、`[]` 这类占位内容对复盘没有价值，只会污染产物中心。"""
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return False
+    return text.casefold() in _PLACEHOLDER_CONTENT
+
+
+def _collect_bootstrap_evidence(root: Path, *, registered: set[str]) -> list[StageFile]:
+    """登记 Bootstrap 留证文件。
+
+    证据在 lease 释放时会被保留到任务证据目录，但只有完成时登记成 artifact
+    才会进产物中心；此前整个 evidence/ 目录被当作子目录跳过，证据因此不可见。
+    """
+    collected: dict[str, StageFile] = {}
+    skipped: list[str] = []
+    for directory in BOOTSTRAP_EVIDENCE_DIRS:
+        evidence_root = root / directory
+        if not evidence_root.is_dir() or evidence_root.is_symlink():
+            continue
+        for current_root, directory_names, file_names in os.walk(
+            evidence_root,
+            topdown=True,
+            followlinks=False,
+        ):
+            current = Path(current_root)
+            directory_names.sort()
+            file_names.sort()
+            retained: list[str] = []
+            for name in directory_names:
+                path = current / name
+                relative = path.relative_to(root)
+                if _safe_explore_relative(relative) and not path.is_symlink():
+                    retained.append(name)
+                else:
+                    skipped.append(relative.as_posix() + "/")
+            directory_names[:] = retained
+            for name in file_names:
+                path = current / name
+                relative = Path("evidence") / path.relative_to(evidence_root)
+                relative_name = relative.as_posix()
+                if relative_name in collected or relative_name in registered:
+                    continue
+                if not _safe_explore_relative(relative) or path.is_symlink():
+                    skipped.append(relative_name)
+                    continue
+                if BOOTSTRAP_EVIDENCE_SECRET_PATTERN.search(name):
+                    skipped.append(relative_name)
+                    continue
+                try:
+                    _require_regular_output(path, root)
+                    if path.stat().st_size <= 0:
+                        skipped.append(relative_name)
+                        continue
+                    if path.stat().st_size <= _PLACEHOLDER_MAX_BYTES and _is_placeholder_content(path):
+                        skipped.append(relative_name)
+                        continue
+                except (StageOutputError, OSError):
+                    skipped.append(relative_name)
+                    continue
+                collected[relative_name] = StageFile(
+                    relative_name=relative_name,
+                    path=path,
+                    artifact_type="bootstrap.evidence",
+                    summary=f"Bootstrap 证据：{relative_name}",
+                )
+    if skipped:
+        logger.warning(
+            "Bootstrap 证据目录跳过无效项 run_dir=%s count=%d samples=%r",
+            root,
+            len(skipped),
+            skipped[:5],
+        )
+    items = sorted(collected.values(), key=lambda item: item.relative_name)
+    if len(items) > BOOTSTRAP_MAX_EVIDENCE_FILES:
+        logger.warning(
+            "Bootstrap 证据超过 %d 个，余者不登记：%r",
+            BOOTSTRAP_MAX_EVIDENCE_FILES,
+            [item.relative_name for item in items[BOOTSTRAP_MAX_EVIDENCE_FILES:]],
+        )
+        items = items[:BOOTSTRAP_MAX_EVIDENCE_FILES]
+    return items
 
 
 def explore_files(

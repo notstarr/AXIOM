@@ -1018,6 +1018,7 @@ window.AxiomModules.human = {
       const type = String(item?.artifact_type || '').toLowerCase();
       if (type.includes('lead')) return 'Leads';
       if (type.includes('finding')) return 'Findings';
+      if (type.includes('evidence')) return 'Evidence';
       if (type.includes('asset')) return '攻击面';
       return item?.artifact_type || 'Artifact';
     },

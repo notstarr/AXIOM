@@ -12,17 +12,7 @@
 - 登录态可用时，访问认证后资源（控制台/后台），补全登录后 JS 资源。
 
 ### 2. 抽取 API 能力树（核心产出）
-**能力树数据底座（jsfinder，先跑）**：
-   ```bash
-   cd "<主提示词给出的运行目录>" && "$AXIOM_PYTHON" "$AXIOM_BOOTSTRAP_TOOLS/jsfinder.py" "<入口URL>"
-   ```
-   **默认参数即可跑**（除入口 URL 外都可选；需要登录态时加 `--cookie`）。读 `AXIOM_RUN_DIR`，产出十类信息（新增「前端路由」分类(Vue/React/Angular 路由声明与导航调用，按站点分组)，API接口按域/前缀分组，含 `METHOD path | query/body/header` 调用点注解；登录态可用时加 `--cookie "<会话Cookie>"` 补认证后接口）。退出码：0=有结果；2=零命中（换入口或带登录态重跑）；3=入口不可达（在资产清单中如实记录收集失败）。该 JSON 为可选数据底座；资产清单与初始线索清单仍由你基于它结合深度分析撰写。
-   登录态到手后（`"$AXIOM_BSK" credentials --domain <域名> --session <id>` 取 Cookie/Storage，或登录页 Cookie），**必须带 Cookie 再跑一次**——认证后 chunk 里的接口树是匿名爬取拿不到的。这次运行产出的是**另一份独立产物**（不替换匿名轮那份），两份都要保留：
-   ```bash
-   cd "<运行目录>" && "$AXIOM_PYTHON" "$AXIOM_BOOTSTRAP_TOOLS/jsfinder.py" "<认证后页面URL>" --cookie "<会话Cookie>"
-   ```
-**产物「一次运行一个文件」，默认不覆盖**：名为 `jsfinder_result-<域名>-<路径>-<随机后缀>.json`；`--out` / `--tag` 可选，通常不用传。
-   **每个入口各跑一次**：入口不止一个时（如 `/admin`、`/test`）分别跑、各留一份产物。**凡是在页面 / JS / Source Map 里发现的新前端路由或入口（其它路径、管理台、其它子域），都要用同一脚本补跑一次**，不要以为一轮扫描就覆盖了全站。若某次运行 JS 数撞到 `--max-js` 上限，说明**没扫全**，应缩窄入口或提高上限再跑。收口前请读**全部** `jsfinder_result*.json` 合并成能力树。
+**能力树数据底座（jsfinder，先跑）**：按 `jsfinder` Skill 的说明执行（先 `axiom skill path jsfinder` 读用法）：每个入口各跑一次；登录态到手后带 Cookie 补跑一次；在页面 / JS / Source Map 里发现新前端路由或入口再补跑。产物一次运行一份、不覆盖，收口前读**全部** `jsfinder_result*.json` 合并成能力树。退出码 3=入口不可达，在资产清单中如实记录收集失败。该 JSON 是可选数据底座；资产清单与初始线索清单仍由你基于它结合深度分析撰写。
 对业务主 JS Bundle（通常 > 200KB）进行深度分析，禁止仅靠简单正则扫零散 URL：
 1. **前缀域**：识别前缀常量（如 `["/api/v1", "/api/automation", "/api/console"]`），全部列出。
 2. **底座拼装函数**：定位 URL 构造函数（如 `const Foo=e=>'/prefix/'+e+'/resource'`），记录参数槽。

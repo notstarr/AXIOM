@@ -344,7 +344,6 @@ class PiBootstrapExecutor:
         environment.update(
             {
                 "AXIOM_RUN_DIR": execution_input.run_dir,
-                "AXIOM_BOOTSTRAP_TOOLS": str(Path(__file__).resolve().parent / "tools" / "bootstrap"),
                 "AXIOM_TASK_ID": execution_input.task_id,
                 "AXIOM_PROJECT_ID": execution_input.project_id,
                 "AXIOM_LEASE_ID": execution_input.lease_id,

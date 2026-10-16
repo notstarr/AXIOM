@@ -35,11 +35,14 @@ KINDS = ("skill", "mcp_tool", "axiom_tool")
 _DEFAULTS_MARKER = ".phase-capabilities-v1-initialized"
 _BROWSER_BOOTSTRAP_MARKER = ".phase-capabilities-v2-browser-bootstrap"
 _SCORING_SCOPES_MARKER = ".phase-capabilities-v3-redteam-scoring-scopes"
+_JSFINDER_SCOPES_MARKER = ".phase-capabilities-v4-jsfinder-scopes"
 _REDTEAM_SCORING_EXTRA_SCOPES = ("bootstrap", "reason", "plan", "review")
+_JSFINDER_SCOPES = ("bootstrap", "reason", "explore")
 _MCP_NAME_PART = re.compile(r"[^a-z0-9_]+")
 _DEFAULT_SKILL_SCOPES = {
     "vuln-review": ("review",),
     "browser-control": ("bootstrap", "explore"),
+    "jsfinder": _JSFINDER_SCOPES,
     "redteam-scoring": ("bootstrap", "reason", "explore", "plan", "review"),
     "redteam-review": ("review",),
 }
@@ -621,6 +624,7 @@ class PhaseCapabilityService:
         marker = self.data_dir / _DEFAULTS_MARKER
         browser_marker = self.data_dir / _BROWSER_BOOTSTRAP_MARKER
         scoring_marker = self.data_dir / _SCORING_SCOPES_MARKER
+        jsfinder_marker = self.data_dir / _JSFINDER_SCOPES_MARKER
         skill_records = self.skills.list()
         with transaction(self.engine) as conn:
             if not marker.exists():
@@ -684,6 +688,27 @@ class PhaseCapabilityService:
                             capability_key="redteam-scoring",
                             now=now,
                         )
+            # jsfinder 原先是 bootstrap 专用内置工具，升级为 Skill 后老安装
+            # 没有任何绑定。一次性补上三个阶段；之后的解绑保持解绑。
+            if not jsfinder_marker.exists():
+                jsfinder_skill = next(
+                    (skill for skill in skill_records if skill.name == "jsfinder"),
+                    None,
+                )
+                if (
+                    jsfinder_skill is not None
+                    and jsfinder_skill.enabled
+                    and Path(jsfinder_skill.path).is_file()
+                ):
+                    now = utcnow()
+                    for scope in _JSFINDER_SCOPES:
+                        self.repository.ensure(
+                            conn,
+                            scope=scope,
+                            capability_kind="skill",
+                            capability_key="jsfinder",
+                            now=now,
+                        )
             self._ensure_mandatory_locked(conn, skill_records=skill_records)
         if not marker.exists():
             marker.parent.mkdir(parents=True, exist_ok=True)
@@ -700,6 +725,11 @@ class PhaseCapabilityService:
             temporary = scoring_marker.with_name(f".{scoring_marker.name}.tmp")
             temporary.write_text(utcnow() + "\n", encoding="utf-8")
             temporary.replace(scoring_marker)
+        if not jsfinder_marker.exists():
+            jsfinder_marker.parent.mkdir(parents=True, exist_ok=True)
+            temporary = jsfinder_marker.with_name(f".{jsfinder_marker.name}.tmp")
+            temporary.write_text(utcnow() + "\n", encoding="utf-8")
+            temporary.replace(jsfinder_marker)
 
     def _ensure_mandatory_locked(self, conn, *, skill_records=None) -> None:
         now = utcnow()

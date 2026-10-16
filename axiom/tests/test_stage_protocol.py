@@ -98,6 +98,47 @@ def test_bootstrap_ignores_missing_or_invalid_jsfinder_output(tmp_path: Path) ->
     ]
 
 
+def test_bootstrap_registers_evidence_from_both_evidence_dirs(tmp_path: Path) -> None:
+    for filename in ("asset_inventory.md", "initial_leads.md"):
+        (tmp_path / filename).write_text(f"# {filename}\n", encoding="utf-8")
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    (evidence / "baseline-api.txt").write_text("HTTP/1.1 200 OK\n", encoding="utf-8")
+    (evidence / "empty.txt").write_text("", encoding="utf-8")
+    nested = evidence / "sub"
+    nested.mkdir()
+    (nested / "debug.json").write_text('{"a":1}', encoding="utf-8")
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "evidence").mkdir()
+    (artifacts / "evidence" / "auth.txt").write_text("authorization: Bearer x\n", encoding="utf-8")
+    # 与 evidence/ 同名时只登记一次
+    (artifacts / "evidence" / "baseline-api.txt").write_text("dup\n", encoding="utf-8")
+
+    outputs = bootstrap_files(tmp_path)
+
+    evidence_outputs = [item for item in outputs if item.artifact_type == "bootstrap.evidence"]
+    assert [item.relative_name for item in evidence_outputs] == [
+        "evidence/auth.txt",
+        "evidence/baseline-api.txt",
+        "evidence/sub/debug.json",
+    ]
+    assert all(item.summary.startswith("Bootstrap 证据：") for item in evidence_outputs)
+
+
+def test_bootstrap_skips_placeholder_extra_files(tmp_path: Path) -> None:
+    for filename in ("asset_inventory.md", "initial_leads.md"):
+        (tmp_path / filename).write_text(f"# {filename}\n", encoding="utf-8")
+    (tmp_path / "mcp-auth.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("real\n", encoding="utf-8")
+
+    outputs = bootstrap_files(tmp_path)
+
+    names = [item.relative_name for item in outputs]
+    assert "mcp-auth.json" not in names
+    assert "notes.txt" in names
+
+
 def test_explore_collects_only_artifacts_directory(tmp_path: Path) -> None:
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()

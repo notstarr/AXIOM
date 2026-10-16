@@ -14,7 +14,7 @@
 1. 运行 `axiom plan status`。读攻击链、成果和积分进度，以及历史 findings.md、leads.md。缺口优先补高分行：靶标、域控、核心服务器最高权限、核心数据大档、穿透。读 `redteam-scoring`。
 2. 用 `axiom plan chain add` 或 `axiom plan chain update` 维护链。走死的链用 `axiom plan chain abandon --chain-id chXXX --reason "..."`。
 3. 派发挂在链上：`axiom plan intent propose --chain-id chXXX` 或 `--chain-ref`。
-4. leads 可以变成同一条链的下一步、另开一条链，或丢掉。
+4. leads 可以变成同一条链的下一步、另开一条链，或丢掉。外网还没拿到立足点时，先派 Web 应用的接口与功能测绘和利用；缺少接口来源和鉴权模型的匿名后端盲测直接丢掉，不要派发。
 5. 提交 `axiom plan decision submit dispatch_explore`。只有当前可见的高性价比链都走死了，才允许 `exhausted`。
 6. 运行 `axiom plan status` 确认 `ready=true`。
 

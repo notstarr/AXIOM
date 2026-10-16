@@ -2433,6 +2433,7 @@
       if (type === 'explore.findings') return 'Findings';
       if (type === 'explore.leads') return 'Leads';
       if (type === 'explore.evidence') return 'Evidence';
+      if (type === 'bootstrap.evidence') return 'Evidence';
       if (type === 'review.report') return 'Review';
       if (type === 'review.evidence') return 'Review Evidence';
       return item?.artifact_type || 'Artifact';
@@ -2442,6 +2443,7 @@
       if (type === 'explore.findings') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
       if (type === 'explore.leads') return 'border-amber-200 bg-amber-50 text-amber-700';
       if (type === 'explore.evidence') return 'border-blue-200 bg-blue-50 text-blue-700';
+      if (type === 'bootstrap.evidence') return 'border-blue-200 bg-blue-50 text-blue-700';
       if (type === 'review.report') return 'border-violet-200 bg-violet-50 text-violet-700';
       if (type === 'review.evidence') return 'border-cyan-200 bg-cyan-50 text-cyan-700';
       return 'border-slate-200 bg-slate-100 text-slate-500';

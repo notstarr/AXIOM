@@ -19,6 +19,8 @@
    - 更新：`axiom reason chain update --chain-id chXXX --status open|partial|blocked|completed --status-reason "..."`
    - 放弃：`axiom reason chain abandon --chain-id chXXX --reason "..."`
 4. leads 是未完成方向。把它变成同一条链的下一条 Intent，另开一条链，或丢掉。丢掉不产生 Todo。
+   外网还没拿到立足点（无 Web 管理员、无主机权限、无核心数据）时，先派 Web 应用的接口与功能测绘和利用，把口子撕开再往纵深走。不给匿名后端域名派发缺少接口来源和鉴权模型的盲模糊测试 Intent——这类 Intent 换不到积分，直接丢掉。
+   派发 Web 应用测绘类 Intent 时，在 description 里点名要求 Explore 用 `jsfinder` Skill 跑能力树底座；评估已有成果时优先读 `jsfinder_result*.json` 产物，不要自己重新探测。
 5. 派发挂在链上：
    ```bash
    axiom reason intent propose --chain-id chXXX --title "这一步" --description "<要拿到的能力或资产>" --from-fact fXXX
