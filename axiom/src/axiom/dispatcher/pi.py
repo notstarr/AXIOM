@@ -124,6 +124,14 @@ _REASON_PROMPT_PROFILE_FILES = {
     "human": "reason_human.md",
     "continuation": "reason_continuation.md",
 }
+REDTEAM_CONTEXT_ATTENTION_SYSTEM_PROMPT = (
+    "本任务是红队积分模式。规划对象是攻击链和挂在链上的 Intent。"
+    "先读注入块中的 red_team_objective、red_team_chains、red_team_results、"
+    "red_team_current_state。Explore 的延续是 findings.md 和 leads.md；"
+    "下一步 Intent 由 Reason 或 Plan 挂到链上。成果走 Result 上报和审核，"
+    "不创建 Vulnerability，不维护 Todo。"
+    "冲突时遵循：系统规则/Scope/本模式阶段合同 > Task Hint > Project Knowledge > Skill。"
+)
 CONTEXT_ATTENTION_SYSTEM_PROMPT = (
     "在开始规划或执行任何操作前，先确认本系统提示末尾的 AXIOM INJECTED CONTEXT 注入块："
     "hints.json、knowledge.json、vulnerabilities.json 等任务上下文与 whatisvul 判定标准"
@@ -210,7 +218,7 @@ class PiBootstrapExecutor:
             raise TransientWorkerError("Bootstrap Context manifest is unavailable")
         self._session_id = self._session_id or uuid.uuid4().hex
         bootstrap_prompt = self.prompts.render(
-            "bootstrap.md",
+            _stage_prompt("bootstrap.md", execution_input.engagement_mode),
             {
                 "task_id": execution_input.task_id,
                 "intent_id": execution_input.intent_id,
@@ -219,11 +227,12 @@ class PiBootstrapExecutor:
                 "scope_guidance": _scope_guidance(execution_input.scope),
                 "context_manifest_path": execution_input.context_manifest_path,
                 "run_dir": execution_input.run_dir,
-                "skill_directories": _format_skill_directories(execution_input.skill_directories),
+                "skill_directories": _format_skill_directories(
+                    execution_input.skill_directories,
+                    execution_input.engagement_mode,
+                ),
             },
         )
-        if execution_input.engagement_mode == "red_team":
-            bootstrap_prompt += "\n\n---\n\n" + self.prompts.render("bootstrap_redteam.md", {})
         result = self._run(
             execution_input,
             bootstrap_prompt,
@@ -244,7 +253,7 @@ class PiBootstrapExecutor:
         result = self._run(
             execution_input,
             self.prompts.render(
-                "bootstrap_conclude.md",
+                _stage_prompt("bootstrap_conclude.md", execution_input.engagement_mode),
                 {
                     "task_id": execution_input.task_id,
                     "intent_id": execution_input.intent_id,
@@ -502,6 +511,7 @@ class PiBootstrapExecutor:
             session_dir,
             tool_names,
             skill_paths=execution_input.skill_directories,
+            engagement_mode=getattr(execution_input, "engagement_mode", "vulnerability"),
             guard_enabled=execution_input.guard_enabled,
             mode="rpc" if rpc else "json",
             axiom_tool_extensions=(
@@ -735,15 +745,19 @@ class PiBootstrapExecutor:
         mcp_mode: str = "legacy",
         mcp_server_names: list[str] | None = None,
         browser_enabled: bool = False,
+        engagement_mode: str = "vulnerability",
         injected_system_context: str = "",
         binary: str | None = None,
         runtime_extension_paths: dict[str, str] | None = None,
     ) -> list[str]:
-        attention_prompt = (
-            CONTEXT_ATTENTION_SYSTEM_PROMPT
-            if "bash" in tool_names
-            else NO_BASH_CONTEXT_ATTENTION_SYSTEM_PROMPT
-        )
+        if engagement_mode == "red_team":
+            attention_prompt = REDTEAM_CONTEXT_ATTENTION_SYSTEM_PROMPT
+        else:
+            attention_prompt = (
+                CONTEXT_ATTENTION_SYSTEM_PROMPT
+                if "bash" in tool_names
+                else NO_BASH_CONTEXT_ATTENTION_SYSTEM_PROMPT
+            )
         if injected_system_context.strip():
             attention_prompt = attention_prompt.rstrip() + "\n\n" + injected_system_context.strip()
         argv = [
@@ -1077,20 +1091,24 @@ class PiReasonExecutor(PiBootstrapExecutor):
             "target_guidance": _reason_target_guidance(execution_input.scope),
             "context_manifest_path": execution_input.context_manifest_path,
             "run_dir": execution_input.run_dir,
-            "skill_directories": _format_skill_directories(execution_input.skill_directories),
+            "skill_directories": _format_skill_directories(
+                execution_input.skill_directories,
+                execution_input.engagement_mode,
+            ),
         }
         profile = getattr(execution_input, "reason_prompt_profile", "default") or "default"
+        if execution_input.engagement_mode == "red_team":
+            return (
+                self.prompts.render("reason_redteam.md", values)
+                + "\n\n---\n\n"
+                + self.prompts.render("reason_profile_redteam.md", {})
+            )
         profile_file = _REASON_PROMPT_PROFILE_FILES.get(profile, "reason_default.md")
         return (
             self.prompts.render("reason.md", values)
             + "\n\n---\n\n"
             + f"# 本轮 Reason 场景策略（由 AXIOM 代码固定注入：{profile}）\n\n"
             + self.prompts.render(profile_file, {})
-            + (
-                "\n\n---\n\n" + self.prompts.render("reason_redteam.md", {})
-                if execution_input.engagement_mode == "red_team"
-                else ""
-            )
         )
 
     def conclude(
@@ -1106,7 +1124,7 @@ class PiReasonExecutor(PiBootstrapExecutor):
         result = self._run(
             execution_input,
             self.prompts.render(
-                "reason_conclude.md",
+                _stage_prompt("reason_conclude.md", execution_input.engagement_mode),
                 {
                     "task_id": execution_input.task_id,
                     "reason_run_id": execution_input.reason_run_id or "",
@@ -1172,8 +1190,8 @@ class PiPlanExecutor(PiBootstrapExecutor):
         return self._last_assistant_text(result)
 
     def _build_plan_prompt(self, execution_input: PlanExecutionInput) -> str:
-        prompt = self.prompts.render(
-            "plan.md",
+        return self.prompts.render(
+            _stage_prompt("plan.md", execution_input.engagement_mode),
             {
                 "task_id": execution_input.task_id,
                 "plan_run_id": execution_input.plan_run_id,
@@ -1182,13 +1200,11 @@ class PiPlanExecutor(PiBootstrapExecutor):
                 "context_manifest_path": execution_input.context_manifest_path or "",
                 "run_dir": execution_input.run_dir,
                 "skill_directories": _format_skill_directories(
-                    execution_input.skill_directories
+                    execution_input.skill_directories,
+                    execution_input.engagement_mode,
                 ),
             },
         )
-        if execution_input.engagement_mode == "red_team":
-            prompt += "\n\n---\n\n" + self.prompts.render("plan_redteam.md", {})
-        return prompt
 
     def conclude(
         self,
@@ -1205,7 +1221,7 @@ class PiPlanExecutor(PiBootstrapExecutor):
         result = self._run(
             execution_input,
             self.prompts.render(
-                "plan_conclude.md",
+                _stage_prompt("plan_conclude.md", execution_input.engagement_mode),
                 {
                     "task_id": execution_input.task_id,
                     "plan_run_id": execution_input.plan_run_id,
@@ -1246,11 +1262,12 @@ class PiExploreExecutor(PiBootstrapExecutor):
             start_armed=False,
         )
         explore_prompt = self.prompts.render(
-            "explore.md",
+            _stage_prompt("explore.md", execution_input.engagement_mode),
             {
                 "task_id": execution_input.task_id,
                 "intent_id": execution_input.intent_id,
                 "todo_id": execution_input.todo_id or "无",
+                "chain_id": execution_input.chain_id or "未绑定",
                 "intent_description": execution_input.intent_description,
                 "intent_targets": _intent_targets_text(execution_input.intent_targets),
                 "origin": execution_input.origin,
@@ -1258,11 +1275,12 @@ class PiExploreExecutor(PiBootstrapExecutor):
                 "scope_guidance": _scope_guidance(execution_input.scope),
                 "context_manifest_path": execution_input.context_manifest_path,
                 "run_dir": execution_input.run_dir,
-                "skill_directories": _format_skill_directories(execution_input.skill_directories),
+                "skill_directories": _format_skill_directories(
+                    execution_input.skill_directories,
+                    execution_input.engagement_mode,
+                ),
             },
         )
-        if execution_input.engagement_mode == "red_team":
-            explore_prompt += "\n\n---\n\n" + self.prompts.render("explore_redteam.md", {})
         result = self._run(
             execution_input,
             explore_prompt,
@@ -1294,14 +1312,15 @@ class PiExploreExecutor(PiBootstrapExecutor):
         result = self._run(
             execution_input,
             self.prompts.render(
-                "explore_conclude.md",
+                _stage_prompt("explore_conclude.md", execution_input.engagement_mode),
                 {
                     "task_id": execution_input.task_id,
                     "intent_id": execution_input.intent_id,
                     "intent_description": execution_input.intent_description,
                     "run_dir": execution_input.run_dir,
                     "skill_directories": _format_skill_directories(
-                        execution_input.skill_directories
+                        execution_input.skill_directories,
+                        execution_input.engagement_mode,
                     ),
                 },
             )
@@ -1336,11 +1355,12 @@ class PiReviewExecutor(PiBootstrapExecutor):
         result = self._run(
             execution_input,
             self.prompts.render(
-                "review.md",
+                "review_redteam.md" if execution_input.red_team_result_id else "review.md",
                 {
                     "task_id": execution_input.task_id,
                     "review_run_id": execution_input.review_run_id,
                     "vulnerability_id": execution_input.vulnerability_id or execution_input.red_team_result_id,
+                    "result_id": execution_input.red_team_result_id or execution_input.vulnerability_id or "",
                     "review_reason": execution_input.intent_description,
                     "origin": execution_input.origin,
                     "goal": execution_input.goal,
@@ -1348,12 +1368,10 @@ class PiReviewExecutor(PiBootstrapExecutor):
                     "context_manifest_path": execution_input.context_manifest_path,
                     "run_dir": execution_input.run_dir,
                     "skill_directories": _format_skill_directories(
-                        execution_input.skill_directories
+                        execution_input.skill_directories,
+                        "red_team" if execution_input.red_team_result_id else "vulnerability",
                     ),
                 },
-            ) + (
-                "\n\n---\n\n" + self.prompts.render("review_redteam.md", {})
-                if execution_input.red_team_result_id else ""
             ),
             lease_active=lease_active,
             timeout_seconds=execution_input.execute_timeout_seconds or 300,
@@ -1378,11 +1396,12 @@ class PiReviewExecutor(PiBootstrapExecutor):
         result = self._run(
             execution_input,
             self.prompts.render(
-                "review_conclude.md",
+                "review_conclude_redteam.md" if execution_input.red_team_result_id else "review_conclude.md",
                 {
                     "task_id": execution_input.task_id,
                     "review_run_id": execution_input.review_run_id or "",
                     "vulnerability_id": execution_input.vulnerability_id or "",
+                    "result_id": execution_input.red_team_result_id or execution_input.vulnerability_id or "",
                     "run_dir": execution_input.run_dir,
                 },
             )
@@ -1494,8 +1513,29 @@ def _terminal_provider_error(stdout: str) -> str:
     return terminal_error
 
 
-def _format_skill_directories(paths: list[str]) -> str:
-    return "\n".join(f"- `{path}`" for path in paths) or "- （当前没有可用 Skill 目录）"
+_REDTEAM_HIDDEN_SKILLS = frozenset({
+    "whatisvul",
+    "vuln-report",
+    "vuln-review",
+    "web-attack-playbook",
+})
+
+
+def _stage_prompt(name: str, engagement_mode: str) -> str:
+    if engagement_mode != "red_team":
+        return name
+    stem, dot, ext = name.rpartition(".")
+    return f"{stem}_redteam.{ext}" if dot else f"{name}_redteam"
+
+
+def _format_skill_directories(paths: list[str], engagement_mode: str = "vulnerability") -> str:
+    selected = paths
+    if engagement_mode == "red_team":
+        selected = [
+            path for path in paths
+            if Path(path).name not in _REDTEAM_HIDDEN_SKILLS
+        ]
+    return "\n".join(f"- `{path}`" for path in selected) or "- （当前没有可用 Skill 目录）"
 
 
 def _explore_soft_reminder(remaining_seconds: int) -> str:

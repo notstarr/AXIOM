@@ -17,6 +17,7 @@ class Intent(BaseModel):
     id: str
     task_id: str
     todo_id: str | None = None
+    chain_id: str | None = None
     kind: Literal["bootstrap", "reason", "explore"]
     from_facts: list[str]
     description: str

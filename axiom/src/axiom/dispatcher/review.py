@@ -216,7 +216,9 @@ class ReviewRunner:
         raw_output: object,
     ) -> None:
         require_finish(str(raw_output))
-        review_files(execution_input.run_dir, emit_warnings=False)
+        # 红队成果审核只看结构化裁决和核定分，不要求漏洞报告。
+        if work.review_subject_type != "redteam_result" and not execution_input.red_team_result_id:
+            review_files(execution_input.run_dir, emit_warnings=False)
         status = self.control_plane.review_status(work)
         if not status.ready:
             raise ReviewDecisionError("；".join(status.errors) or "Reviewer 裁决未就绪")

@@ -21,7 +21,6 @@ from axiom.modules.plan.repository import LEASED_PLAN_STATUSES, PlanRepository
 from axiom.modules.plan.tables import plan_run_sources, plan_runs, plan_workspaces
 from axiom.modules.plan.schemas import (
     DraftChain,
-    DraftChainIntentLink,
     DraftChainUpdate,
     DraftPlanIntent,
     DraftPlanTodo,
@@ -37,7 +36,8 @@ from axiom.modules.plan.schemas import (
     StartedPlanRun,
 )
 from axiom.modules.reason.tables import reason_runs, reason_run_sources
-from axiom.modules.redteam.schemas import RedTeamChainCreate
+from axiom.modules.redteam.schemas import TERMINAL_CHAIN_STATUSES, RedTeamChainCreate
+from axiom.modules.redteam.service import actionable_chain_ids, normalize_chain_status
 from axiom.modules.settings.service import load_runtime_config
 from axiom.modules.settings.tables import runtime_settings
 from axiom.modules.tasks.repository import TaskRepository
@@ -530,6 +530,15 @@ class PlanService:
         if self._unconsumed_fact_ids(conn, task_id):
             return True
         snapshot = self._current_snapshot(conn, task_id)
+        mode = conn.execute(
+            select(tasks.c.engagement_mode).where(tasks.c.id == task_id)
+        ).scalar_one_or_none()
+        if mode == "red_team":
+            return bool(
+                snapshot["failed_intent_ids"]
+                or actionable_chain_ids(conn, task_id)
+                or snapshot["unassessed_intent_ids"]
+            )
         return bool(
             snapshot["failed_intent_ids"]
             or snapshot["actionable_todo_ids"]
@@ -537,14 +546,28 @@ class PlanService:
             or snapshot["unassessed_intent_ids"]
         )
 
-    def _plan_allowed_in(self, conn, task, *, now: str) -> bool:
-        """Apply the per-cycle convergence guard for reconciliation-created Plans."""
-        cycle = task.current_goal_cycle_id
-        # Keep the query local to this module without importing Goal/Reason
-        # services.  A verified vulnerability resets the Plan budget.
+    @staticmethod
+    def _planning_reset_at(conn, task):
+        """A verified outcome reopens the Plan budget.
+
+        Vulnerability tasks reset on a verified finding. Red-team tasks reset
+        on a verified Result, so points progress is not ignored.
+        """
+        if getattr(task, "engagement_mode", "vulnerability") == "red_team":
+            from axiom.modules.redteam.tables import red_team_results
+
+            return conn.execute(
+                select(red_team_results.c.updated_at)
+                .where(
+                    red_team_results.c.task_id == task.id,
+                    red_team_results.c.status == "verified",
+                )
+                .order_by(red_team_results.c.updated_at.desc(), red_team_results.c.id.desc())
+                .limit(1)
+            ).scalar_one_or_none()
         from axiom.modules.vulnerabilities.tables import vulnerabilities
 
-        verified_at = conn.execute(
+        return conn.execute(
             select(vulnerabilities.c.updated_at)
             .where(
                 vulnerabilities.c.task_id == task.id,
@@ -553,6 +576,11 @@ class PlanService:
             .order_by(vulnerabilities.c.updated_at.desc(), vulnerabilities.c.id.desc())
             .limit(1)
         ).scalar_one_or_none()
+
+    def _plan_allowed_in(self, conn, task, *, now: str) -> bool:
+        """Apply the per-cycle convergence guard for reconciliation-created Plans."""
+        cycle = task.current_goal_cycle_id
+        verified_at = self._planning_reset_at(conn, task)
         conditions = [
             plan_runs.c.task_id == task.id,
             plan_runs.c.status.in_(["completed", "failed"]),
@@ -614,20 +642,7 @@ class PlanService:
         if cycle is not None:
             conditions.append(plan_runs.c.goal_cycle_id == cycle)
 
-        # Match the convergence guard's vulnerability reset semantics: a
-        # verified vulnerability after the failed Plan opens a new planning
-        # window, so an old infrastructure failure cannot strand the task.
-        from axiom.modules.vulnerabilities.tables import vulnerabilities
-
-        verified_at = conn.execute(
-            select(vulnerabilities.c.updated_at)
-            .where(
-                vulnerabilities.c.task_id == task.id,
-                vulnerabilities.c.status == "已验证",
-            )
-            .order_by(vulnerabilities.c.updated_at.desc(), vulnerabilities.c.id.desc())
-            .limit(1)
-        ).scalar_one_or_none()
+        verified_at = self._planning_reset_at(conn, task)
         if verified_at is not None:
             conditions.append(plan_runs.c.created_at > verified_at)
         return (
@@ -1272,24 +1287,45 @@ class PlanService:
         if task is None:
             raise NotFoundError(f"Task not found: {workspace.task_id}")
         draft = workspace.draft
-        if proposal.todo_ref:
-            todo = next((item for item in draft.todo_adds if item.ref == proposal.todo_ref), None)
-            if todo is None:
-                raise ConflictError(f"Intent references unknown Todo draft: {proposal.todo_ref}")
-            staged = next((item for item in draft.todo_updates if item.todo_id == proposal.todo_ref), None)
-            effective_status = staged.status if staged and staged.status is not None else todo.status
+        todo_count = int(bool(proposal.todo_ref)) + int(bool(proposal.todo_id))
+        chain_count = int(bool(proposal.chain_ref)) + int(bool(proposal.chain_id))
+        if task.engagement_mode == "red_team":
+            if todo_count or chain_count != 1:
+                raise ConflictError("Red-team Intent must reference exactly one Chain and no Todo")
+            if proposal.chain_ref:
+                if not any(item.ref == proposal.chain_ref for item in draft.chain_adds):
+                    raise ConflictError(f"Intent references unknown Chain draft: {proposal.chain_ref}")
+            else:
+                if self.red_team is None:
+                    raise ConflictError("Red-team service is not configured")
+                chain = self.red_team.repository.get_chain(conn, workspace.task_id, proposal.chain_id or "")
+                if chain is None:
+                    raise NotFoundError(f"Chain not found: {proposal.chain_id}")
+                staged = next((item for item in draft.chain_updates if item.chain_id == chain.id), None)
+                status = normalize_chain_status(staged.status if staged and staged.status else chain.status)
+                if status in TERMINAL_CHAIN_STATUSES:
+                    raise ConflictError(f"Intent cannot reference terminal Chain: {chain.id}")
         else:
-            todo = self.todos.get(conn, workspace.task_id, proposal.todo_id or "")
-            if todo is None:
-                raise NotFoundError(f"Todo not found: {proposal.todo_id}")
-            if todo.archived:
-                raise ConflictError(f"Intent cannot reference archived Todo: {todo.id}")
-            staged = next((item for item in draft.todo_updates if item.todo_id == todo.id), None)
-            effective_status = staged.status if staged and staged.status is not None else todo.status
-        if any(item.todo_id == (proposal.todo_ref or proposal.todo_id) for item in draft.todo_deletions):
-            raise ConflictError(f"Intent cannot reference an obsoleted Todo: {proposal.todo_ref or proposal.todo_id}")
-        if effective_status in {"blocked", "completed", "rejected", "obsolete"}:
-            raise ConflictError(f"Intent cannot reference terminal Todo: {proposal.todo_ref or proposal.todo_id}")
+            if chain_count or todo_count != 1:
+                raise ConflictError("Vulnerability Intent must reference exactly one Todo and no Chain")
+            if proposal.todo_ref:
+                todo = next((item for item in draft.todo_adds if item.ref == proposal.todo_ref), None)
+                if todo is None:
+                    raise ConflictError(f"Intent references unknown Todo draft: {proposal.todo_ref}")
+                staged = next((item for item in draft.todo_updates if item.todo_id == proposal.todo_ref), None)
+                effective_status = staged.status if staged and staged.status is not None else todo.status
+            else:
+                todo = self.todos.get(conn, workspace.task_id, proposal.todo_id or "")
+                if todo is None:
+                    raise NotFoundError(f"Todo not found: {proposal.todo_id}")
+                if todo.archived:
+                    raise ConflictError(f"Intent cannot reference archived Todo: {todo.id}")
+                staged = next((item for item in draft.todo_updates if item.todo_id == todo.id), None)
+                effective_status = staged.status if staged and staged.status is not None else todo.status
+            if any(item.todo_id == (proposal.todo_ref or proposal.todo_id) for item in draft.todo_deletions):
+                raise ConflictError(f"Intent cannot reference an obsoleted Todo: {proposal.todo_ref or proposal.todo_id}")
+            if effective_status in {"blocked", "completed", "rejected", "obsolete"}:
+                raise ConflictError(f"Intent cannot reference terminal Todo: {proposal.todo_ref or proposal.todo_id}")
         if "goal" in proposal.from_facts:
             raise ConflictError("Goal Fact cannot be used as an Intent source")
         if proposal.from_facts:
@@ -1608,57 +1644,80 @@ class PlanService:
             if decision.decision == "exhausted" and not decision.reviewed_dimensions:
                 errors.append("exhausted Plan 必须填写 reviewed_dimensions")
             if decision.decision == "exhausted":
-                if any(item.status in {"open", "partial", "blocked"} for item in draft.todo_adds):
-                    errors.append("exhausted Plan 不能留下未收口的新增 Todo")
-                staged_updates = {
-                    item.todo_id: item
-                    for item in draft.todo_updates
-                    if item.todo_id not in {item.ref for item in draft.todo_adds}
-                }
-                deleted_ids = {item.todo_id for item in draft.todo_deletions}
-                existing_open = conn.execute(
-                    select(todos.c.id, todos.c.status)
-                    .where(
-                        todos.c.task_id == workspace.task_id,
-                        todos.c.archived.is_(False),
-                        todos.c.status.in_(("open", "partial", "blocked")),
-                    )
-                ).mappings()
-                for row in existing_open:
-                    if row["id"] in deleted_ids:
-                        continue
-                    update_command = staged_updates.get(row["id"])
-                    effective_status = (
-                        update_command.status
-                        if update_command is not None and update_command.status is not None
-                        else row["status"]
-                    )
-                    if effective_status in {"open", "partial", "blocked"}:
-                        errors.append(f"exhausted Plan 不能留下未收口的 Todo: {row['id']}")
-                for item in draft.todo_updates:
-                    persisted = self.todos.get(conn, workspace.task_id, item.todo_id)
-                    baseline = persisted.status if persisted is not None else "open"
-                    if (item.status or baseline) in {"open", "partial", "blocked"}:
-                        errors.append(f"exhausted Plan 不能留下未收口的 Todo: {item.todo_id}")
-                reviewed_todo_ids = {
-                    item.todo_id for item in draft.todo_updates
-                } | {
-                    item.todo_id for item in draft.todo_deletions
-                }
-                active_todo_ids = set(
-                    conn.execute(
-                        select(todos.c.id).where(
-                            todos.c.task_id == workspace.task_id,
-                            todos.c.status.in_(["open", "partial", "blocked"]),
-                            todos.c.archived.is_(False),
-                        )
-                    ).scalars()
-                )
-                for todo_id in sorted(active_todo_ids - reviewed_todo_ids):
-                    errors.append(
-                        f"exhausted Plan 必须审查现有未收口 Todo: {todo_id}"
-                    )
+                errors.extend(self._exhausted_parent_errors(conn, workspace, draft))
         return list(dict.fromkeys(errors))
+
+    def _exhausted_parent_errors(self, conn, workspace: PlanWorkspace, draft) -> list[str]:
+        errors: list[str] = []
+        mode = conn.execute(
+            select(tasks.c.engagement_mode).where(tasks.c.id == workspace.task_id)
+        ).scalar_one_or_none()
+        if mode == "red_team":
+            from axiom.modules.redteam.tables import red_team_chains
+            open_chains = conn.execute(
+                select(red_team_chains.c.id, red_team_chains.c.status).where(
+                    red_team_chains.c.task_id == workspace.task_id,
+                    red_team_chains.c.status.in_(("open", "partial", "blocked", "planned", "active")),
+                )
+            ).mappings()
+            reviewed = {item.chain_id: item for item in draft.chain_updates}
+            for row in open_chains:
+                update_command = reviewed.get(row["id"])
+                status = normalize_chain_status(
+                    update_command.status if update_command is not None and update_command.status else row["status"]
+                )
+                if status in {"open", "partial", "blocked"}:
+                    errors.append(f"exhausted Plan 不能留下未收口的攻击链: {row['id']}")
+            return errors
+        if any(item.status in {"open", "partial", "blocked"} for item in draft.todo_adds):
+            errors.append("exhausted Plan 不能留下未收口的新增 Todo")
+        staged_updates = {
+            item.todo_id: item
+            for item in draft.todo_updates
+            if item.todo_id not in {item.ref for item in draft.todo_adds}
+        }
+        deleted_ids = {item.todo_id for item in draft.todo_deletions}
+        existing_open = conn.execute(
+            select(todos.c.id, todos.c.status)
+            .where(
+                todos.c.task_id == workspace.task_id,
+                todos.c.archived.is_(False),
+                todos.c.status.in_(("open", "partial", "blocked")),
+            )
+        ).mappings()
+        for row in existing_open:
+            if row["id"] in deleted_ids:
+                continue
+            update_command = staged_updates.get(row["id"])
+            effective_status = (
+                update_command.status
+                if update_command is not None and update_command.status is not None
+                else row["status"]
+            )
+            if effective_status in {"open", "partial", "blocked"}:
+                errors.append(f"exhausted Plan 不能留下未收口的 Todo: {row['id']}")
+        for item in draft.todo_updates:
+            persisted = self.todos.get(conn, workspace.task_id, item.todo_id)
+            baseline = persisted.status if persisted is not None else "open"
+            if (item.status or baseline) in {"open", "partial", "blocked"}:
+                errors.append(f"exhausted Plan 不能留下未收口的 Todo: {item.todo_id}")
+        reviewed_todo_ids = {
+            item.todo_id for item in draft.todo_updates
+        } | {
+            item.todo_id for item in draft.todo_deletions
+        }
+        active_todo_ids = set(
+            conn.execute(
+                select(todos.c.id).where(
+                    todos.c.task_id == workspace.task_id,
+                    todos.c.status.in_(["open", "partial", "blocked"]),
+                    todos.c.archived.is_(False),
+                )
+            ).scalars()
+        )
+        for todo_id in sorted(active_todo_ids - reviewed_todo_ids):
+            errors.append(f"exhausted Plan 必须审查现有未收口 Todo: {todo_id}")
+        return errors
 
     def add_chain(self, workspace_id: str, chain: DraftChain, *, lease_id: str) -> PlanWorkspace:
         with transaction(self.engine) as conn:
@@ -1691,8 +1750,8 @@ class PlanService:
         with transaction(self.engine) as conn:
             workspace = self._active_workspace(conn, workspace_id, lease_id)
             self._require_red_team(conn, workspace)
-            # Updates target an already persisted Chain; staged refs are
-            # resolved only by chain_intent_links at commit time.
+            # Updates target an already persisted Chain. Staged refs are bound
+            # when the Intent that names them is committed.
             self.red_team.get_chain(workspace.task_id, update_command.chain_id)
             updates = [
                 item
@@ -1713,31 +1772,6 @@ class PlanService:
                 update_command = DraftChainUpdate.model_validate(merged)
             updates.append(update_command)
             draft = workspace.draft.model_copy(update={"chain_updates": updates})
-            return self.repository.save_draft(conn, workspace_id, draft, now=utcnow())
-
-    def link_chain_intent(
-        self,
-        workspace_id: str,
-        link: DraftChainIntentLink,
-        *,
-        lease_id: str,
-    ) -> PlanWorkspace:
-        with transaction(self.engine) as conn:
-            workspace = self._active_workspace(conn, workspace_id, lease_id)
-            self._require_red_team(conn, workspace)
-            draft = workspace.draft
-            if link.chain_ref:
-                if not any(item.ref == link.chain_ref for item in draft.chain_adds):
-                    raise NotFoundError(f"Chain draft ref not found: {link.chain_ref}")
-            else:
-                self.red_team.get_chain(workspace.task_id, link.chain_id)
-            if not any(item.ref for item in draft.intent_proposals if item.ref == link.intent_ref):
-                raise NotFoundError(f"Intent draft ref not found: {link.intent_ref}")
-            if any(item == link for item in draft.chain_intent_links):
-                return workspace
-            draft = draft.model_copy(
-                update={"chain_intent_links": [*draft.chain_intent_links, link]}
-            )
             return self.repository.save_draft(conn, workspace_id, draft, now=utcnow())
 
     def _require_red_team(self, conn, workspace: PlanWorkspace):
@@ -1783,7 +1817,7 @@ class PlanService:
                 if workspace.status == "open"
                 else []
             )
-            return PlanWorkspaceStatus(workspace_id=workspace.id, status=workspace.status, todo_add_count=len(workspace.draft.todo_adds), todo_update_count=len(workspace.draft.todo_updates), intent_proposal_count=len(workspace.draft.intent_proposals), chain_add_count=len(workspace.draft.chain_adds), chain_update_count=len(workspace.draft.chain_updates), chain_link_count=len(workspace.draft.chain_intent_links), chain_refs=[item.ref for item in workspace.draft.chain_adds], decision=workspace.draft.decision, ready=workspace.status == "committed" or not errors, errors=errors)
+            return PlanWorkspaceStatus(workspace_id=workspace.id, status=workspace.status, todo_add_count=len(workspace.draft.todo_adds), todo_update_count=len(workspace.draft.todo_updates), intent_proposal_count=len(workspace.draft.intent_proposals), chain_add_count=len(workspace.draft.chain_adds), chain_update_count=len(workspace.draft.chain_updates), chain_refs=[item.ref for item in workspace.draft.chain_adds], decision=workspace.draft.decision, ready=workspace.status == "committed" or not errors, errors=errors)
 
     def commit(self, workspace_id: str, *, lease_id: str) -> PlanCommitResult:
         with transaction(self.engine) as conn:
@@ -1851,6 +1885,32 @@ class PlanService:
                     raise NotFoundError(f"Todo not found: {target}")
                 deleted_todo_ids.append(target)
             self._align_intent_counter(conn, workspace.task_id)
+            created_chain_ids: list[str] = []
+            chain_refs: dict[str, str] = {}
+            if task.engagement_mode == "red_team" and draft.chain_adds:
+                if self.red_team is None:
+                    raise ConflictError("Red-team service is not configured")
+                objective = task.red_team_objective
+                for chain in draft.chain_adds:
+                    initial_principal = chain.initial_principal or getattr(objective, "initial_principal", None)
+                    if initial_principal is None:
+                        raise ConflictError("Chain requires an initial principal and the task objective has none")
+                    created_chain = self.red_team.create_chain_in(
+                        conn,
+                        workspace.task_id,
+                        RedTeamChainCreate(
+                            title=chain.title,
+                            initial_principal=initial_principal,
+                            target_capabilities=chain.target_capabilities,
+                            target_assets=chain.target_assets,
+                            source_fact_ids=chain.source_fact_ids,
+                        ),
+                        created_by=f"plan.{workspace.worker}",
+                        goal_cycle_id=run.goal_cycle_id,
+                        now=now,
+                    )
+                    chain_refs[chain.ref] = created_chain.id
+                    created_chain_ids.append(created_chain.id)
             created_intent_ids: list[str] = []
             intent_refs: dict[str, str] = {}
             for proposal in draft.intent_proposals:
@@ -1884,10 +1944,17 @@ class PlanService:
                             "legacy_values_ignored": True,
                         },
                     )
-                todo_id = proposal.todo_id or todo_refs.get(proposal.todo_ref or "")
-                if todo_id is None:
-                    raise ConflictError(f"Intent references unknown Todo: {proposal.todo_ref}")
                 self._validate_intent_proposal(conn, workspace, proposal)
+                todo_id = None
+                chain_id = None
+                if task.engagement_mode == "red_team":
+                    chain_id = proposal.chain_id or chain_refs.get(proposal.chain_ref or "")
+                    if not chain_id:
+                        raise ConflictError(f"Intent references unknown Chain: {proposal.chain_ref}")
+                else:
+                    todo_id = proposal.todo_id or todo_refs.get(proposal.todo_ref or "")
+                    if todo_id is None:
+                        raise ConflictError(f"Intent references unknown Todo: {proposal.todo_ref}")
                 intent_id = allocate_id(conn, scope=workspace.task_id, kind="intent", prefix="i")
                 plan_metadata = {
                     "plan_run_id": workspace.plan_run_id,
@@ -1904,7 +1971,9 @@ class PlanService:
                 # Plan owns only its own planning worker pool.  The Explore
                 # Intent it proposes must return to the normal task pool so
                 # a Plan-only backend is never asked to execute probing work.
-                values = {"id": intent_id, "task_id": workspace.task_id, "goal_cycle_id": self.repository.get_run(conn, workspace.task_id, workspace.plan_run_id).goal_cycle_id if self.repository.get_run(conn, workspace.task_id, workspace.plan_run_id) else None, "todo_id": todo_id, "kind": "explore", "description": proposal.description, "priority": proposal.priority, "status": "pending", "creator": workspace.worker, "worker": None, "worker_pool_json": json.dumps(task.worker_pool, ensure_ascii=False), "targets_json": json.dumps(proposal.targets, ensure_ascii=False), "dedup_fingerprint": proposal.dedup_fingerprint or self.intent_fingerprint(proposal), "plan_metadata_json": json.dumps(plan_metadata, ensure_ascii=False), "execute_timeout_seconds": proposal.execute_seconds, "conclude_timeout_seconds": proposal.conclude_seconds, "lease_id": None, "claimed_at": None, "last_heartbeat_at": None, "retry_count": 0, "infrastructure_retry_count": 0, "last_failure_kind": "", "failure_class": "", "activity_kind": "", "activity_summary": "", "activity_tool": "", "activity_started_at": None, "activity_updated_at": None, "next_retry_at": None, "to_fact_id": None, "human_intervention_required": False, "human_intervention_reason": "", "human_intervention_marked_at": None, "assessment_status": "open", "assessment_reason": "", "assessed_at": None, "created_at": now, "concluded_at": None, "archived": False}
+                if chain_id:
+                    plan_metadata["chain_id"] = chain_id
+                values = {"id": intent_id, "task_id": workspace.task_id, "goal_cycle_id": run.goal_cycle_id, "todo_id": todo_id, "chain_id": chain_id, "kind": "explore", "description": proposal.description, "priority": proposal.priority, "status": "pending", "creator": workspace.worker, "worker": None, "worker_pool_json": json.dumps(task.worker_pool, ensure_ascii=False), "targets_json": json.dumps(proposal.targets, ensure_ascii=False), "dedup_fingerprint": proposal.dedup_fingerprint or self.intent_fingerprint(proposal), "plan_metadata_json": json.dumps(plan_metadata, ensure_ascii=False), "execute_timeout_seconds": proposal.execute_seconds, "conclude_timeout_seconds": proposal.conclude_seconds, "lease_id": None, "claimed_at": None, "last_heartbeat_at": None, "retry_count": 0, "infrastructure_retry_count": 0, "last_failure_kind": "", "failure_class": "", "activity_kind": "", "activity_summary": "", "activity_tool": "", "activity_started_at": None, "activity_updated_at": None, "next_retry_at": None, "to_fact_id": None, "human_intervention_required": False, "human_intervention_reason": "", "human_intervention_marked_at": None, "assessment_status": "open", "assessment_reason": "", "assessed_at": None, "created_at": now, "concluded_at": None, "archived": False}
                 conn.execute(intents.insert().values(**values))
                 for fact_id in proposal.from_facts:
                     if fact_id == "goal" or conn.execute(select(facts.c.id).where(facts.c.task_id == workspace.task_id, facts.c.id == fact_id, facts.c.archived.is_(False))).scalar_one_or_none() is None:
@@ -1915,70 +1984,31 @@ class PlanService:
                     if proposal.ref in intent_refs:
                         raise ConflictError(f"Duplicate Intent draft ref: {proposal.ref}")
                     intent_refs[proposal.ref] = intent_id
-            # Red-team staging is applied after the Intent loop so
-            # ``chain_intent_links`` can resolve staged Intent refs to the IDs
-            # created above.  Chains are only persisted here, at commit time,
-            # with the same objective/scope checks as the direct RedTeam API.
-            created_chain_ids: list[str] = []
-            chain_refs: dict[str, str] = {}
-            if draft.chain_adds or draft.chain_updates or draft.chain_intent_links:
+                if chain_id and self.red_team is not None:
+                    self.red_team.link_intent_in(
+                        conn,
+                        workspace.task_id,
+                        chain_id,
+                        intent_id,
+                        actor=workspace.worker,
+                        now=now,
+                    )
+            if draft.chain_updates:
                 if task.engagement_mode != "red_team":
                     raise ConflictError(
                         "RedTeam Chains are only available for red_team tasks"
                     )
                 if self.red_team is None:
                     raise ConflictError("Red-team service is not configured")
-                objective = task.red_team_objective
-                for chain in draft.chain_adds:
-                    initial_principal = chain.initial_principal
-                    if initial_principal is None:
-                        initial_principal = getattr(objective, "initial_principal", None)
-                    if initial_principal is None:
-                        raise ConflictError(
-                            "Chain requires an initial principal and the task objective has none"
-                        )
-                    created_chain = self.red_team.create_chain_in(
-                        conn,
-                        workspace.task_id,
-                        RedTeamChainCreate(
-                            title=chain.title,
-                            initial_principal=initial_principal,
-                            target_capabilities=chain.target_capabilities,
-                            target_assets=chain.target_assets,
-                            source_fact_ids=chain.source_fact_ids,
-                        ),
-                        created_by=f"plan.{workspace.worker}",
-                        goal_cycle_id=run.goal_cycle_id if run else None,
-                        now=now,
-                    )
-                    chain_refs[chain.ref] = created_chain.id
-                    created_chain_ids.append(created_chain.id)
                 for chain_update in draft.chain_updates:
                     self.red_team.apply_chain_update_in(
                         conn,
                         workspace.task_id,
                         chain_update.chain_id,
                         status=chain_update.status,
+                        status_reason=chain_update.status_reason,
                         title=chain_update.title,
-                        actor=workspace.worker,
-                        now=now,
-                    )
-                for chain_link in draft.chain_intent_links:
-                    chain_id = chain_refs.get(chain_link.chain_ref) if chain_link.chain_ref else chain_link.chain_id
-                    if chain_id is None:
-                        raise ConflictError(
-                            f"Chain link references unknown Chain: {chain_link.chain_ref or chain_link.chain_id}"
-                        )
-                    linked_intent_id = intent_refs.get(chain_link.intent_ref)
-                    if linked_intent_id is None:
-                        raise ConflictError(
-                            f"Chain link references unknown Intent: {chain_link.intent_ref}"
-                        )
-                    self.red_team.link_intent_in(
-                        conn,
-                        workspace.task_id,
-                        chain_id,
-                        linked_intent_id,
+                        current_state=chain_update.current_state,
                         actor=workspace.worker,
                         now=now,
                     )

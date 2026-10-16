@@ -64,13 +64,15 @@ class ArtifactRepository:
         summary: str,
         created_by: str,
         now: str,
+        intent_id: str | None = None,
+        artifact_type: str = "upload",
     ) -> Artifact:
         values = {
             "id": allocate_id(conn, scope=task_id, kind="artifact", prefix="a"),
             "task_id": task_id,
-            "intent_id": None,
+            "intent_id": intent_id,
             "review_run_id": None,
-            "artifact_type": "upload",
+            "artifact_type": artifact_type,
             "storage_key": prepared.storage_key,
             "summary": summary,
             "content_hash": prepared.content_hash,

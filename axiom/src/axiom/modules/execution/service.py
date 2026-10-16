@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from pathlib import Path
 
 from datetime import timedelta
@@ -71,6 +72,26 @@ from axiom.shared.storage import FileStore
 
 
 logger = logging.getLogger(__name__)
+_COVERAGE_SKILLS = frozenset({
+    "whatisvul",
+    "vuln-report",
+    "vuln-review",
+    "web-attack-playbook",
+})
+
+
+def _lease_capabilities(capabilities, engagement_mode: str):
+    """Keep coverage skills on disk, but do not mount them into a red-team lease."""
+    if engagement_mode != "red_team":
+        return capabilities
+    directories = [
+        path
+        for path in capabilities.skill_directories
+        if Path(path).name not in _COVERAGE_SKILLS
+    ]
+    if directories == list(capabilities.skill_directories):
+        return capabilities
+    return replace(capabilities, skill_directories=directories)
 
 
 _REASON_PROMPT_PROFILE_BY_TRIGGER = {
@@ -312,7 +333,7 @@ class ExecutionService:
                     if isinstance(row.get("red_team_objective_json"), str)
                     else (row.get("red_team_objective_json") or {})
                 ),
-                "chain_id": chain_id_from_plan_metadata(row.get("plan_metadata_json")),
+                "chain_id": (row.get("chain_id") or "").strip() or chain_id_from_plan_metadata(row.get("plan_metadata_json")),
                 "worker_name": row["worker"] or "",
                 "intent_kind": row["kind"],
                 "intent_description": row["intent_description"],
@@ -351,10 +372,13 @@ class ExecutionService:
         )
         run_dir = str(self._run_directory(task_id, intent_id, command.lease_id, owner_kind="intent"))
         sandbox = self.sandboxes.get(task_id) if self.sandboxes is not None else None
-        capabilities = self.phase_capabilities.snapshot_for_lease(
-            worker_name=values["worker_name"],
-            phase=values["phase"],
-            run_dir=run_dir,
+        capabilities = _lease_capabilities(
+            self.phase_capabilities.snapshot_for_lease(
+                worker_name=values["worker_name"],
+                phase=values["phase"],
+                run_dir=run_dir,
+            ),
+            values["engagement_mode"],
         )
         assets = self._prepare_worker_assets(task_id=task_id, context=context, capabilities=capabilities)
         return ExecutionInput(
@@ -515,10 +539,13 @@ class ExecutionService:
         )
         run_dir = str(self._run_directory(task_id, reason_run_id, command.lease_id, owner_kind="reason_run"))
         sandbox = self.sandboxes.get(task_id) if self.sandboxes is not None else None
-        capabilities = self.phase_capabilities.snapshot_for_lease(
-            worker_name=run.worker or "",
-            phase="reason",
-            run_dir=run_dir,
+        capabilities = _lease_capabilities(
+            self.phase_capabilities.snapshot_for_lease(
+                worker_name=run.worker or "",
+                phase="reason",
+                run_dir=run_dir,
+            ),
+            task.engagement_mode,
         )
         assets = self._prepare_worker_assets(task_id=task_id, context=context, capabilities=capabilities)
         return ExecutionInput(
@@ -604,7 +631,11 @@ class ExecutionService:
             revision=context,
             phase="plan",
             plan_run_id=plan_run_id,
-            current_description="Plan 全局复盘：检查历史覆盖、阻断方向和跨模块资产组合。",
+            current_description=(
+                "红队复盘：按积分缺口检查攻击链、成果和 leads。"
+                if task.engagement_mode == "red_team"
+                else "Plan 全局复盘：检查历史覆盖、阻断方向和跨模块资产组合。"
+            ),
             trigger_payload=run.trigger_payload,
         )
         self._record_context_injection(
@@ -617,10 +648,13 @@ class ExecutionService:
         )
         run_dir = str(self._run_directory(task_id, plan_run_id, command.lease_id, owner_kind="plan_run"))
         sandbox = self.sandboxes.get(task_id) if self.sandboxes is not None else None
-        capabilities = self.phase_capabilities.snapshot_for_lease(
-            worker_name=run.worker or "",
-            phase="plan",
-            run_dir=run_dir,
+        capabilities = _lease_capabilities(
+            self.phase_capabilities.snapshot_for_lease(
+                worker_name=run.worker or "",
+                phase="plan",
+                run_dir=run_dir,
+            ),
+            task.engagement_mode,
         )
         assets = self._prepare_worker_assets(task_id=task_id, context=context, capabilities=capabilities)
         return PlanExecutionInput(
@@ -732,10 +766,13 @@ class ExecutionService:
         )
         run_dir = str(self._run_directory(task_id, review_run_id, command.lease_id, owner_kind="review_run"))
         sandbox = self.sandboxes.get(task_id) if self.sandboxes is not None else None
-        capabilities = self.phase_capabilities.snapshot_for_lease(
-            worker_name=run.worker or "",
-            phase="review",
-            run_dir=run_dir,
+        capabilities = _lease_capabilities(
+            self.phase_capabilities.snapshot_for_lease(
+                worker_name=run.worker or "",
+                phase="review",
+                run_dir=run_dir,
+            ),
+            task.engagement_mode,
         )
         assets = self._prepare_worker_assets(task_id=task_id, context=context, capabilities=capabilities)
         return ExecutionInput(
@@ -1308,6 +1345,20 @@ class ExecutionService:
                             now=now,
                         )
                     fact_id = allocate_id(conn, scope=task_id, kind="fact", prefix="f")
+                    result_ids = None
+                    if existing.get("engagement_mode") == "red_team":
+                        from axiom.modules.redteam.tables import red_team_results
+
+                        result_ids = list(
+                            conn.execute(
+                                select(red_team_results.c.id)
+                                .where(
+                                    red_team_results.c.task_id == task_id,
+                                    red_team_results.c.intent_id == intent_id,
+                                )
+                                .order_by(red_team_results.c.created_at, red_team_results.c.id)
+                            ).scalars()
+                        )
                     conn.execute(
                         facts.insert().values(
                             id=fact_id,
@@ -1316,6 +1367,7 @@ class ExecutionService:
                                 intent_id=intent_id,
                                 artifacts=records,
                                 vulnerability_ids=[item.id for item in vulnerability_records],
+                                result_ids=result_ids,
                             ),
                             created_at=now,
                             archived=False,
@@ -1488,8 +1540,12 @@ class ExecutionService:
         intent_id: str,
         artifacts,
         vulnerability_ids: list[str],
+        result_ids: list[str] | None = None,
     ) -> str:
         artifact_refs = "/".join(item.id for item in artifacts)
+        if result_ids is not None:
+            refs = "/".join(result_ids) if result_ids else "无"
+            return f"intent:{intent_id} 完成；artifacts:{artifact_refs}；results:{refs}。"
         vulnerability_refs = "/".join(vulnerability_ids) if vulnerability_ids else "无"
         return f"intent:{intent_id} 完成；artifacts:{artifact_refs}；vulns:{vulnerability_refs}。"
 

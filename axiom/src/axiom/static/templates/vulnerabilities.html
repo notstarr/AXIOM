@@ -3,7 +3,7 @@
   <header class="app-page-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-5 py-3 flex items-center gap-3 shrink-0">
     <div>
       <h2 class="text-base font-semibold text-slate-800 tracking-tight" x-text="factViewMode === 'result' ? '红队成果' : '漏洞管理'"></h2>
-      <p class="text-xs text-slate-400 mt-0.5" x-text="factViewMode === 'result' ? '红队攻击链与成果（权限 / 数据 / 凭证 / 横向），不计入漏洞数量' : '跨任务聚合漏洞，按列表查看证据、影响和修复建议'"></p>
+      <p class="text-xs text-slate-400 mt-0.5" x-text="factViewMode === 'result' ? '红队成果（权限 / 数据 / 凭证 / 横向），不计入漏洞数量' : '跨任务聚合漏洞，按列表查看证据、影响和修复建议'"></p>
     </div>
     <div class="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs ml-2">
       <button type="button" @click="switchFactView('vulnerability')"
@@ -11,7 +11,7 @@
         :class="factViewMode !== 'result' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">漏洞</button>
       <button type="button" @click="switchFactView('result')"
         class="px-3 py-1.5 rounded-md transition"
-        :class="factViewMode === 'result' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">成果</button>
+        :class="factViewMode === 'result' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">成果</button>
     </div>
     <div class="flex-1"></div>
     <button @click="refreshCurrentPage()" :disabled="refreshLoading" class="sto-ghost" style="padding:7px 13px;">刷新</button>
@@ -226,117 +226,167 @@
     </section>
   </main>
 
-  <!-- ═══════════ 成果视图（红队） ═══════════ -->
-  <div x-show="factViewMode === 'result'" x-cloak class="flex-1 min-h-0 flex flex-col" style="padding:14px 16px; background:var(--sto-inset);">
-    <div class="shrink-0 px-4 py-3 rounded-xl border border-slate-100" style="background:var(--sto-panel);">
-      <div class="flex items-center" style="gap:9px;">
-        <div class="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs">
-          <button type="button" @click="switchRtResultView('results')"
-            class="px-3 py-1.5 rounded-md transition"
-            :class="rtResultView !== 'chains' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">成果列表</button>
-          <button type="button" @click="switchRtResultView('chains')"
-            class="px-3 py-1.5 rounded-md transition"
-            :class="rtResultView === 'chains' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">攻击链</button>
-        </div>
-        <input x-model="rtResultFilter.keyword" @keydown.enter="loadRedTeamResultPage()" placeholder="搜索标题、描述、身份" class="sto-input" style="flex:1;">
-        <select x-model="rtResultFilter.projectId" @change="loadRedTeamResultPage()" class="sto-input" style="width:auto;">
-          <option value="">全部任务</option>
-          <template x-for="p in projects.filter(item => !item.archived)" :key="`rt-filter-${p.id}`">
-            <option :value="p.id" x-text="`${p.id} ${p.title}`"></option>
-          </template>
-        </select>
-        <template x-if="rtResultView !== 'chains'">
-          <div class="flex items-center" style="gap:9px;">
-            <select x-model="rtResultFilter.status" @change="loadRedTeamResultPage()" class="sto-input" style="width:auto;">
-              <option value="">全部状态</option>
-              <option value="reported">已上报</option>
-              <option value="reviewing">审核中</option>
-              <option value="verified">已验证</option>
-              <option value="rejected">已驳回</option>
-              <option value="duplicate">重复</option>
-              <option value="needs-human">需人工</option>
-            </select>
-            <select x-model="rtResultFilter.type" @change="loadRedTeamResultPage()" class="sto-input" style="width:auto;">
-              <option value="">全部类型</option>
-              <option value="permission">权限跃迁</option>
-              <option value="data">数据获取</option>
-              <option value="credential">凭证获取</option>
-              <option value="pivot">横向控制</option>
-            </select>
-          </div>
+  <!-- 筛选 + 统计（成果视图，与漏洞视图同一套顶栏） -->
+  <div x-show="factViewMode === 'result'" x-cloak class="shrink-0 px-5 py-3 border-b border-slate-100" style="background:var(--sto-panel);">
+    <div class="flex items-center" style="gap:9px;">
+      <input x-model="rtResultFilter.keyword" @input="scheduleRtResultSearch()" placeholder="搜索标题、描述、身份" class="sto-input" style="flex:1;">
+      <select x-model="rtResultFilter.projectId" @change="loadRedTeamResultPage()" class="sto-input" style="width:auto;">
+        <option value="">全部任务</option>
+        <template x-for="p in projects.filter(item => !item.archived)" :key="`rt-filter-${p.id}`">
+          <option :value="p.id" x-text="`${p.id} ${p.title}`"></option>
         </template>
-        <template x-if="rtResultView === 'chains'">
-          <select x-model="rtChainFilter.status" @change="loadRedTeamResultPage()" class="sto-input" style="width:auto;">
-            <option value="">全部状态</option>
-            <option value="planned">已规划</option>
-            <option value="active">进行中</option>
-            <option value="blocked">受阻</option>
-            <option value="achieved">已达成</option>
-            <option value="failed">已失败</option>
-            <option value="abandoned">已放弃</option>
-          </select>
-        </template>
-        <span class="sto-muted sto-num" style="font-size:10.5px;" x-text="rtResultView === 'chains' ? `共 ${rtChainTotal} 条链` : `共 ${rtResultTotal} 条成果 · 核定 ${rtVerifiedPoints()} 分`"></span>
-      </div>
+      </select>
+      <select x-model="rtResultFilter.status" @change="loadRedTeamResultPage()" class="sto-input" style="width:auto;">
+        <option value="">全部状态</option>
+        <option value="reported">已上报</option>
+        <option value="reviewing">审核中</option>
+        <option value="verified">已验证</option>
+        <option value="rejected">已驳回</option>
+        <option value="duplicate">重复</option>
+        <option value="needs-human">需人工</option>
+      </select>
+      <select x-model="rtResultFilter.type" @change="loadRedTeamResultPage()" class="sto-input" style="width:auto;">
+        <option value="">全部类型</option>
+        <option value="permission">权限跃迁</option>
+        <option value="data">数据获取</option>
+        <option value="credential">凭证获取</option>
+        <option value="pivot">横向控制</option>
+      </select>
     </div>
-
-    <!-- 成果列表 -->
-    <div x-show="rtResultView !== 'chains'" class="flex-1 min-h-0 overflow-y-auto mt-3 space-y-2.5">
-      <template x-if="!rtResultLoading && rtResultItems.length === 0">
-        <div class="sto-muted" style="text-align:center; padding:48px 0;">暂无红队成果——跑一个红队任务并上报成果后，这里会聚合展示</div>
+    <div class="flex flex-wrap items-center" style="gap:16px; margin-top:11px;">
+      <span class="sto-muted sto-num" style="font-size:10.5px;" x-text="`显示 ${rtResultItems.length} / ${rtResultTotal}`"></span>
+      <span style="width:1px; height:14px; background:var(--sto-line);"></span>
+      <template x-for="kind in [{id:'permission',label:'权限'},{id:'data',label:'数据'},{id:'credential',label:'凭证'},{id:'pivot',label:'横向'}]" :key="`rtstat-${kind.id}`">
+        <span class="sto-status" :class="rtTypeClass(kind.id)" style="font-size:11px;">
+          <i class="sto-sevdot" :class="rtTypeTone(kind.id)" style="box-shadow:none;"></i>
+          <span x-text="kind.label"></span>
+          <b class="sto-num" style="color:var(--sto-fg);" x-text="rtResultItems.filter(item => item.result_type === kind.id).length"></b>
+        </span>
       </template>
-      <template x-for="r in rtResultItems" :key="r.id">
-        <div class="sto-panel" style="padding:13px 15px;">
-          <div class="flex items-center" style="gap:8px; cursor:pointer;" @click="toggleRtResultExpand(r.id)">
-            <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);" x-text="r.id"></span>
-            <span class="sto-status" :class="rtTypeClass(r.result_type)" style="font-size:10px;"><i></i><span x-text="rtTypeLabel(r.result_type)"></span></span>
-            <span class="sto-status" :class="rtStatusClass(r.status)" style="font-size:10px;"><i></i><span x-text="rtStatusLabel(r.status)"></span></span>
-            <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);"
-              x-text="r.status === 'verified' ? `+${r.points_awarded || 0} 分` : (r.points_declared ? `自评 ${r.points_declared}` : '')"></span>
-            <span style="flex:1;"></span>
-            <span class="sto-muted" style="font-size:10.5px;" x-text="rtTaskTitle(r.task_id)"></span>
-          </div>
-          <p style="margin-top:6px; font-size:13px; font-weight:600; color:var(--sto-fg);" x-text="r.title"></p>
-          <p style="margin-top:3px; font-size:12px; color:var(--sto-fg-2); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" x-text="r.description"></p>
-          <div x-show="rtResultExpanded === r.id" x-cloak class="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-x-6 gap-y-2 text-xs" style="color:var(--sto-fg-2);">
-            <div><span class="sto-muted">攻击链</span> <span class="sto-num" x-text="r.chain_id"></span></div>
-            <div><span class="sto-muted">初始身份</span> <span x-text="r.principal"></span><span x-show="r.tenant" x-text="` @ ${r.tenant}`"></span></div>
-            <div><span class="sto-muted">能力变化</span> <span class="sto-num" x-text="(r.capabilities_before || []).join(', ') || '—'"></span> → <span class="sto-num" style="color:var(--sto-fg);" x-text="(r.capabilities_gained || []).join(', ') || '—'"></span></div>
-            <div><span class="sto-muted">目标资产</span> <span x-text="r.target_asset || '—'"></span></div>
-            <div x-show="r.result_type === 'data'"><span class="sto-muted">数据样本</span> <span class="sto-num" x-text="`${r.sample_count ?? '—'} 条 / ${r.sample_bytes ?? '—'} 字节，字段 ${(r.data_fields || []).join(', ') || '—'}`"></span></div>
-            <div x-show="r.result_type === 'credential'"><span class="sto-muted">凭证引用</span> <span class="sto-num" x-text="r.credential_ref || '—'"></span></div>
-            <div class="col-span-2"><span class="sto-muted">证据引用</span> <span class="sto-num" x-text="(r.evidence_refs || []).join('，') || '—'"></span></div>
-            <div x-show="r.reviewed_by"><span class="sto-muted">审核</span> <span x-text="`${r.reviewed_by}：${r.review_reason || '—'}`"></span></div>
-          </div>
-        </div>
-      </template>
-    </div>
-
-    <!-- 攻击链列表 -->
-    <div x-show="rtResultView === 'chains'" x-cloak class="flex-1 min-h-0 overflow-y-auto mt-3 space-y-2.5">
-      <template x-if="!rtResultLoading && rtChainItems.length === 0">
-        <div class="sto-muted" style="text-align:center; padding:48px 0;">暂无攻击链</div>
-      </template>
-      <template x-for="c in rtChainItems" :key="c.id">
-        <div class="sto-panel" style="padding:13px 15px;">
-          <div class="flex items-center" style="gap:8px;">
-            <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);" x-text="c.id"></span>
-            <span class="sto-status" :class="rtChainStatusClass(c.status)" style="font-size:10px;"><i></i><span x-text="rtChainStatusLabel(c.status)"></span></span>
-            <span style="flex:1;"></span>
-            <span class="sto-muted" style="font-size:10.5px;" x-text="rtTaskTitle(c.task_id)"></span>
-          </div>
-          <p style="margin-top:6px; font-size:13px; font-weight:600; color:var(--sto-fg);" x-text="c.title"></p>
-          <div class="mt-2 flex flex-wrap items-center text-xs" style="gap:14px; color:var(--sto-fg-2);">
-            <span><span class="sto-muted">初始身份</span> <span x-text="c.initial_principal?.id || '—'"></span></span>
-            <span><span class="sto-muted">已获能力</span> <span class="sto-num" x-text="(c.current_state?.capabilities || []).join(', ') || '—'"></span></span>
-            <span><span class="sto-muted">已达资产</span> <span class="sto-num" x-text="(c.current_state?.assets || []).join(', ') || '—'"></span></span>
-            <span><span class="sto-muted">关联 Intent</span> <span class="sto-num" x-text="(c.source_intent_ids || []).length"></span></span>
-            <span><span class="sto-muted">创建</span> <span x-text="c.created_by"></span></span>
-          </div>
-        </div>
-      </template>
+      <span style="width:1px; height:14px; background:var(--sto-line);"></span>
+      <span class="sto-status ok" style="font-size:11px;"><i></i><span>已验证</span><b class="sto-num" style="color:var(--sto-fg);" x-text="rtResultItems.filter(item => item.status === 'verified').length"></b></span>
+      <span class="sto-status warn" style="font-size:11px;"><i></i><span>审核中</span><b class="sto-num" style="color:var(--sto-fg);" x-text="rtResultItems.filter(item => item.status === 'reviewing' || item.status === 'reported').length"></b></span>
+      <span class="sto-status ok" style="font-size:11px;"><i></i><span>核定</span><b class="sto-num" style="color:var(--sto-fg);" x-text="`${rtVerifiedPoints()} 分`"></b></span>
     </div>
   </div>
+
+  <main x-show="factViewMode === 'result'" x-cloak class="flex-1 min-h-0 grid grid-cols-[340px_minmax(0,1fr)] gap-4" style="padding:14px 16px; background:var(--sto-inset);">
+    <aside class="sto-panel sto-vlist overflow-y-auto overflow-x-hidden" style="padding:10px;">
+      <template x-if="!rtResultLoading && rtResultItems.length === 0">
+        <div class="sto-muted" style="text-align:center; padding:36px 0;">暂无红队成果</div>
+      </template>
+      <template x-for="r in rtResultItems" :key="r.id">
+        <button type="button" @click="selectRtResult(r)" class="sto-navitem sto-vlist"
+          :class="[rtTypeTone(r.result_type), selectedRtResultId === r.id ? 'active' : '']">
+          <div class="flex items-center" style="gap:7px;">
+            <span class="sto-sevdot"></span>
+            <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);" x-text="r.id"></span>
+            <span style="flex:1;"></span>
+            <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);" x-text="rtPointsLabel(r)"></span>
+            <span class="sto-status" style="font-size:10px;" :class="rtStatusClass(r.status)"><i></i><span x-text="rtStatusLabel(r.status)"></span></span>
+          </div>
+          <p style="margin-top:5px; font-size:12.5px; font-weight:600; color:var(--sto-fg); line-height:1.45; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" x-text="r.title"></p>
+        </button>
+      </template>
+    </aside>
+    <section class="sto-panel overflow-y-auto" style="overflow-x:hidden;">
+      <template x-if="!selectedRtResult()">
+        <div class="sto-muted" style="min-height:420px; display:flex; align-items:center; justify-content:center;">请选择左侧成果查看详情</div>
+      </template>
+      <template x-if="selectedRtResult()">
+        <article>
+          <div class="sto-vhero" :class="rtTypeTone(selectedRtResult().result_type)" style="padding:16px 20px;">
+            <div class="flex flex-wrap items-center" style="gap:9px;">
+              <span class="sevsq" x-text="rtTypeMark(selectedRtResult().result_type)"></span>
+              <span class="sto-num" style="font-size:11px; font-weight:700; color:var(--sto-fg-2);" x-text="selectedRtResult().id"></span>
+              <span class="sto-status" style="font-size:11px;" :class="rtStatusClass(selectedRtResult().status)"><i></i><span x-text="rtStatusLabel(selectedRtResult().status)"></span></span>
+              <span class="sto-num" style="font-size:11px; font-weight:700; color:var(--sto-fg);" x-text="rtPointsLabel(selectedRtResult())"></span>
+              <span class="sto-muted" style="font-size:10.5px;" x-text="rtTaskTitle(selectedRtResult().task_id)"></span>
+            </div>
+            <h3 style="margin-top:9px; font-size:17px; font-weight:700; letter-spacing:-0.01em; color:var(--sto-fg); word-break:break-word;" x-text="selectedRtResult().title"></h3>
+            <div class="flex flex-wrap items-center" style="gap:7px; margin-top:9px;">
+              <span class="sto-sevbadge" x-text="rtTypeLabel(selectedRtResult().result_type)"></span>
+              <span x-show="selectedRtResult().target_asset" class="sto-badge neutral" x-text="selectedRtResult().target_asset"></span>
+              <span x-show="selectedRtResult().principal" class="sto-badge neutral" x-text="selectedRtResult().tenant ? `${selectedRtResult().principal} @ ${selectedRtResult().tenant}` : selectedRtResult().principal"></span>
+            </div>
+          </div>
+          <div style="padding:16px 20px; display:flex; flex-direction:column; gap:13px;">
+            <div class="sto-panel inset" style="padding:13px 15px;">
+              <div class="flex items-center justify-between" style="gap:10px;">
+                <p class="sto-label">Reviewer 审核</p>
+                <span class="sto-badge" :class="rtStatusClass(selectedRtResult().status)" x-text="rtStatusLabel(selectedRtResult().status)"></span>
+              </div>
+              <p class="sto-muted" style="margin-top:4px;">证据优先审核；必要时在 Scope 内做最小复测。</p>
+              <div x-show="!selectedRtResult().reviewed_by && !selectedRtResult().review_reason" class="sto-empty" style="margin-top:10px; padding:14px 0;">暂无 Reviewer 审核记录。成果上报后会自动排队。</div>
+              <article x-show="selectedRtResult().reviewed_by || selectedRtResult().review_reason" class="sto-group" style="margin-top:10px; padding:10px 12px;">
+                <div class="flex flex-wrap items-center" style="gap:7px;">
+                  <span class="sto-num" style="font-size:10px; font-weight:650; color:var(--sto-fg-2);" x-text="selectedRtResult().id"></span>
+                  <span class="sto-badge" style="padding:1px 7px; font-size:9px;" :class="rtStatusClass(selectedRtResult().status)" x-text="rtStatusLabel(selectedRtResult().status)"></span>
+                  <span x-show="selectedRtResult().status === 'verified'" class="sto-badge" style="padding:1px 7px; font-size:9px; color:var(--sto-accent); border-color:color-mix(in srgb, var(--sto-accent) 35%, transparent);" x-text="`核定 ${selectedRtResult().points_awarded || 0} 分`"></span>
+                  <span class="sto-muted sto-num" style="margin-left:auto; font-size:9.5px;" x-text="formatDate(selectedRtResult().updated_at || selectedRtResult().created_at)"></span>
+                </div>
+                <p x-show="selectedRtResult().reviewed_by" class="sto-muted" style="margin-top:5px; font-size:10.5px;"><span style="font-weight:650;">审查者：</span><span x-text="selectedRtResult().reviewed_by"></span></p>
+                <p x-show="selectedRtResult().review_reason" class="sto-muted" style="margin-top:7px; white-space:pre-wrap; word-break:break-word; line-height:1.55;"><span style="font-weight:650; color:var(--sto-fg-2);">审核原因：</span><span x-text="formatMultiline(selectedRtResult().review_reason)"></span></p>
+              </article>
+            </div>
+            <div class="sto-panel" style="padding:13px 15px;">
+              <p class="sto-label" style="margin-bottom:7px;">描述</p>
+              <p style="font-size:13px; color:var(--sto-fg); white-space:pre-wrap; word-break:break-word; line-height:1.6;" x-text="formatMultiline(selectedRtResult().description)"></p>
+            </div>
+            <div class="sto-panel" style="padding:13px 15px;">
+              <div class="flex items-center justify-between" style="gap:8px; margin-bottom:8px;">
+                <p class="sto-label">攻击链</p>
+                <span class="sto-num" style="font-size:10.5px; color:var(--sto-fg-2);" x-text="rtChainView && rtChainView.chainId === selectedRtResult().chain_id ? `${rtChainView.chainId} ${rtChainView.title || ''}`.trim() : (selectedRtResult().chain_id || '—')"></span>
+              </div>
+              <p x-show="rtChainLoading" class="sto-muted">正在读取这条链上的 Intent…</p>
+              <p x-show="!rtChainLoading && rtChainView && rtChainView.chainId === selectedRtResult().chain_id && rtChainView.steps.length === 0" class="sto-muted">这条链上还没有 Intent。</p>
+              <div x-show="rtChainView && rtChainView.chainId === selectedRtResult().chain_id && rtChainView.steps.length" class="chain-strip">
+                <template x-for="(step, index) in (rtChainView && rtChainView.chainId === selectedRtResult().chain_id ? rtChainView.steps : [])" :key="`${selectedRtResult().id}-${step.id}`">
+                  <span class="chain-strip-item">
+                    <button type="button" class="chain-chip" :class="step.id === selectedRtResult().intent_id ? 'on' : ''" :title="step.description || ''" @click="openResultChainIntent(selectedRtResult(), step.id)">
+                      <span x-text="step.id"></span>
+                    </button>
+                    <span class="chain-arrow" x-show="rtChainView && index < rtChainView.steps.length - 1">→</span>
+                  </span>
+                </template>
+              </div>
+            </div>
+            <div class="sto-panel" style="padding:13px 15px;">
+              <p class="sto-label" style="margin-bottom:7px;">能力与归属</p>
+              <div class="grid grid-cols-2 gap-x-6 gap-y-2" style="font-size:12.5px; color:var(--sto-fg-2);">
+                <div><span class="sto-muted">Intent</span> <span class="sto-num" x-text="selectedRtResult().intent_id || '—'"></span></div>
+                <div><span class="sto-muted">能力变化</span> <span class="sto-num" x-text="(selectedRtResult().capabilities_before || []).join(', ') || '—'"></span> → <span class="sto-num" style="color:var(--sto-fg);" x-text="(selectedRtResult().capabilities_gained || []).join(', ') || '—'"></span></div>
+                <div><span class="sto-muted">上报</span> <span x-text="selectedRtResult().reported_by || '—'"></span></div>
+              </div>
+            </div>
+            <div x-show="selectedRtResult().result_type === 'data'" class="sto-panel" style="padding:13px 15px;">
+              <p class="sto-label" style="margin-bottom:7px;">数据样本</p>
+              <p style="font-size:13px; color:var(--sto-fg); line-height:1.6;" x-text="`${selectedRtResult().sample_count ?? '—'} 条 / ${selectedRtResult().sample_bytes ?? '—'} 字节`"></p>
+              <p class="sto-muted" style="margin-top:4px;" x-text="`字段 ${(selectedRtResult().data_fields || []).join(', ') || '—'}`"></p>
+              <p x-show="selectedRtResult().data_summary" style="margin-top:6px; font-size:13px; color:var(--sto-fg); white-space:pre-wrap; word-break:break-word;" x-text="formatMultiline(selectedRtResult().data_summary)"></p>
+            </div>
+            <div x-show="selectedRtResult().result_type === 'credential'" class="sto-panel" style="padding:13px 15px;">
+              <p class="sto-label" style="margin-bottom:7px;">凭证引用</p>
+              <p class="sto-num" style="font-size:13px; color:var(--sto-fg);" x-text="selectedRtResult().credential_ref || '—'"></p>
+            </div>
+            <div class="sto-panel" style="padding:13px 15px;">
+              <p class="sto-label" style="margin-bottom:7px;">证据引用</p>
+              <template x-if="(selectedRtResult().evidence_refs || []).length === 0">
+                <p class="sto-muted" style="font-style:italic;">未填写</p>
+              </template>
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <template x-for="ref in (selectedRtResult().evidence_refs || [])" :key="`${selectedRtResult().id}-${ref}`">
+                  <button type="button" @click="openResultEvidence(selectedRtResult(), ref)" class="sto-item" style="border:1px solid var(--sto-line); border-radius:9px; width:100%; text-align:left; cursor:pointer;">
+                    <span class="sto-num" style="font-size:11.5px; color:var(--sto-accent);" x-text="ref"></span>
+                  </button>
+                </template>
+              </div>
+            </div>
+          </div>
+        </article>
+      </template>
+    </section>
+  </main>
 </div>
 
 <!-- Quick Status Modal -->

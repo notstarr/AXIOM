@@ -1132,6 +1132,38 @@
     position: sticky; bottom: 0; margin: 10px -6px 0; padding: 8px 12px;
     border-top: 1px solid var(--sto-line); background: var(--sto-panel); z-index: 5;
   }
+  .chain-rail { display: flex; flex-direction: column; padding: 2px 2px 4px; }
+  .chain-step {
+    display: flex; align-items: stretch; gap: 8px; width: 100%;
+    text-align: left; background: transparent; border: 0; padding: 0; cursor: pointer;
+  }
+  .chain-step:focus { outline: none; }
+  .chain-step-mark { width: 16px; display: flex; flex-direction: column; align-items: center; flex: none; }
+  .chain-step-index {
+    width: 16px; height: 16px; border-radius: 999px; border: 1px solid #cbd5e1; background: #fff;
+    font-size: 9px; font-weight: 700; color: #64748b; display: grid; place-items: center; flex: none;
+  }
+  .chain-step.on .chain-step-index { background: #0f172a; color: #fff; border-color: #0f172a; }
+  .chain-step-line { width: 1px; flex: 1; min-height: 8px; background: #cbd5e1; margin: 2px 0; }
+  .chain-step-body {
+    min-width: 0; flex: 1; display: flex; align-items: center; gap: 6px;
+    padding: 4px 8px; margin-bottom: 2px; border-radius: 8px; border: 1px solid transparent;
+  }
+  .chain-step.on .chain-step-body { background: #f8fafc; border-color: #cbd5e1; }
+  .chain-step:hover .chain-step-body { border-color: #e2e8f0; }
+  .chain-step-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; color: #334155; flex: none; }
+  .chain-step-title { font-size: 11px; color: #475569; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .chain-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .chain-strip-item { display: inline-flex; align-items: center; gap: 6px; }
+  .chain-chip {
+    border: 1px solid #e2e8f0; background: #fff; border-radius: 999px;
+    padding: 2px 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px; font-weight: 700; color: #334155; cursor: pointer;
+  }
+  .chain-chip.on { background: #0f172a; color: #fff; border-color: #0f172a; }
+  .chain-chip:hover { border-color: #94a3b8; }
+  .chain-arrow { color: #94a3b8; font-size: 12px; line-height: 1; }
+
   .vsc-pill {
     display: inline-flex; align-items: center; justify-content: center; gap: 6px;
     border: 0; cursor: pointer; padding: 6px 12px;

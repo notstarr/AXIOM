@@ -34,11 +34,13 @@ SCOPES = ("common", *PHASES)
 KINDS = ("skill", "mcp_tool", "axiom_tool")
 _DEFAULTS_MARKER = ".phase-capabilities-v1-initialized"
 _BROWSER_BOOTSTRAP_MARKER = ".phase-capabilities-v2-browser-bootstrap"
+_SCORING_SCOPES_MARKER = ".phase-capabilities-v3-redteam-scoring-scopes"
+_REDTEAM_SCORING_EXTRA_SCOPES = ("bootstrap", "reason", "plan", "review")
 _MCP_NAME_PART = re.compile(r"[^a-z0-9_]+")
 _DEFAULT_SKILL_SCOPES = {
     "vuln-review": ("review",),
     "browser-control": ("bootstrap", "explore"),
-    "redteam-scoring": ("explore",),
+    "redteam-scoring": ("bootstrap", "reason", "explore", "plan", "review"),
     "redteam-review": ("review",),
 }
 
@@ -618,6 +620,7 @@ class PhaseCapabilityService:
     def _initialize_existing_skills_once(self) -> None:
         marker = self.data_dir / _DEFAULTS_MARKER
         browser_marker = self.data_dir / _BROWSER_BOOTSTRAP_MARKER
+        scoring_marker = self.data_dir / _SCORING_SCOPES_MARKER
         skill_records = self.skills.list()
         with transaction(self.engine) as conn:
             if not marker.exists():
@@ -659,6 +662,28 @@ class PhaseCapabilityService:
                         capability_key="browser-control",
                         now=utcnow(),
                     )
+            # Existing installs only bound redteam-scoring to Explore. Bind it
+            # once to the stages that pick or adjudicate points. A later
+            # unbind stays unbound.
+            if not scoring_marker.exists():
+                scoring_skill = next(
+                    (skill for skill in skill_records if skill.name == "redteam-scoring"),
+                    None,
+                )
+                if (
+                    scoring_skill is not None
+                    and scoring_skill.enabled
+                    and Path(scoring_skill.path).is_file()
+                ):
+                    now = utcnow()
+                    for scope in _REDTEAM_SCORING_EXTRA_SCOPES:
+                        self.repository.ensure(
+                            conn,
+                            scope=scope,
+                            capability_kind="skill",
+                            capability_key="redteam-scoring",
+                            now=now,
+                        )
             self._ensure_mandatory_locked(conn, skill_records=skill_records)
         if not marker.exists():
             marker.parent.mkdir(parents=True, exist_ok=True)
@@ -670,6 +695,11 @@ class PhaseCapabilityService:
             temporary = browser_marker.with_name(f".{browser_marker.name}.tmp")
             temporary.write_text(utcnow() + "\n", encoding="utf-8")
             temporary.replace(browser_marker)
+        if not scoring_marker.exists():
+            scoring_marker.parent.mkdir(parents=True, exist_ok=True)
+            temporary = scoring_marker.with_name(f".{scoring_marker.name}.tmp")
+            temporary.write_text(utcnow() + "\n", encoding="utf-8")
+            temporary.replace(scoring_marker)
 
     def _ensure_mandatory_locked(self, conn, *, skill_records=None) -> None:
         now = utcnow()

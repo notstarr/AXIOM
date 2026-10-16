@@ -69,7 +69,7 @@
         <button x-show="!project?.project?.archived" @click="switchHumanTab(tab.id)" class="relative px-3 py-2.5 text-xs whitespace-nowrap transition"
           :class="humanTab === tab.id ? 'text-brand-600 font-semibold' : 'text-slate-500 hover:text-slate-700'">
           <span x-text="tab.label"></span>
-          <span x-show="tab.id === 'todos' && project.todos?.length" class="ml-1 inline-flex items-center rounded-full px-1.5 py-px text-[9px] font-semibold tabular-nums" :class="humanTab === tab.id ? 'bg-brand-50 text-brand-600' : 'bg-slate-100 text-slate-500'" x-text="project.todos.filter(item => !item.archived).length"></span>
+          <span x-show="tab.id === 'todos' && (isRedTeamBoard() ? project.chains?.length : project.todos?.length)" class="ml-1 inline-flex items-center rounded-full px-1.5 py-px text-[9px] font-semibold tabular-nums" :class="humanTab === tab.id ? 'bg-brand-50 text-brand-600' : 'bg-slate-100 text-slate-500'" x-text="isRedTeamBoard() ? (project.chains || []).length : project.todos.filter(item => !item.archived).length"></span>
           <span x-show="humanTab === tab.id" class="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-brand-500"></span>
         </button>
       </template>
@@ -80,7 +80,7 @@
     class="shrink-0 border-b px-5 py-2 text-xs"
     :class="taskDetailHasErrors() ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-blue-100 bg-blue-50 text-blue-700'">
     <div class="mx-auto flex max-w-[1600px] items-center justify-between gap-3">
-      <span x-text="taskDetailHasErrors() ? '部分详情加载失败，已加载内容仍可使用。' : '任务摘要已显示，正在后台加载图谱、Todo、漏洞和产物…'"></span>
+      <span x-text="taskDetailHasErrors() ? '部分详情加载失败，已加载内容仍可使用。' : (isRedTeamBoard() ? '任务摘要已显示，正在后台加载图谱、攻击链、成果和产物…' : '任务摘要已显示，正在后台加载图谱、Todo、漏洞和产物…')"></span>
       <button x-show="taskDetailHasErrors()" @click="retryTaskDetailSection()" class="shrink-0 rounded-lg border border-amber-300 bg-white/70 px-2.5 py-1 font-medium hover:bg-white">重试失败区块</button>
     </div>
   </div>
@@ -221,8 +221,9 @@
                 <span class="text-[10px] text-slate-500">当前轮次</span>
               </div>
               <div class="flex items-center gap-2 rounded-xl border border-slate-200/80 bg-slate-50/70 px-3.5 py-2">
-                <span class="text-lg font-bold tabular-nums leading-none text-brand-600" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total}`"></span>
-                <span class="text-[10px] text-slate-500">Todo</span>
+                <span x-show="isRedTeamBoard()" class="text-lg font-bold tabular-nums leading-none text-rose-500" x-text="`${humanRedTeamPoints().awarded}/${humanRedTeamPoints().target}`"></span>
+                <span x-show="!isRedTeamBoard()" class="text-lg font-bold tabular-nums leading-none text-brand-600" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total}`"></span>
+                <span class="text-[10px] text-slate-500" x-text="isRedTeamBoard() ? '积分' : 'Todo'"></span>
               </div>
               <div class="flex items-center gap-2 rounded-xl border border-slate-200/80 bg-slate-50/70 px-3.5 py-2">
                 <span class="text-lg font-bold tabular-nums leading-none text-blue-600" x-text="humanCurrentIntents().length"></span>
@@ -233,9 +234,9 @@
           </div>
           <div class="mt-3 flex items-center gap-2.5">
             <div class="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
-              <div class="h-full rounded-full bg-brand-500 transition-all" :style="`width:${humanIntentCoverage().percent}%`"></div>
+              <div class="h-full rounded-full transition-all" :class="isRedTeamBoard() ? 'bg-rose-500' : 'bg-brand-500'" :style="`width:${isRedTeamBoard() ? humanRedTeamPoints().percent : humanIntentCoverage().percent}%`"></div>
             </div>
-            <span class="text-sm font-bold text-brand-600 tabular-nums" x-text="`${humanIntentCoverage().percent}%`"></span>
+            <span class="text-sm font-bold tabular-nums" :class="isRedTeamBoard() ? 'text-rose-500' : 'text-brand-600'" x-text="`${isRedTeamBoard() ? humanRedTeamPoints().percent : humanIntentCoverage().percent}%`"></span>
           </div>
         </section>
         <template x-if="humanAttentionItems().length">
@@ -305,7 +306,7 @@
                     <span class="mt-0.5 h-7 w-7 rounded-lg flex items-center justify-center text-xs font-mono" :class="`${humanIntentStatusClass(intent)} ${humanIntentIconClass(intent)}`" x-text="humanIntentIcon(intent)"></span>
                     <div class="min-w-0 flex-1">
                       <div class="flex items-start justify-between gap-2"><p class="text-xs font-medium leading-5 text-slate-700" x-text="intent.description || '未命名 Intent'"></p><span class="shrink-0 px-1.5 py-0.5 rounded-md border text-[9px]" :class="humanIntentStatusClass(intent)" x-text="humanIntentStatusLabel(intent)"></span></div>
-                      <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-400"><span x-show="intent.created_at" class="text-slate-500" x-text="formatTime(intent.created_at)"></span><span x-text="intent.worker || '未领取'"></span><span x-text="intent.todo_id ? `Todo：${intent.todo_id}` : '未关联 Todo'"></span><span x-show="intent.targets?.length" x-text="intent.targets.join(', ')"></span><span x-show="intent.retry_count || intent.infrastructure_retry_count" class="text-rose-500" x-text="`执行重试 ${intent.retry_count || 0} · 基础设施重试 ${intent.infrastructure_retry_count || 0}`"></span></div>
+                      <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-400"><span x-show="intent.created_at" class="text-slate-500" x-text="formatTime(intent.created_at)"></span><span x-text="intent.worker || '未领取'"></span><span x-text="intentFeedParent(intent)"></span><span x-show="intent.targets?.length" x-text="intent.targets.join(', ')"></span><span x-show="intent.retry_count || intent.infrastructure_retry_count" class="text-rose-500" x-text="`执行重试 ${intent.retry_count || 0} · 基础设施重试 ${intent.infrastructure_retry_count || 0}`"></span></div>
                     </div>
                   </div>
                 </div>
@@ -326,16 +327,22 @@
         </section>
 
         <section class="sto-panel" style="padding:18px 20px;">
-            <div class="flex items-center justify-between"><div><h3 class="text-sm font-semibold text-slate-800">风险摘要</h3><p class="mt-1 text-xs text-slate-400">漏洞详情和状态统一在漏洞管理中维护。</p></div><button @click="openTaskVulnerabilities()" class="text-[11px] text-brand-600 hover:text-brand-700">查看本任务漏洞 →</button></div>
-            <div class="mt-4 flex flex-wrap gap-2">
+            <div class="flex items-center justify-between"><div><h3 class="text-sm font-semibold text-slate-800" x-text="isRedTeamBoard() ? '积分进度' : '风险摘要'"></h3><p class="mt-1 text-xs text-slate-400" x-text="isRedTeamBoard() ? '核定积分和成果状态在重要事实的成果视图维护。' : '漏洞详情和状态统一在漏洞管理中维护。'"></p></div><button @click="openTaskVulnerabilities()" class="text-[11px] text-brand-600 hover:text-brand-700" x-text="isRedTeamBoard() ? '查看本任务成果 →' : '查看本任务漏洞 →'"></button></div>
+            <div x-show="isRedTeamBoard()" class="mt-4 flex flex-wrap gap-2">
+              <span class="px-2.5 py-1.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100 text-xs">核定 <b x-text="humanRedTeamPoints().awarded"></b> / <b x-text="humanRedTeamPoints().target"></b></span>
+              <span class="px-2.5 py-1.5 rounded-full bg-slate-50 text-slate-700 border border-slate-100 text-xs">成果 <b x-text="(project.red_team_results || []).length"></b></span>
+              <span class="px-2.5 py-1.5 rounded-full bg-slate-50 text-slate-700 border border-slate-100 text-xs">攻击链 <b x-text="(project.chains || []).length"></b></span>
+            </div>
+            <div x-show="!isRedTeamBoard()" class="mt-4 flex flex-wrap gap-2">
               <span class="px-2.5 py-1.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100 text-xs">严重 <b x-text="humanSeverityCounts().critical"></b></span>
               <span class="px-2.5 py-1.5 rounded-full bg-orange-50 text-orange-700 border border-orange-100 text-xs">高危 <b x-text="humanSeverityCounts().high"></b></span>
               <span class="px-2.5 py-1.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100 text-xs">中危 <b x-text="humanSeverityCounts().medium"></b></span>
               <span class="px-2.5 py-1.5 rounded-full bg-sky-50 text-sky-700 border border-sky-100 text-xs">低危 <b x-text="humanSeverityCounts().low"></b></span>
             </div>
-            <p x-show="taskDetailSectionPending('vulnerabilities')" class="mt-4 text-xs text-slate-400">正在加载漏洞记录…</p>
-            <p x-show="taskDetailSectionError('vulnerabilities')" class="mt-4 text-xs text-rose-500">漏洞记录加载失败。<button @click="retryTaskDetailSection('vulnerabilities')" class="ml-1 text-brand-600 hover:underline">重试</button></p>
-            <p x-show="taskDetailSectionReady('vulnerabilities')" class="mt-4 text-xs text-slate-400" x-text="humanVulnerabilityCount() ? `本任务共有 ${humanVulnerabilityCount()} 个漏洞记录。` : '当前没有确认漏洞记录。'"></p>
+            <p x-show="!isRedTeamBoard() && taskDetailSectionPending('vulnerabilities')" class="mt-4 text-xs text-slate-400">正在加载漏洞记录…</p>
+            <p x-show="!isRedTeamBoard() && taskDetailSectionError('vulnerabilities')" class="mt-4 text-xs text-rose-500">漏洞记录加载失败。<button @click="retryTaskDetailSection('vulnerabilities')" class="ml-1 text-brand-600 hover:underline">重试</button></p>
+            <p x-show="!isRedTeamBoard() && taskDetailSectionReady('vulnerabilities')" class="mt-4 text-xs text-slate-400" x-text="humanVulnerabilityCount() ? `本任务共有 ${humanVulnerabilityCount()} 个漏洞记录。` : '当前没有确认漏洞记录。'"></p>
+            <p x-show="isRedTeamBoard()" class="mt-4 text-xs text-slate-400" x-text="(project.red_team_results || []).length ? `本任务已上报 ${(project.red_team_results || []).length} 条成果。` : '当前没有已上报成果。'"></p>
         </section>
       </div>
     </div>
@@ -353,9 +360,10 @@
       <div class="flex gap-4 items-stretch">
         <section class="sto-panel shrink-0 flex flex-col" style="padding:12px; width:380px; max-height:calc(100vh - 220px); overflow:hidden;">
           <div class="flex items-center justify-between px-2 pb-2 shrink-0">
-            <p class="sto-label">Todo 总览</p>
+            <p class="sto-label" x-text="isRedTeamBoard() ? '攻击链总览' : 'Todo 总览'"></p>
+            <span x-show="isRedTeamBoard()" class="text-[10px] font-mono text-rose-500 tabular-nums" x-text="`${humanRedTeamPoints().awarded}/${humanRedTeamPoints().target}`"></span>
             <div class="flex items-center" style="gap:6px;">
-              <span class="text-[10px] font-mono text-slate-400 tabular-nums" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total}`"></span>
+              <span x-show="!isRedTeamBoard()" class="text-[10px] font-mono text-slate-400 tabular-nums" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total}`"></span>
               <div class="vsc-mode-switch">
                 <button type="button" :class="humanNavMode === 'tree' ? 'on' : ''" @click="humanNavMode = 'tree'">总览</button>
                 <button type="button" :class="humanNavMode === 'timeline' ? 'on' : ''" @click="humanNavMode = 'timeline'">时间轴</button>
@@ -377,17 +385,34 @@
                   <span class="text-xs truncate flex-1" style="min-width:0;" :class="todo.status === 'completed' ? 'text-slate-400 line-through' : 'text-slate-700'" x-text="todo.title"></span>
                   <span class="text-[10px] font-mono text-slate-400 tabular-nums shrink-0" x-text="`${todoIntentProgress(todo.id).completed}/${getIntentsForTodo(todo.id).length}`"></span>
                 </button>
-                <div x-show="todoNavExpandedId === todo.id" class="px-2 pb-2 space-y-1">
-                  <template x-for="intent in navIntentsForTodo(todo.id)" :key="`nav-intent-${intent.id}`">
-                    <button type="button" @click="selectTodoNavIntent(intent.id)"
-                      class="w-full text-left rounded-lg px-2.5 py-1.5 border transition flex items-center gap-2"
-                      :class="todoNavIntentId === intent.id ? 'border-brand-300 bg-brand-50/70' : 'border-transparent bg-slate-50/80 hover:border-slate-300'">
-                      <span class="h-1.5 w-1.5 rounded-full shrink-0" :class="intentDotClass(intent)"></span>
-                      <span class="font-mono text-[10px] text-slate-500 shrink-0" x-text="intent.id"></span>
-                      <span class="text-[11px] text-slate-600 line-clamp-2" style="min-width:0; flex:1 1 0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" x-text="intent.description || '未命名 Intent'"></span>
-                    </button>
-                  </template>
-                  <p x-show="getIntentsForTodo(todo.id).length === 0" class="px-2.5 py-1 text-[10px] text-slate-400 italic">暂无子 Intent。</p>
+                <div x-show="todoNavExpandedId === todo.id" class="px-2 pb-2">
+                  <div x-show="isRedTeamBoard()" class="chain-rail">
+                    <template x-for="(intent, index) in navIntentsForTodo(todo.id)" :key="`nav-chain-${intent.id}`">
+                      <button type="button" @click="selectTodoNavIntent(intent.id)" class="chain-step" :class="todoNavIntentId === intent.id ? 'on' : ''" :title="intent.description || ''">
+                        <span class="chain-step-mark">
+                          <span class="chain-step-index" x-text="index + 1"></span>
+                          <span class="chain-step-line" x-show="index < navIntentsForTodo(todo.id).length - 1"></span>
+                        </span>
+                        <span class="chain-step-body">
+                          <span class="h-1.5 w-1.5 rounded-full shrink-0" :class="intentDotClass(intent)"></span>
+                          <span class="chain-step-id" x-text="intent.id"></span>
+                          <span class="chain-step-title" x-text="intent.description || '未命名 Intent'"></span>
+                        </span>
+                      </button>
+                    </template>
+                  </div>
+                  <div x-show="!isRedTeamBoard()" class="space-y-1">
+                    <template x-for="intent in navIntentsForTodo(todo.id)" :key="`nav-intent-${intent.id}`">
+                      <button type="button" @click="selectTodoNavIntent(intent.id)"
+                        class="w-full text-left rounded-lg px-2.5 py-1.5 border transition flex items-center gap-2"
+                        :class="todoNavIntentId === intent.id ? 'border-brand-300 bg-brand-50/70' : 'border-transparent bg-slate-50/80 hover:border-slate-300'">
+                        <span class="h-1.5 w-1.5 rounded-full shrink-0" :class="intentDotClass(intent)"></span>
+                        <span class="font-mono text-[10px] text-slate-500 shrink-0" x-text="intent.id"></span>
+                        <span class="text-[11px] text-slate-600 truncate" style="min-width:0; flex:1 1 0;" x-text="intent.description || '未命名 Intent'"></span>
+                      </button>
+                    </template>
+                  </div>
+                  <p x-show="getIntentsForTodo(todo.id).length === 0" class="px-2.5 py-1 text-[10px] text-slate-400 italic" x-text="isRedTeamBoard() ? '这条链还没有 Intent。' : '暂无子 Intent。'"></p>
                 </div>
               </div>
             </template>
@@ -399,7 +424,7 @@
                   :class="todoNavExpandedId === '_unlinked' ? 'sticky top-0 z-10 bg-white rounded-t-xl shadow-[0_1px_0_0_#e2e8f0]' : ''">
                   <svg class="h-2.5 w-2.5 shrink-0 text-slate-400 transition-transform" :class="todoNavExpandedId === '_unlinked' ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 6 6 6-6 6"/></svg>
                   <span class="text-xs font-semibold text-slate-600 shrink-0">未分类</span>
-                  <span class="text-[10px] text-slate-400 truncate flex-1">未关联 Todo 的探索 Intent</span>
+                  <span class="text-[10px] text-slate-400 truncate flex-1" x-text="isRedTeamBoard() ? '未关联攻击链的探索 Intent' : '未关联 Todo 的探索 Intent'"></span>
                   <span class="text-[10px] font-mono text-slate-400 tabular-nums shrink-0" x-text="getUnlinkedIntents().length"></span>
                 </button>
                 <div x-show="todoNavExpandedId === '_unlinked'" class="px-2 pb-2 space-y-1">
@@ -427,7 +452,7 @@
               </template>
               <p x-show="taskDetailSectionPending('todos')" class="py-8 text-center text-xs text-slate-400">正在加载 Todo…</p>
             <p x-show="taskDetailSectionError('todos')" class="py-8 text-center text-xs text-rose-500">Todo 加载失败。<button @click="retryTaskDetailSection('todos')" class="ml-1 text-brand-600 hover:underline">重试</button></p>
-            <p x-show="taskDetailSectionReady('todos') && project.todos.length === 0" class="py-8 text-center text-xs text-slate-400">Reason 尚未生成 Todo。</p>
+            <p x-show="taskDetailSectionReady('todos') && humanSortedTodos().length === 0" class="py-8 text-center text-xs text-slate-400" x-text="isRedTeamBoard() ? 'Reason 尚未生成攻击链。' : 'Reason 尚未生成 Todo。'"></p>
           </div>
           </div>
           <!-- 时间轴模式 -->
@@ -460,7 +485,7 @@
             <div class="min-h-[380px] grid place-items-center text-center">
               <div>
                 <div class="mx-auto h-12 w-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center text-xl">&#9776;</div>
-                <p class="mt-3 text-sm text-slate-400">从左侧展开 Todo，点击任意 Intent 查看详情</p>
+                <p class="mt-3 text-sm text-slate-400" x-text="isRedTeamBoard() ? '从左侧展开攻击链，点击任意 Intent 查看详情' : '从左侧展开 Todo，点击任意 Intent 查看详情'"></p>
               </div>
             </div>
           </template>
@@ -481,9 +506,23 @@
 
               <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div class="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5"><p class="text-[10px] text-slate-400">Worker</p><p class="mt-0.5 text-xs font-medium text-slate-700 truncate" x-text="todoNavIntentRecord().worker || '未领取'"></p></div>
-                <div class="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5"><p class="text-[10px] text-slate-400">所属 Todo</p><p class="mt-0.5 text-xs font-medium text-slate-700 truncate" x-text="todoNavIntentRecord().todo_id || '未关联'"></p></div>
+                <div class="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5"><p class="text-[10px] text-slate-400" x-text="intentParentNoun()"></p><p class="mt-0.5 text-xs font-medium text-slate-700 truncate" x-text="intentParentLabel(todoNavIntentRecord())"></p></div>
                 <div class="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5"><p class="text-[10px] text-slate-400">重试</p><p class="mt-0.5 text-xs font-medium text-slate-700" x-text="`${todoNavIntentRecord().retry_count || 0} 执行 · ${todoNavIntentRecord().infrastructure_retry_count || 0} 基础设施`"></p></div>
                 <div class="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5"><p class="text-[10px] text-slate-400">目标</p><p class="mt-0.5 text-xs font-medium text-slate-700 truncate" x-text="todoNavIntentRecord().targets?.join(', ') || '&#8212;'"></p></div>
+              </div>
+
+              <div x-show="isRedTeamBoard() && navIntentsForTodo(todoNavIntentRecord().chain_id).length" class="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                <p class="tip-label">攻击链</p>
+                <div class="chain-strip" style="margin-top:8px;">
+                  <template x-for="(intent, index) in navIntentsForTodo(todoNavIntentRecord().chain_id)" :key="`detail-chain-${intent.id}`">
+                    <span class="chain-strip-item">
+                      <button type="button" class="chain-chip" :class="intent.id === todoNavIntentRecord().id ? 'on' : ''" :title="intent.description || ''" @click="selectTodoNavIntent(intent.id)">
+                        <span x-text="intent.id"></span>
+                      </button>
+                      <span class="chain-arrow" x-show="index < navIntentsForTodo(todoNavIntentRecord().chain_id).length - 1">→</span>
+                    </span>
+                  </template>
+                </div>
               </div>
 
               <div>

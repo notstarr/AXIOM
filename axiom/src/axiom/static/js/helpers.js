@@ -477,26 +477,35 @@ window.AxiomModules.helpers = {
     // (_intentIndexVersion) 递增时重建一次，避免模板每次重渲染都全量扫描。
     intentIndex() {
       const intents = this.project?.intents;
-      const todos = this.project?.todos;
+      const redTeam = this.project?.project?.engagement_mode === 'red_team';
+      const parents = redTeam ? this.project?.chains : this.project?.todos;
       const version = this._intentIndexVersion || 0;
       const cache = this._intentIndexCache;
-      if (cache && cache.ref === intents && cache.todosRef === todos && cache.version === version) {
+      if (cache && cache.ref === intents && cache.todosRef === parents && cache.version === version && cache.redTeam === redTeam) {
         return cache;
       }
-      const todoIds = new Set((todos || []).map(t => t.id));
+      const parentIds = new Set((parents || []).map(item => item.id));
+      const parentKey = redTeam ? 'chain_id' : 'todo_id';
       const byTodo = new Map();
       const unlinked = [];
       for (const item of intents || []) {
         if (item.archived || this.isBootstrapIntent(item)) continue;
-        if (item.todo_id && todoIds.has(item.todo_id)) {
-          const list = byTodo.get(item.todo_id);
+        const parentId = item[parentKey];
+        if (parentId && parentIds.has(parentId)) {
+          const list = byTodo.get(parentId);
           if (list) list.push(item);
-          else byTodo.set(item.todo_id, [item]);
+          else byTodo.set(parentId, [item]);
         } else {
           unlinked.push(item);
         }
       }
-      const next = { ref: intents, todosRef: todos, version, byTodo, unlinked };
+      if (redTeam) {
+        const byTime = (a, b) => String(a.created_at || '').localeCompare(String(b.created_at || ''))
+          || String(a.id).localeCompare(String(b.id));
+        for (const list of byTodo.values()) list.sort(byTime);
+        unlinked.sort(byTime);
+      }
+      const next = { ref: intents, todosRef: parents, version, redTeam, byTodo, unlinked };
       this._intentIndexCache = next;
       return next;
     },

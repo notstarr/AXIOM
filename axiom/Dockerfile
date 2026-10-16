@@ -12,8 +12,16 @@ ARG FFUF_VERSION=2.1.0
 
 # ── ffuf 构建阶段：官方 GitHub releases/tags 已清空，改走 Go module
 #    proxy 安装固定版本（proxy 缓存历史版本，不依赖 GitHub tags 存续）──
+# GOPROXY=direct + GOSUMDB=off：本地 Docker 构建（含企业代理/证书劫持环境）
+# 直接从 GitHub 取源码；CI 上 GitHub 同样可达。pinned 版本保证可复现。
 FROM ${GOLANG_IMAGE} AS ffuf-builder
 ARG FFUF_VERSION
+# 清空 Docker Desktop 注入的代理变量：容器直连 GitHub（工具层已验证直连可达），
+# 避免代理链上的证书劫持破坏 go 模块下载；CI 环境无代理，行为不变。
+ENV HTTP_PROXY= HTTPS_PROXY= http_proxy= https_proxy= NO_PROXY=* \
+    GOPROXY=direct \
+    GOSUMDB=off \
+    GIT_TERMINAL_PROMPT=0
 RUN CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" \
       github.com/ffuf/ffuf/v2@v${FFUF_VERSION}
 

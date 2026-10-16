@@ -76,7 +76,9 @@ LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
         "assessed_at": None,
         "dedup_fingerprint": "",
         "plan_metadata_json": "{}",
+        "chain_id": None,
     },
+    "red_team_chains": {"status_reason": ""},
 }
 
 # Columns present only in the frozen SQLite export.  They are validated as

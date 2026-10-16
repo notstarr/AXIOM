@@ -9,6 +9,8 @@ from typing import Any
 import click
 import httpx
 
+from axiom.modules.redteam.schemas import MAX_RESULT_POINTS
+
 
 TODO_CATEGORIES = (
     "recon",
@@ -24,6 +26,18 @@ TODO_CATEGORIES = (
 )
 TODO_STATUSES = ("open", "partial", "blocked", "completed")
 SOURCE_TYPES = {"fact", "hint", "artifact", "vulnerability", "knowledge", "origin"}
+
+
+def _require_one_parent(
+    todo_ref: str | None,
+    todo_id: str | None,
+    chain_ref: str | None,
+    chain_id: str | None,
+) -> None:
+    todo_count = int(bool(todo_ref)) + int(bool(todo_id))
+    chain_count = int(bool(chain_ref)) + int(bool(chain_id))
+    if todo_count > 1 or chain_count > 1 or (todo_count == 1) == (chain_count == 1):
+        raise click.UsageError("exactly one parent is required: Todo (--todo-ref/--todo-id) or Chain (--chain-ref/--chain-id)")
 
 
 def register_worker_commands(main: click.Group) -> None:
@@ -189,11 +203,13 @@ def register_worker_commands(main: click.Group) -> None:
     @reason_intent_group.command("propose")
     @click.option("--todo-ref")
     @click.option("--todo-id")
+    @click.option("--chain-ref")
+    @click.option("--chain-id")
     @click.option(
         "--ref",
         "intent_ref",
         default=None,
-        help="Workspace-local handle so a staged RedTeam Chain can link this Intent.",
+        help="Workspace-local handle so a staged Chain can be cited before it has an ID.",
     )
     @click.option("--from-fact", multiple=True, required=True)
     @click.option("--description")
@@ -220,6 +236,8 @@ def register_worker_commands(main: click.Group) -> None:
     def reason_intent_propose(
         todo_ref: str | None,
         todo_id: str | None,
+        chain_ref: str | None,
+        chain_id: str | None,
         intent_ref: str | None,
         from_fact: tuple[str, ...],
         description: str | None,
@@ -230,12 +248,13 @@ def register_worker_commands(main: click.Group) -> None:
         execute_seconds: int | None,
         conclude_seconds: int | None,
     ) -> None:
-        if bool(todo_ref) == bool(todo_id):
-            raise click.UsageError("exactly one of --todo-ref or --todo-id is required")
+        _require_one_parent(todo_ref, todo_id, chain_ref, chain_id)
         raw_description = description if description is not None else title
         proposal = {
             "todo_ref": todo_ref,
             "todo_id": todo_id,
+            "chain_ref": chain_ref,
+            "chain_id": chain_id,
             "from_facts": list(from_fact),
             "description": _text_value(
                 raw_description,
@@ -375,31 +394,30 @@ def register_worker_commands(main: click.Group) -> None:
 
     @reason_chain_group.command("update")
     @click.option("--chain-id", required=True, help="Persisted Chain ID (chXXX).")
-    @click.option("--status", type=click.Choice(("planned", "blocked", "abandoned")), default=None)
+    @click.option("--status", type=click.Choice(("open", "partial", "blocked", "completed", "abandoned")), default=None)
+    @click.option("--status-reason", default=None)
     @click.option("--title", default=None)
-    def reason_chain_update(chain_id: str, status: str | None, title: str | None) -> None:
+    def reason_chain_update(chain_id: str, status: str | None, status_reason: str | None, title: str | None) -> None:
         update: dict[str, Any] = {"chain_id": chain_id}
         if status is not None:
             update["status"] = status
+        if status_reason is not None and status_reason.strip():
+            update["status_reason"] = status_reason.strip()
         if title is not None and title.strip():
             update["title"] = title.strip()
         if len(update) == 1:
             raise click.UsageError("chain update requires at least one changed field")
         _echo_workspace(_workspace_request("POST", "chain-updates", {"update": update}))
 
-    @reason_chain_group.command("link")
-    @click.option("--chain-ref", default=None, help="Chain draft ref created in this Workspace.")
-    @click.option("--chain-id", default=None, help="Persisted Chain ID from context.")
-    @click.option("--intent-ref", required=True, help="Draft ref of this Workspace's Intent proposal.")
-    def reason_chain_link(chain_ref: str | None, chain_id: str | None, intent_ref: str) -> None:
-        if bool(chain_ref) == bool(chain_id):
-            raise click.UsageError("exactly one of --chain-ref or --chain-id is required")
-        link: dict[str, Any] = {"intent_ref": intent_ref.strip()}
-        if chain_ref:
-            link["chain_ref"] = chain_ref.strip()
-        else:
-            link["chain_id"] = chain_id.strip()
-        _echo_workspace(_workspace_request("POST", "chain-links", {"link": link}))
+    @reason_chain_group.command("abandon")
+    @click.option("--chain-id", required=True)
+    @click.option("--reason", required=True)
+    def reason_chain_abandon(chain_id: str, reason: str) -> None:
+        _echo_workspace(_workspace_request("POST", "chain-updates", {"update": {
+            "chain_id": chain_id,
+            "status": "abandoned",
+            "status_reason": reason.strip(),
+        }}))
 
     @main.group("plan")
     def plan_group() -> None:
@@ -533,11 +551,13 @@ def register_worker_commands(main: click.Group) -> None:
     @plan_intent_group.command("propose")
     @click.option("--todo-ref")
     @click.option("--todo-id")
+    @click.option("--chain-ref")
+    @click.option("--chain-id")
     @click.option(
         "--ref",
         "intent_ref",
         default=None,
-        help="Workspace-local handle so a staged RedTeam Chain can link this Intent.",
+        help="Workspace-local handle so a staged Chain can be cited before it has an ID.",
     )
     @click.option("--from-fact", multiple=True)
     @click.option("--source-ref", multiple=True)
@@ -566,6 +586,8 @@ def register_worker_commands(main: click.Group) -> None:
     def plan_intent_propose(
         todo_ref: str | None,
         todo_id: str | None,
+        chain_ref: str | None,
+        chain_id: str | None,
         intent_ref: str | None,
         from_fact: tuple[str, ...],
         source_ref: tuple[str, ...],
@@ -582,13 +604,14 @@ def register_worker_commands(main: click.Group) -> None:
         execute_seconds: int | None,
         conclude_seconds: int | None,
     ) -> None:
-        if bool(todo_ref) == bool(todo_id):
-            raise click.UsageError("exactly one of --todo-ref or --todo-id is required")
+        _require_one_parent(todo_ref, todo_id, chain_ref, chain_id)
         if not from_fact and not source_ref:
             raise click.UsageError("provide at least one --from-fact or --source-ref")
         intent = {
             "todo_ref": todo_ref,
             "todo_id": todo_id,
+            "chain_ref": chain_ref,
+            "chain_id": chain_id,
             "from_facts": list(from_fact),
             "source_refs": list(source_ref),
             "description": _text_value(
@@ -666,31 +689,30 @@ def register_worker_commands(main: click.Group) -> None:
 
     @plan_chain_group.command("update")
     @click.option("--chain-id", required=True, help="Persisted Chain ID (chXXX).")
-    @click.option("--status", type=click.Choice(("planned", "blocked", "abandoned")), default=None)
+    @click.option("--status", type=click.Choice(("open", "partial", "blocked", "completed", "abandoned")), default=None)
+    @click.option("--status-reason", default=None)
     @click.option("--title", default=None)
-    def plan_chain_update(chain_id: str, status: str | None, title: str | None) -> None:
+    def plan_chain_update(chain_id: str, status: str | None, status_reason: str | None, title: str | None) -> None:
         update: dict[str, Any] = {"chain_id": chain_id}
         if status is not None:
             update["status"] = status
+        if status_reason is not None and status_reason.strip():
+            update["status_reason"] = status_reason.strip()
         if title is not None and title.strip():
             update["title"] = title.strip()
         if len(update) == 1:
             raise click.UsageError("chain update requires at least one changed field")
         _echo_plan_workspace(_plan_workspace_request("chain-updates", {"update": update}))
 
-    @plan_chain_group.command("link")
-    @click.option("--chain-ref", default=None, help="Chain draft ref created in this Workspace.")
-    @click.option("--chain-id", default=None, help="Persisted Chain ID from context.")
-    @click.option("--intent-ref", required=True, help="Draft ref of this Workspace's Intent proposal.")
-    def plan_chain_link(chain_ref: str | None, chain_id: str | None, intent_ref: str) -> None:
-        if bool(chain_ref) == bool(chain_id):
-            raise click.UsageError("exactly one of --chain-ref or --chain-id is required")
-        link: dict[str, Any] = {"intent_ref": intent_ref.strip()}
-        if chain_ref:
-            link["chain_ref"] = chain_ref.strip()
-        else:
-            link["chain_id"] = chain_id.strip()
-        _echo_plan_workspace(_plan_workspace_request("chain-links", {"link": link}))
+    @plan_chain_group.command("abandon")
+    @click.option("--chain-id", required=True)
+    @click.option("--reason", required=True)
+    def plan_chain_abandon(chain_id: str, reason: str) -> None:
+        _echo_plan_workspace(_plan_workspace_request("chain-updates", {"update": {
+            "chain_id": chain_id,
+            "status": "abandoned",
+            "status_reason": reason.strip(),
+        }}))
 
     @plan_group.group("decision")
     def plan_decision_group() -> None:
@@ -883,15 +905,10 @@ def register_worker_commands(main: click.Group) -> None:
 
     @explore_result_group.command("report")
     @click.option(
-        "--chain-id",
-        default=None,
-        help="Chain ID; defaults to the Intent's bound Chain (AXIOM_CHAIN_ID) when omitted.",
-    )
-    @click.option(
         "--points",
-        type=click.IntRange(1, 50),
+        type=click.IntRange(1, MAX_RESULT_POINTS),
         required=True,
-        help="Self-assessed score from the redteam-scoring rubric (1-50).",
+        help="Self-assessed score from redteam-scoring (unit price × count).",
     )
     @click.option("--type", "result_type", type=click.Choice(("permission", "data", "credential", "pivot")), required=True)
     @click.option("--title", required=True)
@@ -910,21 +927,16 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--credential-ref", default=None)
     @click.option("--evidence-path", "evidence_refs", multiple=True, required=True)
     def explore_result_report(
-        chain_id: str | None, points: int, result_type: str, title: str, description: str, principal: str,
+        points: int, result_type: str, title: str, description: str, principal: str,
         tenant: str, capabilities_gained: tuple[str, ...], capabilities_before: tuple[str, ...],
         capabilities_after: tuple[str, ...], target_asset: str, data_target_id: str | None,
         sample_count: int | None, sample_bytes: int | None, data_fields: tuple[str, ...],
         data_summary: str, credential_ref: str | None, evidence_refs: tuple[str, ...],
     ) -> None:
-        chain_id = (chain_id or os.environ.get("AXIOM_CHAIN_ID", "")).strip()
-        if not chain_id:
-            raise click.UsageError(
-                "--chain-id is required (or rely on the Intent's bound Chain via AXIOM_CHAIN_ID)"
-            )
         task_id = _environment("AXIOM_TASK_ID")
         intent_id = _environment("AXIOM_INTENT_ID")
         report = {
-            "chain_id": chain_id, "result_type": result_type, "title": title,
+            "result_type": result_type, "title": title,
             "description": description, "principal": principal, "tenant": tenant,
             "capabilities_gained": list(capabilities_gained),
             "capabilities_before": list(capabilities_before),
@@ -932,7 +944,8 @@ def register_worker_commands(main: click.Group) -> None:
             "data_target_id": data_target_id, "sample_count": sample_count,
             "sample_bytes": sample_bytes, "data_fields": list(data_fields),
             "data_summary": data_summary, "credential_ref": credential_ref,
-            "evidence_refs": list(evidence_refs), "points_declared": points,
+            "evidence_refs": [_bind_result_evidence(task_id, intent_id, ref) for ref in evidence_refs],
+            "points_declared": points,
         }
         _echo(_request("POST", f"/tasks/{task_id}/intents/{intent_id}/red-team-results", {
             "lease_id": _lease_id(), "report": report,
@@ -985,7 +998,7 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--duplicate-of")
     @click.option(
         "--points",
-        type=click.IntRange(1, 50),
+        type=click.IntRange(1, MAX_RESULT_POINTS),
         default=None,
         help="Awarded score for a verified RedTeam Result (redteam-scoring rubric).",
     )
@@ -1040,6 +1053,46 @@ def _review_request(action: str, payload: dict[str, Any]) -> Any:
         f"/dispatch/tasks/{task_id}/vulnerability-review-runs/{review_run_id}/{action}",
         payload,
     )
+
+
+def _bind_result_evidence(task_id: str, intent_id: str, ref: str) -> str:
+    """Put a run-dir evidence file under the current Intent, like vulnerability mode."""
+    text = ref.strip()
+    if text.startswith("artifact:"):
+        return text
+    path = Path(text)
+    if not path.is_file():
+        run_dir = os.environ.get("AXIOM_RUN_DIR", "").strip()
+        if run_dir:
+            candidate = Path(run_dir) / "artifacts" / text
+            if candidate.is_file():
+                path = candidate
+    if not path.is_file():
+        return text
+    uploaded = _upload_intent_evidence(task_id, intent_id, path)
+    return f"artifact:{uploaded['id']}"
+
+
+def _upload_intent_evidence(task_id: str, intent_id: str, path: Path) -> dict[str, Any]:
+    base_url = os.environ.get("AXIOM_SERVER", "http://127.0.0.1:8899").rstrip("/")
+    if not base_url.endswith("/api/v1"):
+        base_url += "/api/v1"
+    headers = {}
+    token = os.environ.get("AXIOM_SERVICE_TOKEN", "").strip()
+    if token:
+        headers["authorization"] = f"Bearer {token}"
+    try:
+        with path.open("rb") as handle, httpx.Client(base_url=base_url, headers=headers, timeout=30, trust_env=False) as client:
+            response = client.post(
+                f"/tasks/{task_id}/artifacts/upload",
+                data={"actor": os.environ.get("AXIOM_WORKER_NAME", "explore"), "summary": path.name, "intent_id": intent_id},
+                files={"file": (path.name, handle, "application/octet-stream")},
+            )
+    except httpx.HTTPError as exc:
+        raise click.ClickException(f"AXIOM API unavailable: {exc}") from exc
+    if response.is_error:
+        raise click.ClickException(f"AXIOM API HTTP {response.status_code}: {response.text}")
+    return response.json()
 
 
 def _request(method: str, path: str, payload: dict[str, Any]) -> Any:

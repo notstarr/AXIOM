@@ -149,6 +149,7 @@ class ArtifactService:
         content: bytes,
         created_by: str,
         summary: str = "",
+        intent_id: str | None = None,
     ) -> Artifact:
         safe_name = Path(filename).name.strip()
         if not safe_name or safe_name in {".", ".."} or safe_name != filename.strip():
@@ -156,8 +157,14 @@ class ArtifactService:
         if not content:
             raise ConflictError("Upload file must not be empty")
         actor = created_by.strip() or "human"
+        bound_intent = (intent_id or "").strip() or None
+        base_key = (
+            f"tasks/{task_id}/artifacts/{bound_intent}"
+            if bound_intent
+            else f"tasks/{task_id}/uploads/{uuid4().hex}"
+        )
         prepared = self.store.prepare_named_files(
-            base_key=f"tasks/{task_id}/uploads/{uuid4().hex}",
+            base_key=base_key,
             files={safe_name: content},
         )
         try:
@@ -177,6 +184,8 @@ class ArtifactService:
                     summary=summary.strip(),
                     created_by=actor,
                     now=utcnow(),
+                    intent_id=bound_intent,
+                    artifact_type="explore.evidence" if bound_intent else "upload",
                 )
         except BaseException:
             prepared.rollback()

@@ -465,6 +465,7 @@ class GraphRepository:
             id=row["id"],
             task_id=row["task_id"],
             todo_id=row["todo_id"],
+            chain_id=row.get("chain_id"),
             kind=row["kind"],
             from_facts=sources,
             description=row["description"],

@@ -756,68 +756,6 @@ def test_reason_cli_stages_chain_with_objective_bounded_targets(monkeypatch) -> 
     ]
 
 
-def test_reason_cli_chain_link_requires_exactly_one_chain_reference(monkeypatch) -> None:
-    calls: list[tuple[str, str, dict]] = []
-
-    def fake_request(method: str, path: str, payload: dict):
-        calls.append((method, path, payload))
-        return {}
-
-    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
-    both = CliRunner().invoke(
-        main,
-        [
-            "reason",
-            "chain",
-            "link",
-            "--chain-ref",
-            "ch-1",
-            "--chain-id",
-            "ch000001",
-            "--intent-ref",
-            "i1",
-        ],
-        env=_env(),
-    )
-    neither = CliRunner().invoke(
-        main,
-        ["reason", "chain", "link", "--intent-ref", "i1"],
-        env=_env(),
-    )
-
-    assert both.exit_code == 2
-    assert "exactly one of --chain-ref or --chain-id is required" in both.output
-    assert neither.exit_code == 2
-    assert calls == []
-
-
-def test_plan_cli_stages_chain_link_against_workspace_draft(monkeypatch) -> None:
-    calls: list[tuple[str, str, dict]] = []
-
-    def fake_request(method: str, path: str, payload: dict):
-        calls.append((method, path, payload))
-        return {"id": "pw_000001", "status": "open", "draft": {}}
-
-    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
-    result = CliRunner().invoke(
-        main,
-        ["plan", "chain", "link", "--chain-ref", "ch-1", "--intent-ref", "i1"],
-        env=_plan_env(),
-    )
-
-    assert result.exit_code == 0, result.output
-    assert calls == [
-        (
-            "POST",
-            "/plan-workspaces/pw_000001/chain-links",
-            {
-                "lease_id": "lease-1",
-                "link": {"chain_ref": "ch-1", "intent_ref": "i1"},
-            },
-        )
-    ]
-
-
 def test_explore_cli_result_report_defaults_to_the_bound_chain(monkeypatch) -> None:
     calls: list[tuple[str, str, dict]] = []
 
@@ -858,7 +796,7 @@ def test_explore_cli_result_report_defaults_to_the_bound_chain(monkeypatch) -> N
     method, path, payload = calls[0]
     assert method == "POST"
     assert path == "/tasks/t_001/intents/i003/red-team-results"
-    assert payload["report"]["chain_id"] == "ch000123"
+    assert "chain_id" not in payload["report"]
     assert payload["report"]["points_declared"] == 30
     assert payload["report"]["capabilities_gained"] == ["tenant:admin"]
 
@@ -882,5 +820,4 @@ def test_explore_cli_result_report_defaults_to_the_bound_chain(monkeypatch) -> N
         env=_env(),
     )
     assert without_binding.exit_code == 2
-    # 缺 --points / --chain-id 任一必填项都会在参数层拒绝
-    assert "Missing option" in without_binding.output or "--chain-id is required" in without_binding.output
+    assert "Missing option" in without_binding.output

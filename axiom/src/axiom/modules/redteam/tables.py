@@ -27,7 +27,8 @@ red_team_chains = Table(
     Column("initial_principal_json", JSONText, nullable=False),
     Column("target_capabilities_json", JSONText, nullable=False, default="[]"),
     Column("target_assets_json", JSONText, nullable=False, default="[]"),
-    Column("status", String, nullable=False, default="planned"),
+    Column("status", String, nullable=False, default="open"),
+    Column("status_reason", Text, nullable=False, default=""),
     Column("current_state_json", JSONText, nullable=False, default="{}"),
     Column("source_fact_ids_json", JSONText, nullable=False, default="[]"),
     Column("source_intent_ids_json", JSONText, nullable=False, default="[]"),
@@ -37,7 +38,7 @@ red_team_chains = Table(
     ForeignKeyConstraint(["task_id"], [tasks.c.id], ondelete="CASCADE"),
     UniqueConstraint("task_id", "id", name="uq_red_team_chains_task_id"),
     CheckConstraint(
-        "status IN ('planned','active','blocked','achieved','failed','abandoned')",
+        "status IN ('open','partial','blocked','completed','abandoned')",
         name="red_team_chain_status",
     ),
 )

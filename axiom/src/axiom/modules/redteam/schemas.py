@@ -7,10 +7,20 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 EngagementMode = Literal["vulnerability", "red_team"]
 ResultType = Literal["permission", "data", "credential", "pivot"]
-ChainStatus = Literal["planned", "active", "blocked", "achieved", "failed", "abandoned"]
+ChainStatus = Literal["open", "partial", "blocked", "completed", "abandoned"]
+LEGACY_CHAIN_STATUS_MAP = {
+    "planned": "open",
+    "active": "partial",
+    "achieved": "completed",
+    "failed": "abandoned",
+}
+ACTIONABLE_CHAIN_STATUSES = ("open", "partial")
+TERMINAL_CHAIN_STATUSES = ("blocked", "completed", "abandoned")
 ResultStatus = Literal[
     "reported", "reviewing", "verified", "rejected", "duplicate", "needs-human"
 ]
+# 护网表按件累计，不设总分上限。单条成果是单价 × 数量，字段宽度与目标分一致。
+MAX_RESULT_POINTS = 10_000
 
 
 class RedTeamPrincipal(BaseModel):
@@ -93,7 +103,8 @@ class RedTeamChainCreate(BaseModel):
 
 
 class RedTeamResultReport(BaseModel):
-    chain_id: str
+    # Optional for older callers. The service records the Intent's bound Chain.
+    chain_id: str = ""
     result_type: ResultType
     title: str
     description: str
@@ -110,8 +121,8 @@ class RedTeamResultReport(BaseModel):
     data_summary: str = ""
     credential_ref: str | None = None
     evidence_refs: list[str] = Field(default_factory=list, max_length=20)
-    # 上报者按评分表自评的申报分（1-50）；落库以审核核定分为准
-    points_declared: int = Field(ge=1, le=50)
+    # 上报者按护网评分表自评（单价 × 数量）；落库以审核核定分为准
+    points_declared: int = Field(ge=1, le=MAX_RESULT_POINTS)
 
     @field_validator("title", "description", "principal")
     @classmethod
@@ -153,7 +164,14 @@ class RedTeamChain(BaseModel):
     target_capabilities: list[str] = Field(default_factory=list)
     target_assets: list[str] = Field(default_factory=list)
     status: ChainStatus
+    status_reason: str = ""
     current_state: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, value: str) -> str:
+        normalized = str(value).strip()
+        return LEGACY_CHAIN_STATUS_MAP.get(normalized, normalized)
     source_fact_ids: list[str] = Field(default_factory=list)
     source_intent_ids: list[str] = Field(default_factory=list)
     created_by: str
@@ -196,14 +214,14 @@ class RedTeamResultReview(BaseModel):
     status: Literal["verified", "rejected", "duplicate", "needs-human"]
     reason: str = Field(min_length=4, max_length=8_000)
     reviewed_by: str = "reviewer"
-    # 核定分：verified 时必填（1-50），其余状态忽略并置 0
-    points_awarded: int | None = Field(default=None, ge=0, le=50)
+    # 核定分：verified 时必填，其余状态忽略并置 0
+    points_awarded: int | None = Field(default=None, ge=0, le=MAX_RESULT_POINTS)
 
 
-# A Worker may only move a Chain into one of these states.  ``achieved`` and
-# ``failed`` are control-plane conclusions derived from reviewed Results and
-# Goal validation, never model claims.
-WorkerChainStatus = Literal["planned", "blocked", "abandoned"]
+# Reason/Plan own the operational lifecycle, the same way they own Todo
+# status.  Points stay on verified Results; a completed Chain only means this
+# path should not receive another Intent.
+WorkerChainStatus = Literal["open", "partial", "blocked", "completed", "abandoned"]
 
 
 class DraftChain(BaseModel):
@@ -241,7 +259,9 @@ class DraftChainUpdate(BaseModel):
 
     chain_id: str
     status: WorkerChainStatus | None = None
+    status_reason: str | None = None
     title: str | None = None
+    current_state: dict[str, Any] | None = None
 
     @field_validator("chain_id")
     @classmethod
@@ -258,42 +278,20 @@ class DraftChainUpdate(BaseModel):
             return None
         return value.strip() or None
 
-    @model_validator(mode="after")
-    def require_change(self) -> "DraftChainUpdate":
-        if self.status is None and self.title is None:
-            raise ValueError("chain update requires at least one changed field")
-        return self
-
-
-class DraftChainIntentLink(BaseModel):
-    """Bind one staged Explore Intent to a Chain.
-
-    ``chain_ref`` targets a Chain created in the same Workspace draft;
-    ``chain_id`` targets an already persisted Chain.  Exactly one of them is
-    required, mirroring the Todo ``ref``/``todo_id`` convention.
-    """
-
-    chain_ref: str | None = None
-    chain_id: str | None = None
-    intent_ref: str
-
-    @field_validator("chain_ref", "chain_id")
+    @field_validator("status_reason")
     @classmethod
-    def normalize_optional(cls, value: str | None) -> str | None:
+    def normalize_status_reason(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        return value.strip() or None
-
-    @field_validator("intent_ref")
-    @classmethod
-    def require_intent_ref(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("intent_ref must not be empty")
-        return value
+        return value.strip()
 
     @model_validator(mode="after")
-    def require_one_chain_reference(self) -> "DraftChainIntentLink":
-        if bool(self.chain_ref) == bool(self.chain_id):
-            raise ValueError("exactly one of chain_ref or chain_id is required")
+    def require_change(self) -> "DraftChainUpdate":
+        if (
+            self.status is None
+            and self.title is None
+            and self.status_reason is None
+            and self.current_state is None
+        ):
+            raise ValueError("chain update requires at least one changed field")
         return self

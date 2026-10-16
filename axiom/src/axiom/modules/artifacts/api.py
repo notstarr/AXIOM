@@ -142,6 +142,7 @@ async def upload_artifact(
     file: UploadFile = File(...),
     actor: str = Form("human"),
     summary: str = Form(""),
+    intent_id: str = Form(""),
     container: Container = Depends(get_container),
 ) -> Artifact:
     return container.artifacts.upload(
@@ -150,6 +151,7 @@ async def upload_artifact(
         content=await file.read(),
         created_by=actor,
         summary=summary,
+        intent_id=intent_id,
     )
 
 

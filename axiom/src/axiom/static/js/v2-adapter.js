@@ -221,6 +221,8 @@
       title: task.title,
       origin: originText(task),
       goal: task.goal,
+      engagement_mode: task.engagement_mode || 'vulnerability',
+      red_team_objective: task.red_team_objective || null,
       current_goal_cycle_id: task.current_goal_cycle_id || '',
       status: taskStatus(task.status),
       phase: task.phase,
@@ -375,6 +377,7 @@
       to: intent.to_fact_id || null,
       to_fact_id: intent.to_fact_id || null,
       todo_id: intent.todo_id || null,
+      chain_id: intent.chain_id || null,
       goal_cycle_id: intent.goal_cycle_id || null,
       kind: intent.kind || '',
       description: intent.description,
@@ -471,6 +474,8 @@
       goal_evaluations: [],
       hints: [],
       todos: [],
+      chains: [],
+      red_team_results: [],
       vulns: [],
       artifacts: [],
       lead_artifacts: [],
@@ -497,6 +502,8 @@
       goal_evaluations: [...(base.goal_evaluations || [])],
       hints: [...(base.hints || [])],
       todos: [...(base.todos || [])],
+      chains: [...(base.chains || [])],
+      red_team_results: [...(base.red_team_results || [])],
       vulns: [...(base.vulns || [])],
       artifacts: [...(base.artifacts || [])],
       lead_artifacts: [...(base.lead_artifacts || [])],
@@ -582,6 +589,14 @@
       pending.push(runSection('todos', () => request('GET', `/tasks/${taskId}/todos?limit=200`, null, options), items => {
         detail.todos = items || [];
       }));
+      if (mappedTask.engagement_mode === 'red_team') {
+        pending.push(runSection('chains', () => request('GET', `/tasks/${taskId}/red-team/chains`, null, options), items => {
+          detail.chains = items || [];
+        }));
+        pending.push(runSection('red_team_results', () => request('GET', `/tasks/${taskId}/red-team/results`, null, options), items => {
+          detail.red_team_results = items || [];
+        }));
+      }
     }
     if (selectedSections.has('vulnerabilities')) {
       pending.push(runSection('vulnerabilities', async () => {
@@ -662,6 +677,12 @@
       goal_evaluations: goalEvaluations || [],
       hints,
       todos,
+      chains: task.engagement_mode === 'red_team'
+        ? await request('GET', `/tasks/${taskId}/red-team/chains`, null, options).catch(() => [])
+        : [],
+      red_team_results: task.engagement_mode === 'red_team'
+        ? await request('GET', `/tasks/${taskId}/red-team/results`, null, options).catch(() => [])
+        : [],
       vulns: vulnerabilities.map(item => mapVulnerability(item, task, project)),
       artifacts: artifacts.map(mapArtifact),
       lead_artifacts: [...leadArtifacts, ...bootstrapLeadArtifacts].map(mapArtifact),
@@ -1479,10 +1500,6 @@
         this.loadVulnerabilityPage({ selectFirst: false });
       }
     },
-    switchRtResultView(view) {
-      this.rtResultView = view === 'chains' ? 'chains' : 'results';
-      this.loadRedTeamResultPage();
-    },
     rtTaskTitle(taskId) {
       const task = (this.projects || []).find(item => item.id === taskId);
       return task ? `${taskId} ${task.title || ''}`.trim() : taskId || '-';
@@ -1493,6 +1510,78 @@
     rtTypeClass(type) {
       return ({ permission: 'ok', data: 'info', credential: 'warn', pivot: 'warn' })[type] || 'off';
     },
+    rtTypeTone(type) {
+      return ({ permission: 'sto-sev-high', data: 'sto-sev-low', credential: 'sto-sev-medium', pivot: 'sto-sev-critical' })[type] || 'sto-sev-info';
+    },
+    rtTypeMark(type) {
+      return ({ permission: '权', data: '数', credential: '证', pivot: '横' })[type] || '果';
+    },
+    rtPointsLabel(item) {
+      if (!item) return '';
+      if (item.status === 'verified') return `+${item.points_awarded || 0} 分`;
+      return item.points_declared ? `自评 ${item.points_declared}` : '';
+    },
+    selectedRtResult() {
+      return (this.rtResultItems || []).find(item => item.id === this.selectedRtResultId) || null;
+    },
+    selectRtResult(item) {
+      this.selectedRtResultId = item?.id || '';
+      this.loadRtResultChain(item);
+    },
+    async loadRtResultChain(result) {
+      if (!result?.task_id || !result.chain_id) {
+        this.rtChainView = null;
+        this.rtChainLoading = false;
+        return;
+      }
+      const cacheKey = `${result.task_id}:${result.chain_id}`;
+      const cached = this._rtChainCache?.[cacheKey];
+      if (cached) {
+        this.rtChainView = cached;
+        this.rtChainLoading = false;
+        return;
+      }
+      const requestId = (this._rtChainRequestId || 0) + 1;
+      this._rtChainRequestId = requestId;
+      this.rtChainLoading = true;
+      try {
+        const [graph, chains] = await Promise.all([
+          request('GET', `/tasks/${result.task_id}/graph`),
+          request('GET', `/tasks/${result.task_id}/red-team/chains`).catch(() => []),
+        ]);
+        if (requestId !== this._rtChainRequestId) return;
+        const chain = (chains || []).find(item => item.id === result.chain_id);
+        const steps = (graph?.intents || [])
+          .filter(item => item.chain_id === result.chain_id && !item.archived)
+          .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')) || String(a.id).localeCompare(String(b.id)))
+          .map(item => ({ id: item.id, description: item.description || '', status: item.status || '' }));
+        const view = { taskId: result.task_id, chainId: result.chain_id, title: chain?.title || '', steps };
+        this._rtChainCache = { ...(this._rtChainCache || {}), [cacheKey]: view };
+        if (this.selectedRtResult()?.chain_id === result.chain_id && this.selectedRtResult()?.task_id === result.task_id) {
+          this.rtChainView = view;
+        }
+      } catch (error) {
+        if (requestId !== this._rtChainRequestId) return;
+        this.rtChainView = { taskId: result.task_id, chainId: result.chain_id, title: '', steps: [] };
+      } finally {
+        if (requestId === this._rtChainRequestId) this.rtChainLoading = false;
+      }
+    },
+    async openResultChainIntent(result, intentId) {
+      if (!result?.task_id || !intentId) return;
+      this.todoNavExpandedId = result.chain_id || '';
+      this.todoNavIntentId = intentId;
+      this._humanTabReturn = { taskId: result.task_id, tab: 'todos' };
+      await this.openTaskOverview(result.task_id);
+      this.humanTab = 'todos';
+      this.todoNavExpandedId = result.chain_id || '';
+      this.todoNavIntentId = intentId;
+    },
+    openResultEvidence(result, ref) {
+      const match = String(ref || '').match(/^artifact:([A-Za-z0-9_-]+)$/);
+      if (!match || !result?.task_id) return;
+      return this.openArtifactLocation(result.task_id, match[1]);
+    },
     rtStatusLabel(status) {
       return ({
         reported: '已上报', reviewing: '审核中', verified: '已验证',
@@ -1502,31 +1591,10 @@
     rtStatusClass(status) {
       return ({ reported: 'info', reviewing: 'warn', verified: 'ok', rejected: 'err', duplicate: 'off', 'needs-human': 'warn' })[status] || 'off';
     },
-    rtChainStatusLabel(status) {
-      return ({
-        planned: '已规划', active: '进行中', blocked: '受阻',
-        achieved: '已达成', failed: '已失败', abandoned: '已放弃',
-      })[status] || status || '-';
-    },
-    rtChainStatusClass(status) {
-      return ({ planned: 'info', active: 'warn', blocked: 'err', achieved: 'ok', failed: 'err', abandoned: 'off' })[status] || 'off';
-    },
-    toggleRtResultExpand(resultId) {
-      this.rtResultExpanded = this.rtResultExpanded === resultId ? '' : (resultId || '');
-    },
     rtVerifiedPoints() {
       return (this.rtResultItems || [])
         .filter(item => item.status === 'verified')
         .reduce((sum, item) => sum + (Number(item.points_awarded) || 0), 0);
-    },
-    _rtChainQuery() {
-      // 任务与关键字筛选与成果列表共用；状态筛选按子视图独立
-      const params = new URLSearchParams({ limit: '100', offset: '0' });
-      const keyword = String(this.rtResultFilter.keyword || '').trim();
-      if (keyword) params.set('search', keyword);
-      if (this.rtResultFilter.projectId) params.set('task_id', this.rtResultFilter.projectId);
-      if (this.rtChainFilter.status) params.set('status', this.rtChainFilter.status);
-      return params.toString();
     },
     async loadRedTeamResultPage() {
       const requestId = ++this._rtResultListRequestId;
@@ -1541,24 +1609,23 @@
         const resultPage = await requestPage(`/red-team/results?${params}`, {
           signal: this._pageAbortController?.signal,
         });
-        const chainPage = this.rtResultView === 'chains'
-          ? await requestPage(`/red-team/chains?${this._rtChainQuery()}`, {
-              signal: this._pageAbortController?.signal,
-            })
-          : null;
         if (requestId !== this._rtResultListRequestId) return;
         this.rtResultItems = resultPage.items;
         this.rtResultTotal = resultPage.total;
-        if (chainPage) {
-          this.rtChainItems = chainPage.items;
-          this.rtChainTotal = chainPage.total;
+        if (!this.rtResultItems.some(item => item.id === this.selectedRtResultId)) {
+          this.selectedRtResultId = this.rtResultItems[0]?.id || '';
         }
+        this.loadRtResultChain(this.selectedRtResult());
       } catch (error) {
         if (error?.name === 'AbortError') return;
         this.showToast(error?.message || '红队成果加载失败', 'error');
       } finally {
         this.rtResultLoading = false;
       }
+    },
+    scheduleRtResultSearch() {
+      clearTimeout(this._rtResultSearchTimer);
+      this._rtResultSearchTimer = setTimeout(() => this.loadRedTeamResultPage(), 250);
     },
     async loadVulnerabilityPage(options = {}) {
       const requestId = ++this._vulnerabilityListRequestId;
@@ -1670,6 +1737,8 @@
         this.project.goal_cycles = [];
         this.project.goal_evaluations = [];
         this.project.todos = [];
+        this.project.chains = [];
+        this.project.red_team_results = [];
         this.project.vulns = [];
         this.project.artifacts = [];
         this.project.lead_artifacts = [];
@@ -1701,6 +1770,10 @@
       }
       if (force || resultChanged) {
         updates.push(request('GET', `/tasks/${taskId}/todos?limit=200`, null, { signal }).then(items => { this.project.todos = items || []; }));
+        if (this.project?.project?.engagement_mode === 'red_team') {
+          updates.push(request('GET', `/tasks/${taskId}/red-team/chains`, null, { signal }).then(items => { this.project.chains = items || []; }));
+          updates.push(request('GET', `/tasks/${taskId}/red-team/results`, null, { signal }).then(items => { this.project.red_team_results = items || []; }));
+        }
         updates.push(request('GET', `/tasks/${taskId}/vulnerabilities?limit=200`, null, { signal }).then(items => {
           const task = this.project.project;
           const group = (this.projectGroups || []).find(item => item.id === task.parent_project_id);

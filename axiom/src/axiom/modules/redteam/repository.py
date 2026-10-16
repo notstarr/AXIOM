@@ -58,7 +58,8 @@ class RedTeamRepository:
             "initial_principal_json": command.initial_principal.model_dump(mode="json"),
             "target_capabilities_json": command.target_capabilities,
             "target_assets_json": command.target_assets,
-            "status": "planned",
+            "status": "open",
+            "status_reason": "",
             "current_state_json": {
                 "principal": command.initial_principal.model_dump(mode="json"),
                 "capabilities": [],
@@ -297,6 +298,7 @@ class RedTeamRepository:
             target_capabilities=_json_list(row.get("target_capabilities_json")),
             target_assets=_json_list(row.get("target_assets_json")),
             status=row["status"],
+            status_reason=row.get("status_reason") or "",
             current_state=_json_object(row.get("current_state_json")),
             source_fact_ids=_json_list(row.get("source_fact_ids_json")),
             source_intent_ids=_json_list(row.get("source_intent_ids_json")),

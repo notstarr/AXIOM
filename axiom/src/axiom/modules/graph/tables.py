@@ -37,6 +37,7 @@ intents = Table(
     Column("task_id", String, nullable=False),
     Column("goal_cycle_id", String),
     Column("todo_id", String),
+    Column("chain_id", String),
     Column("kind", String, nullable=False, default="explore"),
     Column("description", Text, nullable=False),
     Column("priority", Integer, nullable=False, default=50, server_default="50"),

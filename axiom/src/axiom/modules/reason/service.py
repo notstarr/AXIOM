@@ -24,7 +24,6 @@ from axiom.modules.reason.repository import ReasonRepository
 from axiom.modules.reason.schemas import (
     CommitResult,
     DraftChain,
-    DraftChainIntentLink,
     DraftChainUpdate,
     DraftIntent,
     DraftIntentAssessment,
@@ -40,7 +39,11 @@ from axiom.modules.reason.schemas import (
     WorkspaceStatus,
 )
 from axiom.modules.reason.tables import reason_run_sources, reason_runs
-from axiom.modules.redteam.schemas import RedTeamChainCreate
+from axiom.modules.redteam.schemas import (
+    TERMINAL_CHAIN_STATUSES,
+    RedTeamChainCreate,
+)
+from axiom.modules.redteam.service import actionable_chain_ids, normalize_chain_status
 from axiom.modules.plan.repository import PlanRepository
 from axiom.modules.plan.tables import plan_run_sources, plan_runs
 from axiom.modules.settings.service import load_runtime_config
@@ -692,12 +695,27 @@ class ReasonService:
         todo_review_ids = list(state["todo_review_ids"])
         unassessed_intent_ids = list(state["unassessed_intent_ids"])
         snapshot = self._snapshot_from_state(state)
+        red_team = task.engagement_mode == "red_team"
+        chain_ids = actionable_chain_ids(conn, task_id) if red_team else []
+        if red_team:
+            actionable_todo_ids = []
+            todo_review_ids = []
         signals_present = bool(
             source_fact_ids
             or failed_intent_ids
             or actionable_todo_ids
             or todo_review_ids
+            or chain_ids
         )
+        fingerprint_snapshot = snapshot
+        if red_team:
+            # Fold chain ids into the existing fingerprint slot so a new open
+            # chain wakes Reason without changing vulnerability-mode hashes.
+            fingerprint_snapshot = {
+                **snapshot,
+                "actionable_todo_ids": chain_ids,
+                "todo_review_ids": [],
+            }
 
         # An independent Plan can explicitly hand the task back to Reason
         # even when its snapshot contains no newly-unconsumed Fact (the
@@ -886,7 +904,10 @@ class ReasonService:
             # they are passive input that rides along with any run and is
             # mopped up by the max_wait backstop once it ages out.
             non_fact_signals = bool(
-                failed_intent_ids or actionable_todo_ids or todo_review_ids
+                failed_intent_ids
+                or actionable_todo_ids
+                or todo_review_ids
+                or chain_ids
             )
             if non_fact_signals or len(source_fact_ids) >= config.reason_batch_size:
                 trigger = "fact_batch"
@@ -951,7 +972,7 @@ class ReasonService:
                 )
                 return None
 
-        fingerprint = self._snapshot_fingerprint(snapshot)
+        fingerprint = self._snapshot_fingerprint(fingerprint_snapshot)
         latest_deduplication = self.repository.latest_deduplication_row(conn, task_id)
         if (
             not open_runs
@@ -979,8 +1000,9 @@ class ReasonService:
                 "unplanned_fact_count": len(source_fact_ids),
                 "open_explore_count": len(open_explore_ids),
                 "failed_intent_ids": failed_intent_ids,
-                "actionable_todo_ids": actionable_todo_ids,
-                "todo_review_ids": todo_review_ids,
+                "actionable_todo_ids": [] if red_team else actionable_todo_ids,
+                "actionable_chain_ids": chain_ids,
+                "todo_review_ids": [] if red_team else todo_review_ids,
                 "unassessed_intent_ids": unassessed_intent_ids,
                 "oldest_fact_age_seconds": oldest_age,
                 "oldest_unassessed_age_seconds": oldest_unassessed_age,
@@ -1997,8 +2019,8 @@ class ReasonService:
         with transaction(self.engine) as conn:
             workspace = self._require_active_open(conn, workspace_id, lease_id)
             self._require_red_team(conn, workspace)
-            # Updates target an already persisted Chain; staged refs are
-            # resolved only by chain_intent_links at commit time.
+            # Updates target an already persisted Chain. Staged refs are bound
+            # when the Intent that names them is committed.
             self.red_team.get_chain(workspace.task_id, update_command.chain_id)
             updates = [
                 item
@@ -2019,31 +2041,6 @@ class ReasonService:
                 update_command = DraftChainUpdate.model_validate(merged)
             updates.append(update_command)
             draft = workspace.draft.model_copy(update={"chain_updates": updates})
-            return self.repository.save_draft(conn, workspace_id, draft, now=utcnow())
-
-    def link_chain_intent(
-        self,
-        workspace_id: str,
-        link: DraftChainIntentLink,
-        *,
-        lease_id: str,
-    ) -> ReasonWorkspace:
-        with transaction(self.engine) as conn:
-            workspace = self._require_active_open(conn, workspace_id, lease_id)
-            self._require_red_team(conn, workspace)
-            draft = workspace.draft
-            if link.chain_ref:
-                if not any(item.ref == link.chain_ref for item in draft.chain_adds):
-                    raise NotFoundError(f"Chain draft ref not found: {link.chain_ref}")
-            else:
-                self.red_team.get_chain(workspace.task_id, link.chain_id)
-            if not any(item.ref for item in draft.intent_proposals if item.ref == link.intent_ref):
-                raise NotFoundError(f"Intent draft ref not found: {link.intent_ref}")
-            if any(item == link for item in draft.chain_intent_links):
-                return workspace
-            draft = draft.model_copy(
-                update={"chain_intent_links": [*draft.chain_intent_links, link]}
-            )
             return self.repository.save_draft(conn, workspace_id, draft, now=utcnow())
 
     def _require_red_team(self, conn, workspace: ReasonWorkspace):
@@ -2089,7 +2086,10 @@ class ReasonService:
             )
             open_count, limit, remaining = self._intent_quota(conn, workspace, run)
             assessment = workspace.draft.goal_assessment
-            todo_review_ids = self._run_todo_review_ids(conn, workspace.task_id, run)
+            mode = conn.execute(
+                select(tasks.c.engagement_mode).where(tasks.c.id == workspace.task_id)
+            ).scalar_one_or_none()
+            todo_review_ids = [] if mode == "red_team" else self._run_todo_review_ids(conn, workspace.task_id, run)
             return WorkspaceStatus(
                 workspace_id=workspace.id,
                 status=workspace.status,
@@ -2103,7 +2103,6 @@ class ReasonService:
                 todo_review_ids=todo_review_ids,
                 chain_add_count=len(workspace.draft.chain_adds),
                 chain_update_count=len(workspace.draft.chain_updates),
-                chain_link_count=len(workspace.draft.chain_intent_links),
                 chain_refs=[item.ref for item in workspace.draft.chain_adds],
                 goal_assessed=assessment is not None,
                 goal_achieved=bool(assessment and assessment.achieved),
@@ -2270,6 +2269,13 @@ class ReasonService:
                 # control_plane_unavailable retry loop.
                 self._align_intent_counter(conn, workspace.task_id)
 
+                created_chain_ids: list[str] = []
+                chain_refs: dict[str, str] = {}
+                if task.engagement_mode == "red_team" and draft.chain_adds:
+                    created_chain_ids, chain_refs = self._persist_chain_adds(
+                        conn, workspace, task, draft, now, goal_cycle_id=run.goal_cycle_id
+                    )
+
                 created_intent_ids: list[str] = []
                 intent_refs: dict[str, str] = {}
                 for proposal in draft.intent_proposals:
@@ -2314,9 +2320,16 @@ class ReasonService:
                             ),
                         )
                     self._validate_intent(conn, workspace.task_id, draft, proposal, run)
-                    todo_id = proposal.todo_id or todo_refs.get(proposal.todo_ref or "")
-                    if todo_id is None:
-                        raise ConflictError(f"Intent references unknown Todo: {proposal.todo_ref}")
+                    todo_id = None
+                    chain_id = None
+                    if task.engagement_mode == "red_team":
+                        chain_id = proposal.chain_id or chain_refs.get(proposal.chain_ref or "")
+                        if not chain_id:
+                            raise ConflictError(f"Intent references unknown Chain: {proposal.chain_ref}")
+                    else:
+                        todo_id = proposal.todo_id or todo_refs.get(proposal.todo_ref or "")
+                        if todo_id is None:
+                            raise ConflictError(f"Intent references unknown Todo: {proposal.todo_ref}")
                     intent_id = allocate_id(
                         conn, scope=workspace.task_id, kind="intent", prefix="i"
                     )
@@ -2325,6 +2338,7 @@ class ReasonService:
                         "task_id": workspace.task_id,
                         "goal_cycle_id": run.goal_cycle_id,
                         "todo_id": todo_id,
+                        "chain_id": chain_id,
                         "kind": "explore",
                         "description": proposal.description,
                         "status": "pending",
@@ -2369,72 +2383,32 @@ class ReasonService:
                         if proposal.ref in intent_refs:
                             raise ConflictError(f"Duplicate Intent draft ref: {proposal.ref}")
                         intent_refs[proposal.ref] = intent_id
+                    if chain_id and self.red_team is not None:
+                        self.red_team.link_intent_in(
+                            conn,
+                            workspace.task_id,
+                            chain_id,
+                            intent_id,
+                            actor=workspace.worker,
+                            now=now,
+                        )
 
-                # Red-team staging is applied after the Intent loop so
-                # ``chain_intent_links`` can resolve staged Intent refs to the
-                # IDs created above.  Chains are only persisted here, at
-                # commit time, with the same objective/scope checks as the
-                # direct RedTeam API.
-                created_chain_ids: list[str] = []
-                chain_refs: dict[str, str] = {}
-                if draft.chain_adds or draft.chain_updates or draft.chain_intent_links:
+                if draft.chain_updates:
                     if task.engagement_mode != "red_team":
                         raise ConflictError(
                             "RedTeam Chains are only available for red_team tasks"
                         )
                     if self.red_team is None:
                         raise ConflictError("Red-team service is not configured")
-                    objective = task.red_team_objective
-                    for chain in draft.chain_adds:
-                        initial_principal = chain.initial_principal
-                        if initial_principal is None:
-                            initial_principal = getattr(objective, "initial_principal", None)
-                        if initial_principal is None:
-                            raise ConflictError(
-                                "Chain requires an initial principal and the task objective has none"
-                            )
-                        created_chain = self.red_team.create_chain_in(
-                            conn,
-                            workspace.task_id,
-                            RedTeamChainCreate(
-                                title=chain.title,
-                                initial_principal=initial_principal,
-                                target_capabilities=chain.target_capabilities,
-                                target_assets=chain.target_assets,
-                                source_fact_ids=chain.source_fact_ids,
-                            ),
-                            created_by=f"reason.{workspace.worker}",
-                            goal_cycle_id=run.goal_cycle_id,
-                            now=now,
-                        )
-                        chain_refs[chain.ref] = created_chain.id
-                        created_chain_ids.append(created_chain.id)
                     for chain_update in draft.chain_updates:
                         self.red_team.apply_chain_update_in(
                             conn,
                             workspace.task_id,
                             chain_update.chain_id,
                             status=chain_update.status,
+                            status_reason=chain_update.status_reason,
                             title=chain_update.title,
-                            actor=workspace.worker,
-                            now=now,
-                        )
-                    for link in draft.chain_intent_links:
-                        chain_id = chain_refs.get(link.chain_ref) if link.chain_ref else link.chain_id
-                        if chain_id is None:
-                            raise ConflictError(
-                                f"Chain link references unknown Chain: {link.chain_ref or link.chain_id}"
-                            )
-                        linked_intent_id = intent_refs.get(link.intent_ref)
-                        if linked_intent_id is None:
-                            raise ConflictError(
-                                f"Chain link references unknown Intent: {link.intent_ref}"
-                            )
-                        self.red_team.link_intent_in(
-                            conn,
-                            workspace.task_id,
-                            chain_id,
-                            linked_intent_id,
+                            current_state=chain_update.current_state,
                             actor=workspace.worker,
                             now=now,
                         )
@@ -2720,7 +2694,10 @@ class ReasonService:
                 )
             except (ConflictError, NotFoundError) as exc:
                 errors.append(str(exc))
-        review_ids = self._run_todo_review_ids(conn, workspace.task_id, run)
+        mode = conn.execute(
+            select(tasks.c.engagement_mode).where(tasks.c.id == workspace.task_id)
+        ).scalar_one_or_none()
+        review_ids = [] if mode == "red_team" else self._run_todo_review_ids(conn, workspace.task_id, run)
         updates_by_id = {item.todo_id: item for item in draft.todo_updates}
         for todo_id in review_ids:
             staged = updates_by_id.get(todo_id)
@@ -2763,13 +2740,42 @@ class ReasonService:
                 errors.append("Plan 阶段不能直接将 Goal 标记为已达成")
             open_count = self._open_explore_count(conn, workspace.task_id)
             if not assessment.achieved and not draft.intent_proposals and not open_count:
-                unresolved_todos = self._no_op_unresolved_todos(conn, workspace, run)
-                if unresolved_todos:
-                    errors.append(
-                        "本轮不派发 Intent 时，必须先收口无后续工作的 Todo："
-                        + ", ".join(unresolved_todos)
-                    )
+                if mode == "red_team":
+                    unresolved_chains = self._no_op_unresolved_chains(conn, workspace, run)
+                    if unresolved_chains:
+                        errors.append(
+                            "本轮不派发 Intent 时，必须先收口无后续工作的攻击链："
+                            + ", ".join(unresolved_chains)
+                        )
+                else:
+                    unresolved_todos = self._no_op_unresolved_todos(conn, workspace, run)
+                    if unresolved_todos:
+                        errors.append(
+                            "本轮不派发 Intent 时，必须先收口无后续工作的 Todo："
+                            + ", ".join(unresolved_todos)
+                        )
         return list(dict.fromkeys(errors))
+
+    def _no_op_unresolved_chains(self, conn, workspace: ReasonWorkspace, run: ReasonRun) -> list[str]:
+        if self.red_team is None:
+            return []
+        updates = {item.chain_id: item for item in workspace.draft.chain_updates}
+        unresolved: list[str] = []
+        chain_ids = run.trigger_payload.get("actionable_chain_ids", [])
+        if isinstance(chain_ids, list):
+            for chain_id in chain_ids:
+                if not isinstance(chain_id, str):
+                    continue
+                chain = self.red_team.repository.get_chain(conn, workspace.task_id, chain_id)
+                if chain is None:
+                    continue
+                staged = updates.get(chain_id)
+                status = normalize_chain_status(staged.status if staged and staged.status else chain.status)
+                if status in {"open", "partial"}:
+                    unresolved.append(chain_id)
+        for chain in workspace.draft.chain_adds:
+            unresolved.append(chain.ref)
+        return unresolved
 
     def _no_op_unresolved_todos(
         self,
@@ -3152,6 +3158,72 @@ class ReasonService:
                 assessment.intent_id,
             )
 
+    def _persist_chain_adds(self, conn, workspace, task, draft: WorkspaceDraft, now: str, *, goal_cycle_id: str | None):
+        if self.red_team is None:
+            raise ConflictError("Red-team service is not configured")
+        objective = task.red_team_objective
+        created_chain_ids: list[str] = []
+        chain_refs: dict[str, str] = {}
+        for chain in draft.chain_adds:
+            initial_principal = chain.initial_principal
+            if initial_principal is None:
+                initial_principal = getattr(objective, "initial_principal", None)
+            if initial_principal is None:
+                raise ConflictError(
+                    "Chain requires an initial principal and the task objective has none"
+                )
+            created_chain = self.red_team.create_chain_in(
+                conn,
+                workspace.task_id,
+                RedTeamChainCreate(
+                    title=chain.title,
+                    initial_principal=initial_principal,
+                    target_capabilities=chain.target_capabilities,
+                    target_assets=chain.target_assets,
+                    source_fact_ids=chain.source_fact_ids,
+                ),
+                created_by=f"reason.{workspace.worker}",
+                goal_cycle_id=goal_cycle_id,
+                now=now,
+            )
+            chain_refs[chain.ref] = created_chain.id
+            created_chain_ids.append(created_chain.id)
+        return created_chain_ids, chain_refs
+
+    def _validate_intent_parent(self, conn, task, draft: WorkspaceDraft, proposal: DraftIntent) -> None:
+        todo_count = int(bool(proposal.todo_ref)) + int(bool(proposal.todo_id))
+        chain_count = int(bool(proposal.chain_ref)) + int(bool(proposal.chain_id))
+        if task.engagement_mode == "red_team":
+            if todo_count or chain_count != 1:
+                raise ConflictError("Red-team Intent must reference exactly one Chain and no Todo")
+            if proposal.chain_ref:
+                chain = next((item for item in draft.chain_adds if item.ref == proposal.chain_ref), None)
+                if chain is None:
+                    raise ConflictError(f"Intent references unknown Chain draft: {proposal.chain_ref}")
+                return
+            if self.red_team is None:
+                raise ConflictError("Red-team service is not configured")
+            chain = self.red_team.repository.get_chain(conn, task.id, proposal.chain_id or "")
+            if chain is None:
+                raise NotFoundError(f"Chain not found: {proposal.chain_id}")
+            staged = next((item for item in draft.chain_updates if item.chain_id == chain.id), None)
+            status = normalize_chain_status(staged.status if staged and staged.status else chain.status)
+            if status in TERMINAL_CHAIN_STATUSES:
+                raise ConflictError(f"Intent cannot reference terminal Chain: {chain.id}")
+            return
+        if chain_count or todo_count != 1:
+            raise ConflictError("Vulnerability Intent must reference exactly one Todo and no Chain")
+        if proposal.todo_ref:
+            todo = next((item for item in draft.todo_adds if item.ref == proposal.todo_ref), None)
+            if todo is None:
+                raise ConflictError(f"Intent references unknown Todo draft: {proposal.todo_ref}")
+            return
+        todo = self.todos.get(conn, task.id, proposal.todo_id or "")
+        if todo is None:
+            raise NotFoundError(f"Todo not found: {proposal.todo_id}")
+        if todo.archived:
+            raise ConflictError(f"Intent cannot reference archived Todo: {todo.id}")
+
     def _validate_intent(
         self,
         conn,
@@ -3160,28 +3232,24 @@ class ReasonService:
         proposal: DraftIntent,
         run: ReasonRun,
     ) -> None:
-        if proposal.todo_ref:
+        task = self.tasks.get(conn, task_id)
+        if task is None:
+            raise NotFoundError(f"Task not found: {task_id}")
+        self._validate_intent_parent(conn, task, draft, proposal)
+        if task.engagement_mode != "red_team":
+            todo_id = proposal.todo_id or proposal.todo_ref or ""
+            staged = next(
+                (item for item in draft.todo_updates if item.todo_id == todo_id),
+                None,
+            )
             todo = next(
                 (item for item in draft.todo_adds if item.ref == proposal.todo_ref),
                 None,
-            )
-            if todo is None:
-                raise ConflictError(f"Intent references unknown Todo draft: {proposal.todo_ref}")
-            todo_id = proposal.todo_ref
-        else:
-            todo = self.todos.get(conn, task_id, proposal.todo_id or "")
-            if todo is None:
-                raise NotFoundError(f"Todo not found: {proposal.todo_id}")
-            if todo.archived:
-                raise ConflictError(f"Intent cannot reference archived Todo: {todo.id}")
-            todo_id = proposal.todo_id or ""
-        staged = next(
-            (item for item in draft.todo_updates if item.todo_id == todo_id),
-            None,
-        )
-        effective_status = staged.status if staged and staged.status is not None else todo.status
-        if effective_status in {"blocked", "completed", "rejected", "obsolete"}:
-            raise ConflictError(f"Intent cannot reference terminal Todo: {todo_id}")
+            ) if proposal.todo_ref else self.todos.get(conn, task_id, proposal.todo_id or "")
+            baseline = todo.status if todo is not None else "open"
+            effective_status = staged.status if staged and staged.status is not None else baseline
+            if effective_status in {"blocked", "completed", "rejected", "obsolete"}:
+                raise ConflictError(f"Intent cannot reference terminal Todo: {todo_id}")
         if "goal" in proposal.from_facts:
             raise ConflictError("Goal Fact cannot be used as an Intent source")
         for fact_id in proposal.from_facts:

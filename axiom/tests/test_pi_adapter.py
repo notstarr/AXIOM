@@ -756,6 +756,51 @@ def test_reason_conclude_prompt_keeps_strict_planning_gate() -> None:
     assert "至少保留一个可执行" not in prompt
 
 
+def test_redteam_prompts_replace_coverage_contracts() -> None:
+    from axiom.dispatcher.pi import _stage_prompt
+
+    renderer = PromptRenderer()
+    reason = renderer.render(
+        _stage_prompt("reason.md", "red_team"),
+        {
+            "task_id": "t_001",
+            "reason_run_id": "rr1",
+            "intent_description": "增量",
+            "source_fact_ids": "[]",
+            "origin": "a.example.com",
+            "goal": "取得100积分",
+            "target_guidance": "可省略",
+            "context_manifest_path": "/tmp/context.json",
+            "run_dir": "/tmp/run",
+            "skill_directories": "- /tmp/skills/redteam-scoring",
+        },
+    )
+    explore = renderer.render(
+        _stage_prompt("explore.md", "red_team"),
+        {
+            "task_id": "t_001",
+            "intent_id": "i002",
+            "todo_id": "无",
+            "chain_id": "ch000001",
+            "intent_description": "拿到管理员",
+            "intent_targets": "a.example.com",
+            "origin": "a.example.com",
+            "goal": "取得100积分",
+            "scope_guidance": "",
+            "context_manifest_path": "/tmp/context.json",
+            "run_dir": "/tmp/run",
+            "skill_directories": "- /tmp/skills/redteam-scoring",
+        },
+    )
+    assert "不写 Todo" in reason
+    assert "intent propose --chain-id" in reason
+    assert "业务整树覆盖" not in reason
+    assert "leads.md" in explore
+    assert "不建链" in explore
+    assert "axiom explore result report" in explore
+    assert "vulnerability report" not in explore
+
+
 def test_bootstrap_prompt_receives_manifest_and_marks_context_as_injected() -> None:
     prompt = PromptRenderer().render(
         "bootstrap.md",

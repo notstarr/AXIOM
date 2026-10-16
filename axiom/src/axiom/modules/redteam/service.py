@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from sqlalchemy import Engine, select, update
+from sqlalchemy import Engine, exists, select, update
 
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.audit.schemas import RecordAuditEvent
@@ -10,6 +10,8 @@ from axiom.modules.graph.tables import intents
 from axiom.modules.graph.tables import facts
 from axiom.modules.redteam.repository import RedTeamRepository
 from axiom.modules.redteam.schemas import (
+    ACTIONABLE_CHAIN_STATUSES,
+    LEGACY_CHAIN_STATUS_MAP,
     RedTeamChain,
     RedTeamChainCreate,
     RedTeamResult,
@@ -34,6 +36,51 @@ def _is_planner_role(created_by: str) -> bool:
     if role.startswith("worker."):
         role = role[len("worker.") :]
     return role.startswith("reason") or role.startswith("plan")
+
+
+def normalize_chain_status(value: str | None) -> str:
+    normalized = str(value or "").strip()
+    return LEGACY_CHAIN_STATUS_MAP.get(normalized, normalized)
+
+
+def actionable_chain_ids(conn, task_id: str) -> list[str]:
+    """Chains Reason should keep planning, shaped like actionable Todos.
+
+    An open or partial Chain with no in-flight Explore Intent is the red-team
+    wake signal.  Blocked, completed and abandoned chains wait for an explicit
+    Reason/Plan status change.
+    """
+    open_explore = ("pending", "claimed", "running", "concluding")
+    chain_has_open_explore = exists(
+        select(intents.c.id).where(
+            intents.c.task_id == task_id,
+            intents.c.chain_id == red_team_chains.c.id,
+            intents.c.kind == "explore",
+            intents.c.status.in_(open_explore),
+            intents.c.archived.is_(False),
+        )
+    )
+    rows = conn.execute(
+        select(red_team_chains.c.id, red_team_chains.c.status)
+        .where(
+            red_team_chains.c.task_id == task_id,
+            ~chain_has_open_explore,
+        )
+        .order_by(red_team_chains.c.created_at, red_team_chains.c.id)
+    ).mappings()
+    return [
+        row["id"]
+        for row in rows
+        if normalize_chain_status(row["status"]) in ACTIONABLE_CHAIN_STATUSES
+    ]
+
+
+def bound_chain_id(row) -> str | None:
+    """Prefer the Intent column; fall back to legacy plan metadata."""
+    column = row.get("chain_id") if hasattr(row, "get") else None
+    if isinstance(column, str) and column.strip():
+        return column.strip()
+    return _chain_id_from_metadata(row.get("plan_metadata_json") if hasattr(row, "get") else None)
 
 
 def _chain_id_from_metadata(value) -> str | None:
@@ -187,30 +234,39 @@ class RedTeamService:
         chain_id: str,
         *,
         status: str | None = None,
+        status_reason: str | None = None,
         title: str | None = None,
+        current_state: dict | None = None,
         actor: str,
         now: str | None = None,
     ) -> RedTeamChain:
         """Apply one worker-staged Chain update inside the caller's transaction.
 
-        Only ``planned``/``blocked``/``abandoned`` may be written here.
-        ``achieved``/``failed`` are control-plane conclusions derived from
-        reviewed Results and Goal validation, never model claims.
+        Reason and Plan own the operational status, the same way they own Todo
+        status.  Points stay on verified Results.
         """
         now = now or utcnow()
         task = self._task(conn, task_id)
         current = self.repository.get_chain(conn, task_id, chain_id)
         if current is None:
             raise NotFoundError(f"RedTeam Chain not found: {chain_id}")
-        if status is not None and status not in ("planned", "blocked", "abandoned"):
-            raise ConflictError(
-                f"Chain status is a control-plane conclusion, not a worker update: {status}"
-            )
+        if status is not None and status not in (
+            "open",
+            "partial",
+            "blocked",
+            "completed",
+            "abandoned",
+        ):
+            raise ConflictError(f"Chain status is not a worker update: {status}")
         values: dict = {"updated_at": now}
         if status is not None:
             values["status"] = status
+        if status_reason is not None:
+            values["status_reason"] = status_reason
         if title is not None:
             values["title"] = title
+        if current_state is not None:
+            values["current_state_json"] = current_state
         updated = self.repository.update_chain(
             conn, task_id=task_id, chain_id=chain_id, values=values
         )
@@ -235,10 +291,9 @@ class RedTeamService:
     ) -> RedTeamChain:
         """Bind one Explore Intent to a Chain inside the caller's transaction.
 
-        The binding is written on both sides: the Chain records the Intent in
-        ``source_intent_ids`` and the Intent carries ``chain_id`` in its
-        ``plan_metadata_json`` so the Explore worker can report Results
-        against the chain it was dispatched for.
+        The binding is written on ``intents.chain_id``.  ``source_intent_ids``
+        and ``plan_metadata_json.chain_id`` stay filled so older readers keep
+        working during the migration.
         """
         now = now or utcnow()
         task = self._task(conn, task_id)
@@ -270,7 +325,7 @@ class RedTeamService:
         conn.execute(
             update(intents)
             .where(intents.c.task_id == task_id, intents.c.id == intent_id)
-            .values(plan_metadata_json=metadata)
+            .values(chain_id=chain_id, plan_metadata_json=metadata)
         )
         self.audit.record_in(conn, RecordAuditEvent(
             project_id=task["project_id"], task_id=task_id, intent_id=intent_id, worker=actor,
@@ -351,36 +406,45 @@ class RedTeamService:
                 raise NotFoundError(f"Explore Intent not found: {intent_id}")
             if intent["lease_id"] != lease_id or intent["status"] not in {"claimed", "running", "concluding"}:
                 raise LeaseInactiveError("Explore Intent lease is not active")
-            chain = self.repository.get_chain(conn, task_id, command.chain_id)
+            linked_chain_id = bound_chain_id(intent)
+            if not linked_chain_id:
+                raise ConflictError("Explore Intent is not bound to a Chain")
+            if command.chain_id and command.chain_id != linked_chain_id:
+                raise ConflictError("Result must be reported to the Intent's bound Chain")
+            # Do not rebind `command`: this nested function would then treat the
+            # outer parameter as an unassigned local.
+            report = command.model_copy(update={"chain_id": linked_chain_id})
+            chain = self.repository.get_chain(conn, task_id, linked_chain_id)
             if chain is None:
-                raise NotFoundError(f"RedTeam Chain not found: {command.chain_id}")
-            # An Intent bound to a Chain (through chain_intent_links) may only
-            # report to that Chain.  An unbound Intent must at least be
-            # referenced by the Chain itself (the direct-API creation path).
-            bound_chain_id = _chain_id_from_metadata(intent.get("plan_metadata_json"))
-            if bound_chain_id:
-                if command.chain_id != bound_chain_id:
-                    raise ConflictError("Result must be reported to the Intent's bound Chain")
-            elif intent_id not in chain.source_intent_ids:
-                raise ConflictError("Result Intent is not linked to this Chain")
-            if not command.evidence_refs:
+                raise NotFoundError(f"RedTeam Chain not found: {linked_chain_id}")
+            if not report.evidence_refs:
                 raise ConflictError("A Result requires at least one Evidence or Artifact reference")
-            for ref in command.evidence_refs:
+            bound_refs: list[str] = []
+            for ref in report.evidence_refs:
                 if not ref.startswith("artifact:"):
                     raise ConflictError("Evidence references must use artifact:<id>")
                 artifact_id = ref.removeprefix("artifact:")
-                exists = conn.execute(
-                    select(artifacts.c.id).where(
+                artifact = conn.execute(
+                    select(artifacts.c.id, artifacts.c.intent_id).where(
                         artifacts.c.task_id == task_id,
                         artifacts.c.id == artifact_id,
                         artifacts.c.archived.is_(False),
                     )
-                ).scalar_one_or_none()
-                if exists is None:
+                ).mappings().one_or_none()
+                if artifact is None:
                     raise ConflictError(f"Evidence/Artifact is not available: {ref}")
+                # 证据归到上报它的 Intent，和漏洞模式一样出现在 iXXX 目录下。
+                if not artifact["intent_id"]:
+                    conn.execute(
+                        update(artifacts)
+                        .where(artifacts.c.task_id == task_id, artifacts.c.id == artifact_id)
+                        .values(intent_id=intent_id)
+                    )
+                bound_refs.append(ref)
+            report = report.model_copy(update={"evidence_refs": bound_refs})
             objective = self._objective(task)
-            if command.result_type == "data":
-                if command.sample_count is None or command.sample_bytes is None:
+            if report.result_type == "data":
+                if report.sample_count is None or report.sample_bytes is None:
                     raise ConflictError("Data Result requires sample_count and sample_bytes")
                 # 任务声明了数据目标时锁死上限与字段白名单；未声明则不做
                 # 结构化限制（样本数/字节数仍必填，审核与 Goal 校验兜底）。
@@ -389,40 +453,40 @@ class RedTeamService:
                     if isinstance(item, dict) and str(item.get("id") or "").strip()
                 ]
                 if data_targets:
-                    target = next((item for item in data_targets if item.get("id") == command.data_target_id), None)
+                    target = next((item for item in data_targets if item.get("id") == report.data_target_id), None)
                     if target is None:
                         raise ConflictError("Data Result must reference a task data target")
-                    if (command.sample_count or 0) > int(target.get("max_records", 10)) or (command.sample_bytes or 0) > int(target.get("max_bytes", 1_048_576)):
+                    if (report.sample_count or 0) > int(target.get("max_records", 10)) or (report.sample_bytes or 0) > int(target.get("max_bytes", 1_048_576)):
                         raise ConflictError("Data Result exceeds the task objective limit")
-                    if not set(command.data_fields).issubset(set(target.get("allowed_fields", []))):
+                    if not set(report.data_fields).issubset(set(target.get("allowed_fields", []))):
                         raise ConflictError("Data Result contains fields outside the objective")
-            if command.result_type == "credential" and not command.credential_ref:
+            if report.result_type == "credential" and not report.credential_ref:
                 raise ConflictError("Credential Result requires a reference, never plaintext credentials")
-            if command.result_type in {"permission", "pivot"} and not command.capabilities_gained and not command.target_asset:
+            if report.result_type in {"permission", "pivot"} and not report.capabilities_gained and not report.target_asset:
                 raise ConflictError("Permission/Pivot Result requires a capability or target asset")
             result = self.repository.create_result(
                 conn,
                 task_id=task_id,
                 intent_id=intent_id,
-                command=command,
+                command=report,
                 reported_by=intent.get("worker") or reported_by or "explore",
                 now=utcnow(),
             )
             state = dict(chain.current_state)
-            capabilities = set(state.get("capabilities") or []) | set(command.capabilities_gained)
+            capabilities = set(state.get("capabilities") or []) | set(report.capabilities_gained)
             assets = set(state.get("assets") or [])
-            if command.target_asset:
-                assets.add(command.target_asset)
+            if report.target_asset:
+                assets.add(report.target_asset)
             state.update({"capabilities": sorted(capabilities), "assets": sorted(assets), "last_result_id": result.id})
             conn.execute(
                 update(red_team_chains)
-                .where(red_team_chains.c.task_id == task_id, red_team_chains.c.id == command.chain_id)
-                .values(status="active", current_state_json=state, updated_at=utcnow())
+                .where(red_team_chains.c.task_id == task_id, red_team_chains.c.id == report.chain_id)
+                .values(status="partial", current_state_json=state, updated_at=utcnow())
             )
             self.audit.record_in(conn, RecordAuditEvent(
                 project_id=task["project_id"], task_id=task_id, intent_id=intent_id,
                 worker=reported_by or "explore", event_type="redteam.result.reported",
-                message="红队成果已上报并进入审核", payload={"result_id": result.id, "chain_id": command.chain_id, "result_type": command.result_type},
+                message="红队成果已上报并进入审核", payload={"result_id": result.id, "chain_id": report.chain_id, "result_type": report.result_type},
             ))
             if self.reviews is None:
                 raise ConflictError("Red-team Reviewer service is not configured")
@@ -445,7 +509,7 @@ class RedTeamService:
             points_awarded = 0
             if command.status == "verified":
                 if command.points_awarded is None or command.points_awarded < 1:
-                    raise ConflictError("Verified Result requires awarded points (1-50)")
+                    raise ConflictError("Verified Result requires awarded points")
                 points_awarded = int(command.points_awarded)
             updated = self.repository.set_result_status(
                 conn, task_id=task_id, result_id=result_id, status=command.status,

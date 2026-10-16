@@ -7,7 +7,6 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator, model_vali
 from axiom.modules.goals.schemas import GoalAssessment
 from axiom.modules.redteam.schemas import (
     DraftChain,
-    DraftChainIntentLink,
     DraftChainUpdate,
 )
 from axiom.modules.todos.schemas import (
@@ -117,8 +116,12 @@ class DraftTodoDelete(BaseModel):
 class DraftIntent(BaseModel):
     todo_ref: str | None = None
     todo_id: str | None = None
-    # Optional Workspace-local handle so a staged RedTeam Chain can link this
-    # Intent before either side has a persisted ID.
+    # Red-team parent.  Exactly one chain reference is required for red_team
+    # tasks; vulnerability tasks keep the Todo parent and must omit these.
+    chain_ref: str | None = None
+    chain_id: str | None = None
+    # Optional Workspace-local handle so a staged Chain can be cited before
+    # either side has a persisted ID.
     ref: str | None = None
     from_facts: list[str]
     description: str = Field(max_length=500)
@@ -157,10 +160,15 @@ class DraftIntent(BaseModel):
     def normalize_optional_targets(cls, values: list[str]) -> list[str]:
         return list(dict.fromkeys(value.strip() for value in values if value.strip()))
 
+    @field_validator("chain_ref", "chain_id")
+    @classmethod
+    def normalize_chain_reference(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
     @model_validator(mode="after")
-    def require_one_todo_reference(self) -> "DraftIntent":
-        if bool(self.todo_ref) == bool(self.todo_id):
-            raise ValueError("exactly one of todo_ref or todo_id is required")
+    def normalize_parent_references(self) -> "DraftIntent":
         if self.todo_ref:
             self.todo_ref = self.todo_ref.strip()
         if self.todo_id:
@@ -233,9 +241,6 @@ class WorkspaceDraft(BaseModel):
     # when the Workspace commits, never at staging time.
     chain_adds: list[DraftChain] = Field(default_factory=list, max_length=20)
     chain_updates: list[DraftChainUpdate] = Field(default_factory=list, max_length=50)
-    chain_intent_links: list[DraftChainIntentLink] = Field(
-        default_factory=list, max_length=100
-    )
 
 
 class ReasonWorkspace(BaseModel):
@@ -309,10 +314,6 @@ class UpdateWorkspaceChain(WorkspaceWorkerCommand):
     update: DraftChainUpdate
 
 
-class LinkWorkspaceChainIntent(WorkspaceWorkerCommand):
-    link: DraftChainIntentLink
-
-
 class WorkspaceStatus(BaseModel):
     workspace_id: str
     status: Literal["open", "committed", "abandoned"]
@@ -326,7 +327,6 @@ class WorkspaceStatus(BaseModel):
     todo_review_ids: list[str] = Field(default_factory=list)
     chain_add_count: int = 0
     chain_update_count: int = 0
-    chain_link_count: int = 0
     chain_refs: list[str] = Field(default_factory=list)
     goal_assessed: bool = False
     goal_achieved: bool = False

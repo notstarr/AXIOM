@@ -12,7 +12,6 @@ from axiom.modules.reason.schemas import (
     AssessWorkspaceIntent,
     CommitResult,
     DeleteWorkspaceTodo,
-    LinkWorkspaceChainIntent,
     OpenWorkspace,
     ProposeWorkspaceIntent,
     ReasonWorkspace,
@@ -303,18 +302,6 @@ def update_workspace_chain(
         lease_id=body.lease_id,
     )
 
-
-@router.post("/reason-workspaces/{workspace_id}/chain-links", response_model=ReasonWorkspace)
-def link_workspace_chain_intent(
-    workspace_id: str,
-    body: LinkWorkspaceChainIntent,
-    container: Container = Depends(get_container),
-) -> ReasonWorkspace:
-    return container.reason.link_chain_intent(
-        workspace_id,
-        body.link,
-        lease_id=body.lease_id,
-    )
 
 
 @router.post("/reason-workspaces/{workspace_id}/status", response_model=WorkspaceStatus)

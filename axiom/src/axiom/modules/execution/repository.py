@@ -25,6 +25,7 @@ class ExecutionRepository:
                 tasks.c.worker_pool_json,
                 intents.c.id.label("intent_id"),
                 intents.c.todo_id,
+                intents.c.chain_id,
                 intents.c.description.label("intent_description"),
                 intents.c.targets_json,
                 intents.c.plan_metadata_json,

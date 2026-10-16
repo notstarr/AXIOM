@@ -15,7 +15,6 @@ from axiom.modules.plan.schemas import (
     AddPlanChain,
     AddPlanTodo,
     DeletePlanTodo,
-    LinkPlanChainIntent,
     PlanCommitResult,
     PlanReconcileReport,
     PlanRun,
@@ -138,11 +137,6 @@ def add_plan_chain(workspace_id: str, body: AddPlanChain, container: Container =
 @router.post("/plan-workspaces/{workspace_id}/chain-updates", response_model=PlanWorkspace)
 def update_plan_chain(workspace_id: str, body: UpdatePlanChain, container: Container = Depends(get_container)) -> PlanWorkspace:
     return container.plan.update_chain(workspace_id, body.update, lease_id=body.lease_id)
-
-
-@router.post("/plan-workspaces/{workspace_id}/chain-links", response_model=PlanWorkspace)
-def link_plan_chain_intent(workspace_id: str, body: LinkPlanChainIntent, container: Container = Depends(get_container)) -> PlanWorkspace:
-    return container.plan.link_chain_intent(workspace_id, body.link, lease_id=body.lease_id)
 
 
 @router.post("/plan-workspaces/{workspace_id}/decision", response_model=PlanWorkspace)

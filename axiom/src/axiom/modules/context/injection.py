@@ -68,6 +68,10 @@ class ContextInjectionService:
         if trigger_payload:
             sections.append(("本轮触发快照", self._compact(trigger_payload)))
 
+        engagement_mode = ""
+        if isinstance(manifest, dict):
+            engagement_mode = str(manifest.get("engagement_mode") or "")
+        red_team = engagement_mode == "red_team"
         if phase == "explore":
             wanted = ["hints", "knowledge", "artifacts"]
             refs = [f"intent:{intent_id}"] if intent_id else []
@@ -82,20 +86,24 @@ class ContextInjectionService:
         elif phase == "plan":
             wanted = [
                 "graph",
-                "todos",
                 "artifacts",
                 "hints",
                 "knowledge",
-                "vulnerabilities",
                 "goal_evaluations",
                 "goal_cycles",
             ]
+            if not red_team:
+                wanted[1:1] = ["todos", "vulnerabilities"]
             sections.extend(self._index_sections(root, indexes, wanted, source_refs))
         elif phase == "review":
-            wanted = ["review_target", "hints", "vulnerabilities", "graph", "artifacts"]
+            wanted = ["review_target", "hints", "graph", "artifacts"]
+            if not red_team:
+                wanted.append("vulnerabilities")
             sections.extend(self._index_sections(root, indexes, wanted, source_refs))
         else:  # bootstrap
-            wanted = ["hints", "knowledge", "vulnerabilities", "graph"]
+            wanted = ["hints", "knowledge", "graph"]
+            if not red_team:
+                wanted.append("vulnerabilities")
             sections.extend(self._index_sections(root, indexes, wanted, source_refs))
 
         if "red_team_objective" in indexes:

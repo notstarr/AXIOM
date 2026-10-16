@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from axiom.modules.redteam.schemas import (
     DraftChain,
-    DraftChainIntentLink,
     DraftChainUpdate,
 )
 from axiom.modules.todos.schemas import (
@@ -124,8 +123,10 @@ class DraftPlanIntent(BaseModel):
 
     todo_ref: str | None = None
     todo_id: str | None = None
-    # Optional Workspace-local handle so a staged RedTeam Chain can link this
-    # Intent before either side has a persisted ID.
+    chain_ref: str | None = None
+    chain_id: str | None = None
+    # Optional Workspace-local handle so a staged Chain can be cited before
+    # either side has a persisted ID.
     ref: str | None = None
     from_facts: list[str] = Field(default_factory=list)
     description: str
@@ -173,10 +174,15 @@ class DraftPlanIntent(BaseModel):
     def normalize_fingerprint(cls, value: str) -> str:
         return value.strip()
 
+    @field_validator("chain_ref", "chain_id")
+    @classmethod
+    def normalize_chain_reference(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
     @model_validator(mode="after")
-    def require_todo_and_provenance(self) -> "DraftPlanIntent":
-        if bool(self.todo_ref) == bool(self.todo_id):
-            raise ValueError("exactly one of todo_ref or todo_id is required")
+    def require_provenance(self) -> "DraftPlanIntent":
         if self.todo_ref:
             self.todo_ref = self.todo_ref.strip()
         if self.todo_id:
@@ -217,9 +223,6 @@ class PlanWorkspaceDraft(BaseModel):
     # when the Workspace commits, never at staging time.
     chain_adds: list[DraftChain] = Field(default_factory=list, max_length=20)
     chain_updates: list[DraftChainUpdate] = Field(default_factory=list, max_length=50)
-    chain_intent_links: list[DraftChainIntentLink] = Field(
-        default_factory=list, max_length=100
-    )
 
 
 PlanRunStatus = Literal[
@@ -312,7 +315,6 @@ class PlanWorkspaceStatus(BaseModel):
     intent_proposal_count: int = 0
     chain_add_count: int = 0
     chain_update_count: int = 0
-    chain_link_count: int = 0
     chain_refs: list[str] = Field(default_factory=list)
     decision: PlanDecision | None = None
     ready: bool = False
@@ -374,10 +376,6 @@ class AddPlanChain(PlanWorkspaceCommand):
 
 class UpdatePlanChain(PlanWorkspaceCommand):
     update: DraftChainUpdate
-
-
-class LinkPlanChainIntent(PlanWorkspaceCommand):
-    link: DraftChainIntentLink
 
 
 class SubmitPlanDecision(PlanWorkspaceCommand):

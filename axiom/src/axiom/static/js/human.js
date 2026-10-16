@@ -119,18 +119,59 @@ window.AxiomModules.human = {
     },
 
     // Todo 页左侧总览排序：按子 Intent 数量从大到小
-    humanSortedTodos() {
-      return [...(this.project?.todos || [])]
-        .filter(item => !item.archived)
-        .sort((a, b) => this.getIntentsForTodo(b.id).length - this.getIntentsForTodo(a.id).length
-          || String(a.id).localeCompare(String(b.id)));
+    isRedTeamBoard() {
+      return this.project?.project?.engagement_mode === 'red_team';
     },
 
-    // 左侧总览树中 Todo 下的子 Intent：按创建时间新到旧
+    humanBoardNoun() {
+      return this.isRedTeamBoard() ? '攻击链' : 'Todo';
+    },
+
+    humanRedTeamPoints() {
+      const awarded = (this.project?.red_team_results || [])
+        .filter(item => item.status === 'verified')
+        .reduce((sum, item) => sum + Number(item.points_awarded || 0), 0);
+      const target = Number(this.project?.project?.red_team_objective?.target_points || 100);
+      const percent = target > 0 ? Math.min(100, Math.round(awarded / target * 100)) : 0;
+      return { awarded, target, percent };
+    },
+
+    humanSortedTodos() {
+      const items = this.isRedTeamBoard()
+        ? (this.project?.chains || [])
+        : (this.project?.todos || []).filter(item => !item.archived);
+      return [...items].sort((a, b) => this.getIntentsForTodo(b.id).length - this.getIntentsForTodo(a.id).length
+        || String(a.id).localeCompare(String(b.id)));
+    },
+
+    // 漏洞模式按创建时间新到旧。红队链按创建顺序，第一步在上。
     navIntentsForTodo(todoId) {
-      return [...this.getIntentsForTodo(todoId)].sort((a, b) => (
+      const items = this.getIntentsForTodo(todoId);
+      if (this.isRedTeamBoard()) return items;
+      return [...items].sort((a, b) => (
         String(b.created_at || '').localeCompare(String(a.created_at || ''))
       ));
+    },
+
+    intentParentNoun() {
+      return this.isRedTeamBoard() ? '所属攻击链' : '所属 Todo';
+    },
+
+    intentParentLabel(intent) {
+      if (!intent) return '未关联';
+      if (this.isRedTeamBoard()) {
+        const chain = (this.project?.chains || []).find(item => item.id === intent.chain_id);
+        if (!chain) return intent.chain_id || '未关联';
+        return `${chain.id} ${chain.title || ''}`.trim();
+      }
+      return intent.todo_id || '未关联';
+    },
+
+    intentFeedParent(intent) {
+      if (this.isRedTeamBoard()) {
+        return intent?.chain_id ? `链：${intent.chain_id}` : '未关联攻击链';
+      }
+      return intent?.todo_id ? `Todo：${intent.todo_id}` : '未关联 Todo';
     },
 
     // ── Todo 页主从布局：左侧总览树 + 右侧 Intent 详情 ──
@@ -209,9 +250,11 @@ window.AxiomModules.human = {
     },
 
     humanTodoProgress() {
-      const todos = (this.project?.todos || []).filter(item => !item.archived && !['rejected', 'obsolete'].includes(item.status));
-      const completed = todos.filter(item => item.status === 'completed').length;
-      return { total: todos.length, completed, percent: todos.length ? Math.round(completed / todos.length * 100) : 0 };
+      const items = this.isRedTeamBoard()
+        ? (this.project?.chains || [])
+        : (this.project?.todos || []).filter(item => !item.archived && !['rejected', 'obsolete'].includes(item.status));
+      const completed = items.filter(item => item.status === 'completed' || item.status === 'abandoned').length;
+      return { total: items.length, completed, percent: items.length ? Math.round(completed / items.length * 100) : 0 };
     },
 
     // 任务目标覆盖率：已完成 Intent / 全部 Intent（替代原先按 Todo 完成度计算）
@@ -779,6 +822,12 @@ window.AxiomModules.human = {
 
     openTaskVulnerabilities() {
       const taskId = this.selectedProjectId || this.project?.project?.id || '';
+      if (this.isRedTeamBoard()) {
+        this.factViewMode = 'result';
+        this.navigateTo('vulnerabilities');
+        return;
+      }
+      this.factViewMode = 'vulnerability';
       this.vulnFilter = { ...(this.vulnFilter || {}), projectId: taskId, keyword: '' };
       this.selectedVulnerabilityKey = '';
       this.navigateTo('vulnerabilities');

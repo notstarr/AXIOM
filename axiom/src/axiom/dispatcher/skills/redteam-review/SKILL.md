@@ -1,47 +1,63 @@
 ---
 name: redteam-review
-description: 红队成果审核前必读，包含五步审查法、核定分规则与示例
+description: 红队成果审核前必读。按护网评分表核定分
 ---
 
-# RedTeam review（红队成果审核）
+# 红队成果审核
 
-本 Skill 只给 **Reviewer** 阶段使用。审核对象是红队成果（RedTeamResult）：每条成果自带上报者的自评分（`points_declared`），你的职责是**核定分**（`points_awarded`）——落库以核定分为准。
+审核对象是红队成果。先读 `redteam-scoring`，按那张表核定 `points_awarded`。不以自评分为准。
 
-## 五步审查法
+## 审查
 
-1. **证据核验**：声明的 capability 变化必须有对应请求/响应或命令回显证据；无证据 → 降档或驳回
-2. **分数核对**：对照评分表核档（权限 10/15/30/40/50、数据 10/20/25、凭证 10/25/30、横向 20/30）；自评分高于证据支撑的档位 → 下调到对应档
-3. **重复计分**：同任务同链同 capability 是否已有 verified 成果 → 有则标 duplicate（计 0 分）
-4. **数据脱敏**：data 类样本不得出现明文敏感值；字段必须在白名单内；样本数/字节数超限驳回
-5. **边界检查**：成果是否越任务 Scope / Objective（任务显式声明了能力/资产上限时）
+1. 证据要能复现声明的控制、数据或穿透。只有扫描、接口存在、未取得权限 → 驳回。
+2. 对照评分表核定。单价 × 本次新取得的数量。拿不准降档。
+3. 同一目标只计一次。已有低档 verified 时，核定分 = 高档 − 已核定低档。已有同档或更高档 → `duplicate`，0 分。
+4. 核心目标（靶标、域控、域管、统一认证、堡垒机、云管、虚拟化）不另入资产控制类。
+5. 有效办公账号每个 1 分，已核定合计达到 10 分后，超出部分核 0。
+6. 数据要有记录数证明。不足 1000 条或非敏感数据核 0 并驳回。样本不得出现明文敏感值。
+7. 越出任务 Scope 的成果驳回。
 
-## 核定规则
+## 裁决
 
-- `verified`：必须给核定分 `--points`（1-50），落库以核定分为准
-- `rejected`：证据不成立，0 分，理由必须说明缺什么
-- `duplicate`：重复计 0 分，说明与哪条成果重复
-- `needs-human`：需要人工确认（如需要真实短信验证码），0 分
+- `verified`：必须给 `--points`。落库以核定分为准。
+- `rejected`、`duplicate`、`needs-human`：0 分。理由写明缺什么，或与哪条成果、哪个目标重复。
 
 ## 示例
 
-verified（核定 30 分——证据支撑垂直提权档位）：
+核心应用管理员，核定 10 分：
 
 ```bash
 axiom review decision submit verified \
-  --reason '管理接口调用证据完整：普通成员会话成功调用 promote 接口且返回 200，符合评分表垂直提权档（30 分）。自评 30 分一致。' \
-  --points 30
+  --reason '普通成员会话创建角色并批量赋权，变更已落库。核心应用管理员，10 分。' \
+  --points 10
 ```
 
-rejected（证据不足）：
+核心服务器最高权限，核定 20 分：
+
+```bash
+axiom review decision submit verified \
+  --reason '命令回显 uid=0，目标是核心服务器 app-01。最高权限 20 分。未另计 Web 管理员。' \
+  --points 20
+```
+
+同一目标已有低档，只核差额：
+
+```bash
+axiom review decision submit verified \
+  --reason 'app-01 已核定普通权限 10 分。本次证明 root，最高权限 20 分，差额 10 分。' \
+  --points 10
+```
+
+证据不足：
 
 ```bash
 axiom review decision submit rejected \
-  --reason '仅提供目标接口的存在性证明，无成功调用管理员功能的请求/响应，不满足垂直提权认分条件。'
+  --reason '只有接口存在性，没有成功取得权限或数据的可复现证据。'
 ```
 
-duplicate（重复计分）：
+重复：
 
 ```bash
 axiom review decision submit duplicate \
-  --reason '与 rr000003 为同一 capability（tenant:admin）的重复成果，按规则计 0 分。'
+  --reason '与 rr000003 为同一目标 app-01 的同档控制，按最高档只计一次。'
 ```

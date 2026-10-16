@@ -85,25 +85,8 @@ def _active_reason(client, *, red_team: bool) -> tuple[dict, dict, dict]:
     return task, reason_claim, completed
 
 
-def _chain_draft(completed: dict, *, link: bool = True) -> dict:
-    draft = {
-        "todo_adds": [
-            {
-                "ref": "chain-todo",
-                "title": "打通到租户管理员",
-                "status": "open",
-                "sources": [{"type": "fact", "id": completed["fact_id"]}],
-            }
-        ],
-        "intent_proposals": [
-            {
-                "ref": "chain-intent",
-                "todo_ref": "chain-todo",
-                "from_facts": [completed["fact_id"]],
-                "description": "复用普通成员会话验证成员管理接口的权限链",
-                "targets": ["a.example.com"],
-            }
-        ],
+def _chain_draft(completed: dict) -> dict:
+    return {
         "chain_adds": [
             {
                 "ref": "ch-1",
@@ -113,12 +96,16 @@ def _chain_draft(completed: dict, *, link: bool = True) -> dict:
                 "source_fact_ids": [completed["fact_id"]],
             }
         ],
+        "intent_proposals": [
+            {
+                "ref": "chain-intent",
+                "chain_ref": "ch-1",
+                "from_facts": [completed["fact_id"]],
+                "description": "复用普通成员会话验证成员管理接口的权限链",
+                "targets": ["a.example.com"],
+            }
+        ],
     }
-    if link:
-        draft["chain_intent_links"] = [
-            {"chain_ref": "ch-1", "intent_ref": "chain-intent"}
-        ]
-    return draft
 
 
 def _claim_explore(client, task_id: str, intent_id: str) -> tuple[dict, dict]:
@@ -243,7 +230,7 @@ def test_redteam_goal_requires_target_points(client, engine) -> None:
                 initial_principal_json={"id": "user:initial", "label": "初始身份", "tenant": "", "credential_id": None},
                 target_capabilities_json=[], target_assets_json=[], current_state_json={},
                 source_fact_ids_json=[], source_intent_ids_json=[],
-                status="planned", created_by="worker.reason", created_at=now, updated_at=now,
+                status="open", created_by="worker.reason", created_at=now, updated_at=now,
             )
         )
         base_result = dict(
@@ -346,47 +333,6 @@ def test_chain_update_rejects_control_plane_status(client) -> None:
     assert response.status_code == 422, response.text
 
 
-def test_chain_link_requires_known_refs(client) -> None:
-    """A staged link must reference an in-draft Chain ref and a proposed Intent ref."""
-
-    task, claim, completed = _active_reason(client, red_team=True)
-    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
-    lease = {"lease_id": claim["lease_id"]}
-    draft = _chain_draft(completed)
-    draft.pop("chain_intent_links")
-
-    # Stage the Todo, the chain and the intent, then link to unknown refs.
-    for todo in draft["todo_adds"]:
-        response = client.post(
-            f"/api/v1/reason-workspaces/{workspace['id']}/todos",
-            json={**lease, "todo": todo},
-        )
-        assert response.status_code == 200, response.text
-    for chain in draft["chain_adds"]:
-        response = client.post(
-            f"/api/v1/reason-workspaces/{workspace['id']}/chains",
-            json={**lease, "chain": chain},
-        )
-        assert response.status_code == 200, response.text
-    for intent in draft["intent_proposals"]:
-        response = client.post(
-            f"/api/v1/reason-workspaces/{workspace['id']}/intents",
-            json={**lease, "intent": intent},
-        )
-        assert response.status_code == 200, response.text
-
-    missing_chain = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/chain-links",
-        json={**lease, "link": {"chain_ref": "ch-missing", "intent_ref": "chain-intent"}},
-    )
-    assert missing_chain.status_code == 404, missing_chain.text
-    missing_intent = client.post(
-        f"/api/v1/reason-workspaces/{workspace['id']}/chain-links",
-        json={**lease, "link": {"chain_ref": "ch-1", "intent_ref": "i-missing"}},
-    )
-    assert missing_intent.status_code == 404, missing_intent.text
-
-
 def test_reason_commit_creates_chain_and_binds_intent(client) -> None:
     """Commit persists the staged Chain, binds the Intent and reaches the Worker."""
 
@@ -406,7 +352,7 @@ def test_reason_commit_creates_chain_and_binds_intent(client) -> None:
     assert chains.status_code == 200, chains.text
     [chain] = chains.json()
     assert chain["id"] == chain_id
-    assert chain["status"] == "planned"
+    assert chain["status"] == "open"
     # 初始身份默认取 Objective 的初始主体
     assert chain["initial_principal"]["id"] == "user:member"
     assert chain["source_intent_ids"] == [intent_id]
@@ -467,10 +413,10 @@ def test_result_report_enforces_bound_chain(client) -> None:
     assert misplaced.status_code == 409, misplaced.text
     assert "bound Chain" in misplaced.text
 
-    report["chain_id"] = chain_id
+    omitted = {key: value for key, value in report.items() if key != "chain_id"}
     accepted = client.post(
         f"/api/v1/tasks/{task['id']}/intents/{intent_id}/red-team-results",
-        json={**lease, "report": report},
+        json={**lease, "report": omitted},
     )
     assert accepted.status_code == 201, accepted.text
     created = accepted.json()
@@ -742,39 +688,6 @@ def test_plan_workspace_commits_chain_and_binds_intent(client, engine) -> None:
     workspace_id = workspace.json()["id"]
     lease = {"lease_id": plan_lease}
 
-    todo = client.post(
-        f"/api/v1/plan-workspaces/{workspace_id}/todos",
-        json={
-            **lease,
-            "todo": {
-                "ref": "chain-todo",
-                "title": "打通权限链",
-                "category": "authorization",
-                "sources": [{"type": "fact", "id": completed["fact_id"]}],
-            },
-        },
-    )
-    assert todo.status_code == 200, todo.text
-    intent = client.post(
-        f"/api/v1/plan-workspaces/{workspace_id}/intents",
-        json={
-            **lease,
-            "intent": {
-                "ref": "chain-intent",
-                "todo_ref": "chain-todo",
-                "from_facts": [completed["fact_id"]],
-                "source_refs": [f"fact:{completed['fact_id']}"],
-                "description": "验证成员管理接口的权限链",
-                "targets": ["a.example.com"],
-                "endpoint": "/api/v1/members",
-                "test_vector": "role escalation",
-                "why_now": "Plan 复盘发现能力覆盖缺口",
-                "expected_signal": "取得成员管理能力",
-                "stop_condition": "达成权限跃迁后停止",
-            },
-        },
-    )
-    assert intent.status_code == 200, intent.text
     chain = client.post(
         f"/api/v1/plan-workspaces/{workspace_id}/chains",
         json={
@@ -789,11 +702,26 @@ def test_plan_workspace_commits_chain_and_binds_intent(client, engine) -> None:
         },
     )
     assert chain.status_code == 200, chain.text
-    link = client.post(
-        f"/api/v1/plan-workspaces/{workspace_id}/chain-links",
-        json={**lease, "link": {"chain_ref": "ch-1", "intent_ref": "chain-intent"}},
+    intent = client.post(
+        f"/api/v1/plan-workspaces/{workspace_id}/intents",
+        json={
+            **lease,
+            "intent": {
+                "ref": "chain-intent",
+                "chain_ref": "ch-1",
+                "from_facts": [completed["fact_id"]],
+                "source_refs": [f"fact:{completed['fact_id']}"],
+                "description": "验证成员管理接口的权限链",
+                "targets": ["a.example.com"],
+                "endpoint": "/api/v1/members",
+                "test_vector": "role escalation",
+                "why_now": "Plan 复盘发现这条链的下一步",
+                "expected_signal": "取得成员管理能力",
+                "stop_condition": "达成权限跃迁后停止",
+            },
+        },
     )
-    assert link.status_code == 200, link.text
+    assert intent.status_code == 200, intent.text
     decision = client.post(
         f"/api/v1/plan-workspaces/{workspace_id}/decision",
         json={
@@ -825,3 +753,206 @@ def test_plan_workspace_commits_chain_and_binds_intent(client, engine) -> None:
     recommitted = client.post(f"/api/v1/plan-workspaces/{workspace_id}/commit", json=lease)
     assert recommitted.status_code == 200, recommitted.text
     assert recommitted.json()["created_chain_ids"] == [chain_id]
+
+
+def test_redteam_intent_requires_chain_and_rejects_todo(client) -> None:
+    task, claim, completed = _active_reason(client, red_team=True)
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    lease = {"lease_id": claim["lease_id"]}
+    missing = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/intents",
+        json={
+            **lease,
+            "intent": {
+                "from_facts": [completed["fact_id"]],
+                "description": "没有父节点的红队步骤",
+                "targets": ["a.example.com"],
+            },
+        },
+    )
+    assert missing.status_code == 409, missing.text
+    assert "Chain" in missing.text
+
+
+def test_vulnerability_intent_rejects_chain(client) -> None:
+    task, claim, completed = _active_reason(client, red_team=False)
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    lease = {"lease_id": claim["lease_id"]}
+    response = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/intents",
+        json={
+            **lease,
+            "intent": {
+                "chain_ref": "ch-1",
+                "from_facts": [completed["fact_id"]],
+                "description": "漏洞模式不能挂链",
+                "targets": ["a.example.com"],
+            },
+        },
+    )
+    assert response.status_code == 409, response.text
+    assert "Todo" in response.text
+
+
+def test_completed_chain_rejects_new_intent(client, engine) -> None:
+    from axiom.modules.redteam.tables import red_team_chains
+
+    task, claim, completed = _active_reason(client, red_team=True)
+    created = client.post(
+        f"/api/v1/tasks/{task['id']}/red-team/chains",
+        params={"created_by": "worker.reason"},
+        json={
+            "title": "已走完的链",
+            "initial_principal": {"id": "user:member", "label": "普通成员"},
+            "target_capabilities": ["tenant:admin"],
+            "target_assets": ["member-management"],
+            "source_fact_ids": [],
+        },
+    )
+    assert created.status_code == 201, created.text
+    chain_id = created.json()["id"]
+    with engine.begin() as conn:
+        conn.execute(
+            update(red_team_chains)
+            .where(red_team_chains.c.task_id == task["id"], red_team_chains.c.id == chain_id)
+            .values(status="completed", status_reason="这条路径不再派发")
+        )
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    response = client.post(
+        f"/api/v1/reason-workspaces/{workspace['id']}/intents",
+        json={
+            "lease_id": claim["lease_id"],
+            "intent": {
+                "chain_id": chain_id,
+                "from_facts": [completed["fact_id"]],
+                "description": "终态链上的新步骤",
+                "targets": ["a.example.com"],
+            },
+        },
+    )
+    assert response.status_code == 409, response.text
+    assert chain_id in response.text
+
+
+def test_open_chain_without_inflight_intent_wakes_reason(client, engine) -> None:
+    from axiom.modules.graph.tables import intents
+    from protocol_helpers import update_runtime_settings
+
+    update_runtime_settings(client, reason_min_interval_seconds=0)
+    task, claim, completed = _active_reason(client, red_team=True)
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    committed = apply_reason_draft(
+        client, workspace["id"], claim["lease_id"], _chain_draft(completed)
+    )
+    assert committed.status_code == 200, committed.text
+    intent_id = committed.json()["created_intent_ids"][0]
+    now = "2026-10-15T00:00:00Z"
+    with engine.begin() as conn:
+        conn.execute(
+            update(intents)
+            .where(intents.c.task_id == task["id"], intents.c.id == intent_id)
+            .values(status="completed", assessment_status="completed", concluded_at=now)
+        )
+        conn.execute(
+            update(reason_runs)
+            .where(reason_runs.c.task_id == task["id"])
+            .values(status="completed", concluded_at=now, updated_at=now)
+        )
+    reconciled = client.post("/api/v1/dispatch/reason-runs/reconcile")
+    assert reconciled.status_code == 200, reconciled.text
+    created = reconciled.json()["created_reason_run_ids"]
+    assert created, reconciled.text
+    assert completed["next_reason_run_id"] not in created
+
+
+def test_redteam_review_closeout_does_not_require_vuln_report(tmp_path) -> None:
+    from axiom.dispatcher.review import ReviewRunner
+    from axiom.modules.execution.schemas import ExecutionInput
+    from axiom.modules.vulnerability_reviews.schemas import (
+        ClaimedVulnerabilityReviewRun,
+        ReviewStatus,
+    )
+
+    class Plane:
+        def review_status(self, work):
+            return ReviewStatus(
+                review_run_id=work.review_run_id,
+                task_id=work.task_id,
+                review_subject_type="redteam_result",
+                red_team_result_id=work.red_team_result_id,
+                status="running",
+                decision="verified",
+                ready=True,
+            )
+
+    runner = ReviewRunner(Plane())
+    work = ClaimedVulnerabilityReviewRun(
+        task_id="t_001",
+        review_run_id="vr1",
+        review_subject_type="redteam_result",
+        red_team_result_id="rr1",
+        worker_name="worker-a",
+        lease_id="lease",
+        claimed_at="2026-10-15T00:00:00Z",
+    )
+    execution_input = ExecutionInput(
+        task_id="t_001",
+        engagement_mode="red_team",
+        review_run_id="vr1",
+        red_team_result_id="rr1",
+        lease_id="lease",
+        worker_name="worker-a",
+        intent_kind="review",
+        origin="a.example.com",
+        goal="取得100积分",
+        scope={},
+        run_dir=str(tmp_path),
+    )
+    runner._validate_output(work, execution_input, "FINISH")
+
+
+def test_exercise_rubric_accepts_target_control_score() -> None:
+    """护网表单项最高 60，总分不封顶。旧的 50 分上限不能挡住靶标完全控制。"""
+
+    from pathlib import Path
+
+    import pytest
+    from pydantic import ValidationError
+
+    from axiom.modules.redteam.schemas import MAX_RESULT_POINTS, RedTeamResultReport, RedTeamResultReview
+
+    report = RedTeamResultReport(
+        result_type="permission",
+        title="靶标系统完全控制",
+        description="可任意操作目标系统",
+        principal="user:member",
+        target_asset="target-system",
+        evidence_refs=["artifact:a001"],
+        points_declared=60,
+    )
+    assert report.points_declared == 60
+    review = RedTeamResultReview(
+        status="verified",
+        reason="靶标完全控制，证据可复现",
+        reviewed_by="reviewer-a",
+        points_awarded=60,
+    )
+    assert review.points_awarded == 60
+    with pytest.raises(ValidationError):
+        RedTeamResultReport(
+            result_type="permission",
+            title="超出字段宽度",
+            description="技术上限与目标分一致",
+            principal="user:member",
+            evidence_refs=["artifact:a001"],
+            points_declared=MAX_RESULT_POINTS + 1,
+        )
+
+    scoring = Path(__file__).resolve().parents[1] / "src/axiom/dispatcher/skills/redteam-scoring/SKILL.md"
+    text = scoring.read_text(encoding="utf-8")
+    assert "靶标系统 · 完全控制" in text
+    assert "每个 | 60" in text
+    assert "不设上限" in text
+    assert "1-50" not in text
+    review_skill = Path(__file__).resolve().parents[1] / "src/axiom/dispatcher/skills/redteam-review/SKILL.md"
+    assert "先读 `redteam-scoring`" in review_skill.read_text(encoding="utf-8")
