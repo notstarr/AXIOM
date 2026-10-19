@@ -1024,6 +1024,195 @@ def register_worker_commands(main: click.Group) -> None:
             payload["points_awarded"] = points
         _echo(_review_request("decision", payload))
 
+    @main.group("webshell")
+    def webshell_group() -> None:
+        """WebShell connection registry bound to the current red-team task."""
+
+    @webshell_group.command("list")
+    def webshell_list() -> None:
+        task_id = _red_team_task_id()
+        _echo(_request("GET", f"/tasks/{task_id}/webshells", None))
+
+    @webshell_group.command("create")
+    @click.option("--name", required=True)
+    @click.option("--url", required=True)
+    @click.option("--family", type=click.Choice(("posix", "windows")), default="posix")
+    @click.option("--method", type=click.Choice(("GET", "POST")), default="POST")
+    @click.option("--body-template", default="cmd={{cmd}}")
+    @click.option("--query-template", default="")
+    @click.option("--headers-json", default="{}")
+    @click.option("--response-mode", type=click.Choice(("raw", "between", "regex")), default="raw")
+    @click.option("--response-start", default="")
+    @click.option("--response-end", default="")
+    @click.option("--response-decode", type=click.Choice(("none", "base64")), default="none")
+    @click.option("--remark", default="")
+    def webshell_create(
+        name: str,
+        url: str,
+        family: str,
+        method: str,
+        body_template: str,
+        query_template: str,
+        headers_json: str,
+        response_mode: str,
+        response_start: str,
+        response_end: str,
+        response_decode: str,
+        remark: str,
+    ) -> None:
+        task_id = _red_team_task_id()
+        payload = {
+            "name": name,
+            "url": url,
+            "family": family,
+            "request": {
+                "method": method,
+                "headers": json.loads(headers_json or "{}"),
+                "body": body_template,
+                "query": query_template,
+            },
+            "response": {
+                "mode": response_mode,
+                "start": response_start,
+                "end": response_end,
+                "decode": response_decode,
+            },
+            "remark": remark,
+        }
+        _echo(_request("POST", f"/tasks/{task_id}/webshells{_actor_query()}", payload))
+
+    @webshell_group.command("test")
+    @click.argument("connection_id")
+    def webshell_test(connection_id: str) -> None:
+        task_id = _red_team_task_id()
+        _echo(_request("POST", f"/tasks/{task_id}/webshells/{connection_id}/test{_actor_query()}", None))
+
+    @webshell_group.command("exec")
+    @click.argument("connection_id")
+    @click.argument("command")
+    @click.option("--timeout", "timeout_seconds", type=click.IntRange(1, 300), default=30)
+    def webshell_exec(connection_id: str, command: str, timeout_seconds: int) -> None:
+        task_id = _red_team_task_id()
+        _echo(
+            _request(
+                "POST",
+                f"/tasks/{task_id}/webshells/{connection_id}/exec{_actor_query()}",
+                {"command": command, "timeout_seconds": timeout_seconds},
+            )
+        )
+
+    @webshell_group.command("file")
+    @click.argument("connection_id")
+    @click.option("--op", type=click.Choice(("list", "read", "write")), required=True)
+    @click.option("--path", "target_path", required=True)
+    @click.option("--content", default="")
+    def webshell_file(connection_id: str, op: str, target_path: str, content: str) -> None:
+        task_id = _red_team_task_id()
+        _echo(
+            _request(
+                "POST",
+                f"/tasks/{task_id}/webshells/{connection_id}/file{_actor_query()}",
+                {"op": op, "path": target_path, "content": content},
+            )
+        )
+
+    @webshell_group.command("logs")
+    @click.argument("connection_id")
+    @click.option("--limit", type=click.IntRange(1, 200), default=20)
+    def webshell_logs(connection_id: str, limit: int) -> None:
+        task_id = _red_team_task_id()
+        _echo(_request("GET", f"/tasks/{task_id}/webshells/{connection_id}/logs?limit={limit}", None))
+
+    @main.group("c2")
+    def c2_group() -> None:
+        """C2 listeners/sessions/tasks bound to the current red-team task."""
+
+    @c2_group.command("listeners")
+    def c2_listeners() -> None:
+        task_id = _red_team_task_id()
+        _echo(_request("GET", f"/tasks/{task_id}/c2/listeners", None))
+
+    @c2_group.command("listener-create")
+    @click.option("--name", required=True)
+    @click.option("--kind", type=click.Choice(("http", "tcp")), default="http")
+    @click.option("--host", default="0.0.0.0")
+    @click.option("--port", type=click.IntRange(1, 65535), required=True)
+    def c2_listener_create(name: str, kind: str, host: str, port: int) -> None:
+        task_id = _red_team_task_id()
+        _echo(
+            _request(
+                "POST",
+                f"/tasks/{task_id}/c2/listeners?actor={_actor()}",
+                {"name": name, "kind": kind, "host": host, "port": port},
+            )
+        )
+
+    @c2_group.command("listener-start")
+    @click.argument("listener_id")
+    def c2_listener_start(listener_id: str) -> None:
+        task_id = _red_team_task_id()
+        _echo(_request("POST", f"/tasks/{task_id}/c2/listeners/{listener_id}/start", None))
+
+    @c2_group.command("listener-stop")
+    @click.argument("listener_id")
+    def c2_listener_stop(listener_id: str) -> None:
+        task_id = _red_team_task_id()
+        _echo(_request("POST", f"/tasks/{task_id}/c2/listeners/{listener_id}/stop", None))
+
+    @c2_group.command("oneliner")
+    @click.argument("listener_id")
+    def c2_oneliner(listener_id: str) -> None:
+        task_id = _red_team_task_id()
+        _echo(_request("GET", f"/tasks/{task_id}/c2/listeners/{listener_id}/oneliner", None))
+
+    @c2_group.command("sessions")
+    @click.option("--listener-id", default=None)
+    def c2_sessions(listener_id: str | None) -> None:
+        task_id = _red_team_task_id()
+        suffix = f"?listener_id={listener_id}" if listener_id else ""
+        _echo(_request("GET", f"/tasks/{task_id}/c2/sessions{suffix}", None))
+
+    @c2_group.command("session-sleep")
+    @click.argument("session_id")
+    @click.option("--seconds", type=click.IntRange(1, 3600), required=True)
+    def c2_session_sleep(session_id: str, seconds: int) -> None:
+        task_id = _red_team_task_id()
+        _echo(_request("PUT", f"/tasks/{task_id}/c2/sessions/{session_id}/sleep", {"sleep_seconds": seconds}))
+
+    @c2_group.command("session-kill")
+    @click.argument("session_id")
+    def c2_session_kill(session_id: str) -> None:
+        task_id = _red_team_task_id()
+        _echo(_request("POST", f"/tasks/{task_id}/c2/sessions/{session_id}/kill", None))
+
+    @c2_group.command("exec")
+    @click.argument("session_id")
+    @click.argument("command")
+    @click.option("--wait", "wait_seconds", type=click.IntRange(0, 300), default=30)
+    def c2_exec(session_id: str, command: str, wait_seconds: int) -> None:
+        task_id = _red_team_task_id()
+        _echo(
+            _request(
+                "POST",
+                f"/tasks/{task_id}/c2/sessions/{session_id}/exec{_actor_query()}",
+                {"command": command, "wait_seconds": wait_seconds},
+            )
+        )
+
+    @c2_group.command("tasks")
+    @click.option("--session-id", default=None)
+    @click.option("--limit", type=click.IntRange(1, 200), default=20)
+    def c2_tasks(session_id: str | None, limit: int) -> None:
+        task_id = _red_team_task_id()
+        suffix = f"?session_id={session_id}&limit={limit}" if session_id else f"?limit={limit}"
+        _echo(_request("GET", f"/tasks/{task_id}/c2/tasks{suffix}", None))
+
+    @c2_group.command("task")
+    @click.argument("c2_task_id")
+    def c2_task(c2_task_id: str) -> None:
+        task_id = _red_team_task_id()
+        _echo(_request("GET", f"/tasks/{task_id}/c2/tasks/{c2_task_id}", None))
+
 
 def _workspace_request(method: str, action: str, payload: dict[str, Any]) -> Any:
     _environment("AXIOM_REASON_RUN_ID")
@@ -1129,6 +1318,32 @@ def _environment(name: str) -> str:
 
 def _lease_id() -> str:
     return _environment("AXIOM_LEASE_ID")
+
+
+_RED_TEAM_MODE_CACHE: dict[str, str] = {}
+
+
+def _red_team_task_id() -> str:
+    """webshell/c2 是红队原生能力：漏洞模式 lease 里直接拒绝。"""
+    task_id = _environment("AXIOM_TASK_ID")
+    mode = _RED_TEAM_MODE_CACHE.get(task_id)
+    if mode is None:
+        task = _request("GET", f"/tasks/{task_id}", None)
+        mode = str(task.get("engagement_mode") or "vulnerability")
+        _RED_TEAM_MODE_CACHE[task_id] = mode
+    if mode != "red_team":
+        raise click.ClickException("webshell/c2 命令仅红队模式任务的 worker 可用")
+    return task_id
+
+
+def _actor() -> str:
+    return os.environ.get("AXIOM_WORKER", "worker").strip() or "worker"
+
+
+def _actor_query() -> str:
+    intent_id = os.environ.get("AXIOM_INTENT_ID", "").strip()
+    query = f"?actor={_actor()}"
+    return query + (f"&intent_id={intent_id}" if intent_id else "")
 
 
 def _credential_access_payload() -> dict[str, str]:

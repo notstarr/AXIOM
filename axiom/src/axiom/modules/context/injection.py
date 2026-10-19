@@ -104,6 +104,10 @@ class ContextInjectionService:
             wanted = ["hints", "knowledge", "graph"]
             if not red_team:
                 wanted.append("vulnerabilities")
+            # 种子漏洞只喂 bootstrap：Explore/Reason 靠 leads 与产物接力，
+            # 不直接看来源任务的漏洞库。
+            if red_team and "seed_vulnerabilities" in indexes:
+                wanted.append("seed_vulnerabilities")
             sections.extend(self._index_sections(root, indexes, wanted, source_refs))
 
         if "red_team_objective" in indexes:
@@ -226,6 +230,10 @@ _CARD_DESCRIPTORS = {
     "red_team_chains": "红队攻击链及当前能力状态",
     "red_team_results": "红队成果及审核状态；敏感数据仅保留摘要",
     "red_team_current_state": "红队当前成果计数与状态",
+    "seed_vulnerabilities": (
+        "来源任务人工标记的红队可利用漏洞（种子线索）；仅作优先入口，"
+        "利用前必须重新验证；证据按 evidence storage_key 直接读"
+    ),
 }
 
 

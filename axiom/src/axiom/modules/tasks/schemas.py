@@ -63,6 +63,7 @@ class CreateTask(BaseModel):
     guard_enabled: bool = False
     engagement_mode: EngagementMode = "vulnerability"
     red_team_objective: RedTeamObjective | None = None
+    seed_vulnerability_task_id: str | None = None
     run_duration_seconds: int | None = Field(
         default=None,
         ge=MIN_RUN_DURATION_SECONDS,
@@ -77,6 +78,12 @@ class CreateTask(BaseModel):
             raise ValueError("must not be empty")
         return value
 
+    @field_validator("seed_vulnerability_task_id")
+    @classmethod
+    def normalize_seed_task(cls, value: str | None) -> str | None:
+        normalized = (value or "").strip()
+        return normalized or None
+
     @field_validator("hints", "worker_pool")
     @classmethod
     def normalize_lists(cls, values: list[str]) -> list[str]:
@@ -90,6 +97,8 @@ class CreateTask(BaseModel):
         # （不设能力/资产/数据上限），由成果审核与 Goal 校验兜底。
         if self.engagement_mode != "red_team" and self.red_team_objective is not None:
             raise ValueError("red_team_objective is only valid for red_team tasks")
+        if self.engagement_mode != "red_team" and self.seed_vulnerability_task_id is not None:
+            raise ValueError("seed_vulnerability_task_id is only valid for red_team tasks")
         return self
 
 
@@ -183,6 +192,7 @@ class Task(BaseModel):
     goal: str
     engagement_mode: EngagementMode = "vulnerability"
     red_team_objective: RedTeamObjective | None = None
+    seed_vulnerability_task_id: str | None = None
     current_goal_cycle_id: str | None = None
     status: Literal["running", "stopped", "completed", "failed"]
     phase: Literal["bootstrap", "reason", "explore", "plan", "waiting", "none"]

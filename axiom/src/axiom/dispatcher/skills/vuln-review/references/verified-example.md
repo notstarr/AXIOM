@@ -38,7 +38,7 @@ Authorization: Bearer <user-a-redacted>
 | 无 `Authorization` 请求 `order-b-test` | 401 | 401 |
 | **A 请求 `order-b-test`** | —— | **200 + tenant-b 数据（越权）** |
 
-对照排除了「端点公开」「订单不存在」「旧缓存响应」等解释。脱敏请求/响应：`evidence/idor-order-cross-tenant.md`。
+对照排除了「端点公开」「订单不存在」「旧缓存响应」等解释。原始请求/响应：`evidence/idor-order-cross-tenant.md`。
 
 ## 漏洞危害
 
@@ -52,7 +52,7 @@ Authorization: Bearer <user-a-redacted>
 
 ## 证据截图
 
-- `evidence/idor-order-cross-tenant.md`（脱敏请求/响应）
+- `evidence/idor-order-cross-tenant.md`（原始请求/响应）
 - 截图以**相对路径**引用，例如：`![](evidence/order-cross-tenant.png)`
 
 > 只保留能证明漏洞存在的关键证据（关键响应 / 关键页面 / 关键数据回显），每个漏洞 0-3 张。

@@ -34,6 +34,8 @@ from axiom.modules.token_usage.api import router as token_usage_router
 from axiom.modules.interventions.api import router as interventions_router
 from axiom.modules.vulnerabilities.api import router as vulnerabilities_router
 from axiom.modules.vulnerability_reviews.api import router as vulnerability_reviews_router
+from axiom.modules.webshell.api import router as webshell_router
+from axiom.modules.c2.api import router as c2_router
 from axiom.modules.workers.api import phase_router as worker_phases_router
 from axiom.modules.workers.api import router as workers_router
 from axiom.modules.integrations.dingtalk_api import router as dingtalk_router
@@ -66,6 +68,8 @@ router.include_router(settings_router)
 router.include_router(storage_router)
 router.include_router(sandboxes_router)
 router.include_router(vulnerabilities_router)
+router.include_router(webshell_router)
+router.include_router(c2_router)
 router.include_router(vulnerability_reviews_router)
 router.include_router(mcp_router)
 router.include_router(knowledge_router)

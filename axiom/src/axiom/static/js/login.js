@@ -35,7 +35,23 @@
       async init() {
         // 检测已有会话（localStorage token）。有效则 reload 触发完整应用加载。
         var ok = await this.checkAuthStatus();
-        if (ok) { window.AxiomLogin.refresh(); }
+        if (!ok) { return; }
+        // 防循环闸：cookie 为 HttpOnly，本页无法补写。若上一次 reload 后仍落回
+        // 未登录页，说明 cookie 缺失/失效，继续 reload 只会无限刷新；此时清掉
+        // 陈旧 token 直接展示登录卡，让用户重新登录以重建 cookie。
+        var GUARD = "axiom_login_refresh_guard";
+        var guarded = false;
+        try { guarded = sessionStorage.getItem(GUARD) === "1"; } catch (e) {}
+        if (guarded) {
+          try { sessionStorage.removeItem(GUARD); } catch (e) {}
+          try { localStorage.removeItem("axiom_token"); } catch (e) {}
+          this.isAuthenticated = false;
+          this.currentUser = null;
+          this.authLoading = false;
+          return;
+        }
+        try { sessionStorage.setItem(GUARD, "1"); } catch (e) {}
+        window.AxiomLogin.refresh();
       },
 
       async checkAuthStatus() {

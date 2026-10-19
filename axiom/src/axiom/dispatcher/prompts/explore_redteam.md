@@ -15,7 +15,7 @@
 
 ## 规则
 
-1. 只做当前 Intent 要求的这一步。拿到可计分的控制、数据或穿透时，用 `axiom explore result report` 报到当前 Intent 已绑定的链。上报前读 `redteam-scoring`，按单价 × 数量自评。不计分的探测不要上报。
+1. 只做当前 Intent 要求的这一步。任务书四段式里「判据」是完成标准、「边界」是硬限制：对照判据自检后再决定上报或写 leads，边界里写明不做的事一律不碰。拿到可计分的控制、数据或穿透时，用 `axiom explore result report` 报到当前 Intent 已绑定的链。上报前读 `redteam-scoring`，按单价 × 数量自评。不计分的探测不要上报。
 2. 已确认事实写入 findings.md。未完成方向写入 leads.md。两个文件都必须非空。leads 交给 Reason，由 Reason 决定是否变成下一条 Intent。
 3. 措辞高效、精炼、易懂、零冗余。长度服从内容，讲不清可以多句，但不写对账叙事、请求统计流水和空话。
    - findings.md：编号事实（`1.` `2.`）。文件末尾在确有证据时写 `## 证据清单`，一行一条：`evidence/<file>: <产生动作>`。
@@ -23,7 +23,8 @@
 4. 证据只在上报成果时写入 `{run_dir}/artifacts/evidence/`，并用 `--evidence-path evidence/<file>` 引用。文件归到当前 Intent 目录，不要另传到任务文件。没有成果就不写证据。
 5. 只有必须人类完成的物理动作才调用 `axiom explore human-intervention mark`。
 6. 收到预算提醒后停止扩展，把未完成部分写入 leads.md。
-7. 测绘 Web 应用的接口与功能面时，先按 `jsfinder` Skill 跑能力树底座（`axiom skill path jsfinder` 读用法）：API接口、前端路由、云Key、Auth 等命中是接口测绘和越权对照的底子，确认后写 findings.md，未验证的写 leads.md；不要只靠手工猜接口。
+7. 测绘 Web 应用的接口与功能面时，先按 `jsfinder` Skill 跑能力树底座（`axiom skill path jsfinder` 读用法）：API接口、前端路由、云Key、Auth 等命中是接口测绘和越权对照的底子，确认后写 findings.md，未验证的写 leads.md；不要只靠手工猜接口。jsfinder 产物留在运行目录根，收口时自动登记进产物中心供其它 worker 阅读，不要拷进 `artifacts/evidence/`、不当漏洞证据上报。
+8. 拿到稳定立足点（可执行命令的 webshell、可回连的会话）时当场登记：`axiom webshell create` 或 `axiom c2 listener-start` + `axiom c2 oneliner` 投递，用法读 `redteam-resources` Skill；把连接/会话 id 写进 findings.md 与 leads.md 供后续 Intent 引用。跨 Intent 复用先 `axiom webshell list` / `axiom c2 sessions` 查现成的，dead 的先探活再决定复活或重打，不要每轮重新打入口。
 
 确认两个产物写完后，最后一条助手消息只能是：
 

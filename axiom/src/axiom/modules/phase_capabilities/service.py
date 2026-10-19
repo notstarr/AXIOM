@@ -36,8 +36,10 @@ _DEFAULTS_MARKER = ".phase-capabilities-v1-initialized"
 _BROWSER_BOOTSTRAP_MARKER = ".phase-capabilities-v2-browser-bootstrap"
 _SCORING_SCOPES_MARKER = ".phase-capabilities-v3-redteam-scoring-scopes"
 _JSFINDER_SCOPES_MARKER = ".phase-capabilities-v4-jsfinder-scopes"
+_RESOURCES_SCOPES_MARKER = ".phase-capabilities-v5-redteam-resources-scopes"
 _REDTEAM_SCORING_EXTRA_SCOPES = ("bootstrap", "reason", "plan", "review")
 _JSFINDER_SCOPES = ("bootstrap", "reason", "explore")
+_RESOURCES_SCOPES = ("explore", "reason")
 _MCP_NAME_PART = re.compile(r"[^a-z0-9_]+")
 _DEFAULT_SKILL_SCOPES = {
     "vuln-review": ("review",),
@@ -45,6 +47,7 @@ _DEFAULT_SKILL_SCOPES = {
     "jsfinder": _JSFINDER_SCOPES,
     "redteam-scoring": ("bootstrap", "reason", "explore", "plan", "review"),
     "redteam-review": ("review",),
+    "redteam-resources": _RESOURCES_SCOPES,
 }
 
 
@@ -625,6 +628,7 @@ class PhaseCapabilityService:
         browser_marker = self.data_dir / _BROWSER_BOOTSTRAP_MARKER
         scoring_marker = self.data_dir / _SCORING_SCOPES_MARKER
         jsfinder_marker = self.data_dir / _JSFINDER_SCOPES_MARKER
+        resources_marker = self.data_dir / _RESOURCES_SCOPES_MARKER
         skill_records = self.skills.list()
         with transaction(self.engine) as conn:
             if not marker.exists():
@@ -709,6 +713,27 @@ class PhaseCapabilityService:
                             capability_key="jsfinder",
                             now=now,
                         )
+            # redteam-resources（webshell/c2 CLI 说明书）老安装只会在首次初始化时
+            # 绑 common；一次性补到 explore/reason。之后的解绑保持解绑。
+            if not resources_marker.exists():
+                resources_skill = next(
+                    (skill for skill in skill_records if skill.name == "redteam-resources"),
+                    None,
+                )
+                if (
+                    resources_skill is not None
+                    and resources_skill.enabled
+                    and Path(resources_skill.path).is_file()
+                ):
+                    now = utcnow()
+                    for scope in _RESOURCES_SCOPES:
+                        self.repository.ensure(
+                            conn,
+                            scope=scope,
+                            capability_kind="skill",
+                            capability_key="redteam-resources",
+                            now=now,
+                        )
             self._ensure_mandatory_locked(conn, skill_records=skill_records)
         if not marker.exists():
             marker.parent.mkdir(parents=True, exist_ok=True)
@@ -730,6 +755,11 @@ class PhaseCapabilityService:
             temporary = jsfinder_marker.with_name(f".{jsfinder_marker.name}.tmp")
             temporary.write_text(utcnow() + "\n", encoding="utf-8")
             temporary.replace(jsfinder_marker)
+        if not resources_marker.exists():
+            resources_marker.parent.mkdir(parents=True, exist_ok=True)
+            temporary = resources_marker.with_name(f".{resources_marker.name}.tmp")
+            temporary.write_text(utcnow() + "\n", encoding="utf-8")
+            temporary.replace(resources_marker)
 
     def _ensure_mandatory_locked(self, conn, *, skill_records=None) -> None:
         now = utcnow()

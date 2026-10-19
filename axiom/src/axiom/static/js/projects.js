@@ -1045,6 +1045,11 @@ window.AxiomModules.projects = {
 
     setEngagementMode(mode) {
       this.newProject.engagement_mode = mode === 'red_team' ? 'red_team' : 'vulnerability';
+      if (this.newProject.engagement_mode !== 'red_team') {
+        this.newProject.seed_vulnerability_task_id = '';
+      } else {
+        this.refreshSeedVulnerabilityCounts();
+      }
       // 任务目标仍是默认文案（未被用户改过）时，随模式切换默认话术
       const defaults = {
         vulnerability: '对该系统进行渗透测试，并挖掘10个高置信度的漏洞',
@@ -1054,6 +1059,28 @@ window.AxiomModules.projects = {
       if (!current || current === defaults.vulnerability || current === defaults.red_team) {
         this.newProject.goal = defaults[this.newProject.engagement_mode] || '';
       }
+    },
+
+    seedSourceTasks() {
+      return (this.projects || []).filter(item => (item.engagement_mode || 'vulnerability') !== 'red_team');
+    },
+
+    seedSourceLabel(task) {
+      const count = this.newProject.seed_counts?.[task.id];
+      const suffix = count === undefined ? '已标记 … 条' : `已标记 ${count} 条`;
+      return `${task.title}（${task.id} · ${suffix}）`;
+    },
+
+    async refreshSeedVulnerabilityCounts() {
+      const counts = { ...(this.newProject.seed_counts || {}) };
+      await Promise.all(this.seedSourceTasks().map(async task => {
+        try {
+          counts[task.id] = await this.countSeedVulnerabilities(task.id);
+        } catch (_) {
+          counts[task.id] = 0;
+        }
+      }));
+      this.newProject.seed_counts = counts;
     },
 
     async createProject() {
@@ -1094,6 +1121,9 @@ window.AxiomModules.projects = {
           engagement_mode: engagementMode,
           // 红队结构化目标由后端合成宽松默认，Reason 依任务目标自动规划
           red_team_objective: null,
+          seed_vulnerability_task_id: engagementMode === 'red_team'
+            ? (this.newProject.seed_vulnerability_task_id || null)
+            : null,
         };
         const data = await this.api('POST', '/projects', body);
         const pid = data.project.id;
@@ -1106,6 +1136,7 @@ window.AxiomModules.projects = {
           task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '',
           depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false,
           engagement_mode: 'vulnerability', rt_principal_id: '', rt_principal_label: '', rt_principal_tenant: '', rt_credential_id: '', rt_capabilities: '', rt_assets: '', rt_data_targets: [],
+          seed_vulnerability_task_id: '', seed_counts: {},
         };
         await this.loadProjectGroups();
         await this.loadProjects();

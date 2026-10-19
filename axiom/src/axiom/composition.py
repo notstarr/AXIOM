@@ -34,6 +34,8 @@ from axiom.modules.todos.service import TodoService
 from axiom.modules.token_usage.service import TokenUsageService
 from axiom.modules.interventions.service import InterventionService
 from axiom.modules.vulnerabilities.service import VulnerabilityService
+from axiom.modules.c2.service import C2Service
+from axiom.modules.webshell.service import WebShellService
 from axiom.modules.vulnerability_reviews.service import VulnerabilityReviewService
 from axiom.modules.workers.service import WorkerService
 from axiom.modules.storage_admin.service import StorageAdminService
@@ -63,6 +65,8 @@ class Container:
     settings: RuntimeSettingsService
     credentials: CredentialService
     vulnerabilities: VulnerabilityService
+    webshells: WebShellService
+    c2: C2Service
     vulnerability_reviews: VulnerabilityReviewService
     mcp: MCPService
     phase_capabilities: PhaseCapabilityService
@@ -149,6 +153,8 @@ class Container:
                 archives=archives,
                 reviews=vulnerability_reviews,
             ),
+            webshells=WebShellService(engine),
+            c2=C2Service(engine),
             vulnerability_reviews=vulnerability_reviews,
             mcp=mcp,
             phase_capabilities=phase_capabilities,

@@ -1,0 +1,295 @@
+<div class="flex flex-col h-full" style="background:var(--sto-bg);">
+  <header class="shrink-0 px-5 py-4 border-b border-slate-100" style="background:var(--sto-panel);">
+    <div class="flex flex-wrap items-center" style="gap:10px;">
+      <div>
+        <h2 class="text-base font-semibold text-slate-800 tracking-tight">红队资源</h2>
+        <p class="text-xs text-slate-400 mt-0.5">WebShell 连接与 C2 监听器/会话，按任务绑定；worker 侧经 axiom webshell / axiom c2 CLI 使用同一份数据</p>
+      </div>
+      <span style="flex:1;"></span>
+      <div class="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs">
+        <button type="button" @click="rr.view='webshell'; rrLoad()" class="px-3 py-1.5 rounded-md transition"
+          :class="rr.view==='webshell' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">WebShell</button>
+        <button type="button" @click="rr.view='c2'; rrLoad()" class="px-3 py-1.5 rounded-md transition"
+          :class="rr.view==='c2' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">C2</button>
+      </div>
+      <select x-model="rr.taskFilter" @change="rrLoad()" class="sto-input" style="width:auto;">
+        <option value="">全部红队任务</option>
+        <template x-for="t in rrRedTeamTasks()" :key="`rr-filter-${t.id}`">
+          <option :value="t.id" x-text="`${t.id} ${t.title}`"></option>
+        </template>
+      </select>
+      <button @click="rrLoad()" class="sto-minibtn">刷新</button>
+    </div>
+  </header>
+
+  <!-- ================= WebShell ================= -->
+  <main x-show="rr.view==='webshell'" class="flex-1 min-h-0 grid grid-cols-[340px_minmax(0,1fr)] gap-4" style="padding:14px 16px; background:var(--sto-inset);">
+    <aside class="sto-panel overflow-y-auto" style="padding:10px;">
+      <div class="flex items-center" style="gap:7px; margin-bottom:8px;">
+        <span class="sto-muted sto-num" style="font-size:11px;" x-text="`连接 ${rr.wsList.length}`"></span>
+        <span style="flex:1;"></span>
+        <button @click="rr.wsCreateOpen = true" class="sto-btn" style="padding:6px 10px; font-size:11px;">新建连接</button>
+      </div>
+      <template x-if="rr.wsList.length === 0">
+        <div class="sto-muted" style="text-align:center; padding:30px 0; font-size:12px;">暂无 WebShell 连接</div>
+      </template>
+      <template x-for="ws in rr.wsList" :key="rrWsKey(ws)">
+        <button type="button" @click="rrSelectWs(ws)" class="sto-navitem" style="width:100%; text-align:left;"
+          :class="rrWsKey(ws) === rr.wsSelected ? 'active' : ''">
+          <div class="flex items-center" style="gap:7px;">
+            <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);" x-text="ws.id"></span>
+            <span class="sto-status" :class="({alive:'ok',dead:'err',untested:'off'})[ws.status] || 'off'" style="font-size:10px;"><i></i><span x-text="ws.status"></span></span>
+            <span style="flex:1;"></span>
+            <span class="sto-muted sto-num" style="font-size:9.5px;" x-text="ws.task_id"></span>
+          </div>
+          <p style="margin-top:4px; font-size:12px; font-weight:600; color:var(--sto-fg); word-break:break-all;" x-text="ws.name"></p>
+          <p class="sto-muted" style="font-size:10px; word-break:break-all;" x-text="ws.url"></p>
+        </button>
+      </template>
+    </aside>
+
+    <section class="sto-panel overflow-y-auto" style="padding:0;">
+      <template x-if="!rrWsCurrent()">
+        <div class="sto-muted" style="min-height:300px; display:flex; align-items:center; justify-content:center; font-size:12px;">选择左侧连接</div>
+      </template>
+      <template x-if="rrWsCurrent()">
+        <div class="flex flex-col" style="min-height:100%;">
+          <div class="flex flex-wrap items-center" style="gap:7px; padding:10px 14px; border-bottom:1px solid var(--sto-line);">
+            <span class="sto-num" style="font-size:11px; font-weight:700;" x-text="rrWsCurrent().id"></span>
+            <span style="font-size:12px; font-weight:650;" x-text="rrWsCurrent().name"></span>
+            <span class="sto-status" :class="({alive:'ok',dead:'err',untested:'off'})[rrWsCurrent().status] || 'off'" style="font-size:10px;"><i></i><span x-text="rrWsCurrent().status"></span></span>
+            <span class="sto-muted sto-num" style="font-size:10px;" x-text="rrWsCurrent().task_id"></span>
+            <span style="flex:1;"></span>
+            <template x-for="tab in ['terminal','file','config','logs']" :key="`wstab-${tab}`">
+              <button @click="rr.wsTab = tab; rrTabEnter(tab)" class="sto-minibtn" :class="rr.wsTab === tab ? 'acc' : ''"
+                x-text="({terminal:'终端', file:'文件', config:'配置', logs:'日志'})[tab]"></button>
+            </template>
+          </div>
+
+          <div x-show="rr.wsTab==='terminal'" class="flex flex-col" style="padding:10px 14px; gap:8px; min-height:420px;">
+            <div x-show="rrWsCurrent().status==='dead'" class="sto-status err" style="font-size:11px; align-self:flex-start;">
+              <i></i><span>最近探活失败&nbsp;<button class="sto-minibtn" @click="rrWsTest()">测试连接</button></span>
+            </div>
+            <pre class="overflow-y-auto" x-ref="rrTerm" style="flex:1; min-height:300px; background:#0b1020; color:#d5e0ff; border-radius:10px; padding:12px; font-size:11.5px; line-height:1.6; white-space:pre-wrap; word-break:break-word;"
+              ><template x-for="(line, idx) in rr.wsTerm" :key="`term-${idx}`"><div><span style="color:#7ee787;" x-text="line.cmd ? `$ ${line.cmd}` : ''"></span><span style="color:#8b98c9;" x-text="line.meta || ''"></span><div x-text="line.out"></div></div></template></pre>
+            <div class="flex" style="gap:7px;">
+              <input x-model="rr.wsCmd" @keydown.enter="rrWsExec()" placeholder="命令，回车执行" class="sto-input" style="flex:1;">
+              <button @click="rrWsExec()" :disabled="rr.wsBusy" class="sto-btn" style="padding:8px 14px;" x-text="rr.wsBusy ? '执行中…' : '执行'"></button>
+            </div>
+          </div>
+
+          <div x-show="rr.wsTab==='file'" style="padding:12px 14px; display:flex; flex-direction:column; gap:10px;">
+            <div class="flex" style="gap:7px;">
+              <input x-model="rr.wsPath" placeholder="/path" class="sto-input" style="flex:1;">
+              <button @click="rrFile('list')" class="sto-minibtn">列目录</button>
+              <button @click="rrFile('read')" class="sto-minibtn">读</button>
+            </div>
+            <pre class="overflow-y-auto" style="max-height:260px; background:var(--sto-inset); border:1px solid var(--sto-line); border-radius:10px; padding:10px; font-size:11.5px; white-space:pre-wrap; word-break:break-word;" x-text="rr.wsFileOut || '（无输出）'"></pre>
+            <div>
+              <label class="sto-muted" style="font-size:10.5px;">写文件（目标路径 + 内容）</label>
+              <div class="flex" style="gap:7px; margin-top:4px;">
+                <input x-model="rr.wsWritePath" placeholder="/target/path" class="sto-input" style="flex:1;">
+                <button @click="rrFile('write')" class="sto-minibtn danger">写入</button>
+              </div>
+              <textarea x-model="rr.wsWriteContent" rows="4" class="sto-input" style="margin-top:6px; width:100%;"></textarea>
+            </div>
+          </div>
+
+          <div x-show="rr.wsTab==='config'" style="padding:12px 14px; display:flex; flex-direction:column; gap:9px; max-width:760px;">
+            <label class="sto-muted" style="font-size:10.5px;">名称</label>
+            <input x-model="rr.wsForm.name" class="sto-input">
+            <label class="sto-muted" style="font-size:10.5px;">URL</label>
+            <input x-model="rr.wsForm.url" class="sto-input">
+            <div class="flex items-center" style="gap:7px;">
+              <select x-model="rr.wsForm.family" class="sto-input" style="width:auto;"><option value="posix">posix</option><option value="windows">windows</option></select>
+              <span style="flex:1;"></span>
+              <button @click="rrWsTest()" class="sto-minibtn">测试连接</button>
+              <button @click="rrWsSave()" class="sto-btn" style="padding:6px 12px;">保存</button>
+              <button @click="rrWsArchive()" class="sto-minibtn danger">归档</button>
+            </div>
+            <label class="sto-muted" style="font-size:10.5px;">请求模板 JSON（method/headers/body/query/wrap，需含 {{cmd}}）</label>
+            <textarea x-model="rr.wsForm.request" rows="4" class="sto-input" style="width:100%; font-family:ui-monospace,monospace; font-size:11px;"></textarea>
+            <label class="sto-muted" style="font-size:10.5px;">响应提取 JSON（mode/start/end/pattern/group/decode）</label>
+            <textarea x-model="rr.wsForm.response" rows="3" class="sto-input" style="width:100%; font-family:ui-monospace,monospace; font-size:11px;"></textarea>
+            <label class="sto-muted" style="font-size:10.5px;">备注</label>
+            <textarea x-model="rr.wsForm.remark" rows="2" class="sto-input" style="width:100%;"></textarea>
+          </div>
+
+          <div x-show="rr.wsTab==='logs'" style="padding:12px 14px;">
+            <table style="width:100%; font-size:11px; border-collapse:collapse;">
+              <thead><tr class="sto-muted"><th align="left" style="padding:4px 6px;">时间</th><th align="left">执行者</th><th align="left">Intent</th><th align="left">命令</th><th align="left">结果</th><th align="right">耗时</th></tr></thead>
+              <tbody>
+                <template x-for="log in rr.wsLogs" :key="log.id">
+                  <tr style="border-top:1px solid var(--sto-line);">
+                    <td style="padding:4px 6px;" class="sto-num" x-text="formatTime(log.created_at)"></td>
+                    <td x-text="log.actor"></td>
+                    <td class="sto-num" x-text="log.intent_id || '-'"></td>
+                    <td style="max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" :title="log.command" x-text="log.command"></td>
+                    <td><span class="sto-status" :class="log.ok ? 'ok' : 'err'" style="font-size:10px;"><i></i><span x-text="log.ok ? 'ok' : 'fail'"></span></span></td>
+                    <td align="right" class="sto-num" x-text="log.duration_ms + 'ms'"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </template>
+    </section>
+  </main>
+
+  <!-- ================= C2 ================= -->
+  <main x-show="rr.view==='c2'" x-cloak class="flex-1 min-h-0 overflow-y-auto" style="padding:14px 16px; background:var(--sto-inset); display:flex; flex-direction:column; gap:12px;">
+    <section class="sto-panel" style="padding:10px 12px;">
+      <div class="flex items-center" style="gap:7px; margin-bottom:8px;">
+        <span style="font-size:12px; font-weight:650;">监听器</span>
+        <span class="sto-muted sto-num" style="font-size:11px;" x-text="`${rr.c2Listeners.length}`"></span>
+        <span style="flex:1;"></span>
+        <button @click="rr.c2CreateOpen = true" class="sto-btn" style="padding:6px 10px; font-size:11px;">新建监听器</button>
+      </div>
+      <table style="width:100%; font-size:11px; border-collapse:collapse;">
+        <thead><tr class="sto-muted"><th align="left" style="padding:4px 6px;">ID</th><th align="left">任务</th><th align="left">名称</th><th align="left">类型</th><th align="left">地址</th><th align="left">状态</th><th align="right">操作</th></tr></thead>
+        <tbody>
+          <template x-for="l in rr.c2Listeners" :key="rrC2Key(l)">
+            <tr style="border-top:1px solid var(--sto-line);">
+              <td style="padding:4px 6px;" class="sto-num" x-text="l.id"></td>
+              <td class="sto-num" x-text="l.task_id"></td>
+              <td x-text="l.name"></td>
+              <td x-text="l.kind"></td>
+              <td class="sto-num" x-text="`${l.host}:${l.port}`"></td>
+              <td><span class="sto-status" :class="({listening:'ok',stopped:'off',error:'err'})[l.status] || 'off'" style="font-size:10px;"><i></i><span x-text="l.status"></span></span></td>
+              <td align="right" style="white-space:nowrap;">
+                <button x-show="l.status !== 'listening'" @click="rrListenerStart(l)" class="sto-minibtn">启动</button>
+                <button x-show="l.status === 'listening'" @click="rrListenerStop(l)" class="sto-minibtn">停止</button>
+                <button @click="rrOneliner(l)" class="sto-minibtn">oneliner</button>
+                <button @click="rrListenerArchive(l)" class="sto-minibtn danger">归档</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <div x-show="rr.c2Oneliner" style="margin-top:8px;">
+        <label class="sto-muted" style="font-size:10.5px;">回连 one-liner（把回连地址换成目标可达地址后，经已有命令执行能力投递）</label>
+        <pre class="overflow-x-auto" style="margin-top:4px; background:var(--sto-inset); border:1px solid var(--sto-line); border-radius:10px; padding:10px; font-size:11px; white-space:pre-wrap; word-break:break-all;" x-text="rr.c2Oneliner ? (rr.c2Oneliner.bash || rr.c2Oneliner.note) : ''"></pre>
+        <pre x-show="rr.c2Oneliner && rr.c2Oneliner.python" class="overflow-x-auto" style="margin-top:6px; background:var(--sto-inset); border:1px solid var(--sto-line); border-radius:10px; padding:10px; font-size:11px; white-space:pre-wrap; word-break:break-all;" x-text="rr.c2Oneliner ? rr.c2Oneliner.python : ''"></pre>
+        <p class="sto-muted" style="font-size:10.5px; margin-top:4px;" x-text="rr.c2Oneliner ? rr.c2Oneliner.note : ''"></p>
+      </div>
+    </section>
+
+    <section class="sto-panel" style="padding:10px 12px;">
+      <div class="flex items-center" style="gap:7px; margin-bottom:8px;">
+        <span style="font-size:12px; font-weight:650;">会话</span>
+        <span class="sto-muted sto-num" style="font-size:11px;" x-text="`${rrSessionsFiltered().length}`"></span>
+        <span style="flex:1;"></span>
+        <select x-model="rr.c2Listener" @change="rr.c2Session=''" class="sto-input" style="width:auto;">
+          <option value="">全部监听器</option>
+          <template x-for="l in rr.c2Listeners" :key="`sess-filter-${rrC2Key(l)}`">
+            <option :value="rrC2Key(l)" x-text="`${l.id} ${l.name}`"></option>
+          </template>
+        </select>
+      </div>
+      <table style="width:100%; font-size:11px; border-collapse:collapse;">
+        <thead><tr class="sto-muted"><th align="left" style="padding:4px 6px;">ID</th><th align="left">监听器</th><th align="left">remote</th><th align="left">状态</th><th align="left">last_seen</th><th align="left">sleep</th><th align="right">操作</th></tr></thead>
+        <tbody>
+          <template x-for="s in rrSessionsFiltered()" :key="rrSessKey(s)">
+            <tr style="border-top:1px solid var(--sto-line); cursor:pointer;" @click="rrSelectSession(s)" :class="rrSessKey(s) === rr.c2Session ? 'active' : ''">
+              <td style="padding:4px 6px;" class="sto-num" x-text="s.id"></td>
+              <td class="sto-num" x-text="s.listener_id"></td>
+              <td class="sto-num" x-text="s.remote || '-'"></td>
+              <td><span class="sto-status" :class="s.status === 'active' ? 'ok' : 'err'" style="font-size:10px;"><i></i><span x-text="s.status"></span></span></td>
+              <td class="sto-num" x-text="formatTime(s.last_seen_at)"></td>
+              <td @click.stop>
+                <input type="number" min="1" max="3600" x-model.number="s.sleep_seconds" @change="rrSleep(s)" class="sto-input" style="width:64px; padding:2px 6px; font-size:10.5px;">
+              </td>
+              <td align="right" @click.stop><button @click="rrKill(s)" class="sto-minibtn danger">kill</button></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="sto-panel" x-show="rrSessionCurrent()" style="padding:10px 12px;">
+      <div class="flex items-center" style="gap:7px; margin-bottom:8px;">
+        <span style="font-size:12px; font-weight:650;">任务下发</span>
+        <span class="sto-num" style="font-size:10.5px;" x-text="rr.c2Session"></span>
+        <span style="flex:1;"></span>
+        <input x-model="rr.c2Cmd" @keydown.enter="rrC2Exec()" placeholder="命令" class="sto-input" style="width:320px;">
+        <select x-model.number="rr.c2Wait" class="sto-input" style="width:auto;">
+          <option value="5">等 5s</option><option value="30">等 30s</option><option value="60">等 60s</option>
+        </select>
+        <button @click="rrC2Exec()" class="sto-btn" style="padding:6px 12px;">下发</button>
+      </div>
+      <table style="width:100%; font-size:11px; border-collapse:collapse;">
+        <thead><tr class="sto-muted"><th align="left" style="padding:4px 6px;">ID</th><th align="left">状态</th><th align="left">执行者</th><th align="left">Intent</th><th align="left">命令</th><th align="left">时间</th><th align="right">输出</th></tr></thead>
+        <tbody>
+          <template x-for="t in rr.c2Tasks" :key="t.id">
+            <tr style="border-top:1px solid var(--sto-line);">
+              <td style="padding:4px 6px;" class="sto-num" x-text="t.id"></td>
+              <td><span class="sto-status" :class="({completed:'ok',failed:'err',sent:'warn',queued:'off',cancelled:'off'})[t.status] || 'off'" style="font-size:10px;"><i></i><span x-text="t.status"></span></span></td>
+              <td x-text="t.actor"></td>
+              <td class="sto-num" x-text="t.intent_id || '-'"></td>
+              <td style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" :title="t.command" x-text="t.command"></td>
+              <td class="sto-num" x-text="formatTime(t.created_at)"></td>
+              <td align="right"><button @click="rrTaskOut(t)" class="sto-minibtn">查看</button></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <pre x-show="rr.c2Out" class="overflow-y-auto" style="margin-top:8px; max-height:220px; background:#0b1020; color:#d5e0ff; border-radius:10px; padding:10px; font-size:11px; white-space:pre-wrap; word-break:break-word;" x-text="rr.c2Out"></pre>
+    </section>
+  </main>
+
+  <!-- 新建 webshell 连接 -->
+  <div x-show="rr.wsCreateOpen" x-cloak class="fixed inset-0 z-50 flex items-center justify-center" style="background:rgba(15,23,42,.45);" @keydown.escape.window="rr.wsCreateOpen = false">
+    <div class="bg-white rounded-2xl shadow-xl" style="width:520px; padding:20px;" @click.stop>
+      <h3 style="font-size:14px; font-weight:700;">新建 WebShell 连接</h3>
+      <div style="margin-top:12px; display:flex; flex-direction:column; gap:9px;">
+        <label class="text-xs font-semibold text-slate-500">绑定任务</label>
+        <select x-model="rr.wsCreate.task_id" class="sto-input">
+          <option value="">选择任务</option>
+          <template x-for="t in (projects || [])" :key="`ws-create-${t.id}`">
+            <option :value="t.id" x-text="`${t.id} ${t.title}${(t.engagement_mode||'vulnerability')==='red_team' ? '' : '（非红队）'}`"></option>
+          </template>
+        </select>
+        <label class="text-xs font-semibold text-slate-500">名称</label>
+        <input x-model="rr.wsCreate.name" class="sto-input" placeholder="例：magic-admin 冰蝎">
+        <label class="text-xs font-semibold text-slate-500">URL</label>
+        <input x-model="rr.wsCreate.url" class="sto-input" placeholder="https://target/shell.php">
+        <div class="flex" style="gap:8px;">
+          <select x-model="rr.wsCreate.family" class="sto-input" style="width:auto;"><option value="posix">posix</option><option value="windows">windows</option></select>
+          <input x-model="rr.wsCreate.remark" class="sto-input" style="flex:1;" placeholder="备注（可选）">
+        </div>
+      </div>
+      <div class="flex justify-end" style="gap:8px; margin-top:14px;">
+        <button @click="rr.wsCreateOpen = false" class="sto-minibtn">取消</button>
+        <button @click="rrWsCreateSubmit()" class="sto-btn" style="padding:7px 14px;">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新建 listener -->
+  <div x-show="rr.c2CreateOpen" x-cloak class="fixed inset-0 z-50 flex items-center justify-center" style="background:rgba(15,23,42,.45);" @keydown.escape.window="rr.c2CreateOpen = false">
+    <div class="bg-white rounded-2xl shadow-xl" style="width:480px; padding:20px;" @click.stop>
+      <h3 style="font-size:14px; font-weight:700;">新建 C2 监听器</h3>
+      <div style="margin-top:12px; display:flex; flex-direction:column; gap:9px;">
+        <label class="text-xs font-semibold text-slate-500">绑定任务</label>
+        <select x-model="rr.c2Create.task_id" class="sto-input">
+          <option value="">选择红队任务</option>
+          <template x-for="t in rrRedTeamTasks()" :key="`c2-create-${t.id}`">
+            <option :value="t.id" x-text="`${t.id} ${t.title}`"></option>
+          </template>
+        </select>
+        <label class="text-xs font-semibold text-slate-500">名称</label>
+        <input x-model="rr.c2Create.name" class="sto-input" placeholder="例：外网 http 回连">
+        <div class="flex" style="gap:8px;">
+          <select x-model="rr.c2Create.kind" class="sto-input" style="width:auto;"><option value="http">http</option><option value="tcp">tcp</option></select>
+          <input x-model="rr.c2Create.host" class="sto-input" style="flex:1;" placeholder="0.0.0.0">
+          <input type="number" x-model.number="rr.c2Create.port" class="sto-input" style="width:110px;" placeholder="4444">
+        </div>
+      </div>
+      <div class="flex justify-end" style="gap:8px; margin-top:14px;">
+        <button @click="rr.c2CreateOpen = false" class="sto-minibtn">取消</button>
+        <button @click="rrCreateListenerSubmit()" class="sto-btn" style="padding:7px 14px;">创建</button>
+      </div>
+    </div>
+  </div>
+</div>

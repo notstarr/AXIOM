@@ -5,6 +5,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     PrimaryKeyConstraint,
@@ -31,6 +32,7 @@ tasks = Table(
     Column("goal", Text, nullable=False),
     Column("engagement_mode", String, nullable=False, server_default="vulnerability"),
     Column("red_team_objective_json", JSONText, nullable=True),
+    Column("seed_vulnerability_task_id", String),
     Column("current_goal_cycle_id", String),
     Column("status", String, nullable=False),
     Column("phase", String, nullable=False),
@@ -75,6 +77,11 @@ tasks = Table(
     Column("last_pause_reason", String),
     CheckConstraint("status IN ('running','stopped','completed','failed')", name="status"),
     CheckConstraint("engagement_mode IN ('vulnerability','red_team')", name="engagement_mode"),
+    ForeignKeyConstraint(
+        ["seed_vulnerability_task_id"],
+        ["tasks.id"],
+        ondelete="SET NULL",
+    ),
     CheckConstraint(
         "phase IN ('bootstrap','reason','explore','plan','waiting','none')",
         name="phase",

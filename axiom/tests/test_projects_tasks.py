@@ -60,6 +60,7 @@ def test_task_creation_is_atomic_and_seeds_graph(client) -> None:
             "id": "i001",
             "task_id": task["id"],
             "todo_id": None,
+            "chain_id": None,
             "kind": "bootstrap",
             "from_facts": ["origin"],
             "description": "bootstrap",

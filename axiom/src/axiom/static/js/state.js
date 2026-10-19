@@ -176,7 +176,7 @@ window.AxiomModules.state = {
     showDeleteModal: false,
     resumeTaskDialog: { open: false, taskId: '', title: '', limited: false, hours: 0, minutes: 0, submitting: false },
 
-    newProject: { parent_project_id: '', title: '', origin: '', goal: '对该系统进行渗透测试，并挖掘10个高置信度的漏洞', bootstrap: true, depth_mode: false, guard_enabled: false, hints: '', task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '', depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false, engagement_mode: 'vulnerability' },
+    newProject: { parent_project_id: '', title: '', origin: '', goal: '对该系统进行渗透测试，并挖掘10个高置信度的漏洞', bootstrap: true, depth_mode: false, guard_enabled: false, hints: '', task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '', depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false, engagement_mode: 'vulnerability', seed_vulnerability_task_id: '', seed_counts: {} },
     taskWorkerPoolEditor: { projectId: '', worker_pool: [], saving: false },
     projectGroupForm: { title: '', description: '' },
     projectGroupSettingsForm: { title: '', description: '', notes: '', status: 'active' },

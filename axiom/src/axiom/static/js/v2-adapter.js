@@ -223,6 +223,7 @@
       goal: task.goal,
       engagement_mode: task.engagement_mode || 'vulnerability',
       red_team_objective: task.red_team_objective || null,
+      seed_vulnerability_task_id: task.seed_vulnerability_task_id || null,
       current_goal_cycle_id: task.current_goal_cycle_id || '',
       status: taskStatus(task.status),
       phase: task.phase,
@@ -1004,6 +1005,7 @@
         run_duration_seconds: body.run_duration_seconds ?? null,
         engagement_mode: body.engagement_mode || 'vulnerability',
         red_team_objective: body.red_team_objective || null,
+        seed_vulnerability_task_id: body.seed_vulnerability_task_id || null,
       });
       return { project: mapTask(task) };
     }
@@ -1106,6 +1108,12 @@
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/vulns\/([^/]+)\/human-reviewed$/)) && method === 'PUT') {
       return request('POST', `/tasks/${match[1]}/vulnerabilities/${match[2]}/human-reviewed`, {
+        value: !!body.value,
+        actor: body.actor || 'human.frontend',
+      });
+    }
+    if ((match = path.match(/^\/projects\/([^/]+)\/vulns\/([^/]+)\/red-team-exploitable$/)) && method === 'PUT') {
+      return request('POST', `/tasks/${match[1]}/vulnerabilities/${match[2]}/red-team-exploitable`, {
         value: !!body.value,
         actor: body.actor || 'human.frontend',
       });
@@ -1494,6 +1502,16 @@
     },
     switchFactView(mode) {
       this.factViewMode = mode === 'result' ? 'result' : 'vulnerability';
+      // 两个 tab 的任务下拉只列对应模式的任务；切 tab 时清掉不属于当前模式的选择，
+      // 否则 select 会拿着隐藏选项的空值继续过滤列表。
+      const wantedMode = this.factViewMode === 'result' ? 'red_team' : 'vulnerability';
+      const filter = this.factViewMode === 'result' ? this.rtResultFilter : this.vulnFilter;
+      if (filter?.projectId) {
+        const selected = (this.projects || []).find(item => item.id === filter.projectId);
+        if (selected && (selected.engagement_mode || 'vulnerability') !== wantedMode) {
+          filter.projectId = '';
+        }
+      }
       if (this.factViewMode === 'result') {
         this.loadRedTeamResultPage();
       } else {
@@ -1627,6 +1645,17 @@
       clearTimeout(this._rtResultSearchTimer);
       this._rtResultSearchTimer = setTimeout(() => this.loadRedTeamResultPage(), 250);
     },
+    v2Request(method, path, body) {
+      return request(method, path, body);
+    },
+
+    async countSeedVulnerabilities(taskId) {
+      const page = await requestPage(
+        `/vulnerabilities?task_id=${encodeURIComponent(taskId)}&red_team_exploitable=true&limit=1`,
+      );
+      return page.total;
+    },
+
     async loadVulnerabilityPage(options = {}) {
       const requestId = ++this._vulnerabilityListRequestId;
       this.vulnerabilityLoading = true;
@@ -2434,6 +2463,7 @@
       if (type === 'explore.leads') return 'Leads';
       if (type === 'explore.evidence') return 'Evidence';
       if (type === 'bootstrap.evidence') return 'Evidence';
+      if (type.endsWith('.jsfinder')) return 'JSFinder';
       if (type === 'review.report') return 'Review';
       if (type === 'review.evidence') return 'Review Evidence';
       return item?.artifact_type || 'Artifact';
@@ -2444,6 +2474,7 @@
       if (type === 'explore.leads') return 'border-amber-200 bg-amber-50 text-amber-700';
       if (type === 'explore.evidence') return 'border-blue-200 bg-blue-50 text-blue-700';
       if (type === 'bootstrap.evidence') return 'border-blue-200 bg-blue-50 text-blue-700';
+      if (type.endsWith('.jsfinder')) return 'border-indigo-200 bg-indigo-50 text-indigo-700';
       if (type === 'review.report') return 'border-violet-200 bg-violet-50 text-violet-700';
       if (type === 'review.evidence') return 'border-cyan-200 bg-cyan-50 text-cyan-700';
       return 'border-slate-200 bg-slate-100 text-slate-500';

@@ -154,6 +154,9 @@ class Vulnerability(VulnerabilityReport):
     human_reviewed: bool = False
     human_reviewed_at: str | None = None
     human_reviewed_by: str | None = None
+    red_team_exploitable: bool = False
+    red_team_exploitable_at: str | None = None
+    red_team_exploitable_by: str | None = None
 
 
 class SetVulnerabilityHumanReviewed(BaseModel):
@@ -169,6 +172,10 @@ class SetVulnerabilityHumanReviewed(BaseModel):
         if not value:
             raise ValueError("actor must not be empty")
         return value
+
+
+class SetVulnerabilityRedTeamExploitable(SetVulnerabilityHumanReviewed):
+    """人工「红队可利用」标记，与已阅开关同构。"""
 
 
 class UpdateVulnerability(BaseModel):

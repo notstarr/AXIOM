@@ -54,6 +54,7 @@ class TaskRepository:
         goal: str,
         engagement_mode: str,
         red_team_objective: RedTeamObjective | None,
+        seed_vulnerability_task_id: str | None,
         scope: TaskScope,
         worker_pool: list[str],
         guard_enabled: bool,
@@ -82,6 +83,7 @@ class TaskRepository:
             "red_team_objective_json": (
                 red_team_objective.model_dump(mode="json") if red_team_objective else None
             ),
+            "seed_vulnerability_task_id": seed_vulnerability_task_id,
             "current_goal_cycle_id": None,
             "status": "running",
             "phase": "bootstrap",
@@ -331,6 +333,7 @@ class TaskRepository:
             goal=row["goal"],
             engagement_mode=row.get("engagement_mode", "vulnerability") or "vulnerability",
             red_team_objective=objective,
+            seed_vulnerability_task_id=row.get("seed_vulnerability_task_id"),
             current_goal_cycle_id=row.get("current_goal_cycle_id"),
             status=row["status"],
             phase=row["phase"],

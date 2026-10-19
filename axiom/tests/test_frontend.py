@@ -3138,3 +3138,219 @@ def test_legacy_plan_projection_is_plan_only() -> None:
 
     assert result["plan"]["id"] == "pr000001"
     assert result["reason"] is None
+
+
+def _run_red_team_exploitable_toggle_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    dashboard = ROOT / "src/axiom/static/js/dashboard.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{ dashboard: {{ methods: {{}} }} }} }};
+eval(fs.readFileSync({json.dumps(str(dashboard))}, 'utf8'));
+const calls = [];
+const methods = window.AxiomModules.dashboard.methods;
+const ctx = Object.assign({{}}, methods, {{
+  api: async (method, path, body) => {{ calls.push({{ method, path, body }}); return {{}}; }},
+  loadVulnerabilityPage: async () => {{}},
+  loadDashboardSummary: async () => {{}},
+  showToast: () => {{}},
+}});
+const vuln = {{ project_id: 't_9', id: 'v142', red_team_exploitable: false }};
+(async () => {{
+  await ctx.toggleVulnRedTeamExploitable(vuln);
+  const afterSet = vuln.red_team_exploitable;
+  await ctx.toggleVulnRedTeamExploitable(vuln);
+  process.stdout.write(JSON.stringify({{
+    calls,
+    afterSet,
+    afterClear: vuln.red_team_exploitable,
+  }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def _run_seed_task_create_payload_fixture(engagement_mode: str) -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    projects = ROOT / "src/axiom/static/js/projects.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{ projects: {{ methods: {{}} }} }} }};
+global.location = {{ hash: '#/tasks' }};
+eval(fs.readFileSync({json.dumps(str(projects))}, 'utf8'));
+const calls = [];
+const methods = window.AxiomModules.projects.methods;
+const ctx = Object.assign({{}}, methods, {{
+  projectGroups: [{{ id: 'prj_1', title: '项目组' }}],
+  projects: [],
+  loadProjectGroups: async () => {{}},
+  loadProjects: async () => {{}},
+  openProject: async () => {{}},
+  actorName: () => 'hexin',
+  newProjectRunDurationSeconds: () => null,
+  api: async (method, path, body) => {{ calls.push({{ method, path, body }}); return {{ project: {{ id: 't_new' }} }}; }},
+  showToast: () => {{}},
+  newProject: {{
+    parent_project_id: 'prj_1',
+    title: '红队种子', origin: 'seed.example.com', goal: '拿分',
+    guard_enabled: false, hints: '', worker_pool: [],
+    task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '',
+    run_time_limited: false, run_hours: 0, run_minutes: 0,
+    engagement_mode: {json.dumps(engagement_mode)},
+    seed_vulnerability_task_id: 't_220', seed_counts: {{}},
+  }},
+}});
+(async () => {{
+  await ctx.createProject();
+  const create = calls.find(item => item.method === 'POST' && item.path === '/projects');
+  process.stdout.write(JSON.stringify({{ seed: create ? create.body.seed_vulnerability_task_id : 'missing' }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def test_red_team_exploitable_toggle_posts_dedicated_route_and_optimistic_state() -> None:
+    result = _run_red_team_exploitable_toggle_fixture()
+
+    assert result["afterSet"] is True
+    assert result["afterClear"] is False
+    assert [call["method"] for call in result["calls"]] == ["PUT", "PUT"]
+    assert [call["path"] for call in result["calls"]] == [
+        "/projects/t_9/vulns/v142/red-team-exploitable",
+        "/projects/t_9/vulns/v142/red-team-exploitable",
+    ]
+    assert [call["body"]["value"] for call in result["calls"]] == [True, False]
+
+
+def test_seed_vulnerability_task_id_only_sent_for_red_team_tasks() -> None:
+    assert _run_seed_task_create_payload_fixture("red_team")["seed"] == "t_220"
+    assert _run_seed_task_create_payload_fixture("vulnerability")["seed"] is None
+
+
+def test_red_team_seed_frontend_contract() -> None:
+    vulnerabilities = (ROOT / "src/axiom/static/templates/vulnerabilities.html").read_text(encoding="utf-8")
+    task_list = (ROOT / "src/axiom/static/templates/task-list.html").read_text(encoding="utf-8")
+    adapter = (ROOT / "src/axiom/static/js/v2-adapter.js").read_text(encoding="utf-8")
+    dashboard = (ROOT / "src/axiom/static/js/dashboard.js").read_text(encoding="utf-8")
+
+    assert "toggleVulnRedTeamExploitable" in vulnerabilities
+    assert "v.red_team_exploitable" in vulnerabilities
+    assert "toggleVulnRedTeamExploitable(selectedVulnerability())" in vulnerabilities
+    assert "seedSourceTasks()" in task_list
+    assert "newProject.seed_vulnerability_task_id" in task_list
+    assert "red-team-exploitable" in adapter
+    assert "seed_vulnerability_task_id" in adapter
+    assert "toggleVulnRedTeamExploitable" in dashboard
+
+
+def test_redteam_prompts_carry_four_section_task_book() -> None:
+    reason = (ROOT / "src/axiom/dispatcher/prompts/reason_redteam.md").read_text(encoding="utf-8")
+    plan = (ROOT / "src/axiom/dispatcher/prompts/plan_redteam.md").read_text(encoding="utf-8")
+    explore = (ROOT / "src/axiom/dispatcher/prompts/explore_redteam.md").read_text(encoding="utf-8")
+    bootstrap = (ROOT / "src/axiom/dispatcher/prompts/bootstrap_redteam.md").read_text(encoding="utf-8")
+
+    for label in ("目标：", "判据：", "前置：", "边界："):
+        assert label in reason
+        assert label in plan
+    assert "≤500 字符" in reason
+    assert "≤500 字符" in plan
+    assert "判据」是完成标准" in explore
+    assert "边界」是硬限制" in explore
+    assert "evidence_storage_keys" in bootstrap
+    assert "contexts/<task>/rNNNNNN/manifest.json" in bootstrap
+
+
+def test_vulnerability_page_task_filters_are_mode_scoped() -> None:
+    template = (ROOT / "src/axiom/static/templates/vulnerabilities.html").read_text(encoding="utf-8")
+    adapter = (ROOT / "src/axiom/static/js/v2-adapter.js").read_text(encoding="utf-8")
+
+    assert "(item.engagement_mode || 'vulnerability') !== 'red_team'" in template
+    assert "item.engagement_mode === 'red_team'" in template
+    assert "(selected.engagement_mode || 'vulnerability') !== wantedMode" in adapter
+
+
+def test_redteam_resources_page_contract() -> None:
+    index = (ROOT / "src/axiom/static/index.html").read_text(encoding="utf-8")
+    core = (ROOT / "src/axiom/static/js/core.js").read_text(encoding="utf-8")
+    app = (ROOT / "src/axiom/static/js/app.js").read_text(encoding="utf-8")
+    template = (ROOT / "src/axiom/static/templates/redteam-resources.html").read_text(encoding="utf-8")
+    module = (ROOT / "src/axiom/static/js/redteam-resources.js").read_text(encoding="utf-8")
+
+    assert "redteam-resources" in index and "红队资源" in index
+    assert "redteam-resources.js" in index
+    assert "'redteam-resources': 'redteam-resources'" in core
+    assert "name === 'redteam-resources'" in core
+    assert "'redteam-resources': '#/redteam-resources'" in core
+    assert "'workers', 'tools', 'redteam-resources'" in core
+    assert "M.redteamResources.methods" in app
+    for label in ("终端", "文件", "配置", "日志", "监听器", "会话", "任务下发"):
+        assert label in template
+    for method in ("rrWsExec", "rrFile", "rrWsCreateSubmit", "rrListenerStart", "rrC2Exec", "rrOneliner"):
+        assert method in module
+
+
+def test_login_js_refresh_guard_breaks_reload_loop() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+    script = ROOT / "src/axiom/static/js/login.js"
+    program = """
+const fs = require('fs');
+const reloads = { count: 0 };
+global.window = { location: { reload: () => { reloads.count += 1; } } };
+const makeStore = () => {
+  const data = new Map();
+  return {
+    getItem: (k) => (data.has(k) ? data.get(k) : null),
+    setItem: (k, v) => { data.set(k, String(v)); },
+    removeItem: (k) => { data.delete(k); },
+  };
+};
+global.localStorage = makeStore();
+global.sessionStorage = makeStore();
+localStorage.setItem('axiom_token', 'token-a');
+global.fetch = async () => ({
+  ok: true, status: 200,
+  json: async () => ({ authenticated: true, username: 'axiom' }),
+});
+eval(fs.readFileSync(%s, 'utf8'));
+(async () => {
+  const first = window.axiomApp();
+  await first.init();
+  const afterFirst = {
+    reloads: reloads.count,
+    guard: sessionStorage.getItem('axiom_login_refresh_guard'),
+    token: localStorage.getItem('axiom_token'),
+  };
+  const second = window.axiomApp();
+  await second.init();
+  process.stdout.write(JSON.stringify({
+    afterFirst,
+    afterSecond: {
+      reloads: reloads.count,
+      guard: sessionStorage.getItem('axiom_login_refresh_guard'),
+      token: localStorage.getItem('axiom_token'),
+      authLoading: second.authLoading,
+      isAuthenticated: second.isAuthenticated,
+    },
+  }));
+})();
+""" % json.dumps(str(script))
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    data = json.loads(result.stdout)
+    assert data["afterFirst"] == {"reloads": 1, "guard": "1", "token": "token-a"}
+    assert data["afterSecond"] == {
+        "reloads": 1,
+        "guard": None,
+        "token": None,
+        "authLoading": False,
+        "isAuthenticated": False,
+    }

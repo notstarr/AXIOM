@@ -546,6 +546,21 @@ window.AxiomModules.dashboard = {
       }
     },
 
+    async toggleVulnRedTeamExploitable(v) {
+      if (!v?.project_id || !v?.id) return;
+      const next = !v.red_team_exploitable;
+      try {
+        await this.api('PUT', `/projects/${v.project_id}/vulns/${v.id}/red-team-exploitable`, { value: next });
+        v.red_team_exploitable = next;
+        v.red_team_exploitable_at = next ? new Date().toISOString() : null;
+        await this.loadVulnerabilityPage();
+        await this.loadDashboardSummary?.();
+        this.showToast(next ? '已标记红队可利用' : '已取消红队可利用');
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
     async deleteVuln(v) {
       if (!confirm(`删除 ${v.title}？`)) return;
       try {

@@ -18,6 +18,7 @@ function axiomApp() {
     M.dispatch.methods,
     M.prompts.methods,
     M.workerTools.methods,
-    M.storage.methods
+    M.storage.methods,
+    M.redteamResources.methods
   );
 }

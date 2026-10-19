@@ -824,6 +824,7 @@ window.AxiomModules.human = {
       const taskId = this.selectedProjectId || this.project?.project?.id || '';
       if (this.isRedTeamBoard()) {
         this.factViewMode = 'result';
+        this.rtResultFilter = { ...(this.rtResultFilter || {}), projectId: taskId };
         this.navigateTo('vulnerabilities');
         return;
       }
@@ -1019,6 +1020,7 @@ window.AxiomModules.human = {
       if (type.includes('lead')) return 'Leads';
       if (type.includes('finding')) return 'Findings';
       if (type.includes('evidence')) return 'Evidence';
+      if (type.includes('jsfinder')) return 'JSFinder';
       if (type.includes('asset')) return '攻击面';
       return item?.artifact_type || 'Artifact';
     },

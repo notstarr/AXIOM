@@ -23,7 +23,7 @@
       <input x-model="vulnFilter.keyword" @input="scheduleVulnerabilitySearch()" placeholder="搜索标题、类型、描述" class="sto-input" style="flex:1;">
       <select x-model="vulnFilter.projectId" @change="applyVulnerabilityFilters()" class="sto-input" style="width:auto;">
         <option value="">全部任务</option>
-        <template x-for="p in projects.filter(item => !item.archived)" :key="`vuln-filter-${p.id}`">
+        <template x-for="p in projects.filter(item => !item.archived && (item.engagement_mode || 'vulnerability') !== 'red_team')" :key="`vuln-filter-${p.id}`">
           <option :value="p.id" x-text="`${p.id} ${p.title}`"></option>
         </template>
       </select>
@@ -70,6 +70,9 @@
             <span x-show="v.human_reviewed" role="button" @click.stop="toggleVulnReviewed(v)"
               title="人工已阅（点击取消）"
               style="font-size:9.5px; color:var(--sto-fg-3); flex-shrink:0; cursor:pointer; letter-spacing:0.02em;">已阅</span>
+            <span x-show="v.red_team_exploitable" role="button" @click.stop="toggleVulnRedTeamExploitable(v)"
+              title="红队可利用：新建红队任务时可作为种子线索批量注入（点击取消）"
+              style="font-size:9.5px; color:#b91c1c; background:#fef2f2; border:1px solid #fecaca; border-radius:4px; padding:0 4px; flex-shrink:0; cursor:pointer; letter-spacing:0.02em;">红队</span>
             <span class="sto-status" style="font-size:10px;" :class="({verified:'ok',pending:'warn',duplicate:'err',ignored:'off'})[vulnStatusKey(v.status)] || 'off'"><i></i><span x-text="vulnStatusLabel(v.status)"></span></span>
           </div>
           <p style="margin-top:5px; font-size:12.5px; font-weight:600; color:var(--sto-fg); line-height:1.45; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" x-text="v.title"></p>
@@ -120,6 +123,11 @@
                 :class="selectedVulnerability().human_reviewed ? 'acc' : ''"
                 :title="selectedVulnerability().human_reviewed ? '人工已阅，点击取消' : '标记人工已阅'">
                 <span x-text="selectedVulnerability().human_reviewed ? '已阅' : '标记已阅'"></span>
+              </button>
+              <button @click="toggleVulnRedTeamExploitable(selectedVulnerability())" class="sto-minibtn"
+                :class="selectedVulnerability().red_team_exploitable ? 'acc' : ''"
+                :title="selectedVulnerability().red_team_exploitable ? '已标记红队可利用，点击取消' : '标记红队可利用（新建红队任务时可批量作为种子线索）'">
+                <span x-text="selectedVulnerability().red_team_exploitable ? '红队可利用' : '标记红队可利用'"></span>
               </button>
               <button @click="editVuln(selectedVulnerability())" class="sto-minibtn">编辑</button>
               <button @click="deleteVuln(selectedVulnerability())" class="sto-minibtn danger">删除</button>
@@ -232,7 +240,7 @@
       <input x-model="rtResultFilter.keyword" @input="scheduleRtResultSearch()" placeholder="搜索标题、描述、身份" class="sto-input" style="flex:1;">
       <select x-model="rtResultFilter.projectId" @change="loadRedTeamResultPage()" class="sto-input" style="width:auto;">
         <option value="">全部任务</option>
-        <template x-for="p in projects.filter(item => !item.archived)" :key="`rt-filter-${p.id}`">
+        <template x-for="p in projects.filter(item => !item.archived && item.engagement_mode === 'red_team')" :key="`rt-filter-${p.id}`">
           <option :value="p.id" x-text="`${p.id} ${p.title}`"></option>
         </template>
       </select>

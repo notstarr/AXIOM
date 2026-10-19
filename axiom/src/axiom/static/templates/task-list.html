@@ -89,6 +89,17 @@
                   :class="newProject.engagement_mode === 'red_team' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">红队</button>
               </div>
             </div>
+            <div x-show="newProject.engagement_mode === 'red_team'" x-cloak>
+              <label class="text-xs font-semibold text-slate-500 mb-1 block">种子漏洞来源任务（可选）</label>
+              <select x-model="newProject.seed_vulnerability_task_id"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+                <option value="">不使用种子漏洞</option>
+                <template x-for="seedTask in seedSourceTasks()" :key="`seed-source-${seedTask.id}`">
+                  <option :value="seedTask.id" x-text="seedSourceLabel(seedTask)"></option>
+                </template>
+              </select>
+              <p class="mt-1 text-[11px] text-slate-400">来源任务下被人工标记「红队可利用」的漏洞会批量注入本任务 Bootstrap，作为优先入口线索；标记变动会实时反映。</p>
+            </div>
           </div>
 
           <!-- Step 2: optional and operational settings -->

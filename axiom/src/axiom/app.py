@@ -61,7 +61,7 @@ _AUTH_SCRIPTS_PATTERN = (
     r"<!--AXIOM_AUTH_SCRIPTS_START-->.*?<!--AXIOM_AUTH_SCRIPTS_END-->"
 )
 _UNAUTH_SCRIPT = (
-    '<script src="/static/js/login.js?v=20260817-auth-gate-v1"></script>'
+    '<script src="/static/js/login.js?v=20261019-login-loop-guard"></script>'
 )
 
 
@@ -116,11 +116,16 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
         allow_startup_writes=initial_maintenance.state != "frozen",
     )
     app.state.container.storage_admin.start_context_retention_loop()
+    app.state.container.c2.manager.start_watchdog()
 
     def _stop_context_retention_loop() -> None:
         app.state.container.storage_admin.stop_context_retention_loop()
 
+    def _stop_c2_listeners() -> None:
+        app.state.container.c2.manager.stop_all()
+
     app.router.on_shutdown.append(_stop_context_retention_loop)
+    app.router.on_shutdown.append(_stop_c2_listeners)
 
     app.state.service_token = _read_service_token(data_dir)
     app.include_router(router)

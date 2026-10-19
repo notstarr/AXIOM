@@ -27,7 +27,7 @@ window.AxiomModules.core = {
         dashboard: 'dashboard', tasks: 'task-list', vulnerabilities: 'vulnerabilities',
         projects: 'project-mgmt', 'guard-audit': 'guard-audit', skills: 'skills',
         files: 'files', mcp: 'mcp', prompts: 'prompts', settings: 'settings',
-        workers: 'workers', tools: 'tools',
+        workers: 'workers', tools: 'tools', 'redteam-resources': 'redteam-resources',
       })[this.activePage] || 'dashboard';
     },
 
@@ -182,6 +182,7 @@ window.AxiomModules.core = {
       else if (name === 'skills') await this.loadSkills();
       else if (name === 'files') await this.loadArtifactCenter();
       else if (name === 'mcp') await this.loadMcpPage();
+      else if (name === 'redteam-resources') await this.rrLoad?.();
       else if (name === 'settings') await this.loadSettings();
       else if (name === 'workers') await this.loadAxiomWorkersPage();
       else if (name === 'tools') await this.loadAxiomToolsPage();
@@ -527,7 +528,7 @@ window.AxiomModules.core = {
       const page = routePath.split('/')[0];
       // 「重要事实」路由：#/facts 为新地址，#/vulnerabilities 保留兼容旧书签
       const normalizedPage = page === 'facts' ? 'vulnerabilities' : page;
-      const allowed = ['dashboard', 'tasks', 'vulnerabilities', 'facts', 'projects', 'guard-audit', 'skills', 'files', 'mcp', 'settings', 'prompts', 'workers', 'tools'];
+      const allowed = ['dashboard', 'tasks', 'vulnerabilities', 'facts', 'projects', 'guard-audit', 'skills', 'files', 'mcp', 'settings', 'prompts', 'workers', 'tools', 'redteam-resources'];
       const newPage = allowed.includes(normalizedPage) ? normalizedPage : 'dashboard';
       const sameMountedFilesPage = newPage === 'files'
         && this.activePage === 'files'
@@ -572,6 +573,7 @@ window.AxiomModules.core = {
         prompts: '#/prompts',
         workers: '#/workers',
         tools: '#/tools',
+        'redteam-resources': '#/redteam-resources',
       };
       const target = routes[page] || '#/dashboard';
       if (location.hash === target) this.handleRoute();

@@ -27,7 +27,7 @@ from axiom.modules.todos.tables import todo_sources
 from axiom.modules.todos.repository import TodoRepository
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
-from axiom.modules.vulnerabilities.tables import vulnerabilities
+from axiom.modules.vulnerabilities.tables import vulnerabilities, vulnerability_artifacts
 from axiom.modules.redteam.tables import red_team_results
 from axiom.shared.clock import utcnow
 from axiom.shared.database import transaction
@@ -219,6 +219,8 @@ class ContextService:
                             "red_team_current_state": f"{base_key}/red_team_current_state.json",
                         }
                     )
+                if "seed_vulnerabilities.json" in files:
+                    indexes["seed_vulnerabilities"] = f"{base_key}/seed_vulnerabilities.json"
                 if review_run_id is not None:
                     review_row = conn.execute(
                         select(vulnerability_review_runs.c.vulnerability_id, vulnerability_review_runs.c.review_subject_type, vulnerability_review_runs.c.red_team_result_id).where(
@@ -356,6 +358,95 @@ class ContextService:
                     include_archived=include_archived,
                 )
         return ExpandedContext(task_id=task_id, entries=entries)
+
+    _SEED_VULNERABILITY_LIMIT = 50
+    _SEED_SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+    def _seed_vulnerabilities(self, conn, seed_task_id: str | None) -> dict | None:
+        """来源任务里人工标记「红队可利用」的漏洞，作为红队 bootstrap 种子线索。
+
+        活链接：每轮 revision 实时读取源任务当前标记集合；零条时返回 None，
+        不写文件、不进 manifest，注入块里也就不会出现该卡片。
+        """
+        if not seed_task_id:
+            return None
+        rows = list(
+            conn.execute(
+                select(vulnerabilities).where(
+                    vulnerabilities.c.task_id == seed_task_id,
+                    vulnerabilities.c.red_team_exploitable.is_(True),
+                    vulnerabilities.c.archived.is_(False),
+                )
+            ).mappings()
+        )
+        if not rows:
+            return None
+        rows.sort(
+            key=lambda row: (
+                self._SEED_SEVERITY_RANK.get(str(row["severity"]), 4),
+                str(row["created_at"]),
+                str(row["id"]),
+            )
+        )
+        truncated = len(rows) > self._SEED_VULNERABILITY_LIMIT
+        rows = rows[: self._SEED_VULNERABILITY_LIMIT]
+        evidence_rows = conn.execute(
+            select(vulnerability_artifacts).where(
+                vulnerability_artifacts.c.task_id == seed_task_id,
+                vulnerability_artifacts.c.role == "evidence",
+                vulnerability_artifacts.c.vulnerability_id.in_([row["id"] for row in rows]),
+            )
+        ).mappings().all()
+        evidence_by_vulnerability: dict[str, list[str]] = {}
+        for relation in evidence_rows:
+            evidence_by_vulnerability.setdefault(
+                str(relation["vulnerability_id"]), []
+            ).append(str(relation["artifact_id"]))
+        artifact_keys: dict[str, str] = {}
+        if evidence_by_vulnerability:
+            for artifact in conn.execute(
+                select(artifacts).where(
+                    artifacts.c.task_id == seed_task_id,
+                    artifacts.c.id.in_(
+                        {
+                            artifact_id
+                            for ids in evidence_by_vulnerability.values()
+                            for artifact_id in ids
+                        }
+                    ),
+                )
+            ).mappings():
+                artifact_keys[str(artifact["id"])] = str(artifact["storage_key"])
+        entries = []
+        for row in rows:
+            steps = row["reproduction_steps_json"]
+            if isinstance(steps, str):
+                try:
+                    steps = json.loads(steps)
+                except (TypeError, ValueError):
+                    steps = []
+            entries.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "severity": row["severity"],
+                    "status": row["status"],
+                    "affected_target": row["affected_target"],
+                    "prerequisites": row["prerequisites"],
+                    "reproduction_steps": steps,
+                    "curl_command": row["curl_command"],
+                    "evidence_storage_keys": [
+                        artifact_keys[artifact_id]
+                        for artifact_id in evidence_by_vulnerability.get(str(row["id"]), [])
+                        if artifact_id in artifact_keys
+                    ],
+                }
+            )
+        return {
+            "source_task_id": seed_task_id,
+            "truncated": truncated,
+            "vulnerabilities": entries,
+        }
 
     def _index_files(
         self,
@@ -879,6 +970,9 @@ class ContextService:
                     ),
                 }
             )
+            seed_payload = self._seed_vulnerabilities(conn, task.get("seed_vulnerability_task_id"))
+            if seed_payload is not None:
+                files["seed_vulnerabilities.json"] = _json(seed_payload)
         goal_index = [
             {
                 "id": row["id"],

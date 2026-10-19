@@ -33,7 +33,7 @@ Explore 上报前按本表自评 `--points`。Reviewer 按同一张表核定。�
 
 ## 二、数据获取
 
-`--type data`。按可访问库表的记录总数达档计分，不按条数线性累加。`--sample-count` 写记录数，并附记录数证明。样本脱敏。
+`--type data`。按可访问库表的记录总数达档计分，不按条数线性累加。`--sample-count` 写记录数，并附记录数证明。样本原文完整存入 evidence（复核与后续任务要复用，不脱敏、不截断字段）。
 
 | 成果 | 规模 | 分 |
 |---|---|---:|
@@ -123,7 +123,7 @@ axiom explore result report \
   --points 10 \
   --type data \
   --title '核心业务数据：订单表 12 万条可读取' \
-  --description '订单表可访问记录数 120000，已附计数证明。样本已脱敏。' \
+  --description '订单表可访问记录数 120000，已附计数证明。样本原文在 evidence/。' \
   --principal 'user:member' \
   --data-target-id 'orders' \
   --sample-count 120000 \

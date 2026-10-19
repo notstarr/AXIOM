@@ -126,6 +126,7 @@ class VulnerabilityRepository:
         search: str = "",
         status: str | None = None,
         severity: str | None = None,
+        red_team_exploitable: bool | None = None,
         include_archived: bool = False,
         sort: str = "updated",
     ) -> list[Vulnerability]:
@@ -138,6 +139,10 @@ class VulnerabilityRepository:
             query = query.where(vulnerabilities.c.status == status)
         if severity:
             query = query.where(vulnerabilities.c.severity == severity)
+        if red_team_exploitable is not None:
+            query = query.where(
+                vulnerabilities.c.red_team_exploitable.is_(red_team_exploitable)
+            )
         if not include_archived:
             query = query.where(
                 tasks.c.archived.is_(False),
@@ -172,6 +177,7 @@ class VulnerabilityRepository:
         search: str = "",
         status: str | None = None,
         severity: str | None = None,
+        red_team_exploitable: bool | None = None,
         include_archived: bool = False,
         limit: int,
         offset: int,
@@ -186,6 +192,10 @@ class VulnerabilityRepository:
             query = query.where(vulnerabilities.c.status == status)
         if severity:
             query = query.where(vulnerabilities.c.severity == severity)
+        if red_team_exploitable is not None:
+            query = query.where(
+                vulnerabilities.c.red_team_exploitable.is_(red_team_exploitable)
+            )
         if not include_archived:
             query = query.where(
                 tasks.c.archived.is_(False),
@@ -378,6 +388,9 @@ class VulnerabilityRepository:
                     human_reviewed=bool(row.get("human_reviewed") or False),
                     human_reviewed_at=row.get("human_reviewed_at"),
                     human_reviewed_by=row.get("human_reviewed_by"),
+                    red_team_exploitable=bool(row.get("red_team_exploitable") or False),
+                    red_team_exploitable_at=row.get("red_team_exploitable_at"),
+                    red_team_exploitable_by=row.get("red_team_exploitable_by"),
                 )
             )
         return result
@@ -401,6 +414,36 @@ class VulnerabilityRepository:
             "human_reviewed": value,
             "human_reviewed_at": now if value else None,
             "human_reviewed_by": actor if value else None,
+            "updated_at": now,
+        }
+        result = conn.execute(
+            update(vulnerabilities)
+            .where(
+                vulnerabilities.c.task_id == task_id,
+                vulnerabilities.c.id == vulnerability_id,
+            )
+            .values(**values)
+        )
+        if not result.rowcount:
+            return None
+        found = self.get(conn, task_id, vulnerability_id)
+        assert found is not None
+        return found
+
+    def set_red_team_exploitable(
+        self,
+        conn: Connection,
+        task_id: str,
+        vulnerability_id: str,
+        *,
+        value: bool,
+        actor: str,
+        now: str,
+    ) -> Vulnerability | None:
+        values: dict[str, object] = {
+            "red_team_exploitable": value,
+            "red_team_exploitable_at": now if value else None,
+            "red_team_exploitable_by": actor if value else None,
             "updated_at": now,
         }
         result = conn.execute(

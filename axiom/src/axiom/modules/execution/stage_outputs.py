@@ -34,12 +34,9 @@ BOOTSTRAP_FILES = (
 )
 # jsfinder 每轮/每目标产出独立文件（jsfinder_result-<host>-<path>-<rand4>.json），
 # 所以这里按规则发现全部匹配文件，而不是只认一个固定文件名。
-BOOTSTRAP_OPTIONAL_PATTERNS = (
-    ("jsfinder_result*.json", "bootstrap.jsfinder", "JSFinder 能力树"),
-)
-BOOTSTRAP_OPTIONAL_FILES = {
-    "jsfinder_result.json": ("bootstrap.jsfinder", "JSFinder 能力树"),
-}
+JSFINDER_GLOB = "jsfinder_result*.json"
+JSFINDER_PREFIX = "jsfinder_result-"
+JSFINDER_SUFFIX = ".json"
 _SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 EXPLORE_FINDINGS_FILE = "findings.md"
 EXPLORE_LEADS_FILE = "leads.md"
@@ -120,35 +117,15 @@ def bootstrap_files(run_dir: str | Path) -> list[StageFile]:
         )
     if errors:
         raise StageOutputError("Bootstrap 产物未就绪：" + "；".join(errors))
-    for glob_pattern, artifact_type, summary in BOOTSTRAP_OPTIONAL_PATTERNS:
-        seen: set[str] = set()
-        for base in (root, root / "workspace"):
-            if not base.is_dir():
-                continue
-            for path in sorted(base.glob(glob_pattern)):
-                if not path.is_file() or path.name in seen:
-                    continue
-                seen.add(path.name)
-                filename = path.name
-                try:
-                    _require_regular_output(path, root)
-                    _require_non_empty(path)
-                except StageOutputError:
-                    logger.warning("Bootstrap 可选产物无效，已跳过：%s", filename)
-                    continue
-                tag = (
-                    filename[len("jsfinder_result-"):-len(".json")]
-                    if filename.startswith("jsfinder_result-") and filename.endswith(".json")
-                    else ""
-                )
-                results.append(
-                    StageFile(
-                        relative_name=filename,
-                        path=path,
-                        artifact_type=artifact_type,
-                        summary=f"{summary} · {tag}" if tag else summary,
-                    )
-                )
+    results.extend(
+        _collect_jsfinder_results(
+            (root, root / "workspace"),
+            root=root,
+            artifact_type="bootstrap.jsfinder",
+            summary="JSFinder 能力树",
+            registered={item.relative_name for item in results},
+        )
+    )
     results.extend(_collect_bootstrap_extras(root, registered={item.relative_name for item in results}))
     results.extend(_collect_bootstrap_evidence(root, registered={item.relative_name for item in results}))
     return results
@@ -160,11 +137,6 @@ BOOTSTRAP_MAX_EVIDENCE_FILES = 48
 # worker 留证习惯不统一：技能脚本写 `{run_dir}/evidence/`，提示词约定写
 # `{run_dir}/artifacts/evidence/`。两处都收，登记名统一为 evidence/<rel>。
 BOOTSTRAP_EVIDENCE_DIRS = ("evidence", "artifacts/evidence")
-# 凭证正文不进产物中心：产物会被导出报告引用，登记等于把会话凭证写进交付物。
-BOOTSTRAP_EVIDENCE_SECRET_PATTERN = re.compile(
-    r"(?:^|[-_.])(?:credentials?|creds?|tokens?|cookies?|secrets?|sessions?|sids?)(?:[-_.]|$)",
-    re.IGNORECASE,
-)
 _BOOTSTRAP_SYSTEM_FILES = frozenset(
     {
         "bootstrap_artifacts.json",
@@ -244,6 +216,60 @@ def _is_placeholder_content(path: Path) -> bool:
     return text.casefold() in _PLACEHOLDER_CONTENT
 
 
+def _collect_jsfinder_results(
+    bases: tuple[Path, ...],
+    *,
+    root: Path,
+    artifact_type: str,
+    summary: str,
+    registered: set[str],
+) -> list[StageFile]:
+    """登记 jsfinder 能力树产物（bootstrap / explore 共用）。
+
+    脚本默认把结果写在运行目录根；不登记就会随 lease 清理消失，
+    其它 worker 也看不见。一次运行一个文件，全部收。
+    """
+    results: list[StageFile] = []
+    seen: set[str] = set()
+    for base in bases:
+        if not base.is_dir() or base.is_symlink():
+            continue
+        for path in sorted(base.glob(JSFINDER_GLOB)):
+            filename = path.name
+            if filename in seen or filename in registered:
+                continue
+            seen.add(filename)
+            if path.is_symlink():
+                continue
+            try:
+                _require_regular_output(path, root)
+                _require_non_empty(path)
+                size = path.stat().st_size
+            except (StageOutputError, OSError):
+                logger.warning("jsfinder 产物无效，已跳过：%s", filename)
+                continue
+            if size > BOOTSTRAP_EXTRA_MAX_BYTES:
+                logger.warning("jsfinder 产物超 10MB，已丢弃：%s（%d bytes）", filename, size)
+                continue
+            if size <= _PLACEHOLDER_MAX_BYTES and _is_placeholder_content(path):
+                logger.warning("jsfinder 产物是空占位内容，已丢弃：%s", filename)
+                continue
+            tag = (
+                filename[len(JSFINDER_PREFIX):-len(JSFINDER_SUFFIX)]
+                if filename.startswith(JSFINDER_PREFIX) and filename.endswith(JSFINDER_SUFFIX)
+                else ""
+            )
+            results.append(
+                StageFile(
+                    relative_name=filename,
+                    path=path,
+                    artifact_type=artifact_type,
+                    summary=f"{summary} · {tag}" if tag else summary,
+                )
+            )
+    return results
+
+
 def _collect_bootstrap_evidence(root: Path, *, registered: set[str]) -> list[StageFile]:
     """登记 Bootstrap 留证文件。
 
@@ -280,9 +306,6 @@ def _collect_bootstrap_evidence(root: Path, *, registered: set[str]) -> list[Sta
                 if relative_name in collected or relative_name in registered:
                     continue
                 if not _safe_explore_relative(relative) or path.is_symlink():
-                    skipped.append(relative_name)
-                    continue
-                if BOOTSTRAP_EVIDENCE_SECRET_PATTERN.search(name):
                     skipped.append(relative_name)
                     continue
                 try:
@@ -354,6 +377,16 @@ def explore_files(
         )
     if errors:
         raise StageOutputError("Explore 核心产物未就绪：" + "；".join(errors))
+
+    results.extend(
+        _collect_jsfinder_results(
+            (run_root,),
+            root=run_root,
+            artifact_type="explore.jsfinder",
+            summary="Explore JSFinder 能力树",
+            registered={item.relative_name for item in results},
+        )
+    )
 
     evidence, skipped = _collect_optional_explore_evidence(root, required=set(required))
     if len(evidence) > EXPLORE_MAX_EVIDENCE_FILES:

@@ -79,6 +79,8 @@ red_team_results = Table(
     ForeignKeyConstraint(["task_id"], [tasks.c.id], ondelete="CASCADE"),
     ForeignKeyConstraint(["task_id", "chain_id"], [red_team_chains.c.task_id, red_team_chains.c.id], ondelete="CASCADE"),
     ForeignKeyConstraint(["task_id", "intent_id"], [intents.c.task_id, intents.c.id], ondelete="RESTRICT"),
+    # 复合外键 (task_id, red_team_result_id) -> (task_id, id) 的目标唯一约束
+    UniqueConstraint("task_id", "id", name="uq_red_team_results_task_id"),
     CheckConstraint("result_type IN ('permission','data','credential','pivot')", name="red_team_result_type"),
     CheckConstraint(
         "status IN ('reported','reviewing','verified','rejected','duplicate','needs-human')",

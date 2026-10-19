@@ -105,6 +105,13 @@ class TaskService:
                 raise NotFoundError(f"Project not found: {command.project_id}")
             if project.status != "active":
                 raise ConflictError("Task cannot be created in an archived Project")
+            seed_task_id = command.seed_vulnerability_task_id
+            if seed_task_id is not None:
+                seed_task = self.tasks.get(conn, seed_task_id)
+                if seed_task is None:
+                    raise NotFoundError(f"Seed vulnerability task not found: {seed_task_id}")
+                if seed_task.engagement_mode != "vulnerability":
+                    raise ConflictError("种子漏洞来源任务必须是漏洞模式任务")
             task = self.tasks.create(
                 conn,
                 project_id=command.project_id,
@@ -113,6 +120,7 @@ class TaskService:
                 goal=command.goal,
                 engagement_mode=command.engagement_mode,
                 red_team_objective=red_team_objective,
+                seed_vulnerability_task_id=seed_task_id,
                 scope=scope,
                 worker_pool=command.worker_pool,
                 guard_enabled=command.guard_enabled,

@@ -283,3 +283,19 @@ def test_explore_registers_at_most_48_optional_evidence_files(tmp_path: Path) ->
     assert len(outputs) == 50
     assert outputs[2].relative_name == "evidence/proof-00.txt"
     assert outputs[-1].relative_name == "evidence/proof-47.txt"
+
+
+def test_explore_registers_root_jsfinder_results(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "findings.md").write_text("# 已确认事实\n\n本轮无新增确认事实\n", encoding="utf-8")
+    (artifacts / "leads.md").write_text("# 待验证线索\n\n本轮无遗留待验证线索\n", encoding="utf-8")
+    (tmp_path / "jsfinder_result-www-a-cn-ab12.json").write_text('{"tool":"jsfinder"}', encoding="utf-8")
+    (tmp_path / "jsfinder_result-empty-cd34.json").write_text("", encoding="utf-8")
+    (tmp_path / "models.json").write_text('{"secret":"ignored"}', encoding="utf-8")
+
+    outputs = explore_files(tmp_path)
+
+    jsfinder = [item for item in outputs if item.artifact_type == "explore.jsfinder"]
+    assert [item.relative_name for item in jsfinder] == ["jsfinder_result-www-a-cn-ab12.json"]
+    assert jsfinder[0].summary.startswith("Explore JSFinder 能力树")
