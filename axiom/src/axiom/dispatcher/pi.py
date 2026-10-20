@@ -47,7 +47,12 @@ from axiom.modules.phase_capabilities.builtins import native_tool_names
 from axiom.modules.plan.schemas import PlanWorkspace
 from axiom.modules.reason.schemas import ReasonWorkspace
 from axiom.modules.token_usage.schemas import TokenUsageBatchCommand
-from axiom.modules.workers.pi_config import PiWorkerConfig, canonical_provider_api, sdk_base_url
+from axiom.modules.workers.pi_config import (
+    PiWorkerConfig,
+    canonical_provider_api,
+    sdk_base_url,
+    with_opencode_session,
+)
 from axiom.modules.workers.schemas import Worker
 from axiom.modules.sandboxes.backend import CubeSandboxExecutionBackend
 from axiom.modules.sandboxes.schemas import SandboxHandle
@@ -836,6 +841,16 @@ class PiBootstrapExecutor:
                 / "index.ts"
             )
             argv.extend(["--extension", str(extension)])
+        if "web_search" in tool_names:
+            web_access = os.environ.get("PI_WEB_ACCESS_EXTENSION") or runtime_paths.get("pi-web-access")
+            if not web_access:
+                binary_path = Path(binary or self.settings.binary)
+                if binary_path.parent.name == "bin":
+                    candidate = binary_path.parent.parent / "node_modules" / "pi-web-access"
+                    if candidate.is_dir():
+                        web_access = str(candidate)
+            if web_access:
+                argv.extend(["--extension", str(web_access)])
         selected_extensions = list(dict.fromkeys(axiom_tool_extensions or []))
         for extension in selected_extensions:
             argv.extend(["--extension", extension])
@@ -917,6 +932,11 @@ class PiBootstrapExecutor:
             "apiKey": self.settings.api_key or "none",
             "models": [model],
         }
+        request_headers = with_opencode_session(
+            self.settings.base_url, self.settings.headers
+        )
+        if request_headers:
+            provider["headers"] = request_headers
         if self.llm_gateway_enabled and self.service_token:
             # LLM 代理模式：LLM 请求改走 serve 网关（代理只作用于 serve 这一跳），
             # 真实 base_url / api_key 不再下发到 Worker 进程。

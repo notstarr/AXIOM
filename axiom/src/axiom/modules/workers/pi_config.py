@@ -3,13 +3,16 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
+import string
 import subprocess
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 PI_RUNTIME_VERSION = "1.1.0"
@@ -137,17 +140,82 @@ def upstream_request_url(provider_api: str | None, base_url: str, path: str) -> 
     return f"{root}/{p}" if p else root
 
 
-def provider_auth_headers(provider_api: str | None, api_key: str) -> dict[str, str]:
-    """Build the provider-specific authentication headers for a request."""
+OPENCODE_SESSION_HEADER = "x-opencode-session"
+_OPENCODE_GO_SUFFIXES = ("/inference/go", "/zen/go")
+_OPENCODE_SESSION_ALPHABET = string.ascii_lowercase + string.digits
 
+
+def normalize_request_headers(headers: Any) -> dict[str, str]:
+    """Drop empty header names and coerce every value to a string."""
+
+    if not isinstance(headers, dict):
+        return {}
+    return {
+        str(key).strip(): str(value)
+        for key, value in headers.items()
+        if str(key).strip()
+    }
+
+
+def is_opencode_go_base_url(base_url: str) -> bool:
+    path = urlsplit(_root_base_url(base_url)).path.rstrip("/").lower()
+    return path.endswith(_OPENCODE_GO_SUFFIXES)
+
+
+def generate_opencode_session() -> str:
+    suffix = "".join(secrets.choice(_OPENCODE_SESSION_ALPHABET) for _ in range(9))
+    return f"Rat-{suffix}"
+
+
+def with_opencode_session(
+    base_url: str,
+    headers: dict[str, str] | None,
+) -> dict[str, str]:
+    """Fill OpenCode Go's required session header when blank or missing.
+
+    The value is client-generated (the server only needs a stable routing
+    id), so a user-supplied value always wins and a blank one becomes a
+    fresh ``Rat-xxxxxxxxx`` token.
+    """
+
+    result = normalize_request_headers(headers)
+    if not is_opencode_go_base_url(base_url):
+        return result
+    key = next(
+        (name for name in result if name.lower() == OPENCODE_SESSION_HEADER),
+        None,
+    )
+    if key is None:
+        result[OPENCODE_SESSION_HEADER] = generate_opencode_session()
+    elif not result[key].strip():
+        result[key] = generate_opencode_session()
+    return result
+
+
+def provider_auth_headers(
+    provider_api: str | None,
+    api_key: str,
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Build the provider-specific authentication headers for a request.
+
+    ``extra`` carries per-backend custom headers; authentication always wins
+    when both define the same header.
+    """
+
+    headers = normalize_request_headers(extra)
     if is_anthropic_messages(provider_api):
-        headers = {"anthropic-version": ANTHROPIC_API_VERSION}
+        headers.setdefault("anthropic-version", ANTHROPIC_API_VERSION)
         if api_key:
             headers["x-api-key"] = api_key
         return headers
     if canonical_provider_api(provider_api) == "azure":
-        return {"api-key": api_key} if api_key else {}
-    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        if api_key:
+            headers["api-key"] = api_key
+        return headers
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
 
 
 DEVELOPER_ROLE_PROBE_TIMEOUT_SECONDS = 15.0
@@ -160,6 +228,7 @@ def _probe_role_accepted(
     provider_api: str,
     role: str,
     *,
+    extra_headers: dict[str, str] | None = None,
     proxy: str | None = None,
     timeout: float = DEVELOPER_ROLE_PROBE_TIMEOUT_SECONDS,
 ) -> bool | None:
@@ -181,7 +250,7 @@ def _probe_role_accepted(
     }
     headers = {
         "Content-Type": "application/json",
-        **provider_auth_headers(provider_api, api_key),
+        **provider_auth_headers(provider_api, api_key, extra_headers),
     }
     try:
         response = httpx.post(
@@ -204,6 +273,7 @@ def probe_developer_role(
     model: str,
     provider_api: str,
     *,
+    extra_headers: dict[str, str] | None = None,
     proxy: str | None = None,
     timeout: float = DEVELOPER_ROLE_PROBE_TIMEOUT_SECONDS,
 ) -> bool | None:
@@ -235,6 +305,7 @@ def probe_developer_role(
         model,
         api,
         "developer",
+        extra_headers=extra_headers,
         proxy=proxy,
         timeout=timeout,
     )
@@ -249,6 +320,7 @@ def probe_developer_role(
         model,
         api,
         "system",
+        extra_headers=extra_headers,
         proxy=proxy,
         timeout=timeout,
     )
@@ -278,6 +350,8 @@ class PiWorkerConfig(BaseModel):
     base_url: str = ""
     provider_api: str = "openai-completions"
     api_key: str = ""
+    # 后端专属请求头（如 OpenCode Go 的 x-opencode-session）。
+    headers: dict[str, str] = Field(default_factory=dict)
     context_window: int = Field(default=200_000, ge=1)
     thinking_enabled: bool = False
     thinking_level: PiThinkingLevel = "medium"
@@ -294,6 +368,11 @@ class PiWorkerConfig(BaseModel):
     session_dir: str = ""
     session_flag: str = "--session-id"
     environment: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("headers", mode="before")
+    @classmethod
+    def normalize_headers(cls, value: Any) -> dict[str, str]:
+        return normalize_request_headers(value)
 
     @model_validator(mode="before")
     @classmethod

@@ -12,13 +12,13 @@ description: 当红队任务里拿到或需要复用稳定立足点时使用：W
 | 命令 | 作用 |
 |---|---|
 | `axiom webshell list` | 本任务全部连接（id/名称/url/状态/最近探活） |
-| `axiom webshell create --name N --url U [--family posix|windows] [--method POST] [--body-template 'cmd={{cmd}}'] [--query-template ''] [--headers-json '{}'] [--response-mode raw|between|regex --response-start S --response-end E] [--response-decode base64] [--remark R]` | 登记连接并绑定本任务 |
-| `axiom webshell test <ws_id>` | canary（whoami/id/pwd）探活，回写 alive/dead |
+| `axiom webshell create --name N --url U [--family auto|posix|windows] [--method POST] [--body-template 'cmd={{cmd}}'] [--query-template ''] [--headers-json '{}'] [--response-mode raw|between|regex --response-start S --response-end E] [--response-decode base64] [--remark R]` | 登记连接并绑定本任务 |
+| `axiom webshell test <ws_id>` | 探活回写 alive/dead；family=auto 时先用跨 shell 探针判定 posix/windows 并固化，之后不再探测 |
 | `axiom webshell exec <ws_id> '<命令>' [--timeout 30]` | 执行一条命令，返回输出与耗时 |
 | `axiom webshell file <ws_id> --op list|read|write --path P [--content C]` | 文件三件套（posix 的 read 自动 base64 解码） |
 | `axiom webshell logs <ws_id> [--limit 20]` | 执行审计流水（含 actor 与 Intent） |
 
-模板要点：`--body-template` / `--query-template` 必须含 `{{cmd}}` 占位符；shell 用密码参数时把它写进模板（如 `pass=xxx&cmd={{cmd}}`）；响应有包裹标记时用 `between` + start/end，输出是 base64 时加 `--response-decode base64`。命令含特殊字符时整体用单引号包住。
+模板要点：`--body-template` / `--query-template` 必须含 `{{cmd}}` 占位符；shell 用密码参数时把它写进模板（如 `pass=xxx&cmd={{cmd}}`）；响应有包裹标记时用 `between` + start/end，输出是 base64 时加 `--response-decode base64`。命令含特殊字符时整体用单引号包住。`--family` 默认 `auto`，通常不用手动传：首次 `test`/`file` 会探测目标系统并固化，判定失败时再手动指定 posix/windows。
 
 ## 2. C2：`axiom c2`
 

@@ -7,6 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 CMD_PLACEHOLDER = "{{cmd}}"
 
+WebShellFamily = Literal["auto", "posix", "windows"]
+
 
 class WebShellRequestTemplate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -17,6 +19,8 @@ class WebShellRequestTemplate(BaseModel):
     query: str = ""
     # base64 包装命令，绕过对明文命令关键字的拦截
     wrap: Literal["none", "base64"] = "none"
+    # 默认校验证书；仅对明确接受风险的自签目标使用 --insecure。
+    verify_tls: bool = True
 
     @model_validator(mode="after")
     def require_placeholder(self) -> "WebShellRequestTemplate":
@@ -49,7 +53,7 @@ class CreateWebShell(BaseModel):
 
     name: str
     url: str
-    family: Literal["posix", "windows"] = "posix"
+    family: WebShellFamily = "auto"
     request: WebShellRequestTemplate | None = None
     response: WebShellResponseTemplate | None = None
     remark: str = ""
@@ -80,7 +84,7 @@ class UpdateWebShell(BaseModel):
 
     name: str | None = None
     url: str | None = None
-    family: Literal["posix", "windows"] | None = None
+    family: WebShellFamily | None = None
     request: WebShellRequestTemplate | None = None
     response: WebShellResponseTemplate | None = None
     remark: str | None = None
@@ -110,7 +114,7 @@ class WebShellConnection(BaseModel):
     task_id: str
     name: str
     url: str
-    family: Literal["posix", "windows"]
+    family: WebShellFamily
     request: WebShellRequestTemplate
     response: WebShellResponseTemplate
     status: Literal["untested", "alive", "dead"]

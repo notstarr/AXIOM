@@ -28,6 +28,7 @@ from axiom.modules.workers.pi_config import (
     llm_proxy_for,
     provider_auth_headers,
     upstream_request_url,
+    with_opencode_session,
 )
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,7 @@ async def llm_gateway(
         # the Pi service token or an incoming API key reach the upstream.
         auth_headers.pop("anthropic-version", None)
         headers.setdefault("anthropic-version", "2023-06-01")
+    headers.update(with_opencode_session(config.base_url, config.headers))
     headers.update(auth_headers)
 
     body = await request.body()

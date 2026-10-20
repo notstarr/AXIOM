@@ -708,6 +708,27 @@
     return { enabled, level };
   }
 
+  function workerHeaderRows(headers) {
+    if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return [];
+    return Object.entries(headers)
+      .filter(([key]) => String(key).trim())
+      .map(([key, value], index) => ({
+        _id: `header-${index}-${String(key).trim()}`,
+        key: String(key).trim(),
+        value: String(value ?? ''),
+      }));
+  }
+
+  function workerHeaderDict(headers) {
+    const result = {};
+    if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return result;
+    for (const [key, value] of Object.entries(headers)) {
+      const name = String(key).trim();
+      if (name) result[name] = String(value ?? '');
+    }
+    return result;
+  }
+
   function mapWorker(worker) {
     const env = workerEnv(worker);
     const config = worker?.config || {};
@@ -729,6 +750,7 @@
       pi_model_context_window: String(config.context_window || '200000'),
       pi_api_key: '',
       pi_api_key_masked: config.api_key ? '••••••••' : '',
+      request_headers: workerHeaderRows(config.headers),
       pi_thinking_enabled: thinking.enabled,
       pi_thinking_level: thinking.level,
       // Keep the old view model readable for index-legacy.html only. New
@@ -848,6 +870,9 @@
     delete nextConfig.thinking;
     delete nextConfig.thinking_capable;
     delete nextConfig.thinking_tested_at;
+    if (body.pi_headers !== undefined) {
+      nextConfig.headers = workerHeaderDict(body.pi_headers);
+    }
     if (body.pi_api_key) nextConfig.api_key = body.pi_api_key;
     // 改名走 rename 端点原地改名：保留 created_at/冷却状态/工具绑定，
     // 且目标名已存在时报 409 而不是静默覆盖。
@@ -1148,11 +1173,11 @@
     }
     if (path === '/settings/dispatch/models' && method === 'GET') {
       const worker = query.get('worker_name') || '';
-      return request('GET', `/workers/${encodeURIComponent(worker)}/models?base_url=${encodeURIComponent(query.get('base_url') || '')}&api_key=${encodeURIComponent(query.get('api_key') || '')}&provider_api=${encodeURIComponent(query.get('provider_api') || '')}`);
+      return request('GET', `/workers/${encodeURIComponent(worker)}/models?base_url=${encodeURIComponent(query.get('base_url') || '')}&api_key=${encodeURIComponent(query.get('api_key') || '')}&provider_api=${encodeURIComponent(query.get('provider_api') || '')}&headers=${encodeURIComponent(query.get('headers') || '')}`);
     }
     if (path === '/settings/test-pi' && method === 'POST') {
       return request('POST', `/workers/${encodeURIComponent(body.worker_name || '')}/test`, {
-        base_url: body.pi_base_url, api_key: body.pi_api_key, model: body.pi_model, provider_api: body.pi_provider_api, llm_proxy: !!body.llm_proxy,
+        base_url: body.pi_base_url, api_key: body.pi_api_key, model: body.pi_model, provider_api: body.pi_provider_api, llm_proxy: !!body.llm_proxy, headers: body.pi_headers || {},
       });
     }
     if (path === '/settings/judge' && method === 'GET') return judgeSettings();
@@ -2484,8 +2509,11 @@
       const filename = String(name || '').toLowerCase();
       if (this.isImageFile(filename)) return 'image';
       if (this.isMdFile(filename)) return 'markdown';
-      if (/\.(json|har)$/.test(filename)) return 'markdown';
-      if (/\.(txt|log|csv|tsv|jsonl|ndjson|xml|ya?ml|js|mjs|cjs|jsx|ts|tsx|py|sh|bash|zsh|fish|html?|css|scss|sql|ini|conf|cfg|env|toml|properties|http)$/.test(filename)) return 'markdown';
+      // 56118b6 误把这两支收敛成 'markdown'，导致 files.html 的 text/json 预览分支
+      // 与下面的 JSON 格式化/无效告警逻辑全部变成死代码，且 .txt/.html 等不可信产物
+      // 被送进 marked.parse()+x-html 渲染（89ef114 的加固本意是按转义纯文本显示）。
+      if (/\.(json|har)$/.test(filename)) return 'json';
+      if (/\.(txt|log|csv|tsv|jsonl|ndjson|xml|ya?ml|js|mjs|cjs|jsx|ts|tsx|py|sh|bash|zsh|fish|html?|css|scss|sql|ini|conf|cfg|env|toml|properties|http)$/.test(filename)) return 'text';
       return 'unsupported';
     },
     artifactPreviewUrl(item) { return `${apiRoot}/tasks/${item.task_id}/artifacts/${item.id}/content`; },

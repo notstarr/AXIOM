@@ -10,12 +10,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import Boolean, Engine, UniqueConstraint, func, select, text
 
 from axiom.modules.mcp.schema_order import annotate_input_schema
 from axiom.shared.database import (
     AXIOM_SCHEMA,
     JSONText,
+    POSTGRESQL_ALEMBIC_BRANCH,
     UTCDateTimeText,
     create_database_engine,
     metadata,
@@ -25,18 +28,46 @@ from axiom.shared.model_registry import ALL_TABLES
 
 
 LEGACY_SQLITE_REVISION = "20260805_0035"
-# The importer must validate against the current PostgreSQL schema head.  Keep
-# this aligned with the latest migration whenever a schema change is added;
-# otherwise a database that has successfully upgraded cannot accept a legacy
-# SQLite import.
-POSTGRESQL_TARGET_REVISION = "20261013_pg0019"
+# 迁移脚本目录与 cli.py 用的是同一份（该文件比 cli.py 深一层，故 parents[3]）。
+_MIGRATION_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_BATCH_SIZE = 1_000
+
+
+def postgresql_target_revision() -> str:
+    """Return the current PostgreSQL branch head read from the migration scripts.
+
+    This used to be a hardcoded constant that had to be bumped by hand with every
+    new migration; once it lagged behind, a database that had already upgraded to
+    head could no longer accept a legacy SQLite import. Resolve it from the same
+    source ``axiom db upgrade`` targets instead.
+    """
+
+    config = Config(str(_MIGRATION_PROJECT_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(_MIGRATION_PROJECT_ROOT / "migrations"))
+    revision = ScriptDirectory.from_config(config).get_revision(POSTGRESQL_ALEMBIC_BRANCH)
+    if revision is None:
+        raise RuntimeError("PostgreSQL Alembic branch is missing")
+    return revision.revision
 
 # A 20260805 SQLite export predates the independent Plan runtime.  These
 # tables are represented as empty target tables during import; all other
 # historical rows remain byte-for-byte migratable.
 LEGACY_SQLITE_OMIT_TABLES = frozenset(
-    {"plan_runs", "plan_run_sources", "plan_workspaces", "task_sandboxes", "red_team_chains", "red_team_results"}
+    {
+        "plan_runs",
+        "plan_run_sources",
+        "plan_workspaces",
+        "task_sandboxes",
+        "red_team_chains",
+        "red_team_results",
+        # pg0024/pg0025 引入的红队资源表：20260805 的 SQLite 导出里没有对应数据，
+        # 导入时整体跳过（与 red_team_* 的处理方式一致）。
+        "webshell_connections",
+        "webshell_exec_logs",
+        "c2_listeners",
+        "c2_sessions",
+        "c2_tasks",
+    }
 )
 
 LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
@@ -55,13 +86,30 @@ LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
     # The source SQLite export may predate the independent Plan pool.  The
     # target schema backfills it to the compatibility value (inherit the
     # ordinary Task Worker pool).
-    "tasks": {"plan_worker_pool_json": "[]", "engagement_mode": "vulnerability", "red_team_objective_json": None},
+    # seed_vulnerability_task_id（pg0023）是红队种子漏洞来源，旧导出没有该概念，
+    # 导入后保持未设置。
+    "tasks": {
+        "plan_worker_pool_json": "[]",
+        "engagement_mode": "vulnerability",
+        "red_team_objective_json": None,
+        "seed_vulnerability_task_id": None,
+    },
     # The source SQLite export predates the vulnerability human-review
     # toggle.  Imported rows keep the unreviewed default.
+    # red_team_exploitable* 三列由 pg0023 引入，默认值与其 server_default 一致。
     "vulnerabilities": {
         "human_reviewed": False,
         "human_reviewed_at": None,
         "human_reviewed_by": None,
+        "red_team_exploitable": False,
+        "red_team_exploitable_at": None,
+        "red_team_exploitable_by": None,
+    },
+    # pg0020 让既有 Reviewer 能复核 RedTeamResult；旧导出的复核记录只针对
+    # 漏洞，故 review_subject_type 回填为其 server_default，红队结果引用留空。
+    "vulnerability_review_runs": {
+        "review_subject_type": "vulnerability",
+        "red_team_result_id": None,
     },
     # The source SQLite export predates the probed developer-role capability.
     # Imported Workers stay unprobed, which keeps Pi on its default role.
@@ -374,9 +422,10 @@ def _validate_target(engine: Engine) -> str:
         revision = conn.execute(
             text(f'SELECT version_num FROM "{AXIOM_SCHEMA}".alembic_version')
         ).scalar_one_or_none()
-    if revision != POSTGRESQL_TARGET_REVISION:
+    expected = postgresql_target_revision()
+    if revision != expected:
         raise ValueError(
-            f"PostgreSQL revision must be {POSTGRESQL_TARGET_REVISION}, "
+            f"PostgreSQL revision must be {expected}, "
             f"found {revision or 'none'}"
         )
     return str(revision)

@@ -286,8 +286,10 @@
         </div>
       </div>
 
-      <!-- 后端编辑 -->
-      <div x-show="workerSide === 'backend' && axiomWorkerEditor">
+      <!-- 后端编辑：必须用 x-if。x-show 只隐藏元素，Alpine 仍会对其子节点的
+           x-model/x-text 求值，而未选中后端时 axiomWorkerEditor 为 null。 -->
+      <template x-if="workerSide === 'backend' && axiomWorkerEditor">
+      <div>
         <div class="sto-panel" style="overflow:visible;">
           <div style="padding:16px 20px; border-bottom:1px solid var(--sto-line); background:var(--sto-inset); display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; border-radius:14px 14px 0 0;">
             <div style="min-width:0;">
@@ -323,6 +325,22 @@
                 <span style="width:7px; height:7px; border-radius:50%; background:currentColor; flex-shrink:0;"></span>
                 <span x-text="axiomWorkerEditor?.test_result?.message || ''"></span>
               </span>
+            </div>
+          </div>
+          <p class="sto-label" style="margin:16px 0 10px;">请求头（可选）</p>
+          <div class="sto-grid2" style="margin-bottom:4px;">
+            <div class="sto-field span2">
+              <template x-for="(header, index) in (axiomWorkerEditor.request_headers || [])" :key="header._id">
+                <div style="display:flex; gap:7px; margin-bottom:7px;">
+                  <input x-model="header.key" class="sto-input mono" style="flex:0 0 38%;" placeholder="Header 名称">
+                  <input x-model="header.value" class="sto-input mono" style="flex:1; min-width:0;" placeholder="值（x-opencode-session 留空会自动生成）">
+                  <button type="button" class="sto-minibtn danger" style="flex-shrink:0; padding:8px 12px;" @click="removeAxiomWorkerHeader(index)" aria-label="删除请求头">×</button>
+                </div>
+              </template>
+              <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                <button type="button" class="sto-minibtn" style="padding:7px 12px;" @click="addAxiomWorkerHeader()">添加请求头</button>
+                <p class="sto-desc" style="margin:0;">OpenCode Go 的 x-opencode-session 留空会按后端自动生成 Rat-xxxxxxxxx；填写则用你的值。</p>
+              </div>
             </div>
           </div>
           <p class="sto-label" style="margin:16px 0 10px;">模型与推理</p>
@@ -374,6 +392,7 @@
           </div>
         </div>
       </div>
+      </template>
 
       <!-- 空态 -->
       <div x-show="!(workerSide === 'phase' && selectedWorkerPhaseRecord()) && !(workerSide === 'backend' && axiomWorkerEditor)" class="sto-empty" style="padding:80px 0; font-size:13px;">从左侧选择一个阶段或模型后端。</div>

@@ -4,6 +4,7 @@ from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.axiom_tools.tables import axiom_tools, worker_axiom_tool_bindings
 from axiom.modules.archives.tables import archive_batch_members, archive_batches
 from axiom.modules.audit.tables import audit_events
+from axiom.modules.c2.tables import c2_listeners, c2_sessions, c2_tasks
 from axiom.modules.context.tables import context_revisions
 from axiom.modules.credentials.tables import credential_refreshes, credentials
 from axiom.modules.graph.tables import facts, intent_sources, intents
@@ -23,6 +24,7 @@ from axiom.modules.interventions.tables import intent_interventions
 from axiom.modules.todos.tables import todo_sources, todos
 from axiom.modules.vulnerabilities.tables import vulnerability_artifacts, vulnerabilities
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
+from axiom.modules.webshell.tables import webshell_connections, webshell_exec_logs
 from axiom.modules.workers.tables import workers
 from axiom.shared.ids import id_counters
 
@@ -69,4 +71,9 @@ ALL_TABLES = (
     intent_interventions,
     red_team_chains,
     red_team_results,
+    webshell_connections,
+    webshell_exec_logs,
+    c2_listeners,
+    c2_sessions,
+    c2_tasks,
 )

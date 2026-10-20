@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import httpx
 
@@ -106,6 +107,111 @@ def test_worker_models_uses_saved_connection_and_normalizes_response(client, mon
         "headers": {"Authorization": "Bearer secret"},
         "timeout": 10,
     }
+
+
+def test_worker_models_uses_custom_headers(client, monkeypatch) -> None:
+    client.put(
+        "/api/v1/workers/pi-main",
+        json={
+            "config": {
+                "model": "model-a",
+                "base_url": "https://models.example",
+                "api_key": "secret",
+                "headers": {"X-Tenant": "acme"},
+            }
+        },
+    )
+    captured = {}
+
+    def fake_get(url, *, headers, timeout, proxy=None):
+        captured.update(headers=headers)
+        return httpx.Response(200, json={"data": [{"id": "model-a"}]})
+
+    monkeypatch.setattr("axiom.modules.workers.service.httpx.get", fake_get)
+    response = client.get("/api/v1/workers/pi-main/models")
+
+    assert response.status_code == 200, response.text
+    assert captured["headers"]["X-Tenant"] == "acme"
+    assert captured["headers"]["Authorization"] == "Bearer secret"
+
+
+def test_opencode_go_session_is_persisted_and_user_value_wins(client) -> None:
+    config = {
+        "model": "kimi-k2.6",
+        "base_url": "https://opencode.ai/inference/go",
+        "api_key": "sk-test",
+    }
+    response = client.put("/api/v1/workers/opencode-go", json={"config": config})
+    assert response.status_code == 200, response.text
+    generated = response.json()["config"]["headers"]["x-opencode-session"]
+    assert re.fullmatch(r"Rat-[0-9a-z]{9}", generated)
+
+    response = client.put(
+        "/api/v1/workers/opencode-go",
+        json={
+            "config": {
+                **config,
+                "headers": {"x-opencode-session": "Rat-user12345"},
+            }
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["config"]["headers"]["x-opencode-session"] == "Rat-user12345"
+
+    response = client.put(
+        "/api/v1/workers/opencode-go",
+        json={"config": {**config, "headers": {"x-opencode-session": ""}}},
+    )
+    assert response.status_code == 200, response.text
+    assert re.fullmatch(
+        r"Rat-[0-9a-z]{9}",
+        response.json()["config"]["headers"]["x-opencode-session"],
+    )
+
+
+def test_draft_models_request_fills_opencode_session(client, monkeypatch) -> None:
+    captured = {}
+
+    def fake_get(url, *, headers, timeout, proxy=None):
+        captured.update(url=url, headers=headers)
+        return httpx.Response(200, json={"data": [{"id": "kimi-k2.6"}]})
+
+    monkeypatch.setattr("axiom.modules.workers.service.httpx.get", fake_get)
+    response = client.get(
+        "/api/v1/workers/__draft__/models",
+        params={
+            "base_url": "https://opencode.ai/inference/go",
+            "headers": json.dumps({"X-Test": "1"}),
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert captured["url"] == "https://opencode.ai/inference/go/v1/models"
+    assert captured["headers"]["X-Test"] == "1"
+    assert re.fullmatch(r"Rat-[0-9a-z]{9}", captured["headers"]["x-opencode-session"])
+
+
+def test_worker_connection_sends_custom_headers(client, monkeypatch) -> None:
+    captured = {}
+
+    def fake_post(url, *, headers, json, timeout, proxy=None):
+        captured.update(headers=headers)
+        return httpx.Response(200, json={"id": "response"})
+
+    monkeypatch.setattr("axiom.modules.workers.service.httpx.post", fake_post)
+    response = client.post(
+        "/api/v1/workers/__guard__/test",
+        json={
+            "base_url": "https://models.example",
+            "api_key": "guard-secret",
+            "model": "guard-model",
+            "headers": {"X-Tenant": "acme"},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert captured["headers"]["X-Tenant"] == "acme"
+    assert captured["headers"]["Authorization"] == "Bearer guard-secret"
 
 
 def test_worker_connection_supports_responses_api_and_unsaved_guard(client, monkeypatch) -> None:

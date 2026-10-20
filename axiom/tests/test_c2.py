@@ -4,12 +4,14 @@ import base64
 import socket
 import threading
 import time
+import urllib.error
 import urllib.request
 
 import click
 import pytest
 
 from axiom.modules.c2.schemas import C2ExecCommand
+from axiom.modules.c2.token import c2_listener_token
 
 
 def _free_port() -> int:
@@ -50,7 +52,14 @@ def test_c2_http_listener_beacon_roundtrip(client) -> None:
     assert started.status_code == 200, started.text
     assert started.json()["status"] == "listening"
 
-    base = f"http://127.0.0.1:{port}/index?sid=beacon1"
+    token = c2_listener_token(listener["id"])
+    unauthorized = f"http://127.0.0.1:{port}/index?sid=beacon1"
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(unauthorized, timeout=5)
+    assert exc.value.code == 403
+    exc.value.close()
+
+    base = f"{unauthorized}&token={token}"
     with urllib.request.urlopen(base, timeout=5) as response:
         assert response.read() == b""
     sessions = client.get(f"/api/v1/tasks/{task['id']}/c2/sessions").json()
@@ -144,7 +153,8 @@ def test_c2_exec_without_beacon_times_out_as_sent(client) -> None:
     port = _free_port()
     listener = _create_listener(client, task, "http", port)
     client.post(f"/api/v1/tasks/{task['id']}/c2/listeners/{listener['id']}/start")
-    base = f"http://127.0.0.1:{port}/index?sid=lonely"
+    token = c2_listener_token(listener["id"])
+    base = f"http://127.0.0.1:{port}/index?sid=lonely&token={token}"
     with urllib.request.urlopen(base, timeout=5) as response:
         assert response.read() == b""
     session = client.get(f"/api/v1/tasks/{task['id']}/c2/sessions").json()[0]
@@ -161,7 +171,11 @@ def test_c2_oneliner_and_validation(client) -> None:
     task = _red_team_task(client)
     listener = _create_listener(client, task, "http", _free_port())
     oneliner = client.get(f"/api/v1/tasks/{task['id']}/c2/listeners/{listener['id']}/oneliner").json()
+    token = c2_listener_token(listener["id"])
     assert "sid=" in oneliner["bash"]
+    assert "token=" in oneliner["bash"]
+    assert token in oneliner["bash"]
+    assert token in oneliner["python"]
     assert "sleep" in oneliner["bash"]
 
     missing = client.post(

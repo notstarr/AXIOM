@@ -140,7 +140,7 @@ class WebShellRepository:
             task_id=row["task_id"],
             name=row["name"],
             url=row["url"],
-            family=row.get("family") or "posix",
+            family=row.get("family") or "auto",
             request=WebShellRequestTemplate.model_validate(
                 json.loads(row["request_json"]) if isinstance(row["request_json"], str) else row["request_json"]
             ),

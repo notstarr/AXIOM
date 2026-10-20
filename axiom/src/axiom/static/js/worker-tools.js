@@ -969,6 +969,7 @@ window.AxiomModules.workerTools = {
         pi_api_key_masked: '',
         pi_thinking_enabled: false,
         pi_thinking_level: 'medium',
+        request_headers: [],
         llm_proxy: false,
         disabled: false,
         testing: false,
@@ -979,6 +980,32 @@ window.AxiomModules.workerTools = {
         show_model_dropdown: false,
       };
       this.selectedAxiomWorker = '';
+    },
+
+    addAxiomWorkerHeader() {
+      if (!this.axiomWorkerEditor) return;
+      if (!Array.isArray(this.axiomWorkerEditor.request_headers)) {
+        this.axiomWorkerEditor.request_headers = [];
+      }
+      this.axiomWorkerEditor.request_headers.push({
+        _id: `header-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        key: '',
+        value: '',
+      });
+    },
+
+    removeAxiomWorkerHeader(index) {
+      const rows = this.axiomWorkerEditor?.request_headers;
+      if (Array.isArray(rows)) rows.splice(index, 1);
+    },
+
+    workerHeaderDict(worker) {
+      const result = {};
+      for (const row of (worker?.request_headers || [])) {
+        const key = String(row?.key || '').trim();
+        if (key) result[key] = String(row?.value ?? '');
+      }
+      return result;
     },
 
     async saveAxiomWorkerEditor() {
@@ -1152,6 +1179,7 @@ window.AxiomModules.workerTools = {
           pi_model: worker.pi_model,
           pi_provider_api: worker.pi_provider_api || 'openai-completions',
           pi_api_key: worker.pi_api_key || '',
+          pi_headers: this.workerHeaderDict(worker),
           llm_proxy: !!worker.llm_proxy,
         });
         const latencyMs = Math.round(performance.now() - started);

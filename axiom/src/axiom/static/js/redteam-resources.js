@@ -15,9 +15,9 @@ window.AxiomModules.redteamResources = {
       wsWritePath: '',
       wsWriteContent: '',
       wsLogs: [],
-      wsForm: { name: '', url: '', family: 'posix', request: '', response: '', remark: '' },
+      wsForm: { name: '', url: '', family: 'auto', request: '', response: '', remark: '' },
       wsCreateOpen: false,
-      wsCreate: { task_id: '', name: '', url: '', family: 'posix', remark: '' },
+      wsCreate: { task_id: '', name: '', url: '', remark: '' },
       c2Listeners: [],
       c2Sessions: [],
       c2Tasks: [],
@@ -177,10 +177,10 @@ window.AxiomModules.redteamResources = {
       if (!f.task_id || !f.name || !f.url) { this.showToast('任务/名称/URL 必填', 'error'); return; }
       try {
         await this.v2Request('POST', `/tasks/${f.task_id}/webshells?actor=human.frontend`, {
-          name: f.name, url: f.url, family: f.family, remark: f.remark,
+          name: f.name, url: f.url, remark: f.remark,
         });
         this.rr.wsCreateOpen = false;
-        this.rr.wsCreate = { task_id: '', name: '', url: '', family: 'posix', remark: '' };
+        this.rr.wsCreate = { task_id: '', name: '', url: '', remark: '' };
         this.showToast('已创建');
         await this.rrLoadWs();
       } catch (e) {

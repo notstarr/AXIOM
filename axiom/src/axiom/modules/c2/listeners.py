@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hmac
 import logging
 import queue
 import socket
@@ -15,6 +16,7 @@ from sqlalchemy import Engine, select
 
 from axiom.modules.c2.repository import C2Repository
 from axiom.modules.c2.tables import c2_sessions, c2_tasks
+from axiom.modules.c2.token import c2_listener_token
 from axiom.shared.clock import utcnow
 
 
@@ -100,6 +102,7 @@ class ListenerManager:
         if listener.kind == "http":
             manager = self
             task_id, listener_id = listener.task_id, listener.id
+            expected_token = c2_listener_token(listener_id)
 
             class Handler(BaseHTTPRequestHandler):
                 protocol_version = "HTTP/1.1"
@@ -111,12 +114,27 @@ class ListenerManager:
                     query = parse_qs(urlparse(self.path).query)
                     return (query.get("sid") or [""])[0].strip()
 
+                def _token(self) -> str:
+                    query = parse_qs(urlparse(self.path).query)
+                    return (query.get("token") or [""])[0].strip()
+
+                def _authorized(self) -> bool:
+                    supplied = self._token()
+                    return bool(supplied) and hmac.compare_digest(supplied, expected_token)
+
+                def _reject(self, status: int) -> None:
+                    self.send_response(status)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    self.close_connection = True
+
                 def do_GET(self) -> None:  # noqa: N802
                     sid = self._sid()
                     if not sid:
-                        self.send_response(404)
-                        self.send_header("Content-Length", "0")
-                        self.end_headers()
+                        self._reject(404)
+                        return
+                    if not self._authorized():
+                        self._reject(403)
                         return
                     command = manager.http_poll(task_id, listener_id, sid)
                     payload = command.encode("utf-8")
@@ -128,13 +146,14 @@ class ListenerManager:
 
                 def do_POST(self) -> None:  # noqa: N802
                     sid = self._sid()
+                    if not sid:
+                        self._reject(404)
+                        return
+                    if not self._authorized():
+                        self._reject(403)
+                        return
                     length = int(self.headers.get("Content-Length") or 0)
                     raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
-                    if not sid:
-                        self.send_response(404)
-                        self.send_header("Content-Length", "0")
-                        self.end_headers()
-                        return
                     manager.http_result(task_id, listener_id, sid, _decode_b64(raw))
                     self.send_response(200)
                     self.send_header("Content-Length", "0")
@@ -149,6 +168,8 @@ class ListenerManager:
             entry = {"kind": "http", "server": server, "thread": thread}
             thread.start()
         else:
+            # Raw TCP C2 is a shell session without a handshake; token auth is
+            # HTTP-only.  Do not expose TCP listeners on untrusted networks.
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

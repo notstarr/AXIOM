@@ -27,6 +27,7 @@ from axiom.modules.workers.pi_config import (
     PiWorkerConfig,
     llm_proxy_for,
     probe_developer_role,
+    with_opencode_session,
 )
 from axiom.modules.token_usage.schemas import TokenUsageBatchCommand
 
@@ -186,6 +187,9 @@ class AxiomRunner:
             settings.api_key,
             settings.model,
             settings.provider_api,
+            extra_headers=with_opencode_session(
+                settings.base_url, settings.headers
+            ),
             proxy=llm_proxy_for(self._last_runtime_config, settings),
         )
         if verdict is None:
@@ -351,7 +355,7 @@ class AxiomRunner:
         active_task_ids = {task.id for task in snapshot.tasks if task.status == "running"}
         with self._lock:
             for work, cancellation in self._futures.values():
-                if work.kind != "review" and work.task_id not in active_task_ids:
+                if work.task_id not in active_task_ids:
                     cancellation.set()
 
     def _refresh_runtime_settings(self) -> int:

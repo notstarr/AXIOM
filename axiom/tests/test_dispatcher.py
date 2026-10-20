@@ -474,7 +474,7 @@ def test_reconciler_does_not_exceed_per_task_explore_concurrency():
     assert Reconciler(now=lambda: NOW).calculate(snapshot) == []
 
 
-def test_pending_review_is_schedulable_for_a_completed_task() -> None:
+def test_pending_review_is_not_schedulable_for_a_completed_task() -> None:
     snapshot = DispatcherSnapshot(
         tasks=[
             TaskSnapshot(
@@ -488,10 +488,7 @@ def test_pending_review_is_schedulable_for_a_completed_task() -> None:
 
     actions = Reconciler(now=lambda: NOW).calculate(snapshot)
 
-    assert len(actions) == 1
-    assert actions[0].claim.kind == "review"
-    assert actions[0].claim.review_run_id == "vr000001"
-    assert actions[0].claim.intent_id is None
+    assert actions == []
 
 
 def test_reconciler_schedules_reviews_up_to_the_configured_per_task_limit() -> None:
@@ -499,7 +496,7 @@ def test_reconciler_schedules_reviews_up_to_the_configured_per_task_limit() -> N
         tasks=[
             TaskSnapshot(
                 id="t_001",
-                status="completed",
+                status="running",
                 review_runs=[review_run("t_001", number) for number in range(1, 6)],
             )
         ],
@@ -529,7 +526,7 @@ def test_reconciler_stops_new_reviews_at_the_configured_per_task_limit() -> None
         tasks=[
             TaskSnapshot(
                 id="t_001",
-                status="completed",
+                status="running",
                 review_runs=[
                     review_run("t_001", 1, status="running"),
                     review_run("t_001", 2),
@@ -655,7 +652,7 @@ def test_per_task_review_limit_does_not_block_unrelated_explore_work() -> None:
 def test_review_uses_only_review_capable_backends_and_shared_capacity() -> None:
     task = TaskSnapshot(
         id="t_001",
-        status="stopped",
+        status="running",
         review_runs=[review_run("t_001", 1)],
     )
     no_capacity = DispatcherSnapshot(

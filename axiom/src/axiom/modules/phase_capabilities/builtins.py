@@ -101,11 +101,11 @@ _CORE_BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = (
         availability=_all_modes("reason", "explore", "plan"),
     ),
     BuiltinToolDefinition(
-        key="fetch_web_content",
+        key="fetch_content",
         title="提取网页正文",
         description="抓取外部网页/文档并将 HTML 自动转换为 Markdown 正文。",
         source="pi_native",
-        invocation="fetch_web_content",
+        invocation="fetch_content",
         availability=_all_modes("reason", "explore", "plan"),
     ),
     BuiltinToolDefinition(

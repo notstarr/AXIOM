@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, Response, status
 
 from axiom.api.dependencies import get_container
@@ -20,6 +22,20 @@ from axiom.modules.workers.schemas import (
 
 router = APIRouter(prefix="/workers", tags=["workers"])
 phase_router = APIRouter(prefix="/worker-phases", tags=["worker-phases"])
+
+
+def _parse_headers(raw: str) -> dict[str, str]:
+    try:
+        data = json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        str(key).strip(): str(value)
+        for key, value in data.items()
+        if str(key).strip()
+    }
 
 
 @phase_router.get("", response_model=list[WorkerPhase])
@@ -78,6 +94,7 @@ def list_worker_models(
     base_url: str = "",
     api_key: str = "",
     provider_api: str = "",
+    headers: str = "",
     container: Container = Depends(get_container),
 ) -> WorkerModelsResult:
     return container.workers.list_models(
@@ -85,6 +102,7 @@ def list_worker_models(
         base_url=base_url,
         api_key=api_key,
         provider_api=provider_api,
+        headers=_parse_headers(headers),
     )
 
 

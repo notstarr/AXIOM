@@ -70,6 +70,8 @@ class WorkerConnectionRequest(BaseModel):
     api_key: str = ""
     model: str = ""
     provider_api: str = ""
+    # 后端专属请求头；空值在服务端规范化时按需补齐（如 OpenCode Go 的 session）。
+    headers: dict[str, str] = Field(default_factory=dict)
     # 草稿态开关：未保存也能按该语义测试连通性（持久化后以 worker 配置为准）
     llm_proxy: bool = False
 

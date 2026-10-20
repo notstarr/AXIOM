@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import httpx
 
 from axiom.dispatcher.pi import PiBootstrapExecutor
@@ -13,6 +15,7 @@ def _worker(
     base_url: str = "",
     api_key: str = "sk-real",
     provider_api: str = "openai-completions",
+    headers: dict | None = None,
 ) -> Worker:
     return Worker(
         name=name,
@@ -26,6 +29,7 @@ def _worker(
             "provider_api": provider_api,
             "api_key": api_key,
             "context_window": 128000,
+            "headers": headers or {},
         },
         disabled=False,
         cooldown_until=None,
@@ -39,6 +43,7 @@ def _upsert_body(
     api_key: str = "sk-real",
     provider_api: str = "openai-completions",
     llm_proxy: bool = False,
+    headers: dict | None = None,
 ) -> dict:
     return {
         "worker_type": "pi",
@@ -50,6 +55,7 @@ def _upsert_body(
             "api_key": api_key,
             "context_window": 128000,
             "llm_proxy": llm_proxy,
+            "headers": headers or {},
         },
     }
 
@@ -102,6 +108,49 @@ def test_gateway_forwards_with_injected_key(client, monkeypatch):
     assert response.json()["ok"] is True
     assert seen["auth"] == "Bearer sk-real"
     assert seen["path"] == "/v1/chat/completions"
+
+
+def test_gateway_forwards_backend_custom_headers(client, monkeypatch):
+    """后端自定义请求头随网关注入；OpenCode Go 缺省 session 自动补齐。"""
+    seen: dict = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["tenant"] = request.headers.get("X-Tenant")
+        seen["session"] = request.headers.get("x-opencode-session")
+
+        async def stream():
+            yield b'{"ok": true}'
+
+        return httpx.Response(200, content=stream())
+
+    real_client = httpx.AsyncClient
+
+    def fake_async_client(*args, **kwargs):
+        return real_client(
+            transport=httpx.MockTransport(handler),
+            **{k: v for k, v in kwargs.items() if k != "proxy"},
+        )
+
+    monkeypatch.setattr(
+        "axiom.modules.llm_gateway.api.httpx.AsyncClient", fake_async_client
+    )
+
+    saved = client.put(
+        "/api/v1/workers/gw-test",
+        json=_upsert_body(
+            base_url="https://opencode.ai/inference/go",
+            headers={"X-Tenant": "acme"},
+        ),
+    ).json()["config"]["headers"]["x-opencode-session"]
+    response = client.post(
+        "/api/v1/llm-gateway/gw-test/chat/completions",
+        json={"model": "test-model", "messages": []},
+    )
+
+    assert response.status_code == 200
+    assert seen["tenant"] == "acme"
+    assert seen["session"] == saved
+    assert re.fullmatch(r"Rat-[0-9a-z]{9}", saved)
 
 
 def test_gateway_forwards_anthropic_with_x_api_key(client, monkeypatch):
@@ -261,6 +310,43 @@ def test_models_file_keeps_anthropic_api_and_base_url(tmp_path):
     provider = json.loads((agent_dir / "models.json").read_text())["providers"]["axiom"]
     assert provider["api"] == "anthropic-messages"
     assert provider["baseUrl"] == "https://api.real-provider.com"
+
+
+def test_models_file_includes_custom_headers_and_opencode_session(tmp_path):
+    executor = PiBootstrapExecutor(
+        _worker(
+            base_url="https://opencode.ai/inference/go",
+            headers={"X-Tenant": "acme"},
+        ),
+        api_url="http://127.0.0.1:8888",
+        service_token="svc-token-123",
+        llm_gateway_enabled=False,
+    )
+    agent_dir = tmp_path / "agent"
+    executor._write_models_file(agent_dir)
+    import json
+
+    provider = json.loads((agent_dir / "models.json").read_text())["providers"]["axiom"]
+    assert provider["headers"]["X-Tenant"] == "acme"
+    assert re.fullmatch(r"Rat-[0-9a-z]{9}", provider["headers"]["x-opencode-session"])
+
+
+def test_models_file_keeps_user_opencode_session(tmp_path):
+    executor = PiBootstrapExecutor(
+        _worker(
+            base_url="https://opencode.ai/inference/go",
+            headers={"x-opencode-session": "Rat-user12345"},
+        ),
+        api_url="http://127.0.0.1:8888",
+        service_token="svc-token-123",
+        llm_gateway_enabled=False,
+    )
+    agent_dir = tmp_path / "agent"
+    executor._write_models_file(agent_dir)
+    import json
+
+    provider = json.loads((agent_dir / "models.json").read_text())["providers"]["axiom"]
+    assert provider["headers"]["x-opencode-session"] == "Rat-user12345"
 
 
 def test_models_file_normalizes_legacy_responses_api(tmp_path):

@@ -12,7 +12,8 @@ set -u
 # 当前 $HOME/.local/bin/bsk 指向 bsk.fork-0.3.2。
 export BSK_AUTO_UPDATE=off
 
-BSK_BIN="${BSK_BIN:-$HOME/.local/bin/bsk}"
+BSK_BIN="${BSK_BIN:-/opt/bsk/bin/bsk}"
+[ -x "$BSK_BIN" ] || BSK_BIN="$HOME/.local/bin/bsk"
 RUN_DIR="${AXIOM_RUN_DIR:-}"
 AUDIT_DIR="$RUN_DIR/evidence"
 AUDIT_LOG="$AUDIT_DIR/bsk_audit.log"
@@ -26,6 +27,38 @@ audit() {
 cmd="${1:-}"
 [ -z "$cmd" ] && exec "$BSK_BIN"
 shift || true
+
+deny() {
+  audit "DENY $cmd $*"
+  echo "[axiom-bsk] '$cmd $*' is disabled in VPS remote mode" >&2
+  exit 64
+}
+
+if [ "${AXIOM_BSK_REMOTE:-0}" = "1" ]; then
+  case "$cmd" in
+    upload|download) deny ;;
+    tab)
+      case "${1:-}" in
+        borrow|return) deny ;;
+        list)
+          allowed=0
+          prev=""
+          for arg in "$@"; do
+            case "$arg" in
+              --scope=agent) allowed=1 ;;
+              --scope=user|--scope=all) deny ;;
+            esac
+            if [ "$arg" = "agent" ] && [ "$prev" = "--scope" ]; then allowed=1; fi
+            if [ "$arg" = "user" ] && [ "$prev" = "--scope" ]; then deny; fi
+            if [ "$arg" = "all" ] && [ "$prev" = "--scope" ]; then deny; fi
+            prev="$arg"
+          done
+          [ "$allowed" = "1" ] || deny
+          ;;
+      esac
+      ;;
+  esac
+fi
 
 audit "RUN $cmd $*"
 exec "$BSK_BIN" "$cmd" "$@"

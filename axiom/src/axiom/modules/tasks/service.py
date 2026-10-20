@@ -48,6 +48,7 @@ from axiom.modules.tasks.schemas import (
 from axiom.modules.tasks.tables import task_hints, tasks
 from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.tables import vulnerabilities
+from axiom.modules.vulnerability_reviews.repository import VulnerabilityReviewRepository
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.sandboxes.service import TaskSandboxManager
 from axiom.shared import model_registry as _model_registry  # noqa: F401
@@ -83,6 +84,7 @@ class TaskService:
         self.reason = ReasonRepository()
         self.plan = PlanRepository()
         self.reason_service = ReasonService(engine)
+        self.reviews = VulnerabilityReviewRepository()
         self.audit = AuditService(engine)
         self.sandboxes = sandboxes
 
@@ -723,6 +725,12 @@ class TaskService:
             task.id,
             now=now,
             failure_kind=failure_kind,
+        )
+        self.reviews.cancel_active_for_task(
+            conn,
+            task_id=task.id,
+            reason="任务已停止，取消未完成的漏洞审核",
+            now=now,
         )
         self.plan.abandon_open(
             conn,

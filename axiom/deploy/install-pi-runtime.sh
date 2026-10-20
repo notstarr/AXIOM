@@ -27,6 +27,11 @@ PI_DIR="${REPO}/runtime/pi/${PI_VERSION}"
 NODE_VER_SHORT="${NODE_VERSION#v}"
 NODE_DIR="${REPO}/runtime/node/${NODE_VER_SHORT}"
 NODE_DIR_V="${REPO}/runtime/node/${NODE_VERSION}"
+# Pi's floating ^1.x siblings are not reproducible: 1.3.0 renamed an export
+# that 1.1.0 imports, and Linux loads the codemode extension while macOS does
+# not.  Use the repository lockfile, which pins the tested 1.1.0 dependency set.
+PI_PACKAGE_JSON="${REPO}/deploy/pi-runtime/package.json"
+PI_PACKAGE_LOCK="${REPO}/deploy/pi-runtime/package-lock.json"
 
 # ── 已装好则直接校验退出 ────────────────────────────────────────────
 if [[ -x "${PI_DIR}/bin/pi" ]]; then
@@ -68,17 +73,22 @@ if [[ ! -e "${NODE_DIR_V}" ]]; then
   ln -sfn "${NODE_VER_SHORT}" "${NODE_DIR_V}"
 fi
 
-# ── 2. npm 安装 pi-coding-agent ────────────────────────────────────
+# ── 2. npm 安装 pi-coding-agent（仓库 lockfile，锁定已知可用依赖集）────
+NPM="${NODE_DIR}/bin/npm"
+[[ -x "${NPM}" ]] || { echo "[pi-runtime] ERROR: npm not found in Node dist" >&2; exit 1; }
+[[ -f "${PI_PACKAGE_JSON}" && -f "${PI_PACKAGE_LOCK}" ]] \
+  || { echo "[pi-runtime] ERROR: deploy/pi-runtime lockfiles are missing" >&2; exit 1; }
 if [[ ! -f "${PI_DIR}/node_modules/@earendil-works/pi-coding-agent/package.json" ]]; then
-  echo "[pi-runtime] npm install @earendil-works/pi-coding-agent@${PI_VERSION} ..."
+  echo "[pi-runtime] npm ci from deploy/pi-runtime/package-lock.json ..."
   mkdir -p "${PI_DIR}"
-  printf '%s\n' \
-    '{"name":"axiom-pi-runtime","version":"0.0.0","private":true,"dependencies":{"@earendil-works/pi-coding-agent":"'"${PI_VERSION}"'"}}' \
-    > "${PI_DIR}/package.json"
-  NPM="${NODE_DIR}/bin/npm"
-  [[ -x "${NPM}" ]] || { echo "[pi-runtime] ERROR: npm not found in Node dist" >&2; exit 1; }
-  (cd "${PI_DIR}" && "${NPM}" install --omit=dev --no-audit --no-fund)
+  cp "${PI_PACKAGE_JSON}" "${PI_DIR}/package.json"
+  cp "${PI_PACKAGE_LOCK}" "${PI_DIR}/package-lock.json"
+  (cd "${PI_DIR}" && "${NPM}" ci --omit=dev --no-audit --no-fund)
 fi
+
+# pi-web-access is intentionally not part of the lockfile: installing it can
+# hoist a newer @earendil-works/pi-codemode and break Pi on Linux.  Add web
+# search through an MCP server or a separately pinned extension if needed.
 
 # ── 3. bin/pi wrapper（与生产机同构）────────────────────────────────
 mkdir -p "${PI_DIR}/bin"

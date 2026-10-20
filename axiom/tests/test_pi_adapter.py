@@ -299,6 +299,23 @@ def test_pi_adapter_loads_only_selected_axiom_tool_extensions(
     assert ("-p" in argv) is (mode == "json")
 
 
+def test_pi_adapter_loads_web_access_extension_only_when_search_is_enabled(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    binary = runtime_root / "bin" / "pi"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("", encoding="utf-8")
+    package = runtime_root / "node_modules" / "pi-web-access"
+    package.mkdir(parents=True)
+    executor = PiBootstrapExecutor(pi_worker(binary))
+
+    def extensions(tool_names: list[str]) -> list[str]:
+        argv = executor._build_argv("测试提示", tmp_path / "sessions", tool_names)
+        return [argv[index + 1] for index, value in enumerate(argv) if value == "--extension"]
+
+    assert str(package) in extensions(["read", "web_search", "fetch_content"])
+    assert str(package) not in extensions(["read", "write", "edit"])
+
+
 @pytest.mark.parametrize("mode", ["json", "rpc"])
 def test_pi_adapter_merges_only_snapshotted_mcp_tools_into_the_stage_allowlist(
     tmp_path: Path, mode: str
@@ -589,7 +606,7 @@ def test_native_tool_contracts_are_fixed_by_phase_and_run_mode() -> None:
         "edit",
         "bash",
         "web_search",
-        "fetch_web_content",
+        "fetch_content",
     ]
     assert native_tool_names("reason", "conclude") == [
         "read",
@@ -597,7 +614,7 @@ def test_native_tool_contracts_are_fixed_by_phase_and_run_mode() -> None:
         "edit",
         "bash",
         "web_search",
-        "fetch_web_content",
+        "fetch_content",
     ]
     assert native_tool_names("explore", "execute") == [
         "read",
@@ -605,7 +622,7 @@ def test_native_tool_contracts_are_fixed_by_phase_and_run_mode() -> None:
         "edit",
         "bash",
         "web_search",
-        "fetch_web_content",
+        "fetch_content",
     ]
     assert native_tool_names("explore", "conclude") == [
         "read",
@@ -613,7 +630,7 @@ def test_native_tool_contracts_are_fixed_by_phase_and_run_mode() -> None:
         "edit",
         "bash",
         "web_search",
-        "fetch_web_content",
+        "fetch_content",
     ]
     assert native_tool_names("plan", "execute") == [
         "read",
@@ -621,7 +638,7 @@ def test_native_tool_contracts_are_fixed_by_phase_and_run_mode() -> None:
         "edit",
         "bash",
         "web_search",
-        "fetch_web_content",
+        "fetch_content",
     ]
     assert native_tool_names("plan", "conclude") == [
         "read",
@@ -629,7 +646,7 @@ def test_native_tool_contracts_are_fixed_by_phase_and_run_mode() -> None:
         "edit",
         "bash",
         "web_search",
-        "fetch_web_content",
+        "fetch_content",
     ]
     assert native_tool_names("review", "execute") == ["read", "write", "edit", "bash"]
     assert native_tool_names("review", "conclude") == ["read", "write", "edit", "bash"]

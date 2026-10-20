@@ -101,7 +101,7 @@
             <label class="sto-muted" style="font-size:10.5px;">URL</label>
             <input x-model="rr.wsForm.url" class="sto-input">
             <div class="flex items-center" style="gap:7px;">
-              <select x-model="rr.wsForm.family" class="sto-input" style="width:auto;"><option value="posix">posix</option><option value="windows">windows</option></select>
+              <select x-model="rr.wsForm.family" class="sto-input" style="width:auto;"><option value="auto">自动判定（首次测试）</option><option value="posix">posix</option><option value="windows">windows</option></select>
               <span style="flex:1;"></span>
               <button @click="rrWsTest()" class="sto-minibtn">测试连接</button>
               <button @click="rrWsSave()" class="sto-btn" style="padding:6px 12px;">保存</button>
@@ -254,10 +254,7 @@
         <input x-model="rr.wsCreate.name" class="sto-input" placeholder="例：magic-admin 冰蝎">
         <label class="text-xs font-semibold text-slate-500">URL</label>
         <input x-model="rr.wsCreate.url" class="sto-input" placeholder="https://target/shell.php">
-        <div class="flex" style="gap:8px;">
-          <select x-model="rr.wsCreate.family" class="sto-input" style="width:auto;"><option value="posix">posix</option><option value="windows">windows</option></select>
-          <input x-model="rr.wsCreate.remark" class="sto-input" style="flex:1;" placeholder="备注（可选）">
-        </div>
+        <input x-model="rr.wsCreate.remark" class="sto-input" placeholder="备注（可选）">
       </div>
       <div class="flex justify-end" style="gap:8px; margin-top:14px;">
         <button @click="rr.wsCreateOpen = false" class="sto-minibtn">取消</button>

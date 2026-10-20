@@ -495,7 +495,7 @@ class DispatchService:
             raise ConflictError("Legacy Task is read-only")
         if task_state["archived"]:
             raise ConflictError("已归档任务不再接受 Worker 调度")
-        if kind != "review" and task_state["status"] != "running":
+        if task_state["status"] != "running":
             raise ConflictError("Only a running Task can dispatch work")
         if (
             kind != "review"

@@ -1,17 +1,17 @@
 ---
 name: browser-skill
 description: |
-  使用 bsk 命令驱动用户的真实浏览器（已登录态）：访问页面、填表、点击、
-  接口探测、抓取数据。要求本机 bsk CLI 与浏览器扩展已连接。
+  使用 bsk 命令驱动专用 Chrome profile（VPS 远程模式经 bsk daemon）：
+  访问页面、填表、点击、接口探测、抓取数据。要求 Mac 扩展已 Remote 配对。
   本版本为 axiom 定制：凭据提取是渗透测试的合法产出；scope 外目标禁止访问。
-  命令面与上游 bsk 0.3.2 对齐（网站调试用 debug；network 仅索引）。
+  命令面与上游 bsk 0.3.x 对齐（网站调试用 debug；network 仅索引）。
 ---
 
 # browser-skill（axiom 定制）
 
-通过 `$AXIOM_BSK` 包装器驱动用户的真实 Chromium 浏览器。自动化在独立的
-**Agent Window** 中进行，使用用户已有的登录态与 Cookie。用户自己的标签页
-受保护——除非显式 borrow，用完必须归还。
+通过 `$AXIOM_BSK` 包装器驱动专用 Chrome profile。自动化在独立的 **Agent
+Window** 中进行。VPS 远程模式只使用 task-created tabs，不借用用户标签；
+upload/download 不可用；`credentials` 只读取专用 profile。
 
 **不要**将该 skill 用于：无浏览器场景、扩展安装、或用户只想要操作说明的情况。
 **scope 边界**:Intent 的目标范围在**派发时**由 AXIOM 校验(声明即边界);浏览器工具
@@ -23,26 +23,21 @@ description: |
 ## 必需生命周期
 
 ```text
-1. "$AXIOM_BSK" session start [--browser <instance-id>]   # 记下输出的 4 字符 session id
+1. "$AXIOM_BSK" session start [--no-focus]                # 记下输出的 4 字符 session id
 2. "$AXIOM_BSK" <命令> --session <id>                     # 所有会话级命令都要带
 3. "$AXIOM_BSK" session stop <id>                         # 成功与失败路径都必须执行
 ```
 
-不要依赖空闲超时清理。目标达成即 stop。stop 会归还借用的标签。
-任何命令会自动拉起所需后台服务；不要手工管理守护进程。
+不要依赖空闲超时清理。目标达成即 stop；stop 关闭本次 session 的标签。
+远程 daemon 常驻 VPS，不要手工启动/停止；排障用 `bsk doctor` / `bsk status`。
 Agent Window 不需要打断用户时，session start 加 `--no-focus`。
-启动/传输问题重试一次仍存在时运行 `bsk doctor`。
+传输/连接问题重试一次仍存在时运行 `bsk doctor`。
 
-## 多浏览器实例（多身份）
+## 浏览器身份（VPS 远程模式）
 
-本机可能同时在线多个浏览器实例（`bsk browsers` 查看）。每个实例是独立的
-Cookie 沙箱 = **独立的登录身份**，登录态持久保存在实例内，session 重开不丢。
-
-- 任务书指定了浏览器实例/身份时：`session start --browser <instance-id> --no-focus`，该 session 的全部操作发生在该身份的登录态下。
-- 多实例在线且任务书未指定时，`session start` 会报 "more than one browser is online"——按任务书语义选择对应实例，不要盲选。
-- 阶段或任务要求覆盖多个身份时（如 bootstrap 需要各身份基线）：对每个实例分别 `session start --browser <id>` → 取证/操作 → `session stop <id>`，逐个走完再收口；不得只用一个实例的登录态代表全部，也不得凭推断合并身份。
-- 目标实例从 `bsk browsers` 列表消失 = 扩展休眠掉线：在该实例窗口点一下 BrowserSkill 扩展图标唤醒重连，再重试 start。
-- session 存活期间心跳会保活扩展连接；同一身份的后续 intent 复用同一实例。
+远程模式只连接配对的专用 Chrome profile（`bsk browsers` 应显示一个在线设备）。
+不要使用 `--browser` 在多个实例间切换；需要多身份时，配对多个专用 profile/设备。
+session 创建的所有标签都在 Agent Window；只使用 `tab list --scope agent` 查看本 session 的标签。
 
 ## 单一可观察目标
 
@@ -64,19 +59,6 @@ Cookie 沙箱 = **独立的登录身份**，登录态持久保存在实例内，
 读取升级顺序：observe → probe-hover → snapshot → get-html → screenshot。
 不要一上来就用原始 HTML 或截图找普通控件。
 
-## 借用用户标签（登录态复用）
-
-worker 需要用户已登录的页面时：
-
-```bash
-"$AXIOM_BSK" tab list --scope user --session <id>     # 找到目标标签 id
-"$AXIOM_BSK" tab borrow <tab-id> --session <id>       # 借用（移入 Agent Window）
-"$AXIOM_BSK" evaluate "..." --session <id>            # 在用户会话上下文执行
-"$AXIOM_BSK" tab return <tab-id> --session <id>       # 用完立即归还
-```
-
-借用期间的操作以用户身份进行。用完立即归还，不要跨无关任务保持借用。
-
 ## 多标签与可见范围
 
 Agent Window 内可以有多个标签；后台标签不用选中也能被操作：
@@ -91,19 +73,10 @@ Agent Window 内可以有多个标签；后台标签不用选中也能被操作�
 `--tab-id` 可加在 observe / snapshot / get-html / screenshot / console / network /
 navigate / click / fill / select / press / evaluate 等命令上；不加时默认作用于 Agent
 Window 的当前活动标签。后台标签里的页面继续运行，viewport 与整页截图在后台也可用。
-不要自己编 tab id，也不要跨无关任务一直占着用户的标签。
+不要自己编 tab id，也不要跨无关任务一直占着标签。
 
-`tab list` 的可见范围——**判断"是否有别的 agent 在动这个浏览器"时必须知道**：
-
-- `--scope user`：用户自己的标签（任何非 Agent Window 的窗口）；
-- `--scope agent`：**本次查询所用 session** 的 Agent Window 内标签；
-- `--scope all`（默认）：上面两者之和。
-
-也就是说，用**自己**的 session 查 `--scope all` **看不到其他 session 的 Agent Window**。
-这不是隔离保证：用对方的 session id 查 `tab list --session <other-id> --scope agent`
-就能看到对方在开哪些页面（session id 从 `session list` 可得，不是秘密）。
-同一浏览器实例共享 Cookie，所以"我这边 `tab list` 很干净"不等于没人并行在同一
-登录态上操作——`session list` 里有几个 session，就有几个可能的并行动作者。
+`tab list` 在远程模式只允许 `--scope agent`（本 session 的 Agent Window 标签）；
+用户标签不可见、不可借用，wrapper 会拒绝 `--scope user` / `--scope all` / 缺省 scope。
 
 ## 凭据提取（axiom 定制）
 
@@ -111,6 +84,7 @@ Window 的当前活动标签。后台标签里的页面继续运行，viewport �
 "$AXIOM_BSK" credentials --domain <domain> --session <id>
 ```
 
+远程模式只读取专用 profile；不要试图借用用户标签扩大范围。
 返回该域全部 Cookie（**含 HttpOnly**）+ 已打开页面的 localStorage/sessionStorage，
 以及拼好的 `Cookie` 请求头。渗透测试中会话凭据是合法产出：用于认证后接口探测
 （Authorization/Cookie 头）与对象级越权对照。**结果只写 evidence/ 目录**，
@@ -148,8 +122,8 @@ session start|stop|list   browsers   status   doctor   logs
 navigate   navigate-back   navigate-forward   reload   wait-for-navigation   wait-ms
 observe   snapshot   get-html   screenshot   console   network   debug
 click   hover   wheel   scroll-to   focus   blur   fill   select   press   evaluate
-tab list|create|close|select|borrow|return   window resize   emulate
-upload   download   request-help   record start|stop
+tab list|create|close|select   window resize   emulate
+request-help   record start|stop
 credentials --domain <domain> --session <id>   # axiom 定制
 ```
 
@@ -162,8 +136,6 @@ credentials --domain <domain> --session <id>   # axiom 定制
 "$AXIOM_BSK" scroll-to <ref> --session <id>               # 滚动到指定元素(触发懒加载)
 "$AXIOM_BSK" wheel --session <id>                         # 原生滚轮事件
 "$AXIOM_BSK" click <ref> --capture <capture-id> --image-x <x> --image-y <y>
-"$AXIOM_BSK" upload <ref> --file <path>
-"$AXIOM_BSK" download <ref> --out <path>
 
 - `network` 是 DevTools 面板的 worker 版，**只返回索引**：每条一行（method / url /
   status / mime_type / resource_type / 失败原因），游标式取增量——先记 `--since`
@@ -210,6 +182,6 @@ credentials --domain <domain> --session <id>   # axiom 定制
 
 ## 产物约定（axiom）
 
-- screenshot/download 一律 `--out` 到运行目录 `evidence/` 下；
+- screenshot 一律 `--out` 到运行目录 `evidence/` 下；
 - console/network 留证时重定向到 `evidence/` 文件；
 - credentials 结果写 `evidence/credentials-<domain>.json`。

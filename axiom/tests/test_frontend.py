@@ -1261,7 +1261,9 @@ global.fetch = async (url, init = {{}}) => {{
 }};
 eval(fs.readFileSync({json.dumps(str(core))}, 'utf8'));
 eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
-const methods = window.AxiomModules.files.methods;
+// 与生产的 app.js 一致：core 与 files 的 methods 合并进同一组件，
+// 否则 core 里的 renderMarkdown / sanitizePreviewHtml 在 ctx 上不存在。
+const methods = Object.assign({{}}, window.AxiomModules.core.methods, window.AxiomModules.files.methods);
 const ctx = Object.assign({{
   artifactCenterSelected: null,
   isImageFile: name => /\\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(name),
@@ -1781,7 +1783,10 @@ def test_frontend_and_static_assets_are_served(client):
 
     files = client.get("/static/templates/files.html")
     assert files.status_code == 200
-    assert "artifactKindLabel" in files.text
+    # 56118b6 把产物中心改成 VS Code 形态后，kind 徽章 artifactKindLabel 已被
+    # 文件夹/文件名标签取代（该方法现无调用方）；断言跟随当前结构。
+    assert "artifactFolderLabel" in files.text
+    assert "artifactFileName" in files.text
     assert "explore.findings" in files.text
     assert "explore.leads" in files.text
     assert "explore.evidence" in files.text
@@ -1909,14 +1914,16 @@ def test_frontend_and_static_assets_are_served(client):
     assert "最近 Plan 决策" in human.text
     assert "planDecisionLabel(project.project.last_plan_decision)" in human.text
     assert 'x-if="humanTab === \'workspace\'"' in human.text
-    assert 'x-if="humanTab === \'artifacts\'"' in human.text
-    assert 'x-if="humanTab === \'conversation\'"' in human.text
-    assert "sendExploreIntervention()" in human.text
-    assert "exploreConversationIntents()" in human.text
-    assert "jumpExploreConversationToLatest()" in human.text
-    assert 'x-ref="exploreConversationScroll"' in human.text
-    assert "event.tool" in human.text
-    assert "humanArtifactPageCount" in human.text
+    # 56118b6（产物中心 VS Code 形态）移除了 human 视图的 artifacts / conversation
+    # 两个页签，以及 sendExploreIntervention / exploreConversationIntents /
+    # jumpExploreConversationToLatest / humanArtifactPageCount 等 explore 会话符号；
+    # 产物浏览改由「文件」页承载。后端 interventions API 仍保留。
+    assert 'x-if="humanTab === \'todos\'"' in human.text
+    assert "humanTab === 'artifacts'" not in human.text
+    assert "humanTab === 'conversation'" not in human.text
+    assert "sendExploreIntervention" not in human.text
+    assert "exploreConversationIntents" not in human.text
+    assert "humanArtifactPageCount" not in human.text
     assert "triggerManualReason()" not in human.text
     assert "manual-reason-trigger" not in human.text
     assert "sto-seg" in human.text
@@ -1968,7 +1975,9 @@ def test_frontend_and_static_assets_are_served(client):
     assert "openVulnerabilityLocation" in adapter
     assert "applyWorkerRouteParams" in core
     assert "new URLSearchParams(routeQuery)" in core
-    assert "explore-conversation" in adapter
+    # 56118b6 移除 explore 实时会话 UI 后，adapter 不再含 explore-conversation 路由；
+    # interventions 后端能力仍保留，故只反向断言旧路由不得回归。
+    assert "explore-conversation" not in adapter
     assert "interventions" in adapter
     assert "thinking_enabled" in adapter
     assert "thinking_level" in adapter
@@ -2222,7 +2231,7 @@ def test_vulnerability_review_history_retry_and_deep_links() -> None:
         "retry": True,
         "artifactReviewRun": "vr000002",
     }
-    assert result["duplicateHash"] == "#/vulnerabilities?task=t_153&vulnerability=v001"
+    assert result["duplicateHash"] == "#/facts?task=t_153&vulnerability=v001"
     assert result["artifactHash"] == "#/files?task=t_153&folder=vr000002&artifact=a_review"
     assert result["afterTrigger"] == {
         "latest": "vr000003",
@@ -2477,7 +2486,9 @@ def test_vulnerability_deep_link_selects_an_item_outside_the_current_page() -> N
     result = _run_vulnerability_deep_link_fixture()
 
     assert result == {
-        "hash": "#/vulnerabilities?task=t_153&vulnerability=v001",
+        # 62989e0 把「重要事实」路由从 #/vulnerabilities 改名为 #/facts
+        # （旧地址仅作为入站书签兼容保留），故生成的 hash 应为 #/facts。
+        "hash": "#/facts?task=t_153&vulnerability=v001",
         "taskFilter": "t_153",
         "selected": "t_153:v001",
         "first": "v001",
@@ -2499,7 +2510,7 @@ def test_broken_vulnerability_deep_link_never_selects_a_different_record(
     result = _run_vulnerability_deep_link_error_fixture(archived=archived)
 
     assert result == {
-        "hash": "#/vulnerabilities?task=t_153",
+        "hash": "#/facts?task=t_153",
         "selectedKey": "",
         "selectedRecord": None,
         "blocked": True,

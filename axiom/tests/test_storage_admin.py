@@ -19,6 +19,26 @@ def _wait_for_snapshot(data_dir, timeout_s: float = 15.0) -> dict:
     raise AssertionError(f"background snapshot not written within {timeout_s}s")
 
 
+def _assert_table_stats(tables, engine) -> None:
+    """校验数据库表统计的形状与来源。
+
+    该端点按 pg_total_relation_size 倒序取前 10 张表。空库里各表大小只取决于索引页
+    数量，究竟哪 10 张上榜并不确定 —— 新增带索引的表（如 pg0024/pg0025 的
+    webshell/c2）就会把原先断言的 llm_token_usage 挤出前十。故此处只校验形状，
+    并确认表名确实来自 axiom schema。
+    """
+    assert 0 < len(tables) <= 10
+    with engine.connect() as conn:
+        real = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT tablename FROM pg_tables WHERE schemaname = 'axiom'")
+            )
+        }
+    assert {table["name"] for table in tables} <= real
+    assert all(table["total_bytes"] >= 0 and table["rows"] >= 0 for table in tables)
+
+
 def _make_log(logs: Path, name: str, payload: bytes) -> None:
     logs.mkdir(parents=True, exist_ok=True)
     (logs / name).write_bytes(payload)
@@ -46,7 +66,7 @@ def test_overview_first_call_returns_skeleton_then_background_fills(client, engi
     assert runs["bytes"] == 1000
     assert runs["items"] == 1
     assert filled["refreshing"] is False
-    assert any(t["name"] == "llm_token_usage" for t in filled["database"]["tables"])
+    _assert_table_stats(filled["database"]["tables"], engine)
     assert filled["logs"]["keep_days"] == 30
 
 
@@ -66,7 +86,7 @@ def test_refresh_endpoint_recomputes_and_caches(client, engine, data_dir):
     assert runs["items"] == 2
     assert body["total_bytes"] >= 1500
     assert body["disk"]["total_bytes"] > 0
-    assert any(t["name"] == "llm_token_usage" for t in body["database"]["tables"])
+    _assert_table_stats(body["database"]["tables"], engine)
 
     cached = client.get("/api/v1/storage/overview")
     assert cached.json()["categories"] == body["categories"]

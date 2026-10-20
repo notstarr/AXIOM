@@ -255,7 +255,11 @@ class Reconciler:
             ),
             *selected_reason_queue,
             *self._selected_plan_queue(task),
-            *(item for item in task.review_runs if item.status == "pending"),
+            *(
+                item
+                for item in task.review_runs
+                if task.status == "running" and item.status == "pending"
+            ),
         ]
         candidates.sort(
             key=lambda item: (

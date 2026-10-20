@@ -22,6 +22,7 @@ from axiom.modules.workers.pi_config import (
     probe_developer_role,
     provider_auth_headers,
     upstream_request_url,
+    with_opencode_session,
 )
 from axiom.modules.workers.repository import WorkerRepository
 from axiom.modules.workers.schemas import (
@@ -46,9 +47,13 @@ class WorkerService:
     def upsert(self, name: str, command: UpsertWorker) -> Worker:
         name = self._normalize_name(name)
         if command.worker_type == "pi":
-            command = command.model_copy(
-                update={"config": canonicalize_pi_worker_config(command.config)}
+            config = canonicalize_pi_worker_config(command.config)
+            # OpenCode Go 的 session 由客户端生成：用户填了保留，空着则沉淀一个
+            # Rat-xxxxxxxxx，保证同一后端后续请求保持稳定。
+            config["headers"] = with_opencode_session(
+                str(config.get("base_url") or ""), config.get("headers")
             )
+            command = command.model_copy(update={"config": config})
         with self.engine.begin() as conn:
             return self._normalize_worker(
                 self.repository.upsert(conn, name=name, command=command, now=utcnow())
@@ -337,6 +342,7 @@ class WorkerService:
         base_url: str = "",
         api_key: str = "",
         provider_api: str = "",
+        headers: dict[str, str] | None = None,
     ) -> WorkerModelsResult:
         connection = self._connection(
             name,
@@ -344,6 +350,7 @@ class WorkerService:
                 base_url=base_url,
                 api_key=api_key,
                 provider_api=provider_api,
+                headers=headers or {},
             ),
         )
         if not connection.base_url:
@@ -352,7 +359,9 @@ class WorkerService:
         try:
             response = httpx.get(
                 upstream_request_url(provider_api, connection.base_url, "/models"),
-                headers=provider_auth_headers(provider_api, connection.api_key),
+                headers=provider_auth_headers(
+                    provider_api, connection.api_key, connection.headers
+                ),
                 timeout=10,
                 proxy=self._llm_proxy(PiWorkerConfig(llm_proxy=connection.llm_proxy)),
             )
@@ -421,7 +430,9 @@ class WorkerService:
             }
         headers = {
             "Content-Type": "application/json",
-            **provider_auth_headers(provider_api, connection.api_key),
+            **provider_auth_headers(
+                provider_api, connection.api_key, connection.headers
+            ),
         }
         try:
             response = httpx.post(
@@ -464,6 +475,7 @@ class WorkerService:
             connection.api_key,
             connection.model,
             provider_api,
+            extra_headers=connection.headers,
             proxy=self._llm_proxy(PiWorkerConfig(llm_proxy=connection.llm_proxy)),
         )
         if role_supported is None:
@@ -491,17 +503,25 @@ class WorkerService:
                         "provider_api": command.provider_api or "openai-completions",
                         "llm_proxy": command.llm_proxy,
                         "base_url": command.base_url,
+                        "headers": with_opencode_session(
+                            command.base_url, command.headers
+                        ),
                     }
                 )
             raise
         if worker.worker_type != "pi":
             raise ConflictError(f"Worker does not use the Pi adapter: {name}")
         config = PiWorkerConfig.model_validate(worker.config)
+        base_url = command.base_url.strip() or config.base_url
         return WorkerConnectionRequest(
-            base_url=command.base_url.strip() or config.base_url,
+            base_url=base_url,
             api_key=command.api_key.strip() or config.api_key,
             model=command.model.strip() or config.model,
             provider_api=command.provider_api.strip() or config.provider_api,
+            # 草稿头优先；未提供时沿用已保存配置，空 session 由服务端补齐
+            headers=with_opencode_session(
+                base_url, command.headers or config.headers
+            ),
             # 草稿开关优先（编辑器测试未保存配置）；持久化语义以 worker 配置为准
             llm_proxy=command.llm_proxy or config.llm_proxy,
         )

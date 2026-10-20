@@ -55,6 +55,7 @@ def login(
         value=res.token,
         max_age=res.expires_in_seconds,
         httponly=True,
+        secure=True,
         samesite="lax",
         path="/",
     )
@@ -94,6 +95,7 @@ def change_password(
         value=res.token,
         max_age=res.expires_in_seconds,
         httponly=True,
+        secure=True,
         samesite="lax",
         path="/",
     )

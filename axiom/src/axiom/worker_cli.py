@@ -1036,7 +1036,7 @@ def register_worker_commands(main: click.Group) -> None:
     @webshell_group.command("create")
     @click.option("--name", required=True)
     @click.option("--url", required=True)
-    @click.option("--family", type=click.Choice(("posix", "windows")), default="posix")
+    @click.option("--family", type=click.Choice(("auto", "posix", "windows")), default="auto")
     @click.option("--method", type=click.Choice(("GET", "POST")), default="POST")
     @click.option("--body-template", default="cmd={{cmd}}")
     @click.option("--query-template", default="")
@@ -1046,6 +1046,7 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--response-end", default="")
     @click.option("--response-decode", type=click.Choice(("none", "base64")), default="none")
     @click.option("--remark", default="")
+    @click.option("--insecure", is_flag=True, help="Disable TLS verification for this WebShell endpoint")
     def webshell_create(
         name: str,
         url: str,
@@ -1059,6 +1060,7 @@ def register_worker_commands(main: click.Group) -> None:
         response_end: str,
         response_decode: str,
         remark: str,
+        insecure: bool,
     ) -> None:
         task_id = _red_team_task_id()
         payload = {
@@ -1070,6 +1072,7 @@ def register_worker_commands(main: click.Group) -> None:
                 "headers": json.loads(headers_json or "{}"),
                 "body": body_template,
                 "query": query_template,
+                "verify_tls": not insecure,
             },
             "response": {
                 "mode": response_mode,

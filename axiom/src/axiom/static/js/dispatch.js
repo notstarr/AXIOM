@@ -410,6 +410,8 @@ window.AxiomModules.dispatch = {
         params.set('provider_api', worker.pi_provider_api || 'openai-completions');
         if ((worker.pi_api_key || '').trim()) params.set('api_key', worker.pi_api_key.trim());
         if ((worker.name || '').trim()) params.set('worker_name', worker.name.trim());
+        const headers = this.workerHeaderDict(worker);
+        if (Object.keys(headers).length) params.set('headers', JSON.stringify(headers));
         const data = await this.api('GET', `/settings/dispatch/models?${params.toString()}`);
         worker.available_models = Array.isArray(data.models) ? data.models : [];
         worker.models_error = data.error || '';
@@ -637,6 +639,7 @@ window.AxiomModules.dispatch = {
         pi_model_context_window: normalizedContextWindow,
         pi_api_key: worker.pi_api_key || '',
         pi_api_key_masked: worker.pi_api_key_masked || '',
+        pi_headers: this.workerHeaderDict(worker),
         pi_thinking_enabled: !!worker.pi_thinking_enabled,
         pi_thinking_level: normalizedThinkingLevel,
         llm_proxy: !!worker.llm_proxy,
@@ -798,6 +801,7 @@ window.AxiomModules.dispatch = {
           pi_model: worker.pi_model,
           pi_provider_api: worker.pi_provider_api || 'openai-completions',
           pi_api_key: worker.pi_api_key || '',
+          pi_headers: this.workerHeaderDict(worker),
           llm_proxy: !!worker.llm_proxy,
         });
         worker.test_result = result;
