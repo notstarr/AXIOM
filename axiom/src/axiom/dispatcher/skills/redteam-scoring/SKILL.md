@@ -91,6 +91,9 @@ Explore 上报前按本表自评 `--points`。Reviewer 按同一张表核定。�
 3. 凭证已经换成主机、域控或应用管理员控制的，按控制成果计，不另计办公账号分。只有凭证、不能登录的不计分。
 4. 仅扫描探测、未取得权限的不计分，不要上报。
 5. 每条计分成果都要有可复现证据：请求响应、命令回显、录屏或导出样本。
+6. **对象（`--target-asset`）必须写你实际从哪打进去的公网入口**，格式为 `域名或公网IP[:端口]`，可加括号说明，例如 `api.kkgroup.cn（统一认证开放平台）`、`119.23.232.213:8080/prismart`、`shk.kkguan.com/universe（生产数据开发平台，宿主 192.168.0.95）`。**不要只写内网 IP**——即使成果最终落在内网主机上，对象也要先写你是从哪个公网入口进去的，内网地址只放在括号里作为落点说明。这样评审和复盘才能看清「外网打进去」这条路径，而不是误以为是从内网直接打的。不要只写内部代号、应用简称或资产标签（`member-management`、`app-01`、`核心应用` 都不合格）。
+7. **取证通道也要在描述里说清**：是从公网直接打、经目标自身 SSRF 打、还是经已控主机跳板打。经 bsk 浏览器通道取证的，必须写明该通道只访问了范围合规的目标；凡是通过 bsk 直接访问私网地址取得的结果，不予计分。
+8. 证据用 `--evidence-path evidence/<文件名>`；控制台按这些文件的原文件名展示证据链，文件名要能自解释。
 
 ## 上报示例
 
@@ -104,7 +107,7 @@ axiom explore result report \
   --description '普通成员会话创建角色并批量赋权，变更已落库。资产等级：核心应用。' \
   --principal 'user:member' \
   --capability-gained 'app:admin' \
-  --target-asset 'member-management' \
+  --target-asset 'member.kkgroup.cn（成员管理后台）' \
   --evidence-path 'evidence/request.txt' \
   --evidence-path 'evidence/response.txt'
 ```
@@ -119,7 +122,7 @@ axiom explore result report \
   --description '命令回显为 uid=0。资产等级：核心。' \
   --principal 'user:member' \
   --capability-gained 'host:root' \
-  --target-asset 'app-01' \
+  --target-asset 'app-01.kkgroup.cn:8080（核心应用）' \
   --evidence-path 'evidence/id.txt'
 ```
 

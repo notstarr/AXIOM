@@ -918,7 +918,12 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--capability-gained", "capabilities_gained", multiple=True)
     @click.option("--capability-before", "capabilities_before", multiple=True)
     @click.option("--capability-after", "capabilities_after", multiple=True)
-    @click.option("--target-asset", default="")
+    @click.option(
+        "--target-asset",
+        default="",
+        help="对象：实际打进去的公网入口（域名或公网 IP[:端口]），可带括号说明，"
+        "如 shk.kkguan.com/universe（生产平台，宿主 192.168.0.95）；不要只写内网 IP。",
+    )
     @click.option("--data-target-id", default=None)
     @click.option("--sample-count", type=int, default=None)
     @click.option("--sample-bytes", type=int, default=None)
