@@ -76,26 +76,25 @@
       <div>
         <template x-for="event in guardAudit.events" :key="event.id">
           <article class="sto-eventrow" :class="event.decision === 'BLOCK' ? 'block' : 'allow'">
-            <!-- 判定 + 内容 + 原因：一行内看完，不需要展开 -->
-            <div style="display:grid; grid-template-columns:104px minmax(0,1fr); gap:14px; align-items:start;">
-              <span class="ga-verdict" :class="event.decision === 'BLOCK' ? 'block' : 'allow'"
-                x-text="guardAuditStatusLabel(event)"></span>
-              <div style="min-width:0;">
+            <!-- 左：判定与它作用于什么；右：出处与归属 -->
+            <div class="ga-row">
+              <div class="ga-main">
+                <span class="ga-verdict" :class="event.decision === 'BLOCK' ? 'block' : 'allow'"
+                  x-text="guardAuditStatusLabel(event)"></span>
                 <p class="ga-content" x-text="guardAuditContent(event)"></p>
                 <p class="ga-reason" :class="event.decision === 'BLOCK' ? 'block' : 'allow'"
                   x-text="guardAuditReason(event)"></p>
               </div>
-            </div>
 
-            <!-- 时间 / 依据 / 任务 / 意图 / 模式 -->
-            <div class="ga-meta">
-              <span class="ga-chip"><b>时间</b><span x-text="formatDate(event.created_at)"></span></span>
-              <span class="ga-chip"><b>依据</b><span x-text="guardAuditSourceLabel(event)"></span></span>
-              <span class="ga-chip"><b>模式</b><span x-text="guardAuditModeLabel(event)"></span></span>
-              <span class="ga-chip"><b>任务</b><span x-text="event.project_id || '未知'"></span></span>
-              <span class="ga-chip"><b>意图</b><span x-text="event.intent_id || '无'"></span></span>
-              <span class="ga-chip" x-show="event.tool_name"><b>工具</b><span x-text="event.tool_name"></span></span>
-              <span class="ga-chip" x-show="event.model_latency_ms"><b>耗时</b><span x-text="`${event.model_latency_ms}ms`"></span></span>
+              <dl class="ga-side">
+                <div><dt>时间</dt><dd x-text="formatDate(event.created_at)"></dd></div>
+                <div><dt>依据</dt><dd x-text="guardAuditSourceLabel(event)"></dd></div>
+                <div><dt>模式</dt><dd x-text="guardAuditModeLabel(event)"></dd></div>
+                <div><dt>任务</dt><dd x-text="event.project_id || '未知'"></dd></div>
+                <div><dt>意图</dt><dd x-text="event.intent_id || '无'"></dd></div>
+                <div x-show="event.tool_name"><dt>工具</dt><dd x-text="event.tool_name"></dd></div>
+                <div x-show="event.model_latency_ms"><dt>耗时</dt><dd x-text="`${event.model_latency_ms}ms`"></dd></div>
+              </dl>
             </div>
 
             <div class="flex items-center" style="gap:9px; margin-top:8px;">

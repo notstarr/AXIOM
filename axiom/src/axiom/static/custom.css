@@ -1559,11 +1559,25 @@
   .ga-reason.block { color: #b42318; }
   .ga-reason.allow { color: #067647; }
 
-  /* Provenance row: time, basis, mode, task, intent, tool, latency. */
-  .ga-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
-  .ga-chip { display: inline-flex; align-items: baseline; gap: 5px; padding: 3px 8px; border-radius: 7px; background: var(--sto-inset); border: 1px solid var(--sto-line); font-size: 10.5px; color: var(--sto-fg-2); white-space: nowrap; }
-  .ga-chip b { font-weight: 600; color: var(--sto-fg-3); font-size: 9.5px; letter-spacing: .04em; }
-  .ga-chip span { font-variant-numeric: tabular-nums; }
+  /* One record: what was judged on the left, where it came from on the right.
+     Keeping them apart stops a long command from pushing the provenance away
+     and lets the eye scan either column on its own. */
+  .ga-row { display: grid; grid-template-columns: minmax(0, 1fr) 232px; gap: 20px; align-items: start; }
+  .ga-main { min-width: 0; display: grid; grid-template-columns: 92px minmax(0, 1fr); column-gap: 14px; align-items: start; }
+  .ga-main .ga-verdict { grid-column: 1; grid-row: 1; }
+  .ga-main .ga-content { grid-column: 2; grid-row: 1; }
+  .ga-main .ga-reason { grid-column: 2; grid-row: 2; }
+
+  /* Provenance: right-aligned label/value pairs, one per line. */
+  .ga-side { margin: 0; padding-left: 18px; border-left: 1px solid var(--sto-line); display: grid; gap: 5px; }
+  .ga-side > div { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+  .ga-side dt { margin: 0; font-size: 9.5px; font-weight: 600; letter-spacing: .04em; color: var(--sto-fg-3); }
+  .ga-side dd { margin: 0; font-size: 11px; color: var(--sto-fg-2); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+  @media (max-width: 900px) {
+    .ga-row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+    .ga-side { padding-left: 0; padding-top: 10px; border-left: 0; border-top: 1px solid var(--sto-line); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
   @media (max-width: 1180px) {
     .guard-audit-main { grid-template-columns: 1fr; overflow-y: auto; }
     .guard-audit-main > .sto-panel:last-child { overflow: visible; max-height: none; }
