@@ -1526,6 +1526,24 @@
   .sto-statflat > div:hover { border-color: var(--sto-fg-3); }
   .sto-statflat > div.stat-active { border-color: var(--sto-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sto-accent) 14%, transparent); }
 
+  /* Compact stat tile used by the guard-audit left column.  Same visual language
+     as .sto-statflat, sized for a two-column grid inside a narrow sidebar. */
+  .sto-minicard { padding: 10px 12px; background: var(--sto-inset); border: 1px solid var(--sto-line); border-radius: 11px; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
+  .sto-minicard:hover { border-color: var(--sto-fg-3); }
+  .sto-minicard.stat-active { border-color: var(--sto-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sto-accent) 14%, transparent); }
+  .sto-minicard .k { display: flex; align-items: center; gap: 5px; font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--sto-fg-3); }
+  .sto-minicard .k::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .9; flex-shrink: 0; }
+  .sto-minicard b { display: block; margin-top: 3px; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; color: var(--sto-fg); }
+
+  /* Guard audit: filter rail on the left, records on the right.  Collapses to a
+     single column when the viewport cannot hold both without squeezing rows. */
+  .guard-audit-main { display: grid; grid-template-columns: 296px minmax(0, 1fr); gap: 16px; align-items: start; overflow: hidden; }
+  .guard-audit-main > .sto-panel:last-child { overflow: auto; min-width: 0; max-height: 100%; }
+  @media (max-width: 1180px) {
+    .guard-audit-main { grid-template-columns: 1fr; overflow-y: auto; }
+    .guard-audit-main > .sto-panel:last-child { overflow: visible; max-height: none; }
+  }
+
   /* ── intent 悬浮卡（全局单实例，跟随鼠标 fixed 定位；pointer-events:none 不挡交互） ── */
   .intent-hover-tip {
     position: fixed;
@@ -1654,3 +1672,69 @@
   :root.dark .node-card__expand.is-btn.is-open { color: #fff; background: #0f766e; border-color: #0f766e; }
 
 
+
+/* 红队任务目标：句内积分输入框
+   全局 input 样式会把它渲染成独立控件（灰底 + 圆角 + 固定高度），这里全部
+   还原成正文排版：透明背景、无边框圆角、跟随文字基线，只留一条下划线提示
+   可编辑。 */
+.goal-points-input::-webkit-outer-spin-button,
+.goal-points-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+/* 特异性要压过 apple.css 的
+   `input:not([type="checkbox"]):not([type="radio"]):not([type="file"])` (0,3,1)，
+   否则会被渲染成独立的灰底圆角控件。 */
+html body .goal-sentence input.goal-points-input[type="number"],
+html body .goal-sentence input.goal-points-input {
+  -moz-appearance: textfield;
+  appearance: textfield;
+  width: 4.6em !important;
+  min-width: 0 !important;
+  height: auto !important;
+  margin: 0 3px !important;
+  padding: 0 2px 1px !important;
+  border: none !important;
+  border-bottom: 1px solid var(--border, #cbd5e1) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: inherit !important;
+  font-size: inherit !important;
+  font-family: inherit !important;
+  line-height: inherit !important;
+  vertical-align: baseline;
+  text-align: center;
+}
+html body .goal-sentence input.goal-points-input[type="number"]:focus,
+html body .goal-sentence input.goal-points-input:focus {
+  border: none !important;
+  border-bottom: 1px solid var(--accent, #0ea5e9) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* 红队目标行的容器：必须与漏洞模式的 textarea 完全同一套几何 ——
+   同样的内边距、行高、圆角、底色，且文字贴顶（不是垂直居中）。
+   数值全部用 rem/变量，跟随根字号缩放，不写死 px。 */
+.goal-sentence {
+  width: 100%;
+  box-sizing: border-box;
+  /* rows=3 的 textarea 实际高度：3 行 + 上下内边距 + 上下边框 */
+  min-height: calc(5rem + 2px);
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--surface-inset, #f8fafc);
+  color: var(--text-primary, #0f172a);
+  font-size: 13px;
+  line-height: 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  /* 与 textarea 一致：首行贴顶，且文字与数字共用同一条基线 */
+  align-items: baseline;
+  align-content: flex-start;
+}
+.goal-sentence.is-focused { border-color: var(--accent, #0ea5e9); box-shadow: 0 0 0 3px var(--accent-light, rgba(14,165,233,.12)); }

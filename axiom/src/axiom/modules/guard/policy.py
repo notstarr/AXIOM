@@ -189,15 +189,23 @@ def _model_decision(
             reason=f"监管模型不可用，按 fail-open 放行：{type(exc).__name__}",
             source="fail_open",
         )
-    _ = started  # retained for debugger/profiler inspection without persisting secrets
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    diagnostic = {"model_latency_ms": latency_ms, "raw_model_output": raw.strip()[:2_000]}
     verdict = _verdict(raw)
     if verdict == "1":
-        return GuardDecision(decision="ALLOW", source="model")
+        return GuardDecision(decision="ALLOW", source="model", **diagnostic)
     if verdict == "0":
-        return GuardDecision(decision="BLOCK", reason="监管模型判定阻断", source="model")
+        return GuardDecision(
+            decision="BLOCK", reason="监管模型判定阻断", source="model", **diagnostic
+        )
     # The judge answers with a single digit.  Anything else (empty completion,
     # markup, prose) is treated as no answer and keeps the fail-open default.
-    return GuardDecision(decision="ALLOW", reason="监管模型未返回 0/1，按 fail-open 放行", source="fail_open")
+    return GuardDecision(
+        decision="ALLOW",
+        reason="监管模型未返回 0/1，按 fail-open 放行",
+        source="fail_open",
+        **diagnostic,
+    )
 
 
 def _verdict(raw: str) -> str:

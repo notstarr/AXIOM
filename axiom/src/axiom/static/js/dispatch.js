@@ -235,10 +235,28 @@ window.AxiomModules.dispatch = {
       const reason = String(event?.reason || '').trim();
       if (reason) return reason;
       if (event?.decision_source === 'whitelist') return '白名单直放';
-      if (event?.decision_source === 'model') return '模型判定 ALLOW';
-      if (event?.decision_source === 'fail_open') return '模型异常 fail-open';
+      if (event?.decision_source === 'model') return '模型判定放行';
+      if (event?.decision_source === 'fail_open') return '模型未给出 0/1，按 fail-open 放行';
       if (event?.decision_source === 'disabled') return '监管关闭';
       return '无原因';
+    },
+
+    // One-line verdict for the audit list: "意图护栏：<short reason>".  The
+    // hard rule already carries a short Chinese reason; the model path only
+    // knows a digit, so it is described by what produced the verdict.
+    guardAuditSummary(event) {
+      const decision = event?.decision === 'BLOCK' ? '拦截' : '放行';
+      const source = event?.decision_source || '';
+      let short = String(event?.reason || '').trim();
+      if (!short) {
+        if (source === 'hard_rule') short = '命中硬规则';
+        else if (source === 'whitelist') short = '白名单或本地操作';
+        else if (source === 'model') short = decision === '拦截' ? '裁判模型判定破坏' : '裁判模型判定可放行';
+        else if (source === 'fail_open') short = '模型未答，按放行';
+        else if (source === 'disabled') short = '监管未启用';
+        else short = '无原因';
+      }
+      return `意图护栏：${decision} · ${short}`;
     },
 
     guardAuditDetail(event) {

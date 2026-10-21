@@ -4,7 +4,7 @@ from sqlalchemy import Engine
 
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
-from axiom.modules.guard.policy import evaluate
+from axiom.modules.guard.policy import evaluate, normalize
 from axiom.modules.guard.schemas import GuardDecision, GuardRequest
 from axiom.modules.settings.service import RuntimeSettingsService
 from axiom.modules.tasks.repository import TaskRepository
@@ -26,10 +26,12 @@ class GuardService:
             enabled = bool(task and task.guard_enabled)
             engagement_mode = getattr(task, "engagement_mode", "") or ""
         if not enabled:
+            normalized = normalize(request.tool_name, request.input)
             decision = GuardDecision(decision="ALLOW", reason="Task 未启用 Guard", source="disabled")
         else:
             config = self.settings.get().config
             observed = evaluate(request, config, engagement_mode)
+            normalized = normalize(request.tool_name, request.input)
             if config.guard_mode == "audit" and observed.decision == "BLOCK":
                 decision = GuardDecision(
                     decision="ALLOW",
@@ -61,6 +63,15 @@ class GuardService:
                     "source": decision.source,
                     "observed_decision": decision.observed_decision,
                     "observed_reason": decision.observed_reason,
+                    # The audit page shows what was judged, not just the verdict.
+                    # Without these it rendered an empty object for every row.
+                    "tool_name": normalized["tool_name"],
+                    "command": normalized["command"],
+                    "normalized": normalized,
+                    "input": request.input if isinstance(request.input, dict) else {"value": request.input},
+                    "cwd": request.cwd,
+                    "model_latency_ms": decision.model_latency_ms,
+                    "raw_model_output": decision.raw_model_output,
                 },
             )
         )

@@ -41,6 +41,10 @@ class GuardDecision(BaseModel):
     observed_decision: Literal["ALLOW", "BLOCK"] | None = None
     observed_reason: str = ""
     event_id: str = ""
+    # Diagnostics for the audit log: how long the judge took, and what it
+    # literally said.  Both are only set on the model path.
+    model_latency_ms: int = 0
+    raw_model_output: str = ""
 
 
 class GuardProfileDefaults(BaseModel):

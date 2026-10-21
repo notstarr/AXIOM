@@ -437,19 +437,21 @@
 
   function mapGuardEvent(event) {
     const payload = event.payload || {};
-    const toolName = String(event.message || '').split(':').pop().trim() || 'tool';
+    const toolName = payload.tool_name || String(event.message || '').split(':').pop().trim() || 'tool';
     return {
       id: event.id,
       project_id: event.task_id || event.project_id || '',
       intent_id: event.intent_id || '',
       worker: event.worker || '',
       phase: payload.phase || '',
+      engagement_mode: payload.engagement_mode || '',
       tool_name: toolName,
       decision: payload.decision || (event.level === 'warning' ? 'BLOCK' : 'ALLOW'),
       reason: payload.reason || '',
       decision_source: payload.source || '',
-      mode: '',
+      mode: payload.engagement_mode || '',
       command: payload.command || '',
+      cwd: payload.cwd || '',
       normalized_json: JSON.stringify(payload.normalized || {}),
       input_json: JSON.stringify(payload.input || {}),
       raw_model_output: payload.raw_model_output || '',
