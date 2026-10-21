@@ -38,7 +38,7 @@
 
       <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--sto-line);">
         <p class="sto-label">概览</p>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:10px;">
+        <div style="display:flex; flex-direction:column; gap:7px; margin-top:10px;">
           <div @click="guardAudit.decision = 'all'; applyGuardAuditFilter()" class="sto-minicard" :class="guardAudit.decision === 'all' ? 'stat-active' : ''" title="查看全部">
             <div class="k">总记录</div><b x-text="guardAuditCounts().total"></b>
           </div>
@@ -94,13 +94,13 @@
                 <div><dt>意图</dt><dd x-text="event.intent_id || '无'"></dd></div>
                 <div x-show="event.tool_name"><dt>工具</dt><dd x-text="event.tool_name"></dd></div>
                 <div x-show="event.model_latency_ms"><dt>耗时</dt><dd x-text="`${event.model_latency_ms}ms`"></dd></div>
+                <div>
+                  <button @click="guardAudit.expanded[event.id] = !guardAudit.expanded[event.id]"
+                    class="ga-raw" x-text="guardAudit.expanded[event.id] ? '收起' : '原始记录'"></button>
+                </div>
               </dl>
             </div>
 
-            <div class="flex items-center" style="gap:9px; margin-top:8px;">
-              <button @click="guardAudit.expanded[event.id] = !guardAudit.expanded[event.id]" class="sto-minibtn"
-                x-text="guardAudit.expanded[event.id] ? '收起原始记录' : '原始记录'"></button>
-            </div>
 
             <pre x-show="guardAudit.expanded[event.id]" x-cloak class="sto-usage" style="margin-top:9px; max-height:320px; overflow:auto;" x-text="guardAuditDetail(event)"></pre>
           </article>

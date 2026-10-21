@@ -1380,7 +1380,7 @@
   /* ═══════════ 守门审计（复用 sto-* 体系） ═══════════ */
   .sto-eventrow {
     position: relative; background: var(--sto-panel);
-    border-bottom: 1px solid var(--sto-line); padding: 13px 16px 13px 19px;
+    border-bottom: 1px solid var(--sto-line); padding: 9px 14px 9px 17px;
     transition: background 0.15s ease;
   }
   .sto-eventrow:hover { background: var(--sto-inset); }
@@ -1528,12 +1528,12 @@
 
   /* Compact stat tile used by the guard-audit left column.  Same visual language
      as .sto-statflat, sized for a two-column grid inside a narrow sidebar. */
-  .sto-minicard { padding: 10px 12px; background: var(--sto-inset); border: 1px solid var(--sto-line); border-radius: 11px; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
+  .sto-minicard { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 8px 11px; background: var(--sto-inset); border: 1px solid var(--sto-line); border-radius: 10px; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
   .sto-minicard:hover { border-color: var(--sto-fg-3); }
   .sto-minicard.stat-active { border-color: var(--sto-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sto-accent) 14%, transparent); }
-  .sto-minicard .k { display: flex; align-items: center; gap: 5px; font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--sto-fg-3); }
+  .sto-minicard .k { display: flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 600; letter-spacing: 0.05em; color: var(--sto-fg-3); }
   .sto-minicard .k::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .9; flex-shrink: 0; }
-  .sto-minicard b { display: block; margin-top: 3px; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; color: var(--sto-fg); }
+  .sto-minicard b { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; color: var(--sto-fg); }
 
   /* Guard audit: filter rail on the left, records on the right.  Collapses to a
      single column when the viewport cannot hold both without squeezing rows. */
@@ -1549,34 +1549,31 @@
   .guard-audit-railhead { min-height: 18px; }
 
   /* Verdict badge: the first thing the eye should land on. */
-  .ga-verdict { display: inline-flex; align-items: center; justify-content: center; height: 30px; padding: 0 12px; border-radius: 9px; font-size: 12.5px; font-weight: 700; letter-spacing: .02em; }
-  .ga-verdict.block { color: #b42318; background: color-mix(in srgb, #d92d20 12%, transparent); border: 1px solid color-mix(in srgb, #d92d20 28%, transparent); }
-  .ga-verdict.allow { color: #067647; background: color-mix(in srgb, #12b76a 12%, transparent); border: 1px solid color-mix(in srgb, #12b76a 28%, transparent); }
+  /* One record is two lines: verdict + command + reason on the left, the
+     provenance inline on the right.  Anything taller wastes the list. */
+  .ga-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: baseline; }
 
-  /* What was judged: the command, given room to breathe. */
-  .ga-content { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55; color: var(--sto-fg); word-break: break-all; }
-  .ga-reason { margin: 6px 0 0; font-size: 12px; font-weight: 600; line-height: 1.5; }
+  .ga-main { min-width: 0; display: flex; align-items: baseline; flex-wrap: wrap; column-gap: 9px; row-gap: 3px; }
+  .ga-verdict { display: inline-flex; align-items: center; justify-content: center; height: 21px; padding: 0 9px; border-radius: 6px; font-size: 11px; font-weight: 700; letter-spacing: .02em; flex-shrink: 0; }
+  .ga-verdict.block { color: #b42318; background: color-mix(in srgb, #d92d20 12%, transparent); border: 1px solid color-mix(in srgb, #d92d20 26%, transparent); }
+  .ga-verdict.allow { color: #067647; background: color-mix(in srgb, #12b76a 12%, transparent); border: 1px solid color-mix(in srgb, #12b76a 26%, transparent); }
+  .ga-content { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.45; color: var(--sto-fg); word-break: break-all; min-width: 0; }
+  .ga-reason { margin: 0; font-size: 11.5px; font-weight: 600; line-height: 1.45; }
+  .ga-reason::before { content: "·"; margin-right: 7px; color: var(--sto-fg-3); font-weight: 400; }
   .ga-reason.block { color: #b42318; }
   .ga-reason.allow { color: #067647; }
 
-  /* One record: what was judged on the left, where it came from on the right.
-     Keeping them apart stops a long command from pushing the provenance away
-     and lets the eye scan either column on its own. */
-  .ga-row { display: grid; grid-template-columns: minmax(0, 1fr) 232px; gap: 20px; align-items: start; }
-  .ga-main { min-width: 0; display: grid; grid-template-columns: 92px minmax(0, 1fr); column-gap: 14px; align-items: start; }
-  .ga-main .ga-verdict { grid-column: 1; grid-row: 1; }
-  .ga-main .ga-content { grid-column: 2; grid-row: 1; }
-  .ga-main .ga-reason { grid-column: 2; grid-row: 2; }
-
-  /* Provenance: right-aligned label/value pairs, one per line. */
-  .ga-side { margin: 0; padding-left: 18px; border-left: 1px solid var(--sto-line); display: grid; gap: 5px; }
-  .ga-side > div { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+  /* Provenance: one wrapped line of muted facts, not a stacked list. */
+  .ga-side { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; column-gap: 12px; row-gap: 2px; max-width: 46%; }
+  .ga-side > div { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
   .ga-side dt { margin: 0; font-size: 9.5px; font-weight: 600; letter-spacing: .04em; color: var(--sto-fg-3); }
-  .ga-side dd { margin: 0; font-size: 11px; color: var(--sto-fg-2); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .ga-side dd { margin: 0; font-size: 10.5px; color: var(--sto-fg-2); font-variant-numeric: tabular-nums; }
+  .ga-raw { border: 0; background: none; padding: 0; cursor: pointer; font-size: 10px; color: var(--sto-fg-3); text-decoration: underline dotted; text-underline-offset: 2px; }
+  .ga-raw:hover { color: var(--sto-accent); }
 
   @media (max-width: 900px) {
-    .ga-row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
-    .ga-side { padding-left: 0; padding-top: 10px; border-left: 0; border-top: 1px solid var(--sto-line); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .ga-row { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+    .ga-side { justify-content: flex-start; max-width: none; }
   }
   @media (max-width: 1180px) {
     .guard-audit-main { grid-template-columns: 1fr; overflow-y: auto; }
