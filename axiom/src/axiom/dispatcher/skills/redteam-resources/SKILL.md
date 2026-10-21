@@ -36,6 +36,18 @@ description: 当红队任务里拿到或需要复用稳定立足点时使用：W
 
 http 监听协议：beacon `GET /index?sid=<自定id>` 取下一条命令（空=无任务），`POST /index?sid=<id>` 回传 base64 结果；新 sid 自动建会话。服务重启后监听器**不会**自动拉起，状态回落 stopped，需要重新 start。
 
+**监听器一律绑 `127.0.0.1:8443`，经 Caddy 反代对外**（`https://<公网IP>:8888/c2/index?sid=…&token=…`）。这样不用改安全组、复用现有 TLS 证书，也不会在公网上多开一个裸端口：
+
+```bash
+axiom c2 listener-create --name c2-8443 --port 8443 --kind http --host 127.0.0.1
+axiom c2 listener-start clXXX
+axiom c2 oneliner clXXX        # 把其中的回连地址换成 https://<公网IP>:8888/c2
+```
+
+- **不要**用 `--host 0.0.0.0`，**不要**占 443/8443 以外的低端口（443 需要 root，且会和 Caddy 抢）。
+- **不要**用 `--kind tcp`：裸 TCP 通道没有握手也没有鉴权，别人连上就能截走会话与命令；只有 http 档带 per-listener token。
+- one-liner 里的 `token=` 是监听器鉴权凭据，不要贴进 findings、Intent 描述或聊天。
+
 ## 3. 接力与收尾约定
 
 - Explore 拿到命令执行能力后**当场登记**（webshell create / listener-start+oneliner 投递），并把连接或会话 id 写进 findings.md 与 leads.md（如「立足点：ws003 / cs002」），后续 Intent 的前置栏直接引用。
@@ -48,4 +60,4 @@ http 监听协议：beacon `GET /index?sid=<自定id>` 取下一条命令（空=
 
 - 只对本任务资源操作；跨任务复用由人工改绑或新建种子任务。
 - 不在 webshell/C2 通道里跑破坏性命令（删除、加密、业务写入）；L5 类动作（持久化/横向/破坏）默认不做，除非任务授权明确。
-- 监听器端口选高位非常用端口；host 用演练约定的回连网卡地址，不把管理面暴露公网。
+- 监听器一律绑 `127.0.0.1` 并由 Caddy 反代，不在公网直接开裸端口；端口用高位非常用值。
