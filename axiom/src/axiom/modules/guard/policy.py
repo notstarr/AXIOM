@@ -178,7 +178,14 @@ def _model_decision(
                         },
                     ],
                     "temperature": 0,
+                    # One character of output is all the contract needs.  A
+                    # reasoning model left enabled spends its whole budget on
+                    # think tokens first: measured 5.5-12.2s per call against a
+                    # 3s timeout, and the reply that arrived was empty because
+                    # max_tokens ran out before the digit.  Disabled, the same
+                    # call answers in 0.5s with completion_tokens=1.
                     "max_tokens": 64,
+                    **({"enable_thinking": False} if config.guard_thinking_enabled is False else {}),
                 },
             )
         response.raise_for_status()
@@ -223,25 +230,28 @@ def _parse_verdict(raw: str) -> tuple[str, str]:
 
     The contract is ``0`` or ``1`` optionally followed by ``:`` and a reason:
     ``0:会锁死管理员账号`` blocks, ``1:只读探测`` allows.  Only the first
-    non-empty line counts, so trailing prose cannot flip a verdict.  Markdown
-    fences and emphasis characters are dropped first because chat models like to
-    decorate a one-character answer.
+    non-empty line counts, so trailing prose cannot flip a verdict.
 
-    Returns ``("", "")`` when no digit leads the reply, which the caller treats
-    as no answer rather than inventing a verdict.
+    Models drift from the contract even when told not to - a measured reply was
+    ``判定:0:经 bsk 访问公网第三方接口``.  So the digit is located rather than
+    assumed to lead: the first ``0``/``1`` that stands as a token is the verdict,
+    and whatever follows it becomes the reason.  Anything else returns
+    ``("", "")``, which the caller treats as no answer rather than inventing a
+    verdict.
+
+    Returns the reason capped at REASON_MAX_CHARS.
     """
 
+    digit = re.compile(r"(?<![\d.])([01])(?![\d.])(.*)", re.S)
     for line in raw.splitlines():
         cleaned = line.strip().strip("`*_ \t\r\n'\"")
         if not cleaned:
             continue
-        if cleaned[0] not in "01":
+        found = digit.search(cleaned)
+        if not found:
             return "", ""
-        verdict = cleaned[0]
-        # Strip decoration and separators repeatedly: ``**0**：原因`` leaves
-        # ``**：原因`` after the digit, and both layers have to come off before
-        # the reason starts.
-        rest = cleaned[1:]
+        verdict = found.group(1)
+        rest = found.group(2)
         previous = None
         while rest != previous:
             previous = rest

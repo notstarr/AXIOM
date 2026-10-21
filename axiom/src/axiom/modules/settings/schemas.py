@@ -127,6 +127,10 @@ class RuntimeConfig(BaseModel):
     guard_model_name: str = "Qwen/Qwen3.5-9B"
     guard_api_key: str = ""
     guard_timeout_seconds: int = Field(default=3, ge=1, le=30)
+    # Reasoning models spend max_tokens on think tokens before emitting the
+    # verdict digit, which turns a 0.5s answer into 5-12s and often times out.
+    # The guard contract needs one character, so thinking is off by default.
+    guard_thinking_enabled: bool = False
     guard_whitelist_tools: list[str] = Field(
         default_factory=lambda: list(WHITELIST_TOOLS),
         max_length=128,

@@ -305,6 +305,14 @@ def test_verdict_carries_a_short_reason_back_to_the_worker() -> None:
     assert _parse_verdict("1：只读探测") == ("1", "只读探测")
     assert _parse_verdict("**0**：清空生产库") == ("0", "清空生产库")
     assert _parse_verdict("0 - 修改密码") == ("0", "修改密码")
+    # Models drift from the bare contract even when told not to; a measured
+    # reply was "判定:0:经 bsk 访问公网第三方接口".  Locate the digit rather than
+    # require it to lead, otherwise a real BLOCK silently becomes fail-open.
+    assert _parse_verdict("判定:0:经 bsk 访问公网第三方接口") == ("0", "经 bsk 访问公网第三方接口")
+    assert _parse_verdict("判定：1:只读") == ("1", "只读")
+    # A number that merely contains 0/1 is not a verdict.
+    assert _parse_verdict("10") == ("", "")
+    assert _parse_verdict("2") == ("", "")
     assert _parse_verdict("0:") == ("0", "")
     long_reason = "0:" + "x" * 80
     assert len(_parse_verdict(long_reason)[1]) == 40
@@ -402,3 +410,10 @@ def test_guard_audits_only_explore(client) -> None:
     ).json()
     assert events, "explore decisions must be recorded"
     assert {event["payload"]["phase"] for event in events} == {"explore"}
+
+
+def test_guard_disables_model_thinking_by_default(client) -> None:
+    # A reasoning model spends max_tokens on think tokens before the digit:
+    # measured 5.5-12.2s per call against a 3s timeout, usually timing out.
+    config = RuntimeConfig(guard_mode="enforce")
+    assert config.guard_thinking_enabled is False
