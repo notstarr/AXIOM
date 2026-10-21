@@ -43,8 +43,16 @@ class GuardDecision(BaseModel):
     event_id: str = ""
 
 
+class GuardProfileDefaults(BaseModel):
+    system_prompt: str
+    hard_block_rules: list[dict[str, Any]]
+
+
 class GuardDefaults(BaseModel):
     whitelist_tools: list[str]
     whitelist_bash_verbs: list[str]
     hard_block_rules: list[dict[str, Any]]
     system_prompt: str
+    # Shipped per-mode policy, so the settings page can offer "restore defaults"
+    # for whichever mode the operator is editing.
+    profiles: dict[str, GuardProfileDefaults] = Field(default_factory=dict)

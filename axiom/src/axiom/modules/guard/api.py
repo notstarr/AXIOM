@@ -5,12 +5,18 @@ from fastapi import APIRouter, Depends
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
 from axiom.modules.guard.defaults import (
+    DEFAULT_GUARD_PROFILES,
     HARD_BLOCK_RULES,
     SYSTEM_PROMPT,
     WHITELIST_BASH_VERBS,
     WHITELIST_TOOLS,
 )
-from axiom.modules.guard.schemas import GuardDecision, GuardDefaults, GuardRequest
+from axiom.modules.guard.schemas import (
+    GuardDecision,
+    GuardDefaults,
+    GuardProfileDefaults,
+    GuardRequest,
+)
 
 
 router = APIRouter(tags=["guard"])
@@ -31,4 +37,11 @@ def guard_defaults() -> GuardDefaults:
         whitelist_bash_verbs=WHITELIST_BASH_VERBS,
         hard_block_rules=HARD_BLOCK_RULES,
         system_prompt=SYSTEM_PROMPT,
+        profiles={
+            mode: GuardProfileDefaults(
+                system_prompt=profile["system_prompt"],
+                hard_block_rules=list(profile["hard_block_rules"]),
+            )
+            for mode, profile in DEFAULT_GUARD_PROFILES.items()
+        },
     )

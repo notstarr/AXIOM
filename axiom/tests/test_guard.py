@@ -315,16 +315,32 @@ def test_profiles_diverge_on_persistence_but_share_the_browser_rule() -> None:
         assert decision.reason == "经 bsk 浏览器访问私网地址"
 
 
-def test_red_team_profile_protects_our_own_platform() -> None:
+def test_red_team_profile_lets_the_worker_manage_our_own_host() -> None:
+    # The operator allowed the worker to modify the AXIOM host freely, so our
+    # own directories are exempt while a client's paths still block.
     config = RuntimeConfig(guard_mode="enforce")
     for command in (
         "rm -rf /opt/axiom/src",
+        "rm -rf /var/lib/axiom",
+        "rm -rf /var/lib/bsk",
+        "rm -rf /etc/caddy",
+        "find /opt/axiom -delete",
         "cp /tmp/x /var/lib/axiom/auth_secret.key",
         "bsk daemon revoke --all",
     ):
         decision = evaluate(GuardRequest(tool_name="bash", input={"command": command}), config, "red_team")
+        assert decision.decision == "ALLOW", command
+
+    for command in ("rm -rf /etc/passwd", "rm -rf /var/lib/postgresql", "rm -rf /", "rm -rf /home/user"):
+        decision = evaluate(GuardRequest(tool_name="bash", input={"command": command}), config, "red_team")
         assert decision.decision == "BLOCK", command
-        assert decision.reason == "破坏我方平台自身"
+
+    # The exemption is red-team only; a vulnerability assessment never deletes
+    # anything under our tree either.
+    decision = evaluate(
+        GuardRequest(tool_name="bash", input={"command": "rm -rf /opt/axiom/src"}), config, "vulnerability"
+    )
+    assert decision.decision == "BLOCK"
 
 
 def test_profile_falls_back_to_global_fields_for_unknown_modes() -> None:

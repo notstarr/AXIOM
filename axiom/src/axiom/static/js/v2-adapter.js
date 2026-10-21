@@ -897,23 +897,32 @@
       request('GET', '/guard/defaults'),
     ]);
     const config = runtime.config;
+    const profiles = config.guard_profiles || {};
+    const shipped = defaults.profiles || {};
+    const modes = Object.keys(shipped).length ? Object.keys(shipped) : Object.keys(profiles);
+    const byMode = {};
+    for (const mode of modes) {
+      const current = profiles[mode] || {};
+      const base = shipped[mode] || {};
+      byMode[mode] = {
+        system_prompt: current.system_prompt || base.system_prompt || '',
+        hard_block_rules: current.hard_block_rules || base.hard_block_rules || [],
+        default_system_prompt: base.system_prompt || '',
+        default_hard_block_rules: base.hard_block_rules || [],
+      };
+    }
     return {
       enabled_default: !!config.guard_enabled_default,
       mode: config.guard_mode,
       base_url: config.guard_model_base_url,
       model: config.guard_model_name,
       timeout_seconds: config.guard_timeout_seconds,
+      // Shared across both engagement modes: read-only verbs and local file
+      // tools are the same work whether this is a vulnerability assessment or a
+      // red team engagement.
       whitelist_tools: config.guard_whitelist_tools ?? defaults.whitelist_tools ?? [],
       whitelist_bash_verbs: config.guard_whitelist_bash_verbs ?? defaults.whitelist_bash_verbs ?? [],
-      hard_block_rules: config.guard_hard_block_rules ?? defaults.hard_block_rules ?? [],
-      default_hard_block_rules: defaults.hard_block_rules || [],
-      system_prompt: config.guard_system_prompt ?? defaults.system_prompt ?? '',
-      default_system_prompt: defaults.system_prompt || '',
-      // Per engagement mode policy.  The form above still edits one prompt and
-      // one rule set; these are exposed so a mode-specific editor can show what
-      // each mode actually uses.
-      profiles: config.guard_profiles ?? {},
-
+      profiles: byMode,
       has_key: !!config.guard_api_key,
       masked_key: config.guard_api_key ? '••••••••' : '',
       updated_at: runtime.updated_at,
@@ -931,25 +940,26 @@
       guard_model_base_url: body.base_url ?? runtime.config.guard_model_base_url,
       guard_model_name: body.model ?? runtime.config.guard_model_name,
       guard_timeout_seconds: Number(body.timeout_seconds ?? runtime.config.guard_timeout_seconds),
-      guard_system_prompt: body.system_prompt ?? runtime.config.guard_system_prompt,
       guard_whitelist_tools: body.whitelist_tools ?? runtime.config.guard_whitelist_tools,
       guard_whitelist_bash_verbs: body.whitelist_bash_verbs ?? runtime.config.guard_whitelist_bash_verbs,
-      guard_hard_block_rules: body.hard_block_rules ?? runtime.config.guard_hard_block_rules,
     };
-    // This form edits one prompt and one rule set, but the guard judges per
-    // engagement mode.  Mirror the edit onto every profile so what the operator
-    // sees is what the judge uses; a mode-specific editor can send explicit
-    // profiles instead.
-    if (body.system_prompt !== undefined || body.hard_block_rules !== undefined) {
-      const profiles = { ...(runtime.config.guard_profiles || {}) };
-      for (const mode of Object.keys(profiles)) {
-        profiles[mode] = {
-          ...profiles[mode],
-          system_prompt: config.guard_system_prompt,
-          hard_block_rules: config.guard_hard_block_rules,
+    // The panel edits each engagement mode separately, so profiles carry the
+    // prompt and rules.  The legacy global fields stay in sync with the
+    // vulnerability profile, which is what code predating profiles reads.
+    if (body.profiles) {
+      const merged = { ...(runtime.config.guard_profiles || {}) };
+      for (const [mode, profile] of Object.entries(body.profiles)) {
+        merged[mode] = {
+          system_prompt: profile.system_prompt,
+          hard_block_rules: profile.hard_block_rules,
         };
       }
-      config.guard_profiles = profiles;
+      config.guard_profiles = merged;
+      const fallback = merged.vulnerability || merged[Object.keys(merged)[0]];
+      if (fallback) {
+        config.guard_system_prompt = fallback.system_prompt;
+        config.guard_hard_block_rules = fallback.hard_block_rules;
+      }
     }
     if (key !== undefined) config.guard_api_key = key;
     await request('PUT', '/settings/runtime', {

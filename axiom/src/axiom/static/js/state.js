@@ -176,7 +176,7 @@ window.AxiomModules.state = {
     showDeleteModal: false,
     resumeTaskDialog: { open: false, taskId: '', title: '', limited: false, hours: 0, minutes: 0, submitting: false },
 
-    newProject: { parent_project_id: '', title: '', origin: '', goal: '对该系统进行渗透测试，并挖掘10个高置信度的漏洞', bootstrap: true, depth_mode: false, guard_enabled: false, hints: '', task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '', depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false, engagement_mode: 'vulnerability', seed_vulnerability_task_id: '', seed_counts: {} },
+    newProject: { parent_project_id: '', title: '', origin: '', goal: '对该资产进行渗透测试，并挖掘10个高置信度的漏洞', bootstrap: true, depth_mode: false, guard_enabled: false, hints: '', task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '', depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false, engagement_mode: 'vulnerability', rt_target_points: 100, seed_vulnerability_task_id: '', seed_counts: {} },
     taskWorkerPoolEditor: { projectId: '', worker_pool: [], saving: false },
     projectGroupForm: { title: '', description: '' },
     projectGroupSettingsForm: { title: '', description: '', notes: '', status: 'active' },
@@ -237,14 +237,14 @@ window.AxiomModules.state = {
       timeout_seconds: 3,
       whitelist_tools: ['read', 'ls', 'grep', 'find'],
       whitelist_bash_verbs: ['pwd', 'whoami', 'id', 'uname', 'ls', 'cat', 'head', 'tail', 'grep', 'find', 'ifconfig', 'ip', 'env', 'printenv'],
-      system_prompt: '',
-      default_system_prompt: '',
-      hard_block_rules: [],
-      default_hard_block_rules: [],
+      // Prompt and hard rules live per engagement mode; the allowlist above is
+      // shared because it is the same read-only work in both.
+      profiles: {},
       has_key: false,
       masked_key: '',
       updated_at: '',
     },
+    judgeProfileMode: 'vulnerability',
     judgeKeyForm: { api_key: '' },
     judgeTestResult: null,
     judgeTesting: false,

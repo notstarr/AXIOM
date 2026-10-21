@@ -209,11 +209,11 @@
         </div>
       </div>
 
-      <!-- 白名单 -->
+      <!-- 白名单：共用 -->
       <div class="sto-panel" style="padding:16px 18px;">
         <div class="sto-cardhead">
-          <h3>白名单</h3>
-          <p>命中白名单的工具调用与 bash 命令直接放行，不进入裁判模型。</p>
+          <h3>白名单（两种模式共用）</h3>
+          <p>命中白名单的工具调用与 bash 命令直接放行，不进入裁判模型。红队与漏洞模式共用这一份。</p>
         </div>
         <div class="sto-grid2">
           <div class="sto-field"><label>白名单工具（每行一个）</label><textarea :value="(judgeSettings.whitelist_tools || []).join('\n')" @input="judgeSettings.whitelist_tools = normalizeJudgeList($event.target.value)" rows="7" class="sto-input"></textarea></div>
@@ -221,39 +221,56 @@
         </div>
       </div>
 
-      <!-- 裁判提示词 -->
+      <!-- 模式切换：下面是按模式分化的提示词与硬规则 -->
+      <div class="sto-panel" style="padding:14px 18px;">
+        <div class="sto-cardhead" style="margin-bottom:10px;">
+          <h3>按模式分化</h3>
+          <p>提示词与硬规则分成两套。漏洞模式问「会不会不可逆地破坏客户业务」，红队模式问「会不会越界、伤到我们自己、暴露操作者」。</p>
+        </div>
+        <div style="display:inline-flex; gap:6px; padding:4px; border-radius:12px; background:var(--sto-inset, rgba(15,23,42,.05));">
+          <template x-for="mode in Object.keys(judgeSettings.profiles || {})" :key="mode">
+            <button type="button"
+              @click="judgeProfileMode = mode"
+              class="sto-ghost"
+              :style="judgeProfileMode === mode ? 'background:var(--sto-panel,#fff); font-weight:600; box-shadow:0 1px 3px rgba(15,23,42,.12);' : 'opacity:.62;'"
+              x-text="judgeProfileLabel(mode) + '模式'"></button>
+          </template>
+        </div>
+      </div>
+
+      <!-- 裁判提示词（当前模式） -->
       <div class="sto-panel" style="padding:16px 18px;">
         <div class="sto-cardhead">
           <div class="flex items-center justify-between" style="gap:10px;">
             <div>
-              <h3>裁判提示词</h3>
-              <p>用于非白名单、非硬规则工具调用的模型裁判。输出协议必须保持 ALLOW / BLOCK:&lt;原因&gt;。</p>
+              <h3 x-text="judgeProfileLabel(judgeProfileMode) + '模式 · 裁判提示词'"></h3>
+              <p>仅作用于当前切换的模式。输出协议固定为 <code>1</code> = 放行、<code>0</code> = 阻断。</p>
             </div>
-            <button type="button" @click="resetJudgePrompt()" class="sto-ghost" style="flex-shrink:0;">恢复默认提示词</button>
+            <button type="button" @click="resetJudgePrompt()" class="sto-ghost" style="flex-shrink:0;">恢复本模式默认</button>
           </div>
         </div>
-        <textarea x-model="judgeSettings.system_prompt" rows="14" maxlength="20000" class="sto-input"></textarea>
+        <textarea :value="judgePrompt()" @input="setJudgePrompt($event.target.value)" rows="14" maxlength="20000" class="sto-input"></textarea>
         <div class="flex justify-between sto-muted" style="margin-top:7px;">
-          <span>保存后立即影响后续裁判模型判断，不影响白名单和硬规则。</span>
-          <span class="sto-num" x-text="`${(judgeSettings.system_prompt || '').length}/20000`"></span>
+          <span>保存后立即影响该模式的裁判判断，不影响白名单和另一模式。</span>
+          <span class="sto-num" x-text="`${(judgePrompt() || '').length}/20000`"></span>
         </div>
       </div>
 
-      <!-- 硬规则 -->
+      <!-- 硬规则（当前模式） -->
       <div class="sto-panel inset" style="padding:16px 18px;">
         <div class="sto-cardhead">
           <div class="flex items-center justify-between" style="gap:10px;">
             <div>
-              <h3>硬规则 BLOCK</h3>
+              <h3 x-text="judgeProfileLabel(judgeProfileMode) + '模式 · 硬规则 BLOCK'"></h3>
               <p>每行：原因 + Tab + 正则。命中后直接阻断，不进入裁判模型；行首加 # 可临时禁用该规则。</p>
             </div>
-            <button type="button" @click="resetJudgeHardRules()" class="sto-ghost" style="flex-shrink:0;">恢复默认硬规则</button>
+            <button type="button" @click="resetJudgeHardRules()" class="sto-ghost" style="flex-shrink:0;">恢复本模式默认</button>
           </div>
         </div>
         <textarea :value="hardRulesText()" @input="parseHardRulesText($event.target.value)" rows="9" spellcheck="false" class="sto-input" style="background:var(--sto-panel);"></textarea>
         <div class="flex justify-between sto-muted" style="margin-top:7px;">
           <span>建议只放确定性强的规则；正则保存前会由后端校验。</span>
-          <span class="sto-num" x-text="`${(judgeSettings.hard_block_rules || []).filter(r => r.enabled !== false).length}/${(judgeSettings.hard_block_rules || []).length} 启用`"></span>
+          <span class="sto-num" x-text="judgeRuleCount()"></span>
         </div>
       </div>
 

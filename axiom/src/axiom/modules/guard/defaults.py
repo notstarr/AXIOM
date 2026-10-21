@@ -82,18 +82,14 @@ _DOS = {
 }
 
 
-# Red team only: the worker must never modify the platform that is running it.
-# Losing axiom-runner mid-engagement costs every in-flight Intent, and the bsk
-# daemon belongs to the operator's own machine.
-_SELF_INFRA = {
-    "reason": "破坏我方平台自身",
-    "pattern": (
-        r"(?:^|[;&]\s*|\|\s+)(?:sudo\s+|doas\s+)?"
-        r"(?:rm|mv|cp|tee|truncate|chmod|chown|sed\s+-i|install|dd)\b"
-        r"[^;&|]*/(?:opt/axiom|var/lib/axiom|var/lib/bsk|etc/caddy)(?:/|\s|$)"
-        r"|(?:^|[;&]\s*|\|\s+)(?:sudo\s+)?"
-        r"(?:bsk|axiom-bsk)\s+daemon\s+(?:stop|revoke)"
-    ),
+# Red team exemption: the operator allowed the worker to modify the AXIOM host
+# freely, so destroying our own directories is not the damage this rule exists
+# to stop.  Every other absolute path - a client's /etc, /var/lib/postgresql,
+# the bare root - still matches, because wrecking the target is what would end
+# the engagement.
+_DATA_REDTEAM = {
+    "reason": "删除或大规模破坏关键数据",
+    "pattern": r"""(?:^|[;&]\s*|\|\s+)(?:sudo\s+|doas\s+)?(?:dropdb|redis-cli\s+(?:flushall|flushdb)|rm\s+(?=[^;&|]*-[^\s;&|]*r)(?:-[^\s;&|]+\s+)+(?:/(?!opt/axiom|var/lib/axiom|var/lib/bsk|etc/caddy)|~(?:/|$)|\*|\.{1,2}(?:/|$))|find\s+(?!/?(?:opt/axiom|var/lib/axiom|var/lib/bsk|etc/caddy))(?:/|\.\.?|~)[^;&|]*\s-delete(?:\s|$))|(?:^|[;&]\s*|\|\s+)(?:sudo\s+|doas\s+)?(?:mysql|mariadb|psql|sqlite3|cockroach|sqlplus)\b[^;&|]*(?:-e|-c)?\s*[^;&|]*\b(?:drop\s+(?:database|schema|table)|truncate(?:\s+table)?|delete\s+from\s+[A-Za-z_][\w$]*)\b""",
     "enabled": True,
 }
 
@@ -107,13 +103,13 @@ VULNERABILITY_HARD_BLOCK_RULES = [
     _DOS,
 ]
 
+# No self-infrastructure rule: the operator decided the worker may modify the
+# AXIOM host freely.  What remains is the damage that is not recoverable by
+# restarting us - a locked-out client account, destroyed production data, a
+# stopped production service, the browser pivot, and DoS.
 REDTEAM_HARD_BLOCK_RULES = [
-    # Self-infrastructure first: ``rm -rf /opt/axiom`` also matches the generic
-    # data-destruction rule, and reporting the more specific reason is what
-    # tells the operator the platform itself was the target.
-    _SELF_INFRA,
     _PASSWORD,
-    _DATA,
+    _DATA_REDTEAM,
     _SERVICE,
     _BSK_PIVOT,
     _DOS,

@@ -29,6 +29,8 @@ window.AxiomModules.dispatch = {
     async loadJudgeSettings() {
       try {
         const data = await this.api('GET', '/settings/judge');
+        const profiles = data.profiles || {};
+        const modes = Object.keys(profiles);
         this.judgeSettings = {
           enabled_default: !!data.enabled_default,
           mode: data.mode || 'enforce',
@@ -37,14 +39,14 @@ window.AxiomModules.dispatch = {
           timeout_seconds: data.timeout_seconds ?? 3,
           whitelist_tools: Array.isArray(data.whitelist_tools) ? data.whitelist_tools : ['read', 'ls', 'grep', 'find'],
           whitelist_bash_verbs: Array.isArray(data.whitelist_bash_verbs) ? data.whitelist_bash_verbs : ['pwd', 'whoami', 'id', 'uname', 'ls', 'cat', 'head', 'tail', 'grep', 'find', 'ifconfig', 'ip', 'env', 'printenv'],
-          system_prompt: data.system_prompt || '',
-          default_system_prompt: data.default_system_prompt || data.system_prompt || '',
-          hard_block_rules: Array.isArray(data.hard_block_rules) ? data.hard_block_rules : [],
-          default_hard_block_rules: Array.isArray(data.default_hard_block_rules) ? data.default_hard_block_rules : [],
+          profiles,
           has_key: !!data.has_key,
           masked_key: data.masked_key || '',
           updated_at: data.updated_at || '',
         };
+        if (!this.judgeProfileMode || !modes.includes(this.judgeProfileMode)) {
+          this.judgeProfileMode = modes.includes('vulnerability') ? 'vulnerability' : (modes[0] || 'vulnerability');
+        }
         if (this.newProject && !this.newProject._guardTouched) {
           this.newProject.guard_enabled = !!this.judgeSettings.enabled_default;
         }
@@ -53,7 +55,25 @@ window.AxiomModules.dispatch = {
       }
     },
 
+    // The mode currently being edited in the judge panel.  The allowlist above
+    // it is shared; only the prompt and hard rules below it follow this switch.
+    judgeActiveProfile() {
+      const profiles = (this.judgeSettings && this.judgeSettings.profiles) || {};
+      return profiles[this.judgeProfileMode] || { system_prompt: '', hard_block_rules: [], default_system_prompt: '', default_hard_block_rules: [] };
+    },
+
+    judgeProfileLabel(mode) {
+      return mode === 'red_team' ? '红队' : (mode === 'vulnerability' ? '漏洞' : mode);
+    },
+
     judgeSettingsPayload() {
+      const profiles = {};
+      for (const [mode, profile] of Object.entries((this.judgeSettings && this.judgeSettings.profiles) || {})) {
+        profiles[mode] = {
+          system_prompt: profile.system_prompt || '',
+          hard_block_rules: profile.hard_block_rules || [],
+        };
+      }
       return {
         enabled_default: !!this.judgeSettings.enabled_default,
         mode: this.judgeSettings.mode ?? 'enforce',
@@ -62,13 +82,12 @@ window.AxiomModules.dispatch = {
         timeout_seconds: Number(this.judgeSettings.timeout_seconds ?? 3),
         whitelist_tools: this.normalizeJudgeList(this.judgeSettings.whitelist_tools),
         whitelist_bash_verbs: this.normalizeJudgeList(this.judgeSettings.whitelist_bash_verbs),
-        system_prompt: this.judgeSettings.system_prompt ?? this.judgeSettings.default_system_prompt ?? '',
-        hard_block_rules: this.judgeSettings.hard_block_rules || [],
+        profiles,
       };
     },
 
     hardRulesText() {
-      return (this.judgeSettings.hard_block_rules || [])
+      return (this.judgeActiveProfile().hard_block_rules || [])
         .map(rule => `${rule.enabled === false ? '# ' : ''}${rule.reason || ''}\t${rule.pattern || ''}`)
         .join('\n');
     },
@@ -91,17 +110,32 @@ window.AxiomModules.dispatch = {
         if (!reason || !pattern) continue;
         rules.push({ reason, pattern, enabled });
       }
-      this.judgeSettings.hard_block_rules = rules;
+      this.judgeActiveProfile().hard_block_rules = rules;
     },
 
     resetJudgeHardRules() {
-      this.judgeSettings.hard_block_rules = (this.judgeSettings.default_hard_block_rules || []).map(rule => ({ ...rule }));
-      this.showToast('已恢复默认硬规则，请保存后生效');
+      const profile = this.judgeActiveProfile();
+      profile.hard_block_rules = (profile.default_hard_block_rules || []).map(rule => ({ ...rule }));
+      this.showToast(`已恢复${this.judgeProfileLabel(this.judgeProfileMode)}模式默认硬规则，请保存后生效`);
     },
 
     resetJudgePrompt() {
-      this.judgeSettings.system_prompt = this.judgeSettings.default_system_prompt || '';
-      this.showToast('已恢复默认裁判提示词，请保存后生效');
+      const profile = this.judgeActiveProfile();
+      profile.system_prompt = profile.default_system_prompt || '';
+      this.showToast(`已恢复${this.judgeProfileLabel(this.judgeProfileMode)}模式默认提示词，请保存后生效`);
+    },
+
+    judgePrompt() {
+      return this.judgeActiveProfile().system_prompt || '';
+    },
+
+    setJudgePrompt(value) {
+      this.judgeActiveProfile().system_prompt = value;
+    },
+
+    judgeRuleCount() {
+      const rules = this.judgeActiveProfile().hard_block_rules || [];
+      return `${rules.filter(r => r.enabled !== false).length}/${rules.length} 启用`;
     },
 
     async saveJudgeSettings() {
@@ -578,15 +612,54 @@ window.AxiomModules.dispatch = {
       }
     },
 
+    // 事件流缓存：首次进入任务要拉全量历史（t_231 约 1274 条 / 解压 656KB），
+    // 只为让「TOKEN 消耗」累计值正确。反复进出同一任务时复用缓存，只补增量，
+    // 避免每次都重新下载一遍全量历史。
+    _seeEventsCache: {},
+    _seeEventsCacheTtlMs: 120000,
+
+    _seeEventsCacheGet(taskId) {
+      const entry = this._seeEventsCache?.[taskId];
+      if (!entry) return null;
+      if (Date.now() - entry.at > this._seeEventsCacheTtlMs) return null;
+      return entry;
+    },
+
+    _seeEventsCachePut(taskId) {
+      if (!taskId) return;
+      const cache = { ...(this._seeEventsCache || {}) };
+      cache[taskId] = {
+        events: (this.seeEvents || []).slice(),
+        lastId: this.seeLastEventId || 0,
+        at: Date.now(),
+      };
+      // 只保留最近 3 个任务，避免长时间使用后缓存无限增长
+      const keys = Object.keys(cache).filter(key => key !== taskId);
+      if (keys.length > 2) {
+        const ordered = keys.sort((a, b) => (cache[a].at || 0) - (cache[b].at || 0));
+        for (const key of ordered.slice(0, keys.length - 2)) delete cache[key];
+      }
+      this._seeEventsCache = cache;
+    },
+
     async loadSeeEvents(reset = false, options = {}) {
       if (!this.selectedProjectId) {
         this.seeEvents = [];
         this.seeLastEventId = 0;
         return [];
       }
+      const taskId = this.selectedProjectId;
       if (reset) {
-        this.seeLastEventId = 0;
-        this.seeEvents = [];
+        const cached = this._seeEventsCacheGet(taskId);
+        if (cached && cached.events.length) {
+          // 命中缓存：还原历史 + 游标，然后只走增量，不再重拉全量。
+          this.seeEvents = cached.events.slice();
+          this.seeLastEventId = cached.lastId || 0;
+          reset = false;
+        } else {
+          this.seeLastEventId = 0;
+          this.seeEvents = [];
+        }
       }
       try {
         const events = await this.api(
@@ -607,6 +680,7 @@ window.AxiomModules.dispatch = {
             if (el) el.scrollTop = el.scrollHeight;
           });
         }
+        this._seeEventsCachePut(taskId);
         return Array.isArray(events) ? events : [];
       } catch (e) {
         if (e?.name !== 'AbortError') console.error(e);
