@@ -18,48 +18,13 @@ upload/download 不可用；`credentials` 只读取专用 profile。
 
 ## 用途边界：这个浏览器只用来取登录态
 
-配对的 Chrome 跑在**操作者办公网里的一台 Mac** 上，它的出口就是那台机器的网卡。
-也就是说，它发出的每一个请求，都是以操作者身份、从内网内部发出的。所以：
+配对的 Chrome 跑在**操作者办公网里的一台 Mac** 上，出口就是那台机器的网卡。它发出的每个请求都是以操作者身份、从内网内部发出的，所以：
 
-- **唯一合法用途**：打开 scope 内、确实需要登录态的目标，完成登录（或复用已有
-  登录态），用 `credentials` 取出该域 Cookie/localStorage 交给 VPS 侧继续工作，
-  然后 `session stop`。
-- **禁止把浏览器当内网执行点**：不得用 `navigate`、`tab create --url`、
-  `evaluate` 里的 `fetch`、`debug replay` 去访问内网地址，也不得借它做内网
-  探测、扫描、利用或横向。
-- **内网作业的正确路径**：VPS Runner → 目标自身 SSRF → 已控主机跳板，再往下打。
-  浏览器不是跳板。拿不到内网执行点时，按「无进展」上报（`request-help` 或写
-  leads 交回 Reason），**不要退化成用浏览器硬连内网**。
+- **唯一合法用途**：打开 scope 内、确实需要登录态的目标，完成登录（或复用已有登录态），用 `credentials` 取出该域 Cookie/localStorage 交给 VPS 侧继续工作，然后 `session stop`。
+- **它不是跳板**：不得借它访问内网地址或做内网探测、扫描、利用、横向。内网作业只能走目标自身 SSRF、已控主机或 C2 会话。
+- **换写法不算绕开**：`tab create --url`、`evaluate` 里 `fetch`、`debug replay` 指向内网，与直接 `navigate` 是同一件事。
+- 拿不到内网执行点时按无进展上报（`request-help` 或写 leads 交回 Reason），不要退化成用浏览器硬连内网。
 
-## 硬性禁止（任务书怎么写、mode 是什么都不例外）
-
-以下目标一律不得经由本 skill 发起连接：
-
-0. **先解析，再决定**。本环境大量内网服务挂在公网域名下（实例：`git.kkgroup.cn`
-   → `192.168.0.222`），只看域名看不出是否内网。`navigate` 任何域之前，先在
-   worker 里解析一次：
-   ```bash
-   getent hosts <domain> || nslookup <domain>
-   ```
-   解析结果落在下面第 1 条的私网段，就按内网处理，不许用浏览器访问。
-1. **私网/保留地址字面量**：`10/8`、`172.16/12`、`192.168/16`、`127/8`、
-   `169.254/16`（含云元数据 `169.254.169.254`）、`100.64/10`、`::1`、
-   `fc00::/7`、`fe80::/10`。
-2. **解析到上述地址的主机名**：`localhost`、`*.localhost`、`*.local`、
-   `*.internal`、`*.lan`，以及任何 A/AAAA 记录落在私网的域名。
-3. **非 http(s) scheme**：`file:`、`chrome:`、`chrome-extension:`、`data:`、
-   `javascript:`、`view-source:`、`about:`、`devtools:`。
-4. **借道公网跳进内网**：已打开的页面若经 302 或 JS 跳到私网地址，视为越界，
-   立即 `session stop` 并上报。
-5. **`credentials --domain` 只允许 scope 内的域**，不得对无关域读 Cookie。
-
-命中上述任一条：停止操作、`session stop`，把「此处需要内网访问，但浏览器通道
-被禁止」当作阻塞写清楚上报。**换 tab、换命令、换 scheme 都不算绕开**——在
-`evaluate` 里发请求、用 `debug replay` 重放，同样算同一次违规。
-
-**scope 边界**：Intent 的目标范围在派发时由 AXIOM 校验，但浏览器执行期**不**做
-域拦截，所以上面这些约束只能靠你自己守住——审计日志会记录每一次
-`navigate`/`tab create`，越界会出现在 findings 复核里。
 **凭证卫生**：不得从页面提取/外传与测试无关的凭据；Cookie/凭据数据只写
 `evidence/` 目录（证据完整性优先），不要把凭据明文写进 findings/leads 正文。
 
@@ -117,7 +82,7 @@ Agent Window 内可以有多个标签；后台标签不用选中也能被操作�
 navigate / click / fill / select / press / evaluate 等命令上；不加时默认作用于 Agent
 Window 的当前活动标签。后台标签里的页面继续运行，viewport 与整页截图在后台也可用。
 不要自己编 tab id，也不要跨无关任务一直占着标签。
-**`tab create --url` 与 `navigate` 的地址同样受上文「硬性禁止」约束**——换到后台
+**`tab create --url` 与 `navigate` 的地址同样受上文「用途边界」约束**——换到后台
 标签开一个内网地址，和直接 navigate 是同一次违规。
 
 `tab list` 在远程模式只允许 `--scope agent`（本 session 的 Agent Window 标签）；
@@ -228,8 +193,8 @@ credentials --domain <domain> --session <id>   # axiom 定制
   --image-x --image-y` 以**原图坐标**点击；capture_id 一次性、2 分钟过期，
   observe 刷新后失效。坐标用 PNG 原始尺寸，不是缩放后的显示尺寸。
 - `evaluate` 是 observe + 常规交互无法完成时的最后手段；`--json` 时检查 `.ok`。
-  **不要用它在页面里 `fetch`/`XMLHttpRequest`/`WebSocket` 打私网地址**——那是
-  绕开「硬性禁止」的同一件事。
+  **不要用它在页面里 `fetch`/`XMLHttpRequest`/`WebSocket` 打内网地址**——那是
+  绕开「用途边界」的同一件事。
 - 恢复协议：ref 失效 → observe 一次重试；fill 不一致 → 先观察字段；不可恢复 → 上报并 stop。
 
 ## 产物约定（axiom）
