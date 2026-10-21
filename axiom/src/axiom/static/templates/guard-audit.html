@@ -73,7 +73,7 @@
         <div class="sto-empty" style="border:0; flex:1;">暂无裁判记录</div>
       </template>
 
-      <div class="ga-scroll">
+      <div class="ga-scroll" x-show="guardAudit.loading === true || (guardAudit.events || []).length > 0" x-cloak>
       <table class="ga-table">
         <colgroup>
           <col class="ga-col-verdict">
