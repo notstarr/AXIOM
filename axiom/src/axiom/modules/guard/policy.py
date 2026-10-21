@@ -112,6 +112,24 @@ _OPAQUE_SCRIPT = re.compile(
 # nothing opaque escapes review.
 
 
+# Network reach without a URL or a known verb.  The worker uses ``python3 -c``
+# for nearly all of its local housekeeping, so the whole form cannot be treated
+# as opaque - but the same form can open a socket.  These two patterns separate
+# a JSON-wrangling one-liner from one that talks to the network.
+_NET_LIB = re.compile(
+    r"\b(?:requests|urllib|urlopen|http\.client|httpx|aiohttp|socket|socketserver|"
+    r"paramiko|ftplib|telnetlib|smtplib|pycurl|websocket|websockets|scapy|dnspython)\b",
+    re.I,
+)
+_SHELL_NET = re.compile(
+    r"/dev/(?:tcp|udp)/|"
+    r"\b(?:IO::Socket|LWP::UserAgent|Net::SSLeay)\b|"
+    r"\bexec\s+\d+<>|"
+    r"\b(?:nc|ncat|socat)\s[^|;&]*-e\b",
+    re.I,
+)
+
+
 def _external_operation(normalized: dict[str, str]) -> bool:
     name = normalized["tool_name"]
     if (
@@ -127,6 +145,8 @@ def _external_operation(normalized: dict[str, str]) -> bool:
         return False
     command = normalized["command"]
     if _URL.search(command) or _OPAQUE_SCRIPT.search(command):
+        return True
+    if _NET_LIB.search(command) or _SHELL_NET.search(command):
         return True
     return bool(_NETWORK_VERB.search(command))
 
