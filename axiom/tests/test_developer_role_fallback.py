@@ -166,6 +166,33 @@ def test_models_payload_keeps_developer_when_the_column_is_unprobed() -> None:
     assert "compat" not in model
 
 
+def test_models_payload_enables_reasoning_passback_for_deepseek_thinking() -> None:
+    config = _pi_config(model="deepseek-v4.1-flash", thinking_enabled=True)
+    model = _models_payload(config)["providers"]["axiom"]["models"][0]
+    assert model["compat"] == {
+        "requiresReasoningContentOnAssistantMessages": True,
+    }
+
+
+def test_models_payload_merges_reasoning_passback_with_developer_role() -> None:
+    config = _pi_config(
+        model="deepseek-v4.1-flash",
+        thinking_enabled=True,
+        developer_role_supported=False,
+    )
+    model = _models_payload(config)["providers"]["axiom"]["models"][0]
+    assert model["compat"] == {
+        "supportsDeveloperRole": False,
+        "requiresReasoningContentOnAssistantMessages": True,
+    }
+
+
+def test_models_payload_skips_reasoning_passback_when_thinking_is_off() -> None:
+    config = _pi_config(model="deepseek-v4.1-flash", thinking_enabled=False)
+    model = _models_payload(config)["providers"]["axiom"]["models"][0]
+    assert "compat" not in model
+
+
 # ------------------------------------------------------------------- repository
 
 

@@ -1,8 +1,9 @@
 ---
 name: browser-skill
 description: |
-  使用 bsk 命令驱动专用 Chrome profile（VPS 远程模式经 bsk daemon）：
-  访问页面、填表、点击、接口探测、抓取数据。要求 Mac 扩展已 Remote 配对。
+  使用 bsk 命令驱动专用 Chrome profile（VPS 远程模式经 bsk daemon），
+  唯一用途是获取 scope 内目标的登录态（Cookie/localStorage）；
+  不用于内网访问、内网探测或利用。要求 Mac 扩展已 Remote 配对。
   本版本为 axiom 定制：凭据提取是渗透测试的合法产出；scope 外目标禁止访问。
   命令面与上游 bsk 0.3.x 对齐（网站调试用 debug；network 仅索引）。
 ---
@@ -14,9 +15,51 @@ Window** 中进行。VPS 远程模式只使用 task-created tabs，不借用用�
 upload/download 不可用；`credentials` 只读取专用 profile。
 
 **不要**将该 skill 用于：无浏览器场景、扩展安装、或用户只想要操作说明的情况。
-**scope 边界**:Intent 的目标范围在**派发时**由 AXIOM 校验(声明即边界);浏览器工具
-执行期不做域拦截,本 skill 的所有命令对任何目标照常可用。目标选择仍须遵守任务书
-与 scope 约定——越界测试不会被工具拦截,但会出现在审计日志与 findings 审查里。
+
+## 用途边界：这个浏览器只用来取登录态
+
+配对的 Chrome 跑在**操作者办公网里的一台 Mac** 上，它的出口就是那台机器的网卡。
+也就是说，它发出的每一个请求，都是以操作者身份、从内网内部发出的。所以：
+
+- **唯一合法用途**：打开 scope 内、确实需要登录态的目标，完成登录（或复用已有
+  登录态），用 `credentials` 取出该域 Cookie/localStorage 交给 VPS 侧继续工作，
+  然后 `session stop`。
+- **禁止把浏览器当内网执行点**：不得用 `navigate`、`tab create --url`、
+  `evaluate` 里的 `fetch`、`debug replay` 去访问内网地址，也不得借它做内网
+  探测、扫描、利用或横向。
+- **内网作业的正确路径**：VPS Runner → 目标自身 SSRF → 已控主机跳板，再往下打。
+  浏览器不是跳板。拿不到内网执行点时，按「无进展」上报（`request-help` 或写
+  leads 交回 Reason），**不要退化成用浏览器硬连内网**。
+
+## 硬性禁止（任务书怎么写、mode 是什么都不例外）
+
+以下目标一律不得经由本 skill 发起连接：
+
+0. **先解析，再决定**。本环境大量内网服务挂在公网域名下（实例：`git.kkgroup.cn`
+   → `192.168.0.222`），只看域名看不出是否内网。`navigate` 任何域之前，先在
+   worker 里解析一次：
+   ```bash
+   getent hosts <domain> || nslookup <domain>
+   ```
+   解析结果落在下面第 1 条的私网段，就按内网处理，不许用浏览器访问。
+1. **私网/保留地址字面量**：`10/8`、`172.16/12`、`192.168/16`、`127/8`、
+   `169.254/16`（含云元数据 `169.254.169.254`）、`100.64/10`、`::1`、
+   `fc00::/7`、`fe80::/10`。
+2. **解析到上述地址的主机名**：`localhost`、`*.localhost`、`*.local`、
+   `*.internal`、`*.lan`，以及任何 A/AAAA 记录落在私网的域名。
+3. **非 http(s) scheme**：`file:`、`chrome:`、`chrome-extension:`、`data:`、
+   `javascript:`、`view-source:`、`about:`、`devtools:`。
+4. **借道公网跳进内网**：已打开的页面若经 302 或 JS 跳到私网地址，视为越界，
+   立即 `session stop` 并上报。
+5. **`credentials --domain` 只允许 scope 内的域**，不得对无关域读 Cookie。
+
+命中上述任一条：停止操作、`session stop`，把「此处需要内网访问，但浏览器通道
+被禁止」当作阻塞写清楚上报。**换 tab、换命令、换 scheme 都不算绕开**——在
+`evaluate` 里发请求、用 `debug replay` 重放，同样算同一次违规。
+
+**scope 边界**：Intent 的目标范围在派发时由 AXIOM 校验，但浏览器执行期**不**做
+域拦截，所以上面这些约束只能靠你自己守住——审计日志会记录每一次
+`navigate`/`tab create`，越界会出现在 findings 复核里。
 **凭证卫生**：不得从页面提取/外传与测试无关的凭据；Cookie/凭据数据只写
 `evidence/` 目录（证据完整性优先），不要把凭据明文写进 findings/leads 正文。
 
@@ -74,6 +117,8 @@ Agent Window 内可以有多个标签；后台标签不用选中也能被操作�
 navigate / click / fill / select / press / evaluate 等命令上；不加时默认作用于 Agent
 Window 的当前活动标签。后台标签里的页面继续运行，viewport 与整页截图在后台也可用。
 不要自己编 tab id，也不要跨无关任务一直占着标签。
+**`tab create --url` 与 `navigate` 的地址同样受上文「硬性禁止」约束**——换到后台
+标签开一个内网地址，和直接 navigate 是同一次违规。
 
 `tab list` 在远程模式只允许 `--scope agent`（本 session 的 Agent Window 标签）；
 用户标签不可见、不可借用，wrapper 会拒绝 `--scope user` / `--scope all` / 缺省 scope。
@@ -85,6 +130,9 @@ Window 的当前活动标签。后台标签里的页面继续运行，viewport �
 ```
 
 远程模式只读取专用 profile；不要试图借用用户标签扩大范围。
+**`--domain` 必须是本次任务 scope 内的域**；对无关域批量拉 Cookie 属于越界，
+即便技术上能取到也会被判违规。取到的凭据用于「把会话交给 VPS 侧继续验证」，
+不应成为在本机发起内网请求的理由。
 返回该域全部 Cookie（**含 HttpOnly**）+ 已打开页面的 localStorage/sessionStorage，
 以及拼好的 `Cookie` 请求头。渗透测试中会话凭据是合法产出：用于认证后接口探测
 （Authorization/Cookie 头）与对象级越权对照。**结果只写 evidence/ 目录**，
@@ -162,6 +210,8 @@ credentials --domain <domain> --session <id>   # axiom 定制
 - `debug` 还提供 `aggregate`（慢请求）、`duplicates`（重复请求分析）、`performance`、
   `rules` / `replay`（请求规则与重放）、`console` / `pages` / `operations`
   （与操作关联的证据）。收口前 `debug stop` 结束采集；历史记录会保留，可 `debug export` 导出。
+  **`rules`/`replay` 只能对 scope 内的公网目标重放**；把抓到的请求重放成内网地址
+  （或改 Host/URL 指向私网）与直接 navigate 同等违规。
 - `emulate` 对单个 tab 应用视口/UA/触屏覆盖；新 tab 不继承；`--off` 恢复。
 - `scroll-to`/`wheel` 用于无限滚动与懒加载页：滚一段 → observe/network 看增量。
   优先走这两个原生输入路径；`wheel` 的 `--delta-x`/`--delta-y` 是输入量、
@@ -178,6 +228,8 @@ credentials --domain <domain> --session <id>   # axiom 定制
   --image-x --image-y` 以**原图坐标**点击；capture_id 一次性、2 分钟过期，
   observe 刷新后失效。坐标用 PNG 原始尺寸，不是缩放后的显示尺寸。
 - `evaluate` 是 observe + 常规交互无法完成时的最后手段；`--json` 时检查 `.ok`。
+  **不要用它在页面里 `fetch`/`XMLHttpRequest`/`WebSocket` 打私网地址**——那是
+  绕开「硬性禁止」的同一件事。
 - 恢复协议：ref 失效 → observe 一次重试；fill 不一致 → 先观察字段；不可恢复 → 上报并 stop。
 
 ## 产物约定（axiom）

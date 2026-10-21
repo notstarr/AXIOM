@@ -920,12 +920,24 @@ class PiBootstrapExecutor:
             model["thinkingLevelMap"] = {
                 self.settings.thinking_level: self.settings.thinking_level
             }
+        compat: dict[str, Any] = {}
         if self.settings.developer_role_supported is False:
             # The gateway refused OpenAI's ``developer`` message role, so Pi
             # must send the system prompt as ``system``.  Only a confirmed
             # refusal emits this: an unprobed capability keeps Pi's default
             # (``developer``), which is the modern spelling of the same role.
-            model["compat"] = {"supportsDeveloperRole": False}
+            compat["supportsDeveloperRole"] = False
+        if (
+            self.settings.thinking_enabled
+            and self.settings.model.lower().startswith("deepseek")
+        ):
+            # DeepSeek thinking mode rejects replayed assistant messages that
+            # omit reasoning_content.  Pi only auto-detects this for
+            # deepseek.com hosts, so proxies such as OpenCode Go need the
+            # compat flag emitted explicitly.
+            compat["requiresReasoningContentOnAssistantMessages"] = True
+        if compat:
+            model["compat"] = compat
         provider: dict[str, Any] = {
             "baseUrl": sdk_base_url(self.settings.provider_api, self.settings.base_url),
             "api": canonical_provider_api(self.settings.provider_api),

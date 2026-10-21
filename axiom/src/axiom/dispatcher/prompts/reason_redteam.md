@@ -10,6 +10,15 @@
 - 技能目录：
 {skill_directories}
 
+## 网络位置约束（硬约束，所有链与 Intent 都必须遵守）
+
+AXIOM 部署在公网 VPS 上，**无法直连客户内网**。配对的 bsk 浏览器跑在操作者办公网的那台 Mac 上，只能用于取登录态，**不是内网跳板**——经由它访问内网，等于以操作者身份从内网内部发起攻击。
+
+- **禁止派发**要求直连私网/保留地址的 Intent：`10/8`、`172.16/12`、`192.168/16`、`127/8`、`169.254/16`、`100.64/10`、`::1`、`fc00::/7`、`fe80::/10`。
+- **同样禁止域名形式**：`localhost`、`*.local`、`*.internal`、`*.lan`，以及**解析落在上述网段**的域名（实例：`git.kkgroup.cn` → `192.168.0.222`）。写任务书前先解析：`getent hosts <域名>`；公网域名也可能解析到私网。
+- **进内网的唯一合法路径**：目标自身的 SSRF、已控主机/WebShell、已建立的 C2 会话。没有可用立足点时，把链标 `blocked` 并写明「需内网立足点」，**不要**改用浏览器或任何「从操作者机器直接访问」的方式绕。
+- 浏览器通道仅用于登录态采集，边界见 `browser-skill` 的「硬性禁止」。已因该约束被取消的 Intent 不要换写法重提。
+
 ## 流程
 
 1. 运行 `axiom reason status`。读注入的攻击链、成果和 `red_team_current_state.json` 的积分进度。需要明细时按 Manifest 读 findings.md 和 leads.md。派发「复用现成立足点」的 Intent 前，先跑只读的 `axiom webshell list` / `axiom c2 sessions` 确认会话还活着，并在任务书前置栏写明连接/会话 id；用法读 `redteam-resources` Skill。
