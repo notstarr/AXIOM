@@ -60,51 +60,72 @@
     </div>
 
     <!-- 右栏：裁判记录 -->
-    <div class="sto-panel" style="overflow:auto; min-width:0;">
+    <div class="sto-panel" style="min-width:0;">
       <div class="guard-audit-railhead flex items-center justify-between" style="padding:15px 16px; border-bottom:1px solid var(--sto-line);">
         <p class="sto-label">裁判记录</p>
         <span class="sto-muted sto-num" style="font-size:10px;" x-text="`${(guardAudit.events || []).length} 条`"></span>
       </div>
 
       <template x-if="guardAudit.loading && (!guardAudit.events || guardAudit.events.length === 0)">
-        <div class="sto-empty" style="border:0;">正在加载审计日志...</div>
+        <div class="sto-empty" style="border:0; flex:1;">正在加载审计日志...</div>
       </template>
       <template x-if="!guardAudit.loading && (!guardAudit.events || guardAudit.events.length === 0)">
-        <div class="sto-empty" style="border:0;">暂无裁判记录</div>
+        <div class="sto-empty" style="border:0; flex:1;">暂无裁判记录</div>
       </template>
 
-      <div>
-        <template x-for="event in guardAudit.events" :key="event.id">
-          <article class="sto-eventrow" :class="event.decision === 'BLOCK' ? 'block' : 'allow'">
-            <!-- 左：判定与它作用于什么；右：出处与归属 -->
-            <div class="ga-row">
-              <div class="ga-main">
+      <div class="ga-scroll">
+      <table class="ga-table">
+        <colgroup>
+          <col class="ga-col-verdict">
+          <col>
+          <col class="ga-col-time">
+          <col class="ga-col-source">
+          <col class="ga-col-mode">
+          <col class="ga-col-task">
+          <col class="ga-col-intent">
+          <col class="ga-col-raw">
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="ga-th-verdict">判定</th>
+            <th>调用内容 / 原因</th>
+            <th class="ga-th-time">时间</th>
+            <th>依据</th>
+            <th>模式</th>
+            <th>任务</th>
+            <th>意图</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="event in guardAudit.events" :key="event.id">
+            <!-- is-block / is-allow, not block / allow: Tailwind ships
+                 `.block{display:block}`, which pulls every BLOCK row out of the
+                 table layout so its cells collapse to content width. -->
+            <tr class="ga-row" :class="event.decision === 'BLOCK' ? 'is-block' : 'is-allow'">
+              <td class="ga-td-verdict">
                 <span class="ga-verdict" :class="event.decision === 'BLOCK' ? 'block' : 'allow'"
                   x-text="guardAuditStatusLabel(event)"></span>
-                <p class="ga-content" x-text="guardAuditContent(event)"></p>
+              </td>
+              <td class="ga-what">
+                <p class="ga-content" :title="guardAuditContent(event)" x-text="guardAuditContent(event)"></p>
                 <p class="ga-reason" :class="event.decision === 'BLOCK' ? 'block' : 'allow'"
                   x-text="guardAuditReason(event)"></p>
-              </div>
-
-              <dl class="ga-side">
-                <div><dt>时间</dt><dd x-text="formatDate(event.created_at)"></dd></div>
-                <div><dt>依据</dt><dd x-text="guardAuditSourceLabel(event)"></dd></div>
-                <div><dt>模式</dt><dd x-text="guardAuditModeLabel(event)"></dd></div>
-                <div><dt>任务</dt><dd x-text="event.project_id || '未知'"></dd></div>
-                <div><dt>意图</dt><dd x-text="event.intent_id || '无'"></dd></div>
-                <div x-show="event.tool_name"><dt>工具</dt><dd x-text="event.tool_name"></dd></div>
-                <div x-show="event.model_latency_ms"><dt>耗时</dt><dd x-text="`${event.model_latency_ms}ms`"></dd></div>
-                <div>
-                  <button @click="guardAudit.expanded[event.id] = !guardAudit.expanded[event.id]"
-                    class="ga-raw" x-text="guardAudit.expanded[event.id] ? '收起' : '原始记录'"></button>
-                </div>
-              </dl>
-            </div>
-
-
-            <pre x-show="guardAudit.expanded[event.id]" x-cloak class="sto-usage" style="margin-top:9px; max-height:320px; overflow:auto;" x-text="guardAuditDetail(event)"></pre>
-          </article>
-        </template>
+                <pre x-show="guardAudit.expanded[event.id]" x-cloak class="sto-usage ga-detail" x-text="guardAuditDetail(event)"></pre>
+              </td>
+              <td class="ga-time" x-text="formatDate(event.created_at)"></td>
+              <td class="ga-cell" x-text="guardAuditSourceLabel(event)"></td>
+              <td class="ga-cell" x-text="guardAuditModeLabel(event)"></td>
+              <td class="ga-cell" x-text="event.project_id || '未知'"></td>
+              <td class="ga-cell" x-text="event.intent_id || '无'"></td>
+              <td class="ga-td-raw">
+                <button @click="guardAudit.expanded[event.id] = !guardAudit.expanded[event.id]"
+                  class="ga-raw" x-text="guardAudit.expanded[event.id] ? '收起' : '原始'"></button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
       </div>
     </div>
   </main>

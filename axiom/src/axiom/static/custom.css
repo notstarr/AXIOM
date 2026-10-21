@@ -1380,7 +1380,7 @@
   /* ═══════════ 守门审计（复用 sto-* 体系） ═══════════ */
   .sto-eventrow {
     position: relative; background: var(--sto-panel);
-    border-bottom: 1px solid var(--sto-line); padding: 9px 14px 9px 17px;
+    border-bottom: 1px solid var(--sto-line); padding: 7px 14px 7px 17px;
     transition: background 0.15s ease;
   }
   .sto-eventrow:hover { background: var(--sto-inset); }
@@ -1537,47 +1537,104 @@
 
   /* Guard audit: filter rail on the left, records on the right.  Collapses to a
      single column when the viewport cannot hold both without squeezing rows. */
-  .guard-audit-main { display: grid; grid-template-columns: 296px minmax(0, 1fr); gap: 16px; align-items: start; overflow: hidden; }
-  .guard-audit-main > .sto-panel:last-child { overflow: auto; min-width: 0; max-height: 100%; }
+  /* Both panels span the same height so their top and bottom edges line up
+     instead of the rail stopping halfway down the record list. */
+  .guard-audit-main { display: grid; grid-template-columns: 288px minmax(0, 1fr); gap: 16px; align-items: stretch; overflow: hidden; height: 100%; }
+  .guard-audit-main > .sto-panel { min-height: 0; display: flex; flex-direction: column; }
+  .guard-audit-main > .sto-panel:first-child { overflow: auto; }
+  .guard-audit-main > .sto-panel:last-child { overflow: hidden; min-width: 0; }
+  .guard-audit-main > .sto-panel:last-child > .ga-table { flex: none; }
+  .guard-audit-main > .sto-panel:last-child > .ga-scroll { flex: 1; min-height: 0; overflow: auto; }
 
   /* Both columns start on the same line; the left rail sticks while the record
      list scrolls, so the two panels must not drift apart at the top. */
-  .guard-audit-main > .sto-panel { align-self: start; }
-  .guard-audit-main > .sto-panel:first-child { position: sticky; top: 0; }
+  .guard-audit-main > .sto-panel { align-self: stretch; }
 
   /* Both columns share one header rhythm so the two panel edges line up. */
   .guard-audit-railhead { min-height: 18px; }
 
   /* Verdict badge: the first thing the eye should land on. */
-  /* One record is two lines: verdict + command + reason on the left, the
-     provenance inline on the right.  Anything taller wastes the list. */
-  .ga-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: baseline; }
+  /* Records are a real table so the columns align across every row.  Auto
+     layout sizes each metadata column to its widest cell; the command column
+     absorbs the remaining width, which is what removes the gap in the middle. */
+  /* table-layout: fixed keeps every row on the same column boundaries; with
+     auto layout a long command widened column 2 and pushed 时间/依据 right on
+     that row only. */
+  .ga-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 
-  .ga-main { min-width: 0; display: flex; align-items: baseline; flex-wrap: wrap; column-gap: 9px; row-gap: 3px; }
-  .ga-verdict { display: inline-flex; align-items: center; justify-content: center; height: 21px; padding: 0 9px; border-radius: 6px; font-size: 11px; font-weight: 700; letter-spacing: .02em; flex-shrink: 0; }
-  .ga-verdict.block { color: #b42318; background: color-mix(in srgb, #d92d20 12%, transparent); border: 1px solid color-mix(in srgb, #d92d20 26%, transparent); }
-  .ga-verdict.allow { color: #067647; background: color-mix(in srgb, #12b76a 12%, transparent); border: 1px solid color-mix(in srgb, #12b76a 26%, transparent); }
-  .ga-content { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.45; color: var(--sto-fg); word-break: break-all; min-width: 0; }
-  .ga-reason { margin: 0; font-size: 11.5px; font-weight: 600; line-height: 1.45; }
-  .ga-reason::before { content: "·"; margin-right: 7px; color: var(--sto-fg-3); font-weight: 400; }
+  .ga-table thead th {
+    position: sticky; top: 0; z-index: 1;
+    padding: 7px 10px; text-align: left; white-space: nowrap;
+    background: var(--sto-inset); border-bottom: 1px solid var(--sto-line);
+    font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--sto-fg-3);
+  }
+  .ga-table thead th.ga-th-time { padding-left: 14px; }
+
+  .ga-table tbody tr { border-bottom: 1px solid var(--sto-line); }
+  .ga-table tbody tr:hover { background: var(--sto-inset); }
+  .ga-table td { padding: 7px 10px; vertical-align: top; }
+
+  /* The colour bar that marks block vs allow, kept on the row itself. */
+  /* is-* rather than block/allow: .block is a Tailwind utility whose
+     display:block pulls the row out of the table layout entirely. */
+  .ga-table tbody tr.is-block { box-shadow: inset 3px 0 0 var(--sto-danger); }
+  .ga-table tbody tr.is-allow { box-shadow: inset 3px 0 0 var(--sto-ok); }
+
+  .ga-td-verdict { width: 1%; white-space: nowrap; padding-left: 15px !important; }
+  .ga-verdict {
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 20px; padding: 0 8px; border-radius: 6px;
+    font-size: 10.5px; font-weight: 700; letter-spacing: .02em;
+  }
+  .ga-verdict.block { color: #b42318; background: color-mix(in srgb, #d92d20 11%, transparent); border: 1px solid color-mix(in srgb, #d92d20 26%, transparent); }
+  .ga-verdict.allow { color: #067647; background: color-mix(in srgb, #12b76a 11%, transparent); border: 1px solid color-mix(in srgb, #12b76a 26%, transparent); }
+
+  /* Command on one line with an ellipsis, reason beneath it; the full command
+     is in the tooltip and in 原始, so a long one cannot reflow the row. */
+  .ga-what { width: auto; }
+  .ga-content { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.4; color: var(--sto-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ga-reason { margin: 1px 0 0; font-size: 11px; font-weight: 600; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ga-reason.block { color: #b42318; }
   .ga-reason.allow { color: #067647; }
 
-  /* Provenance: one wrapped line of muted facts, not a stacked list. */
-  .ga-side { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; column-gap: 12px; row-gap: 2px; max-width: 46%; }
-  .ga-side > div { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
-  .ga-side dt { margin: 0; font-size: 9.5px; font-weight: 600; letter-spacing: .04em; color: var(--sto-fg-3); }
-  .ga-side dd { margin: 0; font-size: 10.5px; color: var(--sto-fg-2); font-variant-numeric: tabular-nums; }
+  .ga-time { width: 122px; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--sto-fg-3); white-space: nowrap; }
+  .ga-cell { font-size: 11px; color: var(--sto-fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* With table-layout: fixed the browser honours the colgroup, and the single
+     unpinned <col> takes all remaining width.  Declaring the widths on cells
+     instead let a column shrinking back to its content, leaving the table
+     narrower than its container. */
+  .ga-table { table-layout: fixed; }
+  /* Sized to the longest cell each column actually holds: the time is
+     "2026年10月21日 17:06" (~132px at 11px), the source "小模型未答" (~62px).
+     Under-sized columns let the text run over its neighbour - the time was
+     colliding with the source before. */
+  .ga-col-verdict { width: 58px; }
+  .ga-col-time { width: 152px; }
+  .ga-col-source { width: 92px; }
+  .ga-col-mode { width: 54px; }
+  .ga-col-task { width: 76px; }
+  .ga-col-intent { width: 62px; }
+  .ga-col-raw { width: 46px; }
+
+  .ga-td-raw { width: 1%; white-space: nowrap; }
   .ga-raw { border: 0; background: none; padding: 0; cursor: pointer; font-size: 10px; color: var(--sto-fg-3); text-decoration: underline dotted; text-underline-offset: 2px; }
   .ga-raw:hover { color: var(--sto-accent); }
+  .ga-detail { margin: 6px 0 0; max-height: 280px; overflow: auto; white-space: pre-wrap; }
 
-  @media (max-width: 900px) {
-    .ga-row { grid-template-columns: minmax(0, 1fr); gap: 5px; }
-    .ga-side { justify-content: flex-start; max-width: none; }
+  @media (max-width: 1100px) {
+    .ga-table thead th:nth-child(6), .ga-table td:nth-child(6),
+    .ga-table thead th:nth-child(7), .ga-table td:nth-child(7) { display: none; }
+  }
+  @media (max-width: 860px) {
+    .ga-table thead th:nth-child(4), .ga-table td:nth-child(4),
+    .ga-table thead th:nth-child(5), .ga-table td:nth-child(5) { display: none; }
+    .ga-what { min-width: 160px; }
   }
   @media (max-width: 1180px) {
-    .guard-audit-main { grid-template-columns: 1fr; overflow-y: auto; }
-    .guard-audit-main > .sto-panel:last-child { overflow: visible; max-height: none; }
+    .guard-audit-main { grid-template-columns: 1fr; overflow-y: auto; height: auto; }
+    .guard-audit-main > .sto-panel:last-child { overflow: visible; }
+    .guard-audit-main > .sto-panel:last-child > .ga-table { max-height: none; }
   }
 
   /* ── intent 悬浮卡（全局单实例，跟随鼠标 fixed 定位；pointer-events:none 不挡交互） ── */
