@@ -9,6 +9,7 @@ import urllib.request
 
 import click
 import pytest
+from sqlalchemy import text as sa_text
 
 from axiom.modules.c2.schemas import C2ExecCommand
 from axiom.modules.c2.token import c2_listener_token
@@ -104,48 +105,49 @@ def test_c2_http_listener_beacon_roundtrip(client) -> None:
     assert sessions[0]["status"] == "dead"
 
 
-def test_c2_tcp_listener_exec(client) -> None:
+def test_c2_tcp_listener_is_refused(client) -> None:
+    """TCP has no handshake and no token, so creating one must fail."""
+
     task = _red_team_task(client)
-    port = _free_port()
-    listener = _create_listener(client, task, "tcp", port)
-    started = client.post(f"/api/v1/tasks/{task['id']}/c2/listeners/{listener['id']}/start")
-    assert started.json()["status"] == "listening"
-
-    sock = socket.create_connection(("127.0.0.1", port), timeout=10)
-    deadline = time.monotonic() + 5
-    sessions = []
-    while time.monotonic() < deadline:
-        sessions = client.get(f"/api/v1/tasks/{task['id']}/c2/sessions").json()
-        if sessions:
-            break
-        time.sleep(0.2)
-    assert sessions, "tcp 会话未上线"
-    session = sessions[0]
-
-    container = client.app.state.container
-    holder: list = []
-    thread = threading.Thread(
-        target=lambda: holder.append(
-            container.c2.exec(
-                task["id"],
-                session["id"],
-                C2ExecCommand(command="whoami", wait_seconds=8),
-                actor="pytest",
-            )
-        ),
+    response = client.post(
+        f"/api/v1/tasks/{task['id']}/c2/listeners",
+        json={"name": "tcp 监听", "kind": "tcp", "host": "127.0.0.1", "port": _free_port()},
     )
-    thread.start()
-    sock.settimeout(5)
-    received = sock.recv(4096).decode("utf-8")
-    assert received.strip() == "whoami"
-    sock.sendall(b"uid=1(worker)\n")
-    thread.join(timeout=12)
-    assert not thread.is_alive()
-    result = holder[0]
-    assert result.status == "completed"
-    assert "uid=1(worker)" in result.output
-    sock.close()
-    client.post(f"/api/v1/tasks/{task['id']}/c2/listeners/{listener['id']}/stop")
+    assert response.status_code == 422, response.text
+    assert client.get(f"/api/v1/tasks/{task['id']}/c2/listeners").json() == []
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.10", "10.192.192.205", "example.com"])
+def test_c2_listener_must_bind_loopback(client, host: str) -> None:
+    """A public bind address is what put listeners on 0.0.0.0:443 before."""
+
+    task = _red_team_task(client)
+    response = client.post(
+        f"/api/v1/tasks/{task['id']}/c2/listeners",
+        json={"name": "公网监听", "kind": "http", "host": host, "port": _free_port()},
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_c2_listener_start_rejects_legacy_tcp_row(client) -> None:
+    """Rows created before TCP was retired must not start either."""
+
+    task = _red_team_task(client)
+    listener = _create_listener(client, task, "http", _free_port())
+    container = client.app.state.container
+    with container.c2.engine.begin() as conn:
+        conn.execute(
+            sa_text(
+                "UPDATE axiom.c2_listeners SET kind='tcp' "
+                "WHERE task_id=:task_id AND id=:listener_id"
+            ),
+            {"task_id": task["id"], "listener_id": listener["id"]},
+        )
+    response = client.post(
+        f"/api/v1/tasks/{task['id']}/c2/listeners/{listener['id']}/start"
+    )
+    assert response.status_code == 422, response.text
+    assert "停用" in response.text
 
 
 def test_c2_exec_without_beacon_times_out_as_sent(client) -> None:

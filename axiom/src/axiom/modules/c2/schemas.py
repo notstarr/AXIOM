@@ -1,25 +1,47 @@
 from __future__ import annotations
 
+import ipaddress
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# Listeners bind loopback only; Caddy terminates TLS and reverse proxies /c2/.
+# TCP is not offered: the raw socket has no handshake and no token, so anyone
+# who finds the port can take the session and the commands with it.
+LISTENER_HOST = "127.0.0.1"
 
 
 class CreateListener(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    kind: Literal["http", "tcp"] = "http"
-    host: str = "0.0.0.0"
+    kind: Literal["http"] = "http"
+    host: str = LISTENER_HOST
     port: int = Field(ge=1, le=65535)
 
-    @field_validator("name", "host")
+    @field_validator("name")
     @classmethod
     def require_text(cls, value: str) -> str:
         value = value.strip()
         if not value:
             raise ValueError("must not be empty")
         return value
+
+    @field_validator("host")
+    @classmethod
+    def require_loopback(cls, value: str) -> str:
+        value = value.strip()
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError:
+            raise ValueError(
+                f"host 只能是回环地址 {LISTENER_HOST} 或 ::1；对外由 Caddy 反代 /c2/"
+            ) from None
+        if not address.is_loopback:
+            raise ValueError(
+                f"host 只能是回环地址 {LISTENER_HOST} 或 ::1；对外由 Caddy 反代 /c2/"
+            )
+        return str(address)
 
 
 class C2Listener(BaseModel):

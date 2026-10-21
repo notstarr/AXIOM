@@ -1,4 +1,9 @@
-"""C2 listener threads: http polling beacon + tcp raw socket + watchdog."""
+"""C2 listener threads: http polling beacon + watchdog.
+
+The raw TCP listener is no longer offered - it has no handshake and no token,
+so a reachable port would hand the session and its commands to whoever
+connected first.  ``start`` rejects any non-http listener row.
+"""
 from __future__ import annotations
 
 import base64
@@ -169,23 +174,11 @@ class ListenerManager:
             thread.start()
         else:
             # Raw TCP C2 is a shell session without a handshake; token auth is
-            # HTTP-only.  Do not expose TCP listeners on untrusted networks.
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                sock.bind((listener.host, listener.port))
-                sock.listen(8)
-            except OSError as exc:
-                self._mark_listener(listener, "error", str(exc))
-                raise
-            thread = threading.Thread(
-                target=self._tcp_accept_loop,
-                args=(listener, sock),
-                daemon=True,
-                name=f"c2-tcp-{listener.id}",
+            # HTTP-only.  Refuse it outright: a reachable port would hand the
+            # session and every command in it to whoever connected first.
+            raise ValueError(
+                f"listener {listener.id} 的 kind={listener.kind} 已停用；只能用 http 监听器"
             )
-            entry = {"kind": "tcp", "socket": sock, "thread": thread}
-            thread.start()
         with self._lock:
             self._entries[listener.id] = entry
         self._mark_listener(listener, "listening", "")

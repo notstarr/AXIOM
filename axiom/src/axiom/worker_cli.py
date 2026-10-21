@@ -1142,8 +1142,8 @@ def register_worker_commands(main: click.Group) -> None:
 
     @c2_group.command("listener-create")
     @click.option("--name", required=True)
-    @click.option("--kind", type=click.Choice(("http", "tcp")), default="http")
-    @click.option("--host", default="0.0.0.0")
+    @click.option("--kind", type=click.Choice(("http",)), default="http")
+    @click.option("--host", default="127.0.0.1")
     @click.option("--port", type=click.IntRange(1, 65535), required=True)
     def c2_listener_create(name: str, kind: str, host: str, port: int) -> None:
         task_id = _red_team_task_id()
