@@ -191,15 +191,22 @@ def _model_decision(
         )
     latency_ms = int((time.perf_counter() - started) * 1000)
     diagnostic = {"model_latency_ms": latency_ms, "raw_model_output": raw.strip()[:2_000]}
-    verdict = _verdict(raw)
+    verdict, detail = _parse_verdict(raw)
     if verdict == "1":
-        return GuardDecision(decision="ALLOW", source="model", **diagnostic)
+        return GuardDecision(decision="ALLOW", reason=detail, source="model", **diagnostic)
     if verdict == "0":
+        # The worker sees this string: it is returned to Explore as the block
+        # reason, so it has to be short enough to read in a tool result and
+        # specific enough to act on.
         return GuardDecision(
-            decision="BLOCK", reason="监管模型判定阻断", source="model", **diagnostic
+            decision="BLOCK",
+            reason=detail or "监管模型判定阻断",
+            source="model",
+            **diagnostic,
         )
-    # The judge answers with a single digit.  Anything else (empty completion,
-    # markup, prose) is treated as no answer and keeps the fail-open default.
+    # The judge answers with a digit and an optional short reason.  Anything else
+    # (empty completion, markup, prose) is treated as no answer and keeps the
+    # fail-open default.
     return GuardDecision(
         decision="ALLOW",
         reason="监管模型未返回 0/1，按 fail-open 放行",
@@ -208,17 +215,37 @@ def _model_decision(
     )
 
 
-def _verdict(raw: str) -> str:
-    """Return ``"0"`` or ``"1"`` when the completion carries one, else ``""``.
+REASON_MAX_CHARS = 40
 
-    Only the first non-empty line counts, so trailing prose cannot flip a
-    verdict.  Markdown fences and emphasis characters are dropped first because
-    chat models like to decorate a one-character answer.
+
+def _parse_verdict(raw: str) -> tuple[str, str]:
+    """Split a judge reply into its verdict and its short reason.
+
+    The contract is ``0`` or ``1`` optionally followed by ``:`` and a reason:
+    ``0:会锁死管理员账号`` blocks, ``1:只读探测`` allows.  Only the first
+    non-empty line counts, so trailing prose cannot flip a verdict.  Markdown
+    fences and emphasis characters are dropped first because chat models like to
+    decorate a one-character answer.
+
+    Returns ``("", "")`` when no digit leads the reply, which the caller treats
+    as no answer rather than inventing a verdict.
     """
 
     for line in raw.splitlines():
         cleaned = line.strip().strip("`*_ \t\r\n'\"")
-        if cleaned:
-            return cleaned[0] if cleaned[0] in "01" else ""
-    return ""
+        if not cleaned:
+            continue
+        if cleaned[0] not in "01":
+            return "", ""
+        verdict = cleaned[0]
+        # Strip decoration and separators repeatedly: ``**0**：原因`` leaves
+        # ``**：原因`` after the digit, and both layers have to come off before
+        # the reason starts.
+        rest = cleaned[1:]
+        previous = None
+        while rest != previous:
+            previous = rest
+            rest = rest.lstrip("`*_ \t:：,，-|")
+        return verdict, rest.strip().strip("`*_ ").replace("\n", " ")[:REASON_MAX_CHARS]
+    return "", ""
 

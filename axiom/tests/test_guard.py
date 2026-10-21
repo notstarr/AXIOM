@@ -4,7 +4,7 @@ import pytest
 
 from axiom.modules.guard.defaults import HARD_BLOCK_RULES, SYSTEM_PROMPT
 from axiom.modules.guard.policy import evaluate
-from axiom.modules.guard.policy import _external_operation, _verdict
+from axiom.modules.guard.policy import _external_operation, _parse_verdict
 from axiom.modules.guard.schemas import GuardRequest
 from axiom.modules.settings.schemas import RuntimeConfig
 
@@ -55,7 +55,7 @@ def _decide(client, task: dict, command: str) -> dict:
             "project_id": task["project_id"],
             "task_id": task["id"],
             "intent_id": "i001",
-            "phase": "bootstrap",
+            "phase": "explore",
             "worker": "worker-a",
             "tool_name": "bash",
             "input": {"command": command},
@@ -101,7 +101,9 @@ def test_guard_audit_preserves_review_run_owner(client) -> None:
             "project_id": task["project_id"],
             "task_id": task["id"],
             "review_run_id": "vr000001",
-            "phase": "review",
+            # Only Explore is audited now; this test is about the owning run
+            # surviving into the record, so it issues an explore-phase request.
+            "phase": "explore",
             "worker": "reviewer-a",
             "tool_name": "read",
             "input": {"path": "review_target.json"},
@@ -114,7 +116,7 @@ def test_guard_audit_preserves_review_run_owner(client) -> None:
         params={"task_id": task["id"], "event_type": "guard.decision"},
     ).json()
     assert events[0]["review_run_id"] == "vr000001"
-    assert events[0]["payload"]["phase"] == "review"
+    assert events[0]["payload"]["phase"] == "explore"
 
 
 def test_guard_audit_preserves_plan_run_owner(client) -> None:
@@ -125,7 +127,7 @@ def test_guard_audit_preserves_plan_run_owner(client) -> None:
             "project_id": task["project_id"],
             "task_id": task["id"],
             "plan_run_id": "pr000001",
-            "phase": "plan",
+            "phase": "explore",
             "worker": "plan-worker",
             "tool_name": "read",
             "input": {"path": "manifest.json"},
@@ -138,7 +140,7 @@ def test_guard_audit_preserves_plan_run_owner(client) -> None:
         params={"task_id": task["id"], "event_type": "guard.decision"},
     ).json()
     assert events[0]["plan_run_id"] == "pr000001"
-    assert events[0]["payload"]["phase"] == "plan"
+    assert events[0]["payload"]["phase"] == "explore"
 
 
 def test_guard_fails_open_for_normal_external_operation_without_model_config(client) -> None:
@@ -250,8 +252,11 @@ def test_default_hard_rules_do_not_block_normal_security_testing(command: str) -
 
 def test_default_judge_prompt_preserves_allow_first_contract() -> None:
     assert "默认放行" in SYSTEM_PROMPT
-    assert "1 = 放行" in SYSTEM_PROMPT
-    assert "0 = 阻断" in SYSTEM_PROMPT
+    assert "1:<原因>  = 放行" in SYSTEM_PROMPT
+    assert "0:<原因>  = 阻断" in SYSTEM_PROMPT
+    # The reason travels back to Explore as the block message.
+    assert "Explore worker" in SYSTEM_PROMPT
+    assert "20 个汉字" in SYSTEM_PROMPT
     assert "SQL 注入" in SYSTEM_PROMPT
     assert "上传 WebShell" in SYSTEM_PROMPT
     assert "大规模压测" in SYSTEM_PROMPT
@@ -280,17 +285,29 @@ def test_bsk_private_address_rule_blocks_pivoting_only() -> None:
 
 
 def test_verdict_only_accepts_zero_or_one() -> None:
-    assert _verdict("1") == "1"
-    assert _verdict("0") == "0"
-    assert _verdict("  1\n") == "1"
-    assert _verdict("`0`") == "0"
-    assert _verdict("**1**") == "1"
-    assert _verdict("0\n解释：会破坏业务") == "0"
+    assert _parse_verdict("1") == ("1", "")
+    assert _parse_verdict("0") == ("0", "")
+    assert _parse_verdict("  1\n") == ("1", "")
+    assert _parse_verdict("`0`") == ("0", "")
+    assert _parse_verdict("**1**") == ("1", "")
+    assert _parse_verdict("0\n解释：会破坏业务") == ("0", "")
     # Anything that is not a leading 0/1 stays unanswered, which keeps the
     # fail-open default instead of inventing a verdict.
-    assert _verdict("ALLOW") == ""
-    assert _verdict("阻断") == ""
-    assert _verdict("") == ""
+    assert _parse_verdict("ALLOW") == ("", "")
+    assert _parse_verdict("阻断") == ("", "")
+    assert _parse_verdict("") == ("", "")
+
+
+def test_verdict_carries_a_short_reason_back_to_the_worker() -> None:
+    # The reason travels to Explore as the block message, so it is parsed off
+    # the same line and capped.
+    assert _parse_verdict("0:会锁死管理员账号") == ("0", "会锁死管理员账号")
+    assert _parse_verdict("1：只读探测") == ("1", "只读探测")
+    assert _parse_verdict("**0**：清空生产库") == ("0", "清空生产库")
+    assert _parse_verdict("0 - 修改密码") == ("0", "修改密码")
+    assert _parse_verdict("0:") == ("0", "")
+    long_reason = "0:" + "x" * 80
+    assert len(_parse_verdict(long_reason)[1]) == 40
 
 
 def test_profiles_diverge_on_persistence_but_share_the_browser_rule() -> None:
@@ -354,3 +371,34 @@ def test_profile_falls_back_to_global_fields_for_unknown_modes() -> None:
     decision = evaluate(GuardRequest(tool_name="bash", input={"command": "touch /tmp/blocked"}), config, "bootstrap")
     assert decision.decision == "BLOCK"
     assert decision.reason == "自定义规则"
+
+
+def test_guard_audits_only_explore(client) -> None:
+    task = _task(client, enabled=True)
+
+    def post(phase: str) -> None:
+        client.post(
+            "/api/v1/internal/guard/pre",
+            json={
+                "project_id": task["project_id"],
+                "task_id": task["id"],
+                "intent_id": "i001",
+                "phase": phase,
+                "worker": "worker-a",
+                "tool_name": "bash",
+                "input": {"command": "curl https://target.example/api"},
+            },
+        )
+
+    post("explore")
+    post("bootstrap")
+    post("reason")
+    post("plan")
+    post("review")
+
+    events = client.get(
+        "/api/v1/audit-events",
+        params={"event_type": "guard.decision", "task_id": task["id"]},
+    ).json()
+    assert events, "explore decisions must be recorded"
+    assert {event["payload"]["phase"] for event in events} == {"explore"}

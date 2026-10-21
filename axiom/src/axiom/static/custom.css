@@ -1539,6 +1539,31 @@
      single column when the viewport cannot hold both without squeezing rows. */
   .guard-audit-main { display: grid; grid-template-columns: 296px minmax(0, 1fr); gap: 16px; align-items: start; overflow: hidden; }
   .guard-audit-main > .sto-panel:last-child { overflow: auto; min-width: 0; max-height: 100%; }
+
+  /* Both columns start on the same line; the left rail sticks while the record
+     list scrolls, so the two panels must not drift apart at the top. */
+  .guard-audit-main > .sto-panel { align-self: start; }
+  .guard-audit-main > .sto-panel:first-child { position: sticky; top: 0; }
+
+  /* Both columns share one header rhythm so the two panel edges line up. */
+  .guard-audit-railhead { min-height: 18px; }
+
+  /* Verdict badge: the first thing the eye should land on. */
+  .ga-verdict { display: inline-flex; align-items: center; justify-content: center; height: 30px; padding: 0 12px; border-radius: 9px; font-size: 12.5px; font-weight: 700; letter-spacing: .02em; }
+  .ga-verdict.block { color: #b42318; background: color-mix(in srgb, #d92d20 12%, transparent); border: 1px solid color-mix(in srgb, #d92d20 28%, transparent); }
+  .ga-verdict.allow { color: #067647; background: color-mix(in srgb, #12b76a 12%, transparent); border: 1px solid color-mix(in srgb, #12b76a 28%, transparent); }
+
+  /* What was judged: the command, given room to breathe. */
+  .ga-content { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55; color: var(--sto-fg); word-break: break-all; }
+  .ga-reason { margin: 6px 0 0; font-size: 12px; font-weight: 600; line-height: 1.5; }
+  .ga-reason.block { color: #b42318; }
+  .ga-reason.allow { color: #067647; }
+
+  /* Provenance row: time, basis, mode, task, intent, tool, latency. */
+  .ga-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
+  .ga-chip { display: inline-flex; align-items: baseline; gap: 5px; padding: 3px 8px; border-radius: 7px; background: var(--sto-inset); border: 1px solid var(--sto-line); font-size: 10.5px; color: var(--sto-fg-2); white-space: nowrap; }
+  .ga-chip b { font-weight: 600; color: var(--sto-fg-3); font-size: 9.5px; letter-spacing: .04em; }
+  .ga-chip span { font-variant-numeric: tabular-nums; }
   @media (max-width: 1180px) {
     .guard-audit-main { grid-template-columns: 1fr; overflow-y: auto; }
     .guard-audit-main > .sto-panel:last-child { overflow: visible; max-height: none; }

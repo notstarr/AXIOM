@@ -3,7 +3,7 @@
     <div class="flex items-center justify-between gap-4">
       <div>
         <h2 class="text-base font-semibold text-slate-800 tracking-tight">守门审计日志</h2>
-        <p class="text-xs text-slate-400 mt-0.5">记录 bootstrap / reason / explore / plan / review 工具调用的护栏裁决</p>
+        <p class="text-xs text-slate-400 mt-0.5">只记录 explore 工具调用的护栏裁决；其余阶段的判定不回显到审计</p>
       </div>
       <button @click="loadGuardAuditEvents()" :disabled="guardAudit.loading" class="sto-ghost" style="padding:7px 13px;"
         x-text="guardAudit.loading ? '刷新中...' : '刷新'">
@@ -13,12 +13,14 @@
 
   <main class="guard-audit-main flex-1 overflow-hidden p-5" style="background:var(--sto-inset);">
 
-    <!-- 左栏：筛选 + 统计 -->
-    <div class="sto-panel" style="padding:15px 16px; align-self:start; position:sticky; top:0;">
-      <p class="sto-label">筛选</p>
+    <!-- 左栏：筛选 + 统计（与右栏顶部对齐） -->
+    <div class="sto-panel" style="padding:15px 16px;">
+      <div class="guard-audit-railhead">
+        <p class="sto-label">筛选</p>
+      </div>
       <div class="sto-field" style="margin-top:10px;">
         <label>日志状态</label>
-        <select x-model="guardAudit.decision" @change="loadGuardAuditEvents()" class="sto-input">
+        <select x-model="guardAudit.decision" @change="applyGuardAuditFilter()" class="sto-input">
           <option value="all">全部</option>
           <option value="block">仅拦截</option>
           <option value="allow">仅放行</option>
@@ -37,29 +39,29 @@
       <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--sto-line);">
         <p class="sto-label">概览</p>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:10px;">
-          <div @click="guardAudit.decision = 'all'; loadGuardAuditEvents()" class="sto-minicard" :class="guardAudit.decision === 'all' ? 'stat-active' : ''" title="查看全部">
-            <div class="k">总记录</div><b x-text="(guardAudit.events || []).length"></b>
+          <div @click="guardAudit.decision = 'all'; applyGuardAuditFilter()" class="sto-minicard" :class="guardAudit.decision === 'all' ? 'stat-active' : ''" title="查看全部">
+            <div class="k">总记录</div><b x-text="guardAuditCounts().total"></b>
           </div>
-          <div @click="guardAudit.decision = 'block'; loadGuardAuditEvents()" class="sto-minicard" :class="guardAudit.decision === 'block' ? 'stat-active' : ''" title="只看拦截">
-            <div class="k" style="color:var(--sto-danger);">拦截</div><b style="color:var(--sto-danger);" x-text="(guardAudit.events || []).filter(e => e.decision === 'BLOCK').length"></b>
+          <div @click="guardAudit.decision = 'block'; applyGuardAuditFilter()" class="sto-minicard" :class="guardAudit.decision === 'block' ? 'stat-active' : ''" title="只看拦截">
+            <div class="k" style="color:var(--sto-danger);">拦截</div><b style="color:var(--sto-danger);" x-text="guardAuditCounts().blocked"></b>
           </div>
-          <div @click="guardAudit.decision = 'allow'; loadGuardAuditEvents()" class="sto-minicard" :class="guardAudit.decision === 'allow' ? 'stat-active' : ''" title="只看放行">
-            <div class="k" style="color:var(--sto-ok);">放行</div><b style="color:var(--sto-ok);" x-text="(guardAudit.events || []).filter(e => e.decision !== 'BLOCK').length"></b>
+          <div @click="guardAudit.decision = 'allow'; applyGuardAuditFilter()" class="sto-minicard" :class="guardAudit.decision === 'allow' ? 'stat-active' : ''" title="只看放行">
+            <div class="k" style="color:var(--sto-ok);">放行</div><b style="color:var(--sto-ok);" x-text="guardAuditCounts().allowed"></b>
           </div>
           <div class="sto-minicard">
-            <div class="k">拦截率</div><b x-text="`${(guardAudit.events || []).length ? Math.round((guardAudit.events || []).filter(e => e.decision === 'BLOCK').length / (guardAudit.events || []).length * 100) : 0}%`"></b>
+            <div class="k">拦截率</div><b x-text="`${guardAuditCounts().rate}%`"></b>
           </div>
         </div>
       </div>
 
       <p class="sto-muted" style="margin-top:14px; font-size:10px; line-height:1.6;">
-        审计覆盖 bootstrap / reason / explore / plan / review 全阶段。<br>红队与漏洞模式分别套用各自的提示词与硬规则。
+        仅审计 explore。拦截原因会同时回给发起调用的 worker。<br>统计跟随任务筛选，不随“日志状态”变化。
       </p>
     </div>
 
     <!-- 右栏：裁判记录 -->
     <div class="sto-panel" style="overflow:auto; min-width:0;">
-      <div class="flex items-center justify-between" style="padding:11px 16px; border-bottom:1px solid var(--sto-line);">
+      <div class="guard-audit-railhead flex items-center justify-between" style="padding:15px 16px; border-bottom:1px solid var(--sto-line);">
         <p class="sto-label">裁判记录</p>
         <span class="sto-muted sto-num" style="font-size:10px;" x-text="`${(guardAudit.events || []).length} 条`"></span>
       </div>
@@ -74,36 +76,31 @@
       <div>
         <template x-for="event in guardAudit.events" :key="event.id">
           <article class="sto-eventrow" :class="event.decision === 'BLOCK' ? 'block' : 'allow'">
-            <div class="flex items-start justify-between" style="gap:12px;">
-              <div style="min-width:0; flex:1;">
-                <div class="flex flex-wrap items-center" style="gap:8px;">
-                  <span class="sto-status" :class="event.decision === 'BLOCK' ? 'err' : 'ok'"><i></i><span x-text="guardAuditStatusLabel(event)"></span></span>
-                  <span class="etool" x-text="event.tool_name || 'tool'"></span>
-                  <span class="emeta" x-show="event.engagement_mode"
-                    x-text="event.engagement_mode === 'red_team' ? '红队' : (event.engagement_mode === 'vulnerability' ? '漏洞' : event.engagement_mode)"></span>
-                  <span class="emeta" x-text="event.phase || 'unknown phase'"></span>
-                  <span class="emeta" x-text="event.worker || 'unknown worker'"></span>
-                </div>
-                <p class="ecmd" x-text="guardAuditCommandPreview(event)"></p>
-                <p class="sto-muted" style="margin-top:4px; font-size:10.5px;">
-                  <span x-text="guardAuditProjectLabel(event.project_id)"></span>
-                  <span style="margin:0 4px;">·</span>
-                  <span x-text="event.intent_id || '无 intent'"></span>
-                </p>
-                <p class="ereason" style="font-weight:600;">
-                  <span x-text="guardAuditSummary(event)"></span>
-                </p>
-              </div>
-              <div style="text-align:right; flex-shrink:0;">
-                <p class="sto-muted sto-num" style="font-size:10.5px;" x-text="formatDate(event.created_at)"></p>
-                <p class="sto-muted" style="margin-top:3px; font-size:10px;" x-text="`${event.decision_source || 'unknown'} · ${event.mode || ''}`"></p>
+            <!-- 判定 + 内容 + 原因：一行内看完，不需要展开 -->
+            <div style="display:grid; grid-template-columns:104px minmax(0,1fr); gap:14px; align-items:start;">
+              <span class="ga-verdict" :class="event.decision === 'BLOCK' ? 'block' : 'allow'"
+                x-text="guardAuditStatusLabel(event)"></span>
+              <div style="min-width:0;">
+                <p class="ga-content" x-text="guardAuditContent(event)"></p>
+                <p class="ga-reason" :class="event.decision === 'BLOCK' ? 'block' : 'allow'"
+                  x-text="guardAuditReason(event)"></p>
               </div>
             </div>
 
-            <div class="flex items-center" style="gap:9px; margin-top:9px;">
+            <!-- 时间 / 依据 / 任务 / 意图 / 模式 -->
+            <div class="ga-meta">
+              <span class="ga-chip"><b>时间</b><span x-text="formatDate(event.created_at)"></span></span>
+              <span class="ga-chip"><b>依据</b><span x-text="guardAuditSourceLabel(event)"></span></span>
+              <span class="ga-chip"><b>模式</b><span x-text="guardAuditModeLabel(event)"></span></span>
+              <span class="ga-chip"><b>任务</b><span x-text="event.project_id || '未知'"></span></span>
+              <span class="ga-chip"><b>意图</b><span x-text="event.intent_id || '无'"></span></span>
+              <span class="ga-chip" x-show="event.tool_name"><b>工具</b><span x-text="event.tool_name"></span></span>
+              <span class="ga-chip" x-show="event.model_latency_ms"><b>耗时</b><span x-text="`${event.model_latency_ms}ms`"></span></span>
+            </div>
+
+            <div class="flex items-center" style="gap:9px; margin-top:8px;">
               <button @click="guardAudit.expanded[event.id] = !guardAudit.expanded[event.id]" class="sto-minibtn"
-                x-text="guardAudit.expanded[event.id] ? '收起具体命令' : '查看具体命令'"></button>
-              <span x-show="event.model_latency_ms" class="sto-muted sto-num" style="font-size:10.5px;" x-text="`模型 ${event.model_latency_ms}ms`"></span>
+                x-text="guardAudit.expanded[event.id] ? '收起原始记录' : '原始记录'"></button>
             </div>
 
             <pre x-show="guardAudit.expanded[event.id]" x-cloak class="sto-usage" style="margin-top:9px; max-height:320px; overflow:auto;" x-text="guardAuditDetail(event)"></pre>

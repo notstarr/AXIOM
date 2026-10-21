@@ -191,16 +191,41 @@ window.AxiomModules.dispatch = {
     async loadGuardAuditEvents() {
       try {
         this.guardAudit.loading = true;
+        // Fetch the task's records once and filter in memory.  Asking the API
+        // for only the selected verdict would also shrink the counters, so
+        // "总记录" would show the block count and the rate would always read
+        // 100%.
         const params = new URLSearchParams();
-        params.set('limit', String(this.guardAudit.limit || 100));
-        params.set('decision', this.guardAudit.decision || 'all');
+        params.set('limit', String(this.guardAudit.limit || 200));
+        params.set('decision', 'all');
         if (this.guardAudit.project_id) params.set('project_id', this.guardAudit.project_id);
-        this.guardAudit.events = await this.api('GET', '/tool-hooks/events?' + params.toString());
+        const all = await this.api('GET', '/tool-hooks/events?' + params.toString());
+        this.guardAudit.all_events = Array.isArray(all) ? all : [];
+        this.applyGuardAuditFilter();
       } catch (e) {
         this.showToast('加载守门审计日志失败: ' + e.message, 'error');
       } finally {
         this.guardAudit.loading = false;
       }
+    },
+
+    applyGuardAuditFilter() {
+      const all = this.guardAudit.all_events || [];
+      const decision = this.guardAudit.decision || 'all';
+      this.guardAudit.events = decision === 'all'
+        ? all
+        : all.filter(item => String(item.decision || '').toLowerCase() === decision);
+    },
+
+    guardAuditCounts() {
+      const all = this.guardAudit.all_events || [];
+      const blocked = all.filter(item => item.decision === 'BLOCK').length;
+      return {
+        total: all.length,
+        blocked,
+        allowed: all.length - blocked,
+        rate: all.length ? Math.round((blocked / all.length) * 100) : 0,
+      };
     },
 
     parseGuardAuditJson(value) {
@@ -235,10 +260,39 @@ window.AxiomModules.dispatch = {
       const reason = String(event?.reason || '').trim();
       if (reason) return reason;
       if (event?.decision_source === 'whitelist') return '白名单直放';
-      if (event?.decision_source === 'model') return '模型判定放行';
-      if (event?.decision_source === 'fail_open') return '模型未给出 0/1，按 fail-open 放行';
-      if (event?.decision_source === 'disabled') return '监管关闭';
+      if (event?.decision_source === 'model') return '小模型判定放行';
+      if (event?.decision_source === 'fail_open') return '小模型未给出 0/1，按 fail-open 放行';
+      if (event?.decision_source === 'disabled') return '监管未启用';
       return '无原因';
+    },
+
+    // Who produced the verdict, in the operator's words rather than the
+    // internal enum: the left rail counts by 白名单 / 黑名单 / 小模型.
+    guardAuditSourceLabel(event) {
+      switch (event?.decision_source) {
+        case 'hard_rule': return '黑名单';
+        case 'whitelist': return '白名单';
+        case 'model': return '小模型';
+        case 'fail_open': return '小模型未答';
+        case 'disabled': return '未启用';
+        default: return '未知';
+      }
+    },
+
+    guardAuditModeLabel(event) {
+      const mode = event?.engagement_mode || event?.mode || '';
+      if (mode === 'red_team') return '红队';
+      if (mode === 'vulnerability') return '漏洞';
+      return mode || '未知模式';
+    },
+
+    // The command as it will be read by a human.  Rows written before the
+    // audit payload carried the command have nothing to show, and saying so is
+    // more useful than an empty object.
+    guardAuditContent(event) {
+      const command = String(event?.command || this.guardAuditCommand(event) || '').trim();
+      if (!command || command === '{}') return '（历史记录未保存命令）';
+      return command.replace(/\s+/g, ' ').slice(0, 400);
     },
 
     // One-line verdict for the audit list: "意图护栏：<short reason>".  The

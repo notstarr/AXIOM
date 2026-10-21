@@ -42,6 +42,12 @@ class GuardService:
                 )
             else:
                 decision = observed
+        # Only Explore is audited.  Bootstrap, Reason, Plan and Review still get
+        # judged - the decision is returned to the worker either way - but their
+        # tool calls are not what the operator reviews, and recording them turns
+        # the log into noise that hides the Explore rows.
+        if (request.phase or "").strip().lower() != "explore":
+            return decision
         event = self.audit.record(
             RecordAuditEvent(
                 project_id=request.project_id,
