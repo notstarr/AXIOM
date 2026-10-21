@@ -909,6 +909,11 @@
       default_hard_block_rules: defaults.hard_block_rules || [],
       system_prompt: config.guard_system_prompt ?? defaults.system_prompt ?? '',
       default_system_prompt: defaults.system_prompt || '',
+      // Per engagement mode policy.  The form above still edits one prompt and
+      // one rule set; these are exposed so a mode-specific editor can show what
+      // each mode actually uses.
+      profiles: config.guard_profiles ?? {},
+
       has_key: !!config.guard_api_key,
       masked_key: config.guard_api_key ? '••••••••' : '',
       updated_at: runtime.updated_at,
@@ -931,6 +936,21 @@
       guard_whitelist_bash_verbs: body.whitelist_bash_verbs ?? runtime.config.guard_whitelist_bash_verbs,
       guard_hard_block_rules: body.hard_block_rules ?? runtime.config.guard_hard_block_rules,
     };
+    // This form edits one prompt and one rule set, but the guard judges per
+    // engagement mode.  Mirror the edit onto every profile so what the operator
+    // sees is what the judge uses; a mode-specific editor can send explicit
+    // profiles instead.
+    if (body.system_prompt !== undefined || body.hard_block_rules !== undefined) {
+      const profiles = { ...(runtime.config.guard_profiles || {}) };
+      for (const mode of Object.keys(profiles)) {
+        profiles[mode] = {
+          ...profiles[mode],
+          system_prompt: config.guard_system_prompt,
+          hard_block_rules: config.guard_hard_block_rules,
+        };
+      }
+      config.guard_profiles = profiles;
+    }
     if (key !== undefined) config.guard_api_key = key;
     await request('PUT', '/settings/runtime', {
       config,
@@ -1564,11 +1584,17 @@
       if (item.status === 'verified') return `+${item.points_awarded || 0} 分`;
       return item.points_declared ? `自评 ${item.points_declared}` : '';
     },
+    rtResultKey(item) {
+      // 成果编号已按任务独立编号（x001…），跨任务列表必须带上 task_id 才唯一。
+      return item?.id ? `${item.task_id || ''}:${item.id}` : '';
+    },
     selectedRtResult() {
-      return (this.rtResultItems || []).find(item => item.id === this.selectedRtResultId) || null;
+      const key = this.selectedRtResultId;
+      if (!key) return null;
+      return (this.rtResultItems || []).find(item => this.rtResultKey(item) === key) || null;
     },
     selectRtResult(item) {
-      this.selectedRtResultId = item?.id || '';
+      this.selectedRtResultId = this.rtResultKey(item);
       this.loadRtResultChain(item);
     },
     async loadRtResultChain(result) {
@@ -1625,6 +1651,23 @@
       if (!match || !result?.task_id) return;
       return this.openArtifactLocation(result.task_id, match[1]);
     },
+    rtEvidenceList(result) {
+      // 证据蓝链一律显示产物原文件名；解析失败时才退回 artifact id。
+      const resolved = Array.isArray(result?.evidence_artifacts) ? result.evidence_artifacts : [];
+      const byId = new Map(resolved.map(item => [item.id, item]));
+      const refs = Array.isArray(result?.evidence_refs) ? result.evidence_refs : [];
+      return refs.map(ref => {
+        const id = String(ref || '').replace(/^artifact:/, '').trim();
+        const artifact = byId.get(id);
+        return {
+          ref,
+          id,
+          name: artifact?.name || ref,
+          size: Number(artifact?.size) || 0,
+          artifact_type: artifact?.artifact_type || '',
+        };
+      });
+    },
     rtStatusLabel(status) {
       return ({
         reported: '已上报', reviewing: '审核中', verified: '已验证',
@@ -1655,8 +1698,8 @@
         if (requestId !== this._rtResultListRequestId) return;
         this.rtResultItems = resultPage.items;
         this.rtResultTotal = resultPage.total;
-        if (!this.rtResultItems.some(item => item.id === this.selectedRtResultId)) {
-          this.selectedRtResultId = this.rtResultItems[0]?.id || '';
+        if (!this.rtResultItems.some(item => this.rtResultKey(item) === this.selectedRtResultId)) {
+          this.selectedRtResultId = this.rtResultKey(this.rtResultItems[0]);
         }
         this.loadRtResultChain(this.selectedRtResult());
       } catch (error) {

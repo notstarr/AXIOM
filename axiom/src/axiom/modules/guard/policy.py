@@ -13,18 +13,41 @@ from axiom.modules.guard.defaults import SYSTEM_PROMPT
 from axiom.modules.guard.schemas import GuardDecision, GuardRequest
 
 
-def evaluate(request: GuardRequest, config) -> GuardDecision:
+def evaluate(request: GuardRequest, config, engagement_mode: str = "") -> GuardDecision:
     normalized = normalize(request.tool_name, request.input)
     if config.guard_mode == "off":
         return GuardDecision(decision="ALLOW", source="disabled")
     if _whitelisted(normalized, config):
         return GuardDecision(decision="ALLOW", reason="只读或本地侦察操作", source="whitelist")
-    blocked = _hard_block(normalized, config)
+    prompt, rules = _resolve_profile(config, engagement_mode)
+    blocked = _hard_block(normalized, rules)
     if blocked:
         return GuardDecision(decision="BLOCK", reason=blocked, source="hard_rule")
     if not _external_operation(normalized):
         return GuardDecision(decision="ALLOW", reason="本地操作", source="whitelist")
-    return _model_decision(request, normalized, config)
+    return _model_decision(request, normalized, config, prompt)
+
+
+def _resolve_profile(config, engagement_mode: str) -> tuple[str, list]:
+    """Return the prompt and rule set for this engagement mode.
+
+    The allowlist is shared across modes; only the prompt and the hard rules
+    differ.  A mode with no profile (or a profile that only overrides one of the
+    two fields) falls back to the legacy global fields, so existing stored
+    configurations keep their historical behaviour.
+    """
+
+    prompt = config.guard_system_prompt
+    rules = list(config.guard_hard_block_rules)
+    profiles = getattr(config, "guard_profiles", None) or {}
+    profile = profiles.get(engagement_mode) if engagement_mode else None
+    if profile is not None:
+        if profile.system_prompt:
+            prompt = profile.system_prompt
+        if profile.hard_block_rules:
+            rules = list(profile.hard_block_rules)
+    return prompt, rules
+
 
 
 def normalize(tool_name: str, payload: Any) -> dict[str, str]:
@@ -60,9 +83,9 @@ def _whitelisted(normalized: dict[str, str], config) -> bool:
     return not (tokens[0] == "find" and any(item in {"-delete", "-exec", "-execdir"} for item in tokens))
 
 
-def _hard_block(normalized: dict[str, str], config) -> str:
+def _hard_block(normalized: dict[str, str], rules: list) -> str:
     text = normalized["command"]
-    for rule in config.guard_hard_block_rules:
+    for rule in rules:
         if not rule.enabled:
             continue
         if re.search(rule.pattern, text, re.I):
@@ -108,7 +131,9 @@ def _external_operation(normalized: dict[str, str]) -> bool:
     return bool(_NETWORK_VERB.search(command))
 
 
-def _model_decision(request: GuardRequest, normalized: dict[str, str], config) -> GuardDecision:
+def _model_decision(
+    request: GuardRequest, normalized: dict[str, str], config, system_prompt: str
+) -> GuardDecision:
     base_url = config.guard_model_base_url.strip().rstrip("/")
     model = config.guard_model_name.strip()
     key = config.guard_api_key.strip()
@@ -134,7 +159,7 @@ def _model_decision(request: GuardRequest, normalized: dict[str, str], config) -
                     "messages": [
                         {
                             "role": "system",
-                            "content": config.guard_system_prompt.strip() or SYSTEM_PROMPT,
+                            "content": system_prompt.strip() or SYSTEM_PROMPT,
                         },
                         {
                             "role": "user",

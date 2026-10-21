@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 from axiom.modules.guard.defaults import (
+    DEFAULT_GUARD_PROFILES,
     HARD_BLOCK_RULES,
     SYSTEM_PROMPT,
     WHITELIST_BASH_VERBS,
@@ -31,6 +32,35 @@ class GuardHardBlockRule(BaseModel):
         except re.error as exc:
             raise ValueError(f"invalid guard regex: {exc}") from exc
         return value
+
+
+def _default_guard_profiles() -> dict[str, "GuardProfile"]:
+    return {
+        mode: GuardProfile.model_validate(profile)
+        for mode, profile in DEFAULT_GUARD_PROFILES.items()
+    }
+
+
+class GuardProfile(BaseModel):
+    """Per engagement mode overrides.
+
+    The allowlist is deliberately absent: read-only verbs and local file tools
+    are the same work in both modes.  Only the rule set and the judge prompt
+    change, because vulnerability assessment and red team ask different
+    questions about a call.
+    """
+
+    system_prompt: str | None = Field(default=None, max_length=20_000)
+    hard_block_rules: list["GuardHardBlockRule"] | None = Field(default=None, max_length=128)
+
+    @field_validator("system_prompt")
+    @classmethod
+    def normalize_prompt(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
 
 
 class RuntimeConfig(BaseModel):
@@ -110,6 +140,10 @@ class RuntimeConfig(BaseModel):
         max_length=128,
     )
     guard_system_prompt: str = Field(default=SYSTEM_PROMPT, max_length=20_000)
+    # Per engagement mode overrides.  ``vulnerability`` and ``red_team`` ship
+    # with different rule sets and prompts; a mode missing here falls back to
+    # the fields above, so older configurations keep working unchanged.
+    guard_profiles: dict[str, GuardProfile] = Field(default_factory=_default_guard_profiles)
 
     @field_validator("reason_queue_limit", mode="before")
     @classmethod

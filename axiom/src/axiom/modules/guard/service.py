@@ -19,15 +19,17 @@ class GuardService:
 
     def decide(self, request: GuardRequest) -> GuardDecision:
         enabled = False
+        engagement_mode = ""
         if request.task_id:
             with self.engine.connect() as conn:
                 task = self.tasks.get(conn, request.task_id)
             enabled = bool(task and task.guard_enabled)
+            engagement_mode = getattr(task, "engagement_mode", "") or ""
         if not enabled:
             decision = GuardDecision(decision="ALLOW", reason="Task 未启用 Guard", source="disabled")
         else:
             config = self.settings.get().config
-            observed = evaluate(request, config)
+            observed = evaluate(request, config, engagement_mode)
             if config.guard_mode == "audit" and observed.decision == "BLOCK":
                 decision = GuardDecision(
                     decision="ALLOW",
@@ -52,6 +54,7 @@ class GuardService:
                 message=f"Guard {decision.decision}: {request.tool_name}",
                 payload={
                     "phase": request.phase,
+                    "engagement_mode": engagement_mode,
                     "tool_call_id": request.tool_call_id,
                     "decision": decision.decision,
                     "reason": decision.reason,

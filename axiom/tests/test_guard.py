@@ -154,14 +154,22 @@ def test_guard_policy_fields_are_persisted_and_drive_the_next_decision(client) -
         client,
         guard_whitelist_tools=["read", "custom-safe"],
         guard_whitelist_bash_verbs=["echo"],
-        guard_hard_block_rules=[
-            {"reason": "禁止触碰标记文件", "pattern": r"touch\s+/tmp/blocked", "enabled": True}
-        ],
-        guard_system_prompt="仅按当前授权范围判断。",
+        guard_profiles={
+            "vulnerability": {
+                "system_prompt": "仅按当前授权范围判断。",
+                "hard_block_rules": [
+                    {
+                        "reason": "禁止触碰标记文件",
+                        "pattern": r"touch\s+/tmp/blocked",
+                        "enabled": True,
+                    }
+                ],
+            }
+        },
     )
 
     assert updated["config"]["guard_whitelist_bash_verbs"] == ["echo"]
-    assert updated["config"]["guard_system_prompt"] == "仅按当前授权范围判断。"
+    assert updated["config"]["guard_profiles"]["vulnerability"]["system_prompt"] == "仅按当前授权范围判断。"
     assert _decide(client, task, "echo ok")["source"] == "whitelist"
     blocked = _decide(client, task, "touch /tmp/blocked")
     assert blocked["decision"] == "BLOCK"
@@ -283,3 +291,50 @@ def test_verdict_only_accepts_zero_or_one() -> None:
     assert _verdict("ALLOW") == ""
     assert _verdict("阻断") == ""
     assert _verdict("") == ""
+
+
+def test_profiles_diverge_on_persistence_but_share_the_browser_rule() -> None:
+    config = RuntimeConfig(guard_mode="enforce")
+    persistence = [
+        "ssh root@10.0.0.5 'echo \"* * * * * id\" | crontab -'",
+        "useradd -m backdoor",
+        "systemctl enable evil.service",
+    ]
+    for command in persistence:
+        vuln = evaluate(GuardRequest(tool_name="bash", input={"command": command}), config, "vulnerability")
+        red = evaluate(GuardRequest(tool_name="bash", input={"command": command}), config, "red_team")
+        # Red team keeps persistence; a vulnerability assessment never does.
+        assert red.decision == "ALLOW", command
+        assert vuln.decision == "BLOCK", command
+
+    # Both modes refuse to drive Chrome into the customer network.
+    pivot = "$AXIOM_BSK navigate http://192.168.0.95:8080/ --session abcd"
+    for mode in ("vulnerability", "red_team"):
+        decision = evaluate(GuardRequest(tool_name="bash", input={"command": pivot}), config, mode)
+        assert decision.decision == "BLOCK", mode
+        assert decision.reason == "经 bsk 浏览器访问私网地址"
+
+
+def test_red_team_profile_protects_our_own_platform() -> None:
+    config = RuntimeConfig(guard_mode="enforce")
+    for command in (
+        "rm -rf /opt/axiom/src",
+        "cp /tmp/x /var/lib/axiom/auth_secret.key",
+        "bsk daemon revoke --all",
+    ):
+        decision = evaluate(GuardRequest(tool_name="bash", input={"command": command}), config, "red_team")
+        assert decision.decision == "BLOCK", command
+        assert decision.reason == "破坏我方平台自身"
+
+
+def test_profile_falls_back_to_global_fields_for_unknown_modes() -> None:
+    config = RuntimeConfig(
+        guard_mode="enforce",
+        guard_hard_block_rules=[
+            {"reason": "自定义规则", "pattern": r"touch\s+/tmp/blocked", "enabled": True}
+        ],
+        guard_profiles={},
+    )
+    decision = evaluate(GuardRequest(tool_name="bash", input={"command": "touch /tmp/blocked"}), config, "bootstrap")
+    assert decision.decision == "BLOCK"
+    assert decision.reason == "自定义规则"
