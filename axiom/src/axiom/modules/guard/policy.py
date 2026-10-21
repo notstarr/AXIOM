@@ -70,6 +70,25 @@ def _hard_block(normalized: dict[str, str], config) -> str:
     return ""
 
 
+_NETWORK_VERB = re.compile(
+    r"\b(curl|wget|httpx|nmap|subfinder|dirsearch|sqlmap|nuclei|ssh|ftp|nc|"
+    r"socat|telnet|rsync|openssl\s+s_client)\b",
+    re.I,
+)
+_URL = re.compile(r"\b(?:https?|wss?|ftp)://", re.I)
+_OPAQUE_SCRIPT = re.compile(
+    r"(?:^|[;&|]\s*)(?:sudo\s+)?"
+    r"(?:python3?\s+[^\s|;&<>]+\.py|"
+    r"(?:bash|sh|zsh)\s+[^\s|;&<>]+\.(?:sh|bash)|"
+    r"(?:bash|sh|zsh)\s+-c\b)",
+    re.I,
+)
+# Inline ``python3 -c "..."`` and heredocs keep their code inside the command
+# string, so the guard can still read it; only a bare script *file* hides the
+# body.  Splitting on that line keeps local housekeeping out of the judge while
+# nothing opaque escapes review.
+
+
 def _external_operation(normalized: dict[str, str]) -> bool:
     name = normalized["tool_name"]
     if (
@@ -78,13 +97,15 @@ def _external_operation(normalized: dict[str, str]) -> bool:
         or name in {"browser", "browser-control"}
     ):
         return True
-    return name == "bash" and bool(
-        re.search(
-            r"\b(curl|wget|httpx|nmap|subfinder|dirsearch|sqlmap|nuclei|ssh|ftp|nc|openssl\s+s_client)\b|https?://",
-            normalized["command"],
-            re.I,
-        )
-    )
+    if name != "bash":
+        # Local VPS housekeeping (read/write/edit/ls/grep/find) never reaches the
+        # judge: the worker already runs as the operator and the guard is not the
+        # boundary for its own filesystem.
+        return False
+    command = normalized["command"]
+    if _URL.search(command) or _OPAQUE_SCRIPT.search(command):
+        return True
+    return bool(_NETWORK_VERB.search(command))
 
 
 def _model_decision(request: GuardRequest, normalized: dict[str, str], config) -> GuardDecision:
@@ -136,7 +157,7 @@ def _model_decision(request: GuardRequest, normalized: dict[str, str], config) -
                 },
             )
         response.raise_for_status()
-        raw = str(response.json()["choices"][0]["message"]["content"]).strip().splitlines()[0]
+        raw = str(response.json()["choices"][0]["message"]["content"])
     except Exception as exc:
         return GuardDecision(
             decision="ALLOW",
@@ -144,8 +165,27 @@ def _model_decision(request: GuardRequest, normalized: dict[str, str], config) -
             source="fail_open",
         )
     _ = started  # retained for debugger/profiler inspection without persisting secrets
-    if raw == "ALLOW":
+    verdict = _verdict(raw)
+    if verdict == "1":
         return GuardDecision(decision="ALLOW", source="model")
-    if raw.startswith("BLOCK:"):
-        return GuardDecision(decision="BLOCK", reason=raw.partition(":")[2].strip()[:30], source="model")
-    return GuardDecision(decision="ALLOW", reason="监管模型返回格式无效", source="fail_open")
+    if verdict == "0":
+        return GuardDecision(decision="BLOCK", reason="监管模型判定阻断", source="model")
+    # The judge answers with a single digit.  Anything else (empty completion,
+    # markup, prose) is treated as no answer and keeps the fail-open default.
+    return GuardDecision(decision="ALLOW", reason="监管模型未返回 0/1，按 fail-open 放行", source="fail_open")
+
+
+def _verdict(raw: str) -> str:
+    """Return ``"0"`` or ``"1"`` when the completion carries one, else ``""``.
+
+    Only the first non-empty line counts, so trailing prose cannot flip a
+    verdict.  Markdown fences and emphasis characters are dropped first because
+    chat models like to decorate a one-character answer.
+    """
+
+    for line in raw.splitlines():
+        cleaned = line.strip().strip("`*_ \t\r\n'\"")
+        if cleaned:
+            return cleaned[0] if cleaned[0] in "01" else ""
+    return ""
+

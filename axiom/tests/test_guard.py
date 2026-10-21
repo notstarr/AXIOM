@@ -4,7 +4,7 @@ import pytest
 
 from axiom.modules.guard.defaults import HARD_BLOCK_RULES, SYSTEM_PROMPT
 from axiom.modules.guard.policy import evaluate
-from axiom.modules.guard.policy import _external_operation
+from axiom.modules.guard.policy import _external_operation, _verdict
 from axiom.modules.guard.schemas import GuardRequest
 from axiom.modules.settings.schemas import RuntimeConfig
 
@@ -241,10 +241,45 @@ def test_default_hard_rules_do_not_block_normal_security_testing(command: str) -
 
 
 def test_default_judge_prompt_preserves_allow_first_contract() -> None:
-    assert "默认倾向 ALLOW" in SYSTEM_PROMPT
-    assert "只回复一行" in SYSTEM_PROMPT
-    assert "BLOCK:<不超过30字" in SYSTEM_PROMPT
+    assert "默认放行" in SYSTEM_PROMPT
+    assert "1 = 放行" in SYSTEM_PROMPT
+    assert "0 = 阻断" in SYSTEM_PROMPT
     assert "SQL 注入" in SYSTEM_PROMPT
     assert "上传 WebShell" in SYSTEM_PROMPT
     assert "大规模压测" in SYSTEM_PROMPT
-    assert len(HARD_BLOCK_RULES) == 6
+    assert len(HARD_BLOCK_RULES) == 7
+
+
+def test_bsk_private_address_rule_blocks_pivoting_only() -> None:
+    config = RuntimeConfig(guard_mode="enforce")
+    for command in (
+        "$AXIOM_BSK navigate http://192.168.0.95:8080/ --session abcd",
+        "cd /tmp && B=/opt/axiom/src/axiom/dispatcher/tools/axiom-bsk; $B navigate http://10.42.0.49:6066/",
+        "bsk evaluate 'fetch(\"http://127.0.0.1:8889\")' --session abcd",
+    ):
+        decision = evaluate(GuardRequest(tool_name="bash", input={"command": command}), config)
+        assert decision.decision == "BLOCK", command
+        assert decision.reason == "经 bsk 浏览器访问私网地址"
+
+    # The wrapper is still allowed to reach ordinary targets, and a private
+    # address reached *without* the browser is another layer's problem.
+    for command in (
+        "$AXIOM_BSK navigate https://git.kkgroup.cn/ --session abcd",
+        "$AXIOM_BSK credentials --domain terp.kkguan.com --session abcd",
+    ):
+        decision = evaluate(GuardRequest(tool_name="bash", input={"command": command}), config)
+        assert decision.decision == "ALLOW", command
+
+
+def test_verdict_only_accepts_zero_or_one() -> None:
+    assert _verdict("1") == "1"
+    assert _verdict("0") == "0"
+    assert _verdict("  1\n") == "1"
+    assert _verdict("`0`") == "0"
+    assert _verdict("**1**") == "1"
+    assert _verdict("0\n解释：会破坏业务") == "0"
+    # Anything that is not a leading 0/1 stays unanswered, which keeps the
+    # fail-open default instead of inventing a verdict.
+    assert _verdict("ALLOW") == ""
+    assert _verdict("阻断") == ""
+    assert _verdict("") == ""
