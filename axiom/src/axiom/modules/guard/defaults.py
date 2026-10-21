@@ -69,12 +69,6 @@ _SERVICE = {
     "enabled": True,
 }
 
-_BSK_PIVOT = {
-    "reason": "经 bsk 浏览器访问私网地址",
-    "pattern": r"""(?:axiom-bsk|AXIOM_BSK|(?:^|[;&|\s])bsk)\b[\s\S]{0,2000}?(?:(?:(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3})|(?:192\.168\.\d{1,3}\.\d{1,3})|(?:172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})|(?:169\.254\.\d{1,3}\.\d{1,3})|(?:\[::1\])|(?:localhost\b))""",
-    "enabled": True,
-}
-
 _DOS = {
     "reason": "高并发或 DoS 操作",
     "pattern": r"""\b(?:slowloris|slowhttptest|goldeneye|hping3\s+[^;&|]*--flood|nping\s+[^;&|]*(?:--rate|--data-length)|ab\s+[^;&|]*-n\s*\d{5,}|ab\s+[^;&|]*-c\s*\d{4,}|wrk\s+[^;&|]*(?:-c\s*\d{3,}|-t\s*\d{3,})|hey\s+[^;&|]*-n\s*\d{5,}|bombardier\s+[^;&|]*(?:-c\s*\d{3,}|-n\s*\d{5,})|vegeta\s+attack\s+[^;&|]*-rate\s*(?:[1-9]\d{3,}|[1-9]\d*k)\b)""",
@@ -99,19 +93,17 @@ VULNERABILITY_HARD_BLOCK_RULES = [
     _ACCOUNT,
     _DATA,
     _SERVICE,
-    _BSK_PIVOT,
     _DOS,
 ]
 
 # No self-infrastructure rule: the operator decided the worker may modify the
 # AXIOM host freely.  What remains is the damage that is not recoverable by
 # restarting us - a locked-out client account, destroyed production data, a
-# stopped production service, the browser pivot, and DoS.
+# stopped production service, and DoS.
 REDTEAM_HARD_BLOCK_RULES = [
     _PASSWORD,
     _DATA_REDTEAM,
     _SERVICE,
-    _BSK_PIVOT,
     _DOS,
 ]
 
@@ -147,12 +139,25 @@ VULNERABILITY_SYSTEM_PROMPT = """你是授权漏洞评估的安全守门员。�
 - 信息不足、结果不确定，或看起来只是漏洞 Payload 时放行。
 - 不根据道德评价、攻击性措辞或漏洞类别拦截。
 
-只回复一行，格式固定为「判定:原因」：
-1:<原因>  = 放行
-0:<原因>  = 阻断
+只回复一行，就是「数字:原因」，不要任何前缀、标题、引号或换行：
 
-原因用不超过 20 个汉字说清这次调用会怎样，例如「会锁死管理员账号」「清空生产库」。
-阻断时这句原因会直接回给发起的 Explore worker，让它知道为什么被拦；所以写具体的后果，不要写「违反规则」这类空话，也不要带引号、换行或后缀。"""
+输入：bash  curl -s https://api.example.com/health
+输出：1:只读健康检查，不影响目标
+
+输入：bash  mysql -e 'DROP DATABASE orders'
+输出：0:会清空生产库
+
+输入：bash  curl https://target.example/upload -F file=@shell.php
+输出：1:上传 Poc 验证漏洞，可清理
+
+输入：bash  passwd root
+输出：0:会锁死管理员账号
+
+规则：
+- 第一行第一个字符必须是 0 或 1，紧跟冒号，再跟原因。
+- 原因不超过 20 个汉字，写这次调用的具体后果；不要写「违反规则」「不安全」。
+- 阻断时这句原因会直接回给发起的 Explore worker，所以要说清它做错了什么。
+- 一个字符都不要多写：不要「判定：」、不要 Markdown、不要解释过程。"""
 
 
 REDTEAM_SYSTEM_PROMPT = """你是授权红队行动的安全守门员。输入是当前 Task 中一次即将执行的工具调用。
@@ -194,12 +199,25 @@ REDTEAM_SYSTEM_PROMPT = """你是授权红队行动的安全守门员。输入�
 - 信息不足、结果不确定，或看起来只是利用 Payload 时放行。
 - 不根据道德评价、攻击性措辞或漏洞类别拦截。
 
-只回复一行，格式固定为「判定:原因」：
-1:<原因>  = 放行
-0:<原因>  = 阻断
+只回复一行，就是「数字:原因」，不要任何前缀、标题、引号或换行：
 
-原因用不超过 20 个汉字说清这次调用会怎样，例如「会锁死管理员账号」「清空生产库」。
-阻断时这句原因会直接回给发起的 Explore worker，让它知道为什么被拦；所以写具体的后果，不要写「违反规则」这类空话，也不要带引号、换行或后缀。"""
+输入：bash  curl -s https://api.example.com/health
+输出：1:只读健康检查，不影响目标
+
+输入：bash  mysql -e 'DROP DATABASE orders'
+输出：0:会清空生产库
+
+输入：bash  curl https://target.example/upload -F file=@shell.php
+输出：1:上传 Poc 验证漏洞，可清理
+
+输入：bash  passwd root
+输出：0:会锁死管理员账号
+
+规则：
+- 第一行第一个字符必须是 0 或 1，紧跟冒号，再跟原因。
+- 原因不超过 20 个汉字，写这次调用的具体后果；不要写「违反规则」「不安全」。
+- 阻断时这句原因会直接回给发起的 Explore worker，所以要说清它做错了什么。
+- 一个字符都不要多写：不要「判定：」、不要 Markdown、不要解释过程。"""
 
 
 DEFAULT_GUARD_PROFILES = {

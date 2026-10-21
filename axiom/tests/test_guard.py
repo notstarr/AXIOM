@@ -252,36 +252,15 @@ def test_default_hard_rules_do_not_block_normal_security_testing(command: str) -
 
 def test_default_judge_prompt_preserves_allow_first_contract() -> None:
     assert "默认放行" in SYSTEM_PROMPT
-    assert "1:<原因>  = 放行" in SYSTEM_PROMPT
-    assert "0:<原因>  = 阻断" in SYSTEM_PROMPT
+    assert "1:只读健康检查，不影响目标" in SYSTEM_PROMPT
+    assert "0:会清空生产库" in SYSTEM_PROMPT
     # The reason travels back to Explore as the block message.
     assert "Explore worker" in SYSTEM_PROMPT
     assert "20 个汉字" in SYSTEM_PROMPT
     assert "SQL 注入" in SYSTEM_PROMPT
     assert "上传 WebShell" in SYSTEM_PROMPT
     assert "大规模压测" in SYSTEM_PROMPT
-    assert len(HARD_BLOCK_RULES) == 7
-
-
-def test_bsk_private_address_rule_blocks_pivoting_only() -> None:
-    config = RuntimeConfig(guard_mode="enforce")
-    for command in (
-        "$AXIOM_BSK navigate http://192.168.0.95:8080/ --session abcd",
-        "cd /tmp && B=/opt/axiom/src/axiom/dispatcher/tools/axiom-bsk; $B navigate http://10.42.0.49:6066/",
-        "bsk evaluate 'fetch(\"http://127.0.0.1:8889\")' --session abcd",
-    ):
-        decision = evaluate(GuardRequest(tool_name="bash", input={"command": command}), config)
-        assert decision.decision == "BLOCK", command
-        assert decision.reason == "经 bsk 浏览器访问私网地址"
-
-    # The wrapper is still allowed to reach ordinary targets, and a private
-    # address reached *without* the browser is another layer's problem.
-    for command in (
-        "$AXIOM_BSK navigate https://git.kkgroup.cn/ --session abcd",
-        "$AXIOM_BSK credentials --domain terp.kkguan.com --session abcd",
-    ):
-        decision = evaluate(GuardRequest(tool_name="bash", input={"command": command}), config)
-        assert decision.decision == "ALLOW", command
+    assert len(HARD_BLOCK_RULES) == 6
 
 
 def test_verdict_only_accepts_zero_or_one() -> None:
@@ -318,7 +297,7 @@ def test_verdict_carries_a_short_reason_back_to_the_worker() -> None:
     assert len(_parse_verdict(long_reason)[1]) == 40
 
 
-def test_profiles_diverge_on_persistence_but_share_the_browser_rule() -> None:
+def test_profiles_diverge_on_persistence() -> None:
     config = RuntimeConfig(guard_mode="enforce")
     persistence = [
         "ssh root@10.0.0.5 'echo \"* * * * * id\" | crontab -'",
@@ -331,13 +310,6 @@ def test_profiles_diverge_on_persistence_but_share_the_browser_rule() -> None:
         # Red team keeps persistence; a vulnerability assessment never does.
         assert red.decision == "ALLOW", command
         assert vuln.decision == "BLOCK", command
-
-    # Both modes refuse to drive Chrome into the customer network.
-    pivot = "$AXIOM_BSK navigate http://192.168.0.95:8080/ --session abcd"
-    for mode in ("vulnerability", "red_team"):
-        decision = evaluate(GuardRequest(tool_name="bash", input={"command": pivot}), config, mode)
-        assert decision.decision == "BLOCK", mode
-        assert decision.reason == "经 bsk 浏览器访问私网地址"
 
 
 def test_red_team_profile_lets_the_worker_manage_our_own_host() -> None:
