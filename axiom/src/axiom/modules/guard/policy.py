@@ -104,6 +104,46 @@ _DESTRUCTIVE_WRITE = re.compile(
 )
 
 
+# Cleaning up an object the worker itself created.  Blocking this leaves the
+# client's system dirty: i099 wanted to remove two virtual AP records it had
+# written, the guard stopped the delete, and the rows stayed in the store's
+# registry.  A rollback is the opposite of damage, so it is recognised
+# deterministically instead of being put to the judge.
+_ROLLBACK_HINT = re.compile(
+    # Any delete-shaped call.  The prefix anchor is deliberately absent: flags
+    # and helper functions sit between the segment start and the method
+    # (``p(){ curl -s -X DELETE ... }``), so anchoring loses the real cases.
+    # What separates a rollback from a deletion is the self-made marker below.
+    r"(?:-[Xx]\s*DELETE\b"
+    r"|\bDELETE\s+/"
+    r"|/(?:delete|remove|del)\b"
+    r"|\brm\s+-[rf]*)",
+    re.I,
+)
+
+
+def _is_cleanup_of_own_object(command: str) -> bool:
+    """True when the command looks like undoing a write the worker made itself.
+
+    The signal is a delete aimed at an object the worker named with its own test
+    marker - ``i105_probe_self``, ``AXIOM081001``, ``02:00:00:00:09:01``, or a
+    path under its own run directory.  A delete of a client object carries no
+    such marker and still goes to the judge.
+    """
+
+    if not _ROLLBACK_HINT.search(command):
+        return False
+    # An explicit self-made marker.  Kept narrow on purpose: a bare DELETE of an
+    # arbitrary id is not a rollback, it is a deletion.
+    return bool(re.search(
+        r"probe_self|_probe_|axiom[0-9]{3,}|AXIOM[0-9]{3,}|"
+        # Virtual MACs the workers write: 02:00:00:00:09:01 / 00-00-00-00-00-01.
+        r"02:00:00:00:|00:00:00:00:|00-00-00-00-00-|/var/lib/axiom/sandboxes/",
+        command,
+        re.I,
+    ))
+
+
 def _only_touches_own_workspace(command: str) -> bool:
     """True when the command never writes outside the worker's own directories.
 
@@ -133,6 +173,9 @@ def _whitelisted(normalized: dict[str, str], config) -> bool:
         return False
     command = normalized["command"].strip()
     if _is_bsk_command(command):
+        return True
+    # Undoing our own test object is cleanup, not damage.
+    if _is_cleanup_of_own_object(command):
         return True
     # Pure own-workspace housekeeping never reaches the judge - there is nothing
     # to judge.  A command that also talks to the network keeps going, so the
