@@ -439,38 +439,3 @@ def test_own_workspace_paths_do_not_reach_the_judge() -> None:
         assert not _only_touches_own_workspace(command), command
 
 
-def test_cleanup_of_own_object_is_not_a_deletion_to_review() -> None:
-    # Blocking a rollback leaves the client's system dirty: i099 wrote two virtual
-    # AP records, its three cleanup attempts were stopped, and the rows stayed in
-    # the store's registry.
-    from axiom.modules.guard.policy import _is_cleanup_of_own_object
-
-    cleanup = [
-        "GET /cgi/api/ap/delete/02:00:00:00:09:01",
-        'curl -s -X DELETE "$B/ap/X11/X76901" -d \'{"apMac":"02:00:00:00:09:01"}\'',
-        "curl -X DELETE https://h/user/173600780538880005/permissions -d 'i105_probe_self'",
-        "curl -X DELETE https://kpos/goods/X11/X76901 -d 'AXIOM081001'",
-    ]
-    for command in cleanup:
-        assert _is_cleanup_of_own_object(command), command
-
-    # A delete of a client object carries no self-made marker.
-    not_cleanup = [
-        "curl -X DELETE https://target/api/orders/12345",
-        'curl -X DELETE "$B/ap/X11/X76901" -d \'{"apId":104}\'',
-        'curl -X DELETE https://h/user/623096269278580737/permissions -d \'{"resource":"abc"}\'',
-    ]
-    for command in not_cleanup:
-        assert not _is_cleanup_of_own_object(command), command
-
-    # One clean statement must not vouch for the rest of the command: the marker
-    # only covers its own delete, and every delete has to be a rollback.
-    assert not _is_cleanup_of_own_object(
-        'curl -X DELETE \'https://t/api/ap/list\' -d \'{"mac":"02:00:00:00:09:01"}\' '
-        "&& curl -X DELETE 'https://t/api/orders'"
-    )
-    # cd-ing into our own tree does not launder a client-side delete.
-    assert not _is_cleanup_of_own_object(
-        "cd /var/lib/axiom/sandboxes/t_231/x && "
-        "curl -X DELETE https://h/user/623096269278580737/permissions -d '{\"resource\":\"abc\"}'"
-    )

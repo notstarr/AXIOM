@@ -104,71 +104,6 @@ _DESTRUCTIVE_WRITE = re.compile(
 )
 
 
-# Cleaning up an object the worker itself created.  Blocking this leaves the
-# client's system dirty: i099 wanted to remove two virtual AP records it had
-# written, the guard stopped the delete, and the rows stayed in the store's
-# registry.  A rollback is the opposite of damage, so it is recognised
-# deterministically instead of being put to the judge.
-_ROLLBACK_HINT = re.compile(
-    # Any delete-shaped call.  No prefix anchor: flags and helper functions sit
-    # between the segment start and the method (``p(){ curl -s -X DELETE ... }``),
-    # so anchoring loses the real cases.
-    r"(?:-[Xx]\s*DELETE\b"
-    r"|\bDELETE\s+/"
-    r"|/(?:delete|remove|del)\b"
-    r"|\brm\s+-[rf]*)",
-    re.I,
-)
-
-# The worker's own test markers.  Each one is a value the worker invents:
-# ``i105_probe_self``, ``AXIOM081001``, a virtual MAC ``02:00:00:00:09:01``.
-_SELF_MARKER = re.compile(
-    r"probe_self|_probe_|AXIOM[0-9]{3,}|axiom[0-9]{3,}|"
-    r"02:00:00:00:|00:00:00:00:|00-00-00-00-00-",
-    re.I,
-)
-
-
-def _delete_statements(command: str) -> list[str]:
-    """Split a command into statements on ``;`` ``&&`` ``||`` and newlines.
-
-    A marker only vouches for the statement it appears in.  Looking at
-    neighbouring statements was tried and rejected: ``delete A (own mac) && delete
-    B (client orders)`` let the second delete ride on the first one's marker, and
-    telling them apart needs to relate each delete to its own URL, which a regex
-    cannot do reliably.  The cost of the strict version is that a helper defined
-    one statement earlier no longer vouches for the call - that call simply goes
-    to the judge, which is the safe direction.
-    """
-
-    return [part for part in re.split(r"&&|\|\||;|\n", command) if part.strip()]
-
-
-def _is_cleanup_of_own_object(command: str) -> bool:
-    """True when *every* delete in the command is undoing the worker's own write.
-
-    The guard skips the judge only when the whole command is rollback.  One
-    clean statement does not cover the rest: ``delete own-mac && delete client
-    orders`` must still be reviewed, so a single unmatched delete fails the
-    check.  A command with no delete is not a rollback either.
-
-    A delete statement matches when it names a value the worker invented -
-    ``i105_probe_self``, ``AXIOM081001``, a virtual MAC - or when it is ``rm``
-    against a path inside our own run directory.
-    """
-
-    deletes = [s for s in _delete_statements(command) if _ROLLBACK_HINT.search(s)]
-    if not deletes:
-        return False
-
-    for statement in deletes:
-        own_path = re.search(r"\brm\s+-[rf]", statement) and _WORKSPACE_ROOT.search(statement)
-        if own_path or _SELF_MARKER.search(statement):
-            continue
-        return False  # one delete is not a rollback -> review the whole command
-    return True
-
-
 def _only_touches_own_workspace(command: str) -> bool:
     """True when the command never writes outside the worker's own directories.
 
@@ -198,9 +133,6 @@ def _whitelisted(normalized: dict[str, str], config) -> bool:
         return False
     command = normalized["command"].strip()
     if _is_bsk_command(command):
-        return True
-    # Undoing our own test object is cleanup, not damage.
-    if _is_cleanup_of_own_object(command):
         return True
     # Pure own-workspace housekeeping never reaches the judge - there is nothing
     # to judge.  A command that also talks to the network keeps going, so the
@@ -235,6 +167,14 @@ _NETWORK_VERB = re.compile(
     re.I,
 )
 _URL = re.compile(r"\b(?:https?|wss?|ftp)://", re.I)
+# An HTTP call written as a bare path or as ``GET <path>`` carries no scheme, so
+# the URL check misses it: ``GET /cgi/api/ap/delete/02:00:00:00:09:01`` was filed
+# as a local operation and never judged.
+_HTTP_PATH = re.compile(
+    r"(?:^|[;&|]\s*)(?:GET|POST|PUT|DELETE|PATCH|HEAD)\s+/[\w./-]"
+    r"|\b(?:curl|wget)\b[^|;&]*\s/[\w.-]+/",
+    re.I,
+)
 _OPAQUE_SCRIPT = re.compile(
     r"(?:^|[;&|]\s*)(?:sudo\s+)?"
     r"(?:python3?\s+[^\s|;&<>]+\.py|"
@@ -283,6 +223,8 @@ def _external_operation(normalized: dict[str, str]) -> bool:
     if _URL.search(command) or _OPAQUE_SCRIPT.search(command):
         return True
     if _NET_LIB.search(command) or _SHELL_NET.search(command):
+        return True
+    if _HTTP_PATH.search(command):
         return True
     return bool(_NETWORK_VERB.search(command))
 
