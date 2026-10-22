@@ -462,3 +462,15 @@ def test_cleanup_of_own_object_is_not_a_deletion_to_review() -> None:
     ]
     for command in not_cleanup:
         assert not _is_cleanup_of_own_object(command), command
+
+    # One clean statement must not vouch for the rest of the command: the marker
+    # only covers its own delete, and every delete has to be a rollback.
+    assert not _is_cleanup_of_own_object(
+        'curl -X DELETE \'https://t/api/ap/list\' -d \'{"mac":"02:00:00:00:09:01"}\' '
+        "&& curl -X DELETE 'https://t/api/orders'"
+    )
+    # cd-ing into our own tree does not launder a client-side delete.
+    assert not _is_cleanup_of_own_object(
+        "cd /var/lib/axiom/sandboxes/t_231/x && "
+        "curl -X DELETE https://h/user/623096269278580737/permissions -d '{\"resource\":\"abc\"}'"
+    )
