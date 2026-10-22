@@ -411,3 +411,29 @@ def test_network_capable_commands_are_not_treated_as_local() -> None:
         "cat /var/lib/axiom/contexts/t_231/graph.json",
     ):
         assert not _external_operation(normalize("bash", {"command": command})), command
+
+
+def test_own_workspace_paths_do_not_reach_the_judge() -> None:
+    # 28 of 46 model blocks in the recorded run were this mistake: every worker
+    # command cds into its own run directory, and the judge read that path as
+    # "attacking our own platform" while the actual action was on the target.
+    from axiom.modules.guard.policy import _only_touches_own_workspace
+
+    own = [
+        'R=$(ls -d /var/lib/axiom/sandboxes/t_231/workspace/axiom/runs/i106/lease_*); cd "$R"; '
+        'python3 work/x.py > work/creds.json',
+        "cd /var/lib/axiom/contexts/t_231 && ls -la",
+        "cd /var/lib/axiom/tasks/t_231 && cat findings.md | head",
+    ]
+    for command in own:
+        assert _only_touches_own_workspace(command), command
+
+    not_own = [
+        "rm -rf /opt/axiom/src",
+        "cd /var/lib/axiom/sandboxes/x && rm -rf /etc/passwd",
+        # A client-side write inside a command that also cds into our tree is
+        # still the engagement, not housekeeping.
+        "cd /var/lib/axiom/sandboxes/t_231/x/artifacts && rm -f 00_t.txt && curl https://shk.kkguan.com/q",
+    ]
+    for command in not_own:
+        assert not _only_touches_own_workspace(command), command

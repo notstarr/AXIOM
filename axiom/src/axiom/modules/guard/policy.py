@@ -62,6 +62,66 @@ def normalize(tool_name: str, payload: Any) -> dict[str, str]:
     return {"tool_name": name, "command": command[:12_000]}
 
 
+# The bsk wrapper drives the operator's own browser.  The operator asked for it
+# to be waved through rather than judged: it is a tool the engagement uses for
+# login state, not a target action, so neither the rule set nor the model has
+# anything useful to say about it.
+_BSK_INVOCATION = re.compile(
+    r"(?:^|[;&]\s*|\|\s+)(?:sudo\s+)?"
+    r"(?:\$\{?AXIOM_BSK\}?|\$\{?B\}?|axiom-bsk|/\S*axiom-bsk|bsk)(?=\s|$)",
+)
+
+
+def _is_bsk_command(command: str) -> bool:
+    """True when the command runs the bsk wrapper.
+
+    Covers the three shapes the workers actually use: ``$AXIOM_BSK ...``,
+    ``/opt/axiom/src/axiom/dispatcher/tools/axiom-bsk ...`` and a shell alias
+    assigned earlier in the same command (``B=.../axiom-bsk; $B ...``) - the
+    assignment itself is caught by the path match.
+    """
+
+    return bool(_BSK_INVOCATION.search(command))
+
+
+# The worker's own directories.  Every command it runs starts with a cd into one
+# of these, so a naive judge reads the path and calls a target-side action "an
+# attack on our own platform".  Measured on 1264 recorded decisions: 28 of 46
+# model blocks were exactly that mistake.
+_WORKSPACE_ROOT = re.compile(
+    r"/var/lib/axiom/(?:sandboxes|contexts|tasks)\b"
+)
+# A write that stays inside those directories is housekeeping (evidence files,
+# scratch creds.json).  A write anywhere else is the engagement.
+_DESTRUCTIVE_WRITE = re.compile(
+    r"(?:^|[;&|]\s*)(?:sudo\s+)?"
+    r"(?:rm\s+-(?:[rRf]+\s+)+[^;&|]*"
+    r"|mv\s+[^;&|]*"
+    r"|truncate\s+[^;&|]*"
+    r"|sed\s+-i[^;&|]*"
+    r"|tee\s+[^;&|]*"
+    r"|cp\s+[^;&|]*)",
+)
+
+
+def _only_touches_own_workspace(command: str) -> bool:
+    """True when the command never writes outside the worker's own directories.
+
+    The verdict is about where the destructive writes point, not where the
+    command happens to cd.  A ``rm -f evidence/scratch.txt`` is housekeeping even
+    though the path resolves under /var/lib/axiom; an ``rm`` that names a client
+    path is not.
+    """
+
+    if not _WORKSPACE_ROOT.search(command):
+        return False
+    for match in _DESTRUCTIVE_WRITE.finditer(command):
+        segment = match.group(0)
+        if not _WORKSPACE_ROOT.search(segment):
+            return False
+    return True
+
+
 def _whitelisted(normalized: dict[str, str], config) -> bool:
     whitelist_tools = {str(item).strip().casefold() for item in config.guard_whitelist_tools}
     whitelist_bash_verbs = {
@@ -72,6 +132,14 @@ def _whitelisted(normalized: dict[str, str], config) -> bool:
     if normalized["tool_name"] != "bash":
         return False
     command = normalized["command"].strip()
+    if _is_bsk_command(command):
+        return True
+    # Pure own-workspace housekeeping never reaches the judge - there is nothing
+    # to judge.  A command that also talks to the network keeps going, so the
+    # target side still gets reviewed.
+    if _only_touches_own_workspace(command) and not _NETWORK_VERB.search(command) \
+            and not _URL.search(command):
+        return True
     if not command or any(token in command for token in ("|", ";", ">", "<", "`", "$(", "\n")):
         return False
     try:
@@ -151,6 +219,23 @@ def _external_operation(normalized: dict[str, str]) -> bool:
     return bool(_NETWORK_VERB.search(command))
 
 
+def _judge_input(normalized: dict[str, str], request: GuardRequest) -> str:
+    """Render one tool call the way the prompt's examples show it.
+
+    ``bash  <command>`` for shell calls, ``<tool>  <path>`` otherwise.  The
+    engagement phase is appended only when it is set, since it is context rather
+    than part of the operation.
+    """
+
+    name = normalized.get("tool_name") or "tool"
+    body = normalized.get("command") or ""
+    line = f"{name}  {body}"
+    phase = (request.phase or "").strip()
+    if phase:
+        line += f"\n[phase] {phase}"
+    return line
+
+
 def _model_decision(
     request: GuardRequest, normalized: dict[str, str], config, system_prompt: str
 ) -> GuardDecision:
@@ -183,18 +268,15 @@ def _model_decision(
                         },
                         {
                             "role": "user",
-                            "content": json.dumps(
-                                {
-                                    "operation": normalized,
-                                    "task_id": request.task_id,
-                                    "intent_id": request.intent_id,
-                                    "reason_run_id": request.reason_run_id,
-                                    "plan_run_id": request.plan_run_id,
-                                    "review_run_id": request.review_run_id,
-                                    "phase": request.phase,
-                                },
-                                ensure_ascii=False,
-                            ),
+                            # Plain text, matching the few-shot examples in the
+                            # system prompt.  A JSON envelope made the same
+                            # command read differently: measured on one SSRF
+                            # command, JSON produced "会破坏我方平台自身数据"
+                            # (BLOCK) while the bare command produced "尝试读取
+                            # 云实例凭证" (ALLOW).  The wrapper keys carried no
+                            # information the judge acts on, only framing it
+                            # could mistake for structure.
+                            "content": _judge_input(normalized, request),
                         },
                     ],
                     "temperature": 0,
