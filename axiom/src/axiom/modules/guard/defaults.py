@@ -41,7 +41,7 @@ WHITELIST_BASH_VERBS = [
 
 _PASSWORD = {
     "reason": "修改或重置用户密码",
-    "pattern": r"""(?:^|[;&]\s*|\|\s+)(?:sudo\s+|doas\s+)?(?:passwd|chpasswd|htpasswd)\b|(?:^|[;&]\s*|\|\s+)(?:sudo\s+|doas\s+)?(?:mysql|mariadb|psql|cockroach|sqlplus)\b[^;&|]*(?:-e|-c)\s+[^;&|]*\b(?:alter\s+(?:user|role)|set\s+password)\b""",
+    "pattern": r"""(?:^|[;&]\s*|\|\s+)(?:sudo\s+|doas\s+)?(?:passwd|chpasswd|htpasswd)\b|(?:^|[;&]\s*|\|\s+)(?:sudo\s+|doas\s+)?(?:mysql|mariadb|psql|cockroach|sqlplus)\b[^;&|]*(?:-e|-c)\s+[^;&|]*\b(?:alter\s+(?:user|role)|set\s+password)\b|(?:^|[;&]\s*|\|\s+)(?:sudo\s+|doas\s+)?(?:mysql|mariadb|psql|cockroach|sqlplus)\b[^;&|]*(?:-e|-c)\s+[^;&|]*\bupdate\s+\S*(?:user|passwd|account)\S*\s+set\b[^;&|]*\b(?:authentication_string|password|passwd|password_hash|credential)\b""",
     "enabled": True,
 }
 
@@ -65,13 +65,14 @@ _DATA = {
 
 _SERVICE = {
     "reason": "停止或重启业务服务",
-    "pattern": r"""(?:^|[;&]\s*|\|\s+)(?:sudo\s+|doas\s+)?(?:systemctl\s+(?:stop|restart|disable)|service\s+\S+\s+(?:stop|restart)|launchctl\s+(?:unload|bootout|remove)|docker(?:-compose|\s+compose)?\s+(?:stop|restart|down)|docker\s+stop|shutdown|reboot|poweroff|halt)\b|(?:^|[;&]\s*|\|\s+)(?:sudo\s+|doas\s+)?(?:kill|pkill|killall)\b[^;&|]*\b(?:axiom|nginx|apache2?|httpd|gunicorn|uvicorn|postgres(?:ql)?|mysqld?|redis-server|node)\b""",
+    "pattern": r"""(?:^|[;&]\s*|\|\s+)(?:sudo\s+|doas\s+)?(?:(?:/[\w/]*/)?systemctl\b[^;&|]*?\s(?:stop|restart|disable|mask|kill)\b|service\s+\S+\s+(?:stop|restart|disable)|(?:/[\w/]*/)?launchctl\s+(?:unload|bootout|remove)|docker(?:-compose|\s+compose)?\s+(?:stop|restart|down)|docker\s+stop|shutdown|reboot|poweroff|halt)\b|(?:^|[;&]\s*|\|\s+)(?:sudo\s+|doas\s+)?(?:kill|pkill|killall)\b[^;&|]*\b(?:axiom|nginx|apache2?|httpd|gunicorn|uvicorn|postgres(?:ql)?|mysqld?|redis-server|node)\b""",
     "enabled": True,
 }
 
 _DOS = {
     "reason": "高并发或 DoS 操作",
-    "pattern": r"""\b(?:slowloris|slowhttptest|goldeneye|hping3\s+[^;&|]*--flood|nping\s+[^;&|]*(?:--rate|--data-length)|ab\s+[^;&|]*-n\s*\d{5,}|ab\s+[^;&|]*-c\s*\d{4,}|wrk\s+[^;&|]*(?:-c\s*\d{3,}|-t\s*\d{3,})|hey\s+[^;&|]*-n\s*\d{5,}|bombardier\s+[^;&|]*(?:-c\s*\d{3,}|-n\s*\d{5,})|vegeta\s+attack\s+[^;&|]*-rate\s*(?:[1-9]\d{3,}|[1-9]\d*k)\b)""",
+    "pattern": (
+        r"""\b(?:slowloris|slowhttptest|goldeneye|hping3\s+[^;&|]*--flood|nping\s+[^;&|]*(?:--rate|--data-length)|ab\s+[^;&|]*-n\s*\d{5,}|ab\s+[^;&|]*-c\s*\d{4,}|wrk\s+[^;&|]*(?:-c\s*\d{3,}|-t\s*\d{3,})|hey\s+[^;&|]*-n\s*\d{5,}|bombardier\s+[^;&|]*(?:-c\s*\d{3,}|-n\s*\d{5,})|vegeta\s+attack\s+[^;&|]*-rate\s*(?:[1-9]\d{3,}|[1-9]\d*k)\b|\bfor\b[^|]*?\bdo\b[\s\S]{0,400}?\b(?:curl|wget)\b[^\n]*?&\s*(?:done|wait)\b|\bseq\s+\d{3,}\b[^|]*?\|\s*xargs\b[^|]*?(?:curl|wget)|\bxargs\b[^|]*?-P\s*\d{2,}|\bwhile\s+true\b[\s\S]{0,120}?\b(?:curl|wget)\b)"""),
     "enabled": True,
 }
 

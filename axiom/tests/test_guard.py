@@ -467,3 +467,35 @@ def test_http_delete_is_blocked_but_local_work_is_not() -> None:
     ):
         decision = evaluate(GuardRequest(tool_name="bash", input={"command": command}), config, "red_team")
         assert decision.decision == "ALLOW", command
+
+
+def test_bypass_shapes_are_closed() -> None:
+    # Four holes found by probing the rule set directly.
+    config = RuntimeConfig(guard_mode="enforce")
+
+    blocked = {
+        # UPDATE against an account table instead of ALTER USER / SET PASSWORD.
+        'mysql -e "update mysql.user set authentication_string=1"': "修改或重置用户密码",
+        'psql -c "UPDATE users SET password_hash=1"': "修改或重置用户密码",
+        # systemctl with a global flag or an absolute path ahead of the verb.
+        "systemctl --no-pager stop nginx": "停止或重启业务服务",
+        "/bin/systemctl stop nginx": "停止或重启业务服务",
+        # Shell-level floods that the named tools never see.
+        "for i in $(seq 500); do curl -s https://t/ & done": "高并发或 DoS 操作",
+        "seq 10000 | xargs -P 100 -I{} curl -s https://t/": "高并发或 DoS 操作",
+        "while true; do curl -s https://t/; done": "高并发或 DoS 操作",
+    }
+    for command, reason in blocked.items():
+        decision = evaluate(GuardRequest(tool_name="bash", input={"command": command}), config, "red_team")
+        assert decision.decision == "BLOCK", command
+        assert decision.reason == reason, command
+
+    # A sequential small loop, a status query and a plain UPDATE are normal work.
+    for command in (
+        "for i in 1 2 3; do curl -s https://t/api/$i; done",
+        "for f in *.json; do cat $f; done",
+        "systemctl status nginx",
+        'mysql -e "UPDATE orders SET status=1"',
+    ):
+        decision = evaluate(GuardRequest(tool_name="bash", input={"command": command}), config, "red_team")
+        assert decision.decision == "ALLOW", command
