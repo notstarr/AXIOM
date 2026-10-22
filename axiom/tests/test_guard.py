@@ -260,7 +260,7 @@ def test_default_judge_prompt_preserves_allow_first_contract() -> None:
     assert "SQL 注入" in SYSTEM_PROMPT
     assert "上传 WebShell" in SYSTEM_PROMPT
     assert "大规模压测" in SYSTEM_PROMPT
-    assert len(HARD_BLOCK_RULES) == 6
+    assert len(HARD_BLOCK_RULES) == 7
 
 
 def test_verdict_only_accepts_zero_or_one() -> None:
@@ -439,3 +439,31 @@ def test_own_workspace_paths_do_not_reach_the_judge() -> None:
         assert not _only_touches_own_workspace(command), command
 
 
+
+
+def test_http_delete_is_blocked_but_local_work_is_not() -> None:
+    # The operator's call: an HTTP DELETE that reaches the target cannot be undone
+    # by us, and the judge allowed deleting another user's permissions as
+    # "影响范围可控".  A local file delete is unrelated and stays allowlisted.
+    config = RuntimeConfig(guard_mode="enforce")
+
+    for command in (
+        "curl -X DELETE https://t/api/orders/1",
+        "curl --request DELETE https://t/api/orders/1",
+        'curl -X DELETE "http://x/ap" -d \'{"apMac":"02:00:00:00:09:01"}\'',
+        "curl -X DELETE https://h/user/x/permissions -d 'i105_probe_self'",
+        "GET /cgi/api/ap/delete/02:00:00:00:09:01",
+    ):
+        decision = evaluate(GuardRequest(tool_name="bash", input={"command": command}), config, "red_team")
+        assert decision.decision == "BLOCK", command
+        assert decision.reason == "HTTP DELETE 请求一律不执行"
+
+    for command in (
+        "rm -f /tmp/scratch.txt",
+        "cd /var/lib/axiom/contexts/t_231 && cat graph.json | head",
+        "curl https://t/api/x",
+        "curl -X POST https://t/api/x -d 1",
+        "useradd -m backdoor",
+    ):
+        decision = evaluate(GuardRequest(tool_name="bash", input={"command": command}), config, "red_team")
+        assert decision.decision == "ALLOW", command
