@@ -304,6 +304,167 @@ _CURL_COOKIE_FLAG = re.compile(
     """ + _VALUE
 )
 
+# A shell assignment is the shape that actually leaked.  Explore writes
+# ``SID=3c80dc73-...; curl -H "Cookie: sessionId=$SID"``, and while the header
+# reference was masked, the assignment above it kept the real session id in the
+# clear.  ``TOK=de3de127...`` was the same story with an account token.
+#
+# The name decides, not the shape, because ``SID=`` has to be masked while
+# ``BASE=``, ``PID=``, ``OUT=`` and ``U=`` in the same script must not.  Matching
+# is per underscore-separated segment, so ``API_KEY`` and ``MYSQL_PWD`` are
+# caught while ``monkey`` and ``bypass`` are not.
+_SHELL_ASSIGN = re.compile(
+    r"""(?x)
+    (?<![A-Za-z0-9_])
+    ((?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*)
+    (?:"([^"\n]*)"|'([^'\n]*)'|([^\s;&|]+))
+    """
+)
+
+# ``${SID:-3c80dc73-...}`` is the same leak with the value in the default.
+_SHELL_DEFAULT_ASSIGN = re.compile(
+    r"""(?x)
+    (\$\{([A-Za-z_][A-Za-z0-9_]*):-)
+    ([^}\n]+)
+    (\})
+    """
+)
+
+_SECRET_SEGMENTS = frozenset(
+    "password passwd passphrase pwd secret token credential credentials cookie "
+    "session sess sid tok auth ak sk cred priv key jwt csrf xsrf ticket bearer".split()
+)
+# Long unambiguous words also match as a name suffix, so camelCase holders like
+# ``chenToken`` are caught.  The short ones must not: ``monkey`` ends in "key".
+_SECRET_SUFFIXES = (
+    "password", "passwd", "passphrase", "secret", "token", "credential",
+    "credentials", "cookie", "session", "apikey", "ticket", "jwt",
+)
+_SHORT_SEGMENTS = frozenset("ak sk key priv cred auth tok sid sess".split())
+
+
+def _is_secret_variable(name: str) -> bool:
+    lowered = name.casefold()
+    if lowered == "pwd":
+        # The shell's working directory, not a password.  ``MYSQL_PWD`` still
+        # matches, because the whole name is not "pwd".
+        return False
+    if any(part in _SECRET_SEGMENTS for part in lowered.split("_") if part):
+        return True
+    return any(lowered.endswith(suffix) for suffix in _SECRET_SUFFIXES)
+
+
+# The name cannot carry the whole rule.  The recorded run also holds
+# ``S='3c80dc73-...'`` and ``T=25fd91c4...`` and ``for s in <uuid> <uuid>``, where
+# the variable is a single letter and the value is a live session id or account
+# token.  So a second test looks at the shape of the value itself: a UUID, a long
+# hex run, a JWT, or a long mixed-character blob is a credential whatever it is
+# called.
+#
+# The cost is explicit: a UUID that is really an opaque object id - a graph node,
+# a task instance - gets masked too when it sits in an assignment or a for-list.
+# The judge still sees the structure (``for id in [令牌] [令牌]; do curl ...``),
+# which is what the verdict turns on, and a real session id in the clear is the
+# worse outcome.
+_CREDENTIAL_SHAPE = re.compile(
+    r"""(?x)
+    ^(?:
+        [0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}
+      | [0-9a-fA-F]{32,}
+      | eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}
+      | (?=[A-Za-z0-9+/_=-]*[A-Za-z])(?=[A-Za-z0-9+/_=-]*[0-9])
+        [A-Za-z0-9+/_=-]{28,}={0,2}
+    )$
+    """
+)
+
+# ``for s in <uuid> <uuid> <uuid>; do`` - a list of session ids, taken verbatim
+# from the recorded run.  Only the credential-shaped members are replaced; the
+# words around them stay readable.
+_FOR_LIST = re.compile(
+    r"""(?x)
+    (\bfor[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]+in[ \t]+)
+    ([^;\n|&]+)
+    """
+)
+
+
+def _looks_like_credential(value: str) -> bool:
+    """True for a value whose shape alone marks it as a secret."""
+
+    candidate = value.strip().strip("\"'")
+    if len(candidate) < 20:
+        return False
+    # A path or a URL is infrastructure, not a credential, even when a segment
+    # of it happens to be a UUID.
+    if "://" in candidate or candidate[0] in "/~.-":
+        return False
+    return bool(_CREDENTIAL_SHAPE.match(candidate))
+
+
+def _mask_shell_assignment(name: str, value: str) -> str:
+    """Return the value to send, or ``value`` itself when it is not a secret."""
+
+    stripped = value.strip()
+    if not stripped:
+        return value
+    # A reference is not a value: ``$SID``, ``$(cat k)``, ``(a b c)``.  Masking
+    # one deletes the only readable part of the command.
+    if stripped[0] in "$({`":
+        return value
+    if _looks_like_credential(stripped):
+        return PLACEHOLDER_TOKEN
+    if not _is_secret_variable(name):
+        return value
+    lowered = name.casefold()
+    if len(stripped) < 8 and any(
+        part in _SHORT_SEGMENTS for part in lowered.split("_") if part
+    ):
+        # ``AK=1`` is a loop counter; ``AK=AKIDabc123456`` is a key.
+        return value
+    return _secret_placeholder(name)
+
+
+def _for_list_replacement(match: re.Match[str]) -> str:
+    values = match.group(2).split()
+    changed = False
+    masked = []
+    for token in values:
+        if _looks_like_credential(token):
+            quote = '"' if token.startswith('"') else ("'" if token.startswith("'") else "")
+            masked.append(f"{quote}{PLACEHOLDER_TOKEN}{quote}")
+            changed = True
+        else:
+            masked.append(token)
+    if not changed:
+        return match.group(0)
+    return f"{match.group(1)}{' '.join(masked)}"
+
+
+def _shell_assign_replacement(match: re.Match[str]) -> str:
+    prefix, name = match.group(1), match.group(2)
+    for index, quote in ((3, '"'), (4, "'")):
+        original = match.group(index)
+        if original is not None:
+            value = _mask_shell_assignment(name, original)
+            if value == original:
+                return match.group(0)
+            return f"{prefix}{quote}{value}{quote}"
+    original = match.group(5)
+    value = _mask_shell_assignment(name, original)
+    if value == original:
+        return match.group(0)
+    return f"{prefix}{value}"
+
+
+def _shell_default_replacement(match: re.Match[str]) -> str:
+    prefix, name, original = match.group(1), match.group(2), match.group(3)
+    value = _mask_shell_assignment(name, original)
+    if value == original:
+        return match.group(0)
+    return f"{prefix}{value}{match.group(4)}"
+
+
 _ENV_SECRET = re.compile(
     r"""(?x)
     \b([A-Z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|APIKEY|API_KEY|
@@ -463,6 +624,9 @@ def redact(text: str) -> tuple[str, int]:
         (_SMBCLIENT_FLAG, _value_flag_replacement(PLACEHOLDER_PASSWORD, split_percent=True)),
         (_LONG_SECRET_FLAG, _long_flag_replacement),
         (_CURL_COOKIE_FLAG, _value_flag_replacement(PLACEHOLDER_COOKIE)),
+        (_SHELL_DEFAULT_ASSIGN, _shell_default_replacement),
+        (_SHELL_ASSIGN, _shell_assign_replacement),
+        (_FOR_LIST, _for_list_replacement),
         (_ENV_SECRET, _env_replacement),
         (_KEY_VALUE, _key_value_replacement),
         (

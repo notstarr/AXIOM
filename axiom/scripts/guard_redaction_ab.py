@@ -40,7 +40,7 @@ def _load_rows(engine, task_id: str, limit: int) -> list[dict]:
     query = text(
         """
         SELECT id, payload_json
-        FROM audit_events
+        FROM axiom.audit_events
         WHERE event_type = 'guard.decision'
           AND task_id = :task_id
         ORDER BY id DESC

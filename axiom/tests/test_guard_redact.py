@@ -563,3 +563,104 @@ def test_a_keyed_value_is_masked_even_inside_a_sql_literal() -> None:
     assert "Kkg@2023!" not in masked
     for keyword in ("SELECT", "FROM", "users", "WHERE", "password="):
         assert keyword in masked
+
+
+# --------------------------------------------------------------------------
+# shell variable assignments - the shape that actually leaked in production
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # Recorded verbatim from t_231.  The header reference below was masked
+        # but the assignment above it kept the real session id in the clear.
+        (
+            'SID=3c80dc73-85b1-4e6c-9803-ff217acf64b5; curl -s -H "Cookie: sessionId=$SID" https://t/x',
+            'SID=[令牌]; curl -s -H "Cookie: [Cookie]" https://t/x',
+        ),
+        (
+            "TOK=de3de1276f4044df560297da726b0296; curl -H \"Account-Token: $TOK\" https://t/x",
+            "TOK=[令牌]; curl -H \"Account-Token: [令牌]\" https://t/x",
+        ),
+        # same leak with the value in a default expansion
+        (
+            "SID=${SID:-3c80dc73-85b1-4e6c-9803-ff217acf64b5}; echo $SID",
+            "SID=${SID:-[令牌]}; echo $SID",
+        ),
+        # camelCase holder of the same word
+        (
+            'cd /tmp && MY_TOKEN="abc123xyz" curl https://t',
+            'cd /tmp && MY_TOKEN="[令牌]" curl https://t',
+        ),
+        ('MYSQL_PWD=x7Kd92Lq mysql -u root', f'MYSQL_PWD={PLACEHOLDER_PASSWORD} mysql -u root'),
+        ('AK=AKIDabcdefghijklmn SK=Zm9vYmFyYmF6cXV4eA', f'AK={PLACEHOLDER_KEY} SK={PLACEHOLDER_KEY}'),
+    ],
+)
+def test_shell_assignments_holding_a_secret_are_masked(command: str, expected: str) -> None:
+    assert redact(command)[0] == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # The variables in the very same scripts that must stay readable: the
+        # judge needs the base URL and the ids to know what is being touched.
+        "BASE=https://shk.kkguan.com/universe; U=https://t; OUT=/tmp/x",
+        "P=3; PID=6028; T=$(cat /tmp/chen_token)",
+        # a reference is not a value
+        "SID=abc; echo $SID",
+        "H=(-H 'Accept: json' -H 'X-Trace: 1')",
+        # nothing secret in these names, even though they contain a secret word
+        "monkey=banana; bypass=1; compassion=1",
+        # PWD in shell is the working directory
+        "PWD=/tmp/x ls",
+        # a short value behind a two-letter name is a counter, not a key
+        "AK=1 SK=2; for i in 1 2; do :; done",
+    ],
+)
+def test_ordinary_shell_assignments_are_left_alone(command: str) -> None:
+    assert redact(command) == (command, 0)
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # The variable name is a single letter, so only the shape of the value
+        # identifies it.  All three lines are verbatim from the recorded run.
+        (
+            "cd /tmp/i098 && S='3c80dc73-85b1-4e6c-9803-ff217acf64b5'; curl -s -H \"Cookie: $S\" https://t/x",
+            "cd /tmp/i098 && S='[令牌]'; curl -s -H \"Cookie: [Cookie]\" https://t/x",
+        ),
+        (
+            "cd /tmp && T=25fd91c492a4baad338abe12d62dc868; J=$(python3 -c 'x')",
+            "cd /tmp && T=[令牌]; J=$(python3 -c 'x')",
+        ),
+        (
+            "for s in 641eff2d-6f3f-4de1-b122-880229574988 5b62a3dc-099c-4df7-ab40-fc52e509409d; do echo $s; done",
+            "for s in [令牌] [令牌]; do echo $s; done",
+        ),
+    ],
+)
+def test_a_credential_is_recognised_by_its_shape(command: str, expected: str) -> None:
+    assert redact(command)[0] == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # a UUID inside a target URL is infrastructure, not a credential: it
+        # names the role being read, which is the evidence for the finding
+        (
+            "target='http://100.100.100.200/latest/meta-data/ram/security-credentials/"
+            "KubernetesWorkerRole-ea60913a-d3da-4559-851e-b000cec53a38'"
+        ),
+        # short values and plain words never qualify
+        "P=3; PID=6028; A=33311667307327",
+        "for i in 1 2 3; do curl https://t/$i; done",
+        "for f in *.json; do cat $f; done",
+        "B='https://kpos-admin-sg.kkgroup.cn/shopping_api'; OUT=/tmp/x",
+    ],
+)
+def test_shape_rule_does_not_reach_infrastructure(command: str) -> None:
+    assert redact(command) == (command, 0)
