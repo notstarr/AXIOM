@@ -189,19 +189,25 @@ window.AxiomModules.dispatch = {
     },
 
     async loadGuardAuditEvents() {
+      // First page only.  Nothing is dropped from the database; older rows are
+      // fetched as the list is scrolled, so 总记录 reflects everything stored
+      // rather than a hard cap.
       try {
         this.guardAudit.loading = true;
-        // Fetch the task's records once and filter in memory.  Asking the API
-        // for only the selected verdict would also shrink the counters, so
-        // "总记录" would show the block count and the rate would always read
-        // 100%.
-        const params = new URLSearchParams();
-        params.set('limit', String(this.guardAudit.limit || 200));
-        params.set('decision', 'all');
-        if (this.guardAudit.project_id) params.set('project_id', this.guardAudit.project_id);
-        const all = await this.api('GET', '/tool-hooks/events?' + params.toString());
-        this.guardAudit.all_events = Array.isArray(all) ? all : [];
+        this.guardAudit.all_events = [];
+        this.guardAudit.cursor = '';
+        this.guardAudit.has_more = true;
+        this.guardAudit.total = 0;
+        await this.fetchGuardAuditPage();
         this.applyGuardAuditFilter();
+        // Counters come from a SQL aggregate, not from the loaded page: with
+        // paging, "拦截" would otherwise show 22 and climb as the operator
+        // scrolls, and the rate would be computed over a partial set.
+        try {
+          const statParams = new URLSearchParams();
+          if (this.guardAudit.project_id) statParams.set('project_id', this.guardAudit.project_id);
+          this.guardAudit.stats = await this.api('GET', '/tool-hooks/events/stats?' + statParams.toString());
+        } catch (e) { /* counters fall back to the loaded rows */ }
       } catch (e) {
         this.showToast('加载守门审计日志失败: ' + e.message, 'error');
       } finally {
@@ -209,19 +215,81 @@ window.AxiomModules.dispatch = {
       }
     },
 
+    async fetchGuardAuditPage() {
+      if (!this.guardAudit.has_more || this.guardAudit.loading_more) return;
+      this.guardAudit.loading_more = true;
+      try {
+        const params = new URLSearchParams();
+        params.set('limit', String(this.guardAudit.limit || 300));
+        if (this.guardAudit.project_id) params.set('project_id', this.guardAudit.project_id);
+        if (this.guardAudit.cursor) params.set('before_id', this.guardAudit.cursor);
+        const page = await this.api('GET', '/tool-hooks/events?' + params.toString());
+        const rows = Array.isArray(page) ? page : [];
+        this.guardAudit.all_events = (this.guardAudit.all_events || []).concat(rows);
+        // A short page means the end; otherwise remember the last id so the next
+        // call continues strictly below it.
+        this.guardAudit.has_more = rows.length >= (this.guardAudit.limit || 300);
+        if (rows.length) this.guardAudit.cursor = rows[rows.length - 1].id;
+        this.applyGuardAuditFilter();
+      } finally {
+        this.guardAudit.loading_more = false;
+      }
+    },
+
+    async loadMoreGuardAudit() {
+      await this.fetchGuardAuditPage();
+    },
+
     applyGuardAuditFilter() {
       const all = this.guardAudit.all_events || [];
       const decision = this.guardAudit.decision || 'all';
-      this.guardAudit.events = decision === 'all'
-        ? all
-        : all.filter(item => String(item.decision || '').toLowerCase() === decision);
+      const source = this.guardAudit.source || 'all';
+      this.guardAudit.events = all.filter(item => {
+        const byDecision = decision === 'all'
+          || String(item.decision || '').toLowerCase() === decision;
+        // Matched against the displayed label (白名单 / 黑名单 / 小模型), not the
+        // internal enum, so the option the operator picks is the text they see.
+        const bySource = source === 'all' || this.guardAuditSourceLabel(item) === source;
+        return byDecision && bySource;
+      });
+    },
+
+    guardAuditSourceOptions() {
+      // Drawn from the stored aggregate so an option cannot vanish just because
+      // its rows have not been paged in yet.
+      const stats = this.guardAudit.stats;
+      const seen = new Set();
+      if (stats && stats.by_source) {
+        for (const key of Object.keys(stats.by_source)) {
+          seen.add(this.guardAuditSourceLabel({ decision_source: key }));
+        }
+      } else {
+        for (const e of (this.guardAudit.all_events || [])) {
+          seen.add(this.guardAuditSourceLabel(e));
+        }
+      }
+      const order = ['黑名单', '白名单', '小模型', '小模型未答', '未启用'];
+      return order.filter(label => seen.has(label));
     },
 
     guardAuditCounts() {
       const all = this.guardAudit.all_events || [];
+      const stats = this.guardAudit.stats;
+      if (stats && Number(stats.total || 0) > 0) {
+        // Every figure is the stored total, independent of how many rows have
+        // been paged in.
+        return {
+          total: Number(stats.total || 0),
+          loaded: all.length,
+          blocked: Number(stats.blocked || 0),
+          allowed: Number(stats.allowed || 0),
+          rate: Number(stats.rate || 0),
+        };
+      }
       const blocked = all.filter(item => item.decision === 'BLOCK').length;
       return {
         total: all.length,
+        loaded: all.length,
         blocked,
         allowed: all.length - blocked,
         rate: all.length ? Math.round((blocked / all.length) * 100) : 0,

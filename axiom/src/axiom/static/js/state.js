@@ -252,7 +252,7 @@ window.AxiomModules.state = {
     dingtalkTesting: false,
     // all_events is the task-scoped set the counters read; events is the same
     // list filtered by the selected verdict for display.
-    guardAudit: { events: [], all_events: [], loading: false, decision: 'all', project_id: '', limit: 200, expanded: {} },
+    guardAudit: { events: [], all_events: [], loading: false, loading_more: false, has_more: false, cursor: '', total: 0, stats: null, decision: 'all', source: 'all', project_id: '', limit: 300, expanded: {} },
     dispatchSettings: {
       runner_interval_seconds: 3,
       global_max_active_runs: 15,

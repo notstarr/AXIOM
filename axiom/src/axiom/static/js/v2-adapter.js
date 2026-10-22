@@ -1234,10 +1234,29 @@
       const taskId = query.get('project_id') || '';
       const params = new URLSearchParams({ event_type: 'guard.decision', limit: query.get('limit') || '100' });
       if (taskId) params.set('task_id', taskId);
+      // Cursor for older pages: the backend returns newest-first, and before_id
+      // keeps that ordering while walking backwards.
+      const beforeId = query.get('before_id');
+      if (beforeId) params.set('before_id', beforeId);
       let events = (await request('GET', `/audit-events?${params}`)).map(mapGuardEvent);
       const decision = query.get('decision');
       if (decision && decision !== 'all') events = events.filter(item => item.decision.toLowerCase() === decision);
       return events;
+    }
+
+    if (path === '/tool-hooks/events/stats' && method === 'GET') {
+      const params = new URLSearchParams({ event_type: 'guard.decision' });
+      const taskId = query.get('project_id') || '';
+      if (taskId) params.set('task_id', taskId);
+      return request('GET', `/audit-events/stats?${params}`);
+    }
+
+    if (path === '/tool-hooks/events/count' && method === 'GET') {
+      const params = new URLSearchParams({ event_type: 'guard.decision' });
+      const taskId = query.get('project_id') || '';
+      if (taskId) params.set('task_id', taskId);
+      const data = await request('GET', `/audit-events/count?${params}`);
+      return Number(data.count || 0);
     }
 
     if (path === '/skills' || path.startsWith('/skills/')) return request(method, path, body);
