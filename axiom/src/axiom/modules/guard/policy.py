@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from axiom.modules.guard.defaults import SYSTEM_PROMPT
+from axiom.modules.guard.redact import redact
 from axiom.modules.guard.schemas import GuardDecision, GuardRequest
 
 
@@ -229,12 +230,21 @@ def _external_operation(normalized: dict[str, str]) -> bool:
     return bool(_NETWORK_VERB.search(command))
 
 
-def _judge_input(normalized: dict[str, str], request: GuardRequest) -> str:
-    """Render one tool call the way the prompt's examples show it.
+def _judge_input(normalized: dict[str, str], request: GuardRequest) -> tuple[str, int]:
+    """Render one tool call for the judge and mask it before it leaves us.
 
     ``bash  <command>`` for shell calls, ``<tool>  <path>`` otherwise.  The
     engagement phase is appended only when it is set, since it is context rather
     than part of the operation.
+
+    Masking happens here and nowhere earlier: every decision before this point -
+    the allowlist, the hard rules, the "does it leave the host" test - must read
+    the command exactly as it will run.  A placeholder is not shell syntax, so
+    redacting first would change which commands get judged at all.
+
+    Returns ``("", 0)`` if masking fails.  The caller then skips the model call
+    entirely: sending the raw text would defeat the purpose, and there is no
+    partial answer that is better than fail-open.
     """
 
     name = normalized.get("tool_name") or "tool"
@@ -243,7 +253,10 @@ def _judge_input(normalized: dict[str, str], request: GuardRequest) -> str:
     phase = (request.phase or "").strip()
     if phase:
         line += f"\n[phase] {phase}"
-    return line
+    try:
+        return redact(line)
+    except Exception:
+        return "", 0
 
 
 def _model_decision(
@@ -256,6 +269,15 @@ def _model_decision(
         return GuardDecision(
             decision="ALLOW",
             reason="监管模型未配置，按 fail-open 放行",
+            source="fail_open",
+        )
+    judged, redacted_count = _judge_input(normalized, request)
+    if not judged:
+        # Masking is pure regex over one string, so this is close to unreachable
+        # - but "we could not mask it" must never mean "send it anyway".
+        return GuardDecision(
+            decision="ALLOW",
+            reason="请求脱敏失败，按 fail-open 放行且未送审",
             source="fail_open",
         )
     started = time.perf_counter()
@@ -286,7 +308,12 @@ def _model_decision(
                             # 云实例凭证" (ALLOW).  The wrapper keys carried no
                             # information the judge acts on, only framing it
                             # could mistake for structure.
-                            "content": _judge_input(normalized, request),
+                            #
+                            # ``judged`` is the masked form: credentials and
+                            # personal data are already placeholders.  The
+                            # structure is untouched, so the verdict is formed
+                            # from the same shape it always was.
+                            "content": judged,
                         },
                     ],
                     "temperature": 0,
@@ -309,7 +336,15 @@ def _model_decision(
             source="fail_open",
         )
     latency_ms = int((time.perf_counter() - started) * 1000)
-    diagnostic = {"model_latency_ms": latency_ms, "raw_model_output": raw.strip()[:2_000]}
+    diagnostic = {
+        "model_latency_ms": latency_ms,
+        "raw_model_output": raw.strip()[:2_000],
+        # What the judge actually read, and how many values were masked.  Stored
+        # so the operator can verify after the fact that nothing went out in the
+        # clear, and so the A/B harness can replay the exact same text.
+        "judge_input": judged[:4_000],
+        "redacted_count": redacted_count,
+    }
     verdict, detail = _parse_verdict(raw)
     if verdict == "1":
         return GuardDecision(decision="ALLOW", reason=detail, source="model", **diagnostic)

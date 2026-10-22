@@ -385,6 +385,10 @@ window.AxiomModules.dispatch = {
       return JSON.stringify({
         normalized: this.parseGuardAuditJson(event?.normalized_json),
         input: this.parseGuardAuditJson(event?.input_json),
+        // The masked text the judge actually received, shown next to the raw
+        // command above: the difference is exactly what did not leave the host.
+        judge_input: event?.judge_input || '',
+        redacted_count: event?.redacted_count || 0,
         raw_model_output: event?.raw_model_output || '',
       }, null, 2);
     },

@@ -78,6 +78,13 @@ class GuardService:
                     "cwd": request.cwd,
                     "model_latency_ms": decision.model_latency_ms,
                     "raw_model_output": decision.raw_model_output,
+                    # ``command`` above is the raw text, kept because it is what
+                    # the operator investigates with.  ``judge_input`` is the
+                    # masked text that was actually sent to the judge, kept so
+                    # that "nothing left the host in the clear" is verifiable
+                    # from the page rather than from an assertion.
+                    "judge_input": decision.judge_input,
+                    "redacted_count": decision.redacted_count,
                 },
             )
         )

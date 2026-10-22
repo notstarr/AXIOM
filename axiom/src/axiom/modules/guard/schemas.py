@@ -42,9 +42,13 @@ class GuardDecision(BaseModel):
     observed_reason: str = ""
     event_id: str = ""
     # Diagnostics for the audit log: how long the judge took, and what it
-    # literally said.  Both are only set on the model path.
+    # literally said.  Both are only set on the model path.  ``judge_input`` is
+    # the masked text that was actually sent - it is what proves no credential
+    # left the host - and ``redacted_count`` is how many values were replaced.
     model_latency_ms: int = 0
     raw_model_output: str = ""
+    judge_input: str = ""
+    redacted_count: int = 0
 
 
 class GuardProfileDefaults(BaseModel):

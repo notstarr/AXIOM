@@ -455,6 +455,10 @@
       normalized_json: JSON.stringify(payload.normalized || {}),
       input_json: JSON.stringify(payload.input || {}),
       raw_model_output: payload.raw_model_output || '',
+      // The masked text the judge actually read, plus how many values were
+      // replaced before the request left the host.
+      judge_input: payload.judge_input || '',
+      redacted_count: payload.redacted_count || 0,
       model_latency_ms: payload.model_latency_ms || 0,
       created_at: event.created_at,
     };
