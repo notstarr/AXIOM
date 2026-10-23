@@ -307,9 +307,9 @@ def test_evidence_survives_untouched(command: str) -> None:
 
 def test_a_command_injection_inside_a_header_is_not_hidden() -> None:
     # Masking the whole rest of the line would hide an attack from the judge.
-    masked, _ = redact('curl -H "Authorization: Bearer abc; rm -rf /tmp/x" https://t')
+    masked, _ = redact('curl -H "Authorization: Bearer s3cr3tT0ken; rm -rf /tmp/x" https://t')
     assert "rm -rf /tmp/x" in masked
-    assert "abc" not in masked
+    assert "s3cr3tT0ken" not in masked
 
 
 # --------------------------------------------------------------------------
@@ -581,7 +581,7 @@ def test_a_keyed_value_is_masked_even_inside_a_sql_literal() -> None:
         ),
         (
             "TOK=de3de1276f4044df560297da726b0296; curl -H \"Account-Token: $TOK\" https://t/x",
-            "TOK=[令牌]; curl -H \"Account-Token: [令牌]\" https://t/x",
+            "TOK=[令牌]; curl -H \"Account-Token: $TOK\" https://t/x",
         ),
         # same leak with the value in a default expansion
         (
@@ -630,7 +630,7 @@ def test_ordinary_shell_assignments_are_left_alone(command: str) -> None:
         # identifies it.  All three lines are verbatim from the recorded run.
         (
             "cd /tmp/i098 && S='3c80dc73-85b1-4e6c-9803-ff217acf64b5'; curl -s -H \"Cookie: $S\" https://t/x",
-            "cd /tmp/i098 && S='[令牌]'; curl -s -H \"Cookie: [Cookie]\" https://t/x",
+            "cd /tmp/i098 && S='[令牌]'; curl -s -H \"Cookie: $S\" https://t/x",
         ),
         (
             "cd /tmp && T=25fd91c492a4baad338abe12d62dc868; J=$(python3 -c 'x')",
@@ -664,3 +664,183 @@ def test_a_credential_is_recognised_by_its_shape(command: str, expected: str) ->
 )
 def test_shape_rule_does_not_reach_infrastructure(command: str) -> None:
     assert redact(command) == (command, 0)
+
+
+# --------------------------------------------------------------------------
+# the seven cases a 447-command audit found, in both directions
+# --------------------------------------------------------------------------
+
+
+def test_a_json_body_nested_in_a_shell_command_is_masked() -> None:
+    """Escaped quotes defeated the generic key/value rule.
+
+    ``--data-binary '{\\"passwd\\":\\"Sin308\\"}'`` arrives with its quotes
+    backslash-escaped, so a rule that expected a literal quote walked past it.
+    This was one of only two real leaks the audit found, and it hid a working
+    account password.
+    """
+
+    command = r"""curl -s --data-binary '{\"username\":\"Terp\",\"passwd\":\"Sin308\"}' https://t"""
+    masked, count = redact(command)
+    assert count == 1
+    assert "Sin308" not in masked
+    assert '"passwd":"[密码]"'.replace('"', r"\"") in masked
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # A bare ``name`` is a task name here, not a person.  Masking it hid the
+        # only word that said what the command creates.
+        ('curl -d \'{"name":"获取数据","resourceList":[]}\' https://t', None),
+        # A route being iterated over is long and mixes letters with digits, so
+        # the shape rule read it as a token.
+        (
+            'for p in "projects/3/process-instance/list-paging"; do curl "https://t/$p"; done',
+            None,
+        ),
+        # ``token-service`` is part of an image name, not a key.
+        ("docker pull registry.example/brd/token-service:1.0", None),
+        # A reference carries the variable's name, not its value; masking it
+        # severs the link to the assignment that was already masked.
+        (
+            'curl -H "Authorization: Bearer $AXIOM_SERVICE_TOKEN" https://t/x',
+            None,
+        ),
+        # ... but a real person behind the same bare key is still masked
+        (
+            'curl -d "name=谭子清" https://t',
+            'curl -d "name=[姓名]" https://t',
+        ),
+        (
+            'curl -d \'{"name":"谭子清"}\' https://t',
+            'curl -d \'{"name":"[姓名]"}\' https://t',
+        ),
+        # a company name starts with a verb-ish word, not a surname
+        ('curl -d \'{"name":"华为技术"}\' https://t', None),
+    ],
+)
+def test_over_masking_found_by_the_audit(command: str, expected: str | None) -> None:
+    masked, count = redact(command)
+    if expected is None:
+        assert masked == command
+        assert count == 0
+    else:
+        assert masked == expected
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # A live session id inside a Python conditional.  The assignment rule
+        # masks the left branch; the right branch is a bare string literal where
+        # no key/value rule can reach it.
+        (
+            'SID=sys.argv[1] if len(sys.argv)>1 else "96dbf03b-bc67-408f-9e9b-3042457ab223"',
+            'SID=[密钥] if len(sys.argv)>1 else "[令牌]"',
+        ),
+        (
+            '''S='3c80dc73-85b1-4e6c-9803-ff217acf64b5'; curl -H "Cookie: sid=$S" https://t''',
+            '''S='[令牌]'; curl -H "Cookie: [Cookie]" https://t''',
+        ),
+    ],
+)
+def test_a_bare_quoted_credential_is_masked(command: str, expected: str) -> None:
+    assert redact(command)[0] == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Routes, bundle names and URLs are what the workers iterate over; the
+        # shape rule has to leave all of them readable.
+        'for p in "projects/3/process-instance/list-paging"; do curl "https://t/$p"; done',
+        'for f in "api-DjfAaA-N.js" "utils-DiI3jt31"; do echo $f; done',
+        'curl "https://t/api/v1/x/3c80dc73-85b1-4e6c-9803-ff217acf64b5"',
+        "curl 'http://100.100.100.200/latest/meta-data/ram/security-credentials/"
+        "KubernetesWorkerRole-ea60913a-d3da-4559-851e-b000cec53a38'",
+        '''curl -d '"scan"' https://t''',
+    ],
+)
+def test_a_quoted_value_that_is_not_a_credential_survives(command: str) -> None:
+    assert redact(command) == (command, 0)
+
+
+def test_a_bare_positional_credential_is_masked() -> None:
+    # The recorded run ends with the session id as a positional argv element:
+    # not an assignment, not a for-list, not a quoted string.
+    command = 'python3 q.py 96dbf03b-bc67-408f-9e9b-3042457ab223 "select id,app_id"'
+    assert redact(command)[0] == 'python3 q.py [令牌] "select id,app_id"'
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # base64 padding, not a secret
+        "echo AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        # a UUID inside a URL or a path is an object reference
+        'curl "https://t/api/v1/x/3c80dc73-85b1-4e6c-9803-ff217acf64b5"',
+        "cat /var/lib/axiom/tasks/3c80dc73-85b1-4e6c-9803-ff217acf64b5/x.json",
+        # a 16-digit id is not a UUID or a 32-char hex run
+        "curl -d 'id=971493486794096642' https://t",
+    ],
+)
+def test_a_bare_token_that_is_not_a_credential_survives(command: str) -> None:
+    assert redact(command) == (command, 0)
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # a one-character probe value is not a credential
+        ("curl -H 'authorization: Bearer x' https://t", None),
+        # a bundle filename matched the long mixed-character branch
+        (
+            "for f in OriginzationService-CGXyz123abc.js utils-DiI3jt31; do echo $f; done",
+            None,
+        ),
+        # ``-b wj.txt`` names a cookie jar to read, not a cookie
+        ("curl -s -m 30 -b wj.txt https://t", None),
+        ("curl -b \"$JAR\" https://t", None),
+        # ... but a real token in the same positions is still masked
+        (
+            "curl -H 'Authorization: Bearer 8f2a9c1d4e6b7a3f' https://t",
+            "curl -H 'Authorization: Bearer [令牌]' https://t",
+        ),
+        (
+            'curl -s -b "JSESSIONID=821882597543903232_axxttjqq" https://t',
+            'curl -s -b "[Cookie]" https://t',
+        ),
+    ],
+)
+def test_second_pass_of_false_positives(command: str, expected: str | None) -> None:
+    masked, count = redact(command)
+    if expected is None:
+        assert masked == command
+        assert count == 0
+    else:
+        assert masked == expected
+
+
+def test_a_mac_address_is_not_a_postal_address() -> None:
+    """``macAddress`` contains ``address`` and got masked as one.
+
+    A MAC identifies the device an access-point payload is about - it was the
+    single most useful piece of evidence in those commands, and the address rule
+    replaced 12 of them with ``[地址]`` in a 447-command sweep.
+    """
+
+    for command in (
+        'curl -d \'{"macAddress":"98:6D:35:72:A9:B7"}\' https://t',
+        'curl -d \'{"mac_address":"02:00:00:00:09:01"}\' https://t',
+    ):
+        assert redact(command) == (command, 0)
+
+    # a real postal address behind a real key is still masked
+    for command, expected in (
+        ('curl -d \'{"address":"北京市朝阳区建国路1号"}\' https://t',
+         'curl -d \'{"address":"[地址]"}\' https://t'),
+        ('curl -d \'{"addr":"上海市浦东新区世纪大道100号"}\' https://t',
+         'curl -d \'{"addr":"[地址]"}\' https://t'),
+    ):
+        assert redact(command)[0] == expected

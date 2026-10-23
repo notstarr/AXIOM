@@ -110,7 +110,7 @@ _SECRET_WORD = (
     r"client[-_]?secret|csrf[-_]?token|xsrf[-_]?token|"
     r"密码|口令|密钥|令牌|凭证|凭证号"
 )
-_SECRET_KEY = r"(?:[a-z0-9_.-]*?(?:%s)[a-z0-9_.-]*)" % _SECRET_WORD
+_SECRET_KEY = r"(?:[a-z0-9_]*?(?:%s)[a-z0-9_]*)" % _SECRET_WORD
 
 # Flag names, where the leading ``--`` already proves it is a switch.  ``pass``
 # is allowed here for the same reason it is not allowed above.
@@ -184,12 +184,43 @@ _COOKIE_HEADER = re.compile(
 )
 
 
+def _is_reference(value: str) -> bool:
+    """True when the value points at a secret rather than being one.
+
+    ``Authorization: Bearer $AXIOM_SERVICE_TOKEN`` carries no secret - the
+    variable's name is the whole content.  Masking it would hide which
+    variable was used, which is the one fact connecting the header to the
+    assignment the worker made earlier.
+    """
+
+    stripped = value.strip().strip("\"'")
+    return bool(stripped) and stripped[0] in "${("
+
+
+def _looks_like_filename(value: str) -> bool:
+    """``wj.txt``, ``cookies.json`` - a path to a file, not a value in one."""
+
+    stripped = value.strip().strip("\"'")
+    if "/" in stripped:
+        return True
+    head, _, ext = stripped.rpartition(".")
+    return bool(head) and ext.isalnum() and len(ext) <= 5
+
+
 def _mask_header_value(value: str, placeholder: str) -> str:
     """Keep an auth scheme word, drop the credential behind it."""
 
     scheme = re.match(r"(?i)^(bearer|basic|token|digest|bot|negotiate)\s+", value)
     if scheme:
+        rest = value[scheme.end():]
+        if _is_reference(rest) or len(rest.strip()) < 6:
+            # ``Bearer x`` is a placeholder the worker wrote while probing, not a
+            # credential.  Masking it changes nothing a reader needs, and doing
+            # it made the audit look like it had found a secret.
+            return value
         return value[: scheme.end()] + placeholder
+    if _is_reference(value) or len(value.strip()) < 6:
+        return value
     return placeholder
 
 
@@ -208,6 +239,20 @@ _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}
 # at whitespace or ``/``, so an unencoded ``@`` inside the password does not cut
 # the match short - the last ``@`` wins and the host survives.
 _URL_USERINFO = re.compile(r"(\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s/:@]+:)([^\s/]+)(@)")
+
+
+def _cookie_flag_replacement(match: re.Match[str]) -> str:
+    for index, quote in ((2, '"'), (3, "'")):
+        value = match.group(index)
+        if value is None:
+            continue
+        if _is_reference(value) or _looks_like_filename(value):
+            return match.group(0)
+        return f"{match.group(1)}{quote}{PLACEHOLDER_COOKIE}{quote}"
+    value = match.group(4)
+    if _is_reference(value) or _looks_like_filename(value):
+        return match.group(0)
+    return f"{match.group(1)}{PLACEHOLDER_COOKIE}"
 
 
 def _value_flag_replacement(placeholder: str, split_percent: bool = False):
@@ -297,7 +342,9 @@ _LONG_SECRET_FLAG = re.compile(
 )
 
 # ``curl -b`` / ``curl --cookie`` hand the cookie over as a value rather than as
-# a header, so the header rule never sees it.
+# a header, so the header rule never sees it.  But ``-b wj.txt`` names a cookie
+# *jar* to read: a file name is not a credential, and masking it hid which file
+# the worker was loading.
 _CURL_COOKIE_FLAG = re.compile(
     r"""(?ix)
     (\bcurl\b[^|;&]*?\s(?:-b|--cookie)(?:=|\s+)?)
@@ -395,9 +442,17 @@ def _looks_like_credential(value: str) -> bool:
     candidate = value.strip().strip("\"'")
     if len(candidate) < 20:
         return False
-    # A path or a URL is infrastructure, not a credential, even when a segment
-    # of it happens to be a UUID.
-    if "://" in candidate or candidate[0] in "/~.-":
+    # A path, a URL or a repository/API route is infrastructure.  Without this
+    # the generic branch below masked
+    # ``projects/3/process-instance/list-paging`` - an API route being iterated
+    # over - because it is long and mixes letters with digits.
+    if "://" in candidate or "/" in candidate or ":" in candidate:
+        return False
+    if candidate[0] in "/~.-":
+        return False
+    # A file name is an asset, not a token: ``OriginzationService-CGXyz123.js``
+    # matched the long mixed-character branch and was masked as a credential.
+    if "." in candidate and candidate.rsplit(".", 1)[-1].isalnum():
         return False
     return bool(_CREDENTIAL_SHAPE.match(candidate))
 
@@ -423,6 +478,45 @@ def _mask_shell_assignment(name: str, value: str) -> str:
         # ``AK=1`` is a loop counter; ``AK=AKIDabc123456`` is a key.
         return value
     return _secret_placeholder(name)
+
+
+# A quoted credential with no key in front of it.  The recorded run has
+# ``SID=sys.argv[1] if len(sys.argv)>1 else "96dbf03b-..."``: the assignment rule
+# masked the left branch, but a Python conditional put a live session id inside a
+# plain string literal, where no key/value rule could see it.
+#
+# Only shapes that cannot be anything else qualify (see _looks_like_credential),
+# and paths, URLs and image names are excluded there, so the API routes and
+# bundle filenames the workers iterate over stay readable.
+_QUOTED_CREDENTIAL = re.compile(r"""(?<![\w"'=])(["'])([^"'\n]+)\1""")
+
+
+# A bare word on the command line.  The recorded run ends with
+# ``python3 q.py 96dbf03b-... "select ..."``: the session id is a positional
+# argument, so it is neither an assignment, nor a for-list, nor a quoted string,
+# and every earlier rule walked past it.
+#
+# Measured over 447 recorded commands this fires twice - once on the session id
+# above and once on a run of ``A`` characters used as base64 padding.  The
+# padding is excluded here because a single repeated character is not a secret.
+_BARE_CREDENTIAL = re.compile(
+    r"(?<![\w/.:-])"
+    r"([0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}|[0-9a-fA-F]{32,})"
+    r"(?![\w/.:-])"
+)
+
+
+def _bare_credential_replacement(match: re.Match[str]) -> str:
+    token = match.group(1)
+    if len(set(token.lower())) < 3:
+        return match.group(0)
+    return PLACEHOLDER_TOKEN
+
+
+def _quoted_credential_replacement(match: re.Match[str]) -> str:
+    if not _looks_like_credential(match.group(2)):
+        return match.group(0)
+    return f"{match.group(1)}{PLACEHOLDER_TOKEN}{match.group(1)}"
 
 
 def _for_list_replacement(match: re.Match[str]) -> str:
@@ -465,6 +559,27 @@ def _shell_default_replacement(match: re.Match[str]) -> str:
     return f"{prefix}{value}{match.group(4)}"
 
 
+# A JSON body nested inside a shell command arrives with its quotes escaped:
+# ``--data-binary '{\"username\":\"Terp\",\"passwd\":\"Sin308\"}'``.  The generic
+# key/value rule needs a literal quote, so it walked straight past this and the
+# password stayed in the clear - one of only two real leaks a 447-command sweep
+# found.  This rule matches the escaped spelling.
+_ESCAPED_JSON_KV = re.compile(
+    r'((?:\\)?"(?:' + _SECRET_KEY + r')(?:\\)?"\s*:\s*(?:\\)?")'
+    r'([^"\\\n]+)'
+    r'((?:\\)?")',
+    re.I,
+)
+
+
+def _escaped_json_replacement(match: re.Match[str]) -> str:
+    key = match.group(1)
+    if _is_reference(match.group(2)):
+        return match.group(0)
+    placeholder = _secret_placeholder(key)
+    return f"{key}{placeholder}{match.group(3)}"
+
+
 _ENV_SECRET = re.compile(
     r"""(?x)
     \b([A-Z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|APIKEY|API_KEY|
@@ -503,6 +618,12 @@ def _key_value_replacement(match: re.Match[str]) -> str:
     if key == "PWD":
         # Only the all-caps shell variable; a lowercase ``pwd=x`` is a password.
         return match.group(0)
+    for index in (2, 3, 4):
+        value = match.group(index)
+        if value is not None:
+            if _is_reference(value):
+                return match.group(0)
+            break
     placeholder = _secret_placeholder(key)
     for index, quote in ((2, '"'), (3, "'")):
         if match.group(index) is not None:
@@ -535,15 +656,20 @@ _BANK_CARD = re.compile(
     """
 )
 
+# Bare ``name`` is deliberately absent.  ``{"name": "获取数据"}`` is a task name
+# in Explore's own API calls, and masking it as a person removed the one word
+# that said which object the command was creating.  Only keys that actually
+# claim to hold a person's name count.
 _NAME_KEYS = (
     r"real[-_]?name|full[-_]?name|true[-_]?name|nick[-_]?name|customer[-_]?name|"
-    r"contact[-_]?name|user[-_]?name|username|display[-_]?name|name|"
-    r"真实姓名|姓名|联系人|联系人姓名|用户名|昵称|客户名"
+    r"contact[-_]?name|user[-_]?name|username|display[-_]?name|person[-_]?name|"
+    r"真实姓名|姓名|联系人|联系人姓名|用户名|昵称|客户名|客户姓名|收件人"
 )
 _NAME_KEYED = re.compile(
     r"""(?x)
-    (["']?(?:%s)["']?\s*[:=]\s*)
-    (["']?)([\u4e00-\u9fa5]{2,8}(?:·[\u4e00-\u9fa5]{2,8})?)(["']?)
+    ((?:\\)?["']?(?:%s)(?:\\)?["']?\s*[:=]\s*(?:\\)?["']?)
+    ([\u4e00-\u9fa5]{2,8}(?:·[\u4e00-\u9fa5]{2,8})?)
+    ((?:\\)?["']?)
     """ % _NAME_KEYS
 )
 
@@ -567,9 +693,42 @@ _NAME_IN_PATH = re.compile(
     """ % _NAME_SEGMENTS
 )
 
+# A bare ``name`` key is too common to mask on its own: ``{"name": "获取数据"}``
+# is a task name in Explore's own API calls, and hiding it removed the one word
+# that said what was being created.  But ``name=谭子清`` is a real person, and
+# dropping that rule would let every form-posted name through.
+#
+# The surname is what separates them.  A two-to-four character Chinese value
+# beginning with a common surname is a person; ``获取数据`` begins with a verb.
+# The list is the usual hundred, which covers essentially every real name.
+_SURNAMES = frozenset(
+    "王李张刘陈杨黄赵吴周徐孙马朱胡郭何高林罗郑梁谢宋唐许韩冯邓曹彭曾肖田董袁潘"
+    "于蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾夏韦付方白邹孟熊秦邱江"
+    "尹薛闫段雷侯龙史陶黎贺顾毛郝龚邵万钱严覃武戴莫孔向汤欧阳司马诸葛上官"
+)
+_NAME_BARE_KEYED = re.compile(
+    r"""(?x)
+    ((?:\\)?["']?(?:name|nick)(?:\\)?["']?\s*[:=]\s*(?:\\)?["']?)
+    ([\u4e00-\u9fa5]{2,8})
+    ((?:\\)?["']?)
+    """,
+    re.I,
+)
+
+
+def _bare_name_replacement(match: re.Match[str]) -> str:
+    value = match.group(2)
+    if value[:2] not in _SURNAMES and value[:1] not in _SURNAMES:
+        return match.group(0)
+    return f"{match.group(1)}{PLACEHOLDER_NAME}{match.group(3)}"
+
+# ``macAddress`` contains ``address``, and a MAC is the most useful thing in an
+# access-point payload - it identifies the device being changed.  Masking it as a
+# postal address cost 12 replacements in a 447-command sweep, all of them
+# evidence.  So the key is checked, not just the suffix.
 _ADDRESS_KEYED = re.compile(
     r"""(?ix)
-    (["']?(?:address|addr|street|住址|地址|收货地址|家庭住址)["']?\s*[:=]\s*)
+    (["']?(?:(?<!mac)(?<!mac_)(?<!mac-)(?:address|addr|street)|住址|地址|收货地址|家庭住址)["']?\s*[:=]\s*)
     """ + _VALUE
 )
 
@@ -623,11 +782,14 @@ def redact(text: str) -> tuple[str, int]:
         (_SSHPASS_FLAG, _value_flag_replacement(PLACEHOLDER_PASSWORD)),
         (_SMBCLIENT_FLAG, _value_flag_replacement(PLACEHOLDER_PASSWORD, split_percent=True)),
         (_LONG_SECRET_FLAG, _long_flag_replacement),
-        (_CURL_COOKIE_FLAG, _value_flag_replacement(PLACEHOLDER_COOKIE)),
+        (_CURL_COOKIE_FLAG, _cookie_flag_replacement),
         (_SHELL_DEFAULT_ASSIGN, _shell_default_replacement),
         (_SHELL_ASSIGN, _shell_assign_replacement),
         (_FOR_LIST, _for_list_replacement),
+        (_QUOTED_CREDENTIAL, _quoted_credential_replacement),
+        (_BARE_CREDENTIAL, _bare_credential_replacement),
         (_ENV_SECRET, _env_replacement),
+        (_ESCAPED_JSON_KV, _escaped_json_replacement),
         (_KEY_VALUE, _key_value_replacement),
         (
             _ID_CARD,
@@ -644,8 +806,12 @@ def redact(text: str) -> tuple[str, int]:
         (_BANK_CARD, _bank_card_replacement),
         (
             _NAME_KEYED,
-            lambda match: f"{match.group(1)}{match.group(2)}{PLACEHOLDER_NAME}{match.group(4)}",
+            # Group 2 is the name; the escaped-quote form has no separate
+            # opening-quote group, so the key prefix and the trailing quote are
+            # kept verbatim around the placeholder.
+            lambda match: f"{match.group(1)}{PLACEHOLDER_NAME}{match.group(3)}",
         ),
+        (_NAME_BARE_KEYED, _bare_name_replacement),
         (_NAME_IN_PATH, _path_name_replacement),
         (_ADDRESS_KEYED, _value_flag_replacement(PLACEHOLDER_ADDRESS)),
     )
