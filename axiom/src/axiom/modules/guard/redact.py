@@ -112,6 +112,22 @@ _SECRET_WORD = (
 )
 _SECRET_KEY = r"(?:[a-z0-9_]*?(?:%s)[a-z0-9_]*)" % _SECRET_WORD
 
+# A key that only describes a credential is not one.  ``password_version=1``,
+# ``token_expire=3600`` and ``password_type=1`` are columns a query filters on;
+# masking their values cost the judge the predicate it needs to understand the
+# query, and 22 numbers were replaced that way in a 2426-command sweep.
+_NOT_A_SECRET_KEY_SUFFIX = (
+    "_version", "_ver", "_len", "_length", "_expire", "_expires", "_expiry",
+    "_expiresin", "_ttl", "_count", "_type", "_policy", "_rule", "_rules",
+    "_label", "_field", "_enabled", "_required", "_min", "_max", "_format",
+    "_url", "_endpoint", "_path", "_file", "_header",
+)
+
+
+def _key_is_descriptive(key: str) -> bool:
+    lowered = key.casefold().strip("\"'=: \t")
+    return any(lowered.endswith(suffix) for suffix in _NOT_A_SECRET_KEY_SUFFIX)
+
 # Flag names, where the leading ``--`` already proves it is a switch.  ``pass``
 # is allowed here for the same reason it is not allowed above.
 _FLAG_SECRET = (
@@ -129,7 +145,13 @@ def _secret_placeholder(key: str) -> str:
         return PLACEHOLDER_PASSWORD
     if "cookie" in lowered or "session" in lowered:
         return PLACEHOLDER_COOKIE
-    if "token" in lowered or "bearer" in lowered or "令牌" in lowered:
+    if (
+        "token" in lowered
+        or "bearer" in lowered
+        or "session" in lowered
+        or "令牌" in lowered
+        or lowered.strip("_").endswith(("sid", "sess", "tok"))
+    ):
         return PLACEHOLDER_TOKEN
     return PLACEHOLDER_KEY
 
@@ -179,7 +201,7 @@ _COOKIE_HEADER = re.compile(
     r"""(?ix)
     (?<![\w-])
     ((?:set-)?cookie ["']?\s*[:=]\s*)
-    (?:"([^"\n]*)"|'([^'\n]*)'|([^\s"';]+(?:\s*;\s*[^\s"';]+)*))
+    (?:"([^"\n]*)"|'([^'\n]*)'|([^\s"';/]+(?:\s*;\s*[^\s"';]+)*))
     """
 )
 
@@ -197,6 +219,52 @@ def _is_reference(value: str) -> bool:
     return bool(stripped) and stripped[0] in "${("
 
 
+_PLACEHOLDER_RE = re.compile(r"\[[^\]]{1,8}\]")
+# Words that occupy the place of a credential in a probe but are not one.  A
+# worker testing header handling writes ``authorization: null`` and
+# ``Bearer <forged>`` on purpose; masking those hid that the test was a negative
+# control.
+_NOT_A_SECRET_VALUE = frozenset(
+    "null none nil true false undefined nan empty blank test demo sample "
+    "placeholder redacted forged dummy fake x xx xxx".split()
+)
+
+
+def _is_placeholder(value: str) -> bool:
+    """True when this value has already been masked by an earlier rule.
+
+    Without this the pipeline is order-dependent and not idempotent: the shape
+    rule writes ``PGPASSWORD=[令牌]`` and the assignment rule then reads
+    ``[令牌]`` as a fresh value and rewrites it to ``[密码]``.
+    """
+
+    return bool(_PLACEHOLDER_RE.fullmatch(value.strip()))
+
+
+_REGEX_HINT = re.compile(r"\[[A-Za-z0-9].*\]|\\[bdsw{()|]|\{\d|\^|\$\s*$|\.\*|\.\+")
+
+
+def _is_regex(value: str) -> bool:
+    """A pattern that matches credentials, not a credential.
+
+    The worker greps its own capture files for ``Authorization: Bearer ...``, and
+    the pattern sat right where a token would.
+    """
+
+    return bool(_REGEX_HINT.search(value))
+
+
+def _is_probe_placeholder(value: str) -> bool:
+    """``null``, ``x``, ``<forged>`` - written to be rejected, not to work."""
+
+    stripped = value.strip().strip("\"'<>[]").casefold()
+    if not stripped:
+        return True
+    if stripped in _NOT_A_SECRET_VALUE:
+        return True
+    return set(stripped) <= set("xX*.-_] ")
+
+
 def _looks_like_filename(value: str) -> bool:
     """``wj.txt``, ``cookies.json`` - a path to a file, not a value in one."""
 
@@ -210,13 +278,25 @@ def _looks_like_filename(value: str) -> bool:
 def _mask_header_value(value: str, placeholder: str) -> str:
     """Keep an auth scheme word, drop the credential behind it."""
 
+    if _is_placeholder(value) or _is_probe_placeholder(value):
+        return value
+    if not any(char.isalnum() for char in value):
+        # ``sed 's/^Cookie: //'`` - a substitution target, not a value.
+        return value
     scheme = re.match(r"(?i)^(bearer|basic|token|digest|bot|negotiate)\s+", value)
     if scheme:
         rest = value[scheme.end():]
-        if _is_reference(rest) or len(rest.strip()) < 6:
+        if (
+            _is_reference(rest)
+            or _is_probe_placeholder(rest)
+            or _is_regex(rest)
+            or len(rest.strip()) < 6
+        ):
             # ``Bearer x`` is a placeholder the worker wrote while probing, not a
-            # credential.  Masking it changes nothing a reader needs, and doing
-            # it made the audit look like it had found a secret.
+            # credential.  ``Bearer [A-Za-z0-9._-]\{40,\}`` is a grep pattern
+            # that was searching for credentials.  Masking either changes
+            # nothing a reader needs, and both made the audit look like it had
+            # found a secret.
             return value
         return value[: scheme.end()] + placeholder
     if _is_reference(value) or len(value.strip()) < 6:
@@ -235,10 +315,48 @@ def _header_replacement(match: re.Match[str], placeholder: str) -> str:
 
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")
 
+# Cloud and platform keys carry their issuer in the prefix, so they are
+# recognisable anywhere - including as a bare argv element, where no key name is
+# available: ``python3 q.py AKIDabcdefghijklmn arg``.  Measured on a fuzz run,
+# these were the only shaped secrets that still escaped in that position.
+_CLOUD_KEY = re.compile(
+    r"\b("
+    r"AKID[0-9A-Za-z]{13,30}"
+    r"|LTAI[0-9A-Za-z]{12,30}"
+    r"|AKIA[0-9A-Z]{16}"
+    r"|ASIA[0-9A-Z]{16}"
+    r"|gh[pousr]_[A-Za-z0-9]{20,251}"
+    r"|glpat-[A-Za-z0-9_-]{15,}"
+    r"|xox[abprs]-[A-Za-z0-9-]{10,}"
+    r"|sk_(?:live|test)_[A-Za-z0-9]{16,}"
+    r"|AIza[0-9A-Za-z_-]{35}"
+    r"|hsk_[A-Za-z0-9]{20,}"
+    r"|-----BEGIN[ A-Z]*PRIVATE KEY-----"
+    r")\b"
+)
+
 # The password half of ``scheme://user:pass@host``.  The value class stops only
 # at whitespace or ``/``, so an unencoded ``@`` inside the password does not cut
 # the match short - the last ``@`` wins and the host survives.
 _URL_USERINFO = re.compile(r"(\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s/:@]+:)([^\s/]+)(@)")
+
+
+def _reject_cookie(value: str) -> bool:
+    """A cookie jar name, a reference, a probe value, or punctuation only."""
+
+    stripped = value.strip().strip("\"'")
+    if not stripped or len(stripped) < 6:
+        # ``sed 's/^Cookie: //'`` leaves a bare ``//``; that is a substitution
+        # target, not a cookie.
+        return True
+    if not any(char.isalnum() for char in stripped):
+        return True
+    return (
+        _is_reference(stripped)
+        or _is_placeholder(stripped)
+        or _is_probe_placeholder(stripped)
+        or _looks_like_filename(stripped)
+    )
 
 
 def _cookie_flag_replacement(match: re.Match[str]) -> str:
@@ -246,13 +364,34 @@ def _cookie_flag_replacement(match: re.Match[str]) -> str:
         value = match.group(index)
         if value is None:
             continue
-        if _is_reference(value) or _looks_like_filename(value):
+        if _reject_cookie(value):
             return match.group(0)
         return f"{match.group(1)}{quote}{PLACEHOLDER_COOKIE}{quote}"
     value = match.group(4)
-    if _is_reference(value) or _looks_like_filename(value):
+    if _reject_cookie(value):
         return match.group(0)
     return f"{match.group(1)}{PLACEHOLDER_COOKIE}"
+
+
+def _not_a_credential(value: str) -> bool:
+    """One place that answers "is this value obviously not a secret?".
+
+    Every rule needs the same four checks, and each rule that forgot one was a
+    bug: ``--password=[密码]`` re-masked the ``=`` on a second pass, because the
+    value class happily matched a lone ``=``.
+    """
+
+    stripped = value.strip().strip("\"'")
+    if not stripped:
+        return True
+    if not any(char.isalnum() for char in stripped):
+        # ``=``, ``//``, ``--`` - punctuation, not a value.
+        return True
+    return (
+        _is_reference(stripped)
+        or _is_placeholder(stripped)
+        or _is_probe_placeholder(stripped)
+    )
 
 
 def _value_flag_replacement(placeholder: str, split_percent: bool = False):
@@ -264,6 +403,8 @@ def _value_flag_replacement(placeholder: str, split_percent: bool = False):
             value = match.group(index)
             if value is None:
                 continue
+            if _not_a_credential(value):
+                return match.group(0)
             if split_percent:
                 if value.endswith("%"):
                     # Already masked by an earlier pass.
@@ -273,6 +414,8 @@ def _value_flag_replacement(placeholder: str, split_percent: bool = False):
                     return f"{prefix}{quote}{head}%{placeholder}{quote}"
             return f"{prefix}{quote}{placeholder}{quote}"
         value = match.group(4)
+        if _not_a_credential(value):
+            return match.group(0)
         if split_percent:
             if value.endswith("%"):
                 return match.group(0)
@@ -392,6 +535,8 @@ _SHORT_SEGMENTS = frozenset("ak sk key priv cred auth tok sid sess".split())
 
 def _is_secret_variable(name: str) -> bool:
     lowered = name.casefold()
+    if _key_is_descriptive(lowered):
+        return False
     if lowered == "pwd":
         # The shell's working directory, not a password.  ``MYSQL_PWD`` still
         # matches, because the whole name is not "pwd".
@@ -436,6 +581,15 @@ _FOR_LIST = re.compile(
 )
 
 
+# A hex run or a UUID, optionally followed by a short tag: a JWT-style digest is
+# routinely written ``22ccfd...bef4d.H``.  The tag is at most four characters so
+# a real file name - ``bundle.3f2a1b.js`` - still reads as a file.
+_HEX_WITH_TAG = re.compile(
+    r"^(?:[0-9a-fA-F]{32,}|[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})"
+    r"(?:\.[0-9a-zA-Z]{1,4})?$"
+)
+
+
 def _looks_like_credential(value: str) -> bool:
     """True for a value whose shape alone marks it as a secret."""
 
@@ -450,8 +604,29 @@ def _looks_like_credential(value: str) -> bool:
         return False
     if candidate[0] in "/~.-":
         return False
-    # A file name is an asset, not a token: ``OriginzationService-CGXyz123.js``
-    # matched the long mixed-character branch and was masked as a credential.
+    # A trailing ``.ext`` usually means a file name, and file names are assets:
+    # ``OriginzationService-CGXyz123.js`` matched the long mixed-character branch
+    # and was masked as a credential before this check existed.
+    #
+    # But the check made ``22ccfdfbad2fbc8146a8d18a454bef4d.H`` read as a file,
+    # and that is a hashed credential with a one-letter tag - it leaked.  So the
+    # file-name test is only applied to the mixed-character branch; a value that
+    # is a UUID or a long hex run is a credential whatever follows it.
+    if _HEX_WITH_TAG.match(candidate):
+        return True
+    # ``<digits>_<alnum>`` with a short tag, as the target's product writes its
+    # session ids: ``821882597543903232_axxtt...203.H``.
+    if re.fullmatch(r"[A-Za-z0-9]+_[A-Za-z0-9_]{24,}(?:\.[0-9a-zA-Z]{1,4})?", candidate):
+        # Underscore-separated words are a common identifier style, so require a
+        # long run with no further underscore separating words, plus the
+        # digit/letter mix a session id always has.
+        if (
+            candidate.count("_") == 1
+            and re.search(r"\d", candidate)
+            and re.search(r"[A-Za-z]", candidate)
+            and len(candidate) >= 32
+        ):
+            return True
     if "." in candidate and candidate.rsplit(".", 1)[-1].isalnum():
         return False
     return bool(_CREDENTIAL_SHAPE.match(candidate))
@@ -461,23 +636,29 @@ def _mask_shell_assignment(name: str, value: str) -> str:
     """Return the value to send, or ``value`` itself when it is not a secret."""
 
     stripped = value.strip()
-    if not stripped:
+    if not stripped or _is_placeholder(stripped) or _is_probe_placeholder(stripped):
         return value
     # A reference is not a value: ``$SID``, ``$(cat k)``, ``(a b c)``.  Masking
     # one deletes the only readable part of the command.
     if stripped[0] in "$({`":
         return value
+    # The name wins when it is informative, because it types the placeholder:
+    # ``PGPASSWORD=...`` reads better as ``[密码]`` than as a generic token.  The
+    # shape is the fallback for the single-letter names that carry the most
+    # traffic.
+    lowered = name.casefold()
+    if _is_secret_variable(name):
+        short = len(stripped) < 8 and any(
+            part in _SHORT_SEGMENTS for part in lowered.split("_") if part
+        )
+        if not short:
+            # ``AK=1`` is a loop counter; ``AK=AKIDabc123456`` is a key.
+            return _secret_placeholder(name)
+        if not _looks_like_credential(stripped):
+            return value
     if _looks_like_credential(stripped):
         return PLACEHOLDER_TOKEN
-    if not _is_secret_variable(name):
-        return value
-    lowered = name.casefold()
-    if len(stripped) < 8 and any(
-        part in _SHORT_SEGMENTS for part in lowered.split("_") if part
-    ):
-        # ``AK=1`` is a loop counter; ``AK=AKIDabc123456`` is a key.
-        return value
-    return _secret_placeholder(name)
+    return value
 
 
 # A quoted credential with no key in front of it.  The recorded run has
@@ -501,7 +682,15 @@ _QUOTED_CREDENTIAL = re.compile(r"""(?<![\w"'=])(["'])([^"'\n]+)\1""")
 # padding is excluded here because a single repeated character is not a secret.
 _BARE_CREDENTIAL = re.compile(
     r"(?<![\w/.:-])"
-    r"([0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}|[0-9a-fA-F]{32,})"
+    r"("
+    r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}"
+    r"|[0-9a-fA-F]{32,}"
+    # A session id written the way the target's product writes it:
+    # ``821882597543903232_axxttjqq3cwlg8m3aw4sq0xj203``.  Underscore plus a
+    # digit-and-letter mix is what separates it from a lowercase slug such as
+    # ``process-instance-list-paging``.
+    r"|[A-Za-z0-9]+_[A-Za-z0-9_]{24,}"
+    r")"
     r"(?![\w/.:-])"
 )
 
@@ -510,6 +699,11 @@ def _bare_credential_replacement(match: re.Match[str]) -> str:
     token = match.group(1)
     if len(set(token.lower())) < 3:
         return match.group(0)
+    if "_" in token:
+        # Only treat the underscore form as a credential when it really mixes
+        # digits with letters; ``some_long_lowercase_identifier_name`` is a name.
+        if not (re.search(r"\d", token) and re.search(r"[A-Za-z]", token)):
+            return match.group(0)
     return PLACEHOLDER_TOKEN
 
 
@@ -564,8 +758,12 @@ def _shell_default_replacement(match: re.Match[str]) -> str:
 # key/value rule needs a literal quote, so it walked straight past this and the
 # password stayed in the clear - one of only two real leaks a 447-command sweep
 # found.  This rule matches the escaped spelling.
+# The opening quote must actually be escaped: the plain form is already handled
+# by _KEY_VALUE, and matching it here too meant this rule won and typed a
+# ``loginPwd`` key as a generic [密钥].
 _ESCAPED_JSON_KV = re.compile(
-    r'((?:\\)?"(?:' + _SECRET_KEY + r')(?:\\)?"\s*:\s*(?:\\)?")'
+    r'((?:\\)"(?:' + _SECRET_KEY + r')(?:\\?"\s*:\s*\\?")?'
+    r')'
     r'([^"\\\n]+)'
     r'((?:\\)?")',
     re.I,
@@ -573,11 +771,20 @@ _ESCAPED_JSON_KV = re.compile(
 
 
 def _escaped_json_replacement(match: re.Match[str]) -> str:
-    key = match.group(1)
-    if _is_reference(match.group(2)):
+    # Keep the prefix byte-for-byte: it carries the backslash escapes, and
+    # stripping them turned valid shell JSON into invalid shell JSON.
+    prefix = match.group(1)
+    key = prefix.strip('"\\: \t')
+    value = match.group(2)
+    if (
+        _is_reference(value)
+        or _is_placeholder(value)
+        or _is_probe_placeholder(value)
+        or _key_is_descriptive(key)
+    ):
         return match.group(0)
     placeholder = _secret_placeholder(key)
-    return f"{key}{placeholder}{match.group(3)}"
+    return f"{prefix}{placeholder}{match.group(3)}"
 
 
 _ENV_SECRET = re.compile(
@@ -603,9 +810,14 @@ def _long_flag_replacement(match: re.Match[str]) -> str:
 
 def _env_replacement(match: re.Match[str]) -> str:
     key = match.group(1)
-    if key == "PWD":
-        # The shell's working directory, not a password.
+    if key == "PWD" or _key_is_descriptive(key):
+        # ``PWD`` is the shell's working directory, and ``PASSWORD_VERSION`` is
+        # a column name; neither holds a credential.
         return match.group(0)
+    for index in (3, 4, 5):
+        value = match.group(index)
+        if value is not None and (_is_reference(value) or _is_placeholder(value)):
+            return match.group(0)
     placeholder = _secret_placeholder(key)
     for index, quote in ((3, '"'), (4, "'")):
         if match.group(index) is not None:
@@ -621,9 +833,19 @@ def _key_value_replacement(match: re.Match[str]) -> str:
     for index in (2, 3, 4):
         value = match.group(index)
         if value is not None:
-            if _is_reference(value):
+            # A reference, a placeholder, a probe word or bare punctuation is
+            # not a credential.  ``sed 's/^Cookie: //'`` matched here as a
+            # cookie whose value was ``//``.
+            if (
+                _is_reference(value)
+                or _is_placeholder(value)
+                or _is_probe_placeholder(value)
+                or not any(char.isalnum() for char in value)
+            ):
                 return match.group(0)
             break
+    if _key_is_descriptive(key):
+        return match.group(0)
     placeholder = _secret_placeholder(key)
     for index, quote in ((2, '"'), (3, "'")):
         if match.group(index) is not None:
@@ -745,7 +967,13 @@ def _bank_card_replacement(match: re.Match[str]) -> str:
 
 
 def _path_name_replacement(match: re.Match[str]) -> str:
-    if match.group(2) in _NOT_A_NAME:
+    value = match.group(2)
+    if value in _NOT_A_NAME:
+        return match.group(0)
+    # A route segment is only a person when it reads like a name.  ``/客户/财务``
+    # is a breadcrumb in a sentence about data categories, not a customer called
+    # 财务; requiring a common surname separates the two without a word list.
+    if value[:2] not in _SURNAMES and value[:1] not in _SURNAMES:
         return match.group(0)
     return match.group(1) + PLACEHOLDER_NAME
 
@@ -772,6 +1000,7 @@ def redact(text: str) -> tuple[str, int]:
         (_COOKIE_HEADER, lambda match: _header_replacement(match, PLACEHOLDER_COOKIE)),
         (_AUTH_HEADER, lambda match: _header_replacement(match, PLACEHOLDER_TOKEN)),
         (_JWT, PLACEHOLDER_TOKEN),
+        (_CLOUD_KEY, PLACEHOLDER_KEY),
         (
             _URL_USERINFO,
             lambda match: f"{match.group(1)}{PLACEHOLDER_PASSWORD}{match.group(3)}",

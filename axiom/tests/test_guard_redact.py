@@ -737,7 +737,7 @@ def test_over_masking_found_by_the_audit(command: str, expected: str | None) -> 
         # no key/value rule can reach it.
         (
             'SID=sys.argv[1] if len(sys.argv)>1 else "96dbf03b-bc67-408f-9e9b-3042457ab223"',
-            'SID=[密钥] if len(sys.argv)>1 else "[令牌]"',
+            'SID=[令牌] if len(sys.argv)>1 else "[令牌]"',
         ),
         (
             '''S='3c80dc73-85b1-4e6c-9803-ff217acf64b5'; curl -H "Cookie: sid=$S" https://t''',
@@ -844,3 +844,163 @@ def test_a_mac_address_is_not_a_postal_address() -> None:
          'curl -d \'{"addr":"[地址]"}\' https://t'),
     ):
         assert redact(command)[0] == expected
+
+
+# --------------------------------------------------------------------------
+# a corpus of commands that contain a secret word but no secret
+# --------------------------------------------------------------------------
+
+MUST_NOT_CHANGE = [
+    # flags that look like secrets
+    "nmap -p 80,443 -sV 10.0.0.0/24",
+    "mkdir -p /tmp/scan && cd /tmp/scan",
+    "docker run -p 8080:80 nginx",
+    "psql -h 10.0.0.5 -p 5432 -U app orders",
+    "curl -u admin https://t/x",
+    "curl -A 'Mozilla/5.0 (X11; Linux x86_64)' https://t",
+    "curl -o /dev/null -w '%{http_code}' https://t",
+    "curl -x http://127.0.0.1:7890 https://t",
+    "sed -n '1,20p' /etc/hosts",
+    "grep -rn 'password' /etc/app/config.yml",
+    "find / -name '*.pem' 2>/dev/null",
+    # keys describing a credential rather than holding one
+    "curl -d 'where password_version=1' https://t",
+    "curl -d 'token_expire=3600' https://t",
+    "curl -d 'password_type=1&password_policy=8' https://t",
+    "echo $PWD",
+    "PWD=/tmp/x ls",
+    # infrastructure that must stay readable
+    "curl 'http://100.100.100.200/latest/meta-data/ram/security-credentials/"
+    "KubernetesWorkerRole-ea60913a-d3da-4559-851e-b000cec53a38'",
+    "curl 'http://169.254.169.254/latest/meta-data/iam/security-credentials/my-role'",
+    "curl https://t/api/v1/x/3c80dc73-85b1-4e6c-9803-ff217acf64b5",
+    "cat /var/lib/axiom/tasks/3c80dc73-85b1-4e6c-9803-ff217acf64b5/x.json",
+    "curl -d '{\"apMac\":\"02:00:00:00:09:01\"}' https://t",
+    "curl -d '{\"macAddress\":\"98:6D:35:72:A9:B7\"}' https://t",
+    # identifiers, routes, file names
+    'for p in "projects/3/process-instance/list-paging" "injects/3/x"; do curl "https://t/$p"; done',
+    "for f in api-DjfAaA-N.js OriginzationService-CGS0abc123.js; do echo $f; done",
+    "docker pull registry.example/brd/token-service:1.0",
+    "GET /api/v1/用户管理/list",
+    # probe values written to be rejected
+    'curl -H "authorization: null" https://t',
+    'curl -H "Authorization: Bearer <forged>" https://t',
+    "for h in 'authorization: null' 'token:' 'Authorization: Bearer null'; do echo $h; done",
+    "curl -H 'authorization: Bearer x' https://t",
+    "curl -d '{\"password\":\"null\"}' https://t",
+    "curl -d 'name=scan&url=https://t/a' https://t",
+    "curl -d '{\"name\":\"获取数据\"}' https://t",
+    "curl -d '{\"name\":\"华为技术\"}' https://t",
+    # cookies handled as files or references
+    "curl -s -m 30 -b wj.txt https://t",
+    "curl -s -m 30 -c cj.txt -b wj.txt https://t",
+    'curl -b "$JAR" https://t',
+    "sed 's/^Cookie: //' x.txt",
+    # shell variables that are not secrets
+    "BASE=https://shk.kkguan.com/universe; U=https://t; OUT=/tmp/x; P=3; PID=6028",
+    "T=$(cat /tmp/chen_token); echo $T",
+    "for i in 1 2 3; do curl -s https://t/api/$i; done",
+    "for f in *.json; do cat $f; done",
+    "AK=1 SK=2; for i in 1 2; do :; done",
+    "monkey=banana; bypass=1; compassion=1",
+    # ordinary text containing a secret word
+    "echo 'this password policy is documented'",
+    "grep -o 'sessionId=[0-9a-f-]*' /tmp/ht.json",
+    'grep -o "Authorization: Bearer [A-Za-z0-9._-]\\{40,\\}" . 2>/dev/null',
+    "python3 -c \"import json;print(json.load(open('g.json')))\"",
+    "echo AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    # our own platform
+    "cd /var/lib/axiom/sandboxes/t_231/workspace/axiom/runs/i105/lease_abc && ls",
+    "cat /var/lib/axiom/contexts/t_231/graph.json | head",
+    "systemctl status axiom",
+]
+
+
+@pytest.mark.parametrize("command", MUST_NOT_CHANGE)
+def test_a_command_with_no_secret_is_never_changed(command: str) -> None:
+    assert redact(command) == (command, 0)
+
+
+# --------------------------------------------------------------------------
+# placement fuzz: the same secret in every syntactic position
+# --------------------------------------------------------------------------
+
+PLACEMENTS = {
+    "Kkg@2023!": [
+        "curl -d '{\"password\":\"%s\"}' https://t",
+        'curl -d "passwd=%s" https://t',
+        'curl -d "密码=%s" https://t',
+        "curl -u admin:%s https://t",
+        "curl --password %s https://t",
+        "mysql -uroot -p%s db",
+        "mysql --password=%s db",
+        "redis-cli -a %s ping",
+        "sshpass -p %s ssh root@h",
+        "PGPASSWORD=%s psql -h db",
+        "MYSQL_PWD=%s mysql",
+        'psql "postgres://app:%s@h:5432/db"',
+        "smbclient //h/s -U corp/alice%%%s",
+        "cd /tmp && curl -d \"password=%s\" https://t",
+    ],
+    "de3de1276f4044df560297da726b0296": [
+        'curl -H "Authorization: Bearer %s" https://t',
+        'curl -H "X-Api-Key: %s" https://t',
+        'curl -d "token=%s" https://t',
+        'curl -d "sessionId=%s" https://t',
+        'SID=%s; curl -H "Cookie: sid=$SID" https://t',
+        "export API_KEY=%s",
+        "python3 q.py %s arg",
+        "for s in %s %s; do echo $s; done",
+        'SID=sys.argv[1] if len(sys.argv)>1 else "%s"',
+    ],
+    "3c80dc73-85b1-4e6c-9803-ff217acf64b5": [
+        'curl -H "Account-Token: %s" https://t',
+        "SID=%s; curl -H \"Cookie: s=$SID\" https://t",
+        "python3 q.py %s arg",
+        "SID=sys.argv[1] if len(sys.argv)>1 else \"%s\"",
+    ],
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijklmnop": [
+        'curl -H "Authorization: Bearer %s" https://t',
+        'curl -d "access_token=%s" https://t',
+        "python3 q.py %s arg",
+    ],
+    "AKIDabcdefghijklmn": [
+        "export AWS_ACCESS_KEY_ID=%s",
+        'curl -H "X-Amz-Security-Token: %s" https://t',
+        "python3 q.py %s arg",
+    ],
+    "13800138000": [
+        'curl -d "mobile=%s" https://t',
+        "curl -s 'https://t/api?phone=%s'",
+        "curl -s 'https://t/api/user/%s/profile'",
+    ],
+    "110101199003071233": [
+        'curl -d "idCard=%s" https://t',
+        'curl -d \'{"idNo":"%s"}\' https://t',
+    ],
+    "alice@corp.example": [
+        'curl -d "email=%s" https://t',
+        'curl -d \'{"mail":"%s"}\' https://t',
+    ],
+    "JSESSIONID=8A2F19C3D4E5B6A7": [
+        'curl -H "Cookie: %s" https://t',
+        'curl -b "%s" https://t',
+        'curl --cookie "%s" https://t',
+    ],
+}
+
+
+def _placements():
+    for secret, carriers in PLACEMENTS.items():
+        for carrier in carriers:
+            filled = carrier.replace("%s", secret)
+            yield secret, filled
+
+
+@pytest.mark.parametrize(("secret", "command"), list(_placements()))
+def test_a_secret_never_survives_any_placement(secret: str, command: str) -> None:
+    masked, count = redact(command)
+    assert secret not in masked
+    assert count >= 1
+    # and running it twice must be a no-op
+    assert redact(masked) == (masked, 0)
