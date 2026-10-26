@@ -65,11 +65,13 @@
       <template x-for="tab in [
         {id: 'workspace', label: '工作台'},
         {id: 'todos', label: '看板'},
+        {id: 'lineage', label: '血缘'},
       ]" :key="tab.id">
-        <button x-show="!project?.project?.archived" @click="switchHumanTab(tab.id)" class="relative px-3 py-2.5 text-xs whitespace-nowrap transition"
+        <button x-show="!project?.project?.archived && (tab.id !== 'lineage' || isRedTeamBoard())" @click="switchHumanTab(tab.id)" class="relative px-3 py-2.5 text-xs whitespace-nowrap transition"
           :class="humanTab === tab.id ? 'text-brand-600 font-semibold' : 'text-slate-500 hover:text-slate-700'">
           <span x-text="tab.label"></span>
           <span x-show="tab.id === 'todos' && (isRedTeamBoard() ? project.chains?.length : project.todos?.length)" class="ml-1 inline-flex items-center rounded-full px-1.5 py-px text-[9px] font-semibold tabular-nums" :class="humanTab === tab.id ? 'bg-brand-50 text-brand-600' : 'bg-slate-100 text-slate-500'" x-text="isRedTeamBoard() ? (project.chains || []).length : project.todos.filter(item => !item.archived).length"></span>
+          <span x-show="tab.id === 'lineage' && isRedTeamBoard() && lineageModel().redCount" class="ml-1 inline-flex items-center rounded-full px-1.5 py-px text-[9px] font-semibold tabular-nums" :class="humanTab === tab.id ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-500'" x-text="lineageModel().redCount"></span>
           <span x-show="humanTab === tab.id" class="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-brand-500"></span>
         </button>
       </template>
@@ -601,6 +603,37 @@
 
     </div>
   </main>
+  </template>
+
+  <!-- 血缘视图：i001 → 各链口子 → 成果。仅红队任务可见。 -->
+  <template x-if="humanTab === 'lineage'">
+  <div x-show="!project?.project?.archived" class="flex-1 min-h-0 flex flex-col overflow-hidden">
+    <div class="lineage-legend shrink-0">
+      <span><i class="lg-line lg-line-fan"></i>i001 起点 → 各链口子</span>
+      <span><i class="lg-line lg-line-flow"></i>链内推进</span>
+      <span><i class="lg-line lg-line-gap"></i>省略中间意图</span>
+      <span><i class="lg-box lg-box-intent"></i>意图</span>
+      <span><i class="lg-line lg-line-result"></i>意图 → 成果</span>
+      <span><i class="lg-box lg-box-result"></i>命中成果</span>
+      <span><i class="lg-badge">↖ i034</i>跨链接力来源</span>
+      <span class="lg-spacer"></span>
+      <span class="sto-num" style="font-size:11px;color:var(--sto-fg-2);" x-text="lineageSummaryLabel()"></span>
+      <span class="lineage-zoom-bar">
+        <button @click="zoomLineage(-0.08)" class="lineage-zoom-btn" title="缩小">−</button>
+        <button @click="setLineageScale(1, 'manual')" class="lineage-zoom-pct" title="恢复 100%" x-text="lineageScalePercent() + '%'"></button>
+        <button @click="zoomLineage(0.08)" class="lineage-zoom-btn" title="放大">+</button>
+        <button @click="fitLineageWidth()" class="sto-minibtn" :class="{ 'is-on': lineageFit === 'width' }">适应宽度</button>
+        <button @click="fitLineageAll()" class="sto-minibtn" :class="{ 'is-on': lineageFit === 'all' }" title="缩到整张图一屏可见（字会很小，适合看结构）">全览</button>
+      </span>
+      <button @click="exportLineageHtml()" class="sto-minibtn" title="导出为独立 HTML，包含血缘全图与链条清单">导出 HTML</button>
+      <button @click="refreshLineage()" class="sto-minibtn">刷新</button>
+    </div>
+    <div class="lineage-scroll flex-1 min-h-0 overflow-auto">
+      <div id="lineage-zoom" class="lineage-zoomwrap">
+        <div id="lineage-stage" class="lineage-stage"></div>
+      </div>
+    </div>
+  </div>
   </template>
 
   <!-- 全局 Intent 悬浮卡（单实例跟随鼠标，pointer-events:none 不挡交互；与 graph-view 共用样式） -->

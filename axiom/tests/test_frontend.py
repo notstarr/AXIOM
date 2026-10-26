@@ -3248,6 +3248,176 @@ def test_seed_vulnerability_task_id_only_sent_for_red_team_tasks() -> None:
     assert _run_seed_task_create_payload_fixture("vulnerability")["seed"] is None
 
 
+# ── 红队攻击血缘视图 ────────────────────────────────────────────────
+
+def _run_lineage_fixture(payload: dict) -> dict:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    script = ROOT / "src/axiom/static/js/lineage.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+eval(fs.readFileSync({json.dumps(str(script))}, 'utf8'));
+const methods = window.AxiomModules.lineage.methods;
+const project = {json.dumps(payload)};
+const model = methods.deriveLineage(project);
+process.stdout.write(JSON.stringify({{
+  hasData: model.hasData,
+  chainCount: model.chainCount,
+  blueCount: model.blueCount,
+  redCount: model.redCount,
+  totalPoints: model.totalPoints,
+  lanes: model.lanes.map(lane => ({{
+    chainId: lane.chainId,
+    points: lane.points,
+    openingId: lane.openingId,
+    nodes: lane.nodes.map(node => ({{
+      id: node.id,
+      isOpening: node.isOpening,
+      gapBefore: node.gapBefore,
+      points: node.results.reduce((sum, item) => sum + Number(item.points_awarded || 0), 0),
+    }})),
+  }})),
+  edges: model.edges,
+}}));
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def test_lineage_derivation_matches_t_231() -> None:
+    """用 t_231 真实快照校验推导：6 条泳道、口子取链内最早意图、成果挂到发现者。"""
+
+    def intent(iid, chain, ts, desc="目标：x", to=None, frm=None):
+        return {"id": iid, "chain_id": chain, "created_at": ts, "description": desc,
+                "to": to or "", "from": frm or []}
+
+    def result(rid, iid, points, status="verified"):
+        return {"id": rid, "intent_id": iid, "status": status,
+                "points_awarded": points, "title": rid, "description": "d"}
+
+    payload = {
+        "chains": [{"id": "ch1", "title": "链一"}, {"id": "ch2", "title": "链二"}],
+        "intents": [
+            intent("i001", "ch1", "2026-10-20T11:00:00Z"),          # 口子
+            intent("i002", "ch1", "2026-10-20T12:00:00Z"),          # 中间，被省略
+            intent("i003", "ch1", "2026-10-20T13:00:00Z", to="f9"), # 有成果
+            intent("i004", "ch2", "2026-10-20T11:30:00Z", to="f1"), # 口子 + 自身有成果
+            intent("i005", "ch2", "2026-10-20T14:00:00Z", frm=["f1"]),
+        ],
+        "red_team_results": [
+            result("x001", "i003", 10),
+            result("x002", "i004", 5),
+            result("x003", "i005", 0, status="rejected"),   # 未核定，不出现
+        ],
+    }
+
+    model = _run_lineage_fixture(payload)
+
+    assert model["hasData"] is True
+    assert model["chainCount"] == 2
+    assert model["totalPoints"] == 15
+    assert model["redCount"] == 2
+    # ch1: 口子 + 有成果的意图，中间 i002 被省略 → gapBefore=1
+    lane1 = next(l for l in model["lanes"] if l["chainId"] == "ch1")
+    assert [n["id"] for n in lane1["nodes"]] == ["i001", "i003"]
+    assert lane1["openingId"] == "i001"
+    assert lane1["nodes"][1]["gapBefore"] == 1
+    assert lane1["nodes"][1]["points"] == 10
+    # ch2: 口子自身即成果
+    lane2 = next(l for l in model["lanes"] if l["chainId"] == "ch2")
+    assert lane2["nodes"][0]["id"] == "i004"
+    assert lane2["nodes"][0]["isOpening"] is True
+    assert lane2["nodes"][0]["points"] == 5
+    # 泳道按分数倒序
+    assert model["lanes"][0]["chainId"] == "ch1"
+
+
+def test_lineage_parses_both_description_formats() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    script = ROOT / "src/axiom/static/js/lineage.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+eval(fs.readFileSync({json.dumps(str(script))}, 'utf8'));
+const parse = window.AxiomModules.lineage.methods.parseIntentDetail;
+process.stdout.write(JSON.stringify({{
+  newline: parse('目标：A\\n判据：B\\n前置：C\\n边界：D'),
+  inline: parse('目标：A 判据：B 前置：C 边界：D'),
+  bare: parse('没有标记的一段话'),
+  empty: parse(''),
+}}));
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    data = json.loads(result.stdout)
+    expected = {"目标": "A", "判据": "B", "前置": "C", "边界": "D"}
+    assert data["newline"] == expected
+    assert data["inline"] == expected
+    assert data["bare"] == {"目标": "没有标记的一段话", "判据": "", "前置": "", "边界": ""}
+    assert data["empty"] == {"目标": "", "判据": "", "前置": "", "边界": ""}
+
+
+def test_lineage_view_contract() -> None:
+    """血缘是工作台内的一个 tab（与 工作台/看板 并列），不是独立视图。"""
+
+    human_view = (ROOT / "src/axiom/static/templates/human-view.html").read_text(encoding="utf-8")
+    # 工作台导航里出现血缘 tab，且带红队守卫
+    assert "{id: 'lineage', label: '血缘'}" in human_view
+    assert "tab.id !== 'lineage' || isRedTeamBoard()" in human_view
+    assert "humanTab === 'lineage'" in human_view
+    assert "lineage-stage" in human_view
+    assert "refreshLineage()" in human_view
+
+    human = (ROOT / "src/axiom/static/js/human.js").read_text(encoding="utf-8")
+    assert "['workspace', 'todos', 'lineage']" in human
+    assert "refreshLineage()" in human
+
+    # 不再有独立的 lineage 视图入口
+    for name in ("human-view.html", "graph-view.html", "archive-view.html"):
+        html = (ROOT / "src/axiom/static/templates" / name).read_text(encoding="utf-8")
+        assert "switchTaskView('lineage')" not in html, name
+
+    core = (ROOT / "src/axiom/static/js/core.js").read_text(encoding="utf-8")
+    assert "lineage-view" not in core
+
+    index_html = (ROOT / "src/axiom/static/index.html").read_text(encoding="utf-8")
+    assert "/static/js/lineage.js" in index_html
+
+
+def test_lineage_export_html_is_self_contained() -> None:
+    """导出的 HTML 必须是离线可看的单文件：样式内联、主题变量抄实际值。"""
+
+    source = (ROOT / "src/axiom/static/js/lineage.js").read_text(encoding="utf-8")
+
+    # 有导出入口，且模板上挂了按钮
+    assert "exportLineageHtml(" in source
+    human_view = (ROOT / "src/axiom/static/templates/human-view.html").read_text(encoding="utf-8")
+    assert "exportLineageHtml()" in human_view
+
+    # 样式现取现用：从 document.styleSheets 里筛 .lineage-* / .lg-*，
+    # 不能反过来把整份 custom.css 内联进去（体积会失控）
+    assert "document.styleSheets" in source
+    assert "lineageExportCss" in source
+    assert "lineageExportVars" in source
+
+    # 主题变量必须抄实际计算值，否则导出文件里 var(--sto-panel) 全是空
+    for name in ("--sto-panel", "--sto-fg", "--sto-fg-3"):
+        assert name in source
+
+    # 导出文件不依赖任何外部资源：整个 lineage.js 里都不该出现外链引用
+    for pattern in ("<link rel=", 'src="http', "src='http", "@import", "<script src="):
+        assert pattern not in source, pattern
+
+    # 暗色规则不导出：导出统一亮色，带上反而会有半套样式
+    assert "includes('.dark')" in source
+
+
+
 def test_red_team_seed_frontend_contract() -> None:
     vulnerabilities = (ROOT / "src/axiom/static/templates/vulnerabilities.html").read_text(encoding="utf-8")
     task_list = (ROOT / "src/axiom/static/templates/task-list.html").read_text(encoding="utf-8")

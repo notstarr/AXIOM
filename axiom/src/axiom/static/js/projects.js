@@ -618,6 +618,8 @@ window.AxiomModules.projects = {
         next.project = { ...next.project, fact_count: next.facts.length, intent_count: next.intents.length };
       } else if (name === 'hints') next.hints = section.data || [];
       else if (name === 'todos') next.todos = section.data || [];
+      else if (name === 'chains') next.chains = section.data || [];
+      else if (name === 'red_team_results') next.red_team_results = section.data || [];
       else if (name === 'vulnerabilities') next.vulns = section.data || [];
       else if (name === 'artifacts') next.artifacts = section.data || [];
       else if (name === 'lead_artifacts') next.lead_artifacts = section.data || [];
@@ -633,6 +635,13 @@ window.AxiomModules.projects = {
           else if (this.project && this.taskDetailSectionReady('graph')) this.initGraph?.();
         });
       }
+      // 血缘视图是命令式渲染：数据分片到达后必须重绘，否则首屏会停在空状态。
+      if (this.humanTab === 'lineage' && this.view === 'human' && ['graph', 'chains', 'red_team_results'].includes(name)) {
+        this._lineageCache = null;
+        this.$nextTick?.(() => {
+          if (this.selectedProjectId !== taskId || generation !== this._projectOpenGeneration) return;
+          this.renderLineage?.();
+        });
     },
 
     async loadTaskSummary(id, options = {}) {

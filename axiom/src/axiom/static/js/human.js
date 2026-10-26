@@ -29,14 +29,38 @@ window.AxiomModules.human = {
             generation,
             signal: this._pageAbortController?.signal,
             sections: incompleteSections,
+          }).then(() => {
+            // 数据补齐后重绘：血缘的首屏渲染可能早于 graph/results 落地。
+            if (this.humanTab === 'lineage' && this.selectedProjectId === taskId) {
+              this._lineageCache = null;
+              this.renderLineage?.();
+            }
           });
+        }
+        if (this.humanTab === 'lineage') {
+          this._lineageCache = null;
+          this.renderLineage?.();
         }
       }
     },
 
     switchHumanTab(tab) {
-      const allowed = ['workspace', 'todos'];
-      this.humanTab = allowed.includes(tab) ? tab : 'workspace';
+      const allowed = ['workspace', 'todos', 'lineage'];
+      let next = allowed.includes(tab) ? tab : 'workspace';
+      // 血缘只对红队任务开放；非红队任务切过来时回落工作台，避免空白页。
+      if (next === 'lineage' && !this.isRedTeamBoard?.()) next = 'workspace';
+      this.humanTab = next;
+      if (next === 'lineage') {
+        this._lineageCache = null;
+        this._lineageRealH = null;
+        this.$nextTick?.(() => this.renderLineage?.());
+      }
+    },
+
+    refreshLineage() {
+      this._lineageCache = null;
+      this._lineageRealH = null;
+      this.renderLineage?.();
     },
 
     humanTodoGroups() {
