@@ -961,6 +961,7 @@ const items = [
   {{ path:'i002/findings.md', artifact_type:'explore.findings' }},
   {{ path:'i002/leads.md', artifact_type:'explore.leads' }},
   {{ path:'i002/evidence/response.txt', artifact_type:'explore.evidence' }},
+  {{ path:'i002/work/probe_log.txt', artifact_type:'explore.work' }},
 ];
 process.stdout.write(JSON.stringify(items.map(item => ({{
   phase: methods.artifactSourcePhase(item),
@@ -2203,6 +2204,7 @@ def test_artifact_center_classifies_new_explore_paths_by_type() -> None:
         {"phase": "explore", "label": "Findings", "icon": "!"},
         {"phase": "explore", "label": "Leads", "icon": "↗"},
         {"phase": "explore", "label": "Evidence", "icon": "◈"},
+        {"phase": "explore", "label": "Work", "icon": "⧉"},
     ]
 
 

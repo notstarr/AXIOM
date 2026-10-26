@@ -394,6 +394,23 @@ class ArtifactRepository:
         ).mappings().one_or_none()
         return Artifact.model_validate(row) if row is not None else None
 
+    def by_storage_key(
+        self, conn: Connection, task_id: str, storage_key: str
+    ) -> Artifact | None:
+        """Look up the row that owns a storage path, archived rows included.
+
+        ``(task_id, storage_key)`` is unique, so a second upload of the same
+        file name has to be reconciled against the existing row instead of
+        inserting and violating the constraint.
+        """
+        row = conn.execute(
+            select(artifacts).where(
+                artifacts.c.task_id == task_id,
+                artifacts.c.storage_key == storage_key,
+            )
+        ).mappings().one_or_none()
+        return Artifact.model_validate(row) if row is not None else None
+
     def archive(self, conn: Connection, task_id: str, artifact_id: str) -> Artifact | None:
         result = conn.execute(
             update(artifacts)

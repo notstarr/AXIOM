@@ -2523,7 +2523,7 @@
         this.showToast(error.message || '无法打开产物', 'error');
       }
     },
-    artifactTypeIcon(type) { return type === 'upload' ? '↑' : /finding|vuln/i.test(type || '') ? '!' : /lead/i.test(type || '') ? '↗' : /evidence/i.test(type || '') ? '◈' : /api|asset|inventory/i.test(type || '') ? '◫' : '▤'; },
+    artifactTypeIcon(type) { return type === 'upload' ? '↑' : /finding|vuln/i.test(type || '') ? '!' : /lead/i.test(type || '') ? '↗' : /\.work$/i.test(type || '') ? '⧉' : /evidence/i.test(type || '') ? '◈' : /api|asset|inventory/i.test(type || '') ? '◫' : '▤'; },
     openTabContextMenu(event, tabId) {
       const section = event.target.closest('section');
       const rect = (section || document.body).getBoundingClientRect();
@@ -2569,6 +2569,8 @@
       if (type.endsWith('.jsfinder')) return 'JSFinder';
       if (type === 'review.report') return 'Review';
       if (type === 'review.evidence') return 'Review Evidence';
+      // 原始记录：留档，不是证据。灰色独立徽标，和 Evidence 明确区分。
+      if (type.endsWith('.work')) return 'Work';
       return item?.artifact_type || 'Artifact';
     },
     artifactKindClass(item) {
@@ -2580,6 +2582,7 @@
       if (type.endsWith('.jsfinder')) return 'border-indigo-200 bg-indigo-50 text-indigo-700';
       if (type === 'review.report') return 'border-violet-200 bg-violet-50 text-violet-700';
       if (type === 'review.evidence') return 'border-cyan-200 bg-cyan-50 text-cyan-700';
+      if (type.endsWith('.work')) return 'border-slate-200 bg-slate-50 text-slate-600';
       return 'border-slate-200 bg-slate-100 text-slate-500';
     },
     formatBytes(size) { const n = Number(size || 0); if (n < 1024) return `${n} B`; if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`; return `${(n / 1024 / 1024).toFixed(1)} MB`; },

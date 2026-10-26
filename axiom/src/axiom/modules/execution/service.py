@@ -1238,6 +1238,8 @@ class ExecutionService:
                 available_outputs = {item.relative_name for item in outputs}
                 # 证据文件只在支撑漏洞上报时保留：无漏洞的轮次整体丢弃，
                 # 有漏洞的轮次仅保留被报告引用的证据文件（文件管理只显示登记行）。
+                # 原始记录（explore.work）不参与这个剪枝：它不是证据，是留档，
+                # 哪怕本轮没有任何成果也要整轮保留。
                 referenced_evidence = {
                     path
                     for report in state.vulnerabilities

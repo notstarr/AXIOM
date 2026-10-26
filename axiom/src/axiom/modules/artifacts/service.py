@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from sqlalchemy import Engine
+from sqlalchemy.exc import IntegrityError
 
 from axiom.modules.artifacts.repository import ArtifactRepository
 from axiom.modules.artifacts.schemas import Artifact, ArtifactContent, ArtifactFolder
@@ -158,14 +160,73 @@ class ArtifactService:
             raise ConflictError("Upload file must not be empty")
         actor = created_by.strip() or "human"
         bound_intent = (intent_id or "").strip() or None
+        content_hash = hashlib.sha256(content).hexdigest()
         base_key = (
             f"tasks/{task_id}/artifacts/{bound_intent}"
             if bound_intent
             else f"tasks/{task_id}/uploads/{uuid4().hex}"
         )
+        # `(task_id, storage_key)` is unique and intent uploads derive the key
+        # from the bare file name, so re-reporting the same evidence file used
+        # to fail the insert with a UniqueViolation (HTTP 500) and lose the
+        # result. Walk a short list of candidate names instead: an identical
+        # re-upload reuses its row, different bytes get their own name so the
+        # earlier result keeps pointing at the evidence it was judged on.
+        for name in self._upload_names(safe_name, content_hash):
+            artifact = self._upload_as(
+                task_id=task_id,
+                base_key=base_key,
+                name=name,
+                content=content,
+                content_hash=content_hash,
+                summary=summary,
+                actor=actor,
+                bound_intent=bound_intent,
+            )
+            if artifact is not None:
+                return artifact
+        raise ConflictError(f"无法为 {safe_name} 分配可用的存储路径，请换一个文件名重试")
+
+    @staticmethod
+    def _upload_names(safe_name: str, content_hash: str) -> list[str]:
+        stem, dot, suffix = safe_name.rpartition(".")
+        if not dot or not stem:
+            stem, suffix = safe_name, ""
+        else:
+            suffix = f".{suffix}"
+        return [
+            safe_name,
+            f"{stem}-{content_hash[:8]}{suffix}",
+            f"{stem}-{content_hash[:8]}-{uuid4().hex[:8]}{suffix}",
+        ]
+
+    def _upload_as(
+        self,
+        *,
+        task_id: str,
+        base_key: str,
+        name: str,
+        content: bytes,
+        content_hash: str,
+        summary: str,
+        actor: str,
+        bound_intent: str | None,
+    ) -> Artifact | None:
+        """Store one candidate name; ``None`` means the name was taken."""
+        storage_key = f"{base_key}/{name}"
+        with self.engine.connect() as conn:
+            existing = self.repository.by_storage_key(conn, task_id, storage_key)
+        if existing is not None:
+            if existing.archived or existing.content_hash != content_hash:
+                return None
+            # Same bytes already registered: reuse the row so a retried report
+            # does not create a duplicate evidence entry.
+            self._restore_missing_file(storage_key, content)
+            return existing
+
         prepared = self.store.prepare_named_files(
             base_key=base_key,
-            files={safe_name: content},
+            files={name: content},
         )
         try:
             with self.engine.begin() as conn:
@@ -187,12 +248,29 @@ class ArtifactService:
                     intent_id=bound_intent,
                     artifact_type="explore.evidence" if bound_intent else "upload",
                 )
+        except IntegrityError:
+            # A concurrent upload won the same storage key between our lookup
+            # and the insert; fall through to the next candidate name.
+            prepared.rollback()
+            with self.engine.connect() as conn:
+                winner = self.repository.by_storage_key(conn, task_id, storage_key)
+            if winner is not None and not winner.archived and winner.content_hash == content_hash:
+                return winner
+            return None
         except BaseException:
             prepared.rollback()
             raise
         else:
             prepared.finish()
             return artifact
+
+    def _restore_missing_file(self, storage_key: str, content: bytes) -> None:
+        """Re-materialise the blob when the row survived but the file did not."""
+        path = self.store.resolve(storage_key)
+        if path.is_file():
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
 
     def archive(self, task_id: str, artifact_id: str) -> Artifact:
         if self.archives is None:

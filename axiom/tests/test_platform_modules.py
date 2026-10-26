@@ -478,3 +478,61 @@ def test_audit_events_are_append_only_and_filterable(client) -> None:
     # The public API is intentionally read-only; runtime code records events
     # through the service boundary. This assertion protects that boundary.
     assert created.status_code in {404, 405}
+
+
+def _upload_artifact(client, task_id: str, name: str, content: bytes, *, intent_id: str = ""):
+    return client.post(
+        f"/api/v1/tasks/{task_id}/artifacts/upload",
+        files={"file": (name, content, "application/octet-stream")},
+        data={"actor": "explore", "summary": name, "intent_id": intent_id},
+    )
+
+
+def test_reuploading_identical_evidence_reuses_the_existing_artifact(client) -> None:
+    """Worker re-reports with the same evidence file: no second row, no 500."""
+    _project, task = _project_task(client)
+    payload = b'{"count": 1000}'
+
+    first = _upload_artifact(client, task["id"], "count-proof.json", payload, intent_id="i001")
+    assert first.status_code == 201, first.text
+    second = _upload_artifact(client, task["id"], "count-proof.json", payload, intent_id="i001")
+
+    assert second.status_code == 201, second.text
+    assert second.json()["id"] == first.json()["id"]
+    rows = client.get(f"/api/v1/tasks/{task['id']}/artifacts").json()
+    assert [item["id"] for item in rows] == [first.json()["id"]]
+
+
+def test_reuploading_different_bytes_keeps_both_artifacts(client) -> None:
+    """Different content under the same name must not overwrite earlier evidence."""
+    _project, task = _project_task(client)
+    first = _upload_artifact(client, task["id"], "proof.txt", b"first run", intent_id="i001")
+    second = _upload_artifact(client, task["id"], "proof.txt", b"second run", intent_id="i001")
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert second.json()["id"] != first.json()["id"]
+    assert second.json()["storage_key"] != first.json()["storage_key"]
+    assert second.json()["storage_key"].endswith("-" + second.json()["content_hash"][:8] + ".txt")
+
+    # 先前那条成果引用的证据必须还是它当初的原文
+    first_body = client.get(
+        f"/api/v1/tasks/{task['id']}/artifacts/{first.json()['id']}/content"
+    )
+    assert first_body.status_code == 200
+    assert first_body.json()["content"] == "first run"
+    second_body = client.get(
+        f"/api/v1/tasks/{task['id']}/artifacts/{second.json()['id']}/content"
+    )
+    assert second_body.json()["content"] == "second run"
+
+
+def test_upload_name_without_suffix_still_disambiguates(client) -> None:
+    _project, task = _project_task(client)
+    first = _upload_artifact(client, task["id"], "proof", b"one", intent_id="i001")
+    second = _upload_artifact(client, task["id"], "proof", b"two", intent_id="i001")
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert second.json()["storage_key"] != first.json()["storage_key"]
+    assert second.json()["storage_key"].endswith(second.json()["content_hash"][:8])
