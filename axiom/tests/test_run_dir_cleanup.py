@@ -317,6 +317,12 @@ def test_intent_release_preserves_evidence_and_review_artifacts(client) -> None:
     review_artifacts = run_dir / "artifacts"
     review_artifacts.mkdir(parents=True, exist_ok=True)
     (review_artifacts / "review.md").write_text("# 审核结论\n", encoding="utf-8")
+    work_records = review_artifacts / "work"
+    work_records.mkdir(parents=True, exist_ok=True)
+    (work_records / "probe_log.txt").write_text("GET / -> 500\n", encoding="utf-8")
+    legacy_work = run_dir / "work"
+    legacy_work.mkdir(parents=True, exist_ok=True)
+    (legacy_work / "scan.txt").write_text("legacy\n", encoding="utf-8")
 
     response = _release_intent(client, task["id"], "i001", lease_id, failure_class="execution")
     assert response.status_code == 200, response.text
@@ -325,6 +331,9 @@ def test_intent_release_preserves_evidence_and_review_artifacts(client) -> None:
     preserved = manager.store.root / "tasks" / task["id"] / "evidence" / "i001" / lease_id
     assert (preserved / "evidence" / "open-redirect.txt").read_text(encoding="utf-8").startswith("GET /toggle-login")
     assert (preserved / "artifacts" / "review.md").read_text(encoding="utf-8") == "# 审核结论\n"
+    # 原始记录也要活下来：它不是证据，但它是留档。
+    assert (preserved / "artifacts" / "work" / "probe_log.txt").read_text(encoding="utf-8") == "GET / -> 500\n"
+    assert (preserved / "work" / "scan.txt").read_text(encoding="utf-8") == "legacy\n"
 
 
 def test_intent_release_removes_run_directory_when_terminal(client) -> None:

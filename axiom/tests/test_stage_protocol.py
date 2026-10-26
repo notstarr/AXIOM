@@ -299,3 +299,107 @@ def test_explore_registers_root_jsfinder_results(tmp_path: Path) -> None:
     jsfinder = [item for item in outputs if item.artifact_type == "explore.jsfinder"]
     assert [item.relative_name for item in jsfinder] == ["jsfinder_result-www-a-cn-ab12.json"]
     assert jsfinder[0].summary.startswith("Explore JSFinder 能力树")
+
+
+def _explore_core(artifacts: Path) -> None:
+    artifacts.mkdir(parents=True, exist_ok=True)
+    (artifacts / "findings.md").write_text("# 已确认事实\n\n本轮无新增确认事实\n", encoding="utf-8")
+    (artifacts / "leads.md").write_text("# 待验证线索\n\n本轮无遗留待验证线索\n", encoding="utf-8")
+
+
+def test_work_records_register_separately_from_evidence(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    _explore_core(artifacts)
+    (artifacts / "evidence").mkdir()
+    (artifacts / "evidence" / "proof.txt").write_text("HTTP/1.1 200 OK\n", encoding="utf-8")
+    work = artifacts / "work"
+    work.mkdir()
+    (work / "probe_log.txt").write_text("GET / -> 500\n" * 3, encoding="utf-8")
+    nested = work / "scripts"
+    nested.mkdir()
+    (nested / "harvest.py").write_text("print('x')\n", encoding="utf-8")
+    # 过渡期的根 work/ 与规范位置合并，登记名统一 work/<rel>
+    legacy = tmp_path / "work"
+    legacy.mkdir()
+    (legacy / "old.txt").write_text("legacy\n", encoding="utf-8")
+    (legacy / "probe_log.txt").write_text("dup\n", encoding="utf-8")
+
+    outputs = explore_files(tmp_path)
+
+    work_outputs = [item for item in outputs if item.artifact_type == "explore.work"]
+    assert [item.relative_name for item in work_outputs] == [
+        "work/old.txt",
+        "work/probe_log.txt",
+        "work/scripts/harvest.py",
+    ]
+    assert all(item.summary.startswith("原始记录：work/") for item in work_outputs)
+    # 同名时以 artifacts/work 为准
+    assert work_outputs[1].path == work / "probe_log.txt"
+    evidence = [item for item in outputs if item.artifact_type == "explore.evidence"]
+    assert [item.relative_name for item in evidence] == ["evidence/proof.txt"]
+
+
+def test_work_records_skip_noise_and_unsafe_entries(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    _explore_core(artifacts)
+    work = artifacts / "work"
+    work.mkdir()
+    (work / "keep.txt").write_text("real\n", encoding="utf-8")
+    (work / "empty.txt").write_text("", encoding="utf-8")
+    (work / "placeholder.json").write_text("{}\n", encoding="utf-8")
+    (work / "__pycache__").mkdir()
+    (work / "__pycache__" / "x.pyc").write_text("bin", encoding="utf-8")
+    (work / ".hidden").mkdir()
+    (work / ".hidden" / "y.txt").write_text("hidden\n", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n", encoding="utf-8")
+    (work / "escape.txt").symlink_to(outside)
+
+    outputs = explore_files(tmp_path)
+
+    assert [item.relative_name for item in outputs if item.artifact_type == "explore.work"] == [
+        "work/keep.txt"
+    ]
+
+
+def test_work_records_are_capped(tmp_path: Path) -> None:
+    from axiom.modules.execution.stage_outputs import WORK_MAX_FILE_BYTES, WORK_MAX_FILES
+
+    artifacts = tmp_path / "artifacts"
+    _explore_core(artifacts)
+    work = artifacts / "work"
+    work.mkdir()
+    for index in range(WORK_MAX_FILES + 1):
+        (work / f"record-{index:02d}.txt").write_text("x\n", encoding="utf-8")
+    (work / "huge.log").write_text(
+        "x" * (WORK_MAX_FILE_BYTES + 1), encoding="utf-8"
+    )
+
+    outputs = explore_files(tmp_path)
+
+    work_outputs = [item for item in outputs if item.artifact_type == "explore.work"]
+    assert len(work_outputs) == WORK_MAX_FILES
+    assert [item.relative_name for item in work_outputs][0] == "work/record-00.txt"
+    assert "work/huge.log" not in {item.relative_name for item in work_outputs}
+
+
+def test_bootstrap_registers_work_records(tmp_path: Path) -> None:
+    for filename in ("asset_inventory.md", "initial_leads.md"):
+        (tmp_path / filename).write_text(f"# {filename}\n", encoding="utf-8")
+    work = tmp_path / "artifacts" / "work"
+    work.mkdir(parents=True)
+    (work / "scan_matrix.txt").write_text("a b c\n", encoding="utf-8")
+
+    outputs = bootstrap_files(tmp_path)
+
+    work_outputs = [item for item in outputs if item.artifact_type == "bootstrap.work"]
+    assert [item.relative_name for item in work_outputs] == ["work/scan_matrix.txt"]
+
+
+def test_explore_without_work_directory_is_unchanged(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    _explore_core(artifacts)
+
+    outputs = explore_files(tmp_path)
+
+    assert [item.artifact_type for item in outputs] == ["explore.findings", "explore.leads"]

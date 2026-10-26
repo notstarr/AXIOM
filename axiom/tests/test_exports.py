@@ -84,3 +84,66 @@ def test_vulnerability_export_zip_and_markdown(client) -> None:
         vuln_content = zf.read("vulnerability.md").decode("utf-8")
         assert "# 测试XSS漏洞" in vuln_content
         assert "测试XSS描述" in vuln_content
+
+
+def test_vulnerability_export_zip_excludes_work_records(client) -> None:
+    import io
+    import zipfile
+    from axiom.modules.artifacts.tables import artifacts
+    from axiom.modules.vulnerabilities.tables import vulnerabilities
+
+    task_id = _task(client)
+    container = client.app.state.container
+    with container.engine.begin() as conn:
+        conn.execute(
+            vulnerabilities.insert().values(
+                id="v001",
+                task_id=task_id,
+                intent_id="i001",
+                title="测试XSS漏洞",
+                type="xss",
+                severity="high",
+                description="测试XSS描述",
+                impact="测试影响",
+                status="已验证",
+                reported_by="system",
+                source="explore",
+                created_at="2026-08-26T00:00:00Z",
+                updated_at="2026-08-26T00:00:00Z",
+                archived=False,
+            )
+        )
+        rows = (
+            ("a001", "artifacts/i001/findings.md", "explore.findings"),
+            ("a002", "artifacts/i001/evidence/proof.txt", "explore.evidence"),
+            ("a003", "artifacts/i001/work/probe_log.txt", "explore.work"),
+        )
+        for artifact_id, key, artifact_type in rows:
+            storage_key = f"tasks/{task_id}/{key}"
+            path = container.store.resolve(storage_key)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"# {artifact_type}\n", encoding="utf-8")
+            conn.execute(
+                artifacts.insert().values(
+                    id=artifact_id,
+                    task_id=task_id,
+                    intent_id="i001",
+                    review_run_id=None,
+                    artifact_type=artifact_type,
+                    storage_key=storage_key,
+                    summary=artifact_type,
+                    content_hash="0" * 64,
+                    size=path.stat().st_size,
+                    created_by="system",
+                    created_at="2026-08-26T00:00:00Z",
+                    archived=False,
+                )
+            )
+
+    response = client.get(f"/api/v1/tasks/{task_id}/vulnerabilities/v001/export?format=zip")
+
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+        namelist = zf.namelist()
+    assert "evidence/proof.txt" in namelist
+    assert not any("work/" in name for name in namelist)

@@ -60,7 +60,7 @@
                     :class="editorActiveId === item.id ? 'active-file' : ''"
                     x-show="explorerNodeVisible('file', item.id, artifactFileName(item) + ' ' + (item.summary || ''))"
                     @click.stop="openEditorTab(item)">
-                    <span class="vsc-fileicon" :style="item.artifact_type === 'explore.findings' ? 'color:#059669;' : item.artifact_type === 'explore.leads' ? 'color:#b45309;' : item.artifact_type === 'explore.evidence' ? 'color:#0071e3;' : item.artifact_type === 'review.report' ? 'color:#7c3aed;' : ''"
+                    <span class="vsc-fileicon" :style="item.artifact_type === 'explore.findings' ? 'color:#059669;' : item.artifact_type === 'explore.leads' ? 'color:#b45309;' : item.artifact_type === 'explore.evidence' ? 'color:#0071e3;' : (item.artifact_type || '').endsWith('.work') ? 'color:#64748b;' : item.artifact_type === 'review.report' ? 'color:#7c3aed;' : ''"
                       x-text="artifactTypeIcon(item.artifact_type)"></span>
                     <span class="vsc-label" :title="item.summary || ''" x-text="artifactFileName(item)"></span>
                     <span class="vsc-rowmeta" x-text="formatBytes(item.size)"></span>
@@ -90,7 +90,7 @@
       <div class="vsc-tabbar" @contextmenu.self.prevent="openTabContextMenu($event, editorActiveId)">
         <template x-for="tab in (editorTabs || [])" :key="tab.id">
           <div class="vsc-tab" :class="editorActiveId === tab.id ? 'active' : ''" @click="activateEditorTab(tab.id)" @contextmenu.prevent="openTabContextMenu($event, tab.id)">
-            <span class="vsc-fileicon" :style="tab.artifact_type === 'explore.findings' ? 'color:#059669;' : tab.artifact_type === 'explore.leads' ? 'color:#b45309;' : tab.artifact_type === 'explore.evidence' ? 'color:#0071e3;' : tab.artifact_type === 'review.report' ? 'color:#7c3aed;' : ''"
+            <span class="vsc-fileicon" :style="tab.artifact_type === 'explore.findings' ? 'color:#059669;' : tab.artifact_type === 'explore.leads' ? 'color:#b45309;' : tab.artifact_type === 'explore.evidence' ? 'color:#0071e3;' : (tab.artifact_type || '').endsWith('.work') ? 'color:#64748b;' : tab.artifact_type === 'review.report' ? 'color:#7c3aed;' : ''"
               x-text="artifactTypeIcon(tab.artifact_type)"></span>
             <span class="vsc-tabname" x-text="artifactFileName(tab)"></span>
             <button type="button" class="vsc-tabclose" @click.stop="closeEditorTab(tab.id)" aria-label="关闭">&times;</button>

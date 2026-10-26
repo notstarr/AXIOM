@@ -9,7 +9,7 @@ from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -44,6 +44,19 @@ EXPLORE_MAX_EVIDENCE_FILES = 48
 REVIEW_REPORT_FILE = "review.md"  # 旧格式，仅过渡期兼容
 REVIEW_VULN_REPORT_PREFIX = "vuln_report-"
 REVIEW_MAX_EVIDENCE_FILES = 48
+
+# 原始记录目录：{run_dir}/artifacts/work/。它和 evidence/ 是两件事——
+# evidence 是「上报成果/漏洞时用来证明的材料」，work 是「不构成成果、但要留档的原始值」
+# （探测矩阵、逐条状态码回显、批量抓取结果、脚本、中间样本）。
+# 两者都不能混用：把原始记录塞进 evidence 会污染证据链，审核侧要从噪声里挑可复现材料。
+WORK_DIR = "work"
+# 过渡兼容：早期 worker 习惯写在运行目录根的 work/（与 artifacts/ 平级）。
+# 同名时以 artifacts/work/ 为准。收口登记名统一成 work/<rel>，storage_key 落在
+# tasks/<task>/artifacts/<intent>/work/<rel>，和 evidence/ 同一套命名。
+WORK_MAX_FILES = 40
+WORK_MAX_FILE_BYTES = 10 * 1024 * 1024
+WORK_MAX_TOTAL_BYTES = 32 * 1024 * 1024
+_WORK_SKIP_DIRS = frozenset({"__pycache__", ".git", ".cache", "node_modules", ".venv"})
 
 
 class StageOutputError(ConflictError):
@@ -128,6 +141,13 @@ def bootstrap_files(run_dir: str | Path) -> list[StageFile]:
     )
     results.extend(_collect_bootstrap_extras(root, registered={item.relative_name for item in results}))
     results.extend(_collect_bootstrap_evidence(root, registered={item.relative_name for item in results}))
+    results.extend(
+        _collect_run_work(
+            _work_candidates(root / "artifacts", root),
+            run_root=root,
+            artifact_type="bootstrap.work",
+        )
+    )
     return results
 
 
@@ -169,7 +189,9 @@ def _collect_bootstrap_extras(root: Path, *, registered: set[str]) -> list[Stage
         if path.name in registered or path.name in _BOOTSTRAP_SYSTEM_FILES:
             continue
         if path.is_dir():
-            skipped.append(path.name + "/")
+            # artifacts/ 与 work/ 有各自的采集器，不是「被跳过的非法项」。
+            if path.name not in {"artifacts", WORK_DIR}:
+                skipped.append(path.name + "/")
             continue
         if not path.is_file() or path.is_symlink():
             continue
@@ -343,6 +365,130 @@ def _collect_bootstrap_evidence(root: Path, *, registered: set[str]) -> list[Sta
     return items
 
 
+def _collect_run_work(
+    candidates: tuple[tuple[Path, bool], ...],
+    *,
+    run_root: Path,
+    artifact_type: str,
+    emit_warnings: bool = True,
+) -> list[StageFile]:
+    """登记运行目录里的原始记录（``artifacts/work/``，过渡期兼容根 ``work/``）。
+
+    ``candidates`` 是 ``(目录, 是否规范位置)`` 的优先级序列：规范位置在前，
+    同名文件以规范位置为准。原始记录不参与证据剪枝——即使本轮没有上报任何
+    成果或漏洞，收口时也照样登记，否则 worker 写下的探测矩阵、状态码回显、
+    批量抓取结果会随运行目录一起被删掉。
+    """
+    run_root = run_root.resolve()
+    collected: dict[str, StageFile] = {}
+    skipped: list[str] = []
+    duplicates: list[str] = []
+    for work_root, canonical in candidates:
+        if not work_root.is_dir() or work_root.is_symlink():
+            continue
+        for current_root, directory_names, file_names in os.walk(
+            work_root,
+            topdown=True,
+            followlinks=False,
+        ):
+            current = Path(current_root)
+            directory_names.sort()
+            file_names.sort()
+            retained: list[str] = []
+            for name in directory_names:
+                path = current / name
+                if name in _WORK_SKIP_DIRS or name.startswith(".") or path.is_symlink():
+                    skipped.append(f"{path.relative_to(run_root).as_posix()}/")
+                    continue
+                retained.append(name)
+            directory_names[:] = retained
+            for name in file_names:
+                path = current / name
+                relative_name = (PurePosixPath(WORK_DIR) / path.relative_to(work_root)).as_posix()
+                if relative_name in collected:
+                    # 规范位置已经收过，过渡目录里的同名文件不再重复登记。
+                    if not canonical:
+                        duplicates.append(relative_name)
+                    continue
+                if not _safe_explore_relative(Path(WORK_DIR) / path.relative_to(work_root)):
+                    skipped.append(relative_name)
+                    continue
+                try:
+                    _require_regular_output(path, run_root)
+                    size = path.stat().st_size
+                except (StageOutputError, OSError):
+                    skipped.append(relative_name)
+                    continue
+                if size <= 0:
+                    skipped.append(relative_name)
+                    continue
+                if size <= _PLACEHOLDER_MAX_BYTES and _is_placeholder_content(path):
+                    skipped.append(relative_name)
+                    continue
+                if size > WORK_MAX_FILE_BYTES:
+                    if emit_warnings:
+                        logger.warning(
+                            "原始记录单文件超 %dMB，已丢弃：%s（%d bytes）",
+                            WORK_MAX_FILE_BYTES // (1024 * 1024),
+                            relative_name,
+                            size,
+                        )
+                    continue
+                collected[relative_name] = StageFile(
+                    relative_name=relative_name,
+                    path=path,
+                    artifact_type=artifact_type,
+                    summary=f"原始记录：{relative_name}",
+                )
+    if duplicates and emit_warnings:
+        logger.warning(
+            "原始记录在 artifacts/work 与 work 重复，已按 artifacts/work 登记：%r",
+            duplicates[:5],
+        )
+    if skipped and emit_warnings:
+        logger.warning(
+            "原始记录目录跳过无效项 run_dir=%s count=%d samples=%r",
+            run_root,
+            len(skipped),
+            skipped[:5],
+        )
+    items = sorted(collected.values(), key=lambda item: item.relative_name)
+    total_bytes = 0
+    kept: list[StageFile] = []
+    for item in items:
+        if len(kept) >= WORK_MAX_FILES:
+            if emit_warnings:
+                logger.warning(
+                    "原始记录超过 %d 个，余者不登记：%r",
+                    WORK_MAX_FILES,
+                    [entry.relative_name for entry in items[len(kept):]],
+                )
+            break
+        try:
+            size = item.path.stat().st_size
+        except OSError:
+            continue
+        if total_bytes + size > WORK_MAX_TOTAL_BYTES:
+            if emit_warnings:
+                logger.warning(
+                    "原始记录累计超过 %dMB，余者不登记：%r",
+                    WORK_MAX_TOTAL_BYTES // (1024 * 1024),
+                    [entry.relative_name for entry in items[len(kept):]],
+                )
+            break
+        total_bytes += size
+        kept.append(item)
+    return kept
+
+
+def _work_candidates(root: Path, run_root: Path) -> tuple[tuple[Path, bool], ...]:
+    """规范位置在前、过渡期根目录在后。"""
+    return (
+        (root / WORK_DIR, True),
+        (run_root / WORK_DIR, False),
+    )
+
+
 def explore_files(
     run_dir: str | Path,
     *,
@@ -394,6 +540,14 @@ def explore_files(
         evidence = evidence[:EXPLORE_MAX_EVIDENCE_FILES]
         skipped["artifact_limit"].extend(item.relative_name for item in overflow)
     results.extend(evidence)
+    results.extend(
+        _collect_run_work(
+            _work_candidates(root, run_root),
+            run_root=run_root,
+            artifact_type="explore.work",
+            emit_warnings=emit_warnings,
+        )
+    )
     if emit_warnings and skipped:
         _log_skipped_explore_outputs(run_root, skipped, registered=len(evidence))
     return results
@@ -464,6 +618,14 @@ def review_files(run_dir: str | Path, *, emit_warnings: bool = True) -> list[Sta
         evidence = evidence[:REVIEW_MAX_EVIDENCE_FILES]
         skipped["artifact_limit"].extend(item.relative_name for item in overflow)
     results.extend(evidence)
+    results.extend(
+        _collect_run_work(
+            _work_candidates(root, run_root),
+            run_root=run_root,
+            artifact_type="review.work",
+            emit_warnings=emit_warnings,
+        )
+    )
     if emit_warnings and skipped:
         _log_skipped_optional_outputs(
             "review",
@@ -501,7 +663,8 @@ def _collect_optional_evidence(
         raise StageOutputError("无法读取 Explore Artifact 目录") from exc
 
     for path in root_entries:
-        if path.name in required or path.name == "evidence":
+        # work/ 由 _collect_run_work 单独登记，不是「不认识的根目录条目」。
+        if path.name in required or path.name in {"evidence", WORK_DIR}:
             continue
         skipped["unsupported_root_entry"].append(path.name)
 

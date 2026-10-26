@@ -121,6 +121,7 @@ def _complete_explore(
     *,
     number: int = 1,
     vulnerability: dict | None = None,
+    work: dict[str, str] | None = None,
 ) -> dict:
     claim = client.post(
         f"/api/v1/dispatch/tasks/{task_id}/intents/{intent_id}/claim",
@@ -148,6 +149,11 @@ def _complete_explore(
         f"# 证据 {number}\n\nGET /api/orders/{number}",
         encoding="utf-8",
     )
+    if work:
+        work_dir = artifacts_dir / "work"
+        work_dir.mkdir()
+        for name, content in work.items():
+            (work_dir / name).write_text(content, encoding="utf-8")
     if vulnerability is not None:
         report = client.post(
             f"{base}/explore-vulnerabilities",
@@ -202,6 +208,90 @@ def test_explore_completion_atomically_registers_artifact_fact_and_reason(client
     assert [item["id"] for item in task_after["queued_reason_runs"]] == [
         completed["reason_run_id"]
     ]
+
+
+def test_explore_keeps_work_records_when_no_vulnerability_reported(client, data_dir) -> None:
+    task, intents = _task_with_explore_intents(client)
+
+    completed = _complete_explore(
+        client,
+        task["id"],
+        intents[0],
+        work={"probe_log.txt": "GET / -> 500\nGET /login -> 500\n"},
+    )
+
+    # evidence 仍然整轮丢弃，原始记录必须保留：它不是证据，是留档。
+    work_artifacts = [
+        item for item in completed["artifacts"] if item["artifact_type"] == "explore.work"
+    ]
+    assert len(work_artifacts) == 1
+    assert work_artifacts[0]["storage_key"].endswith(f"{intents[0]}/work/probe_log.txt")
+    assert work_artifacts[0]["summary"].startswith("原始记录：work/")
+    kept = data_dir / "tasks" / task["id"] / "artifacts" / intents[0]
+    assert (kept / "work" / "probe_log.txt").read_text(encoding="utf-8").startswith("GET / -> 500")
+    assert not (kept / "evidence").exists()
+
+
+def test_explore_work_records_are_not_scored_evidence(client, data_dir) -> None:
+    task, intents = _task_with_explore_intents(client)
+
+    completed = _complete_explore(
+        client,
+        task["id"],
+        intents[0],
+        vulnerability={
+            "title": "越权读取订单",
+            "type": "IDOR",
+            "severity": "high",
+            "description": "换个订单号即可读取他人订单",
+            "prerequisites": "已登录普通账号",
+            "impact": "可批量读取他人订单",
+            "remediation": "服务端校验订单归属",
+            "affected_target": "api.example.com",
+            "evidence_paths": ["evidence/response-1.md"],
+        },
+        work={"probe_log.txt": "row\n"},
+    )
+
+    vulnerability = completed["vulnerabilities"][0]
+    assert [item["artifact_type"] for item in vulnerability["evidence_artifacts"]] == [
+        "explore.evidence"
+    ]
+    assert all(
+        item["artifact_type"] != "explore.work" for item in completed["artifacts"]
+        if item["id"] in vulnerability["evidence_artifact_ids"]
+    )
+
+
+def test_explore_rejects_work_path_as_vulnerability_evidence(client) -> None:
+    task, intents = _task_with_explore_intents(client)
+    claim = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}/claim",
+        json={"worker_name": "worker-a"},
+    ).json()
+    base = f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}"
+    client.post(f"{base}/start", json={"lease_id": claim["lease_id"]})
+
+    response = client.post(
+        f"{base}/explore-vulnerabilities",
+        json={
+            "lease_id": claim["lease_id"],
+            "report": {
+                "title": "越权读取订单",
+                "type": "IDOR",
+                "severity": "high",
+                "description": "换个订单号即可读取他人订单",
+                "prerequisites": "已登录普通账号",
+                "impact": "可批量读取他人订单",
+                "remediation": "服务端校验订单归属",
+                "affected_target": "api.example.com",
+                "evidence_paths": ["work/probe_log.txt"],
+            },
+        },
+    )
+
+    assert response.status_code in {400, 422}
+    assert "work/" in response.text
 
 
 def test_explore_human_intervention_marker_is_durable_idempotent_and_visible(

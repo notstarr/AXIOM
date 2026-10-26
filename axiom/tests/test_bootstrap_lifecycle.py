@@ -243,3 +243,28 @@ def test_activity_is_rejected_after_task_stop(client) -> None:
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "lease_inactive"
+
+
+def test_bootstrap_registers_work_records_as_bootstrap_work(client, data_dir) -> None:
+    task, claim = setup_claimed_bootstrap(client)
+    base = f"/api/v1/dispatch/tasks/{task['id']}/intents/i001"
+    client.post(f"{base}/start", json={"lease_id": claim["lease_id"]})
+    execution_input = client.post(f"{base}/input", json={"lease_id": claim["lease_id"]}).json()
+    payload = bootstrap_payload(claim["lease_id"])
+    write_bootstrap_files(execution_input["run_dir"], bootstrap_files_from_legacy(payload))
+    run_dir = Path(execution_input["run_dir"])
+    work = run_dir / "artifacts" / "work"
+    work.mkdir(parents=True)
+    (work / "scan_matrix.txt").write_text("host port state\n", encoding="utf-8")
+
+    completed = client.post(f"{base}/bootstrap-complete", json={"lease_id": claim["lease_id"]})
+
+    assert completed.status_code == 200, completed.text
+    work_artifacts = [
+        item for item in completed.json()["artifacts"]
+        if item["artifact_type"] == "bootstrap.work"
+    ]
+    assert len(work_artifacts) == 1
+    assert work_artifacts[0]["storage_key"].endswith("artifacts/i001/work/scan_matrix.txt")
+    assert work_artifacts[0]["summary"] == "原始记录：work/scan_matrix.txt"
+    assert (data_dir / work_artifacts[0]["storage_key"]).is_file()

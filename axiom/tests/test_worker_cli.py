@@ -821,3 +821,75 @@ def test_explore_cli_result_report_defaults_to_the_bound_chain(monkeypatch) -> N
     )
     assert without_binding.exit_code == 2
     assert "Missing option" in without_binding.output
+
+
+def test_result_report_rejects_work_records_as_evidence(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return {"id": "rr000001", "status": "reviewing"}
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+
+    for ref in ("work/probe_log.txt", "artifacts/work/probe_log.txt", "./work/probe_log.txt"):
+        result = CliRunner().invoke(
+            main,
+            [
+                "explore",
+                "result",
+                "report",
+                "--points",
+                "20",
+                "--type",
+                "permission",
+                "--title",
+                "取得成员管理能力",
+                "--description",
+                "复用普通成员会话调用成员管理接口成功。",
+                "--principal",
+                "user:member",
+                "--evidence-path",
+                ref,
+            ],
+            env=_env(),
+        )
+
+        assert result.exit_code != 0, ref
+        assert "原始记录不能作为成果证据" in result.output
+    assert calls == []
+
+
+def test_result_report_still_accepts_evidence_paths(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return {"id": "rr000001", "status": "reviewing"}
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "explore",
+            "result",
+            "report",
+            "--points",
+            "20",
+            "--type",
+            "permission",
+            "--title",
+            "取得成员管理能力",
+            "--description",
+            "复用普通成员会话调用成员管理接口成功。",
+            "--principal",
+            "user:member",
+            "--evidence-path",
+            "evidence/result.txt",
+        ],
+        env=_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls[0][2]["report"]["evidence_refs"] == ["evidence/result.txt"]

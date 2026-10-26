@@ -25,6 +25,7 @@
      - 保持精炼：**不再要求 CVSS 向量**，也不要把长篇过程写进来。
    - 裁决为 `duplicate` / `ignored` / `needs-human` 时**不写漏洞报告**，只在裁决 reason 里说明；重复项用 `--duplicate-of` 指回原漏洞。
    - 截图存 `{run_dir}/artifacts/evidence/`，报告里用相对路径引用。**只允许能证明漏洞存在的关键证据**（关键响应 / 关键页面 / 关键数据回显），每个漏洞 **0-3 张**，禁止无关界面截图；图片文件名同样必须是纯 ASCII。
+   - 非证据的复测原始输出（抓包流水、批量响应、临时脚本）写 `{run_dir}/artifacts/work/`，与截图证据分开：evidence/ 进漏洞证据链，work/ 只留档，不能作为裁决证据。
 4. **提交结构化裁决**：
    - 确认成立：`axiom review decision submit verified --reason "精炼理由(1-3句)"`；理由要精炼、专业、直击裁决要害。
    - 历史重复：`axiom review decision submit duplicate --duplicate-of vXXX --reason "..."`

@@ -37,7 +37,7 @@
 
    外网还没撕开口子时，不要把匿名后端域名的盲模糊测试写成 lead——没有接口来源和鉴权模型的盲 fuzz 换不到积分，只会烧掉后续 worker 的预算。
 
-证据写入 `{run_dir}/evidence/`（基线请求响应、调试导出、授权对照等），在 leads 里以 `evidence/<file>` 引用，完成时会自动登记进产物中心。不写 `{}`、`[]` 这类空占位文件。
+证据写入 `{run_dir}/evidence/`（基线请求响应、调试导出、授权对照等），在 leads 里以 `evidence/<file>` 引用，完成时会自动登记进产物中心。不写 `{}`、`[]` 这类空占位文件。**不是证据、只是留档的原始值**（探测矩阵、批量抓取输出、扫描器原始结果、临时脚本）写 `{run_dir}/artifacts/work/`，同样自动登记，不要塞进 `evidence/`。
 
 注入块若含 `seed_vulnerabilities` 卡片：那是来源任务人工标记「红队可利用」的已验证漏洞种子。按卡内路径读取，把它们当作第一批优先入口线索并入 `initial_leads.md`（注明种子来源漏洞编号）；条目带 `evidence_storage_keys` 时把 key 原样写进对应 lead，并附前提与复现命令的一句话摘要，让下游 Explore 能按 key 取证据原文复现（存储根 = `{context_manifest_path}` 去掉末尾 `contexts/<task>/rNNNNNN/manifest.json`）。种子是历史结论，上报或深入前必须自行复现确认当前仍可利用。
 

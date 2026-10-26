@@ -221,16 +221,20 @@ class ExploreRunner:
             evidence_count = sum(
                 item.artifact_type == "explore.evidence" for item in outputs
             )
+            work_count = sum(
+                item.artifact_type == "explore.work" for item in outputs
+            )
             logger.warning(
                 "explore_closeout_core_fallback task_id=%s intent_id=%s lease_id=%s "
                 "original_reason=%r closeout_error=%r finish_confirmed=false "
-                "evidence_count=%s",
+                "evidence_count=%s work_count=%s",
                 execution_input.task_id,
                 execution_input.intent_id,
                 execution_input.lease_id,
                 reason,
                 str(exc),
                 evidence_count,
+                work_count,
             )
 
     @staticmethod

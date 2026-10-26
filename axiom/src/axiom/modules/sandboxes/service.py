@@ -373,17 +373,20 @@ class TaskSandboxManager:
             )
             self._backend_for_handle(handle).remove_path(handle, path=relative)
 
-    _PRESERVED_RUN_SUBDIRS = ("evidence", "artifacts")
+    # work/ 只为过渡期兼容：规范位置是 artifacts/work/，随 artifacts/ 一起保留；
+    # 早期 worker 习惯写在运行目录根的 work/，同样不能丢。
+    _PRESERVED_RUN_SUBDIRS = ("evidence", "artifacts", "work")
 
     def _preserve_run_outputs(
         self, *, run_dir: Path, task_id: str, owner_id: str, lease_id: str
     ) -> None:
         """Rescue small durable outputs before the run directory is removed.
 
-        Workers write ``evidence/`` (pen-test evidence files) and reviewers write
-        ``artifacts/`` (review conclusions + minimal retests) inside the run
-        directory. Those must outlive the run: sessions, model snapshots and
-        process logs are the bloat cleanup targets, these subdirectories are not.
+        Workers write ``evidence/`` (pen-test evidence files), ``artifacts/work/``
+        (raw records that are not evidence) and reviewers write ``artifacts/``
+        (review conclusions + minimal retests) inside the run directory. Those
+        must outlive the run: sessions, model snapshots and process logs are the
+        bloat cleanup targets, these subdirectories are not.
         """
         for name in self._PRESERVED_RUN_SUBDIRS:
             source = run_dir / name

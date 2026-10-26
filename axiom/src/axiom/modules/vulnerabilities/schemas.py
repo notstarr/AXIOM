@@ -66,6 +66,11 @@ class ExploreVulnerabilityReport(VulnerabilityDetails):
         normalized: list[str] = []
         for raw in value:
             path = PurePosixPath(raw.strip())
+            if path.parts and path.parts[0] in {"work", "artifacts"}:
+                raise ValueError(
+                    "证据路径必须是 evidence/<file>；work/ 只放不上报的原始记录，"
+                    "不能作为漏洞证据"
+                )
             if (
                 path.is_absolute()
                 or len(path.parts) < 2

@@ -1257,6 +1257,15 @@ def _bind_result_evidence(task_id: str, intent_id: str, ref: str) -> str:
     text = ref.strip()
     if text.startswith("artifact:"):
         return text
+    # work/ 是原始记录（探测矩阵、批量抓取、脚本），不是成果证据：
+    # 在发请求前就拒绝，避免把留档材料混进审核与计分链路。
+    normalized = text.lstrip("./")
+    head = normalized.split("/")
+    if head[:1] == ["work"] or head[:2] == ["artifacts", "work"]:
+        raise click.ClickException(
+            "原始记录不能作为成果证据：可复现证据写 artifacts/evidence/ 并用 "
+            "evidence/<file> 引用；work/ 只放不上报的原始记录。"
+        )
     path = Path(text)
     if not path.is_file():
         run_dir = os.environ.get("AXIOM_RUN_DIR", "").strip()

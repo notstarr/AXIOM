@@ -217,7 +217,8 @@ _CARD_DESCRIPTORS = {
     "knowledge": "项目知识条目；明细按 manifest details/ 按需读取",
     "artifacts": (
         "产物登记（按 intent 递增）：findings/leads 在 artifacts/<intent_id>/；"
-        "evidence 同目录 evidence/（review 抽查用）；资产清单在 artifacts/i001/；"
+        "evidence 同目录 evidence/（review 抽查用）；原始记录在同目录 work/"
+        "（只留档，不作证据、不计分）；资产清单在 artifacts/i001/；"
         "明细 manifest details/artifact/<hash>.json"
     ),
     "vulnerabilities": "漏洞记录；细节走漏洞库 CLI 与 review 记录，明细按 manifest details/ 按需读取",
