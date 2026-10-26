@@ -93,7 +93,15 @@ class PhaseBackend(BaseModel):
     available: int = 0
     priority: int = 0
     disabled: bool = False
-    connection_state: Literal["ready", "disabled", "cooldown"] = "ready"
+    # ``tripped`` is a cooldown that came from the circuit breaker rather than
+    # from an operator-chosen timestamp — the two mean different things on screen
+    # ("backing off after repeated failures" vs "someone paused this").
+    connection_state: Literal["ready", "disabled", "cooldown", "tripped"] = "ready"
+    cooldown_until: str | None = None
+    transient_failure_count: int = 0
+    trip_count: int = 0
+    last_failure_at: str | None = None
+    last_failure_kind: str = ""
     capabilities: list[Phase] = Field(default_factory=list)
 
 

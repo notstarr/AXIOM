@@ -5,12 +5,16 @@ from datetime import timedelta
 
 from sqlalchemy import Engine, select
 
+from axiom.dispatcher.queue import fifo_head, is_retry_blocked
 from axiom.dispatcher.schemas import ClaimAction, ClaimedIntent, ClaimedWork, DispatcherSnapshot
 from axiom.modules.dispatch.retry import retry_outcome
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
+from axiom.modules.dispatch.recovery import recover_parked
 from axiom.modules.dispatch.repository import DispatchRepository
 from axiom.modules.dispatch.schemas import (
+    AutoRecoveredWork,
+    DispatchStallObservation,
     RecoveredIntent,
     RecoveredPlanRun,
     RecoveredReasonRun,
@@ -22,6 +26,7 @@ from axiom.modules.reason.schemas import ClaimedReasonRun
 from axiom.modules.plan.repository import PlanRepository
 from axiom.modules.plan.schemas import ClaimedPlanRun
 from axiom.modules.graph.tables import intents
+from axiom.modules.tasks.tables import tasks
 from axiom.modules.vulnerability_reviews.schemas import ClaimedVulnerabilityReviewRun
 from axiom.modules.vulnerability_reviews.service import VulnerabilityReviewService
 from axiom.modules.settings.service import load_runtime_config
@@ -40,6 +45,87 @@ class DispatchService:
         self.plan = PlanRepository()
         self.reviews = reviews
         self.audit = AuditService(engine)
+
+    def recover_parked(self) -> RecoveryReport:
+        """Re-arm work items parked at their infrastructure retry limit.
+
+        Called on every Runner tick.  This is the only path that returns a parked
+        item to the queue without an operator, so it is what makes a transient
+        provider outage cost minutes instead of a dead Task.
+        """
+
+        now = utcnow()
+        with transaction(self.engine) as conn:
+            config = load_runtime_config(conn)
+            outcome = recover_parked(
+                conn, audit=self.audit, config=config, now=now
+            )
+        return RecoveryReport(
+            auto_recovered=[
+                AutoRecoveredWork(
+                    phase=item.phase,
+                    task_id=item.task_id,
+                    run_id=item.run_id,
+                    previous_infrastructure_retry_count=item.previous_retry_count,
+                    recovery_round=item.recovery_round,
+                )
+                for item in outcome.recovered
+            ],
+            recovery_exhausted=[
+                AutoRecoveredWork(
+                    phase=item.phase,
+                    task_id=item.task_id,
+                    run_id=item.run_id,
+                    previous_infrastructure_retry_count=item.previous_retry_count,
+                    recovery_round=item.recovery_round,
+                )
+                for item in outcome.exhausted
+            ],
+        )
+
+    def observe_stall(self, observation: DispatchStallObservation) -> DispatchStallObservation:
+        """Record that a Task has been idle with nothing claiming its work.
+
+        This is the last line of defence for the "nobody will ever move this
+        again" case: automatic recovery re-arms parked rows, so a Task that is
+        still idle afterwards is stuck on something recovery cannot see (an
+        exhausted recovery budget, a misconfigured limit, or a queue waiting on
+        a Worker that no longer exists).  It only writes an audit record — it
+        never changes scheduling state, so a false positive costs one log line.
+        """
+
+        with transaction(self.engine) as conn:
+            task = conn.execute(
+                select(tasks.c.id, tasks.c.project_id, tasks.c.status).where(
+                    tasks.c.id == observation.task_id
+                )
+            ).mappings().one_or_none()
+            if task is None or task["status"] != "running":
+                return observation.model_copy(update={"recorded": False})
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=task["project_id"],
+                    task_id=observation.task_id,
+                    worker="",
+                    event_type="task.dispatch_stalled",
+                    level="warning",
+                    message=(
+                        f"任务已空闲 {observation.idle_seconds} 秒且仍有待执行工作："
+                        f"可执行 {observation.ready_count}、已阻塞 {observation.parked_count}"
+                    ),
+                    payload={
+                        "idle_seconds": observation.idle_seconds,
+                        "ready_count": observation.ready_count,
+                        "parked_count": observation.parked_count,
+                        "hint": (
+                            "自动恢复未能让任务继续。请检查 Worker 后端是否可用、"
+                            "并发/重试限额是否配得过小，或该排队项是否已用尽自动恢复次数"
+                        ),
+                    },
+                ),
+            )
+        return observation.model_copy(update={"recorded": True})
 
     def snapshot(self) -> DispatcherSnapshot:
         with self.engine.connect() as conn:
@@ -193,13 +279,25 @@ class DispatchService:
                     f"排队的 {reason_run_id} 需等待前序结束"
                 )
             pending = self.reason.pending_runs_for_task(conn, task_id)
+            # The head is the first *ready* run, not the first pending row.
+            # ``pending_runs_for_task`` also returns rows parked at their
+            # infrastructure retry limit; treating one of those as the head made
+            # it reject every later run forever, while the dispatcher (which
+            # skips parked rows) never offered the parked one either.  Read the
+            # limit unlocked here — the authoritative budget check still runs
+            # under the settings lock inside _validate_claim.
+            limit = load_runtime_config(conn).infrastructure_retry_limit
             regular_pending = [item for item in pending if item.trigger != "plan"]
+            queue = regular_pending if regular_pending else pending
+            # A run that is itself parked is not "behind" anything: it is waiting
+            # on its own exhausted budget, so the FIFO check must not answer for
+            # it.  Let _validate_claim report the accurate "retry budget
+            # exhausted" instead of a misleading "not the queue head".
+            requested = next((item for item in queue if item.id == reason_run_id), None)
             expected = (
-                regular_pending[0]
-                if regular_pending
-                else pending[0]
-                if pending
-                else None
+                requested
+                if requested is not None and is_retry_blocked(requested, limit)
+                else fifo_head(queue, infrastructure_retry_limit=limit)
             )
             if run["status"] == "pending" and (
                 expected is None or expected.id != reason_run_id
@@ -317,20 +415,31 @@ class DispatchService:
                 raise ConflictError(
                     f"Task has pending or active Explore/Bootstrap Intent {incremental_owner}; Plan must wait"
                 )
-            pending_reason = next(
-                (
+            limit = load_runtime_config(conn).infrastructure_retry_limit
+            # A ReasonRun parked at its retry limit is not "waiting ahead" of
+            # the Plan — it will never run without recovery, so letting it block
+            # Plan parked the whole Task.  Only a *ready* ReasonRun holds Plan.
+            pending_reason = fifo_head(
+                [
                     item
                     for item in self.reason.pending_runs_for_task(conn, task_id)
                     if item.trigger != "plan"
-                ),
-                None,
+                ],
+                infrastructure_retry_limit=limit,
             )
             if pending_reason is not None:
                 raise ConflictError(
                     f"Task 已有排队中的 ReasonRun {pending_reason.id}，Plan 需等待前序结束"
                 )
             pending = self.plan.pending_runs_for_task(conn, task_id)
-            expected = pending[0] if pending else None
+            # Same rule as the Reason queue: a parked PlanRun reports its own
+            # exhausted budget rather than a misleading FIFO rejection.
+            requested = next((item for item in pending if item.id == plan_run_id), None)
+            expected = (
+                requested
+                if requested is not None and is_retry_blocked(requested, limit)
+                else fifo_head(pending, infrastructure_retry_limit=limit)
+            )
             if run["status"] == "pending" and (
                 expected is None or expected.id != plan_run_id
             ):
@@ -508,6 +617,22 @@ class DispatchService:
         if next_retry_at and parse_utc(next_retry_at) > parse_utc(now):
             raise ConflictError("Work retry delay has not elapsed")
 
+        # The work item's own state outranks the worker's: an item whose
+        # infrastructure budget is exhausted cannot run on *any* worker, so
+        # reporting "this worker is cooling down" would send the operator to fix
+        # the wrong thing.  Read the locked config here and report the item first.
+        conn.execute(
+            select(runtime_settings.c.id)
+            .where(runtime_settings.c.id == "runtime")
+            .with_for_update()
+        ).scalar_one_or_none()
+        config = load_runtime_config(conn)
+        if infrastructure_retry_count >= config.infrastructure_retry_limit:
+            raise ConflictError(
+                f"{owner_label} infrastructure retry budget exhausted; "
+                "manual or system recovery is required before another claim"
+            )
+
         worker = self.repository.worker_row(conn, worker_name)
         if worker is None:
             raise NotFoundError(f"Worker not found: {worker_name}")
@@ -523,17 +648,6 @@ class DispatchService:
         if self.repository.worker_active_count(conn, worker_name) >= worker["max_running"]:
             raise ConflictError("Worker has no free capacity")
 
-        conn.execute(
-            select(runtime_settings.c.id)
-            .where(runtime_settings.c.id == "runtime")
-            .with_for_update()
-        ).scalar_one_or_none()
-        config = load_runtime_config(conn)
-        if infrastructure_retry_count >= config.infrastructure_retry_limit:
-            raise ConflictError(
-                f"{owner_label} infrastructure retry budget exhausted; "
-                "manual or system recovery is required before another claim"
-            )
         if self.repository.global_active_count(conn) >= config.global_max_active_runs:
             raise ConflictError("Global active run limit reached")
         active_task_ids = self.repository.active_task_ids(conn)

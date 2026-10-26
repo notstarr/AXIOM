@@ -4,6 +4,7 @@ import random
 from collections.abc import Callable
 from datetime import datetime, timezone
 
+from axiom.dispatcher.queue import fifo_head, is_retry_blocked
 from axiom.dispatcher.schemas import (
     ACTIVE_WORK_STATUSES,
     ClaimAction,
@@ -201,13 +202,12 @@ class Reconciler:
 
         Such rows intentionally remain ``pending`` for auditability and
         operator recovery, but they must not be emitted as claim candidates
-        on every reconciliation tick.
+        on every reconciliation tick.  The predicate itself lives in
+        :mod:`axiom.dispatcher.queue` so the control plane validates FIFO
+        against exactly the same rule.
         """
 
-        return (
-            int(getattr(work, "infrastructure_retry_count", 0) or 0)
-            >= infrastructure_retry_limit
-        )
+        return is_retry_blocked(work, infrastructure_retry_limit)
 
     @staticmethod
     def _active_count(task: TaskSnapshot) -> int:
@@ -241,9 +241,17 @@ class Reconciler:
             ),
             key=lambda item: (item.created_at, item.id),
         )
+        # Filter before taking the head.  Slicing first pinned the queue to a
+        # parked run: the head was selected, then skipped as retry-blocked on
+        # the loop below, so nothing behind it could ever be claimed.  Readiness
+        # is shared with the claim endpoints (see dispatch.queue) so the
+        # dispatcher and the control plane cannot disagree about the head.
         regular_pending_reasons = [item for item in pending_reasons if item.trigger != "plan"]
-        selected_reason_queue = (
-            regular_pending_reasons[:1] if regular_pending_reasons else pending_reasons[:1]
+        reason_queue = regular_pending_reasons if regular_pending_reasons else pending_reasons
+        selected_reason_queue = fifo_head(
+            reason_queue,
+            infrastructure_retry_limit=infrastructure_retry_limit,
+            now=now,
         )
         candidates: list[IntentSnapshot | ReasonRunSnapshot | PlanRunSnapshot | ReviewRunSnapshot] = [
             *(
@@ -253,8 +261,8 @@ class Reconciler:
                 and item.status == "pending"
                 and item.kind in {"bootstrap", "explore"}
             ),
-            *selected_reason_queue,
-            *self._selected_plan_queue(task),
+            *([selected_reason_queue] if selected_reason_queue is not None else []),
+            *self._selected_plan_queue(task, infrastructure_retry_limit=infrastructure_retry_limit),
             *(
                 item
                 for item in task.review_runs
@@ -302,12 +310,18 @@ class Reconciler:
         return None
 
     @staticmethod
-    def _selected_plan_queue(task: TaskSnapshot) -> list[PlanRunSnapshot]:
+    def _selected_plan_queue(
+        task: TaskSnapshot,
+        *,
+        infrastructure_retry_limit: int,
+    ) -> list[PlanRunSnapshot]:
         """Return only the FIFO Plan head for this Task.
 
         A later Plan must remain pending until its predecessor has completed;
         selecting one head here mirrors Reason FIFO while keeping the queues
-        independent.
+        independent.  Readiness is applied before the head is taken, for the
+        same reason as the Reason queue: a parked head must not hold back the
+        Plans queued behind it.
         """
 
         pending = sorted(
@@ -318,7 +332,8 @@ class Reconciler:
             ),
             key=lambda item: (item.created_at, item.id),
         )
-        return pending[:1]
+        head = fifo_head(pending, infrastructure_retry_limit=infrastructure_retry_limit)
+        return [head] if head is not None else []
 
     @staticmethod
     def _work_priority(

@@ -24,6 +24,7 @@ from axiom.modules.workers.pi_config import (
     upstream_request_url,
     with_opencode_session,
 )
+from axiom.modules.dispatch import breaker
 from axiom.modules.workers.repository import WorkerRepository
 from axiom.modules.workers.schemas import (
     UpsertWorker,
@@ -155,7 +156,10 @@ class WorkerService:
                 if worker.disabled:
                     state = "disabled"
                 elif worker.cooldown_until and parse_utc(worker.cooldown_until) > now:
-                    state = "cooldown"
+                    # A cooldown the breaker produced is reported separately so
+                    # the page can say "已熔断" instead of "已停用", and offer the
+                    # one action that actually helps.
+                    state = "tripped" if worker.trip_count > 0 else "cooldown"
                 else:
                     state = "ready"
                 backends.append(
@@ -177,6 +181,11 @@ class WorkerService:
                         priority=worker.priority,
                         disabled=worker.disabled,
                         connection_state=state,
+                        cooldown_until=worker.cooldown_until,
+                        transient_failure_count=worker.transient_failure_count,
+                        trip_count=worker.trip_count,
+                        last_failure_at=worker.last_failure_at,
+                        last_failure_kind=worker.last_failure_kind,
                         capabilities=worker.capabilities,
                     )
                 )
@@ -235,6 +244,24 @@ class WorkerService:
         if worker is None:
             raise NotFoundError(f"Worker not found: {name}")
         return self._normalize_worker(worker)
+
+    def reset_breaker(self, name: str) -> Worker:
+        """Clear a Worker's circuit breaker ("立即恢复").
+
+        Separate from ``set_cooldown``: that endpoint writes an operator-chosen
+        timestamp and knows nothing about failure history, whereas this one
+        clears the history too, so the backend is treated as freshly healthy and
+        the next failure starts the ladder from the bottom again.
+        """
+
+        with transaction(self.engine) as conn:
+            worker = self.repository.get(conn, name)
+            if worker is None:
+                raise NotFoundError(f"Worker not found: {name}")
+            breaker.reset(conn, worker_name=name, now=utcnow())
+            refreshed = self.repository.get(conn, name)
+            assert refreshed is not None
+            return refreshed
 
     def set_capability(self, name: str, developer_role_supported: bool | None) -> Worker:
         """Persist a probed gateway capability reported by the Runner."""

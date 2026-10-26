@@ -26,6 +26,14 @@
     'retry_base_seconds',
     'retry_max_seconds',
     'worker_failure_cooldown_seconds',
+    'dispatch_stall_seconds',
+    'worker_failure_trip_after',
+    'worker_failure_cooling_factor',
+    'worker_failure_cooldown_max_seconds',
+    'worker_breaker_decay_seconds',
+    'retry_recovery_enabled',
+    'retry_recovery_quiet_seconds',
+    'retry_recovery_max_rounds',
     'bootstrap_execute_seconds',
     'bootstrap_conclude_seconds',
     'reason_execute_seconds',
@@ -120,7 +128,17 @@
     };
   }
 
+  // A queue entry can be parked: its infrastructure retry budget is exhausted,
+  // so no dispatch tick will ever pick it up. The service records that as
+  // activity_kind='retry_blocked' with the reason, and it must survive to the
+  // screen — showing a generic "等待 FIFO" hid a stalled task for hours.
+  function retryBlockedLabel(summary = '') {
+    const detail = String(summary || '').trim();
+    return detail ? `已阻塞 · ${detail}` : '已阻塞 · 等待自动恢复';
+  }
+
   function reasonActivitySummary(activityKind, status, summary = '') {
+    if (activityKind === 'retry_blocked') return retryBlockedLabel(summary);
     if (summary) return summary;
     return {
       pending: '等待可用的 Reason Worker 领取',
@@ -131,6 +149,7 @@
   }
 
   function planActivitySummary(activityKind, status, summary = '') {
+    if (activityKind === 'retry_blocked') return retryBlockedLabel(summary);
     if (summary) return summary;
     return {
       pending: '等待可用的 Plan Worker 领取',
@@ -162,6 +181,15 @@
       settings_version: run.settings_version,
       execute_timeout_seconds: run.execute_timeout_seconds,
       conclude_timeout_seconds: run.conclude_timeout_seconds,
+      // The service already records *why* a queued run is not running —
+      // 'retry_blocked' with a reason summary.  Dropping these fields here and
+      // replacing them with a fixed "等待 FIFO" sentence below is what made a
+      // parked queue look like a healthy wait for hours.
+      activity_kind: run.activity_kind || '',
+      activity_summary: run.activity_summary || '',
+      activity_tool: run.activity_tool || '',
+      activity_started_at: run.activity_started_at || null,
+      activity_updated_at: run.activity_updated_at || null,
       created_at: run.created_at,
     }));
     const planPhase = String(task.phase || '').toLowerCase() === 'plan';
@@ -189,28 +217,32 @@
       worker: qr.worker || '排队中',
       trigger: qr.trigger || 'scheduler',
       trigger_payload: qr.trigger_payload || {},
+      activity_kind: qr.activity_kind || '',
+      activity_summary: qr.activity_summary || '',
+      activity_tool: qr.activity_tool || '',
+      activity_started_at: qr.activity_started_at || null,
+      activity_updated_at: qr.activity_updated_at || null,
       created_at: qr.created_at,
     }));
     const isQueuedReasonPrimary = !activeReasonRun && !legacyReason && allQueuedReasons.length > 0;
     const queuedReasonDisplay = isQueuedReasonPrimary ? {
-      id: allQueuedReasons[0].id,
-      status: 'pending',
-      worker: '排队中',
-      trigger: allQueuedReasons[0].trigger,
-      trigger_payload: allQueuedReasons[0].trigger_payload,
-      activity_kind: 'pending',
-      activity_summary: '等待前序 Reason 完成后按 FIFO 领取',
-      activity_tool: '',
-      created_at: allQueuedReasons[0].created_at,
+      ...allQueuedReasons[0],
+      // Never overwrite the recorded activity: a parked run must read as parked.
+      activity_summary: reasonActivitySummary(
+        allQueuedReasons[0].activity_kind,
+        'pending',
+        allQueuedReasons[0].activity_summary,
+      ),
     } : null;
     const isQueuedPlanPrimary = !activePlanRun && allQueuedPlans.length > 0;
     const queuedPlanDisplay = isQueuedPlanPrimary ? {
       ...allQueuedPlans[0],
-      status: 'pending',
-      worker: '等待 Plan Worker',
-      activity_kind: 'pending',
-      activity_summary: '等待可用的 Plan Worker 按 FIFO 领取',
-      activity_tool: '',
+      worker: allQueuedPlans[0].worker || '等待 Plan Worker',
+      activity_summary: planActivitySummary(
+        allQueuedPlans[0].activity_kind,
+        'pending',
+        allQueuedPlans[0].activity_summary,
+      ),
     } : null;
     // 当主卡片展示的是排队中的第一项时，下方的叠放排队列表应当从第 2 项开始展示，避免重影自等
     const queuedReasons = isQueuedReasonPrimary ? allQueuedReasons.slice(1) : allQueuedReasons;
@@ -1087,6 +1119,12 @@
         guard_enabled: !!body?.enabled,
       }));
     }
+    if ((match = path.match(/^\/projects\/([^/]+)\/target-points$/)) && method === 'PUT') {
+      // 只送分值：目标文案由后端按 target_points 派生，前端不参与拼句子。
+      return mapTask(await request('PATCH', `/tasks/${match[1]}`, {
+        target_points: Number(body?.target_points),
+      }));
+    }
     if ((match = path.match(/^\/projects\/([^/]+)\/status$/)) && method === 'PUT') {
       const endpoint = body.status === 'stopped' ? 'stop' : 'resume';
       const payload = endpoint === 'resume'
@@ -1242,10 +1280,15 @@
       // keeps that ordering while walking backwards.
       const beforeId = query.get('before_id');
       if (beforeId) params.set('before_id', beforeId);
-      let events = (await request('GET', `/audit-events?${params}`)).map(mapGuardEvent);
+      // Decision and source must be filtered by the database.  Filtering the
+      // returned page in memory hid every match that fell outside it: with
+      // 11k+ ALLOW rows the newest page contains no BLOCK at all, so
+      // "block only" rendered an empty list next to a counter saying 19.
       const decision = query.get('decision');
-      if (decision && decision !== 'all') events = events.filter(item => item.decision.toLowerCase() === decision);
-      return events;
+      if (decision && decision !== 'all') params.set('decision', decision);
+      const source = query.get('source');
+      if (source && source !== 'all') params.set('decision_source', source);
+      return (await request('GET', `/audit-events?${params}`)).map(mapGuardEvent);
     }
 
     if (path === '/tool-hooks/events/stats' && method === 'GET') {

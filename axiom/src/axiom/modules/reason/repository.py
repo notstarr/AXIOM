@@ -572,6 +572,13 @@ class ReasonRepository:
                 claimed_at=None,
                 last_heartbeat_at=None,
                 next_retry_at=None if terminal else next_retry_at,
+                # See execution/repository.release: this is what makes the row
+                # eligible for automatic recovery once it has been quiet.
+                retry_blocked_at=(
+                    now
+                    if failure_class == "transient" and not terminal and next_retry_at is None
+                    else None
+                ),
                 last_failure_kind=failure_kind,
                 failure_class=failure_class,
                 retry_count=reason_runs.c.retry_count + (1 if failure_class == "execution" else 0),

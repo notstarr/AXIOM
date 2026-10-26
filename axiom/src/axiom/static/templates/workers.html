@@ -137,7 +137,8 @@
                 <div style="display:flex; flex-direction:column; gap:7px;">
                   <template x-for="backend in (workerCapabilityDrawerRecord()?.backends || [])" :key="`detail-backend-${backend.name}`">
                     <div class="sto-chip">
-                      <span class="sto-status" :class="backend.connection_state === 'ready' ? 'ok' : backend.connection_state === 'cooldown' ? 'warn' : 'off'"><i></i><span x-text="backend.name"></span></span>
+                      <span class="sto-status" :class="backend.connection_state === 'ready' ? 'ok' : backend.connection_state === 'tripped' ? 'bad' : backend.connection_state === 'cooldown' ? 'warn' : 'off'" :title="backendConnectionTitle(backend)"><i></i><span x-text="backend.name"></span></span>
+                      <button type="button" x-show="backend.connection_state === 'tripped' || backend.connection_state === 'cooldown'" @click="resetWorkerBreaker(backend.name)" class="sto-minibtn" style="padding:2px 8px; font-size:10px;" title="清除熔断并立即重新尝试该后端">立即恢复</button>
                       <b title="该后端全部阶段的合计占用 / max_running" x-text="`${backend.running}/${backend.max_running}`"></b>
                     </div>
                   </template>

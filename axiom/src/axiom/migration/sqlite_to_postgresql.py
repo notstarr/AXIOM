@@ -110,10 +110,25 @@ LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
     "vulnerability_review_runs": {
         "review_subject_type": "vulnerability",
         "red_team_result_id": None,
+        # pg0028: parking markers for automatic retry recovery.  A legacy export
+        # predates them, and importing a row as "never parked" is correct — there
+        # is no way to know whether it was, and inventing a parking time would let
+        # the first recovery pass re-arm an unknown backlog.
+        "retry_blocked_at": None,
+        "recovery_round": 0,
     },
     # The source SQLite export predates the probed developer-role capability.
     # Imported Workers stay unprobed, which keeps Pi on its default role.
-    "workers": {"developer_role_supported": None},
+    "workers": {
+        "developer_role_supported": None,
+        # pg0028 circuit-breaker state.  An imported Worker starts with a clean
+        # breaker: the legacy export carries no failure history, and a non-zero
+        # trip count would make a healthy backend look like it is backing off.
+        "transient_failure_count": 0,
+        "trip_count": 0,
+        "last_failure_at": None,
+        "last_failure_kind": "",
+    },
     "intents": {
         "human_intervention_required": False,
         "human_intervention_reason": "",
@@ -125,8 +140,24 @@ LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
         "dedup_fingerprint": "",
         "plan_metadata_json": "{}",
         "chain_id": None,
+        # pg0028 parking markers.  A legacy row imports as "never parked": there
+        # is no way to know whether it was, and inventing a parking time would let
+        # the first recovery pass re-arm an unknown backlog.
+        "retry_blocked_at": None,
+        "recovery_round": 0,
     },
     "red_team_chains": {"status_reason": ""},
+    # pg0028 parking markers.  A legacy row imports as "never parked": there is no
+    # way to know whether it was, and inventing a parking time would let the first
+    # recovery pass re-arm an unknown backlog.
+    "reason_runs": {
+        "retry_blocked_at": None,
+        "recovery_round": 0,
+    },
+    "plan_runs": {
+        "retry_blocked_at": None,
+        "recovery_round": 0,
+    },
 }
 
 # Columns present only in the frozen SQLite export.  They are validated as

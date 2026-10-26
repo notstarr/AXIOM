@@ -133,6 +133,20 @@ def set_worker_cooldown(
     return container.workers.set_cooldown(name, body.cooldown_until)
 
 
+@router.post("/{name}/breaker/reset", response_model=Worker)
+def reset_worker_breaker(
+    name: str,
+    container: Container = Depends(get_container),
+) -> Worker:
+    """Clear a Worker's circuit breaker so it is tried again immediately.
+
+    Distinct from ``POST /{name}/cooldown``: that sets a timestamp, this clears
+    the failure history that drives the escalating backoff.
+    """
+
+    return container.workers.reset_breaker(name)
+
+
 @router.post("/{name}/capability", response_model=Worker)
 def set_worker_capability(
     name: str,

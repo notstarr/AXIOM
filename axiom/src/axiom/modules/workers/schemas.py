@@ -44,6 +44,13 @@ class Worker(BaseModel):
     config: dict[str, Any]
     disabled: bool
     cooldown_until: str | None = None
+    # Circuit-breaker history.  ``cooldown_until`` alone cannot express "how
+    # badly is this backend failing", which is what decides whether to back off
+    # further or give it a clean slate.
+    transient_failure_count: int = 0
+    trip_count: int = 0
+    last_failure_at: str | None = None
+    last_failure_kind: str = ""
     # Whether the gateway accepts OpenAI's ``developer`` message role.
     # NULL = not probed yet, FALSE = confirmed refused (fall back to ``system``).
     developer_role_supported: bool | None = None

@@ -2191,6 +2191,9 @@ window.AxiomModules.graph = {
         tool_result: '分析结果',
         failed: '未完成',
         finished: '已完成',
+        // Parked: infrastructure retries are exhausted, so no tick will pick
+        // this run up again on its own.
+        retry_blocked: '已阻塞',
       };
       return labels[reason?.activity_kind] || labels[reason?.status] || '运行中';
     },

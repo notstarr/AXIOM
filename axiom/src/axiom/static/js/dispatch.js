@@ -189,87 +189,149 @@ window.AxiomModules.dispatch = {
     },
 
     async loadGuardAuditEvents() {
-      // First page only.  Nothing is dropped from the database; older rows are
-      // fetched as the list is scrolled, so 总记录 reflects everything stored
-      // rather than a hard cap.
+      // 第一页。库里什么都不删，更早的记录按需向后翻，所以「总记录」是
+      // 全库真值而不是当前页码的累加。
+      //
+      // 裁决与依据都由后端筛（payload_json 里的字段），不再取回一页之后
+      // 在内存里过滤：11k+ 条 ALLOW 之下，最新一页里一条 BLOCK 都没有，
+      // 于是「仅拦截」会显示 0 条，而左边的计数写着 19。
+      const seq = (this._guardAuditSeq || 0) + 1;
+      this._guardAuditSeq = seq;
       try {
         this.guardAudit.loading = true;
         this.guardAudit.all_events = [];
         this.guardAudit.cursor = '';
         this.guardAudit.has_more = true;
         this.guardAudit.total = 0;
+        this.guardAudit.window = this.guardAudit.page_window || 80;
         await this.fetchGuardAuditPage();
+        if (this._guardAuditSeq !== seq) return;
         this.applyGuardAuditFilter();
-        // Counters come from a SQL aggregate, not from the loaded page: with
-        // paging, "拦截" would otherwise show 22 and climb as the operator
-        // scrolls, and the rate would be computed over a partial set.
+        // 计数来自 SQL 聚合，不随分页变化（否则「拦截」会边滚边涨）。
         try {
           const statParams = new URLSearchParams();
           if (this.guardAudit.project_id) statParams.set('project_id', this.guardAudit.project_id);
-          this.guardAudit.stats = await this.api('GET', '/tool-hooks/events/stats?' + statParams.toString());
+          const stats = await this.api('GET', '/tool-hooks/events/stats?' + statParams.toString());
+          if (this._guardAuditSeq === seq) this.guardAudit.stats = stats;
         } catch (e) { /* counters fall back to the loaded rows */ }
       } catch (e) {
-        this.showToast('加载守门审计日志失败: ' + e.message, 'error');
+        if (this._guardAuditSeq === seq) this.showToast('加载守门审计日志失败: ' + e.message, 'error');
       } finally {
-        this.guardAudit.loading = false;
+        if (this._guardAuditSeq === seq) this.guardAudit.loading = false;
       }
     },
 
     async fetchGuardAuditPage() {
       if (!this.guardAudit.has_more || this.guardAudit.loading_more) return;
+      const seq = this._guardAuditSeq || 0;
       this.guardAudit.loading_more = true;
       try {
+        const limit = this.guardAudit.limit || 100;
         const params = new URLSearchParams();
-        params.set('limit', String(this.guardAudit.limit || 300));
+        params.set('limit', String(limit));
         if (this.guardAudit.project_id) params.set('project_id', this.guardAudit.project_id);
         if (this.guardAudit.cursor) params.set('before_id', this.guardAudit.cursor);
+        const decision = this.guardAudit.decision || 'all';
+        if (decision !== 'all') params.set('decision', decision);
+        const source = this.guardAudit.source || 'all';
+        if (source !== 'all') params.set('source', source);
         const page = await this.api('GET', '/tool-hooks/events?' + params.toString());
+        // 筛选条件在请求飞行途中被改掉了：这批结果属于旧的查询，丢掉。
+        if (this._guardAuditSeq !== seq) return;
         const rows = Array.isArray(page) ? page : [];
+        // 续加载（游标已存在）时把窗口一起放行，新到的一页当场可见；
+        // 首屏则保持 80 行，滚动到位再放。
+        const appending = Boolean(this.guardAudit.cursor);
         this.guardAudit.all_events = (this.guardAudit.all_events || []).concat(rows);
         // A short page means the end; otherwise remember the last id so the next
         // call continues strictly below it.
-        this.guardAudit.has_more = rows.length >= (this.guardAudit.limit || 300);
+        this.guardAudit.has_more = rows.length >= limit;
         if (rows.length) this.guardAudit.cursor = rows[rows.length - 1].id;
+        if (appending && rows.length) {
+          this.guardAudit.window = Number(this.guardAudit.window || 0) + rows.length;
+        }
         this.applyGuardAuditFilter();
       } finally {
-        this.guardAudit.loading_more = false;
+        if (this._guardAuditSeq === seq) this.guardAudit.loading_more = false;
       }
     },
 
     async loadMoreGuardAudit() {
+      // 先把已经取回但还没放进 DOM 的行放出来，再考虑向后端要下一页。
+      if (this.guardAuditWindowCapped()) return;
+      const events = this.guardAudit.events || [];
+      const shown = Number(this.guardAudit.window || 0);
+      if (shown < events.length) {
+        this.guardAudit.window = shown + (this.guardAudit.page_window || 80);
+        return;
+      }
       await this.fetchGuardAuditPage();
     },
 
+    // 服务端已经筛过了，这里只做一次浅拷贝给模板用；保留方法名是因为
+    // 模板和测试都按这个名字调用。
+    //
+    // 这里**不能**回退 window：续加载一页之后把可见行数重置回 80，列表会
+    // 在用户眼皮底下从 160 行缩回 80 行，滚动位置也随之跳。
     applyGuardAuditFilter() {
-      const all = this.guardAudit.all_events || [];
-      const decision = this.guardAudit.decision || 'all';
-      const source = this.guardAudit.source || 'all';
-      this.guardAudit.events = all.filter(item => {
-        const byDecision = decision === 'all'
-          || String(item.decision || '').toLowerCase() === decision;
-        // Matched against the displayed label (白名单 / 黑名单 / 小模型), not the
-        // internal enum, so the option the operator picks is the text they see.
-        const bySource = source === 'all' || this.guardAuditSourceLabel(item) === source;
-        return byDecision && bySource;
-      });
+      this.guardAudit.events = (this.guardAudit.all_events || []).slice();
+    },
+
+    // 模板只遍历窗口内的行。以前每条记录都排进 DOM 且每行都求值一次
+    // 明细原文（300 行白算 334 KB 字符串，整表重绘 528 ms）。现在明细用
+    // x-if 懒挂载，80 行约 33 ms、800 行约 38 ms。
+    //
+    // 窗口仍然要有上限：日志是全库 14k+ 条，纯滚动的无限增长最终会把 DOM
+    // 拖到几千行。到顶之后停在原地，请操作者用筛选缩小范围，而不是把整张
+    // 表塞进页面。
+    guardAuditViewRows() {
+      const events = this.guardAudit.events || [];
+      const size = Number(this.guardAudit.window || 0);
+      return size > 0 ? events.slice(0, size) : events;
+    },
+
+    guardAuditWindowCapped() {
+      return Number(this.guardAudit.window || 0) >= Number(this.guardAudit.max_window || 800);
+    },
+
+    guardAuditShownLabel() {
+      const events = this.guardAudit.events || [];
+      const shown = Math.min(Number(this.guardAudit.window || 0), events.length);
+      const total = this.guardAuditCounts().total;
+      if (this.guardAuditWindowCapped()) {
+        return `已显示前 ${shown} 条（已达上限，请用筛选缩小范围）`;
+      }
+      if (events.length < total) return `已显示 ${shown} 条 · 已取回 ${events.length}`;
+      return `已显示 ${shown} / ${events.length} 条`;
+    },
+
+    async onGuardAuditScroll(event) {
+      const el = event?.target;
+      if (!el || el.scrollHeight - el.scrollTop - el.clientHeight > 240) return;
+      if (this.guardAuditWindowCapped()) return;
+      const events = this.guardAudit.events || [];
+      const shown = Number(this.guardAudit.window || 0);
+      if (shown < events.length) {
+        this.guardAudit.window = shown + (this.guardAudit.page_window || 80);
+        return;
+      }
+      if (this.guardAudit.has_more) await this.fetchGuardAuditPage();
     },
 
     guardAuditSourceOptions() {
-      // Drawn from the stored aggregate so an option cannot vanish just because
-      // its rows have not been paged in yet.
+      // 值用内部枚举，显示用中文标签：后端按枚举筛，界面给中文。
       const stats = this.guardAudit.stats;
       const seen = new Set();
       if (stats && stats.by_source) {
-        for (const key of Object.keys(stats.by_source)) {
-          seen.add(this.guardAuditSourceLabel({ decision_source: key }));
-        }
+        for (const key of Object.keys(stats.by_source)) seen.add(key);
       } else {
         for (const e of (this.guardAudit.all_events || [])) {
-          seen.add(this.guardAuditSourceLabel(e));
+          if (e.decision_source) seen.add(e.decision_source);
         }
       }
-      const order = ['黑名单', '白名单', '小模型', '小模型未答', '未启用'];
-      return order.filter(label => seen.has(label));
+      const order = ['hard_rule', 'whitelist', 'model', 'fail_open', 'disabled'];
+      return order.filter(key => seen.has(key))
+        .map(key => ({ value: key, label: this.guardAuditSourceLabel({ decision_source: key }) }));
     },
 
     guardAuditCounts() {
@@ -418,6 +480,14 @@ window.AxiomModules.dispatch = {
         retry_base_seconds: data.retry_base_seconds ?? 15,
         retry_max_seconds: data.retry_max_seconds ?? 300,
         worker_failure_cooldown_seconds: data.worker_failure_cooldown_seconds ?? 30,
+        dispatch_stall_seconds: data.dispatch_stall_seconds ?? 1800,
+        worker_failure_trip_after: data.worker_failure_trip_after ?? 2,
+        worker_failure_cooling_factor: data.worker_failure_cooling_factor ?? 5,
+        worker_failure_cooldown_max_seconds: data.worker_failure_cooldown_max_seconds ?? 1800,
+        worker_breaker_decay_seconds: data.worker_breaker_decay_seconds ?? 3600,
+        retry_recovery_enabled: data.retry_recovery_enabled ?? true,
+        retry_recovery_quiet_seconds: data.retry_recovery_quiet_seconds ?? 900,
+        retry_recovery_max_rounds: data.retry_recovery_max_rounds ?? 5,
         bootstrap_execute_seconds: data.bootstrap_execute_seconds ?? 300,
         bootstrap_conclude_seconds: data.bootstrap_conclude_seconds ?? 120,
         reason_execute_seconds: data.reason_execute_seconds ?? 300,
@@ -886,6 +956,14 @@ window.AxiomModules.dispatch = {
         retry_base_seconds: Number(this.dispatchSettings.retry_base_seconds ?? 15),
         retry_max_seconds: Number(this.dispatchSettings.retry_max_seconds ?? 300),
         worker_failure_cooldown_seconds: Number(this.dispatchSettings.worker_failure_cooldown_seconds ?? 30),
+        dispatch_stall_seconds: Number(this.dispatchSettings.dispatch_stall_seconds ?? 1800),
+        worker_failure_trip_after: Number(this.dispatchSettings.worker_failure_trip_after ?? 2),
+        worker_failure_cooling_factor: Number(this.dispatchSettings.worker_failure_cooling_factor ?? 5),
+        worker_failure_cooldown_max_seconds: Number(this.dispatchSettings.worker_failure_cooldown_max_seconds ?? 1800),
+        worker_breaker_decay_seconds: Number(this.dispatchSettings.worker_breaker_decay_seconds ?? 3600),
+        retry_recovery_enabled: Boolean(this.dispatchSettings.retry_recovery_enabled ?? true),
+        retry_recovery_quiet_seconds: Number(this.dispatchSettings.retry_recovery_quiet_seconds ?? 900),
+        retry_recovery_max_rounds: Number(this.dispatchSettings.retry_recovery_max_rounds ?? 5),
         bootstrap_execute_seconds: Number(this.dispatchSettings.bootstrap_execute_seconds ?? 300),
         bootstrap_conclude_seconds: Number(this.dispatchSettings.bootstrap_conclude_seconds ?? 120),
         reason_execute_seconds: Number(this.dispatchSettings.reason_execute_seconds ?? 300),

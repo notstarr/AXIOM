@@ -233,6 +233,14 @@ class ExecutionRepository:
                 claimed_at=None,
                 last_heartbeat_at=None,
                 next_retry_at=None if terminal else next_retry_at,
+                # Stamp the parking time: the automatic recovery pass needs
+                # "parked since when" to decide a row is safe to re-arm, and it
+                # cannot infer it from "count at limit and no retry scheduled".
+                retry_blocked_at=(
+                    now
+                    if failure_class == "transient" and not terminal and next_retry_at is None
+                    else None
+                ),
                 last_failure_kind=failure_kind,
                 failure_class=failure_class,
                 activity_kind=(

@@ -164,6 +164,13 @@
           <div class="sto-field"><label>重试基准（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.retry_base_seconds" class="sto-input sto-num"></div>
           <div class="sto-field"><label>重试退避上限（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.retry_max_seconds" class="sto-input sto-num"></div>
           <div class="sto-field span2"><label>Worker 失败冷却（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.worker_failure_cooldown_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>熔断触发阈值（连续失败）</label><input type="number" min="1" x-model.number="dispatchSettings.worker_failure_trip_after" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>熔断冷却倍数</label><input type="number" min="1" x-model.number="dispatchSettings.worker_failure_cooling_factor" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>熔断冷却上限（秒）</label><input type="number" min="1" x-model.number="dispatchSettings.worker_failure_cooldown_max_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>熔断衰减窗口（秒）</label><input type="number" min="60" x-model.number="dispatchSettings.worker_breaker_decay_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>自动恢复静默窗口（秒）</label><input type="number" min="60" x-model.number="dispatchSettings.retry_recovery_quiet_seconds" class="sto-input sto-num"></div>
+          <div class="sto-field"><label>自动恢复次数上限</label><input type="number" min="0" x-model.number="dispatchSettings.retry_recovery_max_rounds" class="sto-input sto-num"></div>
+          <div class="sto-field span2"><label>任务停摆告警阈值（秒）</label><input type="number" min="60" x-model.number="dispatchSettings.dispatch_stall_seconds" class="sto-input sto-num"></div>
         </div>
       </div>
     </section>

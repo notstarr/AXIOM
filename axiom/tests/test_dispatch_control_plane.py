@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
 
 from axiom.dispatcher.loop import Dispatcher
 from axiom.dispatcher.schemas import ClaimedIntent, DispatcherSnapshot
+from axiom.modules.reason.tables import reason_runs
 from protocol_helpers import (
     claim_reason_run,
     complete_bootstrap,
@@ -422,3 +424,175 @@ def test_claim_transaction_enforces_configurable_per_task_review_limit(client) -
         json={"worker_name": "reviewer-a"},
     )
     assert second.status_code == 200, second.text
+
+
+def test_a_parked_reason_head_does_not_block_the_claim_of_a_healthy_tail(
+    client, engine
+) -> None:
+    """Regression: claim-side FIFO must skip a parked predecessor.
+
+    ``pending_runs_for_task`` returns rows parked at their infrastructure retry
+    limit.  Validating FIFO against that raw list rejected every later run
+    ("不是 Task 的 FIFO 队首"), so the dispatcher offering a healthy run was
+    useless — the exact second half of the RR004499 deadlock.
+    """
+
+    project = client.post("/api/v1/projects", json={"title": "FIFO"}).json()
+    task = _bootstrap_task(
+        client,
+        project_id=project["id"],
+        title="fifo-parked-head",
+        worker_name="worker-a",
+    )
+    client.put(
+        "/api/v1/workers/worker-a",
+        json={"capabilities": ["bootstrap", "reason", "explore"], "max_running": 4},
+    )
+    bootstrap_base = f"/api/v1/dispatch/tasks/{task['id']}/intents/i001"
+    bootstrap_claim = client.post(
+        f"{bootstrap_base}/claim",
+        json={"worker_name": "worker-a"},
+    ).json()
+    assert client.post(
+        f"{bootstrap_base}/start",
+        json={"lease_id": bootstrap_claim["lease_id"]},
+    ).status_code == 200
+    completed = complete_bootstrap(
+        client,
+        task_id=task["id"],
+        intent_id="i001",
+        lease_id=bootstrap_claim["lease_id"],
+    )
+    healthy_id = completed["next_reason_run_id"]
+
+    # Park an earlier run in front of it, mirroring rr004499 / rr004500.
+    parked_id = "rr000499"
+    with engine.begin() as conn:
+        source = conn.execute(
+            select(reason_runs).where(
+                reason_runs.c.task_id == task["id"],
+                reason_runs.c.id == healthy_id,
+            )
+        ).mappings().one()
+        conn.execute(
+            reason_runs.insert().values(
+                **{
+                    **dict(source),
+                    "id": parked_id,
+                    "status": "pending",
+                    "lease_id": None,
+                    "claimed_at": None,
+                    "last_heartbeat_at": None,
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                    "infrastructure_retry_count": 3,
+                    "next_retry_at": None,
+                    "last_failure_kind": "lease_expired",
+                    "failure_class": "transient",
+                    "activity_kind": "retry_blocked",
+                    "activity_summary": (
+                        "Reason 基础设施重试已达上限，等待人工或系统恢复：lease_expired"
+                    ),
+                }
+            )
+        )
+
+    # The read model must expose why the parked run is not running.  The UI used
+    # to overwrite these fields with a fixed "等待 FIFO" sentence, which is what
+    # made a stalled queue look like a healthy wait on screen.
+    queued = client.get(f"/api/v1/tasks/{task['id']}").json()["queued_reason_runs"]
+    parked = next(item for item in queued if item["id"] == parked_id)
+    assert parked["activity_kind"] == "retry_blocked"
+    assert "重试已达上限" in parked["activity_summary"]
+
+    response = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/reason-runs/{healthy_id}/claim",
+        json={"worker_name": "worker-a"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["reason_run_id"] == healthy_id
+
+
+def test_a_parked_reason_head_does_not_block_a_plan_claim(client, engine) -> None:
+    """A parked ReasonRun used to hold Plan forever ("Plan 需等待前序结束")."""
+
+    project = client.post("/api/v1/projects", json={"title": "FIFO"}).json()
+    task = _bootstrap_task(
+        client,
+        project_id=project["id"],
+        title="fifo-parked-plan",
+        worker_name="worker-a",
+    )
+    client.put(
+        "/api/v1/workers/worker-a",
+        json={"capabilities": ["bootstrap", "reason", "explore", "plan"], "max_running": 4},
+    )
+    bootstrap_base = f"/api/v1/dispatch/tasks/{task['id']}/intents/i001"
+    bootstrap_claim = client.post(
+        f"{bootstrap_base}/claim",
+        json={"worker_name": "worker-a"},
+    ).json()
+    assert client.post(
+        f"{bootstrap_base}/start",
+        json={"lease_id": bootstrap_claim["lease_id"]},
+    ).status_code == 200
+    completed = complete_bootstrap(
+        client,
+        task_id=task["id"],
+        intent_id="i001",
+        lease_id=bootstrap_claim["lease_id"],
+    )
+    healthy_reason_id = completed["next_reason_run_id"]
+
+    with engine.begin() as conn:
+        source = conn.execute(
+            select(reason_runs).where(
+                reason_runs.c.task_id == task["id"],
+                reason_runs.c.id == healthy_reason_id,
+            )
+        ).mappings().one()
+        conn.execute(
+            reason_runs.insert().values(
+                **{
+                    **dict(source),
+                    "id": "rr000498",
+                    "status": "pending",
+                    "lease_id": None,
+                    "claimed_at": None,
+                    "last_heartbeat_at": None,
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                    "infrastructure_retry_count": 3,
+                    "next_retry_at": None,
+                    "last_failure_kind": "lease_expired",
+                    "failure_class": "transient",
+                    "activity_kind": "retry_blocked",
+                }
+            )
+        )
+
+    # Park the healthy run as well.  A *ready* ReasonRun must keep blocking
+    # Plan; what this test isolates is that a *parked* one no longer does.
+    with engine.begin() as conn:
+        conn.execute(
+            reason_runs.update()
+            .where(
+                reason_runs.c.task_id == task["id"],
+                reason_runs.c.id == healthy_reason_id,
+            )
+            .values(infrastructure_retry_count=3, next_retry_at=None)
+        )
+
+    triggered = client.post(
+        f"/api/v1/tasks/{task['id']}/plan-runs/trigger",
+        json={"actor": "test", "trigger": "manual"},
+    )
+    assert triggered.status_code == 200, triggered.text
+    plan_id = triggered.json()["id"]
+    response = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/plan-runs/{plan_id}/claim",
+        json={"worker_name": "worker-a"},
+    )
+
+    assert response.status_code == 200, response.text

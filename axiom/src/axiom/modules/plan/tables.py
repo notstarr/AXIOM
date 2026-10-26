@@ -28,6 +28,13 @@ plan_runs = Table(
     Column("retry_count", Integer, nullable=False, default=0),
     Column("infrastructure_retry_count", Integer, nullable=False, default=0),
     Column("next_retry_at", UTCDateTimeText),
+    # Parked state: infrastructure retries are exhausted and no automatic retry
+    # is scheduled.  ``retry_blocked_at`` records when that happened (the
+    # recovery pass needs "quiet since when"), and ``recovery_round`` counts how
+    # many times automation has already re-armed this row so a permanently
+    # broken configuration stops retrying instead of looping.
+    Column("retry_blocked_at", UTCDateTimeText),
+    Column("recovery_round", Integer, nullable=False, server_default="0"),
     Column("last_failure_kind", String, nullable=False, default=""),
     Column("failure_class", String, nullable=False, default=""),
     Column("activity_kind", String, nullable=False, default=""),
@@ -103,3 +110,12 @@ plan_workspaces = Table(
     UniqueConstraint("task_id", "plan_run_id", "lease_id"),
 )
 Index("ix_plan_workspaces_task_status", plan_workspaces.c.task_id, plan_workspaces.c.status)
+
+# The recovery pass scans "parked and quiet since", which is a timestamp range
+# across every Task, so the index is partial: it only covers the parked rows and
+# stays empty for a healthy installation.
+Index(
+    "ix_plan_runs_retry_blocked_at",
+    plan_runs.c.retry_blocked_at,
+    postgresql_where=plan_runs.c.retry_blocked_at.is_not(None),
+)

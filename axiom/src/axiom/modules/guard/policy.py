@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shlex
@@ -10,7 +11,9 @@ from typing import Any
 import httpx
 
 from axiom.modules.guard.defaults import SYSTEM_PROMPT
+from axiom.modules.guard.prompts import effective_system_prompt
 from axiom.modules.guard.redact import redact
+from axiom.modules.guard.scripts import normalize_scripts
 from axiom.modules.guard.schemas import GuardDecision, GuardRequest
 
 
@@ -254,9 +257,60 @@ def _judge_input(normalized: dict[str, str], request: GuardRequest) -> tuple[str
     if phase:
         line += f"\n[phase] {phase}"
     try:
-        return redact(line)
+        masked, masked_count = redact(line)
+        block, block_count = _script_block(request)
+        return masked + block, masked_count + block_count
     except Exception:
         return "", 0
+
+
+def _script_block(request: GuardRequest) -> tuple[str, int]:
+    """Render the script snapshots appended after the command.
+
+    Redaction has to happen per script, not over the assembled text, for two
+    reasons.  A bare 64-character hex digest matches the credential heuristic, so
+    post-hoc masking replaced every digest with a placeholder; and the redactor's
+    assignment rule can consume past the value's delimiter, so masking a whole
+    block would silently swallow code that follows a suspicious-looking one.
+
+    Masking the body first and then hashing the *masked* text keeps the digest
+    honest: it describes exactly what the judge was given.
+
+    Returns ``(text, masked_count)``.  Calls with no script references get
+    ``("", 0)``, so their judge input stays byte-identical to before this existed.
+    """
+
+    scripts, status = normalize_scripts(
+        request.scripts, request.script_capture_status
+    )
+    if status == "not_applicable" and not scripts:
+        return "", 0
+    if status == "incomplete" and not scripts:
+        return (
+            "\n[script_capture_status] incomplete: 脚本正文未能完整获取，不可据此认为没有副作用",
+            0,
+        )
+    parts = ["\n[scripts]"]
+    masked_total = 0
+    for script in scripts:
+        content, masked = redact(script.content or "")
+        masked_total += masked
+        digest = hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()
+        path, path_masked = redact(script.path or "<无法确定的脚本>")
+        masked_total += path_masked
+        flags = "complete" if script.complete else "incomplete"
+        if script.read_error:
+            flags += f"; read_error={script.read_error}"
+        if script.truncated:
+            flags += "; truncated"
+        parts.append(f"{path} (sha256={digest}, {script.bytes} bytes, {flags})")
+        if content:
+            parts.append("<<<SCRIPT")
+            parts.append(content)
+            parts.append("SCRIPT")
+    if status == "incomplete":
+        parts.append("[script_capture_status] incomplete: 可能存在未附上的脚本或未读取到的内容")
+    return "\n".join(parts), masked_total
 
 
 def _model_decision(
@@ -296,7 +350,9 @@ def _model_decision(
                     "messages": [
                         {
                             "role": "system",
-                            "content": system_prompt.strip() or SYSTEM_PROMPT,
+                            "content": effective_system_prompt(
+                                system_prompt.strip() or SYSTEM_PROMPT
+                            ),
                         },
                         {
                             "role": "user",

@@ -4,6 +4,7 @@ from sqlalchemy import Engine
 
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
+from axiom.modules.guard.messages import platform_block
 from axiom.modules.guard.policy import evaluate, normalize
 from axiom.modules.guard.schemas import GuardDecision, GuardRequest
 from axiom.modules.settings.service import RuntimeSettingsService
@@ -42,6 +43,7 @@ class GuardService:
                 )
             else:
                 decision = observed
+        decision = _with_model_message(decision)
         # Only Explore is audited.  Bootstrap, Reason, Plan and Review still get
         # judged - the decision is returned to the worker either way - but their
         # tool calls are not what the operator reviews, and recording them turns
@@ -66,6 +68,10 @@ class GuardService:
                     "tool_call_id": request.tool_call_id,
                     "decision": decision.decision,
                     "reason": decision.reason,
+                    # The exact text the Worker received.  Stored alongside the
+                    # raw reason so "what the operator sees" and "what the agent
+                    # was told" stay distinguishable after the fact.
+                    "message": decision.message,
                     "source": decision.source,
                     "observed_decision": decision.observed_decision,
                     "observed_reason": decision.observed_reason,
@@ -89,3 +95,17 @@ class GuardService:
             )
         )
         return decision.model_copy(update={"event_id": event.id})
+
+
+def _with_model_message(decision: GuardDecision) -> GuardDecision:
+    """Attach the model-facing block message.
+
+    Only real verdicts get the platform framing.  ``disabled`` and ``whitelist``
+    allow-lists are not decisions about the operation, and a fail-open ALLOW is
+    the absence of a decision, so there is nothing to communicate for any of
+    them.  The audit-facing ``reason`` is never rewritten.
+    """
+
+    if decision.decision != "BLOCK" or decision.source not in {"hard_rule", "model"}:
+        return decision
+    return decision.model_copy(update={"message": platform_block(decision.reason)})

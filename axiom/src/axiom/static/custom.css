@@ -1322,6 +1322,7 @@
   .sto-status.ok > i { background: var(--sto-ok); }
   .sto-status.warn > i { background: var(--sto-warn); }
   .sto-status.err > i { background: var(--sto-danger); }
+  .sto-status.bad > i { background: var(--sto-danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sto-danger) 22%, transparent); }
   .sto-status.off > i { background: var(--sto-fg-3); }
 
   /* ═══════════ Worker 阵容卡 · 阶段身份色 ═══════════ */
@@ -1620,7 +1621,16 @@
   .ga-td-raw { width: 1%; white-space: nowrap; }
   .ga-raw { border: 0; background: none; padding: 0; cursor: pointer; font-size: 10px; color: var(--sto-fg-3); text-decoration: underline dotted; text-underline-offset: 2px; }
   .ga-raw:hover { color: var(--sto-accent); }
-  .ga-detail { margin: 6px 0 0; max-height: 280px; overflow: auto; white-space: pre-wrap; }
+  /* Plain white-on-light block.  The shared .sto-usage style is a dark terminal
+     panel meant for command output; the audit row is a document, so the raw
+     JSON reads better as ordinary text. */
+  .ga-detail {
+    margin: 6px 0 0; max-height: 280px; overflow: auto; white-space: pre-wrap;
+    background: #fff; color: #1f2937; border: 1px solid var(--sto-line);
+    border-radius: 8px; padding: 10px 12px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; line-height: 1.55; word-break: break-all;
+  }
 
   @media (max-width: 1100px) {
     .ga-table thead th:nth-child(6), .ga-table td:nth-child(6),
@@ -1831,3 +1841,194 @@ html body .goal-sentence input.goal-points-input:focus {
   align-content: flex-start;
 }
 .goal-sentence.is-focused { border-color: var(--accent, #0ea5e9); box-shadow: 0 0 0 3px var(--accent-light, rgba(14,165,233,.12)); }
+
+/* 概览页那颗「已得/目标 积分」胶囊：红队进行中时可点开改分母。
+   编辑态把那串 `222/1000` 里的分母换成输入框，外观仍是同一句数字，
+   所以只允许宽度变化，不换行、不撑高胶囊。 */
+.points-capsule { transition: border-color .15s ease, box-shadow .15s ease; }
+.points-capsule-editable { cursor: pointer; }
+.points-capsule-editable:hover { border-color: var(--sto-line-strong, #cbd5e1); box-shadow: 0 1px 2px rgba(15,23,42,.05); }
+/* 特异性要压过 apple.css 的
+   `input:not([type="checkbox"]):not([type="radio"]):not([type="file"])` (0,3,1)。 */
+html body .points-capsule input.points-capsule-input[type="number"],
+html body .points-capsule input.points-capsule-input {
+  -moz-appearance: textfield;
+  appearance: textfield;
+  /* 宽度只够放下 1–5 位数：胶囊在编辑态变宽是允许的，但高度必须与展示态
+     一致，否则整块右对齐的胶囊组会在进入编辑时下跳 5px。
+     span 是 text-lg + leading-none = 1.125rem，输入框按同一高度盒模型对齐。 */
+  box-sizing: border-box !important;
+  width: 3.4em !important;
+  min-width: 0 !important;
+  height: 1.125rem !important;
+  margin: 0 !important;
+  padding: 0 1px !important;
+  border: none !important;
+  border-bottom: 1px solid var(--sto-danger, #f43f5e) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--sto-danger, #f43f5e) !important;
+  font-size: 1.125rem !important;
+  font-weight: 700 !important;
+  font-variant-numeric: tabular-nums;
+  line-height: 1 !important;
+  vertical-align: baseline;
+  text-align: center;
+}
+html body .points-capsule input.points-capsule-input[type="number"]:focus,
+html body .points-capsule input.points-capsule-input:focus {
+  border: none !important;
+  border-bottom: 1px solid var(--sto-danger, #f43f5e) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+html body .points-capsule input.points-capsule-input[type="number"]:disabled,
+html body .points-capsule input.points-capsule-input:disabled { opacity: .5; }
+/* `appearance: textfield` 在 Chrome 上并不会收掉 number 的上下箭头（那是
+   ::-webkit-inner-spin-button），胶囊里多两个小三角会撑高整颗胶囊。 */
+html body .points-capsule input.points-capsule-input::-webkit-outer-spin-button,
+html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+  display: none;
+}
+
+/* ── 红队攻击血缘视图 ──────────────────────────────────────────────
+   版式：左侧 i001 一个起点框，单点扇出成曲线接进每条链的口子卡；链内
+   卡片横向排开、实心箭头推进；成果卡挂在发现者正下方，用竖直虚线相接。
+   与「起点 → 链路 → 成果」那张示意图同构，颜色跟随明/暗主题。 */
+.lineage-legend {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 8px 16px; border-bottom: 1px solid var(--sto-line, #e2e8f0);
+  background: var(--sto-panel, #fff); font-size: 11px; color: var(--sto-fg-3, #94a3b8);
+}
+.lineage-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.lineage-legend .lg-spacer { flex: 1; }
+.lg-line { display: inline-block; width: 24px; height: 0; border-top-width: 2px; border-top-style: solid; }
+.lg-line-fan { border-color: #94a3b8; }
+.lg-line-flow { border-color: #2563eb; }
+.lg-line-gap { border-top-style: dashed; border-color: #cbd5e1; }
+.lg-line-result { border-top-style: dashed; border-top-width: 1.5px; border-color: #fca5a5; }
+.lg-box { display: inline-block; width: 15px; height: 11px; border-radius: 3px; }
+.lg-box-intent { background: #eaf1fc; border: 1.5px solid #b7cdea; }
+.lg-box-result { background: var(--sto-panel, #fff); border: 1.5px solid #f6b3b3; }
+.lg-badge {
+  font-family: ui-monospace, Menlo, monospace; font-size: 9px; font-weight: 700;
+  color: #ea580c; background: #fff7ed; border: 1px solid #fed7aa;
+  border-radius: 4px; padding: 0 4px; white-space: nowrap;
+}
+
+.lineage-scroll { background: var(--sto-panel, #fff); }
+/* 缩放壳：宽度/高度由脚本设成「画布尺寸 × 缩放」，滚动条才对得上；
+   画布本身用 transform: scale，布局尺寸不变，实测高度不会被缩放污染。 */
+.lineage-zoomwrap { position: relative; overflow: hidden; flex: none; }
+.lineage-stage { position: relative; }
+
+.lineage-zoom-bar { display: inline-flex; align-items: center; gap: 4px; }
+.lineage-zoom-btn {
+  width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 6px; border: 1px solid var(--sto-line, #e2e8f0);
+  background: var(--sto-panel, #fff); color: var(--sto-fg-2, #475569);
+  font-size: 13px; font-weight: 700; line-height: 1; cursor: pointer;
+}
+.lineage-zoom-btn:hover { border-color: #94a3b8; color: var(--sto-fg, #0f172a); }
+.lineage-zoom-pct {
+  min-width: 42px; height: 22px; padding: 0 4px;
+  border-radius: 6px; border: 1px solid transparent; background: transparent;
+  font-size: 10.5px; font-weight: 700; color: var(--sto-fg-2, #475569);
+  font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.lineage-zoom-pct:hover { background: var(--sto-inset, #f1f5f9); }
+.sto-minibtn.is-on { border-color: #93c5fd; background: #eff6ff; color: #1d4ed8; }
+
+.lineage-root {
+  position: absolute; box-sizing: border-box; padding: 13px 16px;
+  border-radius: 14px; background: #f2f1e9; border: 1px solid #d8d4c2; color: #1f2937;
+}
+.lineage-root-title { font-size: 16px; font-weight: 800; letter-spacing: .3px; }
+.lineage-root-sub { margin-top: 4px; font-size: 10.5px; line-height: 1.4; color: #8b866f; }
+
+.lineage-lane-head {
+  position: absolute; box-sizing: border-box;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.lineage-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #2563eb; }
+.lineage-lane-title { font-size: 12px; font-weight: 700; color: var(--sto-fg, #0f172a); line-height: 1.45; }
+.lineage-lane-id { font-family: ui-monospace, Menlo, monospace; font-size: 10px; font-weight: 700; color: #94a3b8; }
+.lineage-lane-pts { font-size: 10.5px; font-weight: 800; color: #e0453f; font-variant-numeric: tabular-nums; }
+
+.lineage-card {
+  position: absolute; box-sizing: border-box; padding: 10px 14px 12px;
+  border-radius: 12px; background: #eaf1fc; border: 1.5px solid #b7cdea;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .05);
+}
+.lineage-card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.lineage-card-id {
+  font-family: ui-monospace, Menlo, monospace; font-size: 10px; font-weight: 700;
+  color: #2563eb; letter-spacing: .3px;
+}
+.lineage-goal { font-size: 12px; font-weight: 600; line-height: 1.62; color: #17356b; word-break: break-word; }
+.lineage-goal b, .lineage-sec b { font-weight: 800; margin-right: 5px; }
+.lineage-goal b { color: #2563eb; }
+.lineage-sec { margin-top: 6px; font-size: 10.5px; line-height: 1.62; color: #47638c; word-break: break-word; }
+.lineage-sec b { color: #1e3a72; }
+
+.lineage-result {
+  position: absolute; box-sizing: border-box; padding: 10px 14px 12px;
+  border-radius: 12px; background: var(--sto-panel, #fff);
+  border: 1.5px solid #f6b3b3; box-shadow: 0 2px 8px rgba(220, 38, 38, .07);
+}
+.lineage-result-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.lineage-result-pts {
+  font-size: 10px; font-weight: 800; color: #fff; background: #e0453f;
+  border-radius: 999px; padding: 2px 8px; letter-spacing: .2px;
+}
+.lineage-result-id {
+  margin-left: auto; font-family: ui-monospace, Menlo, monospace;
+  font-size: 10px; font-weight: 700; color: #94a3b8;
+}
+.lineage-result-title { font-size: 12.5px; font-weight: 700; color: #0f172a; line-height: 1.5; word-break: break-word; }
+.lineage-result-desc { margin-top: 5px; font-size: 10.5px; line-height: 1.6; color: #64748b; word-break: break-word; }
+
+/* 被省略的中间意图：夹在两张卡之间的箭头旁标一句 */
+.lineage-gap {
+  position: absolute; transform: translateX(-50%); white-space: nowrap;
+  font-size: 9.5px; font-weight: 600; color: #94a3b8;
+  background: var(--sto-panel, #fff); border: 1px dashed #dbe3ee;
+  border-radius: 999px; padding: 1px 7px;
+}
+
+.lineage-edges { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
+
+.lineage-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; min-height: 320px; color: var(--sto-fg-3, #94a3b8);
+}
+.lineage-empty p { font-size: 13.5px; font-weight: 650; color: var(--sto-fg-2, #475569); }
+.lineage-empty span { font-size: 11.5px; }
+
+/* 跨链接力徽章：标在目标意图卡头部，说明这条事实是从哪条链接过来的 */
+.lineage-card-src {
+  font-family: ui-monospace, Menlo, monospace; font-size: 9px; font-weight: 700;
+  color: #ea580c; background: #fff7ed; border: 1px solid #fed7aa;
+  border-radius: 4px; padding: 1px 5px; white-space: nowrap;
+}
+
+/* 暗色主题：卡片透出底色，文字提亮，避免整块白板 */
+.dark .lineage-scroll { background: #0b1220; }
+.dark .lineage-root { background: #1e293b; border-color: #3b4a5f; color: #e2e8f0; }
+.dark .lineage-root-sub { color: #94a3b8; }
+.dark .lineage-card { background: rgba(37, 99, 235, .16); border-color: rgba(96, 165, 250, .45); }
+.dark .lineage-goal { color: #cfe0ff; }
+.dark .lineage-goal b { color: #93c5fd; }
+.dark .lineage-sec { color: #a8bcd8; }
+.dark .lineage-sec b { color: #cfe0ff; }
+.dark .lineage-result { background: #111c2e; border-color: rgba(248, 113, 113, .5); }
+.dark .lineage-result-title { color: #e2e8f0; }
+.dark .lineage-result-desc { color: #94a3b8; }
+.dark .lineage-gap { background: #0b1220; border-color: #334155; }
+.dark .lineage-lane-title { color: #e2e8f0; }

@@ -5,12 +5,12 @@ import json
 import logging
 import os
 import re
-from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Engine, exists, func, or_, select, update
 
 from axiom.modules.dispatch.pool import json_list, narrow_pool_after_failure
+from axiom.modules.dispatch import breaker
 from axiom.modules.dispatch.retry import retry_blocked_event, retry_outcome
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
@@ -59,8 +59,7 @@ from axiom.modules.todos.schemas import (
     TodoSource,
 )
 from axiom.modules.todos.tables import todos
-from axiom.modules.workers.tables import workers
-from axiom.shared.clock import format_utc, parse_utc, utcnow
+from axiom.shared.clock import parse_utc, utcnow
 from axiom.shared.database import run_transaction, transaction
 from axiom.shared.errors import ConflictError, LeaseInactiveError, NotFoundError
 from axiom.shared.ids import allocate_id, id_counters
@@ -1540,14 +1539,12 @@ class ReasonService:
                     ),
                 )
             if failure_class == "transient" and run.worker:
-                cooldown = format_utc(
-                    parse_utc(now)
-                    + timedelta(seconds=config.worker_failure_cooldown_seconds)
-                )
-                conn.execute(
-                    update(workers)
-                    .where(workers.c.name == run.worker)
-                    .values(cooldown_until=cooldown, updated_at=now)
+                breaker.trip(
+                    conn,
+                    worker_name=run.worker,
+                    failure_kind=failure_kind,
+                    now=now,
+                    config=config,
                 )
             result = ReleasedReasonRun(
                 task_id=task_id,

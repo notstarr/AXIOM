@@ -8,6 +8,9 @@ from sqlalchemy import Engine, select
 
 from axiom.modules.audit.service import AuditService
 from axiom.modules.graph.tables import intents
+from axiom.modules.plan.tables import plan_runs
+from axiom.modules.reason.tables import reason_runs
+from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.modules.settings.service import RuntimeSettingsService
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.token_usage.service import TokenUsageService
@@ -63,6 +66,7 @@ class DiagnosticsService:
                 "is_current": runtime.applied_version >= runtime.version,
                 "applied_at": runtime.applied_at,
             },
+            "retry_recovery": self._retry_recovery(task_id, runtime.config),
             "worker_rankings": self._worker_rankings(events),
             "token_rankings": self.token_usage.rankings(
                 task_id=task_id,
@@ -184,6 +188,80 @@ class DiagnosticsService:
             boards[phase]["workers"] = sorted(workers, key=lambda item: (-item["completion_rate"], item["worker"]))
             boards[phase]["reasons"] = sorted(reasons[phase].values(), key=lambda item: (-item["count"], item["code"]))
         return {"boards": boards, "notes": ["统计基于已持久化的 Intent 生命周期事件；旧数据没有事件时不会臆造执行结果。"]}
+
+    def _retry_recovery(self, task_id: str, config) -> dict[str, Any]:
+        """Report why work is — or is not — moving, in recovery terms.
+
+        A parked row and a cooling-down Worker both look like "nothing is
+        happening" from the outside, and they need different fixes.  This is the
+        one place that says which one it is, and how many automatic recoveries
+        have already been spent on the row.
+        """
+
+        limit = int(getattr(config, "infrastructure_retry_limit", 3) or 3)
+        max_rounds = int(getattr(config, "retry_recovery_max_rounds", 5) or 0)
+        parked: list[dict[str, Any]] = []
+        with self.engine.connect() as conn:
+            for phase, table in (
+                ("intent", intents),
+                ("reason", reason_runs),
+                ("plan", plan_runs),
+                ("review", vulnerability_review_runs),
+            ):
+                rows = conn.execute(
+                    select(
+                        table.c.id,
+                        table.c.infrastructure_retry_count,
+                        table.c.retry_blocked_at,
+                        table.c.recovery_round,
+                        table.c.last_failure_kind,
+                    ).where(
+                        table.c.task_id == task_id,
+                        table.c.status == "pending",
+                        table.c.infrastructure_retry_count >= limit,
+                        table.c.next_retry_at.is_(None),
+                    )
+                ).mappings()
+                for row in rows:
+                    rounds = int(row["recovery_round"] or 0)
+                    parked.append(
+                        {
+                            "phase": phase,
+                            "id": row["id"],
+                            "infrastructure_retry_count": int(
+                                row["infrastructure_retry_count"] or 0
+                            ),
+                            "retry_blocked_at": row["retry_blocked_at"],
+                            "recovery_round": rounds,
+                            "max_rounds": max_rounds,
+                            "last_failure_kind": row["last_failure_kind"] or "",
+                            # True once automatic recovery is exhausted: from then
+                            # on nothing will move the row without a human.
+                            "needs_human": rounds >= max_rounds,
+                        }
+                    )
+        breakers = [
+            {
+                "worker": worker.name,
+                "trip_count": worker.trip_count,
+                "transient_failure_count": worker.transient_failure_count,
+                "last_failure_kind": worker.last_failure_kind,
+                "cooldown_until": worker.cooldown_until,
+                "tripped": worker.trip_count > 0 and bool(worker.cooldown_until),
+            }
+            for worker in self.workers.list()
+            if worker.trip_count or worker.transient_failure_count
+        ]
+        return {
+            "enabled": bool(getattr(config, "retry_recovery_enabled", True)),
+            "infrastructure_retry_limit": limit,
+            "quiet_seconds": int(getattr(config, "retry_recovery_quiet_seconds", 900) or 900),
+            "max_rounds": max_rounds,
+            "parked": parked,
+            "needs_human": [item for item in parked if item["needs_human"]],
+            "breakers": breakers,
+        }
+
 
 def _parse_time(value: str | None) -> datetime | None:
     if not value:

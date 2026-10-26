@@ -799,6 +799,36 @@ window.AxiomModules.workerTools = {
       this.workerPhaseBackendDraft = { ...this.workerPhaseBackendDraft, [phase]: current };
     },
 
+    backendConnectionTitle(backend) {
+      const state = backend?.connection_state;
+      if (state === 'tripped') {
+        const kind = backend?.last_failure_kind || '未知原因';
+        const trips = backend?.trip_count ?? 0;
+        const until = backend?.cooldown_until ? this.formatTime?.(backend.cooldown_until) ?? backend.cooldown_until : '—';
+        return `已熔断（第 ${trips} 次，${kind}），冷却至 ${until}`;
+      }
+      if (state === 'cooldown') {
+        const until = backend?.cooldown_until ? this.formatTime?.(backend.cooldown_until) ?? backend.cooldown_until : '—';
+        return `冷却中，至 ${until}`;
+      }
+      if (state === 'disabled') return '已停用';
+      return '可用';
+    },
+
+    async resetWorkerBreaker(name) {
+      if (!name) return;
+      try {
+        await this.api('POST', `/workers/${encodeURIComponent(name)}/breaker/reset`, {});
+        await Promise.all([
+          this.loadWorkerPhases?.(),
+          this.loadAxiomWorkersOverview?.({ preserveSelection: true }),
+        ]);
+        this.showToast(`${name} 已恢复，将立即重新尝试`);
+      } catch (error) {
+        this.showToast(error?.message || '恢复失败', 'error');
+      }
+    },
+
     async saveWorkerPhaseBackends(phase) {
       if (this.workerPhaseBackendsSaving?.[phase]) return;
       this.workerPhaseBackendsSaving = { ...this.workerPhaseBackendsSaving, [phase]: true };

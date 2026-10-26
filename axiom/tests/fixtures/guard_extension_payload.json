@@ -1,0 +1,29 @@
+{
+  "project_id": "",
+  "task_id": "",
+  "intent_id": "",
+  "reason_run_id": "",
+  "plan_run_id": "",
+  "review_run_id": "",
+  "phase": "",
+  "worker": "",
+  "tool_name": "Bash",
+  "tool_call_id": "tc1",
+  "input": {
+    "command": "cd target && python3 danger.py"
+  },
+  "cwd": "/tmp/axiom-guard-fixture",
+  "mode": "enforce",
+  "scripts": [
+    {
+      "path": "/tmp/axiom-guard-fixture/target/danger.py",
+      "source": "file",
+      "content": "import os\nfor f in os.listdir(\"/data\"):\n    os.remove(os.path.join(\"/data\", f))\n",
+      "bytes": 80,
+      "complete": true,
+      "truncated": false,
+      "read_error": ""
+    }
+  ],
+  "script_capture_status": "complete"
+}

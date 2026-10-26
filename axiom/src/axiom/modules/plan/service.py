@@ -9,6 +9,7 @@ from sqlalchemy import Engine, exists, select, update
 
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.dispatch.pool import json_list, narrow_pool_after_failure
+from axiom.modules.dispatch import breaker
 from axiom.modules.dispatch.retry import retry_blocked_message, retry_outcome
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
@@ -1038,6 +1039,17 @@ class PlanService:
                 if failure_class == "transient"
                 else json_list(run.worker_pool)
             )
+            if failure_class == "transient" and run.worker:
+                # Plan used to release its runs without ever cooling the backend
+                # that failed, so a broken Plan Worker kept being re-selected
+                # while Reason and Explore correctly stepped around it.
+                breaker.trip(
+                    conn,
+                    worker_name=run.worker,
+                    failure_kind=failure_kind,
+                    now=now,
+                    config=config,
+                )
             self.repository.abandon_open(conn, task_id=task_id, plan_run_id=plan_run_id, lease_id=lease_id, failure_reason=failure_kind or "plan_run_released", now=now)
             task = self.tasks.get(conn, task_id)
             if task is not None:

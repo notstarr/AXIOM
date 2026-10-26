@@ -123,6 +123,68 @@ def test_reconciler_skips_pending_work_blocked_by_infrastructure_retry_limit():
     assert Reconciler(now=lambda: NOW).calculate(snapshot) == []
 
 
+def test_a_parked_reason_head_does_not_hold_back_the_healthy_tail():
+    """Regression: one parked ReasonRun used to freeze the whole queue.
+
+    The head was sliced before the retry-blocked filter ran, so the parked row
+    was selected and then skipped — nothing behind it could ever be claimed and
+    the Task stopped reasoning entirely (observed as RR004499 blocking RR004500
+    for two hours).
+    """
+
+    parked = reason_run("t_001", 449)
+    parked.infrastructure_retry_count = 3
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                reason_runs=[parked, reason_run("t_001", 500)],
+            )
+        ],
+        workers=[worker("worker-a", capabilities=("reason",))],
+        limits=DispatchLimits(infrastructure_retry_limit=3),
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert [item.claim.reason_run_id for item in actions] == ["rr000500"]
+
+
+def test_a_parked_plan_head_does_not_hold_back_the_healthy_tail():
+    parked = plan_run("t_001", 1)
+    parked.infrastructure_retry_count = 3
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                plan_runs=[parked, plan_run("t_001", 2)],
+            )
+        ],
+        workers=[worker("worker-a", capabilities=("plan",))],
+        limits=DispatchLimits(infrastructure_retry_limit=3),
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert [item.claim.plan_run_id for item in actions] == ["pr000002"]
+
+
+def test_a_fully_parked_queue_is_not_schedulable():
+    """No ready head must mean "nothing to claim", not "take the parked one"."""
+
+    parked = reason_run("t_001", 449)
+    parked.infrastructure_retry_count = 3
+    snapshot = DispatcherSnapshot(
+        tasks=[TaskSnapshot(id="t_001", status="running", reason_runs=[parked])],
+        workers=[worker("worker-a", capabilities=("reason",))],
+        limits=DispatchLimits(infrastructure_retry_limit=3),
+    )
+
+    assert Reconciler(now=lambda: NOW).calculate(snapshot) == []
+
+
 def worker(name: str, *, capabilities=("explore",), running=0, max_running=1, priority=0):
     return WorkerSnapshot(
         name=name,

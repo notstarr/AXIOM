@@ -82,6 +82,28 @@ class RuntimeConfig(BaseModel):
     retry_base_seconds: int = Field(default=30, ge=1, le=3_600)
     retry_max_seconds: int = Field(default=300, ge=1, le=86_400)
     worker_failure_cooldown_seconds: int = Field(default=30, ge=1, le=3_600)
+    # Circuit breaker per Worker.  ``worker_failure_cooldown_seconds`` (above) is
+    # the first rung; each trip after ``worker_failure_trip_after`` consecutive
+    # transient failures multiplies it, up to the ceiling.  A backend quiet for
+    # ``worker_breaker_decay_seconds`` has its ladder reset, which is what
+    # replaces a success callback.
+    worker_failure_trip_after: int = Field(default=2, ge=1, le=50)
+    worker_failure_cooling_factor: int = Field(default=5, ge=1, le=100)
+    worker_failure_cooldown_max_seconds: int = Field(default=1_800, ge=1, le=86_400)
+    worker_breaker_decay_seconds: int = Field(default=3_600, ge=60, le=604_800)
+    # Automatic recovery of work parked at its infrastructure retry limit.  A
+    # parked row is re-armed once it has been quiet this long, which converts an
+    # upstream hiccup from a dead Task into a few lost minutes.  ``max_rounds``
+    # bounds how many times automation may do that before leaving the row for a
+    # human, so a permanently broken backend cannot retry forever.
+    retry_recovery_enabled: bool = True
+    retry_recovery_quiet_seconds: int = Field(default=900, ge=60, le=86_400)
+    retry_recovery_max_rounds: int = Field(default=5, ge=0, le=100)
+    # How long a running Task may sit with claimable-looking work and no claims
+    # before the Runner records a ``task.dispatch_stalled`` warning.  This is
+    # visibility only — it never changes scheduling.  Keep it above the retry
+    # recovery quiet window so recovery gets its chance first.
+    dispatch_stall_seconds: int = Field(default=1_800, ge=60, le=86_400)
     bootstrap_execute_seconds: int = Field(default=600, ge=60, le=86_400)
     bootstrap_conclude_seconds: int = Field(default=180, ge=30, le=7_200)
     reason_execute_seconds: int = Field(default=600, ge=60, le=7_200)
@@ -216,6 +238,20 @@ class RuntimeConfig(BaseModel):
             raise ValueError("lease_timeout_seconds must allow at least three heartbeats")
         if self.retry_max_seconds < self.retry_base_seconds:
             raise ValueError("retry_max_seconds cannot be smaller than retry_base_seconds")
+        if self.worker_failure_cooldown_max_seconds < self.worker_failure_cooldown_seconds:
+            raise ValueError(
+                "worker_failure_cooldown_max_seconds cannot be smaller than "
+                "worker_failure_cooldown_seconds"
+            )
+        if self.worker_breaker_decay_seconds <= self.worker_failure_cooldown_max_seconds:
+            # A ladder that cannot be outlived is a ladder that never resets: the
+            # decay window has to exceed the longest cooldown, or a backend that
+            # tripped at the ceiling is compared against a window it can never
+            # fill and keeps its escalated state forever.
+            raise ValueError(
+                "worker_breaker_decay_seconds must be greater than "
+                "worker_failure_cooldown_max_seconds"
+            )
         if self.network_proxy_mode != "off" and not self.network_proxy_url.strip():
             raise ValueError("network_proxy_url is required when proxy mode is enabled")
         if self.explore_execute_min_seconds > self.explore_execute_max_seconds:

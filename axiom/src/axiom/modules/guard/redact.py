@@ -329,6 +329,12 @@ _CLOUD_KEY = re.compile(
     r"|glpat-[A-Za-z0-9_-]{15,}"
     r"|xox[abprs]-[A-Za-z0-9-]{10,}"
     r"|sk_(?:live|test)_[A-Za-z0-9]{16,}"
+    # OpenAI-style keys, including the provider-prefixed forms (``sk-proj-``,
+    # ``sk-ant-``) and this deployment's own SiliconFlow keys.  AXIOM sends the
+    # judge script bodies as well as commands, and a deploy script or config file
+    # is exactly where such a key shows up, so it has to be masked here rather
+    # than hoped absent.
+    r"|sk-(?:[A-Za-z0-9]+-)*[A-Za-z0-9]{16,}"
     r"|AIza[0-9A-Za-z_-]{35}"
     r"|hsk_[A-Za-z0-9]{20,}"
     r"|-----BEGIN[ A-Z]*PRIVATE KEY-----"

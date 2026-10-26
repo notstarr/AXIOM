@@ -8,7 +8,12 @@ from axiom.dispatcher.schemas import ClaimedIntent, DispatcherSnapshot
 from axiom.modules.reason.schemas import ClaimedReasonRun
 from axiom.modules.plan.schemas import ClaimedPlanRun
 from axiom.modules.vulnerability_reviews.schemas import ClaimedVulnerabilityReviewRun
-from axiom.modules.dispatch.schemas import ClaimIntent, RecoverStaleIntents, RecoveryReport
+from axiom.modules.dispatch.schemas import (
+    ClaimIntent,
+    DispatchStallObservation,
+    RecoverStaleIntents,
+    RecoveryReport,
+)
 from axiom.modules.tasks.schemas import RunDeadlineReconcileReport
 
 
@@ -105,3 +110,32 @@ def recover_stale_intents(
     return container.dispatch.recover_stale(
         stale_after_seconds=body.stale_after_seconds,
     )
+
+
+@router.post("/recover-parked", response_model=RecoveryReport)
+def recover_parked_work(
+    container: Container = Depends(get_container),
+) -> RecoveryReport:
+    """Re-arm work parked at its infrastructure retry limit, once.
+
+    The Runner does this on every tick; this endpoint exists so an operator can
+    trigger one pass immediately (for example right after upgrading, when the
+    pre-existing parked rows carry no parking timestamp and are therefore not
+    eligible yet).
+    """
+
+    return container.dispatch.recover_parked()
+
+
+@router.post("/dispatch-stall", response_model=DispatchStallObservation)
+def report_dispatch_stall(
+    body: DispatchStallObservation,
+    container: Container = Depends(get_container),
+) -> DispatchStallObservation:
+    """Record that a Task has been idle with unclaimed work.
+
+    Called by the Runner once a Task crosses the stall threshold; it writes one
+    audit record and changes nothing else.
+    """
+
+    return container.dispatch.observe_stall(body)

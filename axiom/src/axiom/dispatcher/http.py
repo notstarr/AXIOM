@@ -281,6 +281,34 @@ class HttpControlPlane:
             )
         )
 
+    def recover_parked(self) -> RecoveryReport:
+        """Re-arm work parked at its infrastructure retry limit."""
+
+        return RecoveryReport.model_validate(
+            self._request("POST", "/dispatch/recover-parked", {})
+        )
+
+    def report_dispatch_stall(
+        self,
+        *,
+        task_id: str,
+        idle_seconds: int,
+        ready_count: int,
+        parked_count: int,
+    ) -> None:
+        """Ask the control plane to record one stalled-Task observation."""
+
+        self._request(
+            "POST",
+            "/dispatch/dispatch-stall",
+            {
+                "task_id": task_id,
+                "idle_seconds": idle_seconds,
+                "ready_count": ready_count,
+                "parked_count": parked_count,
+            },
+        )
+
     def start(
         self, work: ClaimedWork
     ) -> StartedIntent | StartedReasonRun | StartedPlanRun | StartedVulnerabilityReviewRun:

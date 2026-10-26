@@ -5,9 +5,8 @@ import logging
 from dataclasses import replace
 from pathlib import Path
 
-from datetime import timedelta
 
-from sqlalchemy import Engine, select, update
+from sqlalchemy import Engine, select
 
 from axiom.modules.artifacts.repository import ArtifactRepository
 from axiom.modules.audit.schemas import RecordAuditEvent
@@ -20,6 +19,7 @@ from axiom.modules.credentials.schemas import (
     WorkerCredentialSummary,
 )
 from axiom.modules.dispatch.pool import json_list, narrow_pool_after_failure
+from axiom.modules.dispatch import breaker
 from axiom.modules.dispatch.retry import retry_blocked_event, retry_outcome
 from axiom.modules.execution.repository import ExecutionRepository
 from axiom.modules.execution.schemas import (
@@ -58,13 +58,12 @@ from axiom.modules.reason.service import ReasonService
 from axiom.modules.sandboxes.service import TaskSandboxManager
 from axiom.modules.settings.service import load_runtime_config
 from axiom.modules.tasks.schemas import TaskScope
-from axiom.modules.workers.tables import workers
 from axiom.modules.skills.service import SkillService
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
 from axiom.modules.vulnerabilities.schemas import StoredExploreVulnerability, VulnerabilityReport
 from axiom.modules.vulnerability_reviews.service import VulnerabilityReviewService
 from axiom.modules.redteam.tables import red_team_results
-from axiom.shared.clock import format_utc, parse_utc, utcnow
+from axiom.shared.clock import utcnow
 from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, LeaseInactiveError, NotFoundError
 from axiom.shared.ids import allocate_id
@@ -1067,13 +1066,14 @@ class ExecutionService:
                     ),
                 )
             if command.failure_class == "transient" and row["worker"]:
-                cooldown = format_utc(
-                    parse_utc(now) + timedelta(seconds=config.worker_failure_cooldown_seconds)
-                )
-                conn.execute(
-                    update(workers)
-                    .where(workers.c.name == row["worker"])
-                    .values(cooldown_until=cooldown, updated_at=now)
+                # Escalating cooldown: one hiccup cools briefly, a backend that
+                # keeps failing backs off further.  See dispatch.breaker.
+                breaker.trip(
+                    conn,
+                    worker_name=row["worker"],
+                    failure_kind=command.failure_kind,
+                    now=now,
+                    config=config,
                 )
         if self.sandboxes is not None:
             try:

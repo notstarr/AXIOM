@@ -10,6 +10,9 @@ window.AxiomModules.state = {
     _navigatingBack: false,
     view: 'list',
     humanTab: 'workspace',
+    // 血缘视图的缩放档位：0 表示还没算过，首帧按「适应宽度」定
+    lineageScale: 0,
+    lineageFit: 'width',
     darkMode: false,
     showGlobalSearch: false,
     globalSearchQuery: '',
@@ -193,6 +196,8 @@ window.AxiomModules.state = {
     vulnStatusQuick: { open: false, project_id: '', id: '', title: '', status: '待验证' },
     reopenForm: { projectId: '', projectTitle: '', description: '' },
     renameForm: { projectId: '', originalTitle: '', title: '' },
+    // 概览页胶囊里的目标积分编辑态：open 时胶囊换成 number input。
+    pointsEdit: { open: false, taskId: '', value: 0, saving: false },
     crawlerTargetUrl: '',
     crawlerStarting: false,
     crawlerStatus: null,
@@ -252,7 +257,9 @@ window.AxiomModules.state = {
     dingtalkTesting: false,
     // all_events is the task-scoped set the counters read; events is the same
     // list filtered by the selected verdict for display.
-    guardAudit: { events: [], all_events: [], loading: false, loading_more: false, has_more: false, cursor: '', total: 0, stats: null, decision: 'all', source: 'all', project_id: '', limit: 300, expanded: {} },
+    // limit 是每页取回条数，page_window 是每次放进 DOM 的行数：300 行整表
+    // 重绘实测 528 ms，80 行降到百毫秒级，滚到底再放行下一段。
+    guardAudit: { events: [], all_events: [], loading: false, loading_more: false, has_more: false, cursor: '', total: 0, stats: null, decision: 'all', source: 'all', project_id: '', limit: 100, page_window: 80, window: 80, max_window: 800, expanded: {} },
     dispatchSettings: {
       runner_interval_seconds: 3,
       global_max_active_runs: 15,
@@ -267,6 +274,14 @@ window.AxiomModules.state = {
       retry_base_seconds: 30,
       retry_max_seconds: 300,
       worker_failure_cooldown_seconds: 30,
+      dispatch_stall_seconds: 1800,
+      worker_failure_trip_after: 2,
+      worker_failure_cooling_factor: 5,
+      worker_failure_cooldown_max_seconds: 1800,
+      worker_breaker_decay_seconds: 3600,
+      retry_recovery_enabled: true,
+      retry_recovery_quiet_seconds: 900,
+      retry_recovery_max_rounds: 5,
       bootstrap_execute_seconds: 600,
       bootstrap_conclude_seconds: 180,
       reason_execute_seconds: 600,

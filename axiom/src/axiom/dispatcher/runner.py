@@ -14,10 +14,11 @@ from axiom.dispatcher.explore import ExploreRunner
 from axiom.dispatcher.heartbeat import LeaseLostError
 from axiom.dispatcher.http import ControlPlaneError
 from axiom.dispatcher.loop import Dispatcher
+from axiom.dispatcher.queue import is_retry_blocked
 from axiom.dispatcher.reason import ReasonRunner
 from axiom.dispatcher.plan import PlanRunner
 from axiom.dispatcher.review import ReviewRunner
-from axiom.dispatcher.schemas import ClaimedWork, DispatchReport
+from axiom.dispatcher.schemas import ACTIVE_WORK_STATUSES, ClaimedWork, DispatchReport
 from axiom.modules.execution.schemas import ActivityCommand, ReleaseIntentCommand
 from axiom.modules.reason.schemas import ClaimedReasonRun
 from axiom.modules.plan.schemas import ClaimedPlanRun
@@ -73,6 +74,11 @@ class AxiomRunner:
             gateway_service_token=getattr(control_plane, "service_token", ""),
         )
         self._futures: dict[Future, tuple[ClaimedWork, threading.Event]] = {}
+        # Consecutive ticks each Task has been running-but-idle.  A Task that
+        # cannot make progress on its own is only visible as the absence of
+        # events, so it has to be counted rather than queried.
+        self._idle_ticks: dict[str, int] = {}
+        self._stall_reported: set[str] = set()
         self._lock = threading.Lock()
         # A completed Future releases a local runner slot.  Wake the loop as
         # soon as that happens so a pending Intent can be claimed immediately
@@ -96,6 +102,17 @@ class AxiomRunner:
         recover = getattr(self.control_plane, "recover_stale", None)
         if recover is not None:
             recover(stale_after_seconds=self.lease_timeout_seconds)
+        # Automatic recovery runs after stale-lease recovery: a lease that just
+        # expired becomes a retryable row first, and only a row that is *parked*
+        # (budget exhausted, no retry scheduled) is what this pass re-arms.
+        recover_parked = getattr(self.control_plane, "recover_parked", None)
+        if recover_parked is not None:
+            try:
+                recover_parked()
+            except Exception:
+                # A recovery hiccup must not stop dispatch; the next tick retries
+                # and the parked row is still parked, so nothing is lost.
+                logger.warning("automatic retry recovery failed", exc_info=True)
         self._reap_finished()
         snapshot = self.control_plane.snapshot()
         self._cancel_inactive_tasks(snapshot)
@@ -107,6 +124,10 @@ class AxiomRunner:
                 acknowledge(settings_version)
             self._applied_settings_version = settings_version
         if available_slots <= 0:
+            # No local slot, but the snapshot still tells us whether a Task is
+            # idle with work waiting; a saturated Runner is exactly when a stall
+            # is most likely to go unnoticed.
+            self._observe_stalls(snapshot, None)
             return DispatchReport()
         report = self.dispatcher.tick(max_claims=available_slots, snapshot=snapshot)
         for work in report.claims:
@@ -118,6 +139,7 @@ class AxiomRunner:
             # completes synchronously cannot notify the loop before the slot
             # is visible to ``_reap_finished``.
             future.add_done_callback(self._on_future_done)
+        self._observe_stalls(snapshot, report)
         return report
 
     def run_forever(
@@ -357,6 +379,90 @@ class AxiomRunner:
             for work, cancellation in self._futures.values():
                 if work.task_id not in active_task_ids:
                     cancellation.set()
+
+    def _observe_stalls(self, snapshot, report) -> None:
+        """Warn once when a running Task stops producing claims.
+
+        A stalled Task emits no events, so it cannot be detected by watching
+        activity — only by the absence of it.  Parked rows are counted apart
+        from ready ones because they point at different causes (recovery vs
+        capacity), and the whole check is observation only: it never touches
+        scheduling state, so a false positive costs one audit line.
+
+        The threshold is deliberately longer than the automatic recovery quiet
+        window; by the time this fires, recovery has already had its chance.
+        """
+
+        reporter = getattr(self.control_plane, "report_dispatch_stall", None)
+        if reporter is None:
+            return
+        config = self._last_runtime_config
+        threshold = int(getattr(config, "dispatch_stall_seconds", 1800) or 1800)
+        interval = max(1.0, float(self.runner_interval_seconds or 3.0))
+        threshold_ticks = max(1, int(round(threshold / interval)))
+
+        claimed_task_ids = {work.task_id for work in report.claims} if report is not None else set()
+        for task in snapshot.tasks:
+            if task.status != "running":
+                self._forget_stall(task.id)
+                continue
+            ready, parked = self._pending_work_counts(task)
+            if (
+                task.id in claimed_task_ids
+                or self._active_work_count(task) > 0
+                or (ready == 0 and parked == 0)
+            ):
+                # Progress is being made, or there is nothing left to make it
+                # with.  Either way this Task is not stalled.
+                self._forget_stall(task.id)
+                continue
+            ticks = self._idle_ticks.get(task.id, 0) + 1
+            self._idle_ticks[task.id] = ticks
+            if ticks < threshold_ticks or task.id in self._stall_reported:
+                continue
+            self._stall_reported.add(task.id)
+            try:
+                reporter(
+                    task_id=task.id,
+                    idle_seconds=int(ticks * interval),
+                    ready_count=ready,
+                    parked_count=parked,
+                )
+            except Exception:
+                # Reporting must never break the dispatch loop: this runs on the
+                # only path that keeps work moving.  Clear the dedupe marker so
+                # the next tick tries again instead of staying silent forever.
+                self._stall_reported.discard(task.id)
+                logger.warning("failed to report dispatch stall for %s", task.id, exc_info=True)
+
+    def _forget_stall(self, task_id: str) -> None:
+        self._idle_ticks.pop(task_id, None)
+        self._stall_reported.discard(task_id)
+
+    @staticmethod
+    def _active_work_count(task) -> int:
+        return sum(
+            1
+            for collection in (task.intents, task.reason_runs, task.plan_runs, task.review_runs)
+            for item in collection
+            if item.status in ACTIVE_WORK_STATUSES
+        )
+
+    def _pending_work_counts(self, task) -> tuple[int, int]:
+        """``(ready, parked)`` pending work for one Task."""
+
+        config = self._last_runtime_config
+        limit = int(getattr(config, "infrastructure_retry_limit", 3) or 3)
+        ready = parked = 0
+        for collection in (task.intents, task.reason_runs, task.plan_runs, task.review_runs):
+            for item in collection:
+                if item.status != "pending":
+                    continue
+                if is_retry_blocked(item, limit):
+                    parked += 1
+                else:
+                    ready += 1
+        return ready, parked
 
     def _refresh_runtime_settings(self) -> int:
         provider = getattr(self.control_plane, "runtime_settings", None)
