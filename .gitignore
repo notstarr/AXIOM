@@ -49,3 +49,19 @@ axiom/ops.html
 axiom/nologin.txt
 ws_probe_i195.js
 
+
+# 密钥与凭据台账：绝不要提交
+*.pem
+VPS_ACCESS.md
+
+# 真实客户的渗透资料（生产库导出、攻击链、凭证来源）。本仓库是公开仓库，
+# 这些文件一旦推上去就等于把客户数据发布到互联网。只在本机保留。
+reports/
+
+# 内部交接文档：含生产主机地址、SSH 口令与凭据文件路径
+axiom/HANDOFF_*.md
+
+# Worker 抓回来的临时页面与构建产物
+axiom/body.tmp
+axiom/idx.html
+bsk-axiom-fork/target/

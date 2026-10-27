@@ -48,13 +48,29 @@ class ListenerManager:
         self._entries: dict[str, dict] = {}
         self._session_owner: dict[str, str] = {}
         self._watchdog: threading.Thread | None = None
+        self._watchdog_stop = threading.Event()
 
     # ---------------------------------------------------------- lifecycle
     def start_watchdog(self) -> None:
         if self._watchdog is not None:
             return
+        self._watchdog_stop.clear()
         self._watchdog = threading.Thread(target=self._watchdog_loop, daemon=True, name="c2-watchdog")
         self._watchdog.start()
+
+    def stop_watchdog(self) -> None:
+        """Let the sweep thread exit before the engine underneath it is disposed.
+
+        A daemon thread that outlives its engine keeps waking every 30 s and
+        reconnecting to a disposed pool; each attempt logs an exception nobody
+        can act on.  Under a test suite that creates one app per case those
+        strays pile up until PostgreSQL runs out of connection slots.
+        """
+
+        self._watchdog_stop.set()
+        thread, self._watchdog = self._watchdog, None
+        if thread is not None:
+            thread.join(timeout=5)
 
     def stop_all(self) -> None:
         """Release every socket without deciding the listener's fate.
@@ -74,8 +90,7 @@ class ListenerManager:
                 logger.exception("stop listener %s failed", listener_id)
 
     def _watchdog_loop(self) -> None:
-        while True:
-            time.sleep(30)
+        while not self._watchdog_stop.wait(30):
             try:
                 self._sweep()
             except Exception:  # noqa: BLE001

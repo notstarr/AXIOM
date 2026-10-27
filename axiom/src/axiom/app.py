@@ -123,7 +123,10 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
         app.state.container.storage_admin.stop_context_retention_loop()
 
     def _stop_c2_listeners() -> None:
+        # Both halves matter: the sockets go, and so does the sweep thread —
+        # otherwise it keeps polling the engine this shutdown is about to drop.
         app.state.container.c2.manager.stop_all()
+        app.state.container.c2.manager.stop_watchdog()
 
     app.router.on_shutdown.append(_stop_context_retention_loop)
     app.router.on_shutdown.append(_stop_c2_listeners)
