@@ -499,3 +499,63 @@ def test_bypass_shapes_are_closed() -> None:
     ):
         decision = evaluate(GuardRequest(tool_name="bash", input={"command": command}), config, "red_team")
         assert decision.decision == "ALLOW", command
+
+
+def test_a_blocked_call_carries_a_model_facing_platform_message(client) -> None:
+    """The Worker must be told the platform blocked it, not handed a bare reason.
+
+    ``reason`` stays the audit-facing text; ``message`` is what the agent reads.
+    Conflating them is what made blocks look like a target-side WAF, which a
+    red-team agent tries to bypass instead of routing around.
+    """
+
+    _mode(client, "enforce")
+    task = _task(client, enabled=True)
+
+    blocked = _decide(client, task, "passwd root")
+
+    assert blocked["decision"] == "BLOCK"
+    assert blocked["reason"] == "修改或重置用户密码"
+    assert blocked["message"].startswith("【AXIOM 平台管控·非目标防御】")
+    assert "修改或重置用户密码" in blocked["message"]
+    assert "此操作被禁止" in blocked["message"]
+
+
+def test_an_allowed_call_carries_no_platform_message(client) -> None:
+    """There is no decision to communicate on a pass, so nothing is injected."""
+
+    _mode(client, "enforce")
+    task = _task(client, enabled=True)
+
+    allowed = _decide(client, task, "cat /etc/hostname")
+
+    assert allowed["decision"] == "ALLOW"
+    assert allowed["message"] == ""
+
+
+def test_the_audit_record_keeps_both_the_reason_and_the_message(client) -> None:
+    _mode(client, "enforce")
+    task = _task(client, enabled=True)
+    blocked = _decide(client, task, "passwd root")
+
+    events = client.get(
+        "/api/v1/audit-events",
+        params={"task_id": task["id"], "event_type": "guard.decision"},
+    ).json()
+    payload = events[0]["payload"]
+
+    assert payload["reason"] == "修改或重置用户密码"
+    assert payload["message"].startswith("【AXIOM 平台管控·非目标防御】")
+
+
+def test_an_audit_only_block_does_not_message_the_worker(client) -> None:
+    """In audit mode the call runs, so framing it as forbidden would be a lie."""
+
+    _mode(client, "audit")
+    task = _task(client, enabled=True)
+
+    decision = _decide(client, task, "passwd root")
+
+    assert decision["decision"] == "ALLOW"
+    assert decision["observed_decision"] == "BLOCK"
+    assert decision["message"] == ""
