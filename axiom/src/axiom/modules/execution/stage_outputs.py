@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from axiom.modules.artifacts.repository import BOOTSTRAP_ARTIFACT_TYPES
 from axiom.modules.artifacts.schemas import Artifact
 from axiom.modules.vulnerabilities.schemas import StoredExploreVulnerability, Vulnerability
+from axiom.shared import run_outputs
 from axiom.shared.errors import ConflictError
 
 
@@ -53,10 +54,13 @@ WORK_DIR = "work"
 # 过渡兼容：早期 worker 习惯写在运行目录根的 work/（与 artifacts/ 平级）。
 # 同名时以 artifacts/work/ 为准。收口登记名统一成 work/<rel>，storage_key 落在
 # tasks/<task>/artifacts/<intent>/work/<rel>，和 evidence/ 同一套命名。
-WORK_MAX_FILES = 40
-WORK_MAX_FILE_BYTES = 10 * 1024 * 1024
-WORK_MAX_TOTAL_BYTES = 32 * 1024 * 1024
-_WORK_SKIP_DIRS = frozenset({"__pycache__", ".git", ".cache", "node_modules", ".venv"})
+# The bounds and the allowlist live in ``shared.run_outputs`` because the sandbox
+# cleanup path rescues leftovers and must apply exactly the same policy — when the
+# two disagreed, files refused here were copied out there, unregistered.
+WORK_MAX_FILES = run_outputs.MAX_FILES
+WORK_MAX_FILE_BYTES = run_outputs.MAX_FILE_BYTES
+WORK_MAX_TOTAL_BYTES = run_outputs.MAX_TOTAL_BYTES
+_WORK_SKIP_DIRS = run_outputs.SKIP_DIRECTORIES
 
 
 class StageOutputError(ConflictError):
@@ -432,6 +436,15 @@ def _collect_run_work(
                             WORK_MAX_FILE_BYTES // (1024 * 1024),
                             relative_name,
                             size,
+                        )
+                    continue
+                if not run_outputs.is_key_output(path.name):
+                    # ``work/`` is for key source data and scripts.  A bulk dump
+                    # or a binary blob is not a source sample: it belongs in a
+                    # reported evidence file, or nowhere.
+                    if emit_warnings:
+                        logger.warning(
+                            "原始记录只收关键源数据与脚本，已跳过：%s", relative_name
                         )
                     continue
                 collected[relative_name] = StageFile(

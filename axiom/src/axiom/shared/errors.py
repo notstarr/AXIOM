@@ -27,3 +27,16 @@ class LeaseInactiveError(ConflictError):
 class InvalidOriginError(DomainError):
     status_code = 422
     code = "invalid_origin"
+
+
+class StorageDiskFull(DomainError):
+    """The data volume cannot accept another write.
+
+    503 rather than 500: nothing is wrong with the request or with the worker
+    that sent it, and the correct response is to retry once an operator frees
+    space.  Without a distinct type this surfaces as an opaque ASGI 500 on every
+    work input at once, which is indistinguishable from every backend breaking.
+    """
+
+    status_code = 503
+    code = "storage_disk_full"

@@ -707,3 +707,90 @@ def test_review_complete_without_sandboxes_keeps_run_directory(
 
     assert completed.vulnerability_status == "已验证"
     assert legacy_dir.is_dir()
+
+
+# ---------------------------------------------------------------------------
+# work/ 只留关键源数据与脚本（不合规的丢弃，且不入登记）
+# ---------------------------------------------------------------------------
+def test_run_cleanup_drops_bulk_downloads_from_work(client) -> None:
+    """A bulk dump in ``work/`` must not be rescued.
+
+    Live incident: the rescue path copied ``work/`` wholesale while the conclude
+    collector registered at most 40 files / 10 MiB each / 32 MiB total.  One Task
+    therefore held 2 GiB of preserved raw files against 238 MiB of real
+    Artifacts — unregistered, invisible in the UI, and unbounded per lease.
+    """
+
+    _register_worker(client)
+    task = _new_task(client, title="原始记录剪枝")
+    lease_id = _claim_and_start_intent(client, task["id"])
+    run_dir = _materialize(client, task["id"], "i001", lease_id)
+    work = run_dir / "artifacts" / "work"
+    work.mkdir(parents=True, exist_ok=True)
+
+    # Key outputs: kept.
+    (work / "probe.py").write_text("print('ok')\n", encoding="utf-8")
+    (work / "sample.jsonl").write_text('{"a": 1}\n', encoding="utf-8")
+    # Not key outputs: dropped.
+    (work / "dump.bin").write_bytes(b"\x00" * 1024)
+    (work / "bulk.zip").write_bytes(b"PK\x03\x04" + b"\x00" * 1024)
+    # Key suffix but over the per-file bound: dropped.
+    (work / "huge.jsonl").write_bytes(b"x" * (11 * 1024 * 1024))
+
+    response = _release_intent(client, task["id"], "i001", lease_id, failure_class="execution")
+    assert response.status_code == 200, response.text
+
+    manager = client.app.state.container.sandboxes
+    preserved = (
+        manager.store.root / "tasks" / task["id"] / "evidence" / "i001" / lease_id / "artifacts" / "work"
+    )
+    assert (preserved / "probe.py").exists()
+    assert (preserved / "sample.jsonl").exists()
+    assert not (preserved / "dump.bin").exists()
+    assert not (preserved / "bulk.zip").exists()
+    assert not (preserved / "huge.jsonl").exists()
+
+
+def test_run_cleanup_skips_the_rescue_when_artifacts_are_already_registered(client) -> None:
+    """A committed run already stored what survived pruning; do not copy twice."""
+
+    _register_worker(client)
+    task = _new_task(client, title="已完成轮次不重复留档")
+    lease_id = _claim_and_start_intent(client, task["id"])
+    run_dir = _materialize(client, task["id"], "i001", lease_id)
+    work = run_dir / "artifacts" / "work"
+    work.mkdir(parents=True, exist_ok=True)
+    (work / "probe.py").write_text("print('ok')\n", encoding="utf-8")
+
+    manager = client.app.state.container.sandboxes
+    manager.cleanup_run_directory(
+        task_id=task["id"],
+        owner_id="i001",
+        lease_id=lease_id,
+        raw_records_registered=True,
+    )
+
+    assert not run_dir.exists()
+    preserved = manager.store.root / "tasks" / task["id"] / "evidence" / "i001" / lease_id
+    assert not (preserved / "artifacts" / "work" / "probe.py").exists()
+
+
+def test_key_output_allowlist_covers_scripts_and_source_samples() -> None:
+    from axiom.shared import run_outputs
+
+    for name in ("probe.py", "run.sh", "a.js", "d.jsonl", "t.csv", "x.txt", "s.sql", "n.md"):
+        assert run_outputs.is_key_output(name), name
+    for name in ("dump.bin", "bulk.zip", "a.exe", "x.tar", "img.png", "x.gz"):
+        assert not run_outputs.is_key_output(name), name
+
+
+def test_key_output_selection_respects_bounds(tmp_path) -> None:
+    from axiom.shared import run_outputs
+
+    (tmp_path / "a.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "b.bin").write_bytes(b"\x00" * 16)
+    (tmp_path / "c.jsonl").write_bytes(b"x" * (run_outputs.MAX_FILE_BYTES + 1))
+
+    kept = {path.name for path in run_outputs.select_preservable(tmp_path)}
+
+    assert kept == {"a.json"}

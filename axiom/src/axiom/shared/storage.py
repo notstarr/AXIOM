@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import re
@@ -8,7 +9,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
-from axiom.shared.errors import ConflictError, NotFoundError
+from axiom.shared.errors import ConflictError, NotFoundError, StorageDiskFull
 
 
 _SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -123,9 +124,20 @@ class FileStore:
                 temporary_path = staging_dir / Path(*relative_file.parts)
                 temporary_path.parent.mkdir(parents=True, exist_ok=True)
                 with temporary_path.open("wb") as handle:
-                    handle.write(payload)
-                    handle.flush()
-                    os.fsync(handle.fileno())
+                    try:
+                        handle.write(payload)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    except OSError as exc:
+                        if exc.errno == errno.ENOSPC:
+                            # A bare Errno 28 reaches the Runner as an opaque 500
+                            # on every work input at once, which reads as a broken
+                            # worker.  Say what actually happened and who fixes it.
+                            raise StorageDiskFull(
+                                "存储空间不足，无法写入 Agent 产物。"
+                                f"请清理磁盘后重试（目标路径 {temporary_path}）。"
+                            ) from exc
+                        raise
                 storage_key = str(base / relative_file)
                 prepared.append(
                     PreparedFile(

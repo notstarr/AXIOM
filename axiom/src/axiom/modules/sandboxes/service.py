@@ -23,6 +23,7 @@ from axiom.modules.sandboxes.tables import task_sandboxes
 from axiom.modules.tasks.tables import tasks
 from axiom.shared.clock import utcnow
 from axiom.shared.database import transaction
+from axiom.shared import run_outputs
 from axiom.shared.errors import ConflictError
 from axiom.shared.ids import allocate_id
 from axiom.shared.storage import FileStore
@@ -339,8 +340,22 @@ class TaskSandboxManager:
             destination=f"runs/{owner_id}/{lease_id}/{self._relative_worker_path(relative_path)}",
         )
 
-    def cleanup_run_directory(self, *, task_id: str, owner_id: str, lease_id: str) -> None:
-        """Remove only a successfully committed run's private directory."""
+    def cleanup_run_directory(
+        self,
+        *,
+        task_id: str,
+        owner_id: str,
+        lease_id: str,
+        raw_records_registered: bool = False,
+    ) -> None:
+        """Remove a run's private directory, rescuing anything durable first.
+
+        ``raw_records_registered`` says the conclude path already stored this
+        run's artifacts.  In that case nothing needs rescuing: the Artifact store
+        holds exactly what survived pruning, so copying the raw directory again
+        would only duplicate it.
+        """
+
         sandbox = self.get(task_id)
         if sandbox is None or sandbox.status != "ready":
             return
@@ -364,7 +379,11 @@ class TaskSandboxManager:
             if root not in resolved.parents or resolved == root:
                 raise ConflictError("Invalid sandbox cleanup path")
             self._preserve_run_outputs(
-                run_dir=resolved, task_id=task_id, owner_id=owner_id, lease_id=lease_id
+                run_dir=resolved,
+                task_id=task_id,
+                owner_id=owner_id,
+                lease_id=lease_id,
+                raw_records_registered=raw_records_registered,
             )
             shutil.rmtree(resolved, ignore_errors=True)
         else:
@@ -373,35 +392,92 @@ class TaskSandboxManager:
             )
             self._backend_for_handle(handle).remove_path(handle, path=relative)
 
-    # work/ 只为过渡期兼容：规范位置是 artifacts/work/，随 artifacts/ 一起保留；
-    # 早期 worker 习惯写在运行目录根的 work/，同样不能丢。
+    # work/ 只为过渡期兼容：规范位置是 artifacts/work/，早期 worker 习惯写在
+    # 运行目录根的 work/，同样不能丢。
     _PRESERVED_RUN_SUBDIRS = ("evidence", "artifacts", "work")
 
     def _preserve_run_outputs(
-        self, *, run_dir: Path, task_id: str, owner_id: str, lease_id: str
+        self,
+        *,
+        run_dir: Path,
+        task_id: str,
+        owner_id: str,
+        lease_id: str,
+        raw_records_registered: bool = False,
     ) -> None:
-        """Rescue small durable outputs before the run directory is removed.
+        """Rescue the durable outputs that were not already stored as Artifacts.
 
-        Workers write ``evidence/`` (pen-test evidence files), ``artifacts/work/``
-        (raw records that are not evidence) and reviewers write ``artifacts/``
-        (review conclusions + minimal retests) inside the run directory. Those
-        must outlive the run: sessions, model snapshots and process logs are the
-        bloat cleanup targets, these subdirectories are not.
+        Workers write ``evidence/`` (material backing a reported result) and
+        ``artifacts/work/`` (key source data and scripts) inside the run
+        directory.  Those must outlive the run: sessions, model snapshots and
+        process logs are the bloat targets, these are not.
+
+        Two rules keep the rescue from becoming a silent second artifact store:
+
+        * **Only key outputs survive.**  A file is copied out only if it matches
+          ``shared.run_outputs`` — the same allowlist and the same 40-file /
+          10 MiB / 32 MiB bounds the conclude collector applies.  A 400 MiB bulk
+          download is not a source sample; it belongs in a reported evidence file
+          or nowhere.  Copying such files unregistered is what bloated one Task
+          by 2 GiB against 238 MiB of real Artifacts.
+        * **A committed run needs no rescue.**  When conclude already registered
+          the Artifacts, the store holds exactly what survived pruning, so
+          re-copying the raw directory only duplicates it.
+
+        Whatever is dropped is logged with its size, so an operator can tell the
+        difference between "the Worker produced nothing" and "we threw it away".
         """
+
+        if raw_records_registered:
+            return
+        dropped = 0
+        dropped_bytes = 0
+        kept = 0
         for name in self._PRESERVED_RUN_SUBDIRS:
             source = run_dir / name
             if not source.is_dir():
                 continue
-            destination = self.store.root / "tasks" / task_id / "evidence" / owner_id / lease_id / name
-            try:
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                if destination.exists():
-                    shutil.rmtree(destination)
-                shutil.move(str(source), str(destination))
-            except OSError:
-                logger.exception(
-                    "failed to preserve run %s for %s/%s; cleanup continues", name, task_id, owner_id
-                )
+            destination = (
+                self.store.root / "tasks" / task_id / "evidence" / owner_id / lease_id / name
+            )
+            keep = set(run_outputs.select_preservable(source, relative_to=run_dir))
+            for path in keep:
+                try:
+                    target = destination / path.relative_to(source)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(path, target)
+                    kept += 1
+                except OSError:
+                    logger.exception(
+                        "failed to preserve %s for %s/%s; cleanup continues",
+                        path,
+                        task_id,
+                        owner_id,
+                    )
+            for path in source.rglob("*"):
+                if not path.is_file() or path in keep:
+                    continue
+                if any(
+                    part in run_outputs.SKIP_DIRECTORIES
+                    for part in path.relative_to(run_dir).parts
+                ):
+                    continue
+                try:
+                    dropped += 1
+                    dropped_bytes += path.stat().st_size
+                except OSError:
+                    pass
+        if dropped:
+            logger.warning(
+                "dropped %d non-key run outputs (%d bytes) for %s/%s; "
+                "work/ keeps key source data and scripts only — report bulk data as evidence",
+                dropped,
+                dropped_bytes,
+                task_id,
+                owner_id,
+            )
+        if kept:
+            logger.info("preserved %d key run outputs for %s/%s", kept, task_id, owner_id)
 
     def file_read(self, *, task_id: str, owner_id: str, lease_id: str, path: str) -> bytes:
         handle, sandbox = self._file_handle(task_id)
