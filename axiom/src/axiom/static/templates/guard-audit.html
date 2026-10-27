@@ -20,10 +20,19 @@
       </div>
       <div class="sto-field" style="margin-top:10px;">
         <label>日志状态</label>
-        <select x-model="guardAudit.decision" @change="applyGuardAuditFilter()" class="sto-input">
+        <select x-model="guardAudit.decision" @change="loadGuardAuditEvents()" class="sto-input">
           <option value="all">全部</option>
           <option value="block">仅拦截</option>
           <option value="allow">仅放行</option>
+        </select>
+      </div>
+      <div class="sto-field" style="margin-top:10px;">
+        <label>依据</label>
+        <select x-model="guardAudit.source" @change="loadGuardAuditEvents()" class="sto-input">
+          <option value="all">全部</option>
+          <template x-for="opt in guardAuditSourceOptions()" :key="'ga-src-' + opt.value">
+            <option :value="opt.value" x-text="opt.label"></option>
+          </template>
         </select>
       </div>
       <div class="sto-field" style="margin-top:10px;">
@@ -41,6 +50,8 @@
         <div style="display:flex; flex-direction:column; gap:7px; margin-top:10px;">
           <div @click="guardAudit.decision = 'all'; applyGuardAuditFilter()" class="sto-minicard" :class="guardAudit.decision === 'all' ? 'stat-active' : ''" title="查看全部">
             <div class="k">总记录</div><b x-text="guardAuditCounts().total"></b>
+            <div class="sto-muted" style="font-size:9px; margin-top:2px;" x-show="guardAuditCounts().loaded < guardAuditCounts().total"
+              x-text="`已加载 ${guardAuditCounts().loaded}`"></div>
           </div>
           <div @click="guardAudit.decision = 'block'; applyGuardAuditFilter()" class="sto-minicard" :class="guardAudit.decision === 'block' ? 'stat-active' : ''" title="只看拦截">
             <div class="k" style="color:var(--sto-danger);">拦截</div><b style="color:var(--sto-danger);" x-text="guardAuditCounts().blocked"></b>
@@ -63,17 +74,19 @@
     <div class="sto-panel" style="min-width:0;">
       <div class="guard-audit-railhead flex items-center justify-between" style="padding:15px 16px; border-bottom:1px solid var(--sto-line);">
         <p class="sto-label">裁判记录</p>
-        <span class="sto-muted sto-num" style="font-size:10px;" x-text="`${(guardAudit.events || []).length} 条`"></span>
+        <span class="sto-muted sto-num" style="font-size:10px;" x-text="guardAuditShownLabel()"></span>
       </div>
 
       <template x-if="guardAudit.loading && (!guardAudit.events || guardAudit.events.length === 0)">
         <div class="sto-empty" style="border:0; flex:1;">正在加载审计日志...</div>
       </template>
       <template x-if="!guardAudit.loading && (!guardAudit.events || guardAudit.events.length === 0)">
-        <div class="sto-empty" style="border:0; flex:1;">暂无裁判记录</div>
+        <div class="sto-empty" style="border:0; flex:1;"
+          x-text="(guardAudit.decision !== 'all' || guardAudit.source !== 'all') ? '当前筛选没有记录，试试看「全部」' : '暂无裁判记录'"></div>
       </template>
 
-      <div class="ga-scroll" x-show="guardAudit.loading === true || (guardAudit.events || []).length > 0" x-cloak>
+      <div class="ga-scroll" x-show="guardAudit.loading === true || (guardAudit.events || []).length > 0" x-cloak
+        @scroll.throttle.150="onGuardAuditScroll($event)">
       <table class="ga-table">
         <colgroup>
           <col class="ga-col-verdict">
@@ -98,7 +111,7 @@
           </tr>
         </thead>
         <tbody>
-          <template x-for="event in guardAudit.events" :key="event.id">
+          <template x-for="event in guardAuditViewRows()" :key="event.id">
             <!-- is-block / is-allow, not block / allow: Tailwind ships
                  `.block{display:block}`, which pulls every BLOCK row out of the
                  table layout so its cells collapse to content width. -->
@@ -108,10 +121,14 @@
                   x-text="guardAuditStatusLabel(event)"></span>
               </td>
               <td class="ga-what">
-                <p class="ga-content" :title="guardAuditContent(event)" x-text="guardAuditContent(event)"></p>
+                <p class="ga-content" x-text="guardAuditContent(event)"></p>
                 <p class="ga-reason" :class="event.decision === 'BLOCK' ? 'block' : 'allow'"
                   x-text="guardAuditReason(event)"></p>
-                <pre x-show="guardAudit.expanded[event.id]" x-cloak class="sto-usage ga-detail" x-text="guardAuditDetail(event)"></pre>
+                <!-- x-if 而不是 x-show：x-text 不管显示与否都会求值，300 行
+                     每轮白算 334 KB 字符串。只有真正展开的那一行才该展开原文。 -->
+                <template x-if="guardAudit.expanded[event.id]">
+                  <pre class="sto-usage ga-detail" x-text="guardAuditDetail(event)"></pre>
+                </template>
               </td>
               <td class="ga-time" x-text="formatDate(event.created_at)"></td>
               <td class="ga-cell" x-text="guardAuditSourceLabel(event)"></td>
@@ -126,6 +143,12 @@
           </template>
         </tbody>
       </table>
+
+      <div x-show="!guardAuditWindowCapped() && (guardAudit.has_more || (guardAudit.events || []).length > guardAudit.window)"
+        style="padding:12px 16px; text-align:center; border-top:1px solid var(--sto-line);">
+        <button @click="loadMoreGuardAudit()" :disabled="guardAudit.loading_more" class="sto-ghost"
+          x-text="guardAudit.loading_more ? '加载中...' : (guardAudit.has_more ? `加载更早的记录（已取回 ${(guardAudit.events || []).length} 条）` : '加载更多')"></button>
+      </div>
       </div>
     </div>
   </main>

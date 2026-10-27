@@ -517,7 +517,8 @@ window.AxiomModules.core = {
       if (taskMatch || legacyProjectMatch) {
         const id = decodeURIComponent((taskMatch || legacyProjectMatch)[1]);
         const queryParams = new URLSearchParams(routeQuery);
-        const requestedView = queryParams.get('view') === 'graph' ? 'graph' : (queryParams.get('view') === 'archive' ? 'archive' : 'human');
+        const askedView = queryParams.get('view') || '';
+        const requestedView = ['graph', 'archive'].includes(askedView) ? askedView : 'human';
         recordHistory(currentTargetHash);
         this._lastNavigatedHash = currentTargetHash;
         this._navigatingBack = false;

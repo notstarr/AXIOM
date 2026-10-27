@@ -248,6 +248,9 @@ class TaskRepository:
         if command.worker_pool is not None:
             values.pop("worker_pool", None)
             values["worker_pool_json"] = json.dumps(command.worker_pool, ensure_ascii=False)
+        # target_points 是派生输入，不是列：service 用它算出目标文案，再连同
+        # red_team_objective_json 一起写回。这里只把它从 column kwargs 里摘掉。
+        values.pop("target_points", None)
         if values:
             values["updated_at"] = now
             result = conn.execute(update(tasks).where(tasks.c.id == task_id).values(**values))

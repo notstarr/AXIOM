@@ -6,10 +6,10 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    PrimaryKeyConstraint,
     String,
     Table,
     Text,
-    UniqueConstraint,
 )
 
 from axiom.modules.graph.tables import intents
@@ -20,7 +20,9 @@ from axiom.shared.database import JSONText, UTCDateTimeText, metadata
 red_team_chains = Table(
     "red_team_chains",
     metadata,
-    Column("id", String, primary_key=True),
+    # Chain IDs are allocated per Task (``ch001``, ``ch002`` …), so the
+    # identity is the pair - same shape as red_team_results below.
+    Column("id", String, nullable=False),
     Column("task_id", String, nullable=False),
     Column("goal_cycle_id", String),
     Column("title", Text, nullable=False),
@@ -36,7 +38,8 @@ red_team_chains = Table(
     Column("created_at", UTCDateTimeText, nullable=False),
     Column("updated_at", UTCDateTimeText, nullable=False),
     ForeignKeyConstraint(["task_id"], [tasks.c.id], ondelete="CASCADE"),
-    UniqueConstraint("task_id", "id", name="uq_red_team_chains_task_id"),
+    # 复合主键同时充当 (task_id, chain_id) 复合外键的目标唯一约束
+    PrimaryKeyConstraint("task_id", "id"),
     CheckConstraint(
         "status IN ('open','partial','blocked','completed','abandoned')",
         name="red_team_chain_status",
@@ -48,7 +51,9 @@ Index("ix_red_team_chains_task_status", red_team_chains.c.task_id, red_team_chai
 red_team_results = Table(
     "red_team_results",
     metadata,
-    Column("id", String, primary_key=True),
+    # Result IDs are allocated per Task (``x001``, ``x002`` …, like
+    # ``v001`` for Vulnerabilities), so the identity is the pair.
+    Column("id", String, nullable=False),
     Column("task_id", String, nullable=False),
     Column("chain_id", String, nullable=False),
     Column("intent_id", String, nullable=False),
@@ -79,8 +84,8 @@ red_team_results = Table(
     ForeignKeyConstraint(["task_id"], [tasks.c.id], ondelete="CASCADE"),
     ForeignKeyConstraint(["task_id", "chain_id"], [red_team_chains.c.task_id, red_team_chains.c.id], ondelete="CASCADE"),
     ForeignKeyConstraint(["task_id", "intent_id"], [intents.c.task_id, intents.c.id], ondelete="RESTRICT"),
-    # 复合外键 (task_id, red_team_result_id) -> (task_id, id) 的目标唯一约束
-    UniqueConstraint("task_id", "id", name="uq_red_team_results_task_id"),
+    # 复合主键同时充当 (task_id, red_team_result_id) 复合外键的目标唯一约束
+    PrimaryKeyConstraint("task_id", "id"),
     CheckConstraint("result_type IN ('permission','data','credential','pivot')", name="red_team_result_type"),
     CheckConstraint(
         "status IN ('reported','reviewing','verified','rejected','duplicate','needs-human')",

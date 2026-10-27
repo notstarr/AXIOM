@@ -3248,6 +3248,238 @@ def test_seed_vulnerability_task_id_only_sent_for_red_team_tasks() -> None:
     assert _run_seed_task_create_payload_fixture("vulnerability")["seed"] is None
 
 
+def _run_red_team_goal_points_fixture(points: int) -> dict[str, object]:
+    """红队模式：目标文案固定，只有分值可改，且分值落进 target_points。"""
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    projects = ROOT / "src/axiom/static/js/projects.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{ projects: {{ methods: {{}} }} }} }};
+global.location = {{ hash: '#/tasks' }};
+eval(fs.readFileSync({json.dumps(str(projects))}, 'utf8'));
+const calls = [];
+const methods = window.AxiomModules.projects.methods;
+const ctx = Object.assign({{}}, methods, {{
+  projectGroups: [{{ id: 'prj_1', title: '项目组' }}],
+  projects: [],
+  loadProjectGroups: async () => {{}},
+  loadProjects: async () => {{}},
+  openProject: async () => {{}},
+  actorName: () => 'hexin',
+  newProjectRunDurationSeconds: () => null,
+  refreshSeedVulnerabilityCounts: async () => {{}},
+  api: async (method, path, body) => {{ calls.push({{ method, path, body }}); return {{ project: {{ id: 't_new' }} }}; }},
+  showToast: () => {{}},
+  newProject: {{
+    parent_project_id: 'prj_1',
+    title: '红队分值', origin: 'a.example.com', goal: '对该资产进行渗透测试，并挖掘10个高置信度的漏洞',
+    guard_enabled: false, hints: '', worker_pool: [],
+    task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '',
+    run_time_limited: false, run_hours: 0, run_minutes: 0,
+    engagement_mode: 'vulnerability', rt_target_points: 100,
+    seed_vulnerability_task_id: '', seed_counts: {{}},
+  }},
+}});
+(async () => {{
+  ctx.setEngagementMode('red_team');
+  const goalOnSwitch = ctx.newProject.goal;
+  ctx.newProject.rt_target_points = {points};
+  ctx.syncRedTeamGoal();
+  const goalAfterPoints = ctx.newProject.goal;
+  await ctx.createProject();
+  const create = calls.find(item => item.method === 'POST' && item.path === '/projects');
+  process.stdout.write(JSON.stringify({{
+    goalOnSwitch,
+    goalAfterPoints,
+    goal: create ? create.body.goal : 'missing',
+    points: create && create.body.red_team_objective ? create.body.red_team_objective.target_points : null,
+    principal: create && create.body.red_team_objective ? create.body.red_team_objective.initial_principal?.id : null,
+  }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def test_red_team_goal_text_is_fixed_and_only_points_change() -> None:
+    result = _run_red_team_goal_points_fixture(250)
+
+    assert result["goalOnSwitch"] == "对该资产进行渗透测试，并取得100积分"
+    assert result["goalAfterPoints"] == "对该资产进行渗透测试，并取得250积分"
+    assert result["goal"] == "对该资产进行渗透测试，并取得250积分"
+    assert result["points"] == 250
+    assert result["principal"] == "user:initial"
+
+
+def test_red_team_goal_points_are_clamped_to_server_bounds() -> None:
+    # 后端 target_points 是 ge=1 le=10000，表单不能把它送成 0 或越界
+    assert _run_red_team_goal_points_fixture(0)["points"] == 1
+    assert _run_red_team_goal_points_fixture(99999)["points"] == 10000
+
+
+def test_red_team_goal_is_one_sentence_with_inline_points_input() -> None:
+    """红队目标就是那一句话，积分在句内填写；不另起独立的积分输入块。"""
+
+    task_list = (ROOT / "src/axiom/static/templates/task-list.html").read_text(encoding="utf-8")
+
+    assert "对该资产进行渗透测试，并取得" in task_list
+    assert "newProject.rt_target_points" in task_list
+    assert "syncRedTeamGoal()" in task_list
+    assert "goal-points-input" in task_list
+    # 回归护栏：不再出现只读目标框 + 独立「目标积分」小节
+    assert ":readonly=\"newProject.engagement_mode === 'red_team'\"" not in task_list
+    assert "只调整下面的目标积分" not in task_list
+    assert ">目标积分</label>" not in task_list
+
+
+def test_red_team_goal_box_geometry_matches_vulnerability_textarea() -> None:
+    """红队目标框与漏洞模式 textarea 必须同一套几何，文字贴顶而非垂直居中。
+
+    实测两张卡片的正文首行、内边距、行高、高度完全一致；这里把关键声明锁住，
+    防止以后调样式时又变回居中或改高。
+    """
+
+    css = (ROOT / "src/axiom/static/custom.css").read_text(encoding="utf-8")
+    sentence = css[css.index(".goal-sentence {"):]
+    sentence = sentence[: sentence.index("}")]
+
+    # 文字贴顶 + 与句内数字同基线
+    assert "align-items: baseline" in sentence
+    assert "align-content: flex-start" in sentence
+    # 高度 = rows=3 的 textarea：3 行行高 + 上下内边距 + 上下边框
+    assert "min-height: calc(5rem + 2px)" in sentence
+    assert "padding: 0.625rem 0.75rem" in sentence
+    assert "line-height: 1.25rem" in sentence
+    # 不允许再出现会破坏对齐的居中/固定高度写法
+    assert "align-items: center" not in sentence
+    assert "min-height: 82px" not in sentence
+
+
+def test_red_team_seed_frontend_contract() -> None:
+    vulnerabilities = (ROOT / "src/axiom/static/templates/vulnerabilities.html").read_text(encoding="utf-8")
+    task_list = (ROOT / "src/axiom/static/templates/task-list.html").read_text(encoding="utf-8")
+    adapter = (ROOT / "src/axiom/static/js/v2-adapter.js").read_text(encoding="utf-8")
+    dashboard = (ROOT / "src/axiom/static/js/dashboard.js").read_text(encoding="utf-8")
+
+    assert "toggleVulnRedTeamExploitable" in vulnerabilities
+    assert "v.red_team_exploitable" in vulnerabilities
+    assert "toggleVulnRedTeamExploitable(selectedVulnerability())" in vulnerabilities
+    assert "seedSourceTasks()" in task_list
+    assert "newProject.seed_vulnerability_task_id" in task_list
+    assert "red-team-exploitable" in adapter
+    assert "seed_vulnerability_task_id" in adapter
+    assert "toggleVulnRedTeamExploitable" in dashboard
+
+
+def test_redteam_prompts_carry_four_section_task_book() -> None:
+    reason = (ROOT / "src/axiom/dispatcher/prompts/reason_redteam.md").read_text(encoding="utf-8")
+    plan = (ROOT / "src/axiom/dispatcher/prompts/plan_redteam.md").read_text(encoding="utf-8")
+    explore = (ROOT / "src/axiom/dispatcher/prompts/explore_redteam.md").read_text(encoding="utf-8")
+    bootstrap = (ROOT / "src/axiom/dispatcher/prompts/bootstrap_redteam.md").read_text(encoding="utf-8")
+
+    for label in ("目标：", "判据：", "前置：", "边界："):
+        assert label in reason
+        assert label in plan
+    assert "≤500 字符" in reason
+    assert "≤500 字符" in plan
+    assert "判据」是完成标准" in explore
+    assert "边界」是硬限制" in explore
+    assert "evidence_storage_keys" in bootstrap
+    assert "contexts/<task>/rNNNNNN/manifest.json" in bootstrap
+
+
+def test_vulnerability_page_task_filters_are_mode_scoped() -> None:
+    template = (ROOT / "src/axiom/static/templates/vulnerabilities.html").read_text(encoding="utf-8")
+    adapter = (ROOT / "src/axiom/static/js/v2-adapter.js").read_text(encoding="utf-8")
+
+    assert "(item.engagement_mode || 'vulnerability') !== 'red_team'" in template
+    assert "item.engagement_mode === 'red_team'" in template
+    assert "(selected.engagement_mode || 'vulnerability') !== wantedMode" in adapter
+
+
+def test_redteam_resources_page_contract() -> None:
+    index = (ROOT / "src/axiom/static/index.html").read_text(encoding="utf-8")
+    core = (ROOT / "src/axiom/static/js/core.js").read_text(encoding="utf-8")
+    app = (ROOT / "src/axiom/static/js/app.js").read_text(encoding="utf-8")
+    template = (ROOT / "src/axiom/static/templates/redteam-resources.html").read_text(encoding="utf-8")
+    module = (ROOT / "src/axiom/static/js/redteam-resources.js").read_text(encoding="utf-8")
+
+    assert "redteam-resources" in index and "红队资源" in index
+    assert "redteam-resources.js" in index
+    assert "'redteam-resources': 'redteam-resources'" in core
+    assert "name === 'redteam-resources'" in core
+    assert "'redteam-resources': '#/redteam-resources'" in core
+    assert "'workers', 'tools', 'redteam-resources'" in core
+    assert "M.redteamResources.methods" in app
+    for label in ("终端", "文件", "配置", "日志", "监听器", "会话", "任务下发"):
+        assert label in template
+    for method in ("rrWsExec", "rrFile", "rrWsCreateSubmit", "rrListenerStart", "rrC2Exec", "rrOneliner"):
+        assert method in module
+
+
+def test_login_js_refresh_guard_breaks_reload_loop() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+    script = ROOT / "src/axiom/static/js/login.js"
+    program = """
+const fs = require('fs');
+const reloads = { count: 0 };
+global.window = { location: { reload: () => { reloads.count += 1; } } };
+const makeStore = () => {
+  const data = new Map();
+  return {
+    getItem: (k) => (data.has(k) ? data.get(k) : null),
+    setItem: (k, v) => { data.set(k, String(v)); },
+    removeItem: (k) => { data.delete(k); },
+  };
+};
+global.localStorage = makeStore();
+global.sessionStorage = makeStore();
+localStorage.setItem('axiom_token', 'token-a');
+global.fetch = async () => ({
+  ok: true, status: 200,
+  json: async () => ({ authenticated: true, username: 'axiom' }),
+});
+eval(fs.readFileSync(%s, 'utf8'));
+(async () => {
+  const first = window.axiomApp();
+  await first.init();
+  const afterFirst = {
+    reloads: reloads.count,
+    guard: sessionStorage.getItem('axiom_login_refresh_guard'),
+    token: localStorage.getItem('axiom_token'),
+  };
+  const second = window.axiomApp();
+  await second.init();
+  process.stdout.write(JSON.stringify({
+    afterFirst,
+    afterSecond: {
+      reloads: reloads.count,
+      guard: sessionStorage.getItem('axiom_login_refresh_guard'),
+      token: localStorage.getItem('axiom_token'),
+      authLoading: second.authLoading,
+      isAuthenticated: second.isAuthenticated,
+    },
+  }));
+})();
+""" % json.dumps(str(script))
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    data = json.loads(result.stdout)
+    assert data["afterFirst"] == {"reloads": 1, "guard": "1", "token": "token-a"}
+    assert data["afterSecond"] == {
+        "reloads": 1,
+        "guard": None,
+        "token": None,
+        "authLoading": False,
+        "isAuthenticated": False,
+    }
+
+
 # ── 红队攻击血缘视图 ────────────────────────────────────────────────
 
 def _run_lineage_fixture(payload: dict) -> dict:
@@ -3417,123 +3649,62 @@ def test_lineage_export_html_is_self_contained() -> None:
     assert "includes('.dark')" in source
 
 
+def test_guard_audit_filters_on_the_server_and_windows_the_table() -> None:
+    """审计日志：筛选下沉服务端，表格只渲染窗口内的行。
 
-def test_red_team_seed_frontend_contract() -> None:
-    vulnerabilities = (ROOT / "src/axiom/static/templates/vulnerabilities.html").read_text(encoding="utf-8")
-    task_list = (ROOT / "src/axiom/static/templates/task-list.html").read_text(encoding="utf-8")
-    adapter = (ROOT / "src/axiom/static/js/v2-adapter.js").read_text(encoding="utf-8")
-    dashboard = (ROOT / "src/axiom/static/js/dashboard.js").read_text(encoding="utf-8")
+    两个回归护栏：
+    - 筛选不能再落到 `applyGuardAuditFilter` 的内存过滤（线上「仅拦截」显示
+      0 条就是这样来的）；
+    - 明细原文必须用 `x-if` 懒挂载。`x-show` + `x-text` 组合会让每行每轮都
+      求值一次 detail 字符串（300 行实测白算 334 KB）。
+    """
 
-    assert "toggleVulnRedTeamExploitable" in vulnerabilities
-    assert "v.red_team_exploitable" in vulnerabilities
-    assert "toggleVulnRedTeamExploitable(selectedVulnerability())" in vulnerabilities
-    assert "seedSourceTasks()" in task_list
-    assert "newProject.seed_vulnerability_task_id" in task_list
-    assert "red-team-exploitable" in adapter
-    assert "seed_vulnerability_task_id" in adapter
-    assert "toggleVulnRedTeamExploitable" in dashboard
-
-
-def test_redteam_prompts_carry_four_section_task_book() -> None:
-    reason = (ROOT / "src/axiom/dispatcher/prompts/reason_redteam.md").read_text(encoding="utf-8")
-    plan = (ROOT / "src/axiom/dispatcher/prompts/plan_redteam.md").read_text(encoding="utf-8")
-    explore = (ROOT / "src/axiom/dispatcher/prompts/explore_redteam.md").read_text(encoding="utf-8")
-    bootstrap = (ROOT / "src/axiom/dispatcher/prompts/bootstrap_redteam.md").read_text(encoding="utf-8")
-
-    for label in ("目标：", "判据：", "前置：", "边界："):
-        assert label in reason
-        assert label in plan
-    assert "≤500 字符" in reason
-    assert "≤500 字符" in plan
-    assert "判据」是完成标准" in explore
-    assert "边界」是硬限制" in explore
-    assert "evidence_storage_keys" in bootstrap
-    assert "contexts/<task>/rNNNNNN/manifest.json" in bootstrap
-
-
-def test_vulnerability_page_task_filters_are_mode_scoped() -> None:
-    template = (ROOT / "src/axiom/static/templates/vulnerabilities.html").read_text(encoding="utf-8")
+    template = (ROOT / "src/axiom/static/templates/guard-audit.html").read_text(encoding="utf-8")
+    dispatch = (ROOT / "src/axiom/static/js/dispatch.js").read_text(encoding="utf-8")
     adapter = (ROOT / "src/axiom/static/js/v2-adapter.js").read_text(encoding="utf-8")
 
-    assert "(item.engagement_mode || 'vulnerability') !== 'red_team'" in template
-    assert "item.engagement_mode === 'red_team'" in template
-    assert "(selected.engagement_mode || 'vulnerability') !== wantedMode" in adapter
+    # 模板：窗口化 + 懒渲染 + 滚动续加载
+    assert "guardAuditViewRows()" in template
+    assert 'x-for="event in guardAudit.events"' not in template
+    assert "<template x-if=\"guardAudit.expanded[event.id]\">" in template
+    assert 'x-show="guardAudit.expanded[event.id]"' not in template
+    assert "onGuardAuditScroll($event)" in template
+    # DOM 不能无限增长：到上限停在原地，请操作者用筛选缩小范围
+    assert "guardAuditWindowCapped()" in template
+    assert "max_window" in (ROOT / "src/axiom/static/js/state.js").read_text(encoding="utf-8")
+
+    # 下拉改变即重新向服务端要第一页，不再本地 filter
+    assert 'x-model="guardAudit.decision" @change="loadGuardAuditEvents()"' in template
+    assert 'x-model="guardAudit.source" @change="loadGuardAuditEvents()"' in template
+    assert 'x-model="guardAudit.decision" @change="applyGuardAuditFilter()"' not in template
+
+    # 请求带上 decision / source，且适配层原样透传
+    assert "params.set('decision', decision)" in dispatch
+    assert "params.set('source', source)" in dispatch
+    assert "params.set('decision', decision)" in adapter
+    assert "params.set('decision_source', source)" in adapter
+    assert "events.filter(item => item.decision.toLowerCase() === decision)" not in adapter
+
+    # 依据下拉的值是内部枚举、显示才是中文标签
+    assert "order = ['hard_rule', 'whitelist', 'model', 'fail_open', 'disabled']" in dispatch
 
 
-def test_redteam_resources_page_contract() -> None:
-    index = (ROOT / "src/axiom/static/index.html").read_text(encoding="utf-8")
-    core = (ROOT / "src/axiom/static/js/core.js").read_text(encoding="utf-8")
-    app = (ROOT / "src/axiom/static/js/app.js").read_text(encoding="utf-8")
-    template = (ROOT / "src/axiom/static/templates/redteam-resources.html").read_text(encoding="utf-8")
-    module = (ROOT / "src/axiom/static/js/redteam-resources.js").read_text(encoding="utf-8")
+def test_red_team_points_capsule_is_editable_in_place() -> None:
+    """概览页那颗 `已得/目标` 胶囊要能直接改成新分母。"""
 
-    assert "redteam-resources" in index and "红队资源" in index
-    assert "redteam-resources.js" in index
-    assert "'redteam-resources': 'redteam-resources'" in core
-    assert "name === 'redteam-resources'" in core
-    assert "'redteam-resources': '#/redteam-resources'" in core
-    assert "'workers', 'tools', 'redteam-resources'" in core
-    assert "M.redteamResources.methods" in app
-    for label in ("终端", "文件", "配置", "日志", "监听器", "会话", "任务下发"):
-        assert label in template
-    for method in ("rrWsExec", "rrFile", "rrWsCreateSubmit", "rrListenerStart", "rrC2Exec", "rrOneliner"):
-        assert method in module
+    view = (ROOT / "src/axiom/static/templates/human-view.html").read_text(encoding="utf-8")
+    human = (ROOT / "src/axiom/static/js/human.js").read_text(encoding="utf-8")
+    adapter = (ROOT / "src/axiom/static/js/v2-adapter.js").read_text(encoding="utf-8")
 
+    assert "beginEditRedTeamPoints()" in view
+    assert "saveRedTeamPoints()" in view
+    assert 'class="points-capsule-input tabular-nums"' in view
+    assert 'min="1" max="10000"' in view
 
-def test_login_js_refresh_guard_breaks_reload_loop() -> None:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for frontend behavior tests")
-    script = ROOT / "src/axiom/static/js/login.js"
-    program = """
-const fs = require('fs');
-const reloads = { count: 0 };
-global.window = { location: { reload: () => { reloads.count += 1; } } };
-const makeStore = () => {
-  const data = new Map();
-  return {
-    getItem: (k) => (data.has(k) ? data.get(k) : null),
-    setItem: (k, v) => { data.set(k, String(v)); },
-    removeItem: (k) => { data.delete(k); },
-  };
-};
-global.localStorage = makeStore();
-global.sessionStorage = makeStore();
-localStorage.setItem('axiom_token', 'token-a');
-global.fetch = async () => ({
-  ok: true, status: 200,
-  json: async () => ({ authenticated: true, username: 'axiom' }),
-});
-eval(fs.readFileSync(%s, 'utf8'));
-(async () => {
-  const first = window.axiomApp();
-  await first.init();
-  const afterFirst = {
-    reloads: reloads.count,
-    guard: sessionStorage.getItem('axiom_login_refresh_guard'),
-    token: localStorage.getItem('axiom_token'),
-  };
-  const second = window.axiomApp();
-  await second.init();
-  process.stdout.write(JSON.stringify({
-    afterFirst,
-    afterSecond: {
-      reloads: reloads.count,
-      guard: sessionStorage.getItem('axiom_login_refresh_guard'),
-      token: localStorage.getItem('axiom_token'),
-      authLoading: second.authLoading,
-      isAuthenticated: second.isAuthenticated,
-    },
-  }));
-})();
-""" % json.dumps(str(script))
-    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
-    data = json.loads(result.stdout)
-    assert data["afterFirst"] == {"reloads": 1, "guard": "1", "token": "token-a"}
-    assert data["afterSecond"] == {
-        "reloads": 1,
-        "guard": None,
-        "token": None,
-        "authLoading": False,
-        "isAuthenticated": False,
-    }
+    assert "canEditRedTeamPoints()" in human
+    # 已完成 / 归档 / 只读任务不给改：它们要走「继续任务」开新一轮 Goal
+    assert "task.status !== 'completed'" in human
+    assert "!task.archived" in human
+    # 只送分值，文案由后端派生
+    assert "/projects/${taskId}/target-points" in human
+    assert "target_points: Number(body?.target_points)" in adapter

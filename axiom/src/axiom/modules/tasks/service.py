@@ -27,7 +27,7 @@ from axiom.modules.projects.repository import ProjectRepository
 from axiom.modules.reason.repository import ReasonRepository
 from axiom.modules.reason.service import ReasonService
 from axiom.modules.reason.tables import reason_runs
-from axiom.modules.redteam.schemas import RedTeamObjective, RedTeamPrincipal
+from axiom.modules.redteam.schemas import RedTeamObjective, RedTeamPrincipal, red_team_goal_text
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.tasks.schemas import (
     ActivePlanRun,
@@ -101,6 +101,12 @@ class TaskService:
             red_team_objective = RedTeamObjective(
                 initial_principal=RedTeamPrincipal(id="user:initial", label="初始身份"),
             )
+        # 红队目标文案固定，唯一可变量是目标积分（概览页积分进度的分母）。
+        # 无论调用方来自表单、CLI 还是 API，都按 target_points 重写，避免
+        # 目标文字与积分进度各说各话。
+        goal = command.goal
+        if command.engagement_mode == "red_team":
+            goal = red_team_goal_text(red_team_objective.target_points)
         with self.engine.begin() as conn:
             project = self.projects.get(conn, command.project_id)
             if project is None:
@@ -119,7 +125,7 @@ class TaskService:
                 project_id=command.project_id,
                 title=command.title,
                 origin=origin,
-                goal=command.goal,
+                goal=goal,
                 engagement_mode=command.engagement_mode,
                 red_team_objective=red_team_objective,
                 seed_vulnerability_task_id=seed_task_id,
@@ -173,9 +179,54 @@ class TaskService:
                 raise ConflictError("Legacy Task is read-only")
             if task.archived:
                 raise ConflictError("已归档任务不能修改")
+            # 红队目标文案由目标积分派生（见 red_team_goal_text），两者不能各说
+            # 各话：给了 target_points 就按新分值重写文案；只给 goal 也照样
+            # 按当前分值重写，忽略调用方带来的自由文字。
+            objective = task.red_team_objective
+            points_changed = False
+            previous_points: int | None = None
+            if task.engagement_mode == "red_team" and objective is None:
+                objective = RedTeamObjective(
+                    initial_principal=RedTeamPrincipal(id="user:initial", label="初始身份")
+                )
+            effective_points = (
+                int(objective.target_points) if objective is not None else None
+            )
+            if command.target_points is not None:
+                if task.engagement_mode != "red_team":
+                    raise ConflictError("目标积分仅适用于红队任务")
+                assert effective_points is not None
+                points_changed = int(command.target_points) != effective_points
+                previous_points = effective_points
+                effective_points = int(command.target_points)
+            if (
+                task.engagement_mode == "red_team"
+                and effective_points is not None
+                and (command.goal is not None or points_changed)
+            ):
+                command = command.model_copy(
+                    update={"goal": red_team_goal_text(effective_points)}
+                )
+            if command.target_points is not None and not points_changed:
+                # 同值提交：幂等返回，不重写 goal，也不产生噪声审计
+                command = command.model_copy(update={"target_points": None})
             if command.goal is not None and task.status == "completed":
                 raise ConflictError("已完成任务必须通过继续任务创建新的 Goal")
             now = utcnow()
+            if points_changed and objective is not None and effective_points is not None:
+                conn.execute(
+                    update(tasks)
+                    .where(tasks.c.id == task_id)
+                    .values(
+                        red_team_objective_json=json.dumps(
+                            objective.model_copy(
+                                update={"target_points": effective_points}
+                            ).model_dump(mode="json"),
+                            ensure_ascii=False,
+                        ),
+                        updated_at=now,
+                    )
+                )
             updated = self.tasks.update(conn, task_id, command, now=now)
             if command.goal is not None:
                 conn.execute(
@@ -203,6 +254,15 @@ class TaskService:
                             "goal_cycle_id": task.current_goal_cycle_id,
                             "previous_goal": task.goal,
                             "goal": command.goal,
+                            # 只有真正改了分值才带这两个键：纯文案更新与积分无关
+                            **(
+                                {
+                                    "previous_target_points": previous_points,
+                                    "target_points": effective_points,
+                                }
+                                if points_changed
+                                else {}
+                            ),
                         },
                     ),
                 )

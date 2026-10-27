@@ -27,6 +27,7 @@ class GraphRepository:
     def seed_task(self, conn: Connection, *, task: Task, now: str) -> None:
         initialize_counter(conn, scope=task.id, kind="fact", next_value=1)
         initialize_counter(conn, scope=task.id, kind="intent", next_value=2)
+        initialize_counter(conn, scope=task.id, kind="red_team_chain", next_value=1)
         conn.execute(
             facts.insert(),
             [

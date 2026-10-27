@@ -62,13 +62,16 @@ def _handle_help() -> dict[str, Any]:
         "### 🤖 AXIOM 智能安全渗透控制台 — 指令指南\n\n"
         "**📋【任务监控】**\n"
         "- `/tasks` —— 查看当前所有**正在运行**的任务概览\n"
-        "- `/status <任务ID>` —— 查询任务状态/运行时间/事实/意图/漏洞统计（如 `/status 172`）\n\n"
+        "- `/status <任务ID>` —— 查询任务状态/运行时间/事实/意图统计（红队任务另附成果数与积分进度，如 `/status 231`）\n\n"
         "**🎮【任务控制】**\n"
         "- `/pause <任务ID>` —— 暂停指定任务\n"
         "- `/resume <任务ID>` —— 继续/恢复指定任务（默认不限时持续运行）\n\n"
         "**🛡️【漏洞查询】**\n"
         "- `/vulns <任务ID> [页码]` —— 漏洞清单，编号从新到旧，每页 10 条（如 `/vulns 172 2`）\n"
         "- `/vuln <任务ID> <漏洞ID>` —— 漏洞详情：危害等级/审核结果/利用前提/危害/描述（如 `/vuln 172 v008`）\n\n"
+        "**🎯【红队成果】**\n"
+        "- `/results <任务ID> [页码]` —— 成果清单 + 积分进度，编号从新到旧（如 `/results 231`）\n"
+        "- `/result <任务ID> <成果ID>` —— 成果详情：类型/对象/获得能力/核定分/裁决理由（如 `/result 231 x019`）\n\n"
         "*提示：指令不区分大小写，任务ID支持纯数字简写。*"
     )
     return _build_markdown_response("AXIOM 指令指南", text)
@@ -123,6 +126,26 @@ def _format_run_duration(task) -> str:
     return f"{hours} 小时 {minutes} 分钟"
 
 
+def _is_red_team_task(task) -> bool:
+    return str(getattr(task, "engagement_mode", "vulnerability") or "vulnerability") == "red_team"
+
+
+def _redteam_points_line(container: Container, task) -> str:
+    """红队任务的积分进度，口径与 Goal 判定一致（verified 核定分之和）。"""
+
+    from axiom.modules.redteam.repository import points_progress
+
+    try:
+        with container.engine.connect() as conn:
+            awarded, target = points_progress(conn, task.id)
+    except Exception:
+        return ""
+    if target <= 0:
+        return f"- **积分**: `{awarded}` 分"
+    percent = min(100, round(awarded / target * 100))
+    return f"- **积分**: `{awarded}/{target}` 分（{percent}%）"
+
+
 def _handle_status(container: Container, task_id: str) -> dict[str, Any]:
     normalized_id = _normalize_task_id(task_id)
     task = container.tasks.get(normalized_id)
@@ -135,19 +158,46 @@ def _handle_status(container: Container, task_id: str) -> dict[str, Any]:
     if len(origin_lines) > 3:
         origin_display += f" 等 {len(origin_lines)} 个"
 
+    # 红队任务没有「漏洞数」概念，改成成果数与积分进度，避免显示「漏洞: 0」。
+    if _is_red_team_task(task):
+        counts_line = (
+            f"- **事实**: `{task.fact_count}` | **意图**: `{task.intent_count}` | "
+            f"**运行中意图**: `{task.working_intent_count}` | **成果**: `{_redteam_result_total(container, task.id)}`"
+        )
+    else:
+        counts_line = (
+            f"- **事实**: `{task.fact_count}` | **意图**: `{task.intent_count}` | "
+            f"**运行中意图**: `{task.working_intent_count}` | **漏洞**: `{task.vulnerability_count}`"
+        )
+
     lines = [
         f"### 任务 `{task.id}` — {task.title or '未命名'}",
         f"- **状态**: {_task_display_status(task)}（阶段: `{task.phase}`）",
         f"- **运行时间**: {_format_run_duration(task)}",
-        f"- **事实**: `{task.fact_count}` | **意图**: `{task.intent_count}` | **运行中意图**: `{task.working_intent_count}` | **漏洞**: `{task.vulnerability_count}`",
+        counts_line,
+    ]
+    if _is_red_team_task(task):
+        points_line = _redteam_points_line(container, task)
+        if points_line:
+            lines.append(points_line)
+    lines.extend([
         f"- **目标**: {task.goal or '未设置'}",
         f"- **起点**: {origin_display}",
-    ]
+    ])
     if task.last_pause_reason:
         reason_label = "到达运行时限" if task.last_pause_reason == "run_deadline_reached" else "人工暂停"
         lines.append(f"- **暂停原因**: {reason_label}")
+    if _is_red_team_task(task):
+        lines.append(f"\n*成果明细：`/results {task.id}`*")
 
     return _build_markdown_response(f"任务 {task.id} 状态", "\n".join(lines))
+
+
+def _redteam_result_total(container: Container, task_id: str) -> int:
+    try:
+        return len(container.red_team.list_results(task_id))
+    except Exception:
+        return 0
 
 
 def _handle_pause(container: Container, task_id: str) -> dict[str, Any]:
@@ -195,6 +245,100 @@ def _vuln_number(v) -> int:
     """漏洞编号 vNNN 的数字部分；解析失败排最后。"""
     digits = "".join(ch for ch in (v.id or "") if ch.isdigit())
     return int(digits) if digits else 10**9
+
+
+def _item_number(item) -> int:
+    """任务内编号（vNNN / xNNN）的数字部分；解析失败排最后。"""
+
+    digits = "".join(ch for ch in (getattr(item, "id", "") or "") if ch.isdigit())
+    return int(digits) if digits else 10**9
+
+
+def _handle_results(container: Container, task_id: str, page: int = 1) -> dict[str, Any]:
+    """红队成果清单（与 /vulns 对称，编号按任务内 xNNN 倒序）。"""
+
+    from axiom.shared.dingtalk import result_status_label, result_type_label
+
+    normalized_id = _normalize_task_id(task_id)
+    try:
+        results = container.red_team.list_results(normalized_id)
+    except Exception as e:
+        return _build_markdown_response("查询失败", f"❌ 查询任务 `{normalized_id}` 成果失败: {str(e)}")
+
+    if not results:
+        return _build_markdown_response(
+            f"任务 {normalized_id} 成果清单",
+            f"🎯 任务 `{normalized_id}` 当前暂未上报成果。",
+        )
+
+    ordered = sorted(results, key=_item_number, reverse=True)
+    page_size = 10
+    total_pages = (len(ordered) + page_size - 1) // page_size
+    page = max(1, min(page, total_pages))
+    chunk = ordered[(page - 1) * page_size : page * page_size]
+
+    lines = [
+        f"### 🎯 任务 `{normalized_id}` 成果清单（共 {len(ordered)} 条，第 {page}/{total_pages} 页）\n"
+    ]
+    for item in chunk:
+        score = f"+{item.points_awarded}分" if item.status == "verified" else f"自评{item.points_declared}"
+        lines.append(
+            f"- **`{item.id}`** {result_type_label(item.result_type)} | "
+            f"{result_status_label(item.status)} | {score} | {item.title}"
+        )
+    points_line = _redteam_points_line(container, container.tasks.get(normalized_id))
+    if points_line:
+        lines.append(f"\n{points_line}")
+    if total_pages > 1:
+        lines.append(f"\n*翻页：`/results {normalized_id} <页码>`*")
+    lines.append(f"*详情：`/result {normalized_id} <成果ID>`*")
+    return _build_markdown_response(f"任务 {normalized_id} 成果清单 {page}/{total_pages}", "\n".join(lines))
+
+
+def _handle_result(container: Container, task_id: str, result_id: str) -> dict[str, Any]:
+    """红队成果详情。"""
+
+    from axiom.shared.dingtalk import result_status_label, result_type_label
+
+    normalized_id = _normalize_task_id(task_id)
+    try:
+        results = container.red_team.list_results(normalized_id)
+    except Exception as e:
+        return _build_markdown_response("查询失败", f"❌ 查询任务 `{normalized_id}` 成果失败: {str(e)}")
+
+    wanted = (result_id or "").strip().lower()
+    target = next((item for item in results if (item.id or "").lower() == wanted), None)
+    if target is None:
+        return _build_markdown_response(
+            "错误",
+            f"❌ 任务 `{normalized_id}` 下没有成果 `{result_id}`。\n用 `/results {normalized_id}` 查看清单。",
+        )
+
+    lines = [
+        f"### 🎯 成果 `{target.id}`",
+        f"- **标题**: {target.title}",
+        f"- **类型**: {result_type_label(target.result_type)}",
+        f"- **状态**: {result_status_label(target.status)}",
+        f"- **攻击链**: `{target.chain_id}`",
+        f"- **身份**: `{target.principal}`" + (f" @ `{target.tenant}`" if target.tenant else ""),
+    ]
+    if target.target_asset:
+        lines.append(f"- **对象**: `{target.target_asset}`")
+    gained = "、".join(f"`{item}`" for item in (target.capabilities_gained or []))
+    if gained:
+        lines.append(f"- **获得能力**: {gained}")
+    if target.status == "verified":
+        lines.append(f"- **核定分**: `{target.points_awarded}` 分（自评 {target.points_declared}）")
+    else:
+        lines.append(f"- **自评分**: `{target.points_declared}` 分")
+    if target.review_reason:
+        lines.append(f"- **裁决理由**: {target.review_reason[:300]}")
+    if target.evidence_artifacts:
+        names = "、".join(item.name for item in target.evidence_artifacts[:5])
+        lines.append(f"- **证据**: {names}")
+    lines.append(f"\n*描述*: {(target.description or '')[:400]}")
+
+    return _build_markdown_response(f"成果 {target.id}", "\n".join(lines))
 
 
 def _handle_vulns(container: Container, task_id: str, page: int = 1) -> dict[str, Any]:
@@ -308,6 +452,21 @@ def route_dingtalk_command(container: Container, text_content: str) -> dict[str,
         if len(args) > 1 and str(args[1]).isdigit():
             page = int(args[1])
         return _handle_vulns(container, args[0], page=page)
+    if cmd in ("/results", "results", "成果列表"):
+        if not args:
+            return _build_markdown_response("提示", "⚠️ 请指定任务 ID，例如：`/results 231`")
+        page = 1
+        if len(args) > 1 and str(args[1]).isdigit():
+            page = int(args[1])
+        return _handle_results(container, args[0], page=page)
+    if cmd in ("/result", "/results-detail"):
+        if len(args) < 2:
+            return _build_markdown_response(
+                "提示",
+                "⚠️ 成果 ID 是每个任务内独立编号，请同时指定任务 ID：`/result 231 x019`\n"
+                "（可用 `/results 231` 查看该任务成果清单）",
+            )
+        return _handle_result(container, args[0], args[1])
     if cmd in ("/vuln", "vuln", "漏洞"):
         if len(args) < 2:
             return _build_markdown_response(

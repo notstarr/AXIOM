@@ -160,6 +160,68 @@ window.AxiomModules.human = {
       return { awarded, target, percent };
     },
 
+    // 目标积分是概览「积分」进度的分母，也是 Goal 达成判定的门槛。它允许在
+    // 这里直接改：后端的 PATCH /tasks 会同时重写目标文案、objective 里的
+    // target_points、当前 Goal 周期和 goal 事实，四处一次到位。
+    canEditRedTeamPoints() {
+      const task = this.project?.project;
+      if (!task || !this.isRedTeamBoard()) return false;
+      return !task.archived && !task.legacy_readonly && task.status !== 'completed';
+    },
+
+    beginEditRedTeamPoints() {
+      if (!this.canEditRedTeamPoints()) return;
+      this.pointsEdit = {
+        open: true,
+        taskId: this.project.project.id,
+        value: Number(this.humanRedTeamPoints().target || 1),
+        saving: false,
+      };
+      this.$nextTick(() => {
+        const input = document.querySelector('.points-capsule input[type="number"]');
+        if (input) { input.focus(); input.select(); }
+      });
+    },
+
+    cancelEditRedTeamPoints() {
+      this.pointsEdit.open = false;
+      this.pointsEdit.saving = false;
+    },
+
+    async saveRedTeamPoints() {
+      const edit = this.pointsEdit;
+      if (!edit.open || edit.saving) return;
+      const taskId = edit.taskId || this.project?.project?.id;
+      if (!taskId) return;
+      const value = this.normalizeRedTeamPoints(edit.value);
+      const current = Number(this.humanRedTeamPoints().target || 0);
+      if (value === current) { this.cancelEditRedTeamPoints(); return; }
+      edit.saving = true;
+      try {
+        const updated = await this.api('PUT', `/projects/${taskId}/target-points`, {
+          target_points: value,
+        });
+        // 就地回填：整页 reload 会重启轮询并重拉 graph/chains/results。
+        const apply = (task) => {
+          if (!task) return;
+          task.goal = updated.goal;
+          task.red_team_objective = {
+            ...(task.red_team_objective || {}),
+            ...(updated.red_team_objective || {}),
+          };
+        };
+        apply(this.project?.project);
+        apply(this.projects?.find(item => item.id === taskId));
+        apply(this.projectDetailsCache?.[taskId]?.project);
+        this.pointsEdit.open = false;
+        this.showToast(`目标积分已更新为 ${value}`);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      } finally {
+        this.pointsEdit.saving = false;
+      }
+    },
+
     humanSortedTodos() {
       const items = this.isRedTeamBoard()
         ? (this.project?.chains || [])

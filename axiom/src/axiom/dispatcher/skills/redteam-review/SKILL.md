@@ -74,9 +74,11 @@ axiom review decision submit duplicate \
 
 ```bash
 axiom review decision submit verified \
-  --reason 'dataSource 49 / kk_prod_fi.t_ai_bizvoucher，count=1000001。已核定的 kpos_x11_shopping 是另一个 dataSource，不同库，故各自计分。按「重要数据·财务 100 万以上」核 10 分。' \
-  --points 10
+  --reason 'dataSource 49 / kk_prod_fi.t_ai_bizvoucher，count=1000001。已核定的 kpos_x11_shopping 是另一个 dataSource，不同库，故各自计分。按「重要数据·财务 100 万以上」核 5 分。' \
+  --points 5
 ```
+
+> 数据档单价已于 2026-10-26 统一下调为原表一半（向上取整）：核心 2/4/10/15 → 1/2/5/8，重要 1/2/6/10 → 1/1/3/5。资产控制、核心目标、内网纵深、内网高价值目标四类单价不变。
 
 内网档实测复核：
 

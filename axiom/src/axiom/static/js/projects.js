@@ -182,7 +182,7 @@ window.AxiomModules.projects = {
       }
       this.newProject.worker_pool = defaults;
       if (!String(this.newProject.goal || '').trim()) {
-        this.newProject.goal = '对该系统进行渗透测试，并挖掘10个高置信度的漏洞';
+        this.newProject.goal = '对该资产进行渗透测试，并挖掘10个高置信度的漏洞';
       }
       if (!this.newProject._guardTouched) this.newProject.guard_enabled = !!this.judgeSettings?.enabled_default;
       this.taskComposerStep = 1;
@@ -642,6 +642,7 @@ window.AxiomModules.projects = {
           if (this.selectedProjectId !== taskId || generation !== this._projectOpenGeneration) return;
           this.renderLineage?.();
         });
+      }
     },
 
     async loadTaskSummary(id, options = {}) {
@@ -701,6 +702,8 @@ window.AxiomModules.projects = {
       }).then(detail => {
         if (this.selectedProjectId === taskId && generation === this._projectOpenGeneration && detail) {
           this.projectDetailsCache[taskId] = this.project;
+          // 首屏数据刚落地：让紧随其后的第一轮轮询走增量，避免整套重发。
+          this.markTaskDetailFresh(taskId);
         }
         return detail;
       }).catch(error => {
@@ -1059,15 +1062,36 @@ window.AxiomModules.projects = {
       } else {
         this.refreshSeedVulnerabilityCounts();
       }
-      // 任务目标仍是默认文案（未被用户改过）时，随模式切换默认话术
-      const defaults = {
-        vulnerability: '对该系统进行渗透测试，并挖掘10个高置信度的漏洞',
-        red_team: '对该系统进行渗透测试，并取得100积分',
-      };
+      // 漏洞模式目标自由填写；红队模式文案固定，只有分值是可变量。
+      const vulnerabilityGoal = '对该资产进行渗透测试，并挖掘10个高置信度的漏洞';
       const current = String(this.newProject.goal || '').trim();
-      if (!current || current === defaults.vulnerability || current === defaults.red_team) {
-        this.newProject.goal = defaults[this.newProject.engagement_mode] || '';
+      const isTemplateGoal = !current
+        || current === vulnerabilityGoal
+        || this.isRedTeamGoalText(current);
+      if (this.newProject.engagement_mode === 'red_team') {
+        this.syncRedTeamGoal();
+      } else if (isTemplateGoal) {
+        this.newProject.goal = vulnerabilityGoal;
       }
+    },
+
+    isRedTeamGoalText(value) {
+      return /^对该资产进行渗透测试，并取得\d+积分$/.test(String(value || '').trim());
+    },
+
+    normalizeRedTeamPoints(value) {
+      const points = Math.round(Number(value));
+      if (!Number.isFinite(points) || points < 1) return 1;
+      return Math.min(10000, points);
+    },
+
+    redTeamGoalText(points) {
+      return `对该资产进行渗透测试，并取得${this.normalizeRedTeamPoints(points)}积分`;
+    },
+
+    syncRedTeamGoal() {
+      this.newProject.rt_target_points = this.normalizeRedTeamPoints(this.newProject.rt_target_points);
+      this.newProject.goal = this.redTeamGoalText(this.newProject.rt_target_points);
     },
 
     seedSourceTasks() {
@@ -1110,6 +1134,7 @@ window.AxiomModules.projects = {
         const taskScopeTargets = String(this.newProject.task_scope_targets || '').split(/\n|,/).map(x => x.trim()).filter(Boolean);
         const taskScopeExclude = String(this.newProject.task_scope_exclude || '').split(/\n|,/).map(x => x.trim()).filter(Boolean);
         const engagementMode = this.newProject.engagement_mode === 'red_team' ? 'red_team' : 'vulnerability';
+        if (engagementMode === 'red_team') this.syncRedTeamGoal();
         const body = {
           parent_project_id: parentProjectId,
           title: this.newProject.title,
@@ -1128,8 +1153,13 @@ window.AxiomModules.projects = {
           },
           run_duration_seconds: runDurationSeconds,
           engagement_mode: engagementMode,
-          // 红队结构化目标由后端合成宽松默认，Reason 依任务目标自动规划
-          red_team_objective: null,
+          // 红队目标积分即概览页「积分」进度的分母（/100 的那个 100）
+          red_team_objective: engagementMode === 'red_team'
+            ? {
+                initial_principal: { id: 'user:initial', label: '初始身份', tenant: '', credential_id: null },
+                target_points: this.normalizeRedTeamPoints(this.newProject.rt_target_points),
+              }
+            : null,
           seed_vulnerability_task_id: engagementMode === 'red_team'
             ? (this.newProject.seed_vulnerability_task_id || null)
             : null,
@@ -1140,11 +1170,11 @@ window.AxiomModules.projects = {
         this.taskComposerStep = 1;
         this.newProject = {
           parent_project_id: parentProjectId || this.projectGroups[0]?.id || '',
-          title:'', origin:'', goal:'对该系统进行渗透测试，并挖掘10个高置信度的漏洞',
+          title:'', origin:'', goal:'对该资产进行渗透测试，并挖掘10个高置信度的漏洞',
           bootstrap: true, depth_mode: false, guard_enabled: !!this.judgeSettings?.enabled_default, hints: '',
           task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '',
           depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false,
-          engagement_mode: 'vulnerability', rt_principal_id: '', rt_principal_label: '', rt_principal_tenant: '', rt_credential_id: '', rt_capabilities: '', rt_assets: '', rt_data_targets: [],
+          engagement_mode: 'vulnerability', rt_target_points: 100, rt_principal_id: '', rt_principal_label: '', rt_principal_tenant: '', rt_credential_id: '', rt_capabilities: '', rt_assets: '', rt_data_targets: [],
           seed_vulnerability_task_id: '', seed_counts: {},
         };
         await this.loadProjectGroups();
@@ -1519,7 +1549,7 @@ window.AxiomModules.projects = {
       const returnTab = this._humanTabReturn?.taskId === id ? this._humanTabReturn?.tab : '';
       this._humanTabReturn = null;
       this.humanTab = ['workspace', 'todos', 'facts'].includes(returnTab) ? returnTab : 'workspace';
-      this.view = initialView === 'graph' ? 'graph' : 'human';
+      this.view = ['graph', 'archive'].includes(initialView) ? initialView : 'human';
       this.activePage = 'task-detail';
       this.cleanupMountedPage?.();
       this.showPageSkeleton();
@@ -1668,6 +1698,20 @@ window.AxiomModules.projects = {
       return true;
     },
 
+    // 进入任务时 hydrateTaskDetails 已经把整套数据拉过一遍。紧接着的第一轮轮询
+    // 若再走 force/事件分支，会把 graph、chains、results、artifacts… 原样重发
+    // 一遍（实测 26 个请求、解压后 1.35MB）。这里记下“首屏数据新鲜”的时间戳，
+    // 让首轮轮询只做增量，不再重复全量拉取。
+    markTaskDetailFresh(taskId) {
+      this._taskDetailFreshAt = { taskId: String(taskId || ''), at: Date.now() };
+    },
+
+    taskDetailIsFresh(taskId, windowMs = 30000) {
+      const fresh = this._taskDetailFreshAt;
+      if (!fresh || fresh.taskId !== String(taskId || '')) return false;
+      return Date.now() - fresh.at < windowMs;
+    },
+
     // 图谱刷新节流 + 可见性判断。
     // 图谱视图不可见时不刷新；可见时最小间隔 8s，避免任务运行期间每轮轮询都重建图谱。
     _graphRefreshDue(minMs = 8000) {
@@ -1684,13 +1728,18 @@ window.AxiomModules.projects = {
       const signal = this._pageAbortController?.signal;
       if (this.activePage === 'task-detail' && this.selectedProjectId) {
         const routeKey = `task:${this.selectedProjectId}:${this.view}`;
-        const force = this.routeSafeRefreshDue(routeKey);
+        // 首屏刚 hydrate 过就不再 force：否则进入任务的第一次轮询会把整套
+        // 接口重发一遍（graph/chains/results/artifacts…，实测多出 13 个请求）。
+        const fresh = this.taskDetailIsFresh(this.selectedProjectId);
+        const force = !fresh && this.routeSafeRefreshDue(routeKey);
+        if (fresh) this._lastSafeRefreshByRoute[routeKey] = Date.now();
         const events = await this.loadSeeEvents(false, { signal });
         const hydrating = this.taskDetailLoad?.taskId === this.selectedProjectId
           && !!this.taskDetailLoad?.hydrating;
-        if (!hydrating) await this.refreshTaskDetailSections?.(events, force);
-        if (!hydrating && this.view === 'graph' && (force || events.length) && this._graphRefreshDue()) this.updateGraph();
-        if (this.view === 'archive' && (force || events.length)) await this.loadArchives(this.selectedArchiveId);
+        // 首屏那套数据已包含历史事件，首轮只补“这次轮询新到的事件”，不因历史事件重拉。
+        if (!hydrating) await this.refreshTaskDetailSections?.(fresh ? [] : events, force);
+        if (!hydrating && this.view === 'graph' && (force || (!fresh && events.length)) && this._graphRefreshDue()) this.updateGraph();
+        if (this.view === 'archive' && (force || (!fresh && events.length))) await this.loadArchives(this.selectedArchiveId);
         return;
       }
       if (this.activePage === 'dashboard') {

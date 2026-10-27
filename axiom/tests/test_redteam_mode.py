@@ -195,6 +195,45 @@ def test_result_review_points_rules(client) -> None:
     assert duplicated.json()["points_awarded"] == 0
 
 
+def test_redteam_goal_text_follows_target_points(client) -> None:
+    """红队目标文案固定，只有积分可变量；文案由 target_points 派生。"""
+
+    project = client.post("/api/v1/projects", json={"title": "固定目标文案"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "红队分值",
+            "origin": "a.example.com",
+            # 调用方给什么文案都会被忽略：红队目标按 target_points 重写
+            "goal": "随便写一个目标",
+            "worker_pool": ["worker-a"],
+            "engagement_mode": "red_team",
+            "red_team_objective": {
+                "initial_principal": {"id": "user:initial", "label": "初始身份"},
+                "target_points": 250,
+            },
+        },
+    )
+    assert task.status_code == 201, task.text
+    assert task.json()["goal"] == "对该资产进行渗透测试，并取得250积分"
+    assert task.json()["red_team_objective"]["target_points"] == 250
+
+    # 漏洞模式仍然是自由文案
+    vulnerability = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "漏洞任务",
+            "origin": "a.example.com",
+            "goal": "挖 3 个高危漏洞",
+            "worker_pool": ["worker-a"],
+        },
+    )
+    assert vulnerability.status_code == 201, vulnerability.text
+    assert vulnerability.json()["goal"] == "挖 3 个高危漏洞"
+
+
 def test_redteam_goal_requires_target_points(client, engine) -> None:
     """Goal 达成判定：verified 核定分之和必须达到 target_points。"""
 
@@ -212,7 +251,7 @@ def test_redteam_goal_requires_target_points(client, engine) -> None:
             "project_id": project["id"],
             "title": "积分门槛任务",
             "origin": "a.example.com",
-            "goal": "对该系统进行渗透测试，并取得100积分",
+            "goal": "对该资产进行渗透测试，并取得100积分",
             "worker_pool": ["worker-a"],
             "engagement_mode": "red_team",
         },
@@ -333,6 +372,33 @@ def test_chain_update_rejects_control_plane_status(client) -> None:
     assert response.status_code == 422, response.text
 
 
+def test_chain_ids_are_scoped_to_their_task(client) -> None:
+    """每条任务自成一套 ch001 起编号，不沿用全局计数器。"""
+
+    first, claim, completed = _active_reason(client, red_team=True)
+    workspace = open_reason_workspace(client, task_id=first["id"], claim=claim)
+    draft = _chain_draft(completed)
+    second_chain = dict(draft["chain_adds"][0])
+    second_chain["ref"] = "ch-2"
+    second_chain["title"] = "第二条链"
+    draft["chain_adds"].append(second_chain)
+    committed = apply_reason_draft(
+        client, workspace["id"], claim["lease_id"], draft
+    )
+    assert committed.status_code == 200, committed.text
+    # 同任务内就地递增
+    assert committed.json()["created_chain_ids"] == ["ch001", "ch002"]
+
+    # 另一个任务从头开始，不受前一个任务影响
+    other, other_claim, other_completed = _active_reason(client, red_team=True)
+    other_ws = open_reason_workspace(client, task_id=other["id"], claim=other_claim)
+    other_commit = apply_reason_draft(
+        client, other_ws["id"], other_claim["lease_id"], _chain_draft(other_completed)
+    )
+    assert other_commit.status_code == 200, other_commit.text
+    assert other_commit.json()["created_chain_ids"] == ["ch001"]
+
+
 def test_reason_commit_creates_chain_and_binds_intent(client) -> None:
     """Commit persists the staged Chain, binds the Intent and reaches the Worker."""
 
@@ -345,7 +411,8 @@ def test_reason_commit_creates_chain_and_binds_intent(client) -> None:
     result = committed.json()
     assert len(result["created_chain_ids"]) == 1
     chain_id = result["created_chain_ids"][0]
-    assert chain_id.startswith("ch")
+    # 链编号按任务独立（ch001 起），与 intent/fact/artifact 同一套口径
+    assert chain_id == "ch001"
     intent_id = result["created_intent_ids"][0]
 
     chains = client.get(f"/api/v1/tasks/{task['id']}/red-team/chains")
@@ -573,6 +640,10 @@ def test_cross_task_result_and_chain_listing(client) -> None:
     assert results.headers["X-Total-Count"] == "1"
     [item] = results.json()
     assert item["chain_id"] == chain_id
+    # 成果编号按任务独立（x001 起），与漏洞的 v001 同一套口径
+    assert item["id"] == "x001"
+    # 证据链按产物原文件名返回，供控制台直接展示
+    assert [artifact["name"] for artifact in item["evidence_artifacts"]] == ["evidence.txt"]
 
     filtered = client.get(
         "/api/v1/red-team/results",
@@ -956,3 +1027,397 @@ def test_exercise_rubric_accepts_target_control_score() -> None:
     assert "1-50" not in text
     review_skill = Path(__file__).resolve().parents[1] / "src/axiom/dispatcher/skills/redteam-review/SKILL.md"
     assert "先读 `redteam-scoring`" in review_skill.read_text(encoding="utf-8")
+
+
+def test_redteam_notifications_fire_on_report_and_review(client) -> None:
+    """红队成果上报与裁决各推送一次，卡片内容与库内数据一致。"""
+
+    from unittest.mock import patch
+
+    captured: list[tuple[str, str]] = []
+
+    def fake_report(**kwargs):
+        captured.append(("reported", kwargs["result_id"]))
+        return True
+
+    def fake_review(**kwargs):
+        captured.append(("reviewed", kwargs["result_id"]))
+        return True
+
+    task, claim, completed = _active_reason(client, red_team=True)
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    committed = apply_reason_draft(
+        client, workspace["id"], claim["lease_id"], _chain_draft(completed)
+    )
+    chain_id = committed.json()["created_chain_ids"][0]
+    intent_id = committed.json()["created_intent_ids"][0]
+    claim_body, _execution = _claim_explore(client, task["id"], intent_id)
+    uploaded = client.post(
+        f"/api/v1/tasks/{task['id']}/artifacts/upload",
+        files={"file": ("evidence.txt", b"proof")},
+        data={"actor": "worker-a", "summary": "证据"},
+    )
+    artifact_id = uploaded.json()["id"]
+    report = {
+        "chain_id": chain_id,
+        "result_type": "permission",
+        "title": "取得成员管理能力",
+        "description": "普通成员会话调用成员管理接口成功",
+        "principal": "user:member",
+        "capabilities_gained": ["tenant:admin"],
+        "target_asset": "member-management",
+        "evidence_refs": [f"artifact:{artifact_id}"],
+        "points_declared": 30,
+    }
+
+    with patch("axiom.shared.dingtalk.DingTalkNotifier.config",
+               new=__import__("axiom.shared.dingtalk", fromlist=["DingTalkConfig"]).DingTalkConfig(
+                   webhook_url="https://example.invalid/robot", enabled=True)), \
+         patch("axiom.shared.dingtalk.DingTalkNotifier.notify_redteam_result_reported",
+               side_effect=lambda **kw: fake_report(**kw)), \
+         patch("axiom.shared.dingtalk.DingTalkNotifier.notify_redteam_result_reviewed",
+               side_effect=lambda **kw: fake_review(**kw)):
+        accepted = client.post(
+            f"/api/v1/tasks/{task['id']}/intents/{intent_id}/red-team-results",
+            json={"lease_id": claim_body["lease_id"], "report": report},
+        )
+        assert accepted.status_code == 201, accepted.text
+        result_id = accepted.json()["id"]
+        assert captured == [("reported", result_id)]
+
+        # Reviewer 直接调 API 裁决 → 第 2 次推送
+        reviewed = client.post(
+            f"/api/v1/tasks/{task['id']}/red-team/results/{result_id}/review",
+            params={"reviewed_by": "reviewer.1"},
+            json={"status": "verified", "reason": "证据可复现，四要素齐全", "points_awarded": 30},
+        )
+        assert reviewed.status_code == 200, reviewed.text
+
+    assert captured == [("reported", result_id), ("reviewed", result_id)]
+
+
+def test_redteam_notification_failure_never_breaks_business(client) -> None:
+    """钉钉不可用不能回滚已落库的成果。"""
+
+    from unittest.mock import patch
+
+    task, claim, completed = _active_reason(client, red_team=True)
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    committed = apply_reason_draft(
+        client, workspace["id"], claim["lease_id"], _chain_draft(completed)
+    )
+    chain_id = committed.json()["created_chain_ids"][0]
+    intent_id = committed.json()["created_intent_ids"][0]
+    claim_body, _execution = _claim_explore(client, task["id"], intent_id)
+    uploaded = client.post(
+        f"/api/v1/tasks/{task['id']}/artifacts/upload",
+        files={"file": ("evidence.txt", b"proof")},
+        data={"actor": "worker-a", "summary": "证据"},
+    )
+    report = {
+        "chain_id": chain_id,
+        "result_type": "permission",
+        "title": "取得成员管理能力",
+        "description": "普通成员会话调用成员管理接口成功",
+        "principal": "user:member",
+        "capabilities_gained": ["tenant:admin"],
+        "target_asset": "member-management",
+        "evidence_refs": [f"artifact:{uploaded.json()['id']}"],
+        "points_declared": 30,
+    }
+
+    with patch("axiom.shared.dingtalk.DingTalkNotifier.config",
+               new=__import__("axiom.shared.dingtalk", fromlist=["DingTalkConfig"]).DingTalkConfig(
+                   webhook_url="https://example.invalid/robot", enabled=True)), \
+         patch("axiom.shared.dingtalk.DingTalkNotifier.notify_redteam_result_reported",
+               side_effect=RuntimeError("dingtalk down")):
+        accepted = client.post(
+            f"/api/v1/tasks/{task['id']}/intents/{intent_id}/red-team-results",
+            json={"lease_id": claim_body["lease_id"], "report": report},
+        )
+
+    assert accepted.status_code == 201, accepted.text
+    result_id = accepted.json()["id"]
+    listed = client.get(f"/api/v1/tasks/{task['id']}/red-team/results")
+    assert [item["id"] for item in listed.json()] == [result_id]
+
+
+def test_redteam_dingtalk_commands_list_and_detail(client) -> None:
+    """群指令 /results 与 /result 能查到红队成果，且编号按任务内口径。"""
+
+    from axiom.modules.integrations.dingtalk_api import route_dingtalk_command
+    from axiom.shared.errors import NotFoundError
+
+    task, claim, completed = _active_reason(client, red_team=True)
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    committed = apply_reason_draft(
+        client, workspace["id"], claim["lease_id"], _chain_draft(completed)
+    )
+    chain_id = committed.json()["created_chain_ids"][0]
+    intent_id = committed.json()["created_intent_ids"][0]
+    claim_body, _execution = _claim_explore(client, task["id"], intent_id)
+    uploaded = client.post(
+        f"/api/v1/tasks/{task['id']}/artifacts/upload",
+        files={"file": ("evidence.txt", b"proof")},
+        data={"actor": "worker-a", "summary": "证据"},
+    )
+    accepted = client.post(
+        f"/api/v1/tasks/{task['id']}/intents/{intent_id}/red-team-results",
+        json={
+            "lease_id": claim_body["lease_id"],
+            "report": {
+                "chain_id": chain_id,
+                "result_type": "permission",
+                "title": "取得成员管理能力",
+                "description": "普通成员会话调用成员管理接口成功",
+                "principal": "user:member",
+                "capabilities_gained": ["tenant:admin"],
+                "target_asset": "member-management",
+                "evidence_refs": [f"artifact:{uploaded.json()['id']}"],
+                "points_declared": 30,
+            },
+        },
+    )
+    result_id = accepted.json()["id"]
+    assert result_id == "x001"
+
+    container = client.app.state.container
+    listed = route_dingtalk_command(container, f"/results {task['id']}")
+    assert "成果清单" in listed["markdown"]["text"]
+    assert result_id in listed["markdown"]["text"]
+    assert "权限跃迁" in listed["markdown"]["text"]
+
+    detail = route_dingtalk_command(container, f"/result {task['id']} {result_id}")
+    assert result_id in detail["markdown"]["text"]
+    assert "member-management" in detail["markdown"]["text"]
+
+    missing = route_dingtalk_command(container, f"/result {task['id']} x999")
+    assert "没有成果" in missing["markdown"]["text"]
+
+    # /status 对红队任务显示成果数与积分，而不是「漏洞」
+    status = route_dingtalk_command(container, f"/status {task['id']}")
+    text = status["markdown"]["text"]
+    assert "成果" in text
+    assert "漏洞: `0`" not in text
+
+
+def test_redteam_notification_fires_when_review_run_completes(client, engine) -> None:
+    """Reviewer 走 run 完成路径（不是直连 API）时也必须推送裁决卡片。"""
+
+    from sqlalchemy import select
+    from unittest.mock import patch
+
+    from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
+
+    captured: list[dict] = []
+    task, claim, completed = _active_reason(client, red_team=True)
+    workspace = open_reason_workspace(client, task_id=task["id"], claim=claim)
+    committed = apply_reason_draft(
+        client, workspace["id"], claim["lease_id"], _chain_draft(completed)
+    )
+    chain_id = committed.json()["created_chain_ids"][0]
+    intent_id = committed.json()["created_intent_ids"][0]
+    claim_body, _execution = _claim_explore(client, task["id"], intent_id)
+    uploaded = client.post(
+        f"/api/v1/tasks/{task['id']}/artifacts/upload",
+        files={"file": ("evidence.txt", b"proof")},
+        data={"actor": "worker-a", "summary": "证据"},
+    )
+
+    with patch("axiom.shared.dingtalk.DingTalkNotifier.config",
+               new=__import__("axiom.shared.dingtalk", fromlist=["DingTalkConfig"]).DingTalkConfig(
+                   webhook_url="https://example.invalid/robot", enabled=True)), \
+         patch("axiom.shared.dingtalk.DingTalkNotifier.notify_redteam_result_reported",
+               side_effect=lambda **kw: True), \
+         patch("axiom.shared.dingtalk.DingTalkNotifier.notify_redteam_result_reviewed",
+               side_effect=lambda **kw: captured.append(kw) or True):
+        accepted = client.post(
+            f"/api/v1/tasks/{task['id']}/intents/{intent_id}/red-team-results",
+            json={
+                "lease_id": claim_body["lease_id"],
+                "report": {
+                    "chain_id": chain_id,
+                    "result_type": "permission",
+                    "title": "取得成员管理能力",
+                    "description": "普通成员会话调用成员管理接口成功",
+                    "principal": "user:member",
+                    "capabilities_gained": ["tenant:admin"],
+                    "target_asset": "member-management",
+                    "evidence_refs": [f"artifact:{uploaded.json()['id']}"],
+                    "points_declared": 30,
+                },
+            },
+        )
+        result_id = accepted.json()["id"]
+        with engine.connect() as conn:
+            review_run_id = conn.execute(
+                select(vulnerability_review_runs.c.id).where(
+                    vulnerability_review_runs.c.task_id == task["id"],
+                    vulnerability_review_runs.c.red_team_result_id == result_id,
+                )
+            ).scalar_one()
+
+        client.put(
+            "/api/v1/workers/worker-a",
+            json={"capabilities": ["bootstrap", "reason", "explore", "review"], "max_running": 1},
+        )
+        client.post(
+            f"/api/v1/dispatch/tasks/{task['id']}/intents/{intent_id}/release",
+            json={"lease_id": claim_body["lease_id"], "failure_kind": "test_release"},
+        )
+        base = f"/api/v1/dispatch/tasks/{task['id']}/vulnerability-review-runs/{review_run_id}"
+        claimed = client.post(f"{base}/claim", json={"worker_name": "worker-a"})
+        lease = {"lease_id": claimed.json()["lease_id"]}
+        client.post(f"{base}/start", json=lease)
+        client.post(
+            f"{base}/decision",
+            json={**lease, "decision": "verified", "reason": "证据充分：权限跃迁可复现", "points_awarded": 30},
+        )
+        client.post(f"{base}/conclude", json=lease)
+        finished = client.post(f"{base}/complete", json=lease)
+
+    assert finished.status_code == 200, finished.text
+    assert len(captured) == 1
+    card = captured[0]
+    assert card["result_id"] == result_id
+    assert card["status"] == "verified"
+    assert card["points_awarded"] == 30
+    assert card["progress"] is not None and card["progress"][1] == 100
+
+
+def _red_team_task(client, *, points: int = 500) -> dict:
+    project = client.post("/api/v1/projects", json={"title": "目标积分"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "可调分值",
+            "origin": "a.example.com",
+            "worker_pool": ["worker-a"],
+            "engagement_mode": "red_team",
+            "red_team_objective": {
+                "initial_principal": {"id": "user:initial", "label": "初始身份"},
+                "target_points": points,
+            },
+        },
+    )
+    assert task.status_code == 201, task.text
+    return task.json()
+
+
+def test_update_task_target_points_rewrites_every_copy(client, engine) -> None:
+    """改目标积分这一处，四处口径必须一起变，并留审计痕迹。
+
+    积分同时是概览进度的分母、Goal 达成的门槛、注入给 Reason 的 Goal 事实，
+    以及当前 Goal 周期的文案。只改其中一处，界面和目标校验就会各说各话。
+    """
+
+    from sqlalchemy import select as _select
+
+    from axiom.modules.audit.tables import audit_events
+    from axiom.modules.goals.tables import task_goal_cycles
+    from axiom.modules.graph.tables import facts
+
+    task = _red_team_task(client, points=500)
+
+    updated = client.patch(f"/api/v1/tasks/{task['id']}", json={"target_points": 1000})
+    assert updated.status_code == 200, updated.text
+    body = updated.json()
+    assert body["goal"] == "对该资产进行渗透测试，并取得1000积分"
+    assert body["red_team_objective"]["target_points"] == 1000
+    # 结构化目标里的其余字段不能被顺手清空
+    assert body["red_team_objective"]["initial_principal"]["id"] == "user:initial"
+
+    with engine.connect() as conn:
+        goal_fact = conn.execute(
+            _select(facts.c.description).where(
+                facts.c.task_id == task["id"], facts.c.id == "goal"
+            )
+        ).scalar_one()
+        cycle_goal = conn.execute(
+            _select(task_goal_cycles.c.goal).where(
+                task_goal_cycles.c.task_id == task["id"],
+                task_goal_cycles.c.status == "active",
+            )
+        ).scalar_one()
+        events = conn.execute(
+            _select(audit_events.c.payload_json).where(
+                audit_events.c.task_id == task["id"],
+                audit_events.c.event_type == "task.goal_updated",
+            )
+        ).scalars().all()
+
+    assert goal_fact == "对该资产进行渗透测试，并取得1000积分"
+    assert cycle_goal == "对该资产进行渗透测试，并取得1000积分"
+    assert events, "改积分必须留下 task.goal_updated 审计记录"
+    import json as _json
+
+    payload = _json.loads(events[-1]) if isinstance(events[-1], str) else events[-1]
+    assert payload["previous_target_points"] == 500
+    assert payload["target_points"] == 1000
+
+
+def test_update_task_target_points_is_idempotent(client, engine) -> None:
+    """同值提交不该产生噪声审计，也不该把 goal 重写一遍。"""
+
+    from sqlalchemy import func as _func, select as _select
+
+    from axiom.modules.audit.tables import audit_events
+
+    task = _red_team_task(client, points=500)
+
+    def count_goal_events() -> int:
+        with engine.connect() as conn:
+            return int(
+                conn.execute(
+                    _select(_func.count()).select_from(audit_events).where(
+                        audit_events.c.task_id == task["id"],
+                        audit_events.c.event_type == "task.goal_updated",
+                    )
+                ).scalar_one()
+            )
+
+    before = count_goal_events()
+    again = client.patch(f"/api/v1/tasks/{task['id']}", json={"target_points": 500})
+    assert again.status_code == 200, again.text
+    assert again.json()["red_team_objective"]["target_points"] == 500
+    assert count_goal_events() == before
+
+
+def test_update_task_target_points_rejects_bad_targets(client) -> None:
+    task = _red_team_task(client, points=500)
+
+    # 边界与 RedTeamObjective.target_points 一致
+    assert client.patch(f"/api/v1/tasks/{task['id']}", json={"target_points": 0}).status_code == 422
+    assert client.patch(f"/api/v1/tasks/{task['id']}", json={"target_points": 10001}).status_code == 422
+
+    # 漏洞模式没有积分概念
+    project = client.post("/api/v1/projects", json={"title": "漏洞"}).json()
+    vuln = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "漏洞任务",
+            "origin": "a.example.com",
+            "goal": "挖漏洞",
+            "worker_pool": ["worker-a"],
+        },
+    ).json()
+    rejected = client.patch(f"/api/v1/tasks/{vuln['id']}", json={"target_points": 300})
+    assert rejected.status_code == 409
+
+
+def test_update_task_target_points_blocked_on_completed_task(client, engine) -> None:
+    """已完成任务只能通过「继续任务」开新一轮 Goal，不能在原地改门槛。"""
+
+    from sqlalchemy import update as _update
+
+    task = _red_team_task(client, points=500)
+    # 直接置为已完成：这条测试只关心 update 的守卫，不重演完整生命周期
+    with engine.begin() as conn:
+        conn.execute(
+            _update(tasks).where(tasks.c.id == task["id"]).values(status="completed")
+        )
+
+    rejected = client.patch(f"/api/v1/tasks/{task['id']}", json={"target_points": 900})
+    assert rejected.status_code == 409

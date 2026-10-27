@@ -197,6 +197,200 @@ def test_postgresql_baseline_downgrades_and_reupgrades(isolated_postgresql_datab
         engine.dispose()
 
 
+def _seed_legacy_chains(conn, schema: str) -> None:
+    """Two tasks sharing one global counter, plus results and intents pointing at it.
+
+    ``ch000001``/``ch000004`` belong to t_old_a, ``ch000002`` to t_old_b, so the
+    creation order interleaves: renumbering must sort per task, not by id alone.
+    """
+
+    conn.execute(
+        text(
+            f'INSERT INTO "{schema}".projects '
+            "(id, title, description, status, created_at, updated_at) "
+            "VALUES ('prj_chain', 'chains', '', 'active', now(), now())"
+        )
+    )
+    for task_id in ("t_old_a", "t_old_b"):
+        conn.execute(
+            text(
+                f'INSERT INTO "{schema}".tasks '
+                "(id, project_id, title, origin_input, goal, status, phase, scope_json, "
+                "worker_pool_json, guard_enabled, external_report_enabled, legacy_readonly, "
+                "archived, created_at, updated_at) "
+                "VALUES (:id, 'prj_chain', 'chain task', 'a.example.com', 'goal', 'running', "
+                "'none', CAST('{\"enabled\": false, \"targets\": [], \"exclude\": []}' AS jsonb), "
+                "CAST('[]' AS jsonb), false, false, false, false, now(), now())"
+            ),
+            {"id": task_id},
+        )
+
+    # created_at drives the order inside each task; ids are deliberately
+    # interleaved across tasks to prove the partition works.
+    chains = [
+        ("ch000004", "t_old_a", "2026-10-20T10:00:00+00"),
+        ("ch000001", "t_old_a", "2026-10-20T09:00:00+00"),
+        ("ch000002", "t_old_b", "2026-10-20T09:30:00+00"),
+    ]
+    for chain_id, task_id, created_at in chains:
+        conn.execute(
+            text(
+                f'INSERT INTO "{schema}".red_team_chains '
+                "(id, task_id, title, initial_principal_json, target_capabilities_json, "
+                "target_assets_json, status, status_reason, current_state_json, "
+                "source_fact_ids_json, source_intent_ids_json, created_by, created_at, updated_at) "
+                "VALUES (:id, :task_id, :title, CAST('{}' AS jsonb), CAST('[]' AS jsonb), "
+                "CAST('[]' AS jsonb), 'open', '', CAST('{}' AS jsonb), CAST('[]' AS jsonb), "
+                "CAST('[]' AS jsonb), 'reason', :created_at, :created_at)"
+            ),
+            {"id": chain_id, "task_id": task_id, "title": chain_id, "created_at": created_at},
+        )
+
+    # One intent per task pointing at that task's chain (no FK on intents).
+    for intent_id, task_id, chain_id in (
+        ("i900", "t_old_a", "ch000001"),
+        ("i901", "t_old_b", "ch000002"),
+    ):
+        conn.execute(
+            text(
+                f'INSERT INTO "{schema}".intents '
+                "(id, task_id, chain_id, kind, description, priority, status, creator, "
+                "worker_pool_json, targets_json, plan_metadata_json, retry_count, "
+                "infrastructure_retry_count, last_failure_kind, failure_class, activity_kind, "
+                "activity_summary, activity_tool, created_at, archived) "
+                "VALUES (:id, :task_id, :chain_id, 'explore', 'seed', 50, 'completed', 'reason', "
+                "CAST('[]' AS jsonb), CAST('[]' AS jsonb), CAST('{}' AS jsonb), 0, 0, '', '', '', "
+                "'', '', now(), false)"
+            ),
+            {"id": intent_id, "task_id": task_id, "chain_id": chain_id},
+        )
+
+    conn.execute(
+        text(
+            f'INSERT INTO "{schema}".red_team_results '
+            "(id, task_id, chain_id, intent_id, result_type, title, description, principal, "
+            "tenant, capabilities_before_json, capabilities_gained_json, capabilities_after_json, "
+            "target_asset, data_fields_json, data_summary, evidence_refs_json, status, "
+            "reported_by, review_reason, points_declared, points_awarded, created_at, updated_at) "
+            "VALUES ('x900', 't_old_a', 'ch000004', 'i900', 'permission', 'seed', 'seed', "
+            "'user:member', '', CAST('[]' AS jsonb), CAST('[]' AS jsonb), CAST('[]' AS jsonb), "
+            "'a.example.com', CAST('[]' AS jsonb), '', CAST('[]' AS jsonb), 'verified', 'reason', "
+            "'', 5, 5, now(), now())"
+        )
+    )
+
+
+def test_chain_ids_scope_to_task_migration_renumbers_and_round_trips(
+    isolated_postgresql_database,
+) -> None:
+    """ch000004/ch000001 in one task become ch001/ch002; another task restarts at ch001."""
+
+    migrator_url, app_url = isolated_postgresql_database
+    config = alembic_config(migrator_url)
+    command.upgrade(config, "20261021_pg0026")
+
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        with engine.begin() as conn:
+            _seed_legacy_chains(conn, AXIOM_SCHEMA)
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, "20261026_pg0027")
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    f'SELECT task_id, id FROM "{AXIOM_SCHEMA}".red_team_chains '
+                    "ORDER BY task_id, id"
+                )
+            ).all()
+            # t_old_a 内按 created_at 重排：ch000001(09:00)→ch001，ch000004(10:00)→ch002
+            assert rows == [
+                ("t_old_a", "ch001"),
+                ("t_old_a", "ch002"),
+                ("t_old_b", "ch001"),
+            ], rows
+
+            # 外键跟着改：结果指向 ch002
+            result_chain = conn.execute(
+                text(
+                    f'SELECT chain_id FROM "{AXIOM_SCHEMA}".red_team_results '
+                    "WHERE task_id='t_old_a' AND id='x900'"
+                )
+            ).scalar_one()
+            assert result_chain == "ch002"
+
+            # intents 无外键，必须显式重指
+            intents = dict(
+                conn.execute(
+                    text(
+                        f'SELECT id, chain_id FROM "{AXIOM_SCHEMA}".intents '
+                        "WHERE id IN ('i900', 'i901') ORDER BY id"
+                    )
+                ).all()
+            )
+            assert intents == {"i900": "ch001", "i901": "ch001"}
+
+            # 计数器按任务重建，全局计数器退休
+            counters = dict(
+                conn.execute(
+                    text(
+                        f'SELECT scope, next_value FROM "{AXIOM_SCHEMA}".id_counters '
+                        "WHERE kind='red_team_chain'"
+                    )
+                ).all()
+            )
+            assert counters == {"t_old_a": 3, "t_old_b": 2}, counters
+    finally:
+        engine.dispose()
+
+    # 回滚：恢复全局六位编号，跨任务唯一
+    command.downgrade(config, "20261021_pg0026")
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        with engine.connect() as conn:
+            ids = [
+                row[0]
+                for row in conn.execute(
+                    text(
+                        f'SELECT id FROM "{AXIOM_SCHEMA}".red_team_chains ORDER BY id'
+                    )
+                ).all()
+            ]
+            assert ids == ["ch000001", "ch000002", "ch000003"], ids
+            assert conn.execute(
+                text(
+                    f'SELECT count(*) FROM "{AXIOM_SCHEMA}".red_team_results r '
+                    'WHERE NOT EXISTS (SELECT 1 FROM "'
+                    f'{AXIOM_SCHEMA}".red_team_chains c '
+                    "WHERE c.task_id = r.task_id AND c.id = r.chain_id)"
+                )
+            ).scalar_one() == 0
+    finally:
+        engine.dispose()
+
+    # 再升级一次，确认可重复执行
+    command.upgrade(config, "20261026_pg0027")
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    f'SELECT task_id, id FROM "{AXIOM_SCHEMA}".red_team_chains '
+                    "ORDER BY task_id, id"
+                )
+            ).all()
+            assert rows == [
+                ("t_old_a", "ch001"),
+                ("t_old_a", "ch002"),
+                ("t_old_b", "ch001"),
+            ], rows
+    finally:
+        engine.dispose()
+
+
 def test_origin_scope_decoupling_migration_normalizes_disabled_scope_and_rolls_back(
     isolated_postgresql_database,
 ) -> None:

@@ -283,12 +283,13 @@
       <template x-if="!rtResultLoading && rtResultItems.length === 0">
         <div class="sto-muted" style="text-align:center; padding:36px 0;">暂无红队成果</div>
       </template>
-      <template x-for="r in rtResultItems" :key="r.id">
+      <template x-for="r in rtResultItems" :key="rtResultKey(r)">
         <button type="button" @click="selectRtResult(r)" class="sto-navitem sto-vlist"
-          :class="[rtTypeTone(r.result_type), selectedRtResultId === r.id ? 'active' : '']">
+          :class="[rtTypeTone(r.result_type), selectedRtResultId === rtResultKey(r) ? 'active' : '']">
           <div class="flex items-center" style="gap:7px;">
             <span class="sto-sevdot"></span>
             <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);" x-text="r.id"></span>
+            <span class="sto-muted" style="font-size:9.5px;" x-text="r.task_id"></span>
             <span style="flex:1;"></span>
             <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);" x-text="rtPointsLabel(r)"></span>
             <span class="sto-status" style="font-size:10px;" :class="rtStatusClass(r.status)"><i></i><span x-text="rtStatusLabel(r.status)"></span></span>
@@ -314,8 +315,8 @@
             <h3 style="margin-top:9px; font-size:17px; font-weight:700; letter-spacing:-0.01em; color:var(--sto-fg); word-break:break-word;" x-text="selectedRtResult().title"></h3>
             <div class="flex flex-wrap items-center" style="gap:7px; margin-top:9px;">
               <span class="sto-sevbadge" x-text="rtTypeLabel(selectedRtResult().result_type)"></span>
-              <span x-show="selectedRtResult().target_asset" class="sto-badge neutral" x-text="selectedRtResult().target_asset"></span>
-              <span x-show="selectedRtResult().principal" class="sto-badge neutral" x-text="selectedRtResult().tenant ? `${selectedRtResult().principal} @ ${selectedRtResult().tenant}` : selectedRtResult().principal"></span>
+              <span x-show="selectedRtResult().target_asset" class="sto-badge neutral" :title="`对象：${selectedRtResult().target_asset}`"><span class="sto-muted">对象</span>&nbsp;<span class="sto-num" x-text="selectedRtResult().target_asset"></span></span>
+              <span x-show="selectedRtResult().principal" class="sto-badge neutral" :title="`身份：${selectedRtResult().principal}`"><span class="sto-muted">身份</span>&nbsp;<span class="sto-num" x-text="selectedRtResult().tenant ? `${selectedRtResult().principal} @ ${selectedRtResult().tenant}` : selectedRtResult().principal"></span></span>
             </div>
           </div>
           <div style="padding:16px 20px; display:flex; flex-direction:column; gap:13px;">
@@ -383,9 +384,10 @@
                 <p class="sto-muted" style="font-style:italic;">未填写</p>
               </template>
               <div style="display:flex; flex-direction:column; gap:6px;">
-                <template x-for="ref in (selectedRtResult().evidence_refs || [])" :key="`${selectedRtResult().id}-${ref}`">
-                  <button type="button" @click="openResultEvidence(selectedRtResult(), ref)" class="sto-item" style="border:1px solid var(--sto-line); border-radius:9px; width:100%; text-align:left; cursor:pointer;">
-                    <span class="sto-num" style="font-size:11.5px; color:var(--sto-accent);" x-text="ref"></span>
+                <template x-for="ev in rtEvidenceList(selectedRtResult())" :key="`${selectedRtResult().id}-${ev.ref}`">
+                  <button type="button" @click="openResultEvidence(selectedRtResult(), ev.ref)" class="sto-item" style="border:1px solid var(--sto-line); border-radius:9px; width:100%; text-align:left; cursor:pointer;" :title="`${ev.name}${ev.size ? ' · ' + formatBytes(ev.size) : ''}`">
+                    <span class="sto-num" style="font-size:11.5px; color:var(--sto-accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="ev.name"></span>
+                    <span x-show="ev.size" class="sto-muted sto-num" style="font-size:10px; flex-shrink:0;" x-text="formatBytes(ev.size)"></span>
                   </button>
                 </template>
               </div>

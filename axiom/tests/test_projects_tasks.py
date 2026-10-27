@@ -25,7 +25,7 @@ def test_task_creation_is_atomic_and_seeds_graph(client) -> None:
             "project_id": project["id"],
             "title": "授权边界测试",
             "origin": "https://API.Example.com:8443",
-            "goal": "对该系统进行渗透测试，并挖掘10个高置信度的漏洞",
+            "goal": "对该资产进行渗透测试，并挖掘10个高置信度的漏洞",
             "hints": ["优先验证对象级授权", "优先验证对象级授权"],
             "worker_pool": ["worker-a", "worker-a"],
         },
@@ -359,7 +359,7 @@ def test_task_settings_and_hints_can_be_edited_without_stale_graph_state(client)
             "origin": "a.example.com",
         },
     ).json()
-    assert task["goal"] == "对该系统进行渗透测试，并挖掘10个高置信度的漏洞"
+    assert task["goal"] == "对该资产进行渗透测试，并挖掘10个高置信度的漏洞"
 
     updated = client.patch(
         f"/api/v1/tasks/{task['id']}",

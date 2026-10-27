@@ -17,6 +17,33 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# 红队成果的领域词汇：卡片文案与群指令共用同一份定义，避免两处各写一套。
+RESULT_TYPE_LABELS: dict[str, str] = {
+    "permission": "🔓 权限跃迁",
+    "data": "🗄️ 数据获取",
+    "credential": "🔑 凭证获取",
+    "pivot": "↔️ 横向控制",
+}
+
+RESULT_STATUS_LABELS: dict[str, str] = {
+    "reported": "已上报",
+    "reviewing": "审核中",
+    "verified": "✅ 已验证",
+    "rejected": "⛔ 已驳回",
+    "duplicate": "♻️ 重复",
+    "needs-human": "🙋 需人工",
+}
+
+
+def result_type_label(value: str | None) -> str:
+    key = str(value or "").strip().lower()
+    return RESULT_TYPE_LABELS.get(key, f"• {value}" if value else "• 未知")
+
+
+def result_status_label(value: str | None) -> str:
+    key = str(value or "").strip().lower()
+    return RESULT_STATUS_LABELS.get(key, str(value) if value else "未知")
+
 # dingtalk-stream SDK 为可选依赖（Stream 双向交互才需要）；未安装时
 # Webhook 单向推送不受影响，DingTalkStreamBot 启动会报错并由调用方捕获。
 try:
@@ -257,6 +284,124 @@ class DingTalkNotifier:
         lines.append(f"\n*AXIOM 自动化安全测试平台 · 评审通知*")
         card_text = "\n\n".join(lines)
         return self.send_markdown(f"【漏洞评审结果】{title} -> {status}", card_text)
+
+    # ── 红队成果卡片 ──────────────────────────────────────────────────
+    # 红队用护网计分语言（权限跃迁/数据/凭证/横向 + 核定分），不复用漏洞的
+    # 严重度/状态词汇，避免出现「危害等级：permission」这类错位。
+
+    def _progress_line(self, progress: tuple[int, int] | None) -> list[str]:
+        """积分进度：红队 Goal 判定靠 verified 分之和达到 target_points。"""
+        if not progress:
+            return []
+        awarded, target = int(progress[0]), int(progress[1])
+        if target <= 0:
+            return [f"**积分进度**: `{awarded}` 分"]
+        percent = min(100, round(awarded / target * 100))
+        return [f"**积分进度**: `{awarded}/{target}` 分（{percent}%）"]
+
+    def _capability_transition(
+        self, before: list[str] | None, gained: list[str] | None
+    ) -> str:
+        before_list = [str(item) for item in (before or []) if str(item).strip()]
+        gained_list = [str(item) for item in (gained or []) if str(item).strip()]
+        if not before_list and not gained_list:
+            return ""
+        left = "、".join(f"`{item}`" for item in before_list) or "—"
+        right = "、".join(f"`{item}`" for item in gained_list) or "—"
+        return f"{left} → {right}"
+
+    def notify_redteam_result_reported(
+        self,
+        *,
+        task_id: str,
+        result_id: str,
+        title: str,
+        result_type: str,
+        description: str = "",
+        principal: str = "",
+        tenant: str = "",
+        target_asset: str = "",
+        chain_label: str = "",
+        capabilities_before: list[str] | None = None,
+        capabilities_gained: list[str] | None = None,
+        points_declared: int = 0,
+        evidence_names: list[str] | None = None,
+        progress: tuple[int, int] | None = None,
+    ) -> bool:
+        """【红队第 1 次推送】：成果上报、进入审核队列"""
+        lines = [
+            "### 🎯 AXIOM 红队成果上报（待审核）",
+            f"**任务编号**: `{task_id}`",
+            f"**成果编号**: `{result_id}`",
+            f"**成果类型**: {result_type_label(result_type)}",
+            f"**成果标题**: {title}",
+        ]
+        if chain_label:
+            lines.append(f"**攻击链**: {chain_label}")
+        identity = f"`{principal}`" if principal else ""
+        if identity and tenant:
+            identity = f"`{principal}` @ `{tenant}`"
+        if identity:
+            lines.append(f"**身份**: {identity}")
+        if target_asset:
+            lines.append(f"**对象**: `{target_asset}`")
+        capability_line = self._capability_transition(capabilities_before, capabilities_gained)
+        if capability_line:
+            lines.append(f"**能力变化**: {capability_line}")
+        if points_declared:
+            lines.append(f"**自评分**: `{points_declared}` 分")
+        names = [str(item) for item in (evidence_names or []) if str(item).strip()]
+        if names:
+            shown = "、".join(names[:5])
+            more = f" 等 {len(names)} 个" if len(names) > 5 else ""
+            lines.append(f"**证据**: {shown}{more}")
+        desc = self._format_description(description, limit=300)
+        if desc:
+            lines.append(f"**描述**:\n\n{desc}")
+        lines.extend(self._progress_line(progress))
+        lines.append("\n*AXIOM 自动化安全测试平台 · 红队实时上报*")
+        return self.send_markdown(f"【红队成果上报】{title}", "\n\n".join(lines))
+
+    def notify_redteam_result_reviewed(
+        self,
+        *,
+        task_id: str,
+        result_id: str,
+        title: str,
+        result_type: str,
+        status: str,
+        points_awarded: int = 0,
+        points_declared: int = 0,
+        target_asset: str = "",
+        review_reason: str = "",
+        reviewed_by: str = "",
+        progress: tuple[int, int] | None = None,
+    ) -> bool:
+        """【红队第 2 次推送】：成果审核裁决"""
+        lines = [
+            "### ⚖️ AXIOM 红队成果审核结果",
+            f"**任务编号**: `{task_id}`",
+            f"**成果编号**: `{result_id}`",
+            f"**成果标题**: {title}",
+            f"**成果类型**: {result_type_label(result_type)}",
+            f"**审核结论**: {result_status_label(status)}",
+        ]
+        if status == "verified":
+            declared = f"（自评 {points_declared}）" if points_declared else ""
+            lines.append(f"**核定分**: `{points_awarded}` 分{declared}")
+        if target_asset:
+            lines.append(f"**对象**: `{target_asset}`")
+        if reviewed_by:
+            lines.append(f"**审查者**: `{reviewed_by}`")
+        reason = self._format_description(review_reason, limit=400)
+        if reason:
+            lines.append(f"**裁决理由**:\n\n{reason}")
+        lines.extend(self._progress_line(progress))
+        lines.append("\n*AXIOM 自动化安全测试平台 · 红队审核通知*")
+        return self.send_markdown(
+            f"【红队审核结果】{title} -> {status}", "\n\n".join(lines)
+        )
+
 
 
 # 全局单例

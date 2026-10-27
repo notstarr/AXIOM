@@ -9,7 +9,7 @@ from axiom.modules.goals.schemas import GoalCycle
 from axiom.modules.redteam.schemas import EngagementMode, RedTeamObjective
 
 
-DEFAULT_GOAL = "对该系统进行渗透测试，并挖掘10个高置信度的漏洞"
+DEFAULT_GOAL = "对该资产进行渗透测试，并挖掘10个高置信度的漏洞"
 MIN_RUN_DURATION_SECONDS = 60
 MAX_RUN_DURATION_SECONDS = 365 * 24 * 60 * 60
 
@@ -264,6 +264,11 @@ class UpdateTask(BaseModel):
     scope: TaskScope | None = None
     worker_pool: list[str] | None = None
     guard_enabled: bool | None = None
+    # 红队任务的目标积分。它既是概览页「积分」进度的分母，也是 Goal 达成判定
+    # 的门槛，所以要允许建好任务之后再调整。目标文案永远由它派生（见
+    # ``red_team_goal_text``），调用方不能只改文案不改分值。
+    # 边界与 ``RedTeamObjective.target_points`` 保持一致。
+    target_points: int | None = Field(default=None, ge=1, le=10_000)
 
     @field_validator("title", "goal")
     @classmethod

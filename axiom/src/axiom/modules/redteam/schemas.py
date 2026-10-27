@@ -81,6 +81,19 @@ class RedTeamObjective(BaseModel):
         return self
 
 
+def red_team_goal_text(target_points: int | None) -> str:
+    """红队任务的固定目标文案；唯一可变量是目标积分。
+
+    目标积分同时是概览页「积分」进度的分母，所以任务目标文字必须由它派生，
+    两边不会各说各话。
+    """
+
+    points = int(target_points or 100)
+    if points < 1:
+        points = 1
+    return f"对该资产进行渗透测试，并取得{points}积分"
+
+
 class RedTeamChainCreate(BaseModel):
     title: str
     initial_principal: RedTeamPrincipal
@@ -179,6 +192,20 @@ class RedTeamChain(BaseModel):
     updated_at: str
 
 
+class RedTeamEvidenceArtifact(BaseModel):
+    """One resolved ``artifact:<id>`` evidence reference.
+
+    The console links evidence by the artifact's own file name instead of the
+    opaque per-task id, so the API resolves the reference once and ships both.
+    """
+
+    id: str
+    name: str
+    size: int = 0
+    artifact_type: str = ""
+    intent_id: str | None = None
+
+
 class RedTeamResult(BaseModel):
     id: str
     task_id: str
@@ -192,6 +219,7 @@ class RedTeamResult(BaseModel):
     capabilities_before: list[str] = Field(default_factory=list)
     capabilities_gained: list[str] = Field(default_factory=list)
     capabilities_after: list[str] = Field(default_factory=list)
+    # 对象：具体域名 / IP（可带端口与括号说明），由上报方填写
     target_asset: str
     data_target_id: str | None = None
     sample_count: int | None = None
@@ -200,6 +228,7 @@ class RedTeamResult(BaseModel):
     data_summary: str = ""
     credential_ref: str | None = None
     evidence_refs: list[str] = Field(default_factory=list)
+    evidence_artifacts: list[RedTeamEvidenceArtifact] = Field(default_factory=list)
     status: ResultStatus
     reported_by: str
     points_declared: int = 0

@@ -4,14 +4,25 @@ import json
 
 from sqlalchemy import Connection, func, or_, select, update
 
+from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.redteam.schemas import (
     RedTeamChain,
     RedTeamChainCreate,
+    RedTeamEvidenceArtifact,
     RedTeamResult,
     RedTeamResultReport,
 )
 from axiom.modules.redteam.tables import red_team_chains, red_team_results
+from axiom.modules.tasks.tables import tasks
+from axiom.shared.errors import ConflictError
 from axiom.shared.ids import allocate_id
+
+# Chains number themselves per Task (ch001), so the display never carries the
+# global counter.  Three digits keeps the ids aligned in the console; past 999
+# the padding would widen and break the alphabetical tie-break in the lineage
+# view, so refuse instead of silently mis-sorting.
+CHAIN_ID_WIDTH = 3
+CHAIN_ID_LIMIT = 10**CHAIN_ID_WIDTH - 1
 
 
 def _json_list(value) -> list[str]:
@@ -38,6 +49,67 @@ def _json_object(value) -> dict:
     return {}
 
 
+def _evidence_name(storage_key: str, summary: str = "") -> str:
+    """The artifact's own file name, which is what the evidence link shows."""
+
+    key = str(storage_key or "").strip()
+    if key:
+        return key.rsplit("/", 1)[-1]
+    return str(summary or "").strip()
+
+
+def evidence_names(conn: Connection, task_id: str, refs: list[str]) -> list[str]:
+    """把 ``artifact:<id>`` 引用解析成产物原文件名。
+
+    通知卡片与控制台共用同一口径（都显示原文件名而非不透明 id）。
+    """
+
+    ids = [
+        str(ref).split(":", 1)[1].strip()
+        for ref in (refs or [])
+        if str(ref).startswith("artifact:")
+    ]
+    ids = [item for item in ids if item]
+    if not ids:
+        return []
+    rows = conn.execute(
+        select(artifacts.c.id, artifacts.c.storage_key, artifacts.c.summary).where(
+            artifacts.c.task_id == task_id, artifacts.c.id.in_(ids)
+        )
+    ).mappings()
+    by_id = {
+        row["id"]: _evidence_name(row.get("storage_key"), row.get("summary"))
+        for row in rows
+    }
+    return [by_id[item] for item in ids if item in by_id]
+
+
+def points_progress(conn: Connection, task_id: str) -> tuple[int, int]:
+    """红队积分进度：verified 核定分之和 / 目标分。
+
+    Goal 判定（goals.service）用的就是这个口径，通知卡片必须与之一致，
+    否则群里的数字会和控制台/完成判定对不上。
+    """
+
+    awarded = conn.execute(
+        select(func.coalesce(func.sum(red_team_results.c.points_awarded), 0)).where(
+            red_team_results.c.task_id == task_id,
+            red_team_results.c.status == "verified",
+        )
+    ).scalar_one()
+    raw = conn.execute(
+        select(tasks.c.red_team_objective_json).where(tasks.c.id == task_id)
+    ).scalar_one_or_none()
+    target = 100
+    if raw:
+        objective = _json_object(raw)
+        try:
+            target = int(objective.get("target_points") or 100)
+        except (TypeError, ValueError):
+            target = 100
+    return int(awarded or 0), int(target)
+
+
 class RedTeamRepository:
     def create_chain(
         self,
@@ -49,7 +121,17 @@ class RedTeamRepository:
         created_by: str,
         now: str,
     ) -> RedTeamChain:
-        chain_id = allocate_id(conn, scope="global", kind="red_team_chain", prefix="ch", width=6)
+        chain_id = allocate_id(
+            conn,
+            scope=task_id,
+            kind="red_team_chain",
+            prefix="ch",
+            width=CHAIN_ID_WIDTH,
+        )
+        if len(chain_id) > 2 + CHAIN_ID_WIDTH:
+            raise ConflictError(
+                f"任务 {task_id} 的攻击链已达 {CHAIN_ID_LIMIT} 条上限，请先归档或合并"
+            )
         values = {
             "id": chain_id,
             "task_id": task_id,
@@ -118,7 +200,9 @@ class RedTeamRepository:
                 red_team_results.c.id == result_id,
             )
         ).mappings().one_or_none()
-        return self._result(row) if row is not None else None
+        if row is None:
+            return None
+        return self._with_evidence(conn, [self._result(row)])[0]
 
     def list_results(
         self,
@@ -131,7 +215,7 @@ class RedTeamRepository:
         if chain_id:
             query = query.where(red_team_results.c.chain_id == chain_id)
         rows = conn.execute(query.order_by(red_team_results.c.created_at, red_team_results.c.id)).mappings()
-        return [self._result(row) for row in rows]
+        return self._with_evidence(conn, [self._result(row) for row in rows])
 
     def list_results_page(
         self,
@@ -175,7 +259,68 @@ class RedTeamRepository:
             .offset(offset)
             .limit(limit)
         ).mappings()
-        return [self._result(row) for row in rows], int(total)
+        return self._with_evidence(conn, [self._result(row) for row in rows]), int(total)
+
+    # 取数逻辑以模块级函数为唯一实现（通知与评审都能直接用连接调用），
+    # 这里只做薄委托，避免两份口径漂移。
+
+    def evidence_names(self, conn: Connection, task_id: str, refs: list[str]) -> list[str]:
+        return evidence_names(conn, task_id, refs)
+
+    def points_progress(self, conn: Connection, task_id: str) -> tuple[int, int]:
+        return points_progress(conn, task_id)
+
+    def _with_evidence(self, conn: Connection, results: list[RedTeamResult]) -> list[RedTeamResult]:
+        """Resolve ``artifact:<id>`` references to their file names.
+
+        Artifact ids are scoped to a Task, so the lookup key is the pair.
+        References that no longer resolve keep only the raw ref (the console
+        then falls back to showing the id instead of a file name).
+        """
+
+        wanted: dict[str, set[str]] = {}
+        for item in results:
+            for ref in item.evidence_refs:
+                if ref.startswith("artifact:"):
+                    artifact_id = ref.split(":", 1)[1].strip()
+                    if artifact_id:
+                        wanted.setdefault(item.task_id, set()).add(artifact_id)
+        if not wanted:
+            return results
+        lookup: dict[tuple[str, str], dict] = {}
+        for task_id, ids in wanted.items():
+            rows = conn.execute(
+                select(
+                    artifacts.c.task_id,
+                    artifacts.c.id,
+                    artifacts.c.intent_id,
+                    artifacts.c.artifact_type,
+                    artifacts.c.storage_key,
+                    artifacts.c.summary,
+                    artifacts.c.size,
+                ).where(artifacts.c.task_id == task_id, artifacts.c.id.in_(sorted(ids)))
+            ).mappings()
+            for row in rows:
+                lookup[(row["task_id"], row["id"])] = dict(row)
+        hydrated: list[RedTeamResult] = []
+        for item in results:
+            resolved: list[RedTeamEvidenceArtifact] = []
+            for ref in item.evidence_refs:
+                artifact_id = ref.split(":", 1)[1].strip() if ref.startswith("artifact:") else ""
+                row = lookup.get((item.task_id, artifact_id))
+                if row is None:
+                    continue
+                resolved.append(
+                    RedTeamEvidenceArtifact(
+                        id=row["id"],
+                        name=_evidence_name(row.get("storage_key"), row.get("summary")),
+                        size=int(row.get("size") or 0),
+                        artifact_type=row.get("artifact_type") or "",
+                        intent_id=row.get("intent_id"),
+                    )
+                )
+            hydrated.append(item.model_copy(update={"evidence_artifacts": resolved}))
+        return hydrated
 
     def list_chains_page(
         self,
@@ -218,7 +363,9 @@ class RedTeamRepository:
         reported_by: str,
         now: str,
     ) -> RedTeamResult:
-        result_id = allocate_id(conn, scope="global", kind="red_team_result", prefix="rr", width=6)
+        # 成果编号按任务独立（x001、x002…），与漏洞的 v001 同一套口径，
+        # 这样每条任务内都能从 1 开始读，不会出现跨任务的全局大序号。
+        result_id = allocate_id(conn, scope=task_id, kind="red_team_result", prefix="x", width=3)
         values = {
             "id": result_id,
             "task_id": task_id,
@@ -253,7 +400,7 @@ class RedTeamRepository:
             "updated_at": now,
         }
         conn.execute(red_team_results.insert().values(**values))
-        return self._result(values)
+        return self._with_evidence(conn, [self._result(values)])[0]
 
     def set_result_status(
         self,

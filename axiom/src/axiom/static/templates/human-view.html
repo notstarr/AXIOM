@@ -222,8 +222,23 @@
                 <span class="text-lg font-bold tabular-nums leading-none text-slate-800" x-text="humanCycleModel().current?.number ?? 0"></span>
                 <span class="text-[10px] text-slate-500">当前轮次</span>
               </div>
-              <div class="flex items-center gap-2 rounded-xl border border-slate-200/80 bg-slate-50/70 px-3.5 py-2">
-                <span x-show="isRedTeamBoard()" class="text-lg font-bold tabular-nums leading-none text-rose-500" x-text="`${humanRedTeamPoints().awarded}/${humanRedTeamPoints().target}`"></span>
+              <div class="flex items-center gap-2 rounded-xl border border-slate-200/80 bg-slate-50/70 px-3.5 py-2 points-capsule"
+                :class="canEditRedTeamPoints() ? 'points-capsule-editable' : ''"
+                :title="canEditRedTeamPoints() ? '点击修改目标积分' : ''"
+                @click="canEditRedTeamPoints() && !pointsEdit.open ? beginEditRedTeamPoints() : null">
+                <template x-if="isRedTeamBoard() && pointsEdit.open">
+                  <span class="flex items-center gap-1">
+                    <span class="text-lg font-bold tabular-nums leading-none text-slate-400" x-text="humanRedTeamPoints().awarded + '/'"></span>
+                    <input type="number" min="1" max="10000" step="1" x-model.number="pointsEdit.value"
+                      :disabled="pointsEdit.saving"
+                      @click.stop @keydown.enter.prevent="saveRedTeamPoints()" @keydown.escape.prevent="cancelEditRedTeamPoints()"
+                      @blur="saveRedTeamPoints()"
+                      class="points-capsule-input tabular-nums" aria-label="目标积分">
+                  </span>
+                </template>
+                <span x-show="!isRedTeamBoard() || !pointsEdit.open" x-cloak
+                  class="text-lg font-bold tabular-nums leading-none text-rose-500"
+                  x-text="`${humanRedTeamPoints().awarded}/${humanRedTeamPoints().target}`"></span>
                 <span x-show="!isRedTeamBoard()" class="text-lg font-bold tabular-nums leading-none text-brand-600" x-text="`${humanTodoProgress().completed}/${humanTodoProgress().total}`"></span>
                 <span class="text-[10px] text-slate-500" x-text="isRedTeamBoard() ? '积分' : 'Todo'"></span>
               </div>

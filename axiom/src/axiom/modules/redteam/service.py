@@ -9,6 +9,10 @@ from axiom.modules.audit.service import AuditService
 from axiom.modules.graph.tables import intents
 from axiom.modules.graph.tables import facts
 from axiom.modules.redteam.repository import RedTeamRepository
+from axiom.modules.redteam.notifications import (
+    dispatch_result_reported,
+    dispatch_result_reviewed,
+)
 from axiom.modules.redteam.schemas import (
     ACTIONABLE_CHAIN_STATUSES,
     LEGACY_CHAIN_STATUS_MAP,
@@ -397,7 +401,11 @@ class RedTeamService:
         *,
         reported_by: str,
     ) -> RedTeamResult:
+        # 通知载荷在事务内取数、事务外投递，避免钉钉超时拖住业务事务。
+        notification: dict | None = None
+
         def work(conn):
+            nonlocal notification
             task = self._task(conn, task_id)
             intent = conn.execute(
                 select(intents).where(intents.c.task_id == task_id, intents.c.id == intent_id)
@@ -491,12 +499,24 @@ class RedTeamService:
             if self.reviews is None:
                 raise ConflictError("Red-team Reviewer service is not configured")
             self.reviews.enqueue_redteam_in(conn, task_id=task_id, result_id=result.id, now=utcnow())
+            notification = {
+                "result": result,
+                "chain_label": f"{chain.id} {chain.title}".strip(),
+                "evidence_names": self.repository.evidence_names(conn, task_id, result.evidence_refs),
+                "progress": self.repository.points_progress(conn, task_id),
+            }
             return result.model_copy(update={"status": "reviewing"})
 
-        return run_transaction(self.engine, work)
+        outcome = run_transaction(self.engine, work)
+        if notification:
+            dispatch_result_reported(**notification)
+        return outcome
 
     def review_result(self, task_id: str, result_id: str, command: RedTeamResultReview) -> RedTeamResult:
+        notification: dict | None = None
+
         def work(conn):
+            nonlocal notification
             if not command.reviewed_by.startswith("reviewer"):
                 raise ConflictError("Only the Reviewer Worker may adjudicate a Result")
             self._task(conn, task_id)
@@ -523,5 +543,16 @@ class RedTeamService:
                 event_type="redteam.result.reviewed", message="红队成果已完成审核",
                 payload={"result_id": result_id, "status": command.status, "points_awarded": points_awarded},
             ))
+            notification = {
+                "result": updated,
+                "points_awarded": points_awarded,
+                "review_reason": command.reason,
+                "reviewed_by": command.reviewed_by,
+                "progress": self.repository.points_progress(conn, task_id),
+            }
             return updated
-        return run_transaction(self.engine, work)
+
+        outcome = run_transaction(self.engine, work)
+        if notification:
+            dispatch_result_reviewed(**notification)
+        return outcome
