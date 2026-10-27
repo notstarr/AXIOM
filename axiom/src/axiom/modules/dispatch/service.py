@@ -10,6 +10,7 @@ from axiom.dispatcher.schemas import ClaimAction, ClaimedIntent, ClaimedWork, Di
 from axiom.modules.dispatch.retry import retry_outcome
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
+from axiom.modules.dispatch.pool import usable_pool
 from axiom.modules.dispatch.recovery import recover_parked
 from axiom.modules.dispatch.repository import DispatchRepository
 from axiom.modules.dispatch.schemas import (
@@ -81,6 +82,7 @@ class DispatchService:
                 )
                 for item in outcome.exhausted
             ],
+            recovery_failed_queues=list(outcome.failed_queues),
         )
 
     def observe_stall(self, observation: DispatchStallObservation) -> DispatchStallObservation:
@@ -643,8 +645,13 @@ class DispatchService:
         capabilities = json.loads(worker["capabilities_json"] or "[]")
         if kind not in capabilities:
             raise ConflictError(f"Worker does not support {kind}")
-        if worker_pool and worker_name not in worker_pool:
-            raise ConflictError("Worker is outside the work item Worker Pool")
+        # A pool that names no registered worker can never be satisfied.  The
+        # snapshot collapses it to "any worker" so the work item still gets
+        # dispatched; claim has to read it the same way or the two sides
+        # disagree and every dispatch is rejected here.
+        if usable_pool(worker_pool, self.repository.known_worker_names(conn)):
+            if worker_name not in worker_pool:
+                raise ConflictError("Worker is outside the work item Worker Pool")
         if self.repository.worker_active_count(conn, worker_name) >= worker["max_running"]:
             raise ConflictError("Worker has no free capacity")
 

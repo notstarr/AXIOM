@@ -26,6 +26,7 @@ erasing it would destroy the evidence the breaker uses to avoid that backend.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -39,6 +40,8 @@ from axiom.modules.reason.tables import reason_runs
 from axiom.modules.tasks.tables import tasks
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
 from axiom.shared.clock import format_utc, parse_utc
+
+logger = logging.getLogger(__name__)
 
 
 # The four queues that park.  The label is what the audit record calls the kind,
@@ -65,9 +68,17 @@ class RecoveryOutcome:
     recovered: list[RecoveredItem] = field(default_factory=list)
     exhausted: list[RecoveredItem] = field(default_factory=list)
     skipped: int = 0
+    # One queue whose rows cannot be re-armed must not stop the other three.
+    # ``failed_queues`` keeps that failure visible instead of swallowing it.
+    failed_queues: list[str] = field(default_factory=list)
 
     def empty(self) -> bool:
-        return not self.recovered and not self.exhausted and self.skipped == 0
+        return (
+            not self.recovered
+            and not self.exhausted
+            and not self.failed_queues
+            and self.skipped == 0
+        )
 
 
 def _reset_values(table, *, now: str, recovery_round: int, config) -> dict:
@@ -95,7 +106,11 @@ def _reset_values(table, *, now: str, recovery_round: int, config) -> dict:
     # genuinely fails every time start over, which is not what recovery means.
     if "concluded_at" in table.c:
         values["concluded_at"] = None
-    return values
+    # The four parked queues do not share a column set: ``intents`` has never had
+    # an ``updated_at``.  Passing a column the Table does not declare makes
+    # SQLAlchemy raise CompileError before the statement ever reaches Postgres,
+    # which would abort every queue in this scan — so keep only real columns.
+    return {name: value for name, value in values.items() if name in table.c}
 
 
 def recover_parked(
@@ -132,104 +147,155 @@ def recover_parked(
         return outcome
 
     for phase, table, event_prefix in _PARKED_QUEUES:
-        rows = conn.execute(
-            select(table).where(
+        # Each queue gets its own savepoint.  ``recover_parked`` runs inside the
+        # caller's transaction, so without one a single failing queue would poison
+        # the whole transaction and take the other three down with it — which is
+        # exactly the shape of the bug that made ``intents`` (no ``updated_at``)
+        # block Reason/Plan/Review recovery entirely.
+        marks = (len(outcome.recovered), len(outcome.exhausted), outcome.skipped)
+        savepoint = conn.begin_nested()
+        try:
+            _recover_queue(
+                conn,
+                audit=audit,
+                config=config,
+                phase=phase,
+                table=table,
+                event_prefix=event_prefix,
+                outcome=outcome,
+                live_tasks=live_tasks,
+                now=now,
+                cutoff=cutoff,
+                limit=limit,
+                max_rounds=max_rounds,
+                quiet_seconds=quiet_seconds,
+            )
+            savepoint.commit()
+        except Exception as exc:  # noqa: BLE001 - one queue must not stop the rest
+            savepoint.rollback()
+            del outcome.recovered[marks[0] :]
+            del outcome.exhausted[marks[1] :]
+            outcome.skipped = marks[2]
+            outcome.failed_queues.append(f"{phase}: {type(exc).__name__}: {exc}")
+            logger.warning("retry recovery skipped the %s queue: %s", phase, exc)
+    return outcome
+
+
+def _recover_queue(
+    conn: Connection,
+    *,
+    audit: AuditService,
+    config,
+    phase: str,
+    table,
+    event_prefix: str,
+    outcome: RecoveryOutcome,
+    live_tasks: dict[str, str | None],
+    now: str,
+    cutoff: str,
+    limit: int,
+    max_rounds: int,
+    quiet_seconds: int,
+) -> None:
+    """Re-arm every quiet, parked row of one queue."""
+
+    rows = conn.execute(
+        select(table).where(
+            table.c.status == "pending",
+            table.c.infrastructure_retry_count >= limit,
+            table.c.next_retry_at.is_(None),
+            table.c.retry_blocked_at.is_not(None),
+            table.c.retry_blocked_at <= cutoff,
+        )
+    ).mappings().all()
+    for row in rows:
+        task_id = row["task_id"]
+        if task_id not in live_tasks:
+            outcome.skipped += 1
+            continue
+        run_id = row["id"]
+        previous = int(row["infrastructure_retry_count"] or 0)
+        rounds = int(row["recovery_round"] or 0)
+        if rounds >= max_rounds:
+            # Announce once, then leave it parked.  ``recovery_round`` stops
+            # at max_rounds so the "exhausted" flag is written exactly once.
+            if rounds == max_rounds:
+                _audit(
+                    conn,
+                    audit,
+                    event_prefix=event_prefix,
+                    event_suffix="recovery_exhausted",
+                    level="error",
+                    task_id=task_id,
+                    project_id=live_tasks[task_id],
+                    run_id=run_id,
+                    message=(
+                        f"{_label(phase)} 自动恢复已达上限（{max_rounds} 次），"
+                        "已停止自动重试，需人工介入"
+                    ),
+                    payload={
+                        "phase": phase,
+                        "infrastructure_retry_count": previous,
+                        "recovery_round": rounds,
+                        "last_failure_kind": row["last_failure_kind"] or "",
+                        "max_rounds": max_rounds,
+                    },
+                )
+                conn.execute(
+                    update(table)
+                    .where(table.c.id == run_id, table.c.task_id == task_id)
+                    .values(recovery_round=rounds + 1)
+                )
+                outcome.exhausted.append(
+                    RecoveredItem(phase, task_id, run_id, previous, rounds)
+                )
+            else:
+                outcome.skipped += 1
+            continue
+
+        updated = conn.execute(
+            update(table)
+            .where(
+                table.c.id == run_id,
+                table.c.task_id == task_id,
                 table.c.status == "pending",
                 table.c.infrastructure_retry_count >= limit,
-                table.c.next_retry_at.is_(None),
-                table.c.retry_blocked_at.is_not(None),
-                table.c.retry_blocked_at <= cutoff,
             )
-        ).mappings().all()
-        for row in rows:
-            task_id = row["task_id"]
-            if task_id not in live_tasks:
-                outcome.skipped += 1
-                continue
-            run_id = row["id"]
-            previous = int(row["infrastructure_retry_count"] or 0)
-            rounds = int(row["recovery_round"] or 0)
-            if rounds >= max_rounds:
-                # Announce once, then leave it parked.  ``recovery_round`` stops
-                # at max_rounds so the "exhausted" flag is written exactly once.
-                if rounds == max_rounds:
-                    _audit(
-                        conn,
-                        audit,
-                        event_prefix=event_prefix,
-                        event_suffix="recovery_exhausted",
-                        level="error",
-                        task_id=task_id,
-                        project_id=live_tasks[task_id],
-                        run_id=run_id,
-                        message=(
-                            f"{_label(phase)} 自动恢复已达上限（{max_rounds} 次），"
-                            "已停止自动重试，需人工介入"
-                        ),
-                        payload={
-                            "phase": phase,
-                            "infrastructure_retry_count": previous,
-                            "recovery_round": rounds,
-                            "last_failure_kind": row["last_failure_kind"] or "",
-                            "max_rounds": max_rounds,
-                        },
-                    )
-                    conn.execute(
-                        update(table)
-                        .where(table.c.id == run_id, table.c.task_id == task_id)
-                        .values(recovery_round=rounds + 1)
-                    )
-                    outcome.exhausted.append(
-                        RecoveredItem(phase, task_id, run_id, previous, rounds)
-                    )
-                else:
-                    outcome.skipped += 1
-                continue
-
-            updated = conn.execute(
-                update(table)
-                .where(
-                    table.c.id == run_id,
-                    table.c.task_id == task_id,
-                    table.c.status == "pending",
-                    table.c.infrastructure_retry_count >= limit,
-                )
-                .values(
-                    **_reset_values(
-                        table, now=now, recovery_round=rounds + 1, config=config
-                    )
+            .values(
+                **_reset_values(
+                    table, now=now, recovery_round=rounds + 1, config=config
                 )
             )
-            if not updated.rowcount:
-                # Someone (an operator or another recovery pass) moved it first.
-                outcome.skipped += 1
-                continue
-            _audit(
-                conn,
-                audit,
-                event_prefix=event_prefix,
-                event_suffix="auto_recovered",
-                level="warning",
-                task_id=task_id,
-                project_id=live_tasks[task_id],
-                run_id=run_id,
-                message=(
-                    f"{_label(phase)} 已自动恢复（第 {rounds + 1} 次），重新排队领取"
-                ),
-                payload={
-                    "phase": phase,
-                    "previous_infrastructure_retry_count": previous,
-                    "recovery_round": rounds + 1,
-                    "max_rounds": max_rounds,
-                    "last_failure_kind": row["last_failure_kind"] or "",
-                    "quiet_seconds": quiet_seconds,
-                    "worker_pool": _pool(row["worker_pool_json"]),
-                },
-            )
-            outcome.recovered.append(
-                RecoveredItem(phase, task_id, run_id, previous, rounds + 1)
-            )
-    return outcome
+        )
+        if not updated.rowcount:
+            # Someone (an operator or another recovery pass) moved it first.
+            outcome.skipped += 1
+            continue
+        _audit(
+            conn,
+            audit,
+            event_prefix=event_prefix,
+            event_suffix="auto_recovered",
+            level="warning",
+            task_id=task_id,
+            project_id=live_tasks[task_id],
+            run_id=run_id,
+            message=(
+                f"{_label(phase)} 已自动恢复（第 {rounds + 1} 次），重新排队领取"
+            ),
+            payload={
+                "phase": phase,
+                "previous_infrastructure_retry_count": previous,
+                "recovery_round": rounds + 1,
+                "max_rounds": max_rounds,
+                "last_failure_kind": row["last_failure_kind"] or "",
+                "quiet_seconds": quiet_seconds,
+                "worker_pool": _pool(row["worker_pool_json"]),
+            },
+        )
+        outcome.recovered.append(
+            RecoveredItem(phase, task_id, run_id, previous, rounds + 1)
+        )
 
 
 def _pool(raw) -> list[str]:

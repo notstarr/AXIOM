@@ -58,8 +58,55 @@ def narrow_worker_pool(
     if not candidates:
         return current
     narrowed = [name for name in candidates if name != failed_worker]
-    # Never return []: the dispatcher treats an empty pool as "any worker".
+    # Never return []: the dispatcher treats an empty pool as "any worker", and
+    # widening here would throw away the operator's restriction the moment the
+    # only named worker had one bad attempt.
+    #
+    # A pool left naming only *unregistered* workers is harmless at this layer
+    # because :func:`usable_pool` collapses it to "any worker" when the row is
+    # read — that is the permanent case, and it is handled there.
     return narrowed or candidates
+
+
+def usable_pool(pool: Sequence[str] | None, known: Iterable[str] | None) -> list[str]:
+    """Return ``pool`` if it still names at least one registered worker.
+
+    A pool is a *restriction*, and the dispatcher reads an empty pool as "any
+    capable worker".  Two very different situations both look like "no worker in
+    this list is available":
+
+    * a known worker is cooling down or disabled — transient, so the item must
+      keep waiting for it;
+    * the list names only workers that are not registered at all (renamed,
+      removed) — permanent, so waiting can never succeed.
+
+    Only the second case is collapsed to ``[]``.  Left alone it is a silent,
+    permanent stall: the item stays pending forever while every dispatch tick
+    skips it, and nothing in the audit trail says why.
+    """
+
+    current = _clean(pool)
+    if not current:
+        return []
+    known_names = set(_clean(known))
+    if not known_names:
+        # No worker is registered at all: that is a transient state (fresh
+        # install, everything deleted), not evidence that the pool is stale.
+        # Widening here would silently drop the operator's restriction for good.
+        return current
+    if not set(current) & known_names:
+        return []
+    return current
+
+
+def registered_worker_names(conn: Connection) -> set[str]:
+    """Every worker name in the registry, regardless of its current state.
+
+    Deliberately not filtered by ``disabled`` or cooldown: :func:`usable_pool`
+    must keep waiting for a worker that is merely temporarily unavailable.
+    """
+
+    return set(conn.execute(select(workers.c.name)).scalars())
 
 
 def capable_worker_names(conn: Connection, kind: str) -> list[str]:
@@ -125,10 +172,15 @@ def narrow_pool_after_failure(
     Called only for infrastructure (transient) failures.  Persists the narrowed
     pool when it actually changed, so a single broken backend cannot absorb the
     whole retry budget.
+
+    The capable set is read unconditionally.  Fetching it only when the item had
+    no pool of its own left an item that *did* have one narrowing against an
+    empty set of alternatives, so it kept re-selecting the backend that had just
+    failed.
     """
 
     current = json_list(pool_json)
-    capable = capable_worker_names(conn, kind) if not current else []
+    capable = capable_worker_names(conn, kind)
     narrowed = narrow_worker_pool(current, failed_worker, capable)
     if narrowed != current:
         update_worker_pool(

@@ -17,6 +17,11 @@ from axiom.dispatcher.schemas import (
     WorkerSnapshot,
 )
 from axiom.modules.graph.tables import intents
+from axiom.modules.dispatch.pool import (
+    json_list,
+    registered_worker_names,
+    usable_pool,
+)
 from axiom.modules.reason.tables import reason_runs
 from axiom.modules.plan.tables import plan_runs
 from axiom.modules.vulnerability_reviews.tables import vulnerability_review_runs
@@ -42,6 +47,11 @@ class DispatchRepository:
         config: RuntimeConfig,
         config_version: int,
     ) -> DispatcherSnapshot:
+        # Every registered name, whatever its current state: a pool that names a
+        # disabled or cooling-down worker is still satisfiable later, so it must
+        # keep the item waiting rather than be widened to "any worker".
+        known_workers = registered_worker_names(conn)
+
         task_rows = conn.execute(
             select(tasks.c.id, tasks.c.status, tasks.c.created_at)
             .where(tasks.c.archived.is_(False))
@@ -96,7 +106,9 @@ class DispatchRepository:
                     kind=row["kind"],
                     priority=50 if row.get("priority") is None else int(row["priority"]),
                     status=row["status"],
-                    worker_pool=json.loads(row["worker_pool_json"] or "[]"),
+                    worker_pool=usable_pool(
+                        json_list(row["worker_pool_json"]), known_workers
+                    ),
                     next_retry_at=(
                         parse_utc(row["next_retry_at"]) if row["next_retry_at"] else None
                     ),
@@ -134,7 +146,9 @@ class DispatchRepository:
                     id=row["id"],
                     status=row["status"],
                     trigger=row["trigger"],
-                    worker_pool=json.loads(row["worker_pool_json"] or "[]"),
+                    worker_pool=usable_pool(
+                        json_list(row["worker_pool_json"]), known_workers
+                    ),
                     next_retry_at=(
                         parse_utc(row["next_retry_at"]) if row["next_retry_at"] else None
                     ),
@@ -169,7 +183,9 @@ class DispatchRepository:
                     id=row["id"],
                     status=row["status"],
                     trigger=row["trigger"],
-                    worker_pool=json.loads(row["worker_pool_json"] or "[]"),
+                    worker_pool=usable_pool(
+                        json_list(row["worker_pool_json"]), known_workers
+                    ),
                     next_retry_at=(
                         parse_utc(row["next_retry_at"]) if row["next_retry_at"] else None
                     ),
@@ -208,7 +224,9 @@ class DispatchRepository:
                     review_subject_type=row.get("review_subject_type", "vulnerability"),
                     red_team_result_id=row.get("red_team_result_id"),
                     status=row["status"],
-                    worker_pool=json.loads(row["worker_pool_json"] or "[]"),
+                    worker_pool=usable_pool(
+                        json_list(row["worker_pool_json"]), known_workers
+                    ),
                     next_retry_at=(
                         parse_utc(row["next_retry_at"]) if row["next_retry_at"] else None
                     ),
@@ -375,6 +393,12 @@ class DispatchRepository:
         return conn.execute(
             select(workers).where(workers.c.name == worker_name)
         ).mappings().one_or_none()
+
+    @staticmethod
+    def known_worker_names(conn: Connection) -> set[str]:
+        """Every registered worker name, regardless of its current state."""
+
+        return registered_worker_names(conn)
 
     @staticmethod
     def worker_active_count(conn: Connection, worker_name: str) -> int:

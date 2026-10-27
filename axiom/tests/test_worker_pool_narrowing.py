@@ -13,7 +13,11 @@ failed.
 
 from __future__ import annotations
 
-from axiom.modules.dispatch.pool import narrow_pool_after_failure, narrow_worker_pool
+from axiom.modules.dispatch.pool import (
+    narrow_pool_after_failure,
+    narrow_worker_pool,
+    usable_pool,
+)
 
 
 # ------------------------------------------------------------------ pure rules
@@ -153,3 +157,103 @@ def test_narrow_pool_after_failure_keeps_single_worker(client, engine) -> None:
         )
         # No alternative exists, so the pool must stay as it was.
         assert pool == ["pool-a"]
+
+
+# ------------------------------------------------- pools naming dead workers
+
+
+def test_usable_pool_keeps_a_pool_that_names_a_registered_worker() -> None:
+    assert usable_pool(["a", "b"], {"a"}) == ["a", "b"]
+
+
+def test_usable_pool_collapses_a_pool_of_unregistered_workers() -> None:
+    """A renamed or removed worker leaves the pool permanently unsatisfiable.
+
+    The dispatcher's predicate is ``worker.name in work.worker_pool``; when no
+    live worker is named, nothing ever matches and the item waits forever with no
+    audit entry.  Reading such a pool as "no restriction" is the only recovery.
+    """
+
+    assert usable_pool(["gone", "also-gone"], {"a", "b"}) == []
+
+
+def test_usable_pool_leaves_an_already_empty_pool_alone() -> None:
+    assert usable_pool([], {"a"}) == []
+    assert usable_pool(None, {"a"}) == []
+
+
+def test_usable_pool_does_not_widen_when_no_worker_is_registered() -> None:
+    """Nothing registered at all is a transient state, not a stale pool."""
+
+    assert usable_pool(["a"], set()) == ["a"]
+
+
+def test_a_reason_run_whose_pool_names_only_a_dead_worker_is_claimable(
+    client, engine
+) -> None:
+    """End-to-end: the snapshot must not advertise an unsatisfiable pool.
+
+    Reproduces the live stall where a ReasonRun's pool was narrowed to the stale
+    name ``magicrew.io`` while the only registered worker was ``magicrew.ioO``.
+    The row stayed ``pending`` for hours: the dispatcher could never select a
+    worker for it, so it was never claimed and never failed — completely silent.
+    """
+
+    from axiom.modules.reason.tables import reason_runs
+
+    _register(client, "live-worker", ["reason"])
+    project = client.post("/api/v1/projects", json={"title": "死池"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "死池任务",
+            "origin": "pool.example.com",
+            "worker_pool": ["live-worker"],
+        },
+    ).json()
+
+    with engine.begin() as conn:
+        conn.execute(
+            reason_runs.insert().values(
+                id="rr000901",
+                task_id=task["id"],
+                status="pending",
+                trigger="fact_batch",
+                trigger_payload_json="{}",
+                input_fingerprint="",
+                # The stale name: registered worker is "live-worker".
+                worker_pool_json='["renamed-away"]',
+                settings_version=1,
+                execute_timeout_seconds=600,
+                conclude_timeout_seconds=300,
+                explore_execute_min_seconds=300,
+                explore_execute_max_seconds=3600,
+                explore_conclude_min_seconds=180,
+                explore_conclude_max_seconds=600,
+                retry_count=0,
+                infrastructure_retry_count=0,
+                next_retry_at=None,
+                created_at="2026-10-26T00:00:00Z",
+                updated_at="2026-10-26T00:00:00Z",
+            )
+        )
+
+    snapshot = client.get("/api/v1/dispatch/snapshot").json()
+    run = next(
+        item
+        for task_entry in snapshot["tasks"]
+        if task_entry["id"] == task["id"]
+        for item in task_entry["reason_runs"]
+        if item["id"] == "rr000901"
+    )
+    assert run["worker_pool"] == [], (
+        "a pool naming only unregistered workers must be served as unrestricted, "
+        "otherwise the item can never be claimed"
+    )
+
+    claimed = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/reason-runs/rr000901/claim",
+        json={"worker_name": "live-worker"},
+    )
+    assert claimed.status_code == 200, claimed.text

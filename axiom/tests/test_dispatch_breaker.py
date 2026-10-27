@@ -12,6 +12,7 @@ operator can clear it.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -178,3 +179,109 @@ def test_the_breaker_never_shortens_an_operator_set_cooldown(client, engine) -> 
     row = _row(engine, name)
     assert row["cooldown_until"] == _now(3600)
     assert row["last_failure_kind"] == "worker_infrastructure"
+
+
+# ------------------------------------- platform faults are not worker faults
+
+
+def test_is_platform_failure_recognises_our_own_control_plane() -> None:
+    from axiom.modules.dispatch.retry import is_platform_failure
+
+    assert is_platform_failure("control_plane_unavailable")
+    assert is_platform_failure("runner_dispatch_failed")
+    assert not is_platform_failure("worker_infrastructure")
+    assert not is_platform_failure("")
+    assert not is_platform_failure(None)
+
+
+def test_blames_worker_only_for_faults_the_backend_produced() -> None:
+    from axiom.modules.dispatch.retry import blames_worker
+
+    # A backend that died: retried *and* charged to the worker.
+    assert blames_worker("transient", "worker_infrastructure")
+    # Our own API returned 500: retried, but the worker did nothing wrong.
+    assert not blames_worker("transient", "control_plane_unavailable")
+    assert not blames_worker("transient", "runner_dispatch_failed")
+    # An execution failure already has its own budget; never trip the breaker.
+    assert not blames_worker("execution", "worker_infrastructure")
+
+
+def test_releasing_on_a_control_plane_failure_does_not_trip_the_worker(
+    client, engine
+) -> None:
+    """A disk-full 500 must not exile the only healthy worker.
+
+    Live incident: the API returned 500 for every work input because the disk was
+    full.  The Runner correctly classified those as ``control_plane_unavailable``,
+    but because the class is ``transient`` the release path charged them to the
+    worker anyway — 26 trips — and narrowed the pool away from it.  With one
+    capable backend that parked the whole Task while every audit record blamed a
+    worker that had not even started.
+    """
+
+    name = _worker(client)
+    project = client.post("/api/v1/projects", json={"title": "平台故障"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "平台故障任务",
+            "origin": "cp.example.com",
+            "worker_pool": [name],
+        },
+    ).json()
+
+    from axiom.modules.reason.tables import reason_runs
+
+    with engine.begin() as conn:
+        conn.execute(
+            reason_runs.insert().values(
+                id="rr000902",
+                task_id=task["id"],
+                status="claimed",
+                trigger="fact_batch",
+                trigger_payload_json="{}",
+                input_fingerprint="",
+                worker_pool_json=f'["{name}"]',
+                settings_version=1,
+                execute_timeout_seconds=600,
+                conclude_timeout_seconds=300,
+                explore_execute_min_seconds=300,
+                explore_execute_max_seconds=3600,
+                explore_conclude_min_seconds=180,
+                explore_conclude_max_seconds=600,
+                retry_count=0,
+                infrastructure_retry_count=0,
+                next_retry_at=None,
+                worker=name,
+                lease_id="lease_cp",
+                created_at="2026-10-26T00:00:00Z",
+                updated_at="2026-10-26T00:00:00Z",
+            )
+        )
+
+    response = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/reason-runs/rr000902/release",
+        json={
+            "lease_id": "lease_cp",
+            "failure_kind": "control_plane_unavailable",
+            "failure_class": "transient",
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    row = _row(engine, name)
+    assert row["cooldown_until"] is None, (
+        "a control-plane outage must not put the worker in cooldown"
+    )
+    assert int(row["trip_count"] or 0) == 0
+
+    with engine.connect() as conn:
+        pool = conn.execute(
+            select(reason_runs.c.worker_pool_json).where(
+                reason_runs.c.id == "rr000902"
+            )
+        ).scalar_one()
+    assert json.loads(pool) == [name], (
+        "the worker pool must survive a fault that never reached the worker"
+    )

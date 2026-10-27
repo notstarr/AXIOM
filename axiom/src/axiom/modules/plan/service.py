@@ -10,7 +10,7 @@ from sqlalchemy import Engine, exists, select, update
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.dispatch.pool import json_list, narrow_pool_after_failure
 from axiom.modules.dispatch import breaker
-from axiom.modules.dispatch.retry import retry_blocked_message, retry_outcome
+from axiom.modules.dispatch.retry import blames_worker, retry_blocked_message, retry_outcome
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
 from axiom.modules.context.tables import context_revisions
@@ -1036,10 +1036,10 @@ class PlanService:
                     kind="plan",
                     now=now,
                 )
-                if failure_class == "transient"
+                if blames_worker(failure_class, failure_kind)
                 else json_list(run.worker_pool)
             )
-            if failure_class == "transient" and run.worker:
+            if blames_worker(failure_class, failure_kind) and run.worker:
                 # Plan used to release its runs without ever cooling the backend
                 # that failed, so a broken Plan Worker kept being re-selected
                 # while Reason and Explore correctly stepped around it.

@@ -26,6 +26,42 @@ from axiom.shared.clock import format_utc, parse_utc
 _MAX_BACKOFF_EXPONENT = 30
 
 
+# Failure kinds that describe **our own control plane** misbehaving, not the
+# worker.  The attempt never got far enough for the backend to do anything wrong:
+# the platform failed to serve the work input, or to accept the claim.
+#
+# These are still ``transient`` — the work must be retried — but they must not
+# be charged to the worker.  Charging them does two kinds of damage, both seen
+# live: ``narrow_pool_after_failure`` drops the worker from the item's pool, and
+# ``breaker.trip`` raises its cooldown.  With a single capable backend that
+# combination exiles the only worker that could run the work, so a brief
+# platform hiccup (a full disk, a 500) parks the whole Task while every audit
+# record blames a worker that never ran.
+PLATFORM_FAILURE_KINDS = frozenset(
+    {
+        "control_plane_unavailable",
+        "runner_dispatch_failed",
+    }
+)
+
+
+def is_platform_failure(failure_kind: str | None) -> bool:
+    """Return whether ``failure_kind`` was caused by the platform, not the worker."""
+
+    return (failure_kind or "").strip() in PLATFORM_FAILURE_KINDS
+
+
+def blames_worker(failure_class: str | None, failure_kind: str | None) -> bool:
+    """Return whether this release should count against the Worker.
+
+    Only a transient failure that the backend itself produced may narrow the
+    item's worker pool or raise the worker's breaker.  Platform failures are
+    retried like any other transient fault, but they are not the worker's fault.
+    """
+
+    return failure_class == "transient" and not is_platform_failure(failure_kind)
+
+
 @dataclass(frozen=True)
 class RetryOutcome:
     """What a released work item does next."""

@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from axiom.modules.dispatch.recovery import recover_parked
 from axiom.modules.audit.service import AuditService
+from axiom.modules.graph.tables import intents
 from axiom.modules.reason.tables import reason_runs
 
 
@@ -239,3 +240,101 @@ def test_recovery_writes_an_audit_record(client, engine) -> None:
     assert payload["recovery_round"] == 1
     assert payload["last_failure_kind"] == "worker_infrastructure"
     assert payload["quiet_seconds"] == 900
+
+
+def _park_intent(engine, task_id: str, *, quiet_seconds: int) -> str:
+    """Insert a parked Explore Intent.
+
+    ``intents`` is the odd one out of the four parked queues: it has never had an
+    ``updated_at`` column.  A recovery pass that assumes a shared column set
+    therefore fails to even compile its UPDATE for this queue, and because the
+    scan runs in the caller's transaction the failure takes Reason, Plan and
+    Review recovery down with it.  That is not hypothetical — it stalled a live
+    Task for hours.  Keep this fixture deliberately minimal so the missing column
+    stays missing.
+    """
+
+    run_id = "i000901"
+    with engine.begin() as conn:
+        conn.execute(
+            intents.insert().values(
+                id=run_id,
+                task_id=task_id,
+                kind="explore",
+                description="parked Intent",
+                priority=50,
+                status="pending",
+                creator="reason.test",
+                worker_pool_json="[]",
+                targets_json="[]",
+                dedup_fingerprint="",
+                plan_metadata_json="{}",
+                execute_timeout_seconds=600,
+                conclude_timeout_seconds=300,
+                retry_count=0,
+                infrastructure_retry_count=3,
+                next_retry_at=None,
+                retry_blocked_at=_stamp(quiet_seconds),
+                recovery_round=0,
+                last_failure_kind="worker_infrastructure",
+                failure_class="transient",
+                activity_kind="retry_blocked",
+                activity_summary="Intent 基础设施重试已达上限",
+                created_at=_stamp(7200),
+                archived=False,
+            )
+        )
+    return run_id
+
+
+def _intent_row(engine, task_id: str, run_id: str):
+    with engine.connect() as conn:
+        return conn.execute(
+            select(intents).where(
+                intents.c.task_id == task_id, intents.c.id == run_id
+            )
+        ).mappings().one()
+
+
+def test_a_parked_intent_is_re_armed_even_though_it_has_no_updated_at(
+    client, engine
+) -> None:
+    task = _task(client)
+    run_id = _park_intent(engine, task["id"], quiet_seconds=1200)
+
+    outcome = _run(engine)
+
+    assert [item.run_id for item in outcome.recovered] == [run_id]
+    assert outcome.failed_queues == []
+    row = _intent_row(engine, task["id"], run_id)
+    assert row["infrastructure_retry_count"] == 0
+    assert row["retry_blocked_at"] is None
+    assert row["recovery_round"] == 1
+
+
+def test_a_failing_queue_does_not_stop_the_others(client, engine, monkeypatch) -> None:
+    """One unreadable queue must degrade to a report, not to a dead Task."""
+
+    task = _task(client)
+    intent_id = _park_intent(engine, task["id"], quiet_seconds=1200)
+    run_id = _park(client, engine, task["id"], quiet_seconds=1200)
+
+    from axiom.modules.dispatch import recovery as recovery_module
+
+    real = recovery_module._reset_values
+
+    def explode(table, *, now, recovery_round, config):
+        if table.name == "intents":
+            raise RuntimeError("simulated schema drift")
+        return real(table, now=now, recovery_round=recovery_round, config=config)
+
+    monkeypatch.setattr(recovery_module, "_reset_values", explode)
+
+    outcome = _run(engine)
+
+    # The intent queue is reported as failed...
+    assert any(entry.startswith("intent:") for entry in outcome.failed_queues)
+    assert intent_id not in [item.run_id for item in outcome.recovered]
+    # ...while the other queues still recover in the same pass.
+    assert [item.run_id for item in outcome.recovered] == [run_id]
+    assert _row(engine, task["id"], run_id)["recovery_round"] == 1

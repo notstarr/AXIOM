@@ -451,13 +451,34 @@ class ReasonRepository:
         task_id: str,
         run_id: str,
         now: str,
+        worker_pool: list[str] | None = None,
     ) -> bool:
         """Re-arm a parked ReasonRun so the dispatcher may claim it again.
 
         Infrastructure failures park at their limit with no retry timestamp;
         this is the explicit recovery action that releases them.
+
+        ``worker_pool`` replaces the stored pool when supplied.  An operator
+        saying "run this again" also withdraws the narrowing that the failures
+        caused; without it the run can keep a pool naming only a worker that no
+        longer exists, and would look re-armed while staying unclaimable.
         """
 
+        values: dict = {
+            "retry_count": 0,
+            "infrastructure_retry_count": 0,
+            "next_retry_at": None,
+            "last_failure_kind": "",
+            "failure_class": "",
+            "activity_kind": "",
+            "activity_summary": "",
+            "activity_tool": "",
+            "activity_started_at": None,
+            "activity_updated_at": None,
+            "updated_at": now,
+        }
+        if worker_pool is not None:
+            values["worker_pool_json"] = json.dumps(list(worker_pool), ensure_ascii=False)
         result = conn.execute(
             update(reason_runs)
             .where(
@@ -466,19 +487,7 @@ class ReasonRepository:
                 reason_runs.c.status == "pending",
                 reason_runs.c.trigger != "plan",
             )
-            .values(
-                retry_count=0,
-                infrastructure_retry_count=0,
-                next_retry_at=None,
-                last_failure_kind="",
-                failure_class="",
-                activity_kind="",
-                activity_summary="",
-                activity_tool="",
-                activity_started_at=None,
-                activity_updated_at=None,
-                updated_at=now,
-            )
+            .values(**values)
         )
         return bool(result.rowcount)
 

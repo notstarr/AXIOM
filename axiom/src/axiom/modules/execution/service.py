@@ -20,7 +20,7 @@ from axiom.modules.credentials.schemas import (
 )
 from axiom.modules.dispatch.pool import json_list, narrow_pool_after_failure
 from axiom.modules.dispatch import breaker
-from axiom.modules.dispatch.retry import retry_blocked_event, retry_outcome
+from axiom.modules.dispatch.retry import blames_worker, retry_blocked_event, retry_outcome
 from axiom.modules.execution.repository import ExecutionRepository
 from axiom.modules.execution.schemas import (
     ActivityCommand,
@@ -224,6 +224,10 @@ class ExecutionService:
                 task_id=task_id,
                 owner_id=owner_id,
                 lease_id=lease_id,
+                # Conclude already registered this run's Artifacts, so the store
+                # holds what survived pruning.  Re-copying the raw directory would
+                # duplicate it — unregistered, unbounded, and invisible to the UI.
+                raw_records_registered=True,
             )
         except OSError:
             logger.exception("failed to clean committed sandbox run: %s/%s", task_id, owner_id)
@@ -1026,7 +1030,7 @@ class ExecutionService:
                     kind=row["kind"],
                     now=now,
                 )
-                if command.failure_class == "transient"
+                if blames_worker(command.failure_class, command.failure_kind)
                 else json_list(row["intent_worker_pool_json"])
             )
             self.audit.record_in(
@@ -1065,7 +1069,7 @@ class ExecutionService:
                         intent_id=intent_id,
                     ),
                 )
-            if command.failure_class == "transient" and row["worker"]:
+            if blames_worker(command.failure_class, command.failure_kind) and row["worker"]:
                 # Escalating cooldown: one hiccup cools briefly, a backend that
                 # keeps failing backs off further.  See dispatch.breaker.
                 breaker.trip(

@@ -67,6 +67,10 @@ class RecoveryReport(BaseModel):
     # subset where the automatic budget ran out and a human is now required.
     auto_recovered: list[AutoRecoveredWork] = Field(default_factory=list)
     recovery_exhausted: list[AutoRecoveredWork] = Field(default_factory=list)
+    # A queue whose parked rows could not be re-armed at all (schema drift, one
+    # bad row).  Reported instead of swallowed: a silently failing queue looks
+    # exactly like "nothing was parked", which is how a stuck Task hides.
+    recovery_failed_queues: list[str] = Field(default_factory=list)
 
     @model_serializer(mode="wrap")
     def _serialize(self, handler):
@@ -84,6 +88,8 @@ class RecoveryReport(BaseModel):
             payload.pop("auto_recovered", None)
         if not self.recovery_exhausted:
             payload.pop("recovery_exhausted", None)
+        if not self.recovery_failed_queues:
+            payload.pop("recovery_failed_queues", None)
         return payload
 
 

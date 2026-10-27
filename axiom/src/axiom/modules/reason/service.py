@@ -9,9 +9,14 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import Engine, exists, func, or_, select, update
 
-from axiom.modules.dispatch.pool import json_list, narrow_pool_after_failure
+from axiom.modules.dispatch.pool import (
+    json_list,
+    narrow_pool_after_failure,
+    registered_worker_names,
+    usable_pool,
+)
 from axiom.modules.dispatch import breaker
-from axiom.modules.dispatch.retry import retry_blocked_event, retry_outcome
+from axiom.modules.dispatch.retry import blames_worker, retry_blocked_event, retry_outcome
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
 from axiom.modules.context.tables import context_revisions
@@ -1415,8 +1420,19 @@ class ReasonService:
             )
             if not has_retry_debris:
                 return run
+            # An operator re-arm also withdraws the pool narrowing the failures
+            # caused.  Narrowing can leave a pool naming only a worker that has
+            # since been renamed or removed; such an item can never be claimed,
+            # and resetting its counters alone would merely hide that.
+            restored_pool = usable_pool(
+                run.worker_pool, registered_worker_names(conn)
+            )
             if not self.repository.reset_retry_budget(
-                conn, task_id=task_id, run_id=reason_run_id, now=now
+                conn,
+                task_id=task_id,
+                run_id=reason_run_id,
+                now=now,
+                worker_pool=restored_pool,
             ):
                 raise ConflictError(f"ReasonRun changed while resetting: {reason_run_id}")
             self.audit.record_in(
@@ -1485,7 +1501,7 @@ class ReasonService:
                     kind="reason",
                     now=now,
                 )
-                if failure_class == "transient"
+                if blames_worker(failure_class, failure_kind)
                 else json_list(run.worker_pool)
             )
             if failure_kind == "reason_plan_invalid" and not terminal:
@@ -1538,7 +1554,7 @@ class ReasonService:
                         reason_run_id=reason_run_id,
                     ),
                 )
-            if failure_class == "transient" and run.worker:
+            if blames_worker(failure_class, failure_kind) and run.worker:
                 breaker.trip(
                     conn,
                     worker_name=run.worker,
