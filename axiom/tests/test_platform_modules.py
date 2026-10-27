@@ -480,6 +480,80 @@ def test_audit_events_are_append_only_and_filterable(client) -> None:
     assert created.status_code in {404, 405}
 
 
+def test_audit_decision_filter_runs_in_the_database(client, engine) -> None:
+    """「仅拦截」必须在库里筛，不能只筛返回的那一页。
+
+    线上复现过的 bug：t_234 有 11k+ 条 ALLOW、19 条 BLOCK，最新一页全是
+    ALLOW。前端取回一页后在内存里过滤，于是「仅拦截」列出 0 条，左边的计数
+    却写着 19。这里用最小数据复现同一形状：一条很早的 BLOCK 埋在大量更晚的
+    ALLOW 之下，且只请求 1 条一页。
+    """
+
+    from sqlalchemy import insert
+
+    from axiom.modules.audit.tables import audit_events
+
+    project = client.post("/api/v1/projects", json={"title": "审计筛选"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "审计筛选任务",
+            "origin": "a.example.com",
+            "goal": "挖漏洞",
+            "worker_pool": ["worker-a"],
+        },
+    ).json()
+
+    import json as _json
+
+    rows = [
+        {
+            "id": "evt_old_block",
+            "project_id": project["id"],
+            "task_id": task["id"],
+            "worker": "",
+            "event_type": "guard.decision",
+            "level": "warning",
+            "message": "guard BLOCK",
+            "payload_json": _json.dumps({"decision": "BLOCK", "source": "hard_rule"}),
+            "created_at": "2026-10-01T00:00:00Z",
+        }
+    ]
+    for index in range(5):
+        rows.append(
+            {
+                "id": f"evt_new_allow_{index}",
+                "project_id": project["id"],
+                "task_id": task["id"],
+                "worker": "",
+                "event_type": "guard.decision",
+                "level": "debug",
+                "message": "guard ALLOW",
+                "payload_json": _json.dumps({"decision": "ALLOW", "source": "whitelist"}),
+                "created_at": f"2026-10-02T00:00:0{index}Z",
+            }
+        )
+    with engine.begin() as conn:
+        conn.execute(insert(audit_events), rows)
+
+    base = f"/api/v1/audit-events?event_type=guard.decision&task_id={task['id']}&limit=1"
+
+    newest = client.get(base).json()
+    assert len(newest) == 1
+    assert newest[0]["payload"]["decision"] == "ALLOW"
+
+    blocked = client.get(f"{base}&decision=block").json()
+    assert [item["id"] for item in blocked] == ["evt_old_block"]
+
+    allowed = client.get(f"{base}&decision=allow").json()
+    assert len(allowed) == 1 and allowed[0]["payload"]["decision"] == "ALLOW"
+
+    by_source = client.get(f"{base}&decision=block&decision_source=hard_rule").json()
+    assert [item["id"] for item in by_source] == ["evt_old_block"]
+    assert client.get(f"{base}&decision=block&decision_source=model").json() == []
+
+
 def _upload_artifact(client, task_id: str, name: str, content: bytes, *, intent_id: str = ""):
     return client.post(
         f"/api/v1/tasks/{task_id}/artifacts/upload",

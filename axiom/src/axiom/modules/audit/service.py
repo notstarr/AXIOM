@@ -142,6 +142,8 @@ class AuditService:
         intent_id: str | None = None,
         event_type: str | None = None,
         level: str | None = None,
+        decision: str | None = None,
+        decision_source: str | None = None,
         search: str = "",
         after_id: str | None = None,
         before_id: str | None = None,
@@ -158,6 +160,19 @@ class AuditService:
             query = query.where(audit_events.c.event_type == event_type)
         if level:
             query = query.where(audit_events.c.level == level)
+        if decision or decision_source:
+            # 裁决与依据都只存在于 payload_json 里，必须在 SQL 里筛。以前页面
+            # 取回一页之后在内存里过滤，于是「仅拦截」只能看见恰好落在这一页
+            # 的那几条——线上的 19 条拦截全部落在第一页之外，页面就显示 0 条。
+            payload = cast(audit_events.c.payload_json, JSONB)
+            if decision:
+                query = query.where(
+                    payload.op("->>")("decision") == decision.strip().upper()
+                )
+            if decision_source:
+                query = query.where(
+                    payload.op("->>")("source") == decision_source.strip()
+                )
         if search.strip():
             pattern = f"%{search.strip()}%"
             query = query.where(

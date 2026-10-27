@@ -17,6 +17,11 @@ def list_audit_events(
     intent_id: str | None = None,
     event_type: str | None = None,
     level: str | None = None,
+    # 裁决（BLOCK/ALLOW）与依据（hard_rule/whitelist/model/…）只存在于
+    # payload_json，必须由数据库筛：页面按页取回后再在内存里过滤，会让
+    # 「仅拦截」漏掉所有不在当页的记录。
+    decision: str | None = None,
+    decision_source: str | None = None,
     search: str = "",
     after_id: str | None = None,
     before_id: str | None = None,
@@ -32,6 +37,8 @@ def list_audit_events(
         intent_id=intent_id,
         event_type=event_type,
         level=level,
+        decision=decision,
+        decision_source=decision_source,
         search=search,
         after_id=after_id,
         before_id=before_id,
