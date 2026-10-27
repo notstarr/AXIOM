@@ -73,6 +73,9 @@ red_team_results = Table(
     Column("data_summary", Text, nullable=False, default=""),
     Column("credential_ref", String),
     Column("evidence_refs_json", JSONText, nullable=False, default="[]"),
+    # 结构化复现过程（Reproduction）：本环的入口/前置/真实报文/本环增量。
+    # 攻击链（怎么走到这一环）不在这里——它由图谱在读取时装配。
+    Column("reproduction_json", JSONText, nullable=False, default="{}", server_default="{}"),
     Column("status", String, nullable=False, default="reported"),
     Column("reported_by", String, nullable=False),
     Column("points_declared", Integer, nullable=False, default=0),

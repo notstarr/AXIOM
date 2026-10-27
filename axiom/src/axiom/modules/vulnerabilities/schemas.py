@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from axiom.modules.artifacts.schemas import Artifact
+from axiom.modules.reproduction.schemas import Reproduction
 
 
 Severity = Literal["critical", "high", "medium", "low", "info"]
@@ -45,14 +46,19 @@ class ExploreVulnerabilityReport(VulnerabilityDetails):
     """Worker fields. Execution identity, status and Artifact IDs are injected by AXIOM."""
 
     prerequisites: str
-    remediation: str
+    # 修复建议不再是 Explore 的必填项：本环节只负责证明漏洞成立，
+    # 交付报告里的修复建议由 Review / AI 富化补。缺失时渲染器整节省略。
+    remediation: str = ""
+    # 结构化复现过程：入口 / 本环前置 / 有序真实报文 / 本环增量。
+    # 这是 Explore 交付的核心内容——没有可复现路径就不是已确认漏洞。
+    reproduction: Reproduction
 
     evidence_paths: list[str] = Field(
         default_factory=list,
         max_length=MAX_VULNERABILITY_EVIDENCE_ARTIFACTS,
     )
 
-    @field_validator("prerequisites", "remediation")
+    @field_validator("prerequisites")
     @classmethod
     def require_explore_text(cls, value: str) -> str:
         value = value.strip()
@@ -110,6 +116,8 @@ class VulnerabilityReport(VulnerabilityDetails):
     status: VulnerabilityStatus = "待验证"
     status_reason: str = ""
     finding_artifact_id: str | None = None
+    # 人工录入的漏洞可能没有结构化复现（存量或手工补录），Explore 上报的必需。
+    reproduction: Reproduction | None = None
     evidence_artifact_ids: list[str] = Field(
         default_factory=list,
         max_length=MAX_VULNERABILITY_EVIDENCE_ARTIFACTS,
@@ -150,6 +158,8 @@ class Vulnerability(VulnerabilityReport):
     id: str
     task_id: str
     format_version: int = 2
+    # 审核者事后补充的证据图（report_evidence）：step_index 决定挂在报告的哪一步。
+    evidence: list[dict] = Field(default_factory=list)
     finding_artifact: Artifact | None = None
     evidence_artifacts: list[Artifact] = Field(default_factory=list)
     legacy: LegacyVulnerabilityDetails | None = None

@@ -9,6 +9,31 @@ from click.testing import CliRunner
 from axiom.cli import main
 
 
+# 上报漏洞/成果时必须带结构化复现。报文逐字真实，不是 curl。
+REPRODUCTION = {
+    "entry_point": "GET /api/users/2",
+    "prerequisites": ["持有普通用户会话"],
+    "steps": [
+        {
+            "title": "用普通用户会话读取他人资料",
+            "request": (
+                "GET /api/users/2 HTTP/1.1\r\n"
+                "Host: a.example.com\r\n"
+                "Cookie: sid=member\r\n"
+                "\r\n"
+            ),
+            "response": 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{"id":2,"phone":"138"}',
+            "proves": "普通用户可读取他人资料，对象级授权缺失",
+        }
+    ],
+}
+
+
+def _reproduction_file(tmp_path: Path) -> Path:
+    path = tmp_path / "reproduction.json"
+    path.write_text(json.dumps(REPRODUCTION, ensure_ascii=False), encoding="utf-8")
+    return path
+
 def _env() -> dict[str, str]:
     return {
         "AXIOM_SERVER": "http://127.0.0.1:8899",
@@ -148,7 +173,7 @@ def test_reason_cli_intent_propose_allows_omitting_target(monkeypatch) -> None:
     assert calls[0][2]["intent"]["targets"] == []
 
 
-def test_explore_cli_report_does_not_allow_worker_to_choose_identity(monkeypatch) -> None:
+def test_explore_cli_report_does_not_allow_worker_to_choose_identity(monkeypatch, tmp_path: Path) -> None:
     calls: list[tuple[str, str, dict]] = []
 
     def fake_request(method: str, path: str, payload: dict):
@@ -176,10 +201,8 @@ def test_explore_cli_report_does_not_allow_worker_to_choose_identity(monkeypatch
             "导致数据泄露。",
             "--remediation",
             "服务端校验对象归属。",
-            "--evidence-path",
-            "evidence/request.txt",
-            "--evidence-path",
-            "evidence/response.txt",
+            "--reproduction-file",
+            str(_reproduction_file(tmp_path)),
         ],
         env=_env(),
     )
@@ -195,10 +218,8 @@ def test_explore_cli_report_does_not_allow_worker_to_choose_identity(monkeypatch
     assert "status" not in payload["report"]
     assert payload["report"]["prerequisites"] == "需要任意低权限账号。"
     assert payload["report"]["remediation"] == "服务端校验对象归属。"
-    assert payload["report"]["evidence_paths"] == [
-        "evidence/request.txt",
-        "evidence/response.txt",
-    ]
+    assert payload["report"]["reproduction"]["entry_point"] == "GET /api/users/2"
+    assert payload["report"]["reproduction"]["steps"][0]["proves"].startswith("普通用户可读取")
     assert json.loads(result.output)["total"] == 1
 
 
@@ -301,7 +322,7 @@ def test_explore_cli_rejects_two_or_empty_human_intervention_reasons(monkeypatch
     assert calls == []
 
 
-def test_explore_cli_allows_report_without_an_evidence_path(monkeypatch) -> None:
+def test_explore_cli_requires_a_reproduction_file(monkeypatch, tmp_path: Path) -> None:
     calls: list[tuple[str, str, dict]] = []
 
     def fake_request(method: str, path: str, payload: dict):
@@ -333,11 +354,13 @@ def test_explore_cli_allows_report_without_an_evidence_path(monkeypatch) -> None
         env=_env(),
     )
 
-    assert result.exit_code == 0, result.output
-    assert calls[0][2]["report"]["evidence_paths"] == []
+    # 复现是上报的必需项：没有可复现路径就不是已确认漏洞。
+    assert result.exit_code == 2
+    assert "--reproduction-file" in result.output
+    assert calls == []
 
 
-def test_explore_cli_requires_prerequisites_and_remediation(monkeypatch) -> None:
+def test_explore_cli_requires_prerequisites_but_not_remediation(monkeypatch, tmp_path: Path) -> None:
     calls: list[tuple[str, str, dict]] = []
     monkeypatch.setattr(
         "axiom.worker_cli._request",
@@ -359,22 +382,23 @@ def test_explore_cli_requires_prerequisites_and_remediation(monkeypatch) -> None
         "影响",
     ]
 
+    reproduction = str(_reproduction_file(tmp_path))
     missing_prerequisites = CliRunner().invoke(
         main,
-        [*base, "--remediation", "增加服务端鉴权"],
+        [*base, "--remediation", "增加服务端鉴权", "--reproduction-file", reproduction],
         env=_env(),
     )
-    missing_remediation = CliRunner().invoke(
+    # 修复建议不再是 Explore 的必填项：交付报告里的这一节由审核/AI 富化补。
+    without_remediation = CliRunner().invoke(
         main,
-        [*base, "--prerequisites", "无需额外权限"],
+        [*base, "--prerequisites", "无需额外权限", "--reproduction-file", reproduction],
         env=_env(),
     )
 
     assert missing_prerequisites.exit_code == 2
     assert "prerequisites is required" in missing_prerequisites.output
-    assert missing_remediation.exit_code == 2
-    assert "remediation is required" in missing_remediation.output
-    assert calls == []
+    assert without_remediation.exit_code == 0, without_remediation.output
+    assert calls[0][2]["report"]["remediation"] == ""
 
 
 def test_explore_cli_reads_required_fields_from_files(monkeypatch, tmp_path: Path) -> None:
@@ -410,6 +434,8 @@ def test_explore_cli_reads_required_fields_from_files(monkeypatch, tmp_path: Pat
             "影响",
             "--remediation-file",
             str(remediation),
+            "--reproduction-file",
+            str(_reproduction_file(tmp_path)),
         ],
         env=_env(),
     )
@@ -756,7 +782,7 @@ def test_reason_cli_stages_chain_with_objective_bounded_targets(monkeypatch) -> 
     ]
 
 
-def test_explore_cli_result_report_defaults_to_the_bound_chain(monkeypatch) -> None:
+def test_explore_cli_result_report_defaults_to_the_bound_chain(monkeypatch, tmp_path: Path) -> None:
     calls: list[tuple[str, str, dict]] = []
 
     def fake_request(method: str, path: str, payload: dict):
@@ -786,8 +812,8 @@ def test_explore_cli_result_report_defaults_to_the_bound_chain(monkeypatch) -> N
             "tenant:admin",
             "--target-asset",
             "member-management",
-            "--evidence-path",
-            "evidence/result.txt",
+            "--reproduction-file",
+            str(_reproduction_file(tmp_path)),
         ],
         env=environment,
     )
@@ -814,8 +840,8 @@ def test_explore_cli_result_report_defaults_to_the_bound_chain(monkeypatch) -> N
             "复用普通成员会话调用成员管理接口成功。",
             "--principal",
             "user:member",
-            "--evidence-path",
-            "evidence/result.txt",
+            "--reproduction-file",
+            str(_reproduction_file(tmp_path)),
         ],
         env=_env(),
     )
@@ -823,52 +849,18 @@ def test_explore_cli_result_report_defaults_to_the_bound_chain(monkeypatch) -> N
     assert "Missing option" in without_binding.output
 
 
-def test_result_report_rejects_work_records_as_evidence(monkeypatch) -> None:
+def test_result_report_no_longer_takes_evidence_files(monkeypatch) -> None:
+    """Evidence files are gone from the Result path: the reproduction is the proof.
+
+    A worker that still passes --evidence-path gets a usage error naming the option
+    rather than a silent no-op.
+    """
+
     calls: list[tuple[str, str, dict]] = []
-
-    def fake_request(method: str, path: str, payload: dict):
-        calls.append((method, path, payload))
-        return {"id": "rr000001", "status": "reviewing"}
-
-    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
-
-    for ref in ("work/probe_log.txt", "artifacts/work/probe_log.txt", "./work/probe_log.txt"):
-        result = CliRunner().invoke(
-            main,
-            [
-                "explore",
-                "result",
-                "report",
-                "--points",
-                "20",
-                "--type",
-                "permission",
-                "--title",
-                "取得成员管理能力",
-                "--description",
-                "复用普通成员会话调用成员管理接口成功。",
-                "--principal",
-                "user:member",
-                "--evidence-path",
-                ref,
-            ],
-            env=_env(),
-        )
-
-        assert result.exit_code != 0, ref
-        assert "原始记录不能作为成果证据" in result.output
-    assert calls == []
-
-
-def test_result_report_still_accepts_evidence_paths(monkeypatch) -> None:
-    calls: list[tuple[str, str, dict]] = []
-
-    def fake_request(method: str, path: str, payload: dict):
-        calls.append((method, path, payload))
-        return {"id": "rr000001", "status": "reviewing"}
-
-    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
-
+    monkeypatch.setattr(
+        "axiom.worker_cli._request",
+        lambda method, path, payload: calls.append((method, path, payload)) or {},
+    )
     result = CliRunner().invoke(
         main,
         [
@@ -891,5 +883,39 @@ def test_result_report_still_accepts_evidence_paths(monkeypatch) -> None:
         env=_env(),
     )
 
+    assert result.exit_code == 2
+    assert "No such option" in result.output
+    assert calls == []
+
+
+def test_result_report_reports_the_parsed_reproduction(monkeypatch, tmp_path: Path) -> None:
+    calls: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        "axiom.worker_cli._request",
+        lambda method, path, payload: calls.append((method, path, payload)) or {"id": "x001"},
+    )
+    result = CliRunner().invoke(
+        main,
+        [
+            "explore",
+            "result",
+            "report",
+            "--points",
+            "20",
+            "--type",
+            "permission",
+            "--title",
+            "取得成员管理能力",
+            "--description",
+            "复用普通成员会话调用成员管理接口成功。",
+            "--principal",
+            "user:member",
+            "--reproduction-file",
+            str(_reproduction_file(tmp_path)),
+        ],
+        env=_env(),
+    )
+
     assert result.exit_code == 0, result.output
-    assert calls[0][2]["report"]["evidence_refs"] == ["evidence/result.txt"]
+    assert calls[0][2]["report"]["reproduction"]["steps"][0]["title"].startswith("用普通用户会话")
+    assert "evidence_refs" not in calls[0][2]["report"]

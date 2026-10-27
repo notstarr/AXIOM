@@ -544,6 +544,13 @@ window.AxiomModules.projects = {
       return vulns[0];
     },
 
+    // 报告骨架里「步骤 N」下面挂的证据图：审核者按 step_index 补的，
+    // 未补时返回空数组（模板留空槽，不占高度）。
+    vulnEvidenceForStep(stepIndex) {
+      const list = this.selectedVulnerability()?.evidence || [];
+      return list.filter(item => Number(item.step_index) === Number(stepIndex));
+    },
+
     resetTaskDetailLoad(taskId = '') {
       const sectionNames = [
         'project_group', 'graph', 'hints', 'todos', 'vulnerabilities',

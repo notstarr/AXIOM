@@ -8,6 +8,7 @@ from sqlalchemy import Engine, select
 from axiom.modules.artifacts.repository import ArtifactRepository
 from axiom.modules.graph.tables import intents
 from axiom.modules.tasks.repository import TaskRepository
+from axiom.modules.reports import ReportEvidenceRepository
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
 from axiom.modules.vulnerabilities.schemas import Vulnerability, VulnerabilityReport, UpdateVulnerability
 from axiom.shared.clock import utcnow
@@ -42,11 +43,11 @@ def dispatch_vulnerability_reported_notification(
             bool(dingtalk_notifier.config and dingtalk_notifier.config.webhook_url),
         )
         if dingtalk_notifier.is_enabled:
-            curl_command = ""
-            if hasattr(vulnerability, "curl_command") and vulnerability.curl_command:
-                curl_command = vulnerability.curl_command
-            elif getattr(vulnerability, "legacy", None) and vulnerability.legacy.curl_command:
-                curl_command = vulnerability.legacy.curl_command
+            # 通知里给入口点与步骤数，而不是一条 curl：接收者看的是"怎么打的"，
+            # 不是一段需要自己还原成请求的命令行。
+            reproduction = vulnerability.reproduction
+            entry_point = reproduction.entry_point if reproduction else ""
+            step_count = len(reproduction.steps) if reproduction else 0
 
             ok = dingtalk_notifier.notify_vulnerability_reported(
                 task_id=effective_task_id,
@@ -57,7 +58,8 @@ def dispatch_vulnerability_reported_notification(
                 status=vulnerability.status,
                 affected_target=vulnerability.affected_target or "",
                 description=vulnerability.description or "",
-                curl_command=curl_command,
+                entry_point=entry_point,
+                step_count=step_count,
                 prerequisites=getattr(vulnerability, "prerequisites", "") or "",
                 impact=getattr(vulnerability, "impact", "") or "",
             )
@@ -96,6 +98,7 @@ class VulnerabilityService:
     ):
         self.engine = engine
         self.repository = VulnerabilityRepository()
+        self.report_evidence = ReportEvidenceRepository()
         self.artifacts = ArtifactRepository()
         self.tasks = TaskRepository()
         self.archives = archives
@@ -149,9 +152,11 @@ class VulnerabilityService:
             if task.archived:
                 raise ConflictError("已归档任务的漏洞不可见，请先恢复任务")
             result = self.repository.get(conn, task_id, vulnerability_id)
+            # 审核者事后补的证据图随详情一起返回，详情页不必再发一次请求。
+            evidence = self.report_evidence.list(conn, task_id, "vulnerability", vulnerability_id)
         if result is None:
             raise NotFoundError(f"Vulnerability not found: {vulnerability_id}")
-        return result
+        return result.model_copy(update={"evidence": evidence})
 
     def list(self, task_id: str) -> list[Vulnerability]:
         with self.engine.connect() as conn:

@@ -56,7 +56,9 @@ VPS_ACCESS.md
 
 # 真实客户的渗透资料（生产库导出、攻击链、凭证来源）。本仓库是公开仓库，
 # 这些文件一旦推上去就等于把客户数据发布到互联网。只在本机保留。
-reports/
+# 必须锚定到仓库根：不加 `/` 会连带忽略任何叫 reports 的源码目录
+# （例如 axiom/src/axiom/modules/reports/）。
+/reports/
 
 # 内部交接文档：含生产主机地址、SSH 口令与凭据文件路径
 axiom/HANDOFF_*.md

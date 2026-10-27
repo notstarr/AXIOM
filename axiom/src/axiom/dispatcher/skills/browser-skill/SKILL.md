@@ -199,6 +199,7 @@ credentials --domain <domain> --session <id>   # axiom 定制
 
 ## 产物约定（axiom）
 
-- screenshot 一律 `--out` 到运行目录 `evidence/` 下；
-- console/network 留证时重定向到 `evidence/` 文件；
-- credentials 结果写 `evidence/credentials-<domain>.json`。
+- **Explore 阶段不截图**：`artifacts/evidence/` 已停用，证明内容是随上报提交的结构化复现报文。
+  截图由审核者事后补充（`POST /api/v1/tasks/{task_id}/vulnerabilities/{vuln_id}/evidence`）。
+- console/network 的原始输出重定向到运行目录临时文件即可，不要再往 `evidence/` 里放；
+- credentials 结果直接写进 `findings.md` / lead 结论（cookie/token 全文），不落 evidence 文件。

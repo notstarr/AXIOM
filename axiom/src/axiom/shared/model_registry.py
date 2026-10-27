@@ -14,6 +14,7 @@ from axiom.modules.plan.tables import plan_run_sources, plan_runs, plan_workspac
 from axiom.modules.projects.tables import projects
 from axiom.modules.reason.tables import reason_run_sources, reason_runs, reason_workspaces
 from axiom.modules.redteam.tables import red_team_chains, red_team_results
+from axiom.modules.reports.tables import report_evidence
 from axiom.modules.sandboxes.tables import task_sandboxes
 from axiom.modules.mcp.tables import mcp_servers, mcp_tools
 from axiom.modules.phase_capabilities.tables import phase_capability_bindings
@@ -71,6 +72,7 @@ ALL_TABLES = (
     intent_interventions,
     red_team_chains,
     red_team_results,
+    report_evidence,
     webshell_connections,
     webshell_exec_logs,
     c2_listeners,

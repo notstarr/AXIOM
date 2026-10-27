@@ -4,6 +4,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from axiom.modules.reproduction.schemas import Reproduction
+from axiom.modules.reports.path import PathLink
+
 
 EngagementMode = Literal["vulnerability", "red_team"]
 ResultType = Literal["permission", "data", "credential", "pivot"]
@@ -134,6 +137,9 @@ class RedTeamResultReport(BaseModel):
     data_summary: str = ""
     credential_ref: str | None = None
     evidence_refs: list[str] = Field(default_factory=list, max_length=20)
+    # 结构化复现过程（本环的入口/前置/真实报文/本环增量）。红队成果必须提供：
+    # 审核阶段只核对、不重放，上报这一刻是唯一能留下「怎么打的」的机会。
+    reproduction: Reproduction
     # 上报者按护网评分表自评（单价 × 数量）；落库以审核核定分为准
     points_declared: int = Field(ge=1, le=MAX_RESULT_POINTS)
 
@@ -229,6 +235,10 @@ class RedTeamResult(BaseModel):
     credential_ref: str | None = None
     evidence_refs: list[str] = Field(default_factory=list)
     evidence_artifacts: list[RedTeamEvidenceArtifact] = Field(default_factory=list)
+    reproduction: Reproduction | None = None
+    # 攻击链：由图谱在读取时装配（见 axiom.modules.reports.path），不是存储字段。
+    # 只有红队任务有；内容是「这一环做了什么、拿到了什么」，不含分数。
+    attack_path: list[PathLink] = Field(default_factory=list)
     status: ResultStatus
     reported_by: str
     points_declared: int = 0

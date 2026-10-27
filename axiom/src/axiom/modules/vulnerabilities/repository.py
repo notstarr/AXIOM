@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from pydantic import ValidationError
 from sqlalchemy import Connection, case, delete, func, or_, select, update
 
 from axiom.modules.artifacts.schemas import Artifact
@@ -14,8 +15,27 @@ from axiom.modules.vulnerabilities.schemas import (
     Vulnerability,
     VulnerabilityReport,
 )
+from axiom.modules.reproduction.schemas import Reproduction
 from axiom.modules.vulnerabilities.tables import vulnerability_artifacts, vulnerabilities
 from axiom.shared.ids import allocate_id
+
+
+def _reproduction_of(row) -> Reproduction | None:
+    """Decode the stored reproduction; ``{}`` (v1/v2 rows) means "none recorded"."""
+    raw = row.get("reproduction_json")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "{}")
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(raw, dict) or not raw:
+        return None
+    try:
+        return Reproduction.model_validate(raw)
+    except ValidationError:
+        # A malformed stored recipe must not break the whole detail view; the
+        # renderer falls back to "no structured reproduction".
+        return None
 
 
 class VulnerabilityRepository:
@@ -84,7 +104,12 @@ class VulnerabilityRepository:
             "created_at": now,
             "updated_at": now,
             "archived": False,
-            "format_version": 2,
+            # v3: the reproduction lives as a structured object, not as prose plus a
+            # curl command.  A human-entered record may legitimately have none.
+            "format_version": 3 if body.reproduction is not None else 2,
+            "reproduction_json": (
+                body.reproduction.model_dump(mode="json") if body.reproduction is not None else {}
+            ),
         }
         conn.execute(vulnerabilities.insert().values(**values))
         self._replace_artifacts(
@@ -381,6 +406,7 @@ class VulnerabilityRepository:
                     finding_artifact=finding,
                     evidence_artifacts=evidence_items,
                     format_version=format_version,
+                    reproduction=_reproduction_of(row),
                     legacy=legacy,
                     created_at=row["created_at"],
                     updated_at=row["updated_at"],

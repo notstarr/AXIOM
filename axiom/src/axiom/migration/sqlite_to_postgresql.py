@@ -67,6 +67,9 @@ LEGACY_SQLITE_OMIT_TABLES = frozenset(
         "c2_listeners",
         "c2_sessions",
         "c2_tasks",
+        # pg0029 报告证据钩子表：旧导出没有这个概念（当时证据是 evidence/ 文件），
+        # 导入时整体跳过。
+        "report_evidence",
     }
 )
 
@@ -104,6 +107,9 @@ LEGACY_SQLITE_COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
         "red_team_exploitable": False,
         "red_team_exploitable_at": None,
         "red_team_exploitable_by": None,
+        # pg0029 结构化复现：旧导出只有散文式步骤与 curl 命令，没有逐字报文。
+        # 导入为 '{}'（= 未记录），渲染器据此走 legacy 分支，不凭空构造复现。
+        "reproduction_json": {},
     },
     # pg0020 让既有 Reviewer 能复核 RedTeamResult；旧导出的复核记录只针对
     # 漏洞，故 review_subject_type 回填为其 server_default，红队结果引用留空。

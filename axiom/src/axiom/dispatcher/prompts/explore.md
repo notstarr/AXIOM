@@ -14,8 +14,7 @@
 {scope_guidance}
 - 上下文清单（Context Manifest）：`{context_manifest_path}`
 - 核心产物：`{run_dir}/artifacts/findings.md`、`{run_dir}/artifacts/leads.md`
-- 证据目录：`{run_dir}/artifacts/evidence/`（仅上报成果/漏洞的证明）
-- 原始记录目录：`{run_dir}/artifacts/work/`（不构成成果、但要留档的原始值）
+- 复现入口：上报时用 `--reproduction-file` 提交结构化复现（真实报文），**不写证据文件**
 - 技能目录（Skill，仅提供路径，按需读取）：
 {skill_directories}
 
@@ -23,7 +22,7 @@
 
 1. **上下文与判定标准加载**：
    - `hints`、`knowledge`、`artifacts` 三张**目录卡**与当前 Intent/Todo 摘要已由 AXIOM 注入；目录卡只含计数与查询路径——需要内容时按卡内路径按需读取。
-   - 历史 findings/leads/evidence 按 storage_key 直接读文件，facts 细节按 Context Manifest 的 `details/` 读。
+   - 历史 findings/leads 按 storage_key 直接读文件，facts 细节按 Context Manifest 的 `details/` 读。
    - **whatisvul 判定标准按需读**：上报漏洞前必须运行 `axiom skill path whatisvul` 并完整读取 `whatisvul/SKILL.md` 对齐判定标准（失败则 `axiom skill doctor whatisvul`）；未上报漏洞的轮次无需读取。
    - **攻击面形态手册按需查**：实际探测时，按当前 Intent 的目标形态运行 `axiom skill path web-attack-playbook`，读其 `SKILL.md` 索引对一行，选中对应 `manuals/<名>.md` 读一篇再动手；形态不明确时先读同目录 `cheatsheet.md`。**一次只开一篇，禁止通读 `manuals/`**；索引对不上按现场自己判断，不得因手册没写而漏测。
    - 按需读取当前所需的其他 Skill（`axiom skill path <name>`）或上游资产（`asset_inventory.md`、上游 Intent 的 `findings.md`），严禁无脑全盘读取历史。
@@ -34,59 +33,49 @@
    - 将本轮已确认的绝对事实与漏洞发现写入 `{run_dir}/artifacts/findings.md`；
    - 将本次发现但尚未完成或留待后续跟进的方向写入 `{run_dir}/artifacts/leads.md`；
    - 两个文件必须存在且非空（无内容时写"本轮无新增确认事实"/"本轮无遗留待验证线索"）。
-   - **findings.md 格式**：编号事实（`1.` `2.` ...），每条高效精炼——长度服从内容、讲不清可用多句，但零冗余；文件末尾固定一节：
-     ```
-     ## 证据清单
-     evidence/<file>.txt: <产生动作说明，高效精炼>
-     （例：evidence/anon-probe.txt: 匿名 6 连探测（三接口 GET/POST + 401 指纹））
-     ```
-     一行一文件，`路径: 产生动作`。
-   - 本轮写了 `artifacts/work/` 时，在 `## 证据清单` **之后**另起一节，与证据分开写，两节不得混写：
-     ```
-     ## 原始记录
-     work/<file>: <这份记录是什么、怎么产生的>
-     （例：work/probe_log.txt: DNS/TLS/路径矩阵 42 行逐条状态码回显）
-     ```
-     没有成果、只有原始记录的轮次，省略 `## 证据清单` 整节，只留 `## 原始记录`。
-   - **leads.md 末尾固定加一节「资产变更」**，记录本阶段对目标资产做过的增删改，无论成败：
-
-     ```
-     ## 资产变更
-     - 新增：<资产/对象> | <位置：端点/表/门店> | <标识：id/sku/mac> | <是否已清理>
-     - 修改：<资产/对象> | <原值 → 新值> | <是否已还原>
-     - 删除：<资产/对象> | <标识> | <删除前是否备份>
-     - 无变更：本轮未对目标资产做任何写入
-     ```
-
-     要求：
-     - **只写真正落库/生效的变更**。被拦未发出、返回 4xx 探测失败、只在内存里试的，都不算；不确定是否落库的，写「疑似」并说明依据（回读/计数差分）。
-     - 每条必须带**回滚状态**：已清理 / 已还原 / 未清理（留残留）/ 无法回滚。无法回滚的要写明原因。
-     - 没有变更就写一行「无变更：本轮未对目标资产做任何写入」，不要省略这一节。
-     - 这一节是下游清理的依据，不是成绩：残留写清楚比隐瞒有用。它也属于待跟进项（尤其「未清理/无法回滚」），所以放 leads 而不是 findings。
+   - **findings.md 格式**：编号事实（`1.` `2.` ...），每条高效精炼——长度服从内容、讲不清可用多句，但零冗余。
+   - **不要写证据清单**：本轮没有证据文件了，报文随上报走 CLI（见第 6 条）。
    - **leads.md 格式（硬约束）**：一、二、三编号，每条高效精炼；待验证线索写完后，末尾再加「资产变更」一节。
-   - **三禁项**：跨 intent/版本对账叙事（"已在上游 iXXX 上报""按 iYYY leads#N 并入"）——去 todo/状态字段；多端点多证据一逗号到底的 jargon 流——一事实一行；请求统计流水（"本轮 N 请求（基线 X + 正控 Y...）"）——留 work/。
-4. **证据与原始记录（两个目录，别混用）**：
-   - **证据 = 上报的证明**：只在**上报漏洞时**写（见第 6 条）：写入 `{run_dir}/artifacts/evidence/` 并用 `--evidence-path` 引用。证据是审计材料，不是阶段完成条件；没有漏洞上报就不写证据文件。
-   - **原始记录 = 留档的原始值**：不构成漏洞、也不构成成果，但后续要复查或复盘的东西（探测矩阵、逐条状态码/回显、批量抓取结果、临时脚本、中间样本）写 `{run_dir}/artifacts/work/`。这个目录收口时自动全量登记进产物中心（`explore.work`），**不参与证据剪枝，也不参与计分与审核**——它不会被当成证据，也不能用 `--evidence-path` 引用。
-   - 判断标准：**这份文件是用来「证明某条结论成立」的，还是用来「留个原始现场」的？** 前者 evidence/，后者 work/。不要为了省事把探测流水倒进 evidence/，也不要为了留档往 evidence/ 里塞材料。
-   - 不要为了补齐证据重新运行 Nuclei、SQLMap、浏览器、爬虫；遇网络/参数拦截不得宣称“方向穷尽”，积极寻求替代利用路径。
+   - **三禁项**：跨 intent/版本对账叙事（"已在上游 iXXX 上报""按 iYYY leads#N 并入"）——去 todo/状态字段；多端点多证据一逗号到底的 jargon 流——一事实一行；请求统计流水（"本轮 N 请求（基线 X + 正控 Y...）"）——不要写进结论。
+4. **证据就是报文，不写文件**：
+   - 证明漏洞成立的材料是**你真实发出的请求与收到的响应**，随 `--reproduction-file` 一起提交（见第 6 条），不落成 evidence/ 文件。
+   - 也不要写 `artifacts/work/` 留档：收口后运行目录随沙箱清理，需要复查的东西写进 findings.md / leads.md 的结论里。
+   - 不要为了补证据重新运行 Nuclei、SQLMap、浏览器、爬虫；遇网络/参数拦截不得宣称"方向穷尽"，积极寻求替代利用路径。
 5. **协议探测与状态判定准则**：
    - **严禁用单一空 GET 测写接口**：写操作/动作型接口（`/create`, `/generate`, `/submit` 等）若返回 400/404/405，仅代表方法或 Body 不匹配，绝不代表服务未上线；必须构造对应 POST/PUT 及有效 JSON 请求体重新验证；
    - **业务报错（400/422/500）即为存活铁证**：说明已穿透网关触达业务层，必须根据参数报错信息修正入参，继续深挖逻辑/越权/注入；
    - **严禁下达全局未上线的假断言**：单个端点异常不得推广为整树模块下线，只有经多种方法与合规请求体交叉验证均不存在时，方可记录为单个接口不可达。
-6. **漏洞上报标准与 CLI（证据随上报一起写）**：
+6. **漏洞上报标准与 CLI（复现随上报一起提交）**：
    - 仅当存在实际影响/危害且可端到端复现时，使用 CLI 上报。
-   - **证据只在此时写**：确定上报漏洞时，把支撑材料（请求/响应/对照输出）写入 `{run_dir}/artifacts/evidence/`，并在 CLI 用 `--evidence-path evidence/<file>` 逐个引用。未上报漏洞的轮次**不写证据文件**（完成时未上报漏洞的 evidence 不会保留）。`work/` 里的内容不能当证据引用。
+   - **复现是必填项**：没有可复现路径就不是已确认漏洞，写 leads.md 留痕即可。上报时把每一步的真实报文写进一个 JSON 文件（下面有完整示例），用 `--reproduction-file` 提交；报文有换行，**不要用命令行参数拼**。
+   - `request` 必须是**标准 HTTP 请求报文**（请求行 + 关键 header + 空行 + body），**不能是 curl/shell 命令**；`response` 必须是**状态行 + 关键响应内容**，不要用 `...` 省略掉证明点。提交前会本地校验，格式不对直接报错。
    ```bash
    axiom explore vulnerability report \
      --title "漏洞标题" --type "漏洞类型" --severity high \
      --description "漏洞简述" \
      --prerequisites "利用所需条件" \
-     --remediation "服务端修复方案" \
      --impact "实际危害" \
-     --evidence-path "evidence/xxx.txt"
+     --reproduction-file repro.json
    ```
-   - 记忆口诀：`已确认漏洞/事实 -> findings.md`；`未完成线索/资产变更 -> leads.md`；`有效漏洞 -> 先写证据再 CLI 上报`；`原始记录（不是证据）-> artifacts/work/`。findings 的`## 证据清单`仅在确有证据文件（即上报了漏洞）时写。
+   `repro.json` 格式（`steps` 1~12 步，按执行顺序）：
+   ```json
+   {
+     "entry_point": "POST /upload.php",
+     "prerequisites": ["无需认证，任意匿名访问者即可上传", "上传目录可写且 PHP 可解析"],
+     "chain_input": "",
+     "chain_gain": "",
+     "steps": [
+       {
+         "title": "上传 PHP 文件到头像接口",
+         "request": "POST /upload.php HTTP/1.1\nHost: target.test\nContent-Type: multipart/form-data; boundary=----X\n\n------X\nContent-Disposition: form-data; name=\"avatar\"; filename=\"shell.php\"\n\n<?php echo 1; ?>\n------X--",
+         "response": "HTTP/1.1 200 OK\nContent-Type: application/json\n\n{\"uploaded\":\"/uploads/shell.php\"}",
+         "proves": "上传接口不校验类型，任意 .php 落地并可直接访问"
+       }
+     ]
+   }
+   ```
+   - `remediation`（修复建议）**不再必填**：交付报告里的这一节由审核/AI 富化补。
+   - 记忆口诀：`已确认漏洞/事实 -> findings.md`；`未完成线索/资产变更 -> leads.md`；`有效漏洞 -> 写 repro.json 再 CLI 上报`。
 7. **人工干预标记**：
    - 仅当必须人类真实支付、提供短信/MFA/扫码等外部物理动作时，调用 `axiom explore human-intervention mark --reason "..."`；验证码、真实设备和工具失败都应记录为可恢复阻塞，不会暂停任务，也不会自动触发 Reason；不要因为工具暂时失败就宣称方向穷尽，原因不得包含凭证、验证码、支付信息或敏感响应正文；当前 Intent 仍必须正常生成两个产物并以 FINISH 收口，随后继续测试可自动化的其他分支并正常收口。
 8. **收口控制与节奏**：

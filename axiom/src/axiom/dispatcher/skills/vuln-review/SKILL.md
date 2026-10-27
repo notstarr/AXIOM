@@ -131,9 +131,9 @@ Reviewer 必须严格执行**“危害驱动”**审查，严厉剔除纸面告�
 - 对照变量和对照结果；
 - 与漏洞声明一致或不一致之处；
 - Scope 和安全边界；
-- 是否生成了新的 `evidence/**`。
+- 是否留下了可复核的复测记录（报文照抄即可，不需要生成文件）。
 
-新结果具有判定价值时，将原始请求/响应完整写入 `artifacts/evidence/**`——密钥、Cookie、Token 保留全文，供复测与跨任务复用；只保留与判定相关的内容，不要堆大段重复响应。
+新结果具有判定价值时，把复测用到的请求与关键响应写进裁决理由或截图；密钥、Cookie、Token 保留全文以便复用。`artifacts/evidence/` 已停用，不要再往里写文件。
 
 ## 四、四种状态的裁决门槛
 
@@ -189,27 +189,26 @@ Reviewer 必须严格执行**“危害驱动”**审查，严厉剔除纸面告�
 
 提交前阅读：`references/needs-human-example.md`。
 
-## 五、漏洞报告标准结构（仅「确认成立」产出）
+## 五、裁决即产出，不写报告文件
 
-裁决为 `verified` 时，写 `{run_dir}/artifacts/vuln_report-<vuln_id>-<slug>.md`，字段顺序固定：
+裁决为 `verified` 时**不需要写任何报告文件**：报告由代码从上报时提交的结构化复现
+（`review_target.json` 里的 `reproduction`）自动生成，章节顺序与步骤编号都固定，
+你的裁决理由会出现在报告的「审核结论」一节。
 
-```markdown
-# <标题>
-
-## 简述
-## 利用前提
-## 复现步骤
-## 漏洞危害
-## 修复建议
-## 证据截图
-```
-
-- `<slug>` 只用 `[A-Za-z0-9-]`（由标题摘要生成）。**文件名不得含中文、空格或斜杠**，否则该产物会被判为非法路径**直接丢弃**。
-- **不再要求 CVSS 向量**，也不再要求单独的过程记录文件（旧的 `review.md` 已废除）。
-- `duplicate` / `ignored` / `needs-human` **不产出报告**，只在裁决 `--reason` 里说明（1-3 句，精炼直击要害；重复项用 `--duplicate-of` 指回原漏洞）。
-- 截图存 `{run_dir}/artifacts/evidence/`，报告里用**相对路径**引用。**只允许能证明漏洞存在的关键证据**（关键响应 / 关键页面 / 关键数据回显），每个漏洞 **0-3 张**，禁止无关界面截图；图片文件名同样**必须是纯 ASCII**。
-
-可审计程度以 `references/verified-example.md` 为准。
+- `duplicate` / `ignored` / `needs-human` 同样只提交裁决，在 `--reason` 里说明
+  （1-3 句，精炼直击要害；重复项用 `--duplicate-of` 指回原漏洞）。
+- 复测时照 `reproduction.steps` 里的报文重打，不要凭描述臆测。
+- 需要补关键截图时走钩子接口，每条漏洞 **0-3 张**、只留能证明漏洞存在的关键画面：
+  ```bash
+  # 1) 上传图片拿 artifact_id
+  curl -X POST "$AXIOM_SERVER/api/v1/tasks/$AXIOM_TASK_ID/artifacts/upload" \
+       -F file=@retest.png -F actor=reviewer -F summary=命令回显
+  # 2) 挂到第 2 步（step_index=0 表示概览图）
+  curl -X POST "$AXIOM_SERVER/api/v1/tasks/$AXIOM_TASK_ID/vulnerabilities/<vuln_id>/evidence" \
+       -H 'content-type: application/json' \
+       -d '{"artifact_id":"<id>","step_index":2,"caption":"命令回显"}'
+  ```
+  没有图就不补，不影响裁决。
 
 ## 六、语言要求
 

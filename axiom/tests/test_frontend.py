@@ -1769,8 +1769,11 @@ def test_frontend_and_static_assets_are_served(client):
     assert 'x-model="vulnEditor.reproduction_steps"' not in vulnerabilities.text
     assert 'x-model="vulnEditor.curl_command"' not in vulnerabilities.text
     assert 'x-model="vulnEditor.evidence"' not in vulnerabilities.text
+    # 详情页改为渲染结构化复现（测试过程/步骤/证据槽），不再渲染 evidence_artifacts 列表。
     assert "finding_artifact" in vulnerabilities.text
-    assert "evidence_artifacts" in vulnerabilities.text
+    assert "selectedVulnerability().reproduction" in vulnerabilities.text
+    assert "vulnEvidenceForStep" in vulnerabilities.text
+    assert "步骤" in vulnerabilities.text
     assert "Reviewer 审核" in vulnerabilities.text
     assert "重新审核" in vulnerabilities.text
     assert "vulnerabilityReviewDecisionLabel" in vulnerabilities.text
@@ -2011,8 +2014,10 @@ def test_frontend_and_static_assets_are_served(client):
     assert "Plan 排队列表（FIFO）" in graph.text
     assert "planDecisionLabel(project.project.last_plan_decision)" in graph.text
     assert "project.project.reason && project.project.phase !== 'plan'" in graph.text
-    assert "selectedVulnerability().prerequisites || '未填写'" in vulnerabilities.text
-    assert "selectedVulnerability().remediation || '未填写'" in vulnerabilities.text
+    # 前置条件现在渲染自 reproduction.prerequisites；修复建议缺失时整节省略，
+    # 因此两个「未填写」兜底断言按新契约调整。
+    assert "(selectedVulnerability().reproduction.prerequisites || [])" in vulnerabilities.text
+    assert 'x-if="selectedVulnerability().remediation"' in vulnerabilities.text
     assert "按列表查看证据、影响和修复建议" in vulnerabilities.text
     assert "按卡片查看证据、影响和修复建议" not in vulnerabilities.text
 

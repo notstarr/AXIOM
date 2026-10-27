@@ -33,6 +33,7 @@ from axiom.modules.tasks.service import TaskService
 from axiom.modules.todos.service import TodoService
 from axiom.modules.token_usage.service import TokenUsageService
 from axiom.modules.interventions.service import InterventionService
+from axiom.modules.reports import ReportEvidenceService, ReportService
 from axiom.modules.vulnerabilities.service import VulnerabilityService
 from axiom.modules.c2.service import C2Service
 from axiom.modules.webshell.service import WebShellService
@@ -65,6 +66,8 @@ class Container:
     settings: RuntimeSettingsService
     credentials: CredentialService
     vulnerabilities: VulnerabilityService
+    report_evidence: ReportEvidenceService
+    reports: ReportService
     webshells: WebShellService
     c2: C2Service
     vulnerability_reviews: VulnerabilityReviewService
@@ -95,6 +98,9 @@ class Container:
         sandboxes = TaskSandboxManager(engine, store)
         vulnerability_reviews = VulnerabilityReviewService(engine, store, sandboxes=sandboxes)
         archives = ArchiveService(engine, store, reviews=vulnerability_reviews)
+        vulnerability_service = VulnerabilityService(
+            engine, archives=archives, reviews=vulnerability_reviews
+        )
         context = ContextService(engine, store)
         red_team = RedTeamService(engine, reviews=vulnerability_reviews)
         reason = ReasonService(engine, store=store, sandboxes=sandboxes, red_team=red_team)
@@ -148,10 +154,12 @@ class Container:
             context=context,
             settings=settings,
             credentials=CredentialService(engine),
-            vulnerabilities=VulnerabilityService(
+            vulnerabilities=vulnerability_service,
+            report_evidence=ReportEvidenceService(engine),
+            reports=ReportService(
                 engine,
-                archives=archives,
-                reviews=vulnerability_reviews,
+                vulnerabilities=vulnerability_service,
+                red_team=red_team,
             ),
             webshells=WebShellService(engine),
             c2=C2Service(engine),

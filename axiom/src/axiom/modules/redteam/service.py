@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from sqlalchemy import Engine, exists, select, update
+from sqlalchemy import Connection, Engine, exists, select, update
 
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.audit.schemas import RecordAuditEvent
@@ -23,6 +23,7 @@ from axiom.modules.redteam.schemas import (
     RedTeamResultReview,
 )
 from axiom.modules.redteam.tables import red_team_chains
+from axiom.modules.reports.path import attack_paths
 from axiom.modules.tasks.tables import tasks
 from axiom.shared.clock import utcnow
 from axiom.shared.database import run_transaction
@@ -99,6 +100,27 @@ def _chain_id_from_metadata(value) -> str | None:
         return None
     chain_id = value.get("chain_id")
     return chain_id.strip() if isinstance(chain_id, str) and chain_id.strip() else None
+
+
+def _attach_attack_paths(
+    conn: Connection,
+    task_id: str,
+    results: list[RedTeamResult],
+) -> list[RedTeamResult]:
+    """Fill ``attack_path`` on each Result.
+
+    Only red-team Results carry a path: a vulnerability-mode kill chain normally closes
+    inside one Intent and the reviewer replays it, so a separate chain adds nothing.
+    """
+    paths = attack_paths(
+        conn,
+        task_id=task_id,
+        intents_with_results={item.intent_id for item in results if item.intent_id},
+    )
+    return [
+        item.model_copy(update={"attack_path": paths.get(item.intent_id, [])})
+        for item in results
+    ]
 
 
 class RedTeamService:
@@ -346,7 +368,8 @@ class RedTeamService:
     def list_results(self, task_id: str, *, chain_id: str | None = None) -> list[RedTeamResult]:
         with self.engine.connect() as conn:
             self._task(conn, task_id)
-            return self.repository.list_results(conn, task_id, chain_id=chain_id)
+            results = self.repository.list_results(conn, task_id, chain_id=chain_id)
+            return _attach_attack_paths(conn, task_id, results)
 
     def list_results_page(
         self,
@@ -362,7 +385,7 @@ class RedTeamService:
         """Cross-task listing for the 重要事实·成果 view (management console)."""
 
         with self.engine.connect() as conn:
-            return self.repository.list_results_page(
+            results, total = self.repository.list_results_page(
                 conn,
                 task_id=task_id,
                 chain_id=chain_id,
@@ -372,6 +395,15 @@ class RedTeamService:
                 limit=limit,
                 offset=offset,
             )
+            # The cross-task console lists Results from many tasks; the walk needs a
+            # task id, so group first and load one graph per task.
+            grouped: dict[str, list[RedTeamResult]] = {}
+            for result in results:
+                grouped.setdefault(result.task_id, []).append(result)
+            enriched: list[RedTeamResult] = []
+            for owner_task_id, batch in grouped.items():
+                enriched.extend(_attach_attack_paths(conn, owner_task_id, batch))
+            return enriched, total
 
     def list_chains_page(
         self,
@@ -425,8 +457,8 @@ class RedTeamService:
             chain = self.repository.get_chain(conn, task_id, linked_chain_id)
             if chain is None:
                 raise NotFoundError(f"RedTeam Chain not found: {linked_chain_id}")
-            if not report.evidence_refs:
-                raise ConflictError("A Result requires at least one Evidence or Artifact reference")
+            # 复现过程（report.reproduction）是必填的证明来源，已由 schema 保证；
+            # evidence_refs 现在只用于补充图片，可以留空。
             bound_refs: list[str] = []
             for ref in report.evidence_refs:
                 if not ref.startswith("artifact:"):

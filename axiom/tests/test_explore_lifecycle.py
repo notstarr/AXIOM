@@ -22,6 +22,28 @@ BOOTSTRAP = {
 }
 
 
+# Explore 上报必须带结构化复现：报文逐字真实，不是 curl。
+REPRODUCTION = {
+    "entry_point": "GET /api/orders/2",
+    "prerequisites": ["需要任意低权限账号。"],
+    "chain_input": "低权限账号会话",
+    "chain_gain": "可读取他人订单",
+    "steps": [
+        {
+            "title": "用低权限账号读取他人订单",
+            "request": (
+                "GET /api/orders/2 HTTP/1.1\r\n"
+                "Host: a.example.com\r\n"
+                "Cookie: sid=low\r\n"
+                "\r\n"
+            ),
+            "response": 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{"id":2,"owner":"other"}',
+            "proves": "低权限账号可读取他人订单，对象级授权缺失",
+        }
+    ],
+}
+
+
 def _task_with_explore_intents(client, *, count: int = 1) -> tuple[dict, list[str]]:
     update_runtime_settings(client, reason_min_interval_seconds=0)
     project = client.post("/api/v1/projects", json={"title": "系统"}).json()
@@ -210,7 +232,10 @@ def test_explore_completion_atomically_registers_artifact_fact_and_reason(client
     ]
 
 
-def test_explore_keeps_work_records_when_no_vulnerability_reported(client, data_dir) -> None:
+def test_explore_no_longer_registers_work_records(client, data_dir) -> None:
+    """The original-record directory is retired: the proof now travels as structured
+    reproduction, and anything left in work/ stays on disk with the run directory."""
+
     task, intents = _task_with_explore_intents(client)
 
     completed = _complete_explore(
@@ -220,19 +245,18 @@ def test_explore_keeps_work_records_when_no_vulnerability_reported(client, data_
         work={"probe_log.txt": "GET / -> 500\nGET /login -> 500\n"},
     )
 
-    # evidence 仍然整轮丢弃，原始记录必须保留：它不是证据，是留档。
-    work_artifacts = [
+    assert [
         item for item in completed["artifacts"] if item["artifact_type"] == "explore.work"
-    ]
-    assert len(work_artifacts) == 1
-    assert work_artifacts[0]["storage_key"].endswith(f"{intents[0]}/work/probe_log.txt")
-    assert work_artifacts[0]["summary"].startswith("原始记录：work/")
-    kept = data_dir / "tasks" / task["id"] / "artifacts" / intents[0]
-    assert (kept / "work" / "probe_log.txt").read_text(encoding="utf-8").startswith("GET / -> 500")
-    assert not (kept / "evidence").exists()
+    ] == []
+    assert [
+        item for item in completed["artifacts"] if item["artifact_type"] == "explore.evidence"
+    ] == []
 
 
-def test_explore_work_records_are_not_scored_evidence(client, data_dir) -> None:
+def test_explore_evidence_files_are_no_longer_registered(client, data_dir) -> None:
+    """A worker that still drops files in artifacts/evidence/ gets a warning, not
+    artifacts: the reproduction packets are the evidence now."""
+
     task, intents = _task_with_explore_intents(client)
 
     completed = _complete_explore(
@@ -248,18 +272,16 @@ def test_explore_work_records_are_not_scored_evidence(client, data_dir) -> None:
             "impact": "可批量读取他人订单",
             "remediation": "服务端校验订单归属",
             "affected_target": "api.example.com",
+            "reproduction": REPRODUCTION,
             "evidence_paths": ["evidence/response-1.md"],
         },
-        work={"probe_log.txt": "row\n"},
     )
 
     vulnerability = completed["vulnerabilities"][0]
-    assert [item["artifact_type"] for item in vulnerability["evidence_artifacts"]] == [
-        "explore.evidence"
-    ]
+    assert vulnerability["evidence_artifacts"] == []
+    assert vulnerability["reproduction"]["entry_point"] == REPRODUCTION["entry_point"]
     assert all(
-        item["artifact_type"] != "explore.work" for item in completed["artifacts"]
-        if item["id"] in vulnerability["evidence_artifact_ids"]
+        item["artifact_type"] != "explore.evidence" for item in completed["artifacts"]
     )
 
 
@@ -285,6 +307,7 @@ def test_explore_rejects_work_path_as_vulnerability_evidence(client) -> None:
                 "impact": "可批量读取他人订单",
                 "remediation": "服务端校验订单归属",
                 "affected_target": "api.example.com",
+                "reproduction": REPRODUCTION,
                 "evidence_paths": ["work/probe_log.txt"],
             },
         },
@@ -554,6 +577,7 @@ def test_explore_reports_vulnerability_incrementally_and_fact_keeps_its_referenc
         "prerequisites": "需要任意低权限账号。",
         "impact": "导致跨用户数据泄露。",
         "remediation": "服务端校验订单所属用户。",
+        "reproduction": REPRODUCTION,
         "evidence_paths": ["evidence/response-1.md"],
         "affected_target": "https://a.example.com/api/orders/2",
     }
@@ -570,7 +594,7 @@ def test_explore_reports_vulnerability_incrementally_and_fact_keeps_its_referenc
     assert completed["vulnerabilities"][0]["reported_by"] == "worker-a"
     assert completed["vulnerabilities"][0]["status"] == "待验证"
     assert completed["vulnerabilities"][0]["finding_artifact"]["artifact_type"] == "explore.findings"
-    assert [item["artifact_type"] for item in completed["vulnerabilities"][0]["evidence_artifacts"]] == ["explore.evidence"]
+    assert completed["vulnerabilities"][0]["evidence_artifacts"] == []
     review_runs = client.get(
         f"/api/v1/tasks/{task['id']}/vulnerabilities/v001/reviews"
     )
@@ -595,7 +619,12 @@ def test_explore_reports_vulnerability_incrementally_and_fact_keeps_its_referenc
         for path in (data_dir / "runs" / task["id"] / intents[0]).rglob("*")
     )
     artifacts = client.get(f"/api/v1/tasks/{task['id']}/artifacts").json()
-    assert len([item for item in artifacts if item["intent_id"] == intents[0]]) == 3
+    # Only the two conclusion files; the evidence file is neither kept nor registered.
+    registered = [item for item in artifacts if item["intent_id"] == intents[0]]
+    assert sorted(item["artifact_type"] for item in registered) == [
+        "explore.findings",
+        "explore.leads",
+    ]
 
 
 def test_explore_rejects_worker_supplied_status(client) -> None:
@@ -627,6 +656,7 @@ def test_explore_rejects_worker_supplied_status(client) -> None:
                 "prerequisites": "无需额外权限",
                 "impact": "影响",
                 "remediation": "限制敏感信息返回",
+                "reproduction": REPRODUCTION,
                 "evidence_paths": ["evidence/proof.txt"],
                 "status": "忽略",
                 "status_reason": "不够",
@@ -642,11 +672,10 @@ def test_explore_rejects_worker_supplied_status(client) -> None:
     [
         ("prerequisites", None),
         ("prerequisites", "   "),
-        ("remediation", None),
-        ("remediation", "   "),
+        ("reproduction", None),
     ],
 )
-def test_explore_api_requires_prerequisites_and_remediation(
+def test_explore_api_requires_prerequisites_and_reproduction(
     client,
     field: str,
     value: str | None,
@@ -666,6 +695,7 @@ def test_explore_api_requires_prerequisites_and_remediation(
         "prerequisites": "需要任意低权限账号。",
         "impact": "导致跨用户数据泄露。",
         "remediation": "服务端校验对象归属。",
+        "reproduction": REPRODUCTION,
     }
     if value is None:
         report.pop(field)
@@ -679,6 +709,34 @@ def test_explore_api_requires_prerequisites_and_remediation(
 
     assert response.status_code == 422
     assert field in response.text
+
+
+def test_explore_api_treats_remediation_as_optional(client) -> None:
+    """修复建议不再是 Explore 的必填项：交付报告里这一节由审核/AI 富化补。"""
+
+    task, intents = _task_with_explore_intents(client)
+    claim = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}/claim",
+        json={"worker_name": "worker-a"},
+    ).json()
+    base = f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}"
+    client.post(f"{base}/start", json={"lease_id": claim["lease_id"]})
+    report = {
+        "title": "对象级授权缺失",
+        "type": "越权",
+        "severity": "high",
+        "description": "低权限用户可以读取其他用户对象。",
+        "prerequisites": "需要任意低权限账号。",
+        "impact": "导致跨用户数据泄露。",
+        "reproduction": REPRODUCTION,
+    }
+
+    response = client.post(
+        f"{base}/explore-vulnerabilities",
+        json={"lease_id": claim["lease_id"], "report": report},
+    )
+
+    assert response.status_code == 200, response.text
 
 
 def test_explore_keeps_reported_vulnerability_when_evidence_file_is_missing(client) -> None:
@@ -706,6 +764,7 @@ def test_explore_keeps_reported_vulnerability_when_evidence_file_is_missing(clie
                 "prerequisites": "需要低权限账号",
                 "impact": "影响",
                 "remediation": "校验对象归属",
+                "reproduction": REPRODUCTION,
                 "evidence_paths": ["evidence/missing.txt"],
             },
         },
@@ -751,6 +810,7 @@ def test_explore_reports_vulnerability_without_evidence_paths(client) -> None:
                 "prerequisites": "需要任意低权限账号。",
                 "impact": "可能造成跨用户数据泄露。",
                 "remediation": "服务端校验对象归属。",
+                "reproduction": REPRODUCTION,
             },
         },
     )

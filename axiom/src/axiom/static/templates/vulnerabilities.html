@@ -174,46 +174,93 @@
               <p class="sto-label" style="margin-bottom:7px;">描述</p>
               <p style="font-size:13px; color:var(--sto-fg); white-space:pre-wrap; word-break:break-word; line-height:1.6;" x-text="formatMultiline(selectedVulnerability().description)"></p>
             </div>
+
+            <!-- 测试过程：骨架由代码/模板固定，内容来自上报的结构化复现 -->
             <div class="sto-panel" style="padding:13px 15px;">
-              <p class="sto-label" style="margin-bottom:7px;">利用前提</p>
-              <p style="font-size:13px; white-space:pre-wrap; word-break:break-word; line-height:1.6;"
-                :style="selectedVulnerability().prerequisites ? 'color:var(--sto-fg);' : 'color:var(--sto-fg-3); font-style:italic;'"
-                x-text="formatMultiline(selectedVulnerability().prerequisites || '未填写')"></p>
+              <p class="sto-label" style="margin-bottom:9px;">测试过程</p>
+              <template x-if="!selectedVulnerability().reproduction">
+                <p class="sto-muted" style="font-size:12px; font-style:italic;">未提供结构化复现</p>
+              </template>
+              <template x-if="selectedVulnerability().reproduction">
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                  <div>
+                    <span class="sto-desc">入口点</span>
+                    <p class="sto-num" style="font-size:12px; margin-top:2px; word-break:break-all;" x-text="selectedVulnerability().reproduction.entry_point"></p>
+                  </div>
+                  <div>
+                    <span class="sto-desc">前置条件</span>
+                    <template x-if="!(selectedVulnerability().reproduction.prerequisites || []).length">
+                      <p class="sto-muted" style="font-size:12px; font-style:italic;">未填写</p>
+                    </template>
+                    <ul style="margin-top:3px; list-style:disc; margin-left:18px; display:flex; flex-direction:column; gap:2px;">
+                      <template x-for="(item, idx) in (selectedVulnerability().reproduction.prerequisites || [])" :key="`pre-${idx}`">
+                        <li class="sto-muted" style="font-size:12px; line-height:1.55;" x-text="item"></li>
+                      </template>
+                    </ul>
+                  </div>
+                </div>
+              </template>
             </div>
+
+            <!-- 步骤卡片：每步 说明 + 请求报文 + 响应 + 该步证据图 -->
+            <template x-if="selectedVulnerability().reproduction">
+              <div style="display:flex; flex-direction:column; gap:11px;">
+                <template x-for="step in (selectedVulnerability().reproduction.steps || [])" :key="`step-${step.index}`">
+                  <div class="sto-tiercard" style="--pc:#2563eb; border-left-width:3px; padding:11px 13px;">
+                    <div class="flex flex-wrap items-center" style="gap:7px;">
+                      <span class="sto-badge" style="padding:1px 7px; font-size:9.5px;">步骤 <span x-text="step.index"></span></span>
+                      <span style="font-size:12.5px; font-weight:650; color:var(--sto-fg); word-break:break-word;" x-text="step.title"></span>
+                    </div>
+                    <p class="sto-muted" style="margin-top:6px; font-size:11.5px; line-height:1.55;"><span style="font-weight:650; color:var(--sto-fg-2);">证明：</span><span x-text="step.proves"></span></p>
+                    <p class="sto-desc" style="margin-top:9px;">请求</p>
+                    <pre class="sto-usage" style="margin-top:3px; white-space:pre-wrap; word-break:break-all; font-size:11px;" x-text="step.request"></pre>
+                    <p class="sto-desc" style="margin-top:9px;">响应</p>
+                    <pre class="sto-usage" style="margin-top:3px; white-space:pre-wrap; word-break:break-all; font-size:11px;" x-text="step.response"></pre>
+                    <!-- 证据钩子：审核者未补图时留空槽，不占高度 -->
+                    <template x-if="vulnEvidenceForStep(step.index).length">
+                      <div style="margin-top:9px; display:flex; flex-wrap:wrap; gap:8px;">
+                        <template x-for="ev in vulnEvidenceForStep(step.index)" :key="`ev-${ev.artifact_id}`">
+                          <a :href="ev.url" target="_blank" rel="noopener" style="display:block;">
+                            <img :src="ev.url" :alt="ev.caption || '证据'" style="max-width:260px; max-height:180px; border:1px solid var(--sto-line); border-radius:7px;">
+                            <span class="sto-muted" style="display:block; margin-top:2px; font-size:10px;" x-text="ev.caption"></span>
+                          </a>
+                        </template>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+
             <div class="sto-panel" style="padding:13px 15px;">
               <p class="sto-label" style="margin-bottom:7px;">影响</p>
               <p style="font-size:13px; color:var(--sto-fg); white-space:pre-wrap; word-break:break-word; line-height:1.6;" x-text="formatMultiline(selectedVulnerability().impact)"></p>
             </div>
-            <template x-if="selectedVulnerability().finding_artifact">
+
+            <!-- 修复建议：Explore 不再必填，缺失则整节省略 -->
+            <template x-if="selectedVulnerability().remediation">
               <div class="sto-panel" style="padding:13px 15px;">
-                <p class="sto-label" style="margin-bottom:7px;">关联 Findings</p>
-                <button @click="openVulnerabilityArtifact(selectedVulnerability(), selectedVulnerability().finding_artifact)" class="sto-item" style="border:1px solid var(--sto-line); border-radius:9px; width:100%;">
-                  <span style="min-width:0;">
-                    <span class="sto-num" style="display:block; font-size:11.5px; font-weight:600; color:var(--sto-accent);" x-text="selectedVulnerability().finding_artifact.path"></span>
-                    <span class="sto-muted" style="display:block; margin-top:2px; font-size:10px;" x-text="selectedVulnerability().finding_artifact.summary"></span>
-                  </span>
-                </button>
+                <p class="sto-label" style="margin-bottom:7px;">修复建议</p>
+                <p style="font-size:13px; white-space:pre-wrap; word-break:break-word; line-height:1.6;" x-text="formatMultiline(selectedVulnerability().remediation)"></p>
               </div>
             </template>
-            <template x-if="(selectedVulnerability().evidence_artifacts || []).length > 0">
-              <div class="sto-panel" style="padding:13px 15px;">
-                <p class="sto-label" style="margin-bottom:7px;">证据文件</p>
-                <div style="display:flex; flex-direction:column; gap:6px;">
-                  <template x-for="artifact in (selectedVulnerability().evidence_artifacts || [])" :key="`${selectedVulnerability().id}-${artifact.id}`">
-                    <button @click="openVulnerabilityArtifact(selectedVulnerability(), artifact)" class="sto-item" style="border:1px solid var(--sto-line); border-radius:9px; justify-content:space-between;">
-                      <span style="font-size:11.5px; color:var(--sto-accent); font-family:ui-monospace,'SF Mono',Menlo,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="artifact.path"></span>
-                      <span class="sto-muted sto-num" style="font-size:10px; flex-shrink:0;" x-text="formatBytes(artifact.size)"></span>
-                    </button>
-                  </template>
-                </div>
-              </div>
-            </template>
+
+            <!-- 证据：审核者补充的概览图 -->
             <div class="sto-panel" style="padding:13px 15px;">
-              <p class="sto-label" style="margin-bottom:7px;">修复建议</p>
-              <p style="font-size:13px; white-space:pre-wrap; word-break:break-word; line-height:1.6;"
-                :style="selectedVulnerability().remediation ? 'color:var(--sto-fg);' : 'color:var(--sto-fg-3); font-style:italic;'"
-                x-text="formatMultiline(selectedVulnerability().remediation || '未填写')"></p>
+              <p class="sto-label" style="margin-bottom:7px;">证据</p>
+              <template x-if="!(selectedVulnerability().evidence || []).filter(ev => !ev.step_index).length">
+                <p class="sto-muted" style="font-size:12px; font-style:italic;">证据由审核者补充</p>
+              </template>
+              <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                <template x-for="ev in (selectedVulnerability().evidence || []).filter(item => !item.step_index)" :key="`oev-${ev.artifact_id}`">
+                  <a :href="ev.url" target="_blank" rel="noopener" style="display:block;">
+                    <img :src="ev.url" :alt="ev.caption || '证据'" style="max-width:260px; max-height:180px; border:1px solid var(--sto-line); border-radius:7px;">
+                    <span class="sto-muted" style="display:block; margin-top:2px; font-size:10px;" x-text="ev.caption"></span>
+                  </a>
+                </template>
+              </div>
             </div>
+
             <template x-if="selectedVulnerability().legacy">
               <div class="sto-tiercard" style="--pc:#b45309; border-left-width:3px;">
                 <p class="sto-label" style="margin-bottom:8px;">旧格式内容（只读）</p>
@@ -342,53 +389,87 @@
               <p class="sto-label" style="margin-bottom:7px;">描述</p>
               <p style="font-size:13px; color:var(--sto-fg); white-space:pre-wrap; word-break:break-word; line-height:1.6;" x-text="formatMultiline(selectedRtResult().description)"></p>
             </div>
+
+            <!-- 利用前提 + 攻击链：本环增量由上报方填，全局路径由图谱装配 -->
             <div class="sto-panel" style="padding:13px 15px;">
-              <div class="flex items-center justify-between" style="gap:8px; margin-bottom:8px;">
-                <p class="sto-label">攻击链</p>
-                <span class="sto-num" style="font-size:10.5px; color:var(--sto-fg-2);" x-text="rtChainView && rtChainView.chainId === selectedRtResult().chain_id ? `${rtChainView.chainId} ${rtChainView.title || ''}`.trim() : (selectedRtResult().chain_id || '—')"></span>
-              </div>
-              <p x-show="rtChainLoading" class="sto-muted">正在读取这条链上的 Intent…</p>
-              <p x-show="!rtChainLoading && rtChainView && rtChainView.chainId === selectedRtResult().chain_id && rtChainView.steps.length === 0" class="sto-muted">这条链上还没有 Intent。</p>
-              <div x-show="rtChainView && rtChainView.chainId === selectedRtResult().chain_id && rtChainView.steps.length" class="chain-strip">
-                <template x-for="(step, index) in (rtChainView && rtChainView.chainId === selectedRtResult().chain_id ? rtChainView.steps : [])" :key="`${selectedRtResult().id}-${step.id}`">
-                  <span class="chain-strip-item">
-                    <button type="button" class="chain-chip" :class="step.id === selectedRtResult().intent_id ? 'on' : ''" :title="step.description || ''" @click="openResultChainIntent(selectedRtResult(), step.id)">
-                      <span x-text="step.id"></span>
-                    </button>
-                    <span class="chain-arrow" x-show="rtChainView && index < rtChainView.steps.length - 1">→</span>
-                  </span>
+              <p class="sto-label" style="margin-bottom:9px;">利用前提</p>
+              <template x-if="!selectedRtResult().reproduction">
+                <p class="sto-muted" style="font-size:12px; font-style:italic;">未填写</p>
+              </template>
+              <template x-if="selectedRtResult().reproduction">
+                <ul style="list-style:disc; margin-left:18px; display:flex; flex-direction:column; gap:3px;">
+                  <template x-if="selectedRtResult().reproduction.chain_input">
+                    <li class="sto-muted" style="font-size:12px; line-height:1.55;" x-text="selectedRtResult().reproduction.chain_input"></li>
+                  </template>
+                  <template x-for="(item, idx) in (selectedRtResult().reproduction.prerequisites || [])" :key="`rt-pre-${idx}`">
+                    <li class="sto-muted" style="font-size:12px; line-height:1.55;" x-text="item"></li>
+                  </template>
+                </ul>
+              </template>
+              <!-- 攻击链：仅红队，且不含分数（分数只进审核结论与计分视图） -->
+              <template x-if="(selectedRtResult().attack_path || []).length">
+                <div style="margin-top:12px;">
+                  <p class="sto-desc" style="margin-bottom:5px;">攻击链</p>
+                  <ol style="list-style:none; display:flex; flex-direction:column; gap:5px;">
+                    <template x-for="(link, idx) in (selectedRtResult().attack_path || [])" :key="`rt-link-${link.intent_id}`">
+                      <li style="display:flex; gap:7px; align-items:baseline;">
+                        <span class="sto-num" style="font-size:10.5px; color:var(--sto-fg-3); flex-shrink:0;" x-text="`${idx + 1}.`"></span>
+                        <span style="font-size:12px; line-height:1.5; word-break:break-word;"
+                              :style="link.is_current ? 'font-weight:650; color:var(--sto-fg);' : 'color:var(--sto-fg-2);'">
+                          <span x-text="link.title"></span>
+                          <span x-show="link.is_current" class="sto-badge" style="padding:0 6px; font-size:9px; margin-left:5px;">本环</span>
+                          <span x-show="link.gain" class="sto-muted" style="display:block; font-size:11px; margin-top:1px;" x-text="link.gain"></span>
+                        </span>
+                      </li>
+                    </template>
+                  </ol>
+                </div>
+              </template>
+            </div>
+
+            <!-- 测试过程：入口点 + 有序步骤（每步请求/响应/该步证据图） -->
+            <div class="sto-panel" style="padding:13px 15px;">
+              <p class="sto-label" style="margin-bottom:9px;">测试过程</p>
+              <template x-if="!selectedRtResult().reproduction">
+                <p class="sto-muted" style="font-size:12px; font-style:italic;">未提供结构化复现</p>
+              </template>
+              <template x-if="selectedRtResult().reproduction">
+                <div>
+                  <span class="sto-desc">入口点</span>
+                  <p class="sto-num" style="font-size:12px; margin-top:2px; word-break:break-all;" x-text="selectedRtResult().reproduction.entry_point"></p>
+                </div>
+              </template>
+            </div>
+
+            <template x-if="selectedRtResult().reproduction">
+              <div style="display:flex; flex-direction:column; gap:11px;">
+                <template x-for="step in (selectedRtResult().reproduction.steps || [])" :key="`rt-step-${step.index}`">
+                  <div class="sto-tiercard" style="--pc:#2563eb; border-left-width:3px; padding:11px 13px;">
+                    <div class="flex flex-wrap items-center" style="gap:7px;">
+                      <span class="sto-badge" style="padding:1px 7px; font-size:9.5px;">步骤 <span x-text="step.index"></span></span>
+                      <span style="font-size:12.5px; font-weight:650; color:var(--sto-fg); word-break:break-word;" x-text="step.title"></span>
+                    </div>
+                    <p class="sto-muted" style="margin-top:6px; font-size:11.5px; line-height:1.55;"><span style="font-weight:650; color:var(--sto-fg-2);">证明：</span><span x-text="step.proves"></span></p>
+                    <p class="sto-desc" style="margin-top:9px;">请求</p>
+                    <pre class="sto-usage" style="margin-top:3px; white-space:pre-wrap; word-break:break-all; font-size:11px;" x-text="step.request"></pre>
+                    <p class="sto-desc" style="margin-top:9px;">响应</p>
+                    <pre class="sto-usage" style="margin-top:3px; white-space:pre-wrap; word-break:break-all; font-size:11px;" x-text="step.response"></pre>
+                  </div>
                 </template>
               </div>
-            </div>
+            </template>
+
+            <!-- 证据：审核者补充 -->
             <div class="sto-panel" style="padding:13px 15px;">
-              <p class="sto-label" style="margin-bottom:7px;">能力与归属</p>
-              <div class="grid grid-cols-2 gap-x-6 gap-y-2" style="font-size:12.5px; color:var(--sto-fg-2);">
-                <div><span class="sto-muted">Intent</span> <span class="sto-num" x-text="selectedRtResult().intent_id || '—'"></span></div>
-                <div><span class="sto-muted">能力变化</span> <span class="sto-num" x-text="(selectedRtResult().capabilities_before || []).join(', ') || '—'"></span> → <span class="sto-num" style="color:var(--sto-fg);" x-text="(selectedRtResult().capabilities_gained || []).join(', ') || '—'"></span></div>
-                <div><span class="sto-muted">上报</span> <span x-text="selectedRtResult().reported_by || '—'"></span></div>
-              </div>
-            </div>
-            <div x-show="selectedRtResult().result_type === 'data'" class="sto-panel" style="padding:13px 15px;">
-              <p class="sto-label" style="margin-bottom:7px;">数据样本</p>
-              <p style="font-size:13px; color:var(--sto-fg); line-height:1.6;" x-text="`${selectedRtResult().sample_count ?? '—'} 条 / ${selectedRtResult().sample_bytes ?? '—'} 字节`"></p>
-              <p class="sto-muted" style="margin-top:4px;" x-text="`字段 ${(selectedRtResult().data_fields || []).join(', ') || '—'}`"></p>
-              <p x-show="selectedRtResult().data_summary" style="margin-top:6px; font-size:13px; color:var(--sto-fg); white-space:pre-wrap; word-break:break-word;" x-text="formatMultiline(selectedRtResult().data_summary)"></p>
-            </div>
-            <div x-show="selectedRtResult().result_type === 'credential'" class="sto-panel" style="padding:13px 15px;">
-              <p class="sto-label" style="margin-bottom:7px;">凭证引用</p>
-              <p class="sto-num" style="font-size:13px; color:var(--sto-fg);" x-text="selectedRtResult().credential_ref || '—'"></p>
-            </div>
-            <div class="sto-panel" style="padding:13px 15px;">
-              <p class="sto-label" style="margin-bottom:7px;">证据引用</p>
-              <template x-if="(selectedRtResult().evidence_refs || []).length === 0">
-                <p class="sto-muted" style="font-style:italic;">未填写</p>
+              <p class="sto-label" style="margin-bottom:7px;">证据</p>
+              <template x-if="!(selectedRtResult().evidence || []).length">
+                <p class="sto-muted" style="font-size:12px; font-style:italic;">证据由审核者补充</p>
               </template>
-              <div style="display:flex; flex-direction:column; gap:6px;">
-                <template x-for="ev in rtEvidenceList(selectedRtResult())" :key="`${selectedRtResult().id}-${ev.ref}`">
-                  <button type="button" @click="openResultEvidence(selectedRtResult(), ev.ref)" class="sto-item" style="border:1px solid var(--sto-line); border-radius:9px; width:100%; text-align:left; cursor:pointer;" :title="`${ev.name}${ev.size ? ' · ' + formatBytes(ev.size) : ''}`">
-                    <span class="sto-num" style="font-size:11.5px; color:var(--sto-accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="ev.name"></span>
-                    <span x-show="ev.size" class="sto-muted sto-num" style="font-size:10px; flex-shrink:0;" x-text="formatBytes(ev.size)"></span>
-                  </button>
+              <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                <template x-for="ev in (selectedRtResult().evidence || [])" :key="`rt-ev-${ev.artifact_id}`">
+                  <a :href="ev.url" target="_blank" rel="noopener" style="display:block;">
+                    <img :src="ev.url" :alt="ev.caption || '证据'" style="max-width:260px; max-height:180px; border:1px solid var(--sto-line); border-radius:7px;">
+                  </a>
                 </template>
               </div>
             </div>

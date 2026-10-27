@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from pydantic import ValidationError
 from sqlalchemy import Connection, func, or_, select, update
 
 from axiom.modules.artifacts.tables import artifacts
@@ -13,6 +14,7 @@ from axiom.modules.redteam.schemas import (
     RedTeamResultReport,
 )
 from axiom.modules.redteam.tables import red_team_chains, red_team_results
+from axiom.modules.reproduction.schemas import Reproduction
 from axiom.modules.tasks.tables import tasks
 from axiom.shared.errors import ConflictError
 from axiom.shared.ids import allocate_id
@@ -23,6 +25,22 @@ from axiom.shared.ids import allocate_id
 # view, so refuse instead of silently mis-sorting.
 CHAIN_ID_WIDTH = 3
 CHAIN_ID_LIMIT = 10**CHAIN_ID_WIDTH - 1
+
+
+def _reproduction_of(row) -> Reproduction | None:
+    """Decode the stored reproduction; ``{}`` means none recorded."""
+    raw = row.get("reproduction_json")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "{}")
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(raw, dict) or not raw:
+        return None
+    try:
+        return Reproduction.model_validate(raw)
+    except ValidationError:
+        return None
 
 
 def _json_list(value) -> list[str]:
@@ -387,6 +405,8 @@ class RedTeamRepository:
             "data_summary": command.data_summary,
             "credential_ref": command.credential_ref,
             "evidence_refs_json": command.evidence_refs,
+            # 本环的复现过程；攻击链由图谱在读取时装配，不落在这里。
+            "reproduction_json": command.reproduction.model_dump(mode="json"),
             # The control plane immediately queues a Reviewer; there is no
             # externally observable window in which an unqueued Result is
             # considered complete.
@@ -477,6 +497,7 @@ class RedTeamRepository:
             data_summary=row.get("data_summary") or "",
             credential_ref=row.get("credential_ref"),
             evidence_refs=_json_list(row.get("evidence_refs_json")),
+            reproduction=_reproduction_of(row),
             status=row["status"],
             reported_by=row["reported_by"],
             points_declared=int(row.get("points_declared") or 0),

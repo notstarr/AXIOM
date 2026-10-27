@@ -1065,13 +1065,14 @@ def test_explore_prompts_prioritize_core_outputs_over_optional_evidence() -> Non
     execute_prompt = PromptRenderer().render("explore.md", values)
     conclude_prompt = PromptRenderer().render("explore_conclude.md", values)
 
-    assert "证据是审计材料，不是阶段完成条件" in execute_prompt
-    assert "未上报漏洞的轮次**不写证据文件**" in execute_prompt
-    assert "没有漏洞上报就不写证据文件" in execute_prompt
-    assert "不要为了补齐证据重新运行 Nuclei、SQLMap、浏览器、爬虫" in execute_prompt
+    # 证据通道已取消：证明是上报时提交的结构化复现报文，不再写文件。
+    assert "证据就是报文，不写文件" in execute_prompt
+    assert "--reproduction-file" in execute_prompt
+    assert "也不要写 `artifacts/work/` 留档" in execute_prompt
+    assert "不要为了补证据重新运行 Nuclei、SQLMap、浏览器、爬虫" in execute_prompt
     assert "没做完没有关系" in conclude_prompt
     assert "不要为了补证据重新运行 Nuclei、SQLMap、浏览器、爬虫" in conclude_prompt
-    assert "`evidence/` 完全可选" in conclude_prompt
+    assert "`evidence/` 已停用" in conclude_prompt
 
 
 def test_explore_prompts_expose_human_intervention_marker_contract() -> None:
@@ -1336,20 +1337,20 @@ def test_review_prompt_enforces_single_target_decision_and_review_artifact() -> 
     assert "axiom skill path vuln-review" in prompt
     assert "按该 Skill 的“必读附件”规则读取对应状态示例" in prompt
     assert "未分配该 Skill 时不要把它当作缺失依赖" in prompt
-    assert "vuln_report-" in prompt
+    assert "你不再写 `vuln_report-*.md`" in prompt
+    assert "产出就是裁决，不写任何文件" in prompt
     assert "axiom review decision submit verified" in prompt
     assert "needs-human" in prompt
     assert "默认必须进行至少一次新的独立验证" in prompt
     assert "不得只复述文件内容后直接裁决" in prompt
     assert "至少一个关键对照结果" in prompt
-    assert "不再要求 CVSS 向量" in prompt
     assert "精炼、专业、直击裁决要害" in prompt
-    assert "只允许能证明漏洞存在的关键证据" in prompt
+    assert "/evidence" in prompt  # 证据钩子接口
     assert "最后一条 assistant 消息必须只包含 6 个 ASCII 字符" in prompt
     assert "不修改漏洞原始正文" in conclude
     assert "不得仅根据旧 Finding/Evidence 强行提交" in conclude
     assert "references/*-example.md" in conclude
-    assert "vuln_report-" in conclude
+    assert "写 vuln_report" not in conclude
     assert "axiom review status" in conclude
 
 

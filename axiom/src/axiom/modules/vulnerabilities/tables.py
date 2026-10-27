@@ -50,6 +50,10 @@ vulnerabilities = Table(
     Column("red_team_exploitable_at", UTCDateTimeText, nullable=True),
     Column("red_team_exploitable_by", String, nullable=True),
     Column("format_version", Integer, nullable=False, default=1, server_default="1"),
+    # 结构化复现过程（Reproduction）：入口点 / 本环前置 / 有序真实报文 / 本环增量。
+    # v3 起由 Explore 在 report 时随 CLI 一起提交，报文逐字取自真实执行；
+    # '{}' 表示没有（v1/v2 存量行），渲染器降级到 legacy 内容。
+    Column("reproduction_json", JSONText, nullable=False, default="{}", server_default="{}"),
     PrimaryKeyConstraint("task_id", "id"),
     ForeignKeyConstraint(["task_id"], [tasks.c.id], ondelete="CASCADE"),
     ForeignKeyConstraint(

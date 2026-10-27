@@ -43,7 +43,7 @@ Explore 上报前按本表自评 `--points`。Reviewer 按同一张表核定。�
 
 ## 二、数据获取
 
-`--type data`。按可访问库表的记录总数达档计分，不按条数线性累加。`--sample-count` 写记录数，并附记录数证明。样本原文完整存入 evidence（复核与后续任务要复用，不脱敏、不截断字段）。
+`--type data`。按可访问库表的记录总数达档计分，不按条数线性累加。`--sample-count` 写记录数，并在复现步骤里给出计数回显。样本原文放进复现的响应里（复核与后续任务要复用，不脱敏、不截断字段）。
 
 | 成果 | 规模 | 分 |
 |---|---|---:|
@@ -134,12 +134,13 @@ Explore 上报前按本表自评 `--points`。Reviewer 按同一张表核定。�
 3. 核心目标不重复计分：已按「靶标系统」档计的成果，不再叠加同一能力对应的服务器、Web 管理员或网络设备分；仅取得应用后台管理员会话的，按「Web 应用管理员」档计，不套用「靶标系统·完全控制」。
 4. 凭证已经换成主机、域控或应用管理员控制的，按控制成果计，不另计办公账号分。只有凭证、不能登录的不计分。
 5. 仅扫描探测、未取得权限的不计分，不要上报。测绘本身 0 分，但由测绘取得的权限与数据照常全额计分。
-6. 每条计分成果都要有可复现证据：请求响应、命令回显、录屏或导出样本。
+6. 每条计分成果都要有可复现证据：**上报时必须带 `--reproduction-file`**，把每一步真实发出的请求与响应写进去（逐字，不是 curl/命令）。
 7. **对象（`--target-asset`）必须写你实际从哪打进去的公网入口**，格式为 `域名或公网IP[:端口]`，可加括号说明，例如 `api.kkgroup.cn（统一认证开放平台）`、`119.23.232.213:8080/prismart`、`shk.kkguan.com/universe（生产数据开发平台，宿主 192.168.0.95）`。**不要只写内网 IP**——即使成果最终落在内网主机上，对象也要先写你是从哪个公网入口进去的，内网地址只放在括号里作为落点说明。这样评审和复盘才能看清「外网打进去」这条路径，而不是误以为是从内网直接打的。不要只写内部代号、应用简称或资产标签（`member-management`、`app-01`、`核心应用` 都不合格）。
    唯一例外：成果的**首个入口**就是已控内网立足点（如经 CI runner 打下 buildhost 后横向到第二台），此时对象写该内网主机，并在描述里写明「从哪个已控立足点横向过来」。
 8. **取证通道也要在描述里说清**：是从公网直接打、经目标自身 SSRF 打、还是经已控主机跳板打。经 bsk 浏览器通道取证的，必须写明该通道只访问了范围合规的目标；凡是通过 bsk 直接访问私网地址取得的结果，不予计分。
 9. **按内网栏计价要写依据**：申报内网价时，在描述里写明为什么公网不可达（无公网入口 / 端口未开放 / 实测超时）。评审会实测复核，能直达的降回公网档。
-10. 证据用 `--evidence-path evidence/<文件名>`；控制台按这些文件的原文件名展示证据链，文件名要能自解释。探测矩阵、批量抓取、扫描器原始输出、临时脚本这类**不是证据**的原始值放 `artifacts/work/`——它们会留档但**不能作为计分证据**，引用 `work/` 会被直接拒绝。
+10. 证明就是报文：用 `--reproduction-file` 提交结构化复现（见下方示例）。`--evidence-path` 已移除，`artifacts/evidence/` 与 `artifacts/work/` 也已停用——探测矩阵、批量抓取、扫描器原始输出、临时脚本都不再作为证据，需要留档的内容写进 `findings.md` / `leads.md` 的结论里。
+11. 步骤要能让人照着重打：入口点写 `方法 + 路径`，每步一条请求，`response` 给状态行与关键回显（`uid=0`、`count=120000`、样本前几行）。
 
 ## 上报示例
 
@@ -154,8 +155,7 @@ axiom explore result report \
   --principal 'user:member' \
   --capability-gained 'app:admin' \
   --target-asset 'member.kkgroup.cn（成员管理后台）' \
-  --evidence-path 'evidence/request.txt' \
-  --evidence-path 'evidence/response.txt'
+  --reproduction-file repro.json
 ```
 
 核心服务器最高权限，1 台 20 分：
@@ -169,7 +169,7 @@ axiom explore result report \
   --principal 'user:member' \
   --capability-gained 'host:root' \
   --target-asset 'app-01.kkgroup.cn:8080（核心应用）' \
-  --evidence-path 'evidence/id.txt'
+  --reproduction-file repro.json
 ```
 
 核心业务数据 10 万条，5 分：
@@ -179,13 +179,12 @@ axiom explore result report \
   --points 5 \
   --type data \
   --title '核心业务数据：订单表 12 万条可读取' \
-  --description '订单表可访问记录数 120000，已附计数证明。样本原文在 evidence/。' \
+  --description '订单表可访问记录数 120000，计数回显见复现步骤；样本前几行在响应里。' \
   --principal 'user:member' \
   --data-target-id 'orders' \
   --sample-count 120000 \
   --data-field 'order_id' --data-field 'status' \
-  --evidence-path 'evidence/count.txt' \
-  --evidence-path 'evidence/sample.json'
+  --reproduction-file repro.json
 ```
 
 内网 CI 构建机控制，15 分（同时打通新网段再另报第四类）：
@@ -199,7 +198,7 @@ axiom explore result report \
   --principal 'user:runner' \
   --capability-gained 'host:internal' \
   --target-asset '10.192.192.205（buildhost，从 git.kkgroup.cn 的 CI runner 进）' \
-  --evidence-path 'evidence/runner-trace.txt'
+  --reproduction-file repro.json
 ```
 
 同一入口下的第二个数据库，5 分（不与上一个库去重）：
@@ -209,11 +208,37 @@ axiom explore result report \
   --points 5 \
   --type data \
   --title '核心业务数据：财务记账凭证 100 万行（kk_prod_fi）' \
-  --description 'dataSource 49 / kk_prod_fi.t_ai_bizvoucher，count=1000001。与已核定的 kpos_x11_shopping 是不同库，故各自计分。样本在 evidence/。' \
+  --description 'dataSource 49 / kk_prod_fi.t_ai_bizvoucher，count=1000001。与已核定的 kpos_x11_shopping 是不同库，故各自计分。计数回显与样本见复现步骤。' \
   --principal 'user:employee' \
   --data-target-id 'kk_prod_fi.t_ai_bizvoucher' \
   --sample-count 1000001 \
   --data-field 'gl_acnotice' \
-  --evidence-path 'evidence/count.txt' \
-  --evidence-path 'evidence/sample.json'
 ```
+
+## repro.json 示例
+
+```json
+{
+  "entry_point": "POST /api/member/role",
+  "prerequisites": ["持有普通成员会话"],
+  "chain_input": "普通成员会话（user:member）",
+  "chain_gain": "可创建角色并批量赋权，取得 app:admin",
+  "steps": [
+    {
+      "title": "用普通成员会话创建管理员角色",
+      "request": "POST /api/member/role HTTP/1.1\nHost: member.kkgroup.cn\nCookie: sid=member-session\nContent-Type: application/json\n\n{\"name\":\"audit\",\"permissions\":[\"*\"]}",
+      "response": "HTTP/1.1 200 OK\nContent-Type: application/json\n\n{\"code\":1000,\"data\":{\"roleId\":8842}}",
+      "proves": "普通成员可直接创建拥有全部权限的角色，垂直越权成立"
+    },
+    {
+      "title": "回读角色列表确认落库",
+      "request": "GET /api/member/role/list HTTP/1.1\nHost: member.kkgroup.cn\nCookie: sid=member-session\n\n",
+      "response": "HTTP/1.1 200 OK\n\n{\"code\":1000,\"items\":[{\"roleId\":8842,\"name\":\"audit\",\"permissions\":[\"*\"]}]}",
+      "proves": "变更真实落库，不是仅内存生效"
+    }
+  ]
+}
+```
+
+`chain_input` / `chain_gain` 只写**本环**的起点与增量：攻击链由图谱自动装配，
+你写不准也不需要写整条历史。

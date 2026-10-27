@@ -17,6 +17,8 @@ from axiom.modules.knowledge.tables import project_knowledge
 from axiom.modules.projects.repository import ProjectRepository
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.todos.repository import TodoRepository
+from axiom.modules.reports import ReportEvidenceRepository
+from axiom.modules.reports.skeleton import build_vulnerability_report, to_markdown
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
 from axiom.shared.errors import NotFoundError
 from axiom.shared.storage import FileStore
@@ -34,11 +36,17 @@ class ExportService:
         self.artifacts = ArtifactRepository()
         self.todos = TodoRepository()
         self.vulnerabilities = VulnerabilityRepository()
+        self.report_evidence = ReportEvidenceRepository()
         self.goals = GoalRepository()
         self.audit = AuditService(engine)
 
     def export_vulnerability_zip(self, task_id: str, vulnerability_id: str) -> tuple[bytes, str]:
-        """打包导出单漏洞原文 (vulnerability.md)、原始 Findings (findings.md) 以及所有关联 Evidence 附件。"""
+        """单漏洞交付包：报告正文 + 原始 Findings + 审核者补充的证据图。
+
+        The report body is generated from the stored reproduction (skeleton + attack
+        path), not from files — Explore no longer ships evidence documents, so the only
+        binary payload left is the pictures a reviewer attached afterwards.
+        """
         self._require_task(task_id)
         with self.engine.connect() as conn:
             vuln = self.vulnerabilities.get(conn, task_id, vulnerability_id)
@@ -47,37 +55,43 @@ class ExportService:
 
             intent_id = vuln.intent_id
             artifacts_list = self.artifacts.list(conn, task_id)
+            evidence = self.report_evidence.list(
+                conn, task_id, "vulnerability", vulnerability_id
+            )
 
-        vuln_md = _vulnerability_markdown(vuln.model_dump(mode="json"))
+        vuln_md = self.vulnerability_markdown(task_id, vulnerability_id)
 
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            # 1. 写入漏洞原文
             zip_file.writestr("vulnerability.md", vuln_md)
 
-            # 2. 查找并写入原始 findings.md 与 evidence 附件
+            # 原始 findings.md（结论载体，仍在写）
             intent_artifacts = [a for a in artifacts_list if a.intent_id == intent_id] if intent_id else []
-            
             findings_written = False
             for art in intent_artifacts:
-                art_path = self.store.resolve(art.storage_key)
-                if not art_path.is_file():
+                if not art.storage_key.replace("\\", "/").endswith("findings.md"):
                     continue
-
-                storage_key = art.storage_key.replace("\\", "/")
-                # 写入 findings.md
-                if storage_key.endswith("findings.md") and not findings_written:
+                art_path = self.store.resolve(art.storage_key)
+                if art_path.is_file():
                     zip_file.writestr("findings.md", art_path.read_bytes())
                     findings_written = True
-                # 写入 evidence/ 下的附件
-                elif "/evidence/" in storage_key:
-                    rel_name = storage_key.split("/evidence/")[-1]
-                    zip_file.writestr(f"evidence/{rel_name}", art_path.read_bytes())
-                elif art.artifact_type.startswith("explore.evidence"):
-                    zip_file.writestr(f"evidence/{art_path.name}", art_path.read_bytes())
-
+                    break
             if not findings_written:
                 zip_file.writestr("findings.md", "# Findings\n\n暂无关联的原始 Findings 记录。\n")
+
+            # 审核者补充的证据图（按步骤号归档，与报告里的位置一致）
+            for item in evidence:
+                artifact = next(
+                    (a for a in artifacts_list if a.id == item["artifact_id"]), None
+                )
+                if artifact is None:
+                    continue
+                art_path = self.store.resolve(artifact.storage_key)
+                if art_path.is_file():
+                    step = int(item.get("step_index") or 0)
+                    zip_file.writestr(
+                        f"evidence/step-{step:02d}/{art_path.name}", art_path.read_bytes()
+                    )
 
         zip_filename = f"{task_id}_{vulnerability_id}_export.zip"
         return zip_buffer.getvalue(), zip_filename
@@ -103,21 +117,32 @@ class ExportService:
         return "\n".join(lines) + "\n"
 
     def vulnerability_markdown(self, task_id: str, vulnerability_id: str) -> str:
+        """交付用 Markdown：由代码从结构化复现生成，不经 AI 重写。"""
         self._require_task(task_id)
         with self.engine.connect() as conn:
             item = self.vulnerabilities.get(conn, task_id, vulnerability_id)
-        if item is None:
-            raise NotFoundError(f"Vulnerability not found: {vulnerability_id}")
-        return _vulnerability_markdown(item.model_dump(mode="json"))
+            if item is None:
+                raise NotFoundError(f"Vulnerability not found: {vulnerability_id}")
+            evidence = self.report_evidence.list(conn, task_id, "vulnerability", vulnerability_id)
+        return _render_vulnerability_markdown(item, evidence)
 
     def vulnerabilities_markdown(self, task_id: str) -> str:
         self._require_task(task_id)
         with self.engine.connect() as conn:
             items = self.vulnerabilities.list(conn, task_id)
+            evidence_by_id = self.report_evidence.for_subjects(
+                conn,
+                task_id,
+                "vulnerability",
+                [item.id for item in items],
+            )
         if not items:
             return f"# 漏洞报告\n\n任务：{task_id}\n\n当前没有漏洞记录。\n"
         blocks = [f"# 漏洞报告\n\n任务：{task_id}\n"]
-        blocks.extend(_vulnerability_markdown(item.model_dump(mode="json")) for item in items)
+        blocks.extend(
+            _render_vulnerability_markdown(item, evidence_by_id.get(item.id, []))
+            for item in items
+        )
         return "\n---\n\n".join(blocks)
 
     def _overview(self, task_id: str) -> dict[str, Any]:
@@ -193,6 +218,18 @@ class ExportService:
         if task is None:
             raise NotFoundError(f"Task not found: {task_id}")
         return task
+
+
+def _render_vulnerability_markdown(item, evidence: list[dict[str, Any]]) -> str:
+    """The delivered Markdown for one vulnerability.
+
+    Content comes from the structured reproduction; layout comes from the skeleton.
+    Historical rows with no reproduction fall back to the legacy renderer below so an
+    old export keeps its prose instead of becoming an empty template.
+    """
+    if item.reproduction is None:
+        return _vulnerability_markdown(item.model_dump(mode="json"))
+    return to_markdown(build_vulnerability_report(item, evidence=evidence))
 
 
 def _vulnerability_markdown(item: dict[str, Any]) -> str:

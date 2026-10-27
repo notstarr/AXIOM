@@ -10,6 +10,7 @@ import click
 import httpx
 
 from axiom.modules.redteam.schemas import MAX_RESULT_POINTS
+from axiom.modules.reproduction.validators import load_reproduction_file
 
 
 TODO_CATEGORIES = (
@@ -851,7 +852,11 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--impact-file", type=click.Path(path_type=Path, dir_okay=False))
     @click.option("--remediation")
     @click.option("--remediation-file", type=click.Path(path_type=Path, dir_okay=False))
-    @click.option("--evidence-path", multiple=True)
+    @click.option(
+        "--reproduction-file",
+        required=True,
+        help="结构化复现 JSON 的路径；传 - 从标准输入读。报文有换行，不要用命令行参数传。",
+    )
     @click.option("--affected-target", default="")
     def explore_vulnerability_report(
         title: str,
@@ -865,7 +870,7 @@ def register_worker_commands(main: click.Group) -> None:
         impact_file: Path | None,
         remediation: str | None,
         remediation_file: Path | None,
-        evidence_path: tuple[str, ...],
+        reproduction_file: str,
         affected_target: str,
     ) -> None:
         report = {
@@ -889,9 +894,9 @@ def register_worker_commands(main: click.Group) -> None:
                 remediation,
                 remediation_file,
                 "remediation",
-                required=True,
+                required=False,
             ),
-            "evidence_paths": list(evidence_path),
+            "reproduction": _reproduction_payload(reproduction_file),
             "affected_target": affected_target,
         }
         task_id = _environment("AXIOM_TASK_ID")
@@ -930,13 +935,17 @@ def register_worker_commands(main: click.Group) -> None:
     @click.option("--data-field", "data_fields", multiple=True)
     @click.option("--data-summary", default="")
     @click.option("--credential-ref", default=None)
-    @click.option("--evidence-path", "evidence_refs", multiple=True, required=True)
+    @click.option(
+        "--reproduction-file",
+        required=True,
+        help="结构化复现 JSON 的路径；传 - 从标准输入读。这是成果的证明来源。",
+    )
     def explore_result_report(
         points: int, result_type: str, title: str, description: str, principal: str,
         tenant: str, capabilities_gained: tuple[str, ...], capabilities_before: tuple[str, ...],
         capabilities_after: tuple[str, ...], target_asset: str, data_target_id: str | None,
         sample_count: int | None, sample_bytes: int | None, data_fields: tuple[str, ...],
-        data_summary: str, credential_ref: str | None, evidence_refs: tuple[str, ...],
+        data_summary: str, credential_ref: str | None, reproduction_file: str,
     ) -> None:
         task_id = _environment("AXIOM_TASK_ID")
         intent_id = _environment("AXIOM_INTENT_ID")
@@ -949,7 +958,7 @@ def register_worker_commands(main: click.Group) -> None:
             "data_target_id": data_target_id, "sample_count": sample_count,
             "sample_bytes": sample_bytes, "data_fields": list(data_fields),
             "data_summary": data_summary, "credential_ref": credential_ref,
-            "evidence_refs": [_bind_result_evidence(task_id, intent_id, ref) for ref in evidence_refs],
+            "reproduction": _reproduction_payload(reproduction_file),
             "points_declared": points,
         }
         _echo(_request("POST", f"/tasks/{task_id}/intents/{intent_id}/red-team-results", {
@@ -1265,55 +1274,6 @@ def _review_request(action: str, payload: dict[str, Any]) -> Any:
     )
 
 
-def _bind_result_evidence(task_id: str, intent_id: str, ref: str) -> str:
-    """Put a run-dir evidence file under the current Intent, like vulnerability mode."""
-    text = ref.strip()
-    if text.startswith("artifact:"):
-        return text
-    # work/ 是原始记录（探测矩阵、批量抓取、脚本），不是成果证据：
-    # 在发请求前就拒绝，避免把留档材料混进审核与计分链路。
-    normalized = text.lstrip("./")
-    head = normalized.split("/")
-    if head[:1] == ["work"] or head[:2] == ["artifacts", "work"]:
-        raise click.ClickException(
-            "原始记录不能作为成果证据：可复现证据写 artifacts/evidence/ 并用 "
-            "evidence/<file> 引用；work/ 只放不上报的原始记录。"
-        )
-    path = Path(text)
-    if not path.is_file():
-        run_dir = os.environ.get("AXIOM_RUN_DIR", "").strip()
-        if run_dir:
-            candidate = Path(run_dir) / "artifacts" / text
-            if candidate.is_file():
-                path = candidate
-    if not path.is_file():
-        return text
-    uploaded = _upload_intent_evidence(task_id, intent_id, path)
-    return f"artifact:{uploaded['id']}"
-
-
-def _upload_intent_evidence(task_id: str, intent_id: str, path: Path) -> dict[str, Any]:
-    base_url = os.environ.get("AXIOM_SERVER", "http://127.0.0.1:8899").rstrip("/")
-    if not base_url.endswith("/api/v1"):
-        base_url += "/api/v1"
-    headers = {}
-    token = os.environ.get("AXIOM_SERVICE_TOKEN", "").strip()
-    if token:
-        headers["authorization"] = f"Bearer {token}"
-    try:
-        with path.open("rb") as handle, httpx.Client(base_url=base_url, headers=headers, timeout=30, trust_env=False) as client:
-            response = client.post(
-                f"/tasks/{task_id}/artifacts/upload",
-                data={"actor": os.environ.get("AXIOM_WORKER_NAME", "explore"), "summary": path.name, "intent_id": intent_id},
-                files={"file": (path.name, handle, "application/octet-stream")},
-            )
-    except httpx.HTTPError as exc:
-        raise click.ClickException(f"AXIOM API unavailable: {exc}") from exc
-    if response.is_error:
-        raise click.ClickException(f"AXIOM API HTTP {response.status_code}: {response.text}")
-    return response.json()
-
-
 def _request(method: str, path: str, payload: dict[str, Any]) -> Any:
     base_url = os.environ.get("AXIOM_SERVER", "http://127.0.0.1:8899").rstrip("/")
     if not base_url.endswith("/api/v1"):
@@ -1460,6 +1420,19 @@ def _source(value: str) -> dict[str, str]:
     if not separator or kind not in SOURCE_TYPES or not item_id:
         raise click.BadParameter(f"invalid source ref: {value}")
     return {"type": kind, "id": item_id}
+
+
+def _reproduction_payload(path: str) -> dict[str, Any]:
+    """Parse and validate the reproduction locally before spending a round trip.
+
+    The worker gets an actionable message here (wrong packet shape, oversized, a curl
+    command instead of an HTTP packet) rather than a bare 422 from the API.
+    """
+    try:
+        reproduction = load_reproduction_file(path)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    return reproduction.model_dump(mode="json")
 
 
 def _text_value(

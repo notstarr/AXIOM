@@ -139,7 +139,13 @@ def test_bootstrap_skips_placeholder_extra_files(tmp_path: Path) -> None:
     assert "notes.txt" in names
 
 
-def test_explore_collects_only_artifacts_directory(tmp_path: Path) -> None:
+def test_explore_registers_only_the_two_conclusion_files(tmp_path: Path) -> None:
+    """Explore's file channel is now just findings.md + leads.md.
+
+    The proof travels as structured reproduction (verbatim packets) submitted through
+    the CLI, so a leftover artifacts/evidence/ directory is neither collected nor
+    registered — it stays on disk with the run directory and gets a warning.
+    """
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
     (artifacts / "findings.md").write_text("# 已确认事实\n\n本轮无新增确认事实\n", encoding="utf-8")
@@ -147,25 +153,46 @@ def test_explore_collects_only_artifacts_directory(tmp_path: Path) -> None:
     evidence = artifacts / "evidence"
     evidence.mkdir()
     (evidence / "response.txt").write_text("HTTP/1.1 200 OK\n", encoding="utf-8")
+    work = artifacts / "work"
+    work.mkdir()
+    (work / "probe_log.txt").write_text("GET / -> 500\n", encoding="utf-8")
     (tmp_path / "models.json").write_text('{"secret":"ignored"}', encoding="utf-8")
     (tmp_path / "auth.json").write_text('{"credential":"ignored"}', encoding="utf-8")
     (tmp_path / "sessions").mkdir()
     (tmp_path / "sessions" / "session.jsonl").write_text("ignored", encoding="utf-8")
-    (tmp_path / "process").mkdir()
-    (tmp_path / "process" / "stdout.log").write_text("ignored", encoding="utf-8")
 
     outputs = explore_files(tmp_path)
 
-    assert [item.relative_name for item in outputs] == [
-        "findings.md",
-        "leads.md",
-        "evidence/response.txt",
-    ]
-    assert [item.artifact_type for item in outputs] == [
-        "explore.findings",
-        "explore.leads",
-        "explore.evidence",
-    ]
+    assert [item.relative_name for item in outputs] == ["findings.md", "leads.md"]
+    assert [item.artifact_type for item in outputs] == ["explore.findings", "explore.leads"]
+    assert all(
+        item.artifact_type not in {"explore.evidence", "explore.work"} for item in outputs
+    )
+
+
+def test_explore_warns_once_about_retired_directories(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker still following the old instructions gets told, not silently ignored."""
+    artifacts = tmp_path / "artifacts"
+    _explore_core(artifacts)
+    (artifacts / "evidence").mkdir()
+    (artifacts / "evidence" / "proof.txt").write_text("proof", encoding="utf-8")
+    (artifacts / "work").mkdir()
+    (artifacts / "work" / "probe_log.txt").write_text("log", encoding="utf-8")
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        "axiom.modules.execution.stage_outputs.logger.warning",
+        lambda message, *args: warnings.append(message % args),
+    )
+
+    outputs = explore_files(tmp_path)
+
+    assert [item.relative_name for item in outputs] == ["findings.md", "leads.md"]
+    assert any("reason=retired_directory" in message for message in warnings)
+    assert any("evidence" in message and "work" in message for message in warnings)
 
 
 @pytest.mark.parametrize("relative_name", ["models.json", "sessions/output.md", "process/log.md"])
@@ -234,57 +261,6 @@ def test_explore_ignores_old_or_unknown_directories(tmp_path: Path, directory: s
     assert [item.relative_name for item in outputs] == ["findings.md", "leads.md"]
 
 
-def test_explore_skips_empty_and_unsafe_evidence_files(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    artifacts = tmp_path / "artifacts"
-    evidence = artifacts / "evidence"
-    evidence.mkdir(parents=True)
-    (artifacts / "findings.md").write_text("已确认事实", encoding="utf-8")
-    (artifacts / "leads.md").write_text("待验证线索", encoding="utf-8")
-    (evidence / "empty.log").touch()
-    (evidence / "unsafe=name.txt").write_text("ignored", encoding="utf-8")
-    (evidence / "response.txt").write_text("HTTP/1.1 200 OK", encoding="utf-8")
-
-    warnings: list[tuple[str, tuple[object, ...]]] = []
-    monkeypatch.setattr(
-        "axiom.modules.execution.stage_outputs.logger.warning",
-        lambda message, *args: warnings.append((message, args)),
-    )
-
-    outputs = explore_files(tmp_path)
-
-    assert [item.relative_name for item in outputs] == [
-        "findings.md",
-        "leads.md",
-        "evidence/response.txt",
-    ]
-    rendered = [message % args for message, args in warnings]
-    assert any("reason=empty count=1" in message for message in rendered)
-    assert any("reason=unsafe_path count=1" in message for message in rendered)
-    assert any("evidence_registered=1 skipped=2" in message for message in rendered)
-
-
-def test_explore_registers_at_most_48_optional_evidence_files(tmp_path: Path) -> None:
-    artifacts = tmp_path / "artifacts"
-    evidence = artifacts / "evidence"
-    evidence.mkdir(parents=True)
-    (artifacts / "findings.md").write_text("已确认事实", encoding="utf-8")
-    (artifacts / "leads.md").write_text("待验证线索", encoding="utf-8")
-    for number in range(60):
-        (evidence / f"proof-{number:02d}.txt").write_text(
-            f"proof {number}",
-            encoding="utf-8",
-        )
-
-    outputs = explore_files(tmp_path)
-
-    assert len(outputs) == 50
-    assert outputs[2].relative_name == "evidence/proof-00.txt"
-    assert outputs[-1].relative_name == "evidence/proof-47.txt"
-
-
 def test_explore_registers_root_jsfinder_results(tmp_path: Path) -> None:
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
@@ -307,80 +283,28 @@ def _explore_core(artifacts: Path) -> None:
     (artifacts / "leads.md").write_text("# 待验证线索\n\n本轮无遗留待验证线索\n", encoding="utf-8")
 
 
-def test_work_records_register_separately_from_evidence(tmp_path: Path) -> None:
+def test_work_records_are_left_on_disk_but_not_registered(tmp_path: Path) -> None:
+    """Original records stay with the run directory: not evidence, not an artifact.
+
+    They used to be registered so a human could inspect the probing matrix afterwards;
+    that is now what the reproduction steps and the run directory are for, and
+    registering them competed with the evidence channel that no longer exists.
+    """
     artifacts = tmp_path / "artifacts"
     _explore_core(artifacts)
-    (artifacts / "evidence").mkdir()
-    (artifacts / "evidence" / "proof.txt").write_text("HTTP/1.1 200 OK\n", encoding="utf-8")
     work = artifacts / "work"
     work.mkdir()
     (work / "probe_log.txt").write_text("GET / -> 500\n" * 3, encoding="utf-8")
     nested = work / "scripts"
     nested.mkdir()
     (nested / "harvest.py").write_text("print('x')\n", encoding="utf-8")
-    # 过渡期的根 work/ 与规范位置合并，登记名统一 work/<rel>
-    legacy = tmp_path / "work"
-    legacy.mkdir()
-    (legacy / "old.txt").write_text("legacy\n", encoding="utf-8")
-    (legacy / "probe_log.txt").write_text("dup\n", encoding="utf-8")
 
     outputs = explore_files(tmp_path)
 
-    work_outputs = [item for item in outputs if item.artifact_type == "explore.work"]
-    assert [item.relative_name for item in work_outputs] == [
-        "work/old.txt",
-        "work/probe_log.txt",
-        "work/scripts/harvest.py",
-    ]
-    assert all(item.summary.startswith("原始记录：work/") for item in work_outputs)
-    # 同名时以 artifacts/work 为准
-    assert work_outputs[1].path == work / "probe_log.txt"
-    evidence = [item for item in outputs if item.artifact_type == "explore.evidence"]
-    assert [item.relative_name for item in evidence] == ["evidence/proof.txt"]
-
-
-def test_work_records_skip_noise_and_unsafe_entries(tmp_path: Path) -> None:
-    artifacts = tmp_path / "artifacts"
-    _explore_core(artifacts)
-    work = artifacts / "work"
-    work.mkdir()
-    (work / "keep.txt").write_text("real\n", encoding="utf-8")
-    (work / "empty.txt").write_text("", encoding="utf-8")
-    (work / "placeholder.json").write_text("{}\n", encoding="utf-8")
-    (work / "__pycache__").mkdir()
-    (work / "__pycache__" / "x.pyc").write_text("bin", encoding="utf-8")
-    (work / ".hidden").mkdir()
-    (work / ".hidden" / "y.txt").write_text("hidden\n", encoding="utf-8")
-    outside = tmp_path / "outside.txt"
-    outside.write_text("outside\n", encoding="utf-8")
-    (work / "escape.txt").symlink_to(outside)
-
-    outputs = explore_files(tmp_path)
-
-    assert [item.relative_name for item in outputs if item.artifact_type == "explore.work"] == [
-        "work/keep.txt"
-    ]
-
-
-def test_work_records_are_capped(tmp_path: Path) -> None:
-    from axiom.modules.execution.stage_outputs import WORK_MAX_FILE_BYTES, WORK_MAX_FILES
-
-    artifacts = tmp_path / "artifacts"
-    _explore_core(artifacts)
-    work = artifacts / "work"
-    work.mkdir()
-    for index in range(WORK_MAX_FILES + 1):
-        (work / f"record-{index:02d}.txt").write_text("x\n", encoding="utf-8")
-    (work / "huge.log").write_text(
-        "x" * (WORK_MAX_FILE_BYTES + 1), encoding="utf-8"
-    )
-
-    outputs = explore_files(tmp_path)
-
-    work_outputs = [item for item in outputs if item.artifact_type == "explore.work"]
-    assert len(work_outputs) == WORK_MAX_FILES
-    assert [item.relative_name for item in work_outputs][0] == "work/record-00.txt"
-    assert "work/huge.log" not in {item.relative_name for item in work_outputs}
+    assert [item.artifact_type for item in outputs] == ["explore.findings", "explore.leads"]
+    # The files themselves are untouched — pruning is the sandbox's job, not ours.
+    assert (work / "probe_log.txt").is_file()
+    assert (nested / "harvest.py").is_file()
 
 
 def test_bootstrap_registers_work_records(tmp_path: Path) -> None:

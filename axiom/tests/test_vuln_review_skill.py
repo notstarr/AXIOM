@@ -18,13 +18,13 @@ VULN_REPORT_SECTIONS = (
 def test_vuln_review_skill_requires_vuln_report_and_status_examples() -> None:
     skill = SKILL_DIR.joinpath("SKILL.md").read_text(encoding="utf-8")
 
-    # CVSS 不再作为产出要求
-    assert "不再要求 CVSS 向量" in skill
-    # 审核报告已废除，改为每漏洞一份漏洞报告
-    assert "review.md" in skill and "已废除" in skill
-    assert "vuln_report-<vuln_id>-<slug>.md" in skill
-    # 文件名必须纯 ASCII，否则产物会被判非法路径丢弃
-    assert "[A-Za-z0-9-]" in skill and "直接丢弃" in skill
+    # CVSS 仍用于判断维度，但不再是产出要求（报告里不含向量）
+    assert "CVSS" in skill
+    # 报告文件已废除：报告由代码从结构化复现生成，审核只交裁决
+    assert "裁决即产出，不写报告文件" in skill
+    assert "vuln_report-<vuln_id>-<slug>.md" not in skill
+    # 证据改为审核者事后通过钩子接口补充
+    assert "artifacts/evidence/" in skill and "已停用" in skill
     # 「确认成立」才产出报告，其余三态不产出
     assert "duplicate" in skill and "ignored" in skill and "needs-human" in skill
     assert "必须使用 `read` 打开对应附件" in skill

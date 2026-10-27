@@ -547,106 +547,47 @@ def explore_files(
         )
     )
 
-    evidence, skipped = _collect_optional_explore_evidence(root, required=set(required))
-    if len(evidence) > EXPLORE_MAX_EVIDENCE_FILES:
-        overflow = evidence[EXPLORE_MAX_EVIDENCE_FILES:]
-        evidence = evidence[:EXPLORE_MAX_EVIDENCE_FILES]
-        skipped["artifact_limit"].extend(item.relative_name for item in overflow)
-    results.extend(evidence)
-    results.extend(
-        _collect_run_work(
-            _work_candidates(root, run_root),
-            run_root=run_root,
-            artifact_type="explore.work",
-            emit_warnings=emit_warnings,
-        )
-    )
+    # Explore 不再提交 evidence/ 与 work/ 文件：证明内容是随 CLI 上报的结构化
+    # 复现（逐字报文），原始记录留在运行目录随沙箱清理。这里只报告"看到了但不再
+    # 登记"，让仍按旧约定写文件的 worker 得到一次性提示，而不是默默丢失。
+    skipped: dict[str, list[str]] = defaultdict(list)
+    for stale in ("evidence", WORK_DIR):
+        candidate = root / stale
+        if candidate.exists():
+            skipped["retired_directory"].append(stale)
     if emit_warnings and skipped:
-        _log_skipped_explore_outputs(run_root, skipped, registered=len(evidence))
+        _log_skipped_explore_outputs(run_root, skipped, registered=len(results))
     return results
 
 
 def review_files(run_dir: str | Path, *, emit_warnings: bool = True) -> list[StageFile]:
+    """Reviewer produces no files.
+
+    A review used to require a ``vuln_report-<id>.md`` per verified finding, which meant
+    a second LLM wrote a second prose version of steps the reporter had already
+    submitted.  The report is now assembled from the stored reproduction by
+    ``axiom.modules.reports``; the reviewer's entire output is the structured verdict
+    (decision + reason + optionally awarded points).
+
+    Returning an empty list is therefore the normal, successful case.
+    """
     run_root = Path(run_dir).resolve()
     root = run_root / "artifacts"
-    if not root.is_dir() or root.is_symlink():
-        raise StageOutputError("Reviewer 必须在 artifacts/ 中写入产物（漏洞报告与/或证据）")
-
-    # 审核报告废除：改为「每个「已验证」漏洞一份漏洞报告」。
-    # 允许零份（本轮无有效漏洞是合法结果），裁决本身存在漏洞记录的 status + reason 里。
-    allowed_root_names: set[str] = set()
-    results: list[StageFile] = []
-    for path in sorted(root.iterdir(), key=lambda item: item.name):
-        if not path.is_file():
-            continue
-        name = path.name
-        if name.startswith(REVIEW_VULN_REPORT_PREFIX) and name.endswith(".md"):
-            # 新：漏洞报告（每漏洞一份）。文件名必须是纯 ASCII，
-            # 否则存储/引用链路会出问题（提示词里已要求 <slug> 只用 [A-Za-z0-9-]）。
-            if not _safe_explore_relative(Path(name)):
-                if emit_warnings:
-                    logger.warning("漏洞报告文件名非法（须纯 ASCII），已跳过：%s", name)
-                continue
-            try:
-                _require_regular_output(path, root)
-                _require_non_empty(path)
-            except StageOutputError:
-                if emit_warnings:
-                    logger.warning("审核漏洞报告无效，已跳过：%s", name)
-                continue
-            vuln_id = name[len(REVIEW_VULN_REPORT_PREFIX):-len(".md")].split("-")[0]
-            results.append(
-                StageFile(
-                    relative_name=name,
-                    path=path,
-                    artifact_type="review.vuln_report",
-                    summary=f"漏洞报告 · {vuln_id}" if vuln_id else "漏洞报告",
-                )
-            )
-            allowed_root_names.add(name)
-        elif name == REVIEW_REPORT_FILE:
-            # 过渡期兼容：旧的 review.md 仍收（不再强制要求）
-            try:
-                _require_regular_output(path, root)
-                _require_non_empty(path)
-            except StageOutputError:
-                continue
-            results.append(
-                StageFile(
-                    relative_name=name,
-                    path=path,
-                    artifact_type="review.report",
-                    summary="Reviewer 漏洞审核记录（旧格式）",
-                )
-            )
-            allowed_root_names.add(name)
-    evidence, skipped = _collect_optional_evidence(
-        root,
-        required=allowed_root_names,
-        artifact_type="review.evidence",
-        summary_prefix="Reviewer 复测证据",
-    )
-    if len(evidence) > REVIEW_MAX_EVIDENCE_FILES:
-        overflow = evidence[REVIEW_MAX_EVIDENCE_FILES:]
-        evidence = evidence[:REVIEW_MAX_EVIDENCE_FILES]
-        skipped["artifact_limit"].extend(item.relative_name for item in overflow)
-    results.extend(evidence)
-    results.extend(
-        _collect_run_work(
-            _work_candidates(root, run_root),
-            run_root=run_root,
-            artifact_type="review.work",
-            emit_warnings=emit_warnings,
+    if emit_warnings and root.is_dir() and not root.is_symlink():
+        stale = sorted(
+            path.name
+            for path in root.iterdir()
+            if path.is_file() and (path.name.endswith(".md") or path.name == WORK_DIR)
         )
-    )
-    if emit_warnings and skipped:
-        _log_skipped_optional_outputs(
-            "review",
-            run_root,
-            skipped,
-            registered=len(evidence),
-        )
-    return results
+        if stale:
+            logger.warning(
+                "review_outputs_ignored run_dir=%s count=%s samples=%r "
+                "hint=报告由代码从复现过程生成，无需写文件",
+                run_root,
+                len(stale),
+                stale[:5],
+            )
+    return []
 
 
 def _collect_optional_explore_evidence(

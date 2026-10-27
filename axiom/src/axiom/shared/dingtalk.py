@@ -204,7 +204,8 @@ class DingTalkNotifier:
         status: str,
         affected_target: str = "",
         description: str = "",
-        curl_command: str = "",
+        entry_point: str = "",
+        step_count: int = 0,
         prerequisites: str = "",
         impact: str = "",
     ) -> bool:
@@ -238,8 +239,9 @@ class DingTalkNotifier:
         desc_preview = self._format_description(description, limit=300)
         if desc_preview:
             lines.append(f"**漏洞描述**:\n\n{desc_preview}")
-        if curl_command:
-            lines.append(f"**复现命令 (Curl)**:\n\n```bash\n{curl_command.strip()[:400]}\n```")
+        if entry_point:
+            steps = f"（{step_count} 步）" if step_count else ""
+            lines.append(f"**入口点**: `{entry_point}`\n\n复现步骤{steps}见任务详情。")
 
         lines.append(f"\n*AXIOM 自动化安全测试平台 · 实时上报*")
         card_text = "\n\n".join(lines)

@@ -12,6 +12,30 @@ from protocol_helpers import (
     open_reason_workspace,
 )
 
+# 红队成果必须带结构化复现（报文逐字真实，不是 curl）。各用例只关心审核/计分规则，
+# 所以复现内容取一份最小但合法的样本。
+REPRODUCTION = {
+    "entry_point": "POST /api/member/list",
+    "prerequisites": ["持有普通成员会话"],
+    "chain_input": "普通成员会话",
+    "chain_gain": "可读取成员列表",
+    "steps": [
+        {
+            "title": "用普通成员会话调用成员管理接口",
+            "request": (
+                "POST /api/member/list HTTP/1.1\r\n"
+                "Host: a.example.com\r\n"
+                "Cookie: sid=member-session\r\n"
+                "Content-Type: application/json\r\n"
+                "\r\n"
+                '{"page":1}'
+            ),
+            "response": 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{"items":[{"id":1}]}',
+            "proves": "普通成员可直接读取成员列表，越权成立",
+        }
+    ],
+}
+
 BOOTSTRAP_PAYLOAD = {
     "summary": "完成初始资产发现。",
     "artifacts": {
@@ -169,6 +193,7 @@ def test_result_review_points_rules(client) -> None:
         "capabilities_gained": ["tenant:admin"],
         "target_asset": "member-management",
         "evidence_refs": [f"artifact:{uploaded.json()['id']}"],
+        "reproduction": REPRODUCTION,
         "points_declared": 40,
     }
     accepted = client.post(
@@ -470,6 +495,7 @@ def test_result_report_enforces_bound_chain(client) -> None:
         "capabilities_gained": ["tenant:admin"],
         "target_asset": "member-management",
         "evidence_refs": [f"artifact:{artifact_id}"],
+        "reproduction": REPRODUCTION,
         "points_declared": 30,
     }
 
@@ -533,6 +559,7 @@ def test_redteam_result_review_lifecycle(client, engine) -> None:
         "capabilities_gained": ["tenant:admin"],
         "target_asset": "member-management",
         "evidence_refs": [f"artifact:{uploaded.json()['id']}"],
+        "reproduction": REPRODUCTION,
         "points_declared": 30,
     }
     accepted = client.post(
@@ -627,6 +654,7 @@ def test_cross_task_result_and_chain_listing(client) -> None:
         "capabilities_gained": ["tenant:admin"],
         "target_asset": "member-management",
         "evidence_refs": [f"artifact:{uploaded.json()['id']}"],
+        "reproduction": REPRODUCTION,
         "points_declared": 30,
     }
     accepted = client.post(
@@ -676,6 +704,7 @@ def test_vulnerability_task_rejects_redteam_result(client) -> None:
                 "description": "漏洞任务不得上报红队成果",
                 "principal": "user:member",
                 "evidence_refs": ["artifact:x"],
+                "reproduction": REPRODUCTION,
                 "points_declared": 10,
             },
         },
@@ -999,6 +1028,7 @@ def test_exercise_rubric_accepts_target_control_score() -> None:
         principal="user:member",
         target_asset="target-system",
         evidence_refs=["artifact:a001"],
+        reproduction=REPRODUCTION,
         points_declared=60,
     )
     assert report.points_declared == 60
@@ -1067,6 +1097,7 @@ def test_redteam_notifications_fire_on_report_and_review(client) -> None:
         "capabilities_gained": ["tenant:admin"],
         "target_asset": "member-management",
         "evidence_refs": [f"artifact:{artifact_id}"],
+        "reproduction": REPRODUCTION,
         "points_declared": 30,
     }
 
@@ -1123,6 +1154,7 @@ def test_redteam_notification_failure_never_breaks_business(client) -> None:
         "capabilities_gained": ["tenant:admin"],
         "target_asset": "member-management",
         "evidence_refs": [f"artifact:{uploaded.json()['id']}"],
+        "reproduction": REPRODUCTION,
         "points_declared": 30,
     }
 
@@ -1174,6 +1206,7 @@ def test_redteam_dingtalk_commands_list_and_detail(client) -> None:
                 "capabilities_gained": ["tenant:admin"],
                 "target_asset": "member-management",
                 "evidence_refs": [f"artifact:{uploaded.json()['id']}"],
+                "reproduction": REPRODUCTION,
                 "points_declared": 30,
             },
         },
@@ -1244,6 +1277,7 @@ def test_redteam_notification_fires_when_review_run_completes(client, engine) ->
                     "capabilities_gained": ["tenant:admin"],
                     "target_asset": "member-management",
                     "evidence_refs": [f"artifact:{uploaded.json()['id']}"],
+                    "reproduction": REPRODUCTION,
                     "points_declared": 30,
                 },
             },

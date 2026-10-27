@@ -30,7 +30,8 @@ def test_dingtalk_signature_and_markdown_payload():
             status="待验证",
             affected_target="/api/practise/questionItems",
             description="无认证返回完整题目答案",
-            curl_command="curl http://target/api/practise/questionItems",
+            entry_point="GET /api/practise/questionItems",
+            step_count=2,
         )
         assert ok is True
         assert mock_post.called
@@ -39,6 +40,10 @@ def test_dingtalk_signature_and_markdown_payload():
         assert "t_172" in sent_payload["markdown"]["text"]
         assert "v014" in sent_payload["markdown"]["text"]
         assert "待验证" in sent_payload["markdown"]["text"]
+        # 通知给入口点与步骤数，不再给一条需要自己还原的 curl。
+        assert "GET /api/practise/questionItems" in sent_payload["markdown"]["text"]
+        assert "2 步" in sent_payload["markdown"]["text"]
+        assert "curl" not in sent_payload["markdown"]["text"].lower()
 
 
 def test_dingtalk_notify_reviewed():
