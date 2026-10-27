@@ -180,6 +180,12 @@
         <span style="font-size:12px; font-weight:650;">会话</span>
         <span class="sto-muted sto-num" style="font-size:11px;" x-text="`${rrSessionsFiltered().length}`"></span>
         <span style="flex:1;"></span>
+        <button
+          class="sto-minibtn"
+          @click="rrPurgeSessions()"
+          :disabled="!rrSessionsFiltered().some(s => s.status !== 'active')"
+          title="删除所有离线会话（连同命令历史）"
+        >清理离线</button>
         <select x-model="rr.c2Listener" @change="rr.c2Session=''" class="sto-input" style="width:auto;">
           <option value="">全部监听器</option>
           <template x-for="l in rr.c2Listeners" :key="`sess-filter-${rrC2Key(l)}`">
@@ -200,7 +206,21 @@
               <td @click.stop>
                 <input type="number" min="1" max="3600" x-model.number="s.sleep_seconds" @change="rrSleep(s)" class="sto-input" style="width:64px; padding:2px 6px; font-size:10.5px;">
               </td>
-              <td align="right" @click.stop><button @click="rrKill(s)" class="sto-minibtn danger">kill</button></td>
+              <td align="right" @click.stop style="white-space:nowrap;">
+                <button
+                  @click="rrKill(s)"
+                  class="sto-minibtn danger"
+                  :disabled="s.status !== 'active'"
+                  title="标记为 dead，保留执行记录"
+                >kill</button>
+                <button
+                  @click="rrDeleteSession(s)"
+                  class="sto-minibtn danger"
+                  :disabled="s.status === 'active'"
+                  style="margin-left:4px;"
+                  title="删除这条会话及其命令历史"
+                >删除</button>
+              </td>
             </tr>
           </template>
         </tbody>

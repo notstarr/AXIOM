@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import Connection, select, update
+from sqlalchemy import Connection, delete, select, update
 
 from axiom.modules.c2.schemas import C2Listener, C2Session, C2Task
 from axiom.modules.c2.tables import c2_listeners, c2_sessions, c2_tasks
@@ -151,6 +151,43 @@ class C2Repository:
         if not result.rowcount:
             return None
         return self.get_session(conn, task_id, session_id)
+
+    def delete_session(self, conn: Connection, task_id: str, session_id: str) -> bool:
+        """Drop one session row.  Its command history goes with it (FK cascade)."""
+
+        result = conn.execute(
+            delete(c2_sessions).where(
+                c2_sessions.c.task_id == task_id,
+                c2_sessions.c.id == session_id,
+            )
+        )
+        return bool(result.rowcount)
+
+    def delete_dead_sessions(
+        self,
+        conn: Connection,
+        task_id: str,
+        *,
+        listener_id: str | None = None,
+    ) -> list[str]:
+        """Drop every offline session, returning the ids so the caller can audit them."""
+
+        query = select(c2_sessions.c.id).where(
+            c2_sessions.c.task_id == task_id,
+            c2_sessions.c.status != "active",
+        )
+        if listener_id:
+            query = query.where(c2_sessions.c.listener_id == listener_id)
+        ids = [row[0] for row in conn.execute(query.order_by(c2_sessions.c.id)).all()]
+        if not ids:
+            return []
+        conn.execute(
+            delete(c2_sessions).where(
+                c2_sessions.c.task_id == task_id,
+                c2_sessions.c.id.in_(ids),
+            )
+        )
+        return ids
 
     # ------------------------------------------------------------ tasks
     def create_task(

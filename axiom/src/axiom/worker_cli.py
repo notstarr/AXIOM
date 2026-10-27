@@ -1193,6 +1193,19 @@ def register_worker_commands(main: click.Group) -> None:
         task_id = _red_team_task_id()
         _echo(_request("POST", f"/tasks/{task_id}/c2/sessions/{session_id}/kill", None))
 
+    @c2_group.command("session-delete")
+    @click.argument("session_id")
+    def c2_session_delete(session_id: str) -> None:
+        task_id = _red_team_task_id()
+        _request("DELETE", f"/tasks/{task_id}/c2/sessions/{session_id}{_actor_query()}", None)
+        click.echo(f"已删除 {session_id}")
+
+    @c2_group.command("session-purge")
+    def c2_session_purge() -> None:
+        task_id = _red_team_task_id()
+        result = _request("DELETE", f"/tasks/{task_id}/c2/sessions{_actor_query()}", None)
+        click.echo(f"已清理 {int((result or {}).get('deleted') or 0)} 个离线会话")
+
     @c2_group.command("exec")
     @click.argument("session_id")
     @click.argument("command")

@@ -10,6 +10,8 @@ from sqlalchemy import Engine
 from axiom.modules.c2.listeners import ListenerManager
 from axiom.modules.c2.repository import C2Repository
 from axiom.modules.c2.token import c2_listener_token
+from axiom.modules.audit.schemas import RecordAuditEvent
+from axiom.modules.audit.service import AuditService
 from axiom.modules.c2.schemas import (
     C2ExecCommand,
     C2Listener,
@@ -77,6 +79,7 @@ class C2Service:
         self.repository = C2Repository()
         self.tasks = TaskRepository()
         self.manager = ListenerManager(engine)
+        self.audit = AuditService(engine)
 
     # ------------------------------------------------------------ listeners
     def list_listeners(self, task_id: str, *, include_archived: bool = False) -> list[C2Listener]:
@@ -234,6 +237,69 @@ class C2Service:
             updated = self.repository.update_session(conn, task_id, session_id, {"status": "dead"}, now=utcnow())
         assert updated is not None
         return updated
+
+    def delete_session(self, task_id: str, session_id: str, *, actor: str) -> None:
+        """Remove an offline session and its command history.
+
+        ``kill`` is the soft one: the row stays, marked dead, so the record of
+        what ran there survives.  This is the housekeeping one, for sessions
+        that are noise — a probe, a target that rebooted, a beacon dropped by a
+        test.  It is deliberately restricted to offline sessions: deleting one
+        that is still polling would lose its history and let the next beacon
+        create a fresh id, which looks like a new foothold that never existed.
+        """
+
+        with transaction(self.engine) as conn:
+            task = self._require_task(conn, task_id)
+            session = self._require_session(conn, task_id, session_id)
+            if session.status == "active":
+                raise ConflictError(
+                    f"会话 {session_id} 仍在线；先 kill（保留记录）或等它超时自动离线，再删除"
+                )
+            self.repository.delete_session(conn, task_id, session_id)
+            self.audit.record_in(
+                conn,
+                RecordAuditEvent(
+                    project_id=task.project_id,
+                    task_id=task_id,
+                    worker=actor,
+                    event_type="c2.session.deleted",
+                    message="红队 C2 会话已删除",
+                    payload={
+                        "session_id": session_id,
+                        "remote": session.remote,
+                        "listener_id": session.listener_id,
+                    },
+                ),
+            )
+
+    def purge_dead_sessions(
+        self,
+        task_id: str,
+        *,
+        listener_id: str | None = None,
+        actor: str,
+    ) -> int:
+        """Remove every offline session, so the list only shows what can be used."""
+
+        with transaction(self.engine) as conn:
+            task = self._require_task(conn, task_id)
+            removed = self.repository.delete_dead_sessions(
+                conn, task_id, listener_id=listener_id
+            )
+            if removed:
+                self.audit.record_in(
+                    conn,
+                    RecordAuditEvent(
+                        project_id=task.project_id,
+                        task_id=task_id,
+                        worker=actor,
+                        event_type="c2.session.purged",
+                        message="红队 C2 离线会话已清理",
+                        payload={"session_ids": removed, "listener_id": listener_id},
+                    ),
+                )
+        return len(removed)
 
     # ------------------------------------------------------------ tasks
     def exec(self, task_id: str, session_id: str, body: C2ExecCommand, *, actor: str, intent_id: str | None = None) -> C2Task:

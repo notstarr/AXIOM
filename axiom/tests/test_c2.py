@@ -205,6 +205,98 @@ def test_c2_oneliner_and_validation(client) -> None:
     assert archived.status_code == 409
 
 
+def _open_session(client, task: dict, *, beacons: int = 1) -> list[dict]:
+    """Start a listener and let ``beacons`` pollers register sessions."""
+
+    port = _free_port()
+    listener = _create_listener(client, task, "http", port)
+    client.post(f"/api/v1/tasks/{task['id']}/c2/listeners/{listener['id']}/start")
+    token = c2_listener_token(listener["id"])
+    for index in range(beacons):
+        url = f"http://127.0.0.1:{port}/index?sid=beacon{index}&token={token}"
+        with urllib.request.urlopen(url, timeout=5) as response:
+            response.read()
+    return client.get(f"/api/v1/tasks/{task['id']}/c2/sessions").json()
+
+
+def _retire_listener(client, task: dict, sessions: list[dict]) -> list[dict]:
+    """Stop the listener the sessions belong to, which marks them dead."""
+
+    listener_id = sessions[0]["listener_id"]
+    client.post(f"/api/v1/tasks/{task['id']}/c2/listeners/{listener_id}/stop")
+    return client.get(f"/api/v1/tasks/{task['id']}/c2/sessions").json()
+
+
+def test_dead_session_can_be_deleted_with_its_history(client) -> None:
+    """kill leaves a record; delete is the housekeeping one, history included."""
+
+    task = _red_team_task(client)
+    sessions = _open_session(client, task)
+    session = sessions[0]
+
+    # Queue a command while it is still online, then let it go offline: the
+    # delete below must take that history with it.
+    client.post(
+        f"/api/v1/tasks/{task['id']}/c2/sessions/{session['id']}/exec?actor=pytest",
+        json={"command": "id", "wait_seconds": 0},
+    )
+    assert len(client.get(f"/api/v1/tasks/{task['id']}/c2/tasks").json()) == 1
+    assert _retire_listener(client, task, sessions)[0]["status"] == "dead"
+
+    deleted = client.delete(
+        f"/api/v1/tasks/{task['id']}/c2/sessions/{session['id']}?actor=pytest"
+    )
+    assert deleted.status_code == 204, deleted.text
+    assert client.get(f"/api/v1/tasks/{task['id']}/c2/sessions").json() == []
+    assert client.get(f"/api/v1/tasks/{task['id']}/c2/tasks").json() == []
+
+    events = client.get(
+        f"/api/v1/audit-events?task_id={task['id']}&event_type=c2.session.deleted"
+    ).json()
+    assert len(events) == 1
+    assert events[0]["payload"]["session_id"] == session["id"]
+
+
+def test_an_online_session_is_not_deletable(client) -> None:
+    """Deleting a polling session would lose its history and mint a fresh id."""
+
+    task = _red_team_task(client)
+    sessions = _open_session(client, task)
+    session = sessions[0]
+    assert session["status"] == "active"
+
+    response = client.delete(f"/api/v1/tasks/{task['id']}/c2/sessions/{session['id']}")
+    assert response.status_code == 409, response.text
+    assert "仍在线" in response.json()["error"]["message"]
+    assert len(client.get(f"/api/v1/tasks/{task['id']}/c2/sessions").json()) == 1
+
+
+def test_purge_dead_sessions_leaves_the_live_one(client) -> None:
+    task = _red_team_task(client)
+    old = _retire_listener(client, task, _open_session(client, task, beacons=2))
+    assert [s["status"] for s in old] == ["dead", "dead"]
+
+    live_listener = _create_listener(client, task, "http", _free_port())
+    client.post(f"/api/v1/tasks/{task['id']}/c2/listeners/{live_listener['id']}/start")
+    token = c2_listener_token(live_listener["id"])
+    url = f"http://127.0.0.1:{live_listener['port']}/index?sid=live&token={token}"
+    with urllib.request.urlopen(url, timeout=5) as response:
+        response.read()
+
+    purged = client.delete(f"/api/v1/tasks/{task['id']}/c2/sessions?actor=pytest")
+    assert purged.status_code == 200, purged.text
+    assert purged.json() == {"deleted": 2}
+
+    remaining = client.get(f"/api/v1/tasks/{task['id']}/c2/sessions").json()
+    assert [s["status"] for s in remaining] == ["active"]
+    assert remaining[0]["remote"] == "live"
+
+    # Nothing dead is left, so a second purge is a no-op rather than an error.
+    assert client.delete(f"/api/v1/tasks/{task['id']}/c2/sessions").json() == {"deleted": 0}
+    assert len(client.get(f"/api/v1/tasks/{task['id']}/c2/sessions").json()) == 1
+    client.post(f"/api/v1/tasks/{task['id']}/c2/listeners/{live_listener['id']}/stop")
+
+
 def test_worker_cli_red_team_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     from axiom import worker_cli
 

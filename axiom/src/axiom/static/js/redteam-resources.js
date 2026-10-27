@@ -279,8 +279,56 @@ window.AxiomModules.redteamResources = {
       }
     },
     async rrKill(s) {
-      if (!confirm(`kill 会话 ${s.id}？`)) return;
+      if (!confirm(`kill 会话 ${s.id}？记录会保留，状态标记为 dead。`)) return;
       await this.v2Request('POST', `/tasks/${s.task_id}/c2/sessions/${s.id}/kill`);
+      await this.rrLoadSessions();
+    },
+    // kill 只把会话标成 dead，留着执行记录；删除是把整行连同命令历史一起去掉，
+    // 只用于清理噪声（探活、目标重启、测试 beacon）。在线会话不允许删。
+    async rrDeleteSession(s) {
+      if (s.status === 'active') {
+        this.showToast('会话仍在线；先 kill 或等它超时离线', 'error');
+        return;
+      }
+      if (!confirm(`删除会话 ${s.id}？该会话的命令历史会一起删除，不可恢复。`)) return;
+      try {
+        await this.v2Request('DELETE', `/tasks/${s.task_id}/c2/sessions/${s.id}?actor=human.frontend`);
+        if (this.rr.c2Session === this.rrSessKey(s)) {
+          this.rr.c2Session = '';
+          this.rr.c2Tasks = [];
+        }
+        this.showToast('已删除');
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+      await this.rrLoadSessions();
+    },
+    async rrPurgeSessions() {
+      const dead = this.rrSessionsFiltered().filter(s => s.status !== 'active');
+      if (!dead.length) {
+        this.showToast('没有离线会话');
+        return;
+      }
+      if (!confirm(`清理 ${dead.length} 个离线会话？它们的命令历史会一起删除，不可恢复。`)) return;
+      try {
+        // 逐个任务下发，因为接口按任务绑定；同任务合并成一次请求。
+        const byTask = new Map();
+        dead.forEach(s => {
+          const key = `${s.task_id}\u0000${s.listener_id}`;
+          if (!byTask.has(key)) byTask.set(key, { task_id: s.task_id, listener_id: s.listener_id });
+        });
+        let total = 0;
+        for (const { task_id: tid, listener_id: lid } of byTask.values()) {
+          const r = await this.v2Request(
+            'DELETE',
+            `/tasks/${tid}/c2/sessions?listener_id=${encodeURIComponent(lid)}&actor=human.frontend`,
+          );
+          total += Number(r?.deleted || 0);
+        }
+        this.showToast(`已清理 ${total} 个离线会话`);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
       await this.rrLoadSessions();
     },
   },

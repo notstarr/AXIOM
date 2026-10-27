@@ -79,6 +79,12 @@ class SetSessionSleep(BaseModel):
     sleep_seconds: int = Field(ge=1, le=3600)
 
 
+class C2SessionPurge(BaseModel):
+    """How many offline sessions a bulk cleanup removed."""
+
+    deleted: int = 0
+
+
 class C2Task(BaseModel):
     id: str
     task_id: str

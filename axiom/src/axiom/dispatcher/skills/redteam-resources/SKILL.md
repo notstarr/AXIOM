@@ -30,7 +30,9 @@ description: 当红队任务里拿到或需要复用稳定立足点时使用：W
 | `axiom c2 oneliner <cl_id>` | 回连 one-liner（bash/python 轮询版），地址取自 `AXIOM_C2_PUBLIC_BASE`，直接投递即可；若 note 里带「警告：未配置」，说明服务端没配对外地址，不要投递，先报给运维 |
 | `axiom c2 sessions [--listener-id clX]` | 上线会话（id/remote/info/status/last_seen/sleep） |
 | `axiom c2 session-sleep <cs_id> --seconds N` | 调轮询间隔：交互需求高才调小，默认 5s 已够；长潜伏调大降低噪声 |
-| `axiom c2 session-kill <cs_id>` | 标记会话死亡 |
+| `axiom c2 session-kill <cs_id>` | 标记会话死亡（记录保留，命令历史不清） |
+| `axiom c2 session-delete <cs_id>` | 删除一个离线会话及其命令历史；在线会话会被拒绝 |
+| `axiom c2 session-purge` | 清理本任务全部离线会话，返回删除条数 |
 | `axiom c2 exec <cs_id> '<命令>' [--wait 30]` | 下发任务：http 会话入队等 beacon 取走并回传 |
 | `axiom c2 tasks [--session-id csX]` / `axiom c2 task <ct_id>` | 任务队列与结果（status: queued/sent/completed/failed） |
 
@@ -53,7 +55,8 @@ axiom c2 oneliner clXXX        # 地址已带对外 /c2/ 前缀，直接投递
 - Explore 拿到命令执行能力后**当场登记**（webshell create / listener-start+oneliner 投递），并把连接或会话 id 写进 findings.md 与 leads.md（如「立足点：ws003 / cs002」），后续 Intent 的前置栏直接引用。
 - 开工先 `webshell list` / `c2 sessions` 查现成立足点；status=dead 的先 `webshell test` 或看 last_seen 再决定复活还是重打。
 - 上报成果时 `--target-asset` 写被控主机的**具体 IP 或域名[:端口]**（如 `10.192.192.205（buildhost）`），立足点 id（ws003 / cs002）写进描述，Reviewer 可按 logs/tasks 复核执行轨迹。
-- 任务收尾：`listener-stop` 全部监听器、`session-kill` 残留会话；webshell 连接由人工在「红队资源」页归档或删除。
+- 任务收尾：`listener-stop` 全部监听器、`session-purge` 清理离线会话；webshell 连接由人工在「红队资源」页归档或删除。
+- `session-kill` 与 `session-delete` 是两件事：前者留档（标记 dead），后者收拾噪声。要留证据链就用 kill，探活/重启/测试留下的空会话用 delete。
 - 凭证与输出完整留档（不脱敏），但不要把会话凭证粘进 Intent 描述这类会进导出的字段。
 
 ## 4. 边界

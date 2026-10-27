@@ -9,6 +9,7 @@ from axiom.modules.c2.schemas import (
     C2Listener,
     C2Oneliner,
     C2Session,
+    C2SessionPurge,
     C2Task,
     CreateListener,
     SetSessionSleep,
@@ -111,6 +112,32 @@ def kill_session(
     container: Container = Depends(get_container),
 ) -> C2Session:
     return container.c2.kill_session(task_id, session_id)
+
+
+@router.delete(
+    "/tasks/{task_id}/c2/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_session(
+    task_id: str,
+    session_id: str,
+    actor: str = Query(default="human.frontend"),
+    container: Container = Depends(get_container),
+) -> None:
+    container.c2.delete_session(task_id, session_id, actor=actor)
+
+
+@router.delete("/tasks/{task_id}/c2/sessions", response_model=C2SessionPurge)
+def purge_dead_sessions(
+    task_id: str,
+    listener_id: str | None = Query(default=None),
+    actor: str = Query(default="human.frontend"),
+    container: Container = Depends(get_container),
+) -> C2SessionPurge:
+    deleted = container.c2.purge_dead_sessions(
+        task_id, listener_id=listener_id, actor=actor
+    )
+    return C2SessionPurge(deleted=deleted)
 
 
 @router.post("/tasks/{task_id}/c2/sessions/{session_id}/exec", response_model=C2Task)
