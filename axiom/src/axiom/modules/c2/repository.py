@@ -56,6 +56,24 @@ class C2Repository:
         rows = conn.execute(query.order_by(c2_listeners.c.id)).mappings()
         return [C2Listener.model_validate(dict(row)) for row in rows]
 
+    def active_listeners(self, conn: Connection) -> list[C2Listener]:
+        """Every non-archived listener whose last known state was listening.
+
+        A crash leaves the row at ``listening`` while the socket is gone; a
+        clean shutdown flips it to ``stopped`` first.  Startup uses this to
+        tell the two apart without guessing.
+        """
+
+        rows = conn.execute(
+            select(c2_listeners)
+            .where(
+                c2_listeners.c.status == "listening",
+                c2_listeners.c.archived.is_(False),
+            )
+            .order_by(c2_listeners.c.task_id, c2_listeners.c.id)
+        ).mappings()
+        return [C2Listener.model_validate(dict(row)) for row in rows]
+
     def update_listener(self, conn: Connection, task_id: str, listener_id: str, values: dict, *, now: str) -> C2Listener | None:
         values = dict(values)
         values["updated_at"] = now

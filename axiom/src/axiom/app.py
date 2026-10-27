@@ -117,6 +117,7 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
     )
     app.state.container.storage_admin.start_context_retention_loop()
     app.state.container.c2.manager.start_watchdog()
+    app.state.container.c2.resume_active()
 
     def _stop_context_retention_loop() -> None:
         app.state.container.storage_admin.stop_context_retention_loop()

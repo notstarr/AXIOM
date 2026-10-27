@@ -222,3 +222,100 @@ def test_worker_cli_red_team_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(worker_cli, "_request", lambda *a, **k: {"engagement_mode": "red_team"})
     worker_cli._RED_TEAM_MODE_CACHE.clear()
     assert worker_cli._red_team_task_id() == "t_100"
+
+
+def test_oneliner_uses_public_base_when_configured(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A beacon must carry the Caddy-published URL, not the loopback bind."""
+
+    task = _red_team_task(client)
+    port = _free_port()
+    listener = _create_listener(client, task, "http", port)
+    url = f"/api/v1/tasks/{task['id']}/c2/listeners/{listener['id']}/oneliner"
+
+    monkeypatch.delenv("AXIOM_C2_PUBLIC_BASE", raising=False)
+    fallback = client.get(url).json()
+    assert f"http://127.0.0.1:{port}/index" in fallback["bash"]
+    assert "AXIOM_C2_PUBLIC_BASE" in fallback["note"]
+
+    monkeypatch.setenv("AXIOM_C2_PUBLIC_BASE", "https://203.0.113.10:8888/c2/")
+    public = client.get(url).json()
+    assert "https://203.0.113.10:8888/c2/index" in public["bash"]
+    assert "https://203.0.113.10:8888/c2/index" in public["python"]
+    assert "127.0.0.1" not in public["bash"]
+    assert "警告" not in public["note"]
+
+
+def test_resume_active_rebinds_crashed_listener(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A listener left at ``listening`` by a crash comes back on startup."""
+
+    from axiom.modules.c2.listeners import ListenerManager
+
+    task = _red_team_task(client)
+    listener = _create_listener(client, task, "http", _free_port())
+    client.post(f"/api/v1/tasks/{task['id']}/c2/listeners/{listener['id']}/start")
+    client.post(f"/api/v1/tasks/{task['id']}/c2/listeners/{listener['id']}/stop")
+
+    container = client.app.state.container
+    row = client.get(f"/api/v1/tasks/{task['id']}/c2/listeners/{listener['id']}").json()
+    assert row["status"] == "stopped"
+
+    with container.engine.begin() as conn:
+        conn.execute(
+            sa_text("update axiom.c2_listeners set status = 'listening' where task_id = :t and id = :i"),
+            {"t": task["id"], "i": listener["id"]},
+        )
+    # A fresh manager stands in for the restarted process.
+    container.c2.manager = ListenerManager(container.engine)
+    resumed = container.c2.resume_active()
+    assert listener["id"] in resumed
+    assert client.get(f"/api/v1/tasks/{task['id']}/c2/listeners/{listener['id']}").json()["status"] == "listening"
+    container.c2.manager.stop_all()
+
+
+def test_resume_active_skips_legacy_wildcard_bind(client) -> None:
+    """Legacy ``0.0.0.0`` rows are marked error instead of blocking the rest."""
+
+    from axiom.modules.c2.listeners import ListenerManager
+
+    task = _red_team_task(client)
+    listener = _create_listener(client, task, "http", _free_port())
+    container = client.app.state.container
+    with container.engine.begin() as conn:
+        conn.execute(
+            sa_text(
+                "update axiom.c2_listeners set status = 'listening', host = '0.0.0.0'"
+                " where task_id = :t and id = :i"
+            ),
+            {"t": task["id"], "i": listener["id"]},
+        )
+    container.c2.manager = ListenerManager(container.engine)
+    assert container.c2.resume_active() == []
+    row = client.get(f"/api/v1/tasks/{task['id']}/c2/listeners/{listener['id']}").json()
+    assert row["status"] == "error"
+    assert "回环" in row["error"]
+
+
+def test_shutdown_keeps_listener_armed_for_next_start(client) -> None:
+    """A deploy must not turn a live listener into an operator-initiated stop."""
+
+    from axiom.modules.c2.listeners import ListenerManager
+
+    task = _red_team_task(client)
+    listener = _create_listener(client, task, "http", _free_port())
+    client.post(f"/api/v1/tasks/{task['id']}/c2/listeners/{listener['id']}/start")
+    container = client.app.state.container
+
+    container.c2.manager.stop_all()  # what FastAPI shutdown does
+    # The API reports the live socket, so during the gap it reads "stopped";
+    # what matters is that the stored intent stayed "listening".
+    with container.engine.connect() as conn:
+        stored = conn.execute(
+            sa_text("select status from axiom.c2_listeners where task_id = :t and id = :i"),
+            {"t": task["id"], "i": listener["id"]},
+        ).scalar_one()
+    assert stored == "listening"
+
+    container.c2.manager = ListenerManager(container.engine)  # the restarted process
+    assert listener["id"] in container.c2.resume_active()
+    assert client.get(f"/api/v1/tasks/{task['id']}/c2/listeners/{listener['id']}").json()["status"] == "listening"
+    container.c2.manager.stop_all()

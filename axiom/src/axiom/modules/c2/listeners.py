@@ -57,11 +57,19 @@ class ListenerManager:
         self._watchdog.start()
 
     def stop_all(self) -> None:
+        """Release every socket without deciding the listener's fate.
+
+        This runs on process shutdown, not on operator request: a deploy must
+        not silently end an engagement, so the rows stay at ``listening`` and
+        ``C2Service.resume_active`` rebinds them on the next start.  Only an
+        explicit ``axiom c2 listener-stop`` writes ``stopped``.
+        """
+
         with self._lock:
             ids = list(self._entries)
         for listener_id in ids:
             try:
-                self.stop(listener_id, mark_stopped=True)
+                self.stop(listener_id, mark_stopped=False)
             except Exception:  # noqa: BLE001
                 logger.exception("stop listener %s failed", listener_id)
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
+import os
 import time
 
 from sqlalchemy import Engine
@@ -21,6 +23,28 @@ from axiom.modules.tasks.repository import TaskRepository
 from axiom.shared.clock import utcnow
 from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, DomainError, NotFoundError
+
+
+logger = logging.getLogger(__name__)
+
+PUBLIC_BASE_ENV = "AXIOM_C2_PUBLIC_BASE"
+
+
+def _beacon_base(listener: C2Listener) -> tuple[str, bool]:
+    """Return the base URL a beacon should poll, and whether it is externally routable.
+
+    The listener always binds loopback and is published by Caddy on a public
+    path, so the URL baked into a one-liner must come from configuration:
+    emitting ``http://127.0.0.1:8443`` hands the operator a beacon that can
+    never phone home from a target.  ``AXIOM_C2_PUBLIC_BASE`` carries the
+    public form (for example ``https://203.0.113.10:8888/c2``).
+    """
+
+    configured = os.environ.get(PUBLIC_BASE_ENV, "").strip().rstrip("/")
+    if configured:
+        return configured, True
+    host = listener.host if listener.host not in {"0.0.0.0", "::"} else "<回连地址>"
+    return f"http://{host}:{listener.port}", False
 
 
 def _require_loopback_listener(kind: str, host: str) -> None:
@@ -100,6 +124,40 @@ class C2Service:
         self.manager.stop(listener_id)
         return self.get_listener(task_id, listener_id)
 
+    def resume_active(self) -> list[str]:
+        """Restart listeners that were live when the process died.
+
+        A red-team engagement outlives a deploy: if the listener is not coming
+        back on its own, every beacon on the target silently starts failing
+        and the operator only finds out when a session stops reporting.  Rows
+        marked ``listening`` are exactly the ones a crash left behind, so
+        startup rebinds them.  Failures are recorded on the row and skipped —
+        one legacy ``0.0.0.0`` listener must not keep the others down.
+        """
+
+        with self.engine.connect() as conn:
+            listeners = self.repository.active_listeners(conn)
+        resumed: list[str] = []
+        for listener in listeners:
+            try:
+                _require_loopback_listener(listener.kind, listener.host)
+                self.manager.start(listener)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("resume c2 listener %s failed: %s", listener.id, exc)
+                with transaction(self.engine) as conn:
+                    self.repository.update_listener(
+                        conn,
+                        listener.task_id,
+                        listener.id,
+                        {"status": "error", "error": str(exc)[:500]},
+                        now=utcnow(),
+                    )
+                continue
+            resumed.append(listener.id)
+        if resumed:
+            logger.info("resumed c2 listeners: %s", ", ".join(resumed))
+        return resumed
+
     def archive_listener(self, task_id: str, listener_id: str) -> None:
         self.manager.stop(listener_id)
         with transaction(self.engine) as conn:
@@ -115,8 +173,7 @@ class C2Service:
 
     def oneliner(self, task_id: str, listener_id: str) -> C2Oneliner:
         listener = self.get_listener(task_id, listener_id)
-        host = listener.host if listener.host not in {"0.0.0.0", "::"} else "<回连地址>"
-        base = f"http://{host}:{listener.port}"
+        base, routable = _beacon_base(listener)
         token = c2_listener_token(listener_id)
         if listener.kind == "http":
             bash = (
@@ -138,8 +195,15 @@ class C2Service:
             )
             note = (
                 "sleep 与 sid 可按需调整；URL 中的 token 是监听器鉴权凭据，不要泄露；"
-                "base64 回传避免二进制破坏。回连地址需目标可达。"
+                "base64 回传避免二进制破坏。"
             )
+            if routable:
+                note += f"回连地址取自 {PUBLIC_BASE_ENV}，目标需能访问该地址。"
+            else:
+                note += (
+                    f"警告：未配置 {PUBLIC_BASE_ENV}，地址是监听器绑定的回环地址，"
+                    "目标无法回连；请把它换成 Caddy 对外发布的 /c2/ 地址后再投递。"
+                )
             return C2Oneliner(listener_id=listener_id, kind="http", bash=bash, python=python, note=note)
         raise DomainError(
             f"只支持 http 监听器；{listener.kind} 通道无握手无鉴权，已停用"
