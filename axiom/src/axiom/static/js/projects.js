@@ -551,6 +551,73 @@ window.AxiomModules.projects = {
       return list.filter(item => Number(item.step_index) === Number(stepIndex));
     },
 
+    // 未挂到具体步骤的图（step_index = 0）归「证据」一节。
+    vulnOverviewEvidence() {
+      return this.vulnEvidenceForStep(0);
+    },
+
+    rtEvidenceForStep(stepIndex) {
+      const list = this.selectedRtResult()?.evidence || [];
+      return list.filter(item => Number(item.step_index) === Number(stepIndex));
+    },
+
+    rtOverviewEvidence() {
+      return this.rtEvidenceForStep(0);
+    },
+
+    // 证据上传：先落成普通 artifact，再挂到主体与步骤上（report_evidence）。
+    // 报告里每步的虚线槽调它，所以失败必须让人看见，不能静默。
+    async uploadReportEvidence(subjectType, subjectId, stepIndex, event) {
+      const input = event?.target;
+      const file = input?.files?.[0];
+      if (!file) return;
+      // 漏洞的读模型把 task_id 映射成 project_id（同一件事，见 mapVulnerability）。
+      const taskId = subjectType === 'redteam_result'
+        ? (this.selectedRtResult()?.task_id || '')
+        : (this.selectedVulnerability()?.project_id || '');
+      if (!taskId || !subjectId) {
+        this.showToast('缺少任务或主体标识，无法挂证据', 'error');
+        return;
+      }
+      const actor = this.actorName ? this.actorName() : 'reviewer';
+      const form = new FormData();
+      form.append('file', file);
+      form.append('actor', actor);
+      form.append('summary', file.name);
+      try {
+        const uploaded = await this.api('POST', `/tasks/${taskId}/artifacts/upload`, form);
+        const base = subjectType === 'redteam_result'
+          ? `/tasks/${taskId}/red-team/results/${subjectId}/evidence`
+          : `/tasks/${taskId}/vulnerabilities/${subjectId}/evidence`;
+        await this.api('POST', base, {
+          artifact_id: uploaded.id,
+          step_index: Number(stepIndex) || 0,
+          caption: '',
+          created_by: actor,
+        });
+        this.showToast('证据已挂到报告', 'success');
+        // 重新拉一次列表以获得新的 evidence 数组（详情面板直接读它）。
+        if (subjectType === 'redteam_result') {
+          await this.loadRedTeamResultPage?.();
+        } else {
+          // 取标识要在重新加载之前——加载完 selectedVulnerability() 可能已切到别的行。
+          const keepTaskId = taskId;
+          await this.loadVulnerabilityPage?.({ selectFirst: false });
+          const refreshed = (this.vulnerabilityItems || []).find(
+            item => item.project_id === keepTaskId && item.id === subjectId,
+          );
+          if (refreshed) {
+            this.selectedVulnerabilityKey = this.vulnerabilityKey(refreshed);
+            await this.loadVulnerabilityReviews?.(refreshed);
+          }
+        }
+      } catch (e) {
+        this.showToast(e.message || '证据上传失败', 'error');
+      } finally {
+        if (input) input.value = '';
+      }
+    },
+
     resetTaskDetailLoad(taskId = '') {
       const sectionNames = [
         'project_group', 'graph', 'hints', 'todos', 'vulnerabilities',

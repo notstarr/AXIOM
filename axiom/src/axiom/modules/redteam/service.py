@@ -23,6 +23,7 @@ from axiom.modules.redteam.schemas import (
     RedTeamResultReview,
 )
 from axiom.modules.redteam.tables import red_team_chains
+from axiom.modules.reports.evidence import ReportEvidenceRepository
 from axiom.modules.reports.path import attack_paths
 from axiom.modules.tasks.tables import tasks
 from axiom.shared.clock import utcnow
@@ -107,18 +108,33 @@ def _attach_attack_paths(
     task_id: str,
     results: list[RedTeamResult],
 ) -> list[RedTeamResult]:
-    """Fill ``attack_path`` on each Result.
+    """Fill ``attack_path`` and ``evidence`` on each Result.
 
     Only red-team Results carry a path: a vulnerability-mode kill chain normally closes
     inside one Intent and the reviewer replays it, so a separate chain adds nothing.
+
+    ``evidence`` is the pictures a reviewer attached afterwards; the report template
+    interleaves them under the step they belong to, so the list payload has to carry
+    them (the console renders the detail straight from this row).
     """
     paths = attack_paths(
         conn,
         task_id=task_id,
         intents_with_results={item.intent_id for item in results if item.intent_id},
     )
+    evidence_by_id = ReportEvidenceRepository().for_subjects(
+        conn,
+        task_id,
+        "redteam_result",
+        [item.id for item in results],
+    )
     return [
-        item.model_copy(update={"attack_path": paths.get(item.intent_id, [])})
+        item.model_copy(
+            update={
+                "attack_path": paths.get(item.intent_id, []),
+                "evidence": evidence_by_id.get(item.id, []),
+            }
+        )
         for item in results
     ]
 

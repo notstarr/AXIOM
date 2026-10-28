@@ -1769,11 +1769,16 @@ def test_frontend_and_static_assets_are_served(client):
     assert 'x-model="vulnEditor.reproduction_steps"' not in vulnerabilities.text
     assert 'x-model="vulnEditor.curl_command"' not in vulnerabilities.text
     assert 'x-model="vulnEditor.evidence"' not in vulnerabilities.text
-    # 详情页改为渲染结构化复现（测试过程/步骤/证据槽），不再渲染 evidence_artifacts 列表。
+    # 详情页是一页「报告」：报头 + 章节 + 分步报文 + 每步证据槽。
     assert "finding_artifact" in vulnerabilities.text
+    assert 'class="rp-doc"' in vulnerabilities.text
     assert "selectedVulnerability().reproduction" in vulnerabilities.text
     assert "vulnEvidenceForStep" in vulnerabilities.text
-    assert "步骤" in vulnerabilities.text
+    assert 'class="rp-packet"' in vulnerabilities.text
+    # 证据槽是每步一个方块，不是通栏虚线框；且挂在步骤内部
+    assert 'class="rp-slot"' in vulnerabilities.text
+    # 只允许一个实心主按钮（提交类动作）
+    assert vulnerabilities.text.count("rp-act primary") == 1
     assert "Reviewer 审核" in vulnerabilities.text
     assert "重新审核" in vulnerabilities.text
     assert "vulnerabilityReviewDecisionLabel" in vulnerabilities.text
@@ -2017,7 +2022,8 @@ def test_frontend_and_static_assets_are_served(client):
     # 前置条件现在渲染自 reproduction.prerequisites；修复建议缺失时整节省略，
     # 因此两个「未填写」兜底断言按新契约调整。
     assert "(selectedVulnerability().reproduction.prerequisites || [])" in vulnerabilities.text
-    assert 'x-if="selectedVulnerability().remediation"' in vulnerabilities.text
+    # 修复建议缺失时整节省略（用 x-show 控制，不渲染空标题）
+    assert 'x-show="selectedVulnerability().remediation"' in vulnerabilities.text
     assert "按列表查看证据、影响和修复建议" in vulnerabilities.text
     assert "按卡片查看证据、影响和修复建议" not in vulnerabilities.text
 

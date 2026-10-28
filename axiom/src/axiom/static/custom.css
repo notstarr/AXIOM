@@ -840,6 +840,179 @@
   .sto-chip span { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; color: var(--sto-fg-2); }
   .sto-chip b { font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--sto-fg-2); }
 
+  /* —— 报告视图：漏洞 / 红队成果详情 ——
+     方向：这是一页「报告」，不是一个仪表盘行。
+
+     三条硬约束决定了全部尺寸：
+     1) 行宽。中文正文 30~45 字/行最舒服，所以正文列固定 max-width，
+        而不是拉满容器——拉满就会读成表格而不是文档。
+     2) 边界。只有「区域」才画边框（测试过程那段），步骤之间用留白 + 发丝线
+        分隔，绝不一层套一层卡片。
+     3) 颜色。正文内几乎无色：等级/状态是唯一允许的彩色，主操作是唯一允许的
+        实心按钮。步骤号、链接、次要操作全部走文字重量。
+     纸张感来自近黑正文 + 暖灰发丝线 + 微暖留白，不来自阴影和圆角堆叠。 */
+  .rp-doc {
+    /* 报告自带的墨色与纸色，覆盖在 .sto 变量之上，不影响页面其它区域 */
+    --rp-ink: #1b1b1d;
+    --rp-ink-2: #57534e;
+    --rp-ink-3: #6d6862;
+    --rp-rule: #e5e2dd;
+    --rp-wash: #faf9f7;
+    --rp-accent: #1b1b1d;
+
+    display: flex; flex-direction: column;
+    gap: 26px;
+    padding: 26px 30px 34px;
+    /* 单栏正文列：中文 13.5px 下约 42 字/行，落在 65~75ch 的舒适区间里。
+       容器更宽时靠 max-width 收住，不靠右留白撑出「页」的错觉。 */
+    max-width: 760px;
+    color: var(--rp-ink);
+    font-size: 13.5px;
+    line-height: 1.75;
+  }
+
+  /* —— 报头 —— */
+  .rp-dochead { display: flex; flex-direction: column; gap: 0; border-bottom: 1px solid var(--rp-rule); padding-bottom: 14px; }
+  .rp-titleline { display: flex; align-items: flex-start; gap: 10px; }
+  .rp-doctitle {
+    flex: 1 1 auto; min-width: 0; margin: 0;
+    font-size: 17px; font-weight: 650; line-height: 1.4; letter-spacing: -0.011em;
+    color: var(--rp-ink); text-wrap: balance;
+  }
+  .rp-stamps { display: flex; flex-shrink: 0; align-items: center; gap: 6px; padding-top: 3px; }
+  .rp-meta { margin-top: 8px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; font-size: 11.5px; color: var(--rp-ink-3); }
+  .rp-meta code, .rp-inlinecode {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px;
+    color: var(--rp-ink-2); letter-spacing: -0.01em;
+  }
+  .rp-meta .rp-sep { color: var(--rp-rule); }
+  .rp-acts { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+
+  /* —— 章节 —— */
+  .rp-block { display: flex; flex-direction: column; }
+  /* 「报告感」的一半来自节与节之间的呼吸，而不是每条都加框 */
+  .rp-doc > .rp-block + .rp-block { margin-top: 2px; }
+  /* 标题离自己的内容近、离上一段远：这是「结构」而不是「列表」的来源 */
+  .rp-h {
+    margin: 0 0 7px; font-size: 11.5px; font-weight: 600;
+    letter-spacing: 0.04em; color: var(--rp-ink-3);
+  }
+  .rp-p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .rp-absent { margin: 0; font-size: 12.5px; color: var(--rp-ink-3); font-style: italic; }
+
+  /* —— 测试过程：整段一个边界，步骤在里面靠留白排队 —— */
+  .rp-proc { border: 1px solid var(--rp-rule); border-radius: 3px; }
+  .rp-entry { padding: 11px 14px; background: var(--rp-wash); border-bottom: 1px solid var(--rp-rule); }
+  .rp-entryrow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 8px; }
+  .rp-k { flex-shrink: 0; font-size: 11.5px; color: var(--rp-ink-3); }
+  .rp-codes {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+    color: var(--rp-ink); overflow-wrap: anywhere;
+  }
+  .rp-req { margin: 5px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
+  .rp-req li { position: relative; padding-left: 13px; font-size: 12.5px; line-height: 1.6; color: var(--rp-ink-2); overflow-wrap: anywhere; }
+  .rp-req li::before { content: "·"; position: absolute; left: 3px; color: var(--rp-ink-3); }
+
+  .rp-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+  .rp-step { padding: 13px 14px 15px; }
+  .rp-step + .rp-step { border-top: 1px solid var(--rp-rule); }
+  .rp-stephead { display: flex; align-items: baseline; gap: 8px; }
+  .rp-stepno {
+    flex-shrink: 0; font-size: 11.5px; font-weight: 600; color: var(--rp-ink-3);
+    font-variant-numeric: tabular-nums; min-width: 13px; text-align: right;
+  }
+  /* 摘要一句连读：在做什么 ｜ 证明了什么。不拆成三个字段标签。 */
+  .rp-stepsum { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 13px; line-height: 1.6; color: var(--rp-ink); overflow-wrap: anywhere; }
+  .rp-stepsum em { font-style: normal; color: var(--rp-ink-2); }
+
+  /* 报文：极浅底、无边框、等宽——它是引用的一段内容，不是代码控件 */
+  .rp-packet {
+    margin: 10px 0 0; padding: 10px 12px; border-radius: 2px;
+    background: var(--rp-wash); color: #232320;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11.5px; line-height: 1.62;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .rp-resplabel { margin-top: 12px; font-size: 10.5px; letter-spacing: 0.04em; color: var(--rp-ink-3); }
+
+  /* 证据：小方槽（不是通栏虚线），与参考报告一致 */
+  .rp-slots { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 9px; }
+  .rp-slot {
+    width: 104px; height: 78px; flex-shrink: 0;
+    border: 1px dashed var(--rp-rule); border-radius: 3px; background: transparent;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    cursor: pointer; color: var(--rp-ink-3);
+    font-size: 10.5px; line-height: 1.35; text-align: center; padding: 4px;
+    transition: border-color .15s ease, color .15s ease, background .15s ease;
+  }
+  .rp-slot:hover { border-color: var(--rp-ink-3); color: var(--rp-ink-2); background: var(--rp-wash); }
+  .rp-slot svg { width: 13px; height: 13px; }
+  .rp-shot { display: block; text-decoration: none; }
+  .rp-shot img {
+    display: block; max-width: 214px; max-height: 148px; object-fit: contain;
+    border: 1px solid var(--rp-rule); border-radius: 3px; background: var(--rp-wash);
+  }
+  .rp-shotcap { display: block; margin-top: 4px; font-size: 10.5px; color: var(--rp-ink-3); }
+
+  /* —— 攻击链：报告里的一段编年，不是流程图 —— */
+  .rp-chain { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .rp-chain li { display: grid; grid-template-columns: 17px 1fr; gap: 0 7px; align-items: baseline; }
+  .rp-chainno { font-size: 11.5px; color: var(--rp-ink-3); font-variant-numeric: tabular-nums; }
+  .rp-chaintext { min-width: 0; font-size: 12.5px; line-height: 1.55; color: var(--rp-ink-2); overflow-wrap: anywhere; }
+  .rp-chaintext.cur { color: var(--rp-ink); font-weight: 600; }
+  .rp-chaingain { display: block; font-size: 11.5px; font-weight: 400; color: var(--rp-ink-3); }
+
+  /* —— 操作：文字重量，只有一个允许实心 —— */
+  .rp-act {
+    display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+    padding: 0; border: 0; background: none; cursor: pointer;
+    font-size: 11.5px; color: var(--rp-ink-2);
+    text-decoration: underline; text-decoration-color: transparent;
+    text-underline-offset: 3px; transition: color .15s ease, text-decoration-color .15s ease;
+  }
+  .rp-act:hover { color: var(--rp-ink); text-decoration-color: currentColor; }
+  .rp-act svg { width: 12px; height: 12px; flex-shrink: 0; }
+  .rp-act.on { color: var(--rp-ink); font-weight: 600; }
+  .rp-act.danger:hover { color: var(--sto-danger); }
+  .rp-act:disabled { opacity: .45; cursor: not-allowed; text-decoration: none; }
+  /* 唯一的实心元素：提交类动作。它是页面上最重的点，所以只允许一个。 */
+  .rp-act.primary {
+    padding: 5px 13px; border-radius: 3px; background: var(--rp-ink); color: #fff;
+    text-decoration: none; font-weight: 500;
+  }
+  .rp-act.primary:hover { background: #000; color: #fff; }
+  .rp-act.primary:disabled { background: var(--rp-ink-3); color: #fff; }
+
+  /* —— 审核记录：折叠在页尾，不占正文重量 —— */
+  .rp-runs { display: flex; flex-direction: column; gap: 0; border-top: 1px solid var(--rp-rule); }
+  .rp-run { padding: 9px 0; }
+  .rp-run + .rp-run { border-top: 1px solid var(--rp-rule); }
+  .rp-runhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 9px; font-size: 11.5px; color: var(--rp-ink-3); }
+  .rp-runnote { margin: 4px 0 0; font-size: 12px; line-height: 1.6; color: var(--rp-ink-2); overflow-wrap: anywhere; }
+  .rp-runnote strong { font-weight: 600; color: var(--rp-ink); }
+
+  /* 报告内的徽标：只保留等级/状态，弱化到不抢标题 */
+  .rp-doc .sto-badge, .rp-doc .sto-sevbadge { font-size: 10.5px; }
+  /* 深色：纸面变成深色稿纸，墨色反相。层次靠亮度差，不靠换色相。 */
+  .dark .rp-doc {
+    --rp-ink: #e8e6e3;
+    --rp-ink-2: #b3ada6;
+    --rp-ink-3: #a19a92;
+    --rp-rule: #343a42;
+    --rp-wash: #2a313a;
+    --rp-accent: #e8e6e3;
+  }
+  .dark .rp-doc .rp-act.primary { background: #e8e6e3; color: #17150f; }
+  .dark .rp-doc .rp-act.primary:hover { background: #fff; color: #17150f; }
+  .dark .rp-doc .rp-act.primary:disabled { background: var(--rp-ink-3); color: #17150f; }
+  .dark .rp-doc .rp-packet { color: #ded9d3; }
+  .dark .rp-doc ::selection { background: #3a342c; color: var(--rp-ink); }
+
+  /* 报告内的滚动条、选区、焦点也归这套纸色 */
+  .rp-doc ::selection { background: #f0ece5; color: var(--rp-ink); }
+  .rp-doc :focus-visible { outline: 2px solid var(--rp-ink-3); outline-offset: 2px; }
+
+
   /* —— 清理中心：三档 —— */
   .sto-tiercard {
     position: relative; background: var(--sto-inset);

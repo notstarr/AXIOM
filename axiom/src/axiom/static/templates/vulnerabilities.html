@@ -85,197 +85,183 @@
       </div>
     </aside>
 
-    <!-- 详情 -->
+    <!-- 详情：版式对齐 AntiFox —— 扁平头 + 描述 + 测试过程（分步报文） + 影响 + 证据 + 审核结论 -->
     <section class="sto-panel overflow-y-auto" style="overflow-x:hidden;">
       <template x-if="!selectedVulnerability()">
-        <div class="sto-muted" style="min-height:420px; display:flex; align-items:center; justify-content:center;">请选择左侧漏洞查看详情</div>
+        <div class="sto-muted" style="min-height:420px; display:flex; align-items: center; justify-content: center;">请选择左侧漏洞查看详情</div>
       </template>
       <template x-if="selectedVulnerability()">
-        <article>
-          <!-- 严重度色 hero -->
-          <div class="sto-vhero" :class="`sto-sev-${(selectedVulnerability().severity || 'info').toLowerCase()}`" style="padding:16px 20px;">
-            <div class="flex flex-wrap items-center" style="gap:9px;">
-              <span class="sevsq" x-text="(selectedVulnerability().severity || 'info').toLowerCase() === 'critical' ? '严' : (selectedVulnerability().severity || '').toLowerCase() === 'high' ? '高' : (selectedVulnerability().severity || '').toLowerCase() === 'medium' ? '中' : (selectedVulnerability().severity || '').toLowerCase() === 'low' ? '低' : '信'"></span>
-              <span class="sto-num" style="font-size:11px; font-weight:700; color:var(--sto-fg-2);" x-text="selectedVulnerability().id"></span>
-              <button type="button" @click="openVulnStatusQuick(selectedVulnerability())" class="sto-status" style="font-size:11px; cursor:pointer; border:0; background:none; padding:0;" :class="({verified:'ok',pending:'warn',duplicate:'err',ignored:'off'})[vulnStatusKey(selectedVulnerability().status)] || 'off'"><i></i><span x-text="vulnStatusLabel(selectedVulnerability().status)"></span></button>
-              <span class="sto-muted" style="font-size:10.5px;" x-text="`${selectedVulnerability().project_group_title || '未归属项目'} / ${selectedVulnerability().task_title || selectedVulnerability().project_id}`"></span>
-            </div>
-            <h3 style="margin-top:9px; font-size:17px; font-weight:700; letter-spacing:-0.01em; color:var(--sto-fg); word-break:break-word;" x-text="selectedVulnerability().title"></h3>
-            <div class="flex flex-wrap items-center" style="gap:7px; margin-top:9px;">
-              <span class="sto-sevbadge" x-text="selectedVulnerability().type || '通用漏洞'"></span>
-              <span x-show="selectedVulnerability().affected_target" class="sto-badge neutral" x-text="selectedVulnerability().affected_target"></span>
-            </div>
-            <template x-if="selectedVulnerability().status_reason">
-              <p class="sto-muted" style="margin-top:9px; white-space:pre-wrap; word-break:break-word;"><span style="font-weight:650; color:var(--sto-fg-2);">状态原因 / 审核结论：</span><span x-text="formatMultiline(selectedVulnerability().status_reason)"></span></p>
-            </template>
-            <div class="flex flex-wrap items-center" style="gap:7px; margin-top:12px;">
-              <button @click="exportSingleVulnerability(selectedVulnerability())" class="sto-btn" title="一键导出包含漏洞原文、Findings与证据文件的完整Zip包">
-                <svg style="width:13px; height:13px;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                导出漏洞包
-              </button>
-              <button @click="triggerVulnerabilityReview(selectedVulnerability())" :disabled="!vulnerabilityReviewCanRetry()" :title="vulnerabilityReviewCanRetry() ? '创建一次新的 Reviewer 审核' : '已有审核正在排队或运行'" class="sto-ghost" x-text="vulnerabilityReviewSubmitting ? '正在排队…' : '重新审核'"></button>
-              <button x-show="selectedVulnerability().finding_artifact" @click="openVulnerabilityArtifact(selectedVulnerability(), selectedVulnerability().finding_artifact)" class="sto-ghost">
-                <svg style="width:12px; height:12px;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
-                Findings
-              </button>
-              <span style="flex:1;"></span>
-              <button @click="toggleVulnReviewed(selectedVulnerability())" class="sto-minibtn"
-                :class="selectedVulnerability().human_reviewed ? 'acc' : ''"
-                :title="selectedVulnerability().human_reviewed ? '人工已阅，点击取消' : '标记人工已阅'">
-                <span x-text="selectedVulnerability().human_reviewed ? '已阅' : '标记已阅'"></span>
-              </button>
-              <button @click="toggleVulnRedTeamExploitable(selectedVulnerability())" class="sto-minibtn"
-                :class="selectedVulnerability().red_team_exploitable ? 'acc' : ''"
-                :title="selectedVulnerability().red_team_exploitable ? '已标记红队可利用，点击取消' : '标记红队可利用（新建红队任务时可批量作为种子线索）'">
-                <span x-text="selectedVulnerability().red_team_exploitable ? '红队可利用' : '标记红队可利用'"></span>
-              </button>
-              <button @click="editVuln(selectedVulnerability())" class="sto-minibtn">编辑</button>
-              <button @click="deleteVuln(selectedVulnerability())" class="sto-minibtn danger">删除</button>
-            </div>
-          </div>
+        <article class="rp-doc">
 
-          <div style="padding:16px 20px; display:flex; flex-direction:column; gap:13px;">
-            <!-- Reviewer 审核 -->
-            <div class="sto-panel inset" style="padding:13px 15px;">
-              <div class="flex items-center justify-between" style="gap:10px;">
-                <p class="sto-label">Reviewer 审核</p>
-                <span x-show="latestVulnerabilityReview()" class="sto-badge" :class="vulnerabilityReviewStateClass(latestVulnerabilityReview())" x-text="vulnerabilityReviewStateLabel(latestVulnerabilityReview())"></span>
-              </div>
-              <p class="sto-muted" style="margin-top:4px;">证据优先审核；必要时在 Scope 内做最小复测。</p>
-              <p x-show="vulnerabilityReviewsLoading" class="sto-muted" style="margin-top:10px;">正在加载审核记录…</p>
-              <p x-show="vulnerabilityReviewsError" class="sto-warnline" style="margin-top:10px;" x-text="vulnerabilityReviewsError"></p>
-              <div x-show="!vulnerabilityReviewsLoading && !vulnerabilityReviewsError && (vulnerabilityReviews || []).length === 0" class="sto-empty" style="margin-top:10px; padding:14px 0;">暂无 Reviewer 审核记录。待验证漏洞会自动排队。</div>
-              <div x-show="(vulnerabilityReviews || []).length > 0" style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
-                <template x-for="run in (vulnerabilityReviews || [])" :key="run.id">
-                  <article class="sto-group" style="padding:10px 12px;">
-                    <div class="flex flex-wrap items-center" style="gap:7px;">
-                      <span class="sto-num" style="font-size:10px; font-weight:650; color:var(--sto-fg-2);" x-text="run.id"></span>
-                      <span class="sto-badge" style="padding:1px 7px; font-size:9px;" :class="vulnerabilityReviewStateClass(run)" x-text="vulnerabilityReviewStateLabel(run)"></span>
-                      <span class="sto-badge neutral" style="padding:1px 7px; font-size:9px;" x-text="vulnerabilityReviewTriggerLabel(run.trigger)"></span>
-                      <span x-show="run.decision" class="sto-badge" style="padding:1px 7px; font-size:9px; color:var(--sto-accent); border-color:color-mix(in srgb, var(--sto-accent) 35%, transparent);" x-text="vulnerabilityReviewDecisionLabel(run.decision)"></span>
-                      <span class="sto-muted sto-num" style="margin-left:auto; font-size:9.5px;" x-text="formatDate(run.concluded_at || run.updated_at || run.created_at)"></span>
-                    </div>
-                    <p x-show="run.worker" class="sto-muted" style="margin-top:5px; font-size:10.5px;"><span style="font-weight:650;">审查者：</span><span x-text="run.worker"></span></p>
-                    <p x-show="run.activity_summary && ['pending','claimed','running','concluding'].includes(run.status)" style="margin-top:3px; font-size:10.5px; color:var(--sto-accent);" x-text="run.activity_summary"></p>
-                    <p x-show="run.decision_reason" class="sto-muted" style="margin-top:7px; white-space:pre-wrap; word-break:break-word; line-height:1.55;"><span style="font-weight:650; color:var(--sto-fg-2);">审核原因：</span><span x-text="run.decision_reason"></span></p>
-                    <button x-show="run.duplicate_of_vulnerability_id" @click="openReviewDuplicate(run)" style="margin-top:6px; font-size:11.5px; font-weight:600; color:var(--sto-accent); background:none; border:0; cursor:pointer; padding:0;">重复于 <span x-text="run.duplicate_of_vulnerability_id"></span> →</button>
-                    <p x-show="run.status === 'failed' && run.last_failure_kind" class="sto-warnline" style="margin-top:6px;"><span style="font-weight:650;">失败原因：</span><span x-text="run.last_failure_kind"></span></p>
-                    <div x-show="(run.artifacts || []).length > 0" class="sto-chipline" style="margin-top:8px;">
-                      <template x-for="artifact in (run.artifacts || [])" :key="`${run.id}-${artifact.id}`">
-                        <button @click="openVulnerabilityArtifact(selectedVulnerability(), artifact)" class="sto-minibtn acc" style="padding:3px 9px; font-size:10px;" x-text="artifact.artifact_type === 'review.report' ? '审核报告' : (artifact.path || artifact.id)"></button>
-                      </template>
-                    </div>
-                  </article>
-                </template>
+          <!-- 报头：标题 / 印章 / 元信息 / 操作 -->
+          <header class="rp-dochead">
+            <div class="rp-titleline">
+              <h1 class="rp-doctitle" x-text="selectedVulnerability().title"></h1>
+              <div class="rp-stamps">
+                <span class="sto-sevbadge" x-text="vulnSeverityLabel(selectedVulnerability().severity)"></span>
+                <button type="button" @click="openVulnStatusQuick(selectedVulnerability())" class="sto-status" style="font-size:11px; cursor:pointer; border:0; background:none; padding:0;" :class="({verified:'ok',pending:'warn',duplicate:'err',ignored:'off'})[vulnStatusKey(selectedVulnerability().status)] || 'off'"><i></i><span x-text="vulnStatusLabel(selectedVulnerability().status)"></span></button>
               </div>
             </div>
-
-            <div class="sto-panel" style="padding:13px 15px;">
-              <p class="sto-label" style="margin-bottom:7px;">描述</p>
-              <p style="font-size:13px; color:var(--sto-fg); white-space:pre-wrap; word-break:break-word; line-height:1.6;" x-text="formatMultiline(selectedVulnerability().description)"></p>
+            <div class="rp-meta">
+              <code x-text="selectedVulnerability().id"></code>
+              <code x-text="selectedVulnerability().type || '通用漏洞'"></code>
+              <span x-show="selectedVulnerability().affected_target" x-text="selectedVulnerability().affected_target"></span>
+              <span x-text="`${selectedVulnerability().project_group_title || '未归属项目'} / ${selectedVulnerability().task_title || selectedVulnerability().project_id}`"></span>
             </div>
+            <div class="rp-acts">
+              <button @click="triggerVulnerabilityReview(selectedVulnerability())" :disabled="!vulnerabilityReviewCanRetry()" :title="vulnerabilityReviewCanRetry() ? '创建一次新的 Reviewer 审核' : '已有审核正在排队或运行'" class="rp-act primary" x-text="vulnerabilityReviewSubmitting ? '正在排队…' : '重新审核'"></button>
+              <button @click="editVuln(selectedVulnerability())" class="rp-act">编辑</button>
+              <button @click="exportSingleVulnerability(selectedVulnerability())" class="rp-act" title="导出正文、Findings 与证据图">
+                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                导出
+              </button>
+              <button x-show="selectedVulnerability().finding_artifact" @click="openVulnerabilityArtifact(selectedVulnerability(), selectedVulnerability().finding_artifact)" class="rp-act">Findings</button>
+              <button @click="toggleVulnReviewed(selectedVulnerability())" class="rp-act" :class="selectedVulnerability().human_reviewed ? 'on' : ''" x-text="selectedVulnerability().human_reviewed ? '已阅' : '标记已阅'"></button>
+              <button @click="toggleVulnRedTeamExploitable(selectedVulnerability())" class="rp-act" :class="selectedVulnerability().red_team_exploitable ? 'on' : ''" x-text="selectedVulnerability().red_team_exploitable ? '红队可利用' : '标记红队可利用'"></button>
+              <button @click="deleteVuln(selectedVulnerability())" class="rp-act danger">删除</button>
+            </div>
+          </header>
 
-            <!-- 测试过程：骨架由代码/模板固定，内容来自上报的结构化复现 -->
-            <div class="sto-panel" style="padding:13px 15px;">
-              <p class="sto-label" style="margin-bottom:9px;">测试过程</p>
-              <template x-if="!selectedVulnerability().reproduction">
-                <p class="sto-muted" style="font-size:12px; font-style:italic;">未提供结构化复现</p>
-              </template>
-              <template x-if="selectedVulnerability().reproduction">
-                <div style="display:flex; flex-direction:column; gap:10px;">
-                  <div>
-                    <span class="sto-desc">入口点</span>
-                    <p class="sto-num" style="font-size:12px; margin-top:2px; word-break:break-all;" x-text="selectedVulnerability().reproduction.entry_point"></p>
-                  </div>
-                  <div>
-                    <span class="sto-desc">前置条件</span>
-                    <template x-if="!(selectedVulnerability().reproduction.prerequisites || []).length">
-                      <p class="sto-muted" style="font-size:12px; font-style:italic;">未填写</p>
-                    </template>
-                    <ul style="margin-top:3px; list-style:disc; margin-left:18px; display:flex; flex-direction:column; gap:2px;">
-                      <template x-for="(item, idx) in (selectedVulnerability().reproduction.prerequisites || [])" :key="`pre-${idx}`">
-                        <li class="sto-muted" style="font-size:12px; line-height:1.55;" x-text="item"></li>
-                      </template>
-                    </ul>
-                  </div>
+          <!-- 描述 -->
+          <section class="rp-block">
+            <h2 class="rp-h">描述</h2>
+            <p class="rp-p" x-text="formatMultiline(selectedVulnerability().description)"></p>
+          </section>
+
+          <!-- 测试过程 -->
+          <section class="rp-block">
+            <h2 class="rp-h">测试过程</h2>
+            <p class="rp-absent" x-show="!selectedVulnerability().reproduction">未提供结构化复现，本报告只有描述与影响。</p>
+            <div class="rp-proc" x-show="selectedVulnerability().reproduction">
+              <div class="rp-entry">
+                <div class="rp-entryrow">
+                  <span class="rp-k">入口点</span>
+                  <span class="rp-codes" x-text="selectedVulnerability().reproduction.entry_point"></span>
                 </div>
-              </template>
-            </div>
-
-            <!-- 步骤卡片：每步 说明 + 请求报文 + 响应 + 该步证据图 -->
-            <template x-if="selectedVulnerability().reproduction">
-              <div style="display:flex; flex-direction:column; gap:11px;">
+                <div x-show="(selectedVulnerability().reproduction.prerequisites || []).length">
+                  <div class="rp-k" style="margin-top:5px;">前置条件</div>
+                  <ul class="rp-req">
+                    <template x-for="(item, idx) in (selectedVulnerability().reproduction.prerequisites || [])" :key="`pre-${idx}`">
+                      <li x-text="item"></li>
+                    </template>
+                  </ul>
+                </div>
+              </div>
+              <ol class="rp-steps">
                 <template x-for="step in (selectedVulnerability().reproduction.steps || [])" :key="`step-${step.index}`">
-                  <div class="sto-tiercard" style="--pc:#2563eb; border-left-width:3px; padding:11px 13px;">
-                    <div class="flex flex-wrap items-center" style="gap:7px;">
-                      <span class="sto-badge" style="padding:1px 7px; font-size:9.5px;">步骤 <span x-text="step.index"></span></span>
-                      <span style="font-size:12.5px; font-weight:650; color:var(--sto-fg); word-break:break-word;" x-text="step.title"></span>
+                  <li class="rp-step">
+                    <div class="rp-stephead">
+                      <span class="rp-stepno" x-text="step.index"></span>
+                      <p class="rp-stepsum"><span x-text="step.title"></span><span x-show="step.proves" style="color:var(--rp-ink-2);" x-text="` ｜ ${step.proves}`"></span></p>
                     </div>
-                    <p class="sto-muted" style="margin-top:6px; font-size:11.5px; line-height:1.55;"><span style="font-weight:650; color:var(--sto-fg-2);">证明：</span><span x-text="step.proves"></span></p>
-                    <p class="sto-desc" style="margin-top:9px;">请求</p>
-                    <pre class="sto-usage" style="margin-top:3px; white-space:pre-wrap; word-break:break-all; font-size:11px;" x-text="step.request"></pre>
-                    <p class="sto-desc" style="margin-top:9px;">响应</p>
-                    <pre class="sto-usage" style="margin-top:3px; white-space:pre-wrap; word-break:break-all; font-size:11px;" x-text="step.response"></pre>
-                    <!-- 证据钩子：审核者未补图时留空槽，不占高度 -->
-                    <template x-if="vulnEvidenceForStep(step.index).length">
-                      <div style="margin-top:9px; display:flex; flex-wrap:wrap; gap:8px;">
-                        <template x-for="ev in vulnEvidenceForStep(step.index)" :key="`ev-${ev.artifact_id}`">
-                          <a :href="ev.url" target="_blank" rel="noopener" style="display:block;">
-                            <img :src="ev.url" :alt="ev.caption || '证据'" style="max-width:260px; max-height:180px; border:1px solid var(--sto-line); border-radius:7px;">
-                            <span class="sto-muted" style="display:block; margin-top:2px; font-size:10px;" x-text="ev.caption"></span>
-                          </a>
-                        </template>
-                      </div>
-                    </template>
-                  </div>
+                    <pre class="rp-packet" x-text="step.request"></pre>
+                    <div class="rp-resplabel">响应</div>
+                    <pre class="rp-packet" x-text="step.response"></pre>
+                    <div class="rp-slots" x-show="vulnEvidenceForStep(step.index).length">
+                      <template x-for="ev in vulnEvidenceForStep(step.index)" :key="`ev-${ev.artifact_id}`">
+                        <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
+                          <img :src="ev.url" :alt="ev.caption || '证据截图'">
+                          <span class="rp-shotcap" x-text="ev.caption || `步骤 ${step.index} 证据`"></span>
+                        </a>
+                      </template>
+                    </div>
+                    <div class="rp-slots">
+                      <label class="rp-slot" title="为这一步补截图">
+                        <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                        <span>本步截图</span>
+                        <input type="file" accept="image/*" style="display:none;"
+                               @change="uploadReportEvidence('vulnerability', selectedVulnerability().id, step.index, $event)">
+                      </label>
+                    </div>
+                  </li>
                 </template>
-              </div>
-            </template>
-
-            <div class="sto-panel" style="padding:13px 15px;">
-              <p class="sto-label" style="margin-bottom:7px;">影响</p>
-              <p style="font-size:13px; color:var(--sto-fg); white-space:pre-wrap; word-break:break-word; line-height:1.6;" x-text="formatMultiline(selectedVulnerability().impact)"></p>
+              </ol>
             </div>
+          </section>
 
-            <!-- 修复建议：Explore 不再必填，缺失则整节省略 -->
-            <template x-if="selectedVulnerability().remediation">
-              <div class="sto-panel" style="padding:13px 15px;">
-                <p class="sto-label" style="margin-bottom:7px;">修复建议</p>
-                <p style="font-size:13px; white-space:pre-wrap; word-break:break-word; line-height:1.6;" x-text="formatMultiline(selectedVulnerability().remediation)"></p>
-              </div>
-            </template>
+          <!-- 影响 -->
+          <section class="rp-block">
+            <h2 class="rp-h">影响</h2>
+            <p class="rp-p" x-text="formatMultiline(selectedVulnerability().impact)"></p>
+          </section>
 
-            <!-- 证据：审核者补充的概览图 -->
-            <div class="sto-panel" style="padding:13px 15px;">
-              <p class="sto-label" style="margin-bottom:7px;">证据</p>
-              <template x-if="!(selectedVulnerability().evidence || []).filter(ev => !ev.step_index).length">
-                <p class="sto-muted" style="font-size:12px; font-style:italic;">证据由审核者补充</p>
+          <!-- 修复建议：缺失则整节省略 -->
+          <section class="rp-block" x-show="selectedVulnerability().remediation">
+            <h2 class="rp-h">修复建议</h2>
+            <p class="rp-p" x-text="formatMultiline(selectedVulnerability().remediation)"></p>
+          </section>
+
+          <!-- 证据：概览图 -->
+          <section class="rp-block">
+            <h2 class="rp-h">证据</h2>
+            <div class="rp-slots" style="margin-top:0;">
+              <template x-for="ev in vulnOverviewEvidence()" :key="`oev-${ev.artifact_id}`">
+                <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
+                  <img :src="ev.url" :alt="ev.caption || '证据截图'">
+                  <span class="rp-shotcap" x-text="ev.caption || '概览证据'"></span>
+                </a>
               </template>
-              <div style="display:flex; flex-wrap:wrap; gap:8px;">
-                <template x-for="ev in (selectedVulnerability().evidence || []).filter(item => !item.step_index)" :key="`oev-${ev.artifact_id}`">
-                  <a :href="ev.url" target="_blank" rel="noopener" style="display:block;">
-                    <img :src="ev.url" :alt="ev.caption || '证据'" style="max-width:260px; max-height:180px; border:1px solid var(--sto-line); border-radius:7px;">
-                    <span class="sto-muted" style="display:block; margin-top:2px; font-size:10px;" x-text="ev.caption"></span>
-                  </a>
-                </template>
+              <label class="rp-slot" title="补一张概览截图">
+                <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                <span>概览截图</span>
+                <input type="file" accept="image/*" style="display:none;"
+                       @change="uploadReportEvidence('vulnerability', selectedVulnerability().id, 0, $event)">
+              </label>
+            </div>
+          </section>
+
+          <!-- 审核结论 -->
+          <section class="rp-block">
+            <h2 class="rp-h">审核结论</h2>
+            <p class="rp-p" x-text="formatMultiline(selectedVulnerability().status_reason || '未填写')"></p>
+          </section>
+
+          <!-- Reviewer 审核记录：页尾，收起 -->
+          <details>
+            <summary class="rp-h" style="cursor:pointer; margin:0;">
+              Reviewer 审核记录<span x-show="latestVulnerabilityReview()" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400;" x-text="vulnerabilityReviewStateLabel(latestVulnerabilityReview())"></span>
+            </summary>
+            <p x-show="vulnerabilityReviewsLoading" class="rp-absent" style="margin-top:8px;">正在加载…</p>
+            <p x-show="vulnerabilityReviewsError" class="sto-warnline" style="margin-top:8px;" x-text="vulnerabilityReviewsError"></p>
+            <p x-show="!vulnerabilityReviewsLoading && !vulnerabilityReviewsError && (vulnerabilityReviews || []).length === 0" class="rp-absent" style="margin-top:8px;">暂无审核记录。</p>
+            <div class="rp-runs" style="margin-top:9px;" x-show="(vulnerabilityReviews || []).length > 0">
+              <template x-for="run in (vulnerabilityReviews || [])" :key="run.id">
+                <div class="rp-run">
+                  <div class="rp-runhead">
+                    <code x-text="run.id"></code>
+                    <span x-text="vulnerabilityReviewStateLabel(run)"></span>
+                    <span x-text="vulnerabilityReviewTriggerLabel(run.trigger)"></span>
+                    <span x-show="run.decision" x-text="vulnerabilityReviewDecisionLabel(run.decision)"></span>
+                    <span style="margin-left:auto;" x-text="formatDate(run.concluded_at || run.updated_at || run.created_at)"></span>
+                  </div>
+                  <p x-show="run.worker" class="rp-runnote"><strong>审查者</strong> <span x-text="run.worker"></span></p>
+                  <p x-show="run.activity_summary && ['pending','claimed','running','concluding'].includes(run.status)" class="rp-runnote" x-text="run.activity_summary"></p>
+                  <p x-show="run.decision_reason" class="rp-runnote"><strong>原因</strong> <span x-text="run.decision_reason"></span></p>
+                  <p x-show="run.status === 'failed' && run.last_failure_kind" class="rp-runnote"><strong>失败</strong> <span x-text="run.last_failure_kind"></span></p>
+                  <button x-show="run.duplicate_of_vulnerability_id" @click="openReviewDuplicate(run)" class="rp-act" style="margin-top:3px;">重复于 <span x-text="run.duplicate_of_vulnerability_id"></span></button>
+                </div>
+              </template>
+            </div>
+          </details>
+
+          <!-- 旧格式内容 -->
+          <details x-show="selectedVulnerability().legacy">
+            <summary class="rp-h" style="cursor:pointer; margin:0;">旧格式内容（只读）</summary>
+            <div style="margin-top:9px; display:flex; flex-direction:column; gap:7px;">
+              <div x-show="(selectedVulnerability().legacy && selectedVulnerability().legacy.reproduction_steps || []).length">
+                <div class="rp-k">旧复现步骤</div>
+                <ul class="rp-req"><template x-for="(step, idx) in (selectedVulnerability().legacy ? selectedVulnerability().legacy.reproduction_steps : [])" :key="`ls-${idx}`"><li x-text="step"></li></template></ul>
+              </div>
+              <div x-show="(selectedVulnerability().legacy && selectedVulnerability().legacy.evidence || []).length">
+                <div class="rp-k">旧文字证据</div>
+                <ul class="rp-req"><template x-for="(ev, idx) in (selectedVulnerability().legacy ? selectedVulnerability().legacy.evidence : [])" :key="`le-${idx}`"><li x-text="ev"></li></template></ul>
+              </div>
+              <div x-show="selectedVulnerability().legacy && selectedVulnerability().legacy.curl_command">
+                <div class="rp-k">旧请求示例</div>
+                <pre class="rp-packet" x-text="selectedVulnerability().legacy ? selectedVulnerability().legacy.curl_command : ''"></pre>
               </div>
             </div>
-
-            <template x-if="selectedVulnerability().legacy">
-              <div class="sto-tiercard" style="--pc:#b45309; border-left-width:3px;">
-                <p class="sto-label" style="margin-bottom:8px;">旧格式内容（只读）</p>
-                <div x-show="(selectedVulnerability().legacy.reproduction_steps || []).length">
-                  <p class="sto-desc" style="margin-bottom:4px;">旧复现步骤</p>
-                  <ul style="list-style:disc; margin-left:18px; display:flex; flex-direction:column; gap:3px;"><template x-for="(step, idx) in selectedVulnerability().legacy.reproduction_steps" :key="`legacy-step-${idx}`"><li class="sto-muted" style="font-size:11.5px;" x-text="step"></li></template></ul>
-                </div>
-                <div x-show="(selectedVulnerability().legacy.evidence || []).length" style="margin-top:9px;">
-                  <p class="sto-desc" style="margin-bottom:4px;">旧文字证据</p>
-                  <ul style="list-style:disc; margin-left:18px; display:flex; flex-direction:column; gap:3px;"><template x-for="(ev, idx) in selectedVulnerability().legacy.evidence" :key="`legacy-ev-${idx}`"><li class="sto-muted" style="font-size:11.5px;" x-text="ev"></li></template></ul>
-                </div>
-                <div x-show="selectedVulnerability().legacy.curl_command" style="margin-top:9px;"><p class="sto-desc" style="margin-bottom:4px;">旧请求示例</p><pre class="sto-usage" x-text="selectedVulnerability().legacy.curl_command"></pre></div>
-              </div>
-            </template>
-          </div>
+          </details>
         </article>
       </template>
     </section>
@@ -350,130 +336,135 @@
         <div class="sto-muted" style="min-height:420px; display:flex; align-items:center; justify-content:center;">请选择左侧成果查看详情</div>
       </template>
       <template x-if="selectedRtResult()">
-        <article>
-          <div class="sto-vhero" :class="rtTypeTone(selectedRtResult().result_type)" style="padding:16px 20px;">
-            <div class="flex flex-wrap items-center" style="gap:9px;">
-              <span class="sevsq" x-text="rtTypeMark(selectedRtResult().result_type)"></span>
-              <span class="sto-num" style="font-size:11px; font-weight:700; color:var(--sto-fg-2);" x-text="selectedRtResult().id"></span>
-              <span class="sto-status" style="font-size:11px;" :class="rtStatusClass(selectedRtResult().status)"><i></i><span x-text="rtStatusLabel(selectedRtResult().status)"></span></span>
-              <span class="sto-num" style="font-size:11px; font-weight:700; color:var(--sto-fg);" x-text="rtPointsLabel(selectedRtResult())"></span>
-              <span class="sto-muted" style="font-size:10.5px;" x-text="rtTaskTitle(selectedRtResult().task_id)"></span>
-            </div>
-            <h3 style="margin-top:9px; font-size:17px; font-weight:700; letter-spacing:-0.01em; color:var(--sto-fg); word-break:break-word;" x-text="selectedRtResult().title"></h3>
-            <div class="flex flex-wrap items-center" style="gap:7px; margin-top:9px;">
-              <span class="sto-sevbadge" x-text="rtTypeLabel(selectedRtResult().result_type)"></span>
-              <span x-show="selectedRtResult().target_asset" class="sto-badge neutral" :title="`对象：${selectedRtResult().target_asset}`"><span class="sto-muted">对象</span>&nbsp;<span class="sto-num" x-text="selectedRtResult().target_asset"></span></span>
-              <span x-show="selectedRtResult().principal" class="sto-badge neutral" :title="`身份：${selectedRtResult().principal}`"><span class="sto-muted">身份</span>&nbsp;<span class="sto-num" x-text="selectedRtResult().tenant ? `${selectedRtResult().principal} @ ${selectedRtResult().tenant}` : selectedRtResult().principal"></span></span>
-            </div>
-          </div>
-          <div style="padding:16px 20px; display:flex; flex-direction:column; gap:13px;">
-            <div class="sto-panel inset" style="padding:13px 15px;">
-              <div class="flex items-center justify-between" style="gap:10px;">
-                <p class="sto-label">Reviewer 审核</p>
-                <span class="sto-badge" :class="rtStatusClass(selectedRtResult().status)" x-text="rtStatusLabel(selectedRtResult().status)"></span>
-              </div>
-              <p class="sto-muted" style="margin-top:4px;">证据优先审核；必要时在 Scope 内做最小复测。</p>
-              <div x-show="!selectedRtResult().reviewed_by && !selectedRtResult().review_reason" class="sto-empty" style="margin-top:10px; padding:14px 0;">暂无 Reviewer 审核记录。成果上报后会自动排队。</div>
-              <article x-show="selectedRtResult().reviewed_by || selectedRtResult().review_reason" class="sto-group" style="margin-top:10px; padding:10px 12px;">
-                <div class="flex flex-wrap items-center" style="gap:7px;">
-                  <span class="sto-num" style="font-size:10px; font-weight:650; color:var(--sto-fg-2);" x-text="selectedRtResult().id"></span>
-                  <span class="sto-badge" style="padding:1px 7px; font-size:9px;" :class="rtStatusClass(selectedRtResult().status)" x-text="rtStatusLabel(selectedRtResult().status)"></span>
-                  <span x-show="selectedRtResult().status === 'verified'" class="sto-badge" style="padding:1px 7px; font-size:9px; color:var(--sto-accent); border-color:color-mix(in srgb, var(--sto-accent) 35%, transparent);" x-text="`核定 ${selectedRtResult().points_awarded || 0} 分`"></span>
-                  <span class="sto-muted sto-num" style="margin-left:auto; font-size:9.5px;" x-text="formatDate(selectedRtResult().updated_at || selectedRtResult().created_at)"></span>
-                </div>
-                <p x-show="selectedRtResult().reviewed_by" class="sto-muted" style="margin-top:5px; font-size:10.5px;"><span style="font-weight:650;">审查者：</span><span x-text="selectedRtResult().reviewed_by"></span></p>
-                <p x-show="selectedRtResult().review_reason" class="sto-muted" style="margin-top:7px; white-space:pre-wrap; word-break:break-word; line-height:1.55;"><span style="font-weight:650; color:var(--sto-fg-2);">审核原因：</span><span x-text="formatMultiline(selectedRtResult().review_reason)"></span></p>
-              </article>
-            </div>
-            <div class="sto-panel" style="padding:13px 15px;">
-              <p class="sto-label" style="margin-bottom:7px;">描述</p>
-              <p style="font-size:13px; color:var(--sto-fg); white-space:pre-wrap; word-break:break-word; line-height:1.6;" x-text="formatMultiline(selectedRtResult().description)"></p>
-            </div>
+        <article class="rp-doc">
 
-            <!-- 利用前提 + 攻击链：本环增量由上报方填，全局路径由图谱装配 -->
-            <div class="sto-panel" style="padding:13px 15px;">
-              <p class="sto-label" style="margin-bottom:9px;">利用前提</p>
-              <template x-if="!selectedRtResult().reproduction">
-                <p class="sto-muted" style="font-size:12px; font-style:italic;">未填写</p>
-              </template>
-              <template x-if="selectedRtResult().reproduction">
-                <ul style="list-style:disc; margin-left:18px; display:flex; flex-direction:column; gap:3px;">
-                  <template x-if="selectedRtResult().reproduction.chain_input">
-                    <li class="sto-muted" style="font-size:12px; line-height:1.55;" x-text="selectedRtResult().reproduction.chain_input"></li>
-                  </template>
-                  <template x-for="(item, idx) in (selectedRtResult().reproduction.prerequisites || [])" :key="`rt-pre-${idx}`">
-                    <li class="sto-muted" style="font-size:12px; line-height:1.55;" x-text="item"></li>
-                  </template>
-                </ul>
-              </template>
-              <!-- 攻击链：仅红队，且不含分数（分数只进审核结论与计分视图） -->
-              <template x-if="(selectedRtResult().attack_path || []).length">
-                <div style="margin-top:12px;">
-                  <p class="sto-desc" style="margin-bottom:5px;">攻击链</p>
-                  <ol style="list-style:none; display:flex; flex-direction:column; gap:5px;">
-                    <template x-for="(link, idx) in (selectedRtResult().attack_path || [])" :key="`rt-link-${link.intent_id}`">
-                      <li style="display:flex; gap:7px; align-items:baseline;">
-                        <span class="sto-num" style="font-size:10.5px; color:var(--sto-fg-3); flex-shrink:0;" x-text="`${idx + 1}.`"></span>
-                        <span style="font-size:12px; line-height:1.5; word-break:break-word;"
-                              :style="link.is_current ? 'font-weight:650; color:var(--sto-fg);' : 'color:var(--sto-fg-2);'">
-                          <span x-text="link.title"></span>
-                          <span x-show="link.is_current" class="sto-badge" style="padding:0 6px; font-size:9px; margin-left:5px;">本环</span>
-                          <span x-show="link.gain" class="sto-muted" style="display:block; font-size:11px; margin-top:1px;" x-text="link.gain"></span>
-                        </span>
-                      </li>
+          <!-- 报头 -->
+          <header class="rp-dochead">
+            <div class="rp-titleline">
+              <h1 class="rp-doctitle" x-text="selectedRtResult().title"></h1>
+              <div class="rp-stamps">
+                <span class="sto-sevbadge" x-text="rtTypeLabel(selectedRtResult().result_type)"></span>
+                <span class="sto-badge" :class="lineageResultTone(selectedRtResult().status)" x-text="rtResultStatusLabel(selectedRtResult().status)"></span>
+              </div>
+            </div>
+            <div class="rp-meta">
+              <code x-text="selectedRtResult().id"></code>
+              <span x-show="selectedRtResult().target_asset" x-text="selectedRtResult().target_asset"></span>
+              <span x-text="selectedRtResult().chain_id || '—'"></span>
+              <span x-text="`上报 ${selectedRtResult().reported_by || '—'}`"></span>
+            </div>
+          </header>
+
+          <!-- 描述 -->
+          <section class="rp-block">
+            <h2 class="rp-h">描述</h2>
+            <p class="rp-p" x-text="formatMultiline(selectedRtResult().description)"></p>
+          </section>
+
+          <!-- 利用前提 + 攻击链 -->
+          <section class="rp-block">
+            <h2 class="rp-h">利用前提</h2>
+            <p class="rp-absent" x-show="!selectedRtResult().reproduction">未填写</p>
+            <div class="rp-proc" x-show="selectedRtResult().reproduction">
+              <div class="rp-entry">
+                <div class="rp-entryrow" x-show="selectedRtResult().reproduction && selectedRtResult().reproduction.chain_input">
+                  <span class="rp-k">起始身份</span>
+                  <span x-text="selectedRtResult().reproduction ? selectedRtResult().reproduction.chain_input : ''"></span>
+                </div>
+                <div x-show="(selectedRtResult().reproduction && selectedRtResult().reproduction.prerequisites || []).length">
+                  <div class="rp-k" style="margin-top:5px;">前置条件</div>
+                  <ul class="rp-req">
+                    <template x-for="(item, idx) in (selectedRtResult().reproduction ? selectedRtResult().reproduction.prerequisites || [] : [])" :key="`rtpre-${idx}`">
+                      <li x-text="item"></li>
                     </template>
-                  </ol>
+                  </ul>
                 </div>
-              </template>
+              </div>
             </div>
+            <!-- 攻击链：由图谱装配，只讲「这一环做了什么、拿到了什么」，不含分数 -->
+            <div x-show="(selectedRtResult().attack_path || []).length" style="margin-top:13px;">
+              <div class="rp-k">攻击链</div>
+              <ol class="rp-chain">
+                <template x-for="(link, idx) in (selectedRtResult().attack_path || [])" :key="`rtlink-${link.intent_id}`">
+                  <li>
+                    <span class="rp-chainno" x-text="`${idx + 1}.`"></span>
+                    <span class="rp-chaintext" :class="link.is_current ? 'cur' : ''">
+                      <span x-text="link.title"></span>
+                      <span x-show="link.gain" class="rp-chaingain" x-text="link.gain"></span>
+                    </span>
+                  </li>
+                </template>
+              </ol>
+            </div>
+          </section>
 
-            <!-- 测试过程：入口点 + 有序步骤（每步请求/响应/该步证据图） -->
-            <div class="sto-panel" style="padding:13px 15px;">
-              <p class="sto-label" style="margin-bottom:9px;">测试过程</p>
-              <template x-if="!selectedRtResult().reproduction">
-                <p class="sto-muted" style="font-size:12px; font-style:italic;">未提供结构化复现</p>
-              </template>
-              <template x-if="selectedRtResult().reproduction">
-                <div>
-                  <span class="sto-desc">入口点</span>
-                  <p class="sto-num" style="font-size:12px; margin-top:2px; word-break:break-all;" x-text="selectedRtResult().reproduction.entry_point"></p>
+          <!-- 测试过程 -->
+          <section class="rp-block">
+            <h2 class="rp-h">测试过程</h2>
+            <p class="rp-absent" x-show="!selectedRtResult().reproduction">未提供结构化复现。</p>
+            <div class="rp-proc" x-show="selectedRtResult().reproduction">
+              <div class="rp-entry">
+                <div class="rp-entryrow">
+                  <span class="rp-k">入口点</span>
+                  <span class="rp-codes" x-text="selectedRtResult().reproduction ? selectedRtResult().reproduction.entry_point : ''"></span>
                 </div>
-              </template>
-            </div>
-
-            <template x-if="selectedRtResult().reproduction">
-              <div style="display:flex; flex-direction:column; gap:11px;">
-                <template x-for="step in (selectedRtResult().reproduction.steps || [])" :key="`rt-step-${step.index}`">
-                  <div class="sto-tiercard" style="--pc:#2563eb; border-left-width:3px; padding:11px 13px;">
-                    <div class="flex flex-wrap items-center" style="gap:7px;">
-                      <span class="sto-badge" style="padding:1px 7px; font-size:9.5px;">步骤 <span x-text="step.index"></span></span>
-                      <span style="font-size:12.5px; font-weight:650; color:var(--sto-fg); word-break:break-word;" x-text="step.title"></span>
+              </div>
+              <ol class="rp-steps">
+                <template x-for="step in (selectedRtResult().reproduction ? selectedRtResult().reproduction.steps || [] : [])" :key="`rtstep-${step.index}`">
+                  <li class="rp-step">
+                    <div class="rp-stephead">
+                      <span class="rp-stepno" x-text="step.index"></span>
+                      <p class="rp-stepsum"><span x-text="step.title"></span><span x-show="step.proves" style="color:var(--rp-ink-2);" x-text="` ｜ ${step.proves}`"></span></p>
                     </div>
-                    <p class="sto-muted" style="margin-top:6px; font-size:11.5px; line-height:1.55;"><span style="font-weight:650; color:var(--sto-fg-2);">证明：</span><span x-text="step.proves"></span></p>
-                    <p class="sto-desc" style="margin-top:9px;">请求</p>
-                    <pre class="sto-usage" style="margin-top:3px; white-space:pre-wrap; word-break:break-all; font-size:11px;" x-text="step.request"></pre>
-                    <p class="sto-desc" style="margin-top:9px;">响应</p>
-                    <pre class="sto-usage" style="margin-top:3px; white-space:pre-wrap; word-break:break-all; font-size:11px;" x-text="step.response"></pre>
-                  </div>
+                    <pre class="rp-packet" x-text="step.request"></pre>
+                    <div class="rp-resplabel">响应</div>
+                    <pre class="rp-packet" x-text="step.response"></pre>
+                    <div class="rp-slots" x-show="rtEvidenceForStep(step.index).length">
+                      <template x-for="ev in rtEvidenceForStep(step.index)" :key="`rtev-${ev.artifact_id}`">
+                        <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
+                          <img :src="ev.url" :alt="ev.caption || '证据截图'">
+                          <span class="rp-shotcap" x-text="ev.caption || `步骤 ${step.index} 证据`"></span>
+                        </a>
+                      </template>
+                    </div>
+                    <div class="rp-slots">
+                      <label class="rp-slot" title="为这一步补截图">
+                        <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                        <span>本步截图</span>
+                        <input type="file" accept="image/*" style="display:none;"
+                               @change="uploadReportEvidence('redteam_result', selectedRtResult().id, step.index, $event)">
+                      </label>
+                    </div>
+                  </li>
                 </template>
-              </div>
-            </template>
-
-            <!-- 证据：审核者补充 -->
-            <div class="sto-panel" style="padding:13px 15px;">
-              <p class="sto-label" style="margin-bottom:7px;">证据</p>
-              <template x-if="!(selectedRtResult().evidence || []).length">
-                <p class="sto-muted" style="font-size:12px; font-style:italic;">证据由审核者补充</p>
-              </template>
-              <div style="display:flex; flex-wrap:wrap; gap:8px;">
-                <template x-for="ev in (selectedRtResult().evidence || [])" :key="`rt-ev-${ev.artifact_id}`">
-                  <a :href="ev.url" target="_blank" rel="noopener" style="display:block;">
-                    <img :src="ev.url" :alt="ev.caption || '证据'" style="max-width:260px; max-height:180px; border:1px solid var(--sto-line); border-radius:7px;">
-                  </a>
-                </template>
-              </div>
+              </ol>
             </div>
-          </div>
+          </section>
+
+          <!-- 证据：概览图 -->
+          <section class="rp-block">
+            <h2 class="rp-h">证据</h2>
+            <div class="rp-slots" style="margin-top:0;">
+              <template x-for="ev in rtOverviewEvidence()" :key="`rtoev-${ev.artifact_id}`">
+                <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
+                  <img :src="ev.url" :alt="ev.caption || '证据截图'">
+                  <span class="rp-shotcap" x-text="ev.caption || '概览证据'"></span>
+                </a>
+              </template>
+              <label class="rp-slot" title="补一张概览截图">
+                <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                <span>概览截图</span>
+                <input type="file" accept="image/*" style="display:none;"
+                       @change="uploadReportEvidence('redteam_result', selectedRtResult().id, 0, $event)">
+              </label>
+            </div>
+          </section>
+
+          <!-- 审核结论 -->
+          <section class="rp-block">
+            <h2 class="rp-h">审核结论</h2>
+            <p class="rp-p" x-text="formatMultiline(selectedRtResult().review_reason || '未填写')"></p>
+          </section>
         </article>
       </template>
     </section>

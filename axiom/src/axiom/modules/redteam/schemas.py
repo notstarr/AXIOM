@@ -239,6 +239,8 @@ class RedTeamResult(BaseModel):
     # 攻击链：由图谱在读取时装配（见 axiom.modules.reports.path），不是存储字段。
     # 只有红队任务有；内容是「这一环做了什么、拿到了什么」，不含分数。
     attack_path: list[PathLink] = Field(default_factory=list)
+    # 审核者事后补充的证据图（report_evidence），按 step_index 挂到报告的对应步骤。
+    evidence: list[dict] = Field(default_factory=list)
     status: ResultStatus
     reported_by: str
     points_declared: int = 0

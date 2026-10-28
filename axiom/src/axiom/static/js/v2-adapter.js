@@ -368,6 +368,8 @@
       affected_scope: item.affected_target || '',
       finding_artifact: item.finding_artifact ? mapArtifact(item.finding_artifact) : null,
       evidence_artifacts: (item.evidence_artifacts || []).map(mapArtifact),
+      // 报告骨架按 step_index 把证据图挂到「步骤 N」之后；后端随详情一起返回。
+      evidence: Array.isArray(item.evidence) ? item.evidence : [],
     };
   }
 
@@ -1656,6 +1658,15 @@
     },
     rtTypeMark(type) {
       return ({ permission: '权', data: '数', credential: '证', pivot: '横' })[type] || '果';
+    },
+    rtTypeLabel(type) {
+      return ({ permission: '权限跃迁', data: '数据获取', credential: '凭证获取', pivot: '横向控制' })[type] || (type || '成果');
+    },
+    rtResultStatusLabel(status) {
+      return ({
+        reported: '已上报', reviewing: '审核中', verified: '已验证',
+        rejected: '已驳回', duplicate: '重复', 'needs-human': '需人工',
+      })[status] || (status || '—');
     },
     rtPointsLabel(item) {
       if (!item) return '';
