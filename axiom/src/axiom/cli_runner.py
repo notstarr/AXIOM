@@ -35,6 +35,15 @@ def register_runner_command(main: click.Group) -> None:
     @click.option("--interval", default=None, type=float, help="Override runtime settings.")
     @click.option("--max-parallel", default=None, type=int, help="Override runtime settings.")
     @click.option("--lease-timeout", default=None, type=int, help="Override runtime settings.")
+    @click.option(
+        "--worker-name",
+        "worker_names",
+        multiple=True,
+        help=(
+            "Only take claims assigned to this worker; repeat for several. "
+            "Use it when this Runner sits in a network zone the others cannot reach."
+        ),
+    )
     @click.option("--once", is_flag=True, help="Run one reconciliation and wait for its claims.")
     def runner_command(
         api_url: str,
@@ -42,6 +51,7 @@ def register_runner_command(main: click.Group) -> None:
         interval: float | None,
         max_parallel: int | None,
         lease_timeout: int | None,
+        worker_names: tuple[str, ...],
         once: bool,
     ) -> None:
         """Run the API-only AXIOM worker runner."""
@@ -53,6 +63,7 @@ def register_runner_command(main: click.Group) -> None:
             control,
             max_parallel=max_parallel,
             lease_timeout_seconds=lease_timeout,
+            worker_names=worker_names,
         )
         stop_event = threading.Event()
         try:

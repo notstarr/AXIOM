@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 
 from pydantic import ValidationError
@@ -47,6 +47,7 @@ class AxiomRunner:
         max_parallel: int | None = None,
         heartbeat_interval_seconds: float | None = None,
         lease_timeout_seconds: int | None = None,
+        worker_names: Iterable[str] | None = None,
     ):
         if max_parallel is not None and max_parallel <= 0:
             raise ValueError("max_parallel must be positive")
@@ -63,6 +64,11 @@ class AxiomRunner:
         self._heartbeat_override = heartbeat_interval_seconds
         self._lease_timeout_override = lease_timeout_seconds
         self.max_parallel = max_parallel or 10
+        # Runner affinity.  ``None`` keeps the historic behaviour: take anything
+        # the reconciler offers.  A set restricts this process to the claims that
+        # name one of those workers, which is what lets one Runner serve a
+        # network zone the other cannot reach.
+        self.worker_names = frozenset(worker_names) if worker_names else None
         self.heartbeat_interval_seconds = heartbeat
         self.lease_timeout_seconds = lease_timeout_seconds or minimum_lease_timeout
         self.runner_interval_seconds = 3.0
@@ -129,7 +135,11 @@ class AxiomRunner:
             # is most likely to go unnoticed.
             self._observe_stalls(snapshot, None)
             return DispatchReport()
-        report = self.dispatcher.tick(max_claims=available_slots, snapshot=snapshot)
+        report = self.dispatcher.tick(
+            max_claims=available_slots,
+            snapshot=snapshot,
+            allowed_workers=self.worker_names,
+        )
         for work in report.claims:
             cancellation = threading.Event()
             future = self._pool.submit(self._execute_claim, work, cancellation)

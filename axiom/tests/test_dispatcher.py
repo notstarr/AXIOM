@@ -790,3 +790,77 @@ def test_bounded_closeout_reports_progress_per_attempt():
     assert "第 1/3 次" in activities[0]
     assert "第 3/3 次" in activities[2]
     assert "上一轮校验未过" in activities[1]
+
+
+def test_tick_skips_claims_for_workers_this_runner_does_not_own():
+    """Affinity is what lets a Runner in one network zone ignore the other's work."""
+
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                intents=[
+                    intent("t_001", 1, pool=["inner"]),
+                    intent("t_001", 2, pool=["outer"]),
+                ],
+            )
+        ],
+        workers=[worker("inner", max_running=2), worker("outer", max_running=2)],
+    )
+    control_plane = FakeControlPlane(snapshot)
+
+    report = Dispatcher(control_plane, reconciler=Reconciler(now=lambda: NOW)).tick(
+        allowed_workers={"inner"}
+    )
+
+    assert report.claimed == 1
+    assert control_plane.claims == [("t_001", "i001", "inner")]
+    # The other worker's item stays pending for the Runner that owns it.
+    pending = [item.id for item in snapshot.tasks[0].intents if item.status == "pending"]
+    assert pending == ["i002"]
+
+
+def test_tick_without_affinity_still_takes_everything():
+    """``allowed_workers=None`` must keep the historic single-Runner behaviour."""
+
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                intents=[intent("t_001", 1, pool=["inner"]), intent("t_001", 2, pool=["outer"])],
+            )
+        ],
+        workers=[worker("inner", max_running=2), worker("outer", max_running=2)],
+    )
+    control_plane = FakeControlPlane(snapshot)
+
+    report = Dispatcher(control_plane, reconciler=Reconciler(now=lambda: NOW)).tick()
+
+    assert report.claimed == 2
+    assert {name for _, _, name in control_plane.claims} == {"inner", "outer"}
+
+
+def test_affinity_that_matches_nothing_claims_nothing():
+    """A misconfigured Runner must idle, not steal the other zone's work."""
+
+    snapshot = DispatcherSnapshot(
+        tasks=[
+            TaskSnapshot(
+                id="t_001",
+                status="running",
+                intents=[intent("t_001", 1, pool=["inner"])],
+            )
+        ],
+        workers=[worker("inner", max_running=2)],
+    )
+    control_plane = FakeControlPlane(snapshot)
+
+    report = Dispatcher(control_plane, reconciler=Reconciler(now=lambda: NOW)).tick(
+        allowed_workers={"typo-worker"}
+    )
+
+    assert report.claimed == 0
+    assert control_plane.claims == []
+    assert snapshot.tasks[0].intents[0].status == "pending"

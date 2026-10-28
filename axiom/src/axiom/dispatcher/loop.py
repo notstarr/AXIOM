@@ -22,9 +22,22 @@ class Dispatcher:
         *,
         max_claims: int | None = None,
         snapshot: DispatcherSnapshot | None = None,
+        allowed_workers: set[str] | None = None,
     ) -> DispatchReport:
         snapshot = snapshot or self.control_plane.snapshot()
         actions = self.reconciler.calculate(snapshot)
+        # Runner affinity: a claim names the worker that should execute it, but
+        # nothing in the protocol ties that name to *this* process.  Two Runners
+        # that sit in different network zones (one on the internet, one inside a
+        # customer network) would otherwise race for the same claim and the wrong
+        # side would win roughly half the time.  Filtering by name here is what
+        # makes "this Runner only takes its own workers" true.
+        if allowed_workers is not None:
+            actions = [
+                action
+                for action in actions
+                if action.claim.worker_name in allowed_workers
+            ]
         if max_claims is not None:
             if max_claims < 0:
                 raise ValueError("max_claims must not be negative")
