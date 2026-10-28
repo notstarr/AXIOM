@@ -74,7 +74,11 @@
             <div class="mt-2 flex items-center justify-between text-[9px] text-slate-400"><span x-text="`${batch.members.length} 项`"></span><span x-text="formatTime(batch.created_at)"></span></div>
           </button>
         </template>
-        <p x-show="!archiveLoading && archives.length === 0" class="px-5 py-12 text-center text-xs text-slate-400">当前没有归档批次。</p>
+        <div x-show="!archiveLoading && archives.length === 0" class="sto-empty">
+          <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M3 7h18M5 7v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7M9 11h6"/></svg>
+          <p class="sto-empty-title">当前没有归档批次</p>
+          <p class="sto-empty-hint">任务归档后会在这里按批次列出，可回看当时的完整过程。</p>
+        </div>
         <p x-show="archiveLoading" class="px-5 py-12 text-center text-xs text-slate-400">正在加载归档记录…</p>
       </div>
     </aside>
@@ -119,7 +123,11 @@
           </template>
         </div>
       </template>
-      <p x-show="!selectedArchive && !archiveLoading" class="py-20 text-center text-sm text-slate-400">请选择一个归档批次。</p>
+      <div x-show="!selectedArchive && !archiveLoading" class="sto-empty" style="height:100%;">
+          <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M3 7h18M5 7v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7M9 11h6"/></svg>
+          <p class="sto-empty-title">选择一个归档批次</p>
+          <p class="sto-empty-hint">左侧选择批次后，这里显示该批次的节点、结论与产物。</p>
+        </div>
     </main>
   </div>
 </div>

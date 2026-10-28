@@ -31,7 +31,11 @@
         <button @click="rr.wsCreateOpen = true" class="sto-btn" style="padding:6px 10px; font-size:11px;">新建连接</button>
       </div>
       <template x-if="rr.wsList.length === 0">
-        <div class="sto-muted" style="text-align:center; padding:30px 0; font-size:12px;">暂无 WebShell 连接</div>
+        <div class="sto-empty">
+            <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M4 17l6-5-6-5M12 19h8"/></svg>
+            <p class="sto-empty-title">暂无 WebShell 连接</p>
+            <p class="sto-empty-hint">红队任务拿到 Shell 后会自动登记在这里。</p>
+          </div>
       </template>
       <template x-for="ws in rr.wsList" :key="rrWsKey(ws)">
         <button type="button" @click="rrSelectWs(ws)" class="sto-navitem" style="width:100%; text-align:left;"
@@ -50,7 +54,11 @@
 
     <section class="sto-panel overflow-y-auto" style="padding:0;">
       <template x-if="!rrWsCurrent()">
-        <div class="sto-muted" style="min-height:300px; display:flex; align-items:center; justify-content:center; font-size:12px;">选择左侧连接</div>
+        <div class="sto-empty" style="min-height:300px;">
+            <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M4 17l6-5-6-5M12 19h8"/></svg>
+            <p class="sto-empty-title">选择左侧连接</p>
+            <p class="sto-empty-hint">选中后可在这里执行命令、上传文件。</p>
+          </div>
       </template>
       <template x-if="rrWsCurrent()">
         <div class="flex flex-col" style="min-height:100%;">

@@ -43,17 +43,17 @@
         </div>
         <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px;">
           <button @click="selectDispatchPreset('snail')" class="sto-pcard" style="padding:12px; position:relative;" :class="workerPresetName === 'snail' ? 'active' : ''"><span x-show="workerPresetPending === 'snail'" style="position:absolute; top:8px; right:8px; font-size:9px; font-weight:650; padding:2px 7px; border-radius:999px; background:var(--sto-warn); color:#fff;">待保存</span>
-            <div style="font-size:13px; font-weight:650;">🐌 蜗牛档</div>
+            <div style="font-size:13px; font-weight:650;">蜗牛档</div>
             <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">Reason ≥5min · 90s 退避 · 120s 冷却</div>
             <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">严格限流 key 保命</div>
           </button>
           <button @click="selectDispatchPreset('balanced')" class="sto-pcard" style="padding:12px; position:relative;" :class="workerPresetName === 'balanced' ? 'active' : ''"><span x-show="workerPresetPending === 'balanced'" style="position:absolute; top:8px; right:8px; font-size:9px; font-weight:650; padding:2px 7px; border-radius:999px; background:var(--sto-warn); color:#fff;">待保存</span>
-            <div style="font-size:13px; font-weight:650;">⚖️ 均衡档</div>
+            <div style="font-size:13px; font-weight:650;">均衡档</div>
             <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">Reason ≥150s · 60s 退避 · 60s 冷却</div>
             <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">中转 key 推荐</div>
           </button>
           <button @click="selectDispatchPreset('turbo')" class="sto-pcard" style="padding:12px; position:relative;" :class="workerPresetName === 'turbo' ? 'active' : ''"><span x-show="workerPresetPending === 'turbo'" style="position:absolute; top:8px; right:8px; font-size:9px; font-weight:650; padding:2px 7px; border-radius:999px; background:var(--sto-warn); color:#fff;">待保存</span>
-            <div style="font-size:13px; font-weight:650;">🚀 高效档</div>
+            <div style="font-size:13px; font-weight:650;">高效档</div>
             <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">Reason ≥300s · 30s 退避 · 30s 冷却</div>
             <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">官方 / 高额度 key</div>
           </button>
@@ -63,7 +63,7 @@
         <div style="font-size:12px; font-weight:650; margin-top:14px; margin-bottom:6px;">Worker 速度（每阶段时间预算）</div>
         <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px;">
           <button @click="selectSpeedPreset('slow-fast')" class="sto-pcard" style="padding:12px; position:relative;" :class="workerSpeedName === 'slow-fast' ? 'active' : ''"><span x-show="workerSpeedPending === 'slow-fast'" style="position:absolute; top:8px; right:8px; font-size:9px; font-weight:650; padding:2px 7px; border-radius:999px; background:var(--sto-warn); color:#fff;">待保存</span>
-            <div style="font-size:13px; font-weight:650;">⚡ 快速</div>
+            <div style="font-size:13px; font-weight:650;">快速</div>
             <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">Explore 12min · 阶段执行 8min</div>
             <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">响应快的供应商，快速周转</div>
           </button>
@@ -73,7 +73,7 @@
             <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">现行默认预算</div>
           </button>
           <button @click="selectSpeedPreset('slow-llm')" class="sto-pcard" style="padding:12px; position:relative;" :class="workerSpeedName === 'slow-llm' ? 'active' : ''"><span x-show="workerSpeedPending === 'slow-llm'" style="position:absolute; top:8px; right:8px; font-size:9px; font-weight:650; padding:2px 7px; border-radius:999px; background:var(--sto-warn); color:#fff;">待保存</span>
-            <div style="font-size:13px; font-weight:650;">🐢 慢速</div>
+            <div style="font-size:13px; font-weight:650;">慢速</div>
             <div style="font-size:10.5px; color:var(--sto-fg-3); margin-top:4px;">Explore 30min · 阶段执行 20min</div>
             <div style="font-size:10px; color:var(--sto-fg-3); margin-top:2px;">响应慢的供应商；消化率约减半</div>
           </button>

@@ -80,10 +80,15 @@
       </template>
     </aside>
     <!-- Editor -->
+    <!-- 未选中时的空状态：必须放在 section 之外。原先那个 x-if 挂在
+         x-show="skillEditor.name || skillEditor.isNew" 的 section 里面，
+         条件互斥，永远不可能渲染——所以右侧一直是纯空白。 -->
+    <div class="sto-empty" style="height:100%; grid-column:2 / -1;" x-show="!skillEditor.name && !skillEditor.isNew">
+      <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M9 12h6m-3-3v6m-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v14l-4-2-4 2-4-2-4 2Z"/></svg>
+      <p class="sto-empty-title">选择一个 Skill 开始编辑</p>
+      <p class="sto-empty-hint">左侧列出全部 Skill 及其作用域，点开即可改说明与脚本。</p>
+    </div>
     <section class="overflow-hidden flex flex-col" x-show="skillEditor.name || skillEditor.isNew">
-      <template x-if="!skillEditor.name && !skillEditor.isNew">
-        <div class="flex items-center justify-center h-full sto-muted text-sm">← 选择一个 Skill 开始编辑</div>
-      </template>
       <template x-if="skillEditor.name || skillEditor.isNew">
         <div class="flex flex-col h-full">
           <!-- Skill meta bar -->

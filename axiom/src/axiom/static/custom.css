@@ -144,7 +144,7 @@
   .token-fill-output, .token-segment-output { background: #6b5b8e; }
   .token-fg-input { color: #2f5d7c; }
   .token-fg-cache { color: #4a7c59; }
-  .token-fg-cache-write { color: #d88706; }
+  .token-fg-cache-write { color: #a3742c; }
   .token-fg-output { color: #6b5b8e; }
   .token-hit-rate { background: var(--surface-inset); border-color: var(--border); }
   .token-legend-dot { width: 8px; height: 8px; border-radius: 999px; flex: none; }
@@ -203,7 +203,7 @@
     align-self: center;
     justify-self: center;
     color: var(--text-tertiary);
-    font-size: 9px;
+    font-size: 11px;
     line-height: 20px;
     white-space: nowrap;
   }
@@ -220,7 +220,7 @@
     color: var(--text-secondary);
     background: var(--surface-panel);
     box-shadow: var(--shadow-lg);
-    font-size: 10px;
+    font-size: 12px;
     pointer-events: none;
   }
   .token-chart-tooltip p { display: flex; justify-content: space-between; gap: 10px; margin: 2px 0; }
@@ -472,7 +472,7 @@
     overflow-wrap: anywhere; white-space: pre-wrap;
   }
   .node-card__ref {
-    font-size: 9px; font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 11px; font-family: ui-monospace, SFMono-Regular, monospace;
     opacity: .55; pointer-events: none; margin-left: auto;
   }
   .node-card__status.is-done  { background:#e3eee6; color:#3f6b4d; }
@@ -486,7 +486,7 @@
   .node-card__status.is-block,
   .node-card__status.is-fail {
     border-radius: 9999px; padding: 1px 7px;
-    font-size: 9px; font-weight: 700; flex-shrink: 0;
+    font-size: 11px; font-weight: 700; flex-shrink: 0;
   }
   .node-card__reason-beacon {
     display: none;
@@ -614,7 +614,7 @@
   .node-card__status {
     margin-left: auto;
     flex-shrink: 0;
-    font-size: 8px;
+    font-size: 11px;
     font-weight: 800;
     color: #3f6b4d;
   }
@@ -622,7 +622,7 @@
   .node-card__status {
     display: inline-flex; align-items: center; gap: 4px;
     flex-shrink: 0;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     line-height: 1;
   }
@@ -637,16 +637,16 @@
   }
   .node-card__type-icon { border-radius: 6px; }
   .node-card--depth_plan .node-card__header { color: #26506c; }
-  .node-card--depth_plan .node-card__body { color: #26506c; font-size: 10px; }
+  .node-card--depth_plan .node-card__body { color: #26506c; font-size: 12px; }
   .node-card--depth_fact { border: 1.5px solid #e8d5aa; background: #ffffff; }
   .node-card--depth_fact .node-card__header { color: #1b1b1d; }
-  .node-card--depth_fact .node-card__body { color: #1b1b1d; font-size: 10px; }
+  .node-card--depth_fact .node-card__body { color: #1b1b1d; font-size: 12px; }
   .node-card--bootstrap_pending { border: 1.5px dashed #d0a877; background: #faf3ea; }
   .node-card--bootstrap_pending .node-card__header { color: #96481f; }
-  .node-card--bootstrap_pending .node-card__body { color: #8a4520; font-size: 9px; }
+  .node-card--bootstrap_pending .node-card__body { color: #8a4520; font-size: 11px; }
   .node-card--bootstrap_running { border: 2px solid #b8763a; background: #ffedd5; }
   .node-card--bootstrap_running .node-card__header { color: #8a4520; }
-  .node-card--bootstrap_running .node-card__body { color: #6d3a20; font-size: 9px; font-weight: 600; }
+  .node-card--bootstrap_running .node-card__body { color: #6d3a20; font-size: 11px; font-weight: 600; }
   .dark .node-card--origin, .dark .node-card--depth_origin {
     border-color: var(--status-success-border); background: var(--status-success-bg);
   }
@@ -706,7 +706,7 @@
   }
   .node-card--archived .node-card__body::after {
     content: ' 📦';
-    font-size: 9px;
+    font-size: 11px;
   }
 
   /* ═══════════ 存储治理 · Ops Console（sto-*） ═══════════ */
@@ -760,7 +760,7 @@
     box-shadow: var(--sto-shadow);
   }
   .sto-label {
-    font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
     color: var(--sto-fg-3);
   }
 
@@ -818,16 +818,16 @@
   .sto-row:hover { background: var(--sto-inset); }
   .sto-rank { font-size: 11px; font-weight: 650; color: var(--sto-fg-3); }
   .sto-row-name { font-size: 12.5px; font-weight: 600; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-  .sto-row-meta { font-size: 10.5px; color: var(--sto-fg-3); margin-top: 1px; }
+  .sto-row-meta { font-size: 12px; color: var(--sto-fg-3); margin-top: 1px; }
   .sto-row-val { text-align: right; }
   .sto-row-val b { font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
-  .sto-row-val span { display: block; font-size: 10.5px; color: var(--sto-fg-3); }
+  .sto-row-val span { display: block; font-size: 12px; color: var(--sto-fg-3); }
   .sto-meter { height: 3px; border-radius: 2px; background: var(--sto-inset); overflow: hidden; margin-top: 5px; }
   .sto-meter > i { display: block; height: 100%; border-radius: 2px; transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
 
   /* —— 数据库表 —— */
   .sto-db { width: 100%; border-collapse: collapse; }
-  .sto-db th { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--sto-fg-3); text-align: right; padding: 0 0 6px; }
+  .sto-db th { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--sto-fg-3); text-align: right; padding: 0 0 6px; }
   .sto-db th:first-child { text-align: left; }
   .sto-db td { padding: 6px 0; border-top: 1px solid var(--sto-line); font-size: 12px; vertical-align: middle; }
   .sto-db td:first-child { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; }
@@ -939,7 +939,7 @@
     font-size: 12px; line-height: 1.65;
     white-space: pre-wrap; overflow-wrap: anywhere;
   }
-  .rp-resplabel { margin-top: 12px; font-size: 10.5px; letter-spacing: 0.04em; color: var(--rp-ink-3); }
+  .rp-resplabel { margin-top: 12px; font-size: 12px; letter-spacing: 0.04em; color: var(--rp-ink-3); }
 
   /* 证据：小方槽（不是通栏虚线），与参考报告一致 */
   .rp-slots { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 9px; }
@@ -948,7 +948,7 @@
     border: 1px dashed var(--rp-rule); border-radius: 3px; background: transparent;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
     cursor: pointer; color: var(--rp-ink-3);
-    font-size: 10.5px; line-height: 1.35; text-align: center; padding: 4px;
+    font-size: 12px; line-height: 1.35; text-align: center; padding: 4px;
     transition: border-color .15s ease, color .15s ease, background .15s ease;
   }
   .rp-slot:hover { border-color: var(--rp-ink-3); color: var(--rp-ink-2); background: var(--rp-wash); }
@@ -958,7 +958,7 @@
     display: block; max-width: 214px; max-height: 148px; object-fit: contain;
     border: 1px solid var(--rp-rule); border-radius: 3px; background: var(--rp-wash);
   }
-  .rp-shotcap { display: block; margin-top: 4px; font-size: 10.5px; color: var(--rp-ink-3); }
+  .rp-shotcap { display: block; margin-top: 4px; font-size: 12px; color: var(--rp-ink-3); }
 
   /* —— 攻击链：报告里的一段编年，不是流程图 —— */
   .rp-chain { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
@@ -998,7 +998,7 @@
   .rp-runnote strong { font-weight: 600; color: var(--rp-ink); }
 
   /* 报告内的徽标：只保留等级/状态，弱化到不抢标题 */
-  .rp-doc .sto-badge, .rp-doc .sto-sevbadge { font-size: 10.5px; }
+  .rp-doc .sto-badge, .rp-doc .sto-sevbadge { font-size: 12px; }
   /* 深色：纸面变成深色稿纸，墨色反相。层次靠亮度差，不靠换色相。 */
   .dark .rp-doc {
     --rp-ink: #e8e6e3;
@@ -1034,7 +1034,7 @@
   .sto-tier-tag {
     display: inline-flex; align-items: center; justify-content: center;
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+    font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
     padding: 2px 7px; border-radius: 6px; border: 1px solid;
   }
   .sto-tier-tag.t1 { color: var(--sto-ok); border-color: color-mix(in srgb, var(--sto-ok) 45%, transparent); }
@@ -1062,8 +1062,8 @@
   .sto-lock .nm { font-size: 12px; color: var(--sto-fg-2); }
   .sto-lock .sz { font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--sto-fg-3); }
   .sto-muted { font-size: 11px; color: var(--sto-fg-3); line-height: 1.55; }
-  .sto-desc { font-size: 10.5px; color: var(--sto-fg-3); line-height: 1.5; margin-top: 1px; }
-  .sto-warnline { font-size: 10.5px; color: var(--sto-danger); }
+  .sto-desc { font-size: 12px; color: var(--sto-fg-3); line-height: 1.5; margin-top: 1px; }
+  .sto-warnline { font-size: 12px; color: var(--sto-danger); }
   .sto-chevron { transition: transform 0.2s ease; color: var(--sto-fg-3); }
   .sto-chevron.open { transform: rotate(90deg); }
 
@@ -1080,7 +1080,7 @@
 
   .sto-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
   .sto-field > label {
-    font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
     color: var(--sto-fg-3);
   }
   .sto-input {
@@ -1185,7 +1185,7 @@
   .sto-toggle.on::after { transform: translateX(15px); }
   .sto-phasechip {
     display: inline-flex; align-items: center; justify-content: center; gap: 3px;
-    font-size: 10px; padding: 4px 0; border-radius: 7px; border: 1px solid; text-align: center;
+    font-size: 12px; padding: 4px 0; border-radius: 7px; border: 1px solid; text-align: center;
   }
   .sto-phasechip.on { color: var(--sto-ok); border-color: color-mix(in srgb, var(--sto-ok) 40%, transparent); background: color-mix(in srgb, var(--sto-ok) 7%, transparent); }
   .sto-phasechip.off { color: var(--sto-fg-3); border-color: var(--sto-line); background: var(--sto-inset); }
@@ -1238,7 +1238,7 @@
   }
   .vsc-side-head {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 14px 6px; font-size: 10.5px; font-weight: 700;
+    padding: 10px 14px 6px; font-size: 12px; font-weight: 700;
     letter-spacing: 0.08em; text-transform: uppercase; color: var(--sto-fg-3);
   }
   .vsc-side-count { font-weight: 500; letter-spacing: 0; text-transform: none; }
@@ -1250,7 +1250,7 @@
   .vsc-side-filter:focus { border-color: var(--sto-accent); }
   .vsc-side-foot {
     padding: 6px 14px; border-top: 1px solid var(--sto-line);
-    font-size: 10px; color: var(--sto-fg-3);
+    font-size: 12px; color: var(--sto-fg-3);
   }
   .vsc-tree-row {
     display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0;
@@ -1290,18 +1290,18 @@
   }
   .vsc-tree-row.lvl2 .vsc-label { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; }
   .vsc-tree-row .vsc-badge {
-    flex-shrink: 0; font-size: 9px; padding: 0 6px; border-radius: 999px;
+    flex-shrink: 0; font-size: 11px; padding: 0 6px; border-radius: 999px;
     border: 1px solid var(--sto-line); color: var(--sto-fg-3); line-height: 14px;
   }
-  .vsc-tree-row .vsc-rowmeta { flex-shrink: 0; font-size: 10px; color: var(--sto-fg-3); font-variant-numeric: tabular-nums; }
-  .vsc-tree-empty { padding: 2px 12px 6px 68px; font-size: 10.5px; color: var(--sto-fg-3); }
+  .vsc-tree-row .vsc-rowmeta { flex-shrink: 0; font-size: 12px; color: var(--sto-fg-3); font-variant-numeric: tabular-nums; }
+  .vsc-tree-empty { padding: 2px 12px 6px 68px; font-size: 12px; color: var(--sto-fg-3); }
   /* 模式切换（总览 / 时间轴） */
   .vsc-mode-switch {
     display: inline-flex; background: var(--sto-inset); border: 1px solid var(--sto-line);
     border-radius: 7px; padding: 2px; gap: 2px;
   }
   .vsc-mode-switch button {
-    border: 0; background: transparent; cursor: pointer; font-size: 10px;
+    border: 0; background: transparent; cursor: pointer; font-size: 12px;
     padding: 2px 8px; border-radius: 5px; color: var(--sto-fg-3); font-weight: 600;
     transition: all 0.12s ease;
   }
@@ -1321,7 +1321,7 @@
   .chain-step-mark { width: 16px; display: flex; flex-direction: column; align-items: center; flex: none; }
   .chain-step-index {
     width: 16px; height: 16px; border-radius: 999px; border: 1px solid #cfc9c0; background: #fff;
-    font-size: 9px; font-weight: 700; color: #57534e; display: grid; place-items: center; flex: none;
+    font-size: 11px; font-weight: 700; color: #57534e; display: grid; place-items: center; flex: none;
   }
   .chain-step.on .chain-step-index { background: #1b1b1d; color: #fff; border-color: #1b1b1d; }
   .chain-step-line { width: 1px; flex: 1; min-height: 8px; background: #cfc9c0; margin: 2px 0; }
@@ -1331,7 +1331,7 @@
   }
   .chain-step.on .chain-step-body { background: #fafafa; border-color: #cfc9c0; }
   .chain-step:hover .chain-step-body { border-color: #e0dbd3; }
-  .chain-step-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; color: #57534e; flex: none; }
+  .chain-step-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; color: #57534e; flex: none; }
   .chain-step-title { font-size: 11px; color: #57534e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .chain-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .chain-strip-item { display: inline-flex; align-items: center; gap: 6px; }
@@ -1354,7 +1354,7 @@
   .vsc-pill:hover { filter: brightness(0.96); }
   .vsc-pill.fact { background: #e8f0e9; color: #3f6b4d; }
   .vsc-pill.intent { background: #eeebf2; color: #5c4e7d; }
-  .vsc-pill.intent .pill-art { font-size: 10px; font-weight: 700; opacity: 0.85; }
+  .vsc-pill.intent .pill-art { font-size: 12px; font-weight: 700; opacity: 0.85; }
   .vsc-pill-group {
     display: flex; align-items: stretch; width: 100%; cursor: pointer;
     border-radius: 10px; overflow: hidden;
@@ -1417,7 +1417,7 @@
     min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .sto-folder .fbadge { flex-shrink: 0; }
-  .sto-artcard .apath { margin-top: 7px; font-size: 10px; color: var(--sto-fg-3); font-family: ui-monospace, "SF Mono", Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sto-artcard .apath { margin-top: 7px; font-size: 12px; color: var(--sto-fg-3); font-family: ui-monospace, "SF Mono", Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sto-pager { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; font-size: 12px; color: var(--sto-fg-3); }
   .sto-pager .pgbtns { display: flex; align-items: center; gap: 8px; }
   .sto-preview { background: var(--sto-panel); border-left: 1px solid var(--sto-line); }
@@ -1431,7 +1431,7 @@
     background: var(--sto-accent-soft); color: var(--sto-accent);
     border-radius: 10px; padding: 10px 13px; font-size: 11px; line-height: 1.6;
   }
-  .sto-kv dt { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--sto-fg-3); }
+  .sto-kv dt { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--sto-fg-3); }
   .sto-kv dd { margin-top: 3px; color: var(--sto-fg); font-size: 12px; }
   .sto-kv dd.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; word-break: break-all; }
   .sto-listbtn {
@@ -1452,11 +1452,11 @@
     background: var(--sto-inset); border: 1px solid var(--sto-line);
     border-radius: 10px; padding: 8px 10px; text-align: center;
   }
-  .sto-statmini .k { font-size: 9.5px; color: var(--sto-fg-3); }
+  .sto-statmini .k { font-size: 11px; color: var(--sto-fg-3); }
   .sto-statmini b { display: block; margin-top: 2px; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--sto-fg); }
   .sto-chipline { display: flex; flex-wrap: wrap; gap: 4px; }
   .sto-chipline > span {
-    font-size: 9.5px; padding: 2px 7px; border-radius: 6px;
+    font-size: 11px; padding: 2px 7px; border-radius: 6px;
     background: var(--sto-inset); border: 1px solid var(--sto-line); color: var(--sto-fg-2);
   }
 
@@ -1493,7 +1493,7 @@
   .sto-statflat { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; }
   .sto-statflat > div { text-align: center; padding: 2px 4px; }
   .sto-statflat > div + div { border-left: 1px solid var(--sto-line); }
-  .sto-statflat .k { font-size: 9.5px; color: var(--sto-fg-3); }
+  .sto-statflat .k { font-size: 11px; color: var(--sto-fg-3); }
   .sto-statflat b { display: block; margin-top: 2px; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--sto-fg); }
 
   /* 状态点 + 文本（替代状态徽章） */
@@ -1531,11 +1531,11 @@
   .sto-pcard .pname { font-size: 12.5px; font-weight: 650; color: var(--sto-fg); }
   .sto-pcard .pprog { height: 4px; border-radius: 2px; background: var(--sto-line); overflow: hidden; margin-top: 7px; }
   .sto-pcard .pprog > i { display: block; height: 100%; border-radius: 2px; background: var(--pc); transition: width 0.5s ease; }
-  .sto-pcard .pline { display: flex; gap: 10px; margin-top: 7px; font-size: 9.5px; color: var(--sto-fg-3); font-variant-numeric: tabular-nums; }
+  .sto-pcard .pline { display: flex; gap: 10px; margin-top: 7px; font-size: 11px; color: var(--sto-fg-3); font-variant-numeric: tabular-nums; }
   .sto-pcard .pline b { color: var(--sto-fg-2); font-weight: 650; }
   .sto-pcard .pissue {
     display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;
-    font-size: 9.5px; color: var(--sto-warn);
+    font-size: 11px; color: var(--sto-warn);
   }
   .sto-pcard .pissue::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--sto-warn); }
 
@@ -1571,7 +1571,7 @@
   .sto-eventrow.block::before { background: var(--sto-danger); }
   .sto-eventrow.allow::before { background: var(--sto-ok); }
   .sto-eventrow .etool { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; font-weight: 650; color: var(--sto-fg); }
-  .sto-eventrow .emeta { font-size: 10.5px; color: var(--sto-fg-3); }
+  .sto-eventrow .emeta { font-size: 12px; color: var(--sto-fg-3); }
   .sto-eventrow .ecmd { margin-top: 6px; font-size: 12.5px; font-weight: 550; color: var(--sto-fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sto-eventrow .ereason { margin-top: 6px; font-size: 11.5px; line-height: 1.5; }
   .sto-eventrow.block .ereason { color: var(--sto-danger); }
@@ -1585,7 +1585,7 @@
   .sto-sev-info     { --sev: #6d6862; --sev-soft: rgba(109, 104, 98, 0.10); }
   .sto-sevdot { width: 9px; height: 9px; border-radius: 50%; background: var(--sev, var(--sto-fg-3)); flex-shrink: 0; box-shadow: 0 0 0 2px color-mix(in srgb, var(--sev, #6d6862) 18%, transparent); }
   .sto-sevbadge {
-    font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
+    font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
     color: var(--sev); background: var(--sev-soft, var(--sto-inset));
     border: 1px solid color-mix(in srgb, var(--sev, #6d6862) 35%, transparent);
   }
@@ -1664,7 +1664,7 @@
   .sto-collapse > summary { list-style: none; cursor: pointer; padding: 11px 14px; display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 650; color: var(--sto-fg-2); user-select: none; transition: background .15s ease; }
   .sto-collapse > summary::-webkit-details-marker { display: none; }
   .sto-collapse > summary:hover { background: var(--sto-bg-2); }
-  .sto-collapse > summary::after { content: '▾'; margin-left: auto; font-size: 10px; color: var(--sto-fg-3); transition: transform .18s ease; }
+  .sto-collapse > summary::after { content: '▾'; margin-left: auto; font-size: 12px; color: var(--sto-fg-3); transition: transform .18s ease; }
   .sto-collapse[open] > summary::after { transform: rotate(180deg); }
   .sto-collapse-body { padding: 2px 14px 14px; }
 
@@ -1684,7 +1684,7 @@
   .sto-statflat { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
   .sto-statflat > div { text-align: left; padding: 12px 14px; background: var(--sto-inset); border: 1px solid var(--sto-line); border-radius: 12px; }
   .sto-statflat > div + div { border-left: 1px solid var(--sto-line); }
-  .sto-statflat .k { display: flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sto-fg-3); }
+  .sto-statflat .k { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sto-fg-3); }
   .sto-statflat .k::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.9; flex-shrink: 0; }
   .sto-statflat b { display: block; margin-top: 4px; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; color: var(--sto-fg); }
 
@@ -1712,7 +1712,7 @@
   .sto-minicard { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 8px 11px; background: var(--sto-inset); border: 1px solid var(--sto-line); border-radius: 10px; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
   .sto-minicard:hover { border-color: var(--sto-fg-3); }
   .sto-minicard.stat-active { border-color: var(--sto-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sto-accent) 14%, transparent); }
-  .sto-minicard .k { display: flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 600; letter-spacing: 0.05em; color: var(--sto-fg-3); }
+  .sto-minicard .k { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; letter-spacing: 0.05em; color: var(--sto-fg-3); }
   .sto-minicard .k::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .9; flex-shrink: 0; }
   .sto-minicard b { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; color: var(--sto-fg); }
 
@@ -1747,7 +1747,7 @@
     position: sticky; top: 0; z-index: 1;
     padding: 7px 10px; text-align: left; white-space: nowrap;
     background: var(--sto-inset); border-bottom: 1px solid var(--sto-line);
-    font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
     color: var(--sto-fg-3);
   }
   .ga-table thead th.ga-th-time { padding-left: 14px; }
@@ -1766,7 +1766,7 @@
   .ga-verdict {
     display: inline-flex; align-items: center; justify-content: center;
     height: 20px; padding: 0 8px; border-radius: 6px;
-    font-size: 10.5px; font-weight: 700; letter-spacing: .02em;
+    font-size: 12px; font-weight: 700; letter-spacing: .02em;
   }
   .ga-verdict.block { color: #9c3025; background: color-mix(in srgb, #b3392c 11%, transparent); border: 1px solid color-mix(in srgb, #b3392c 26%, transparent); }
   .ga-verdict.allow { color: #067647; background: color-mix(in srgb, #4a7c59 11%, transparent); border: 1px solid color-mix(in srgb, #4a7c59 26%, transparent); }
@@ -1799,7 +1799,7 @@
   .ga-col-raw { width: 46px; }
 
   .ga-td-raw { width: 1%; white-space: nowrap; }
-  .ga-raw { border: 0; background: none; padding: 0; cursor: pointer; font-size: 10px; color: var(--sto-fg-3); text-decoration: underline dotted; text-underline-offset: 2px; }
+  .ga-raw { border: 0; background: none; padding: 0; cursor: pointer; font-size: 12px; color: var(--sto-fg-3); text-decoration: underline dotted; text-underline-offset: 2px; }
   .ga-raw:hover { color: var(--sto-accent); }
   /* Plain white-on-light block.  The shared .sto-usage style is a dark terminal
      panel meant for command output; the audit row is a document, so the raw
@@ -1877,7 +1877,7 @@
   .sto-vmodal .vm-sec + .vm-sec { padding-top: 18px; border-top: 1px solid var(--sto-line); }
   .sto-vmodal .vm-seclabel {
     display: flex; align-items: center; gap: 10px;
-    font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sto-fg-3);
+    font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sto-fg-3);
   }
   .sto-vmodal .vm-seclabel::after { content: ""; flex: 1; height: 1px; background: var(--sto-line); }
   .sto-vmodal .vm-foot {
@@ -1893,7 +1893,7 @@
   .sto-vmodal .sto-input { padding: 8px 11px; }
   .sto-vmodal textarea.sto-input { min-height: 78px; line-height: 1.7; }
   .sto-vmodal .vm-req { color: var(--sto-danger); margin-left: 2px; }
-  .sto-vmodal .vm-hint { font-size: 10.5px; line-height: 1.5; color: var(--sto-fg-3); }
+  .sto-vmodal .vm-hint { font-size: 12px; line-height: 1.5; color: var(--sto-fg-3); }
 
   /* 严重程度：横向分段选择器（原先误用 .sto-listbtn，被拉成整行列表） */
   .sto-sevpicker { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1927,7 +1927,7 @@
     position: absolute; top: 6px; right: 6px; z-index: 7;
     display: inline-flex; align-items: center;
     padding: 1px 6px; border-radius: 999px;
-    font-size: 10px; font-weight: 700; line-height: 1.5;
+    font-size: 12px; font-weight: 700; line-height: 1.5;
     color: #2f5d7c; background: #f1f1f3; border: 1px solid #cdd6dc;
     font-variant-numeric: tabular-nums;
     /* 一次点击即可展开/折叠（卡片本身 pointer-events:none，按钮单独打开） */
@@ -1940,7 +1940,7 @@
      卡片本身是 pointer-events:none，这里单独打开，才能收到点击。 */
   .node-card__expand.is-btn {
     pointer-events: auto; cursor: pointer;
-    padding: 2px 9px; font-size: 10.5px;
+    padding: 2px 9px; font-size: 12px;
     color: #fff; background: #2f5d7c; border-color: #2f5d7c;
     box-shadow: 0 1px 3px rgba(79, 70, 229, 0.35);
     transition: filter 0.15s ease, background 0.15s ease;
@@ -2097,7 +2097,7 @@ html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button 
 .lg-box-intent { background: #eaf1fc; border: 1.5px solid #9dc0d8; }
 .lg-box-result { background: var(--sto-panel, #fff); border: 1.5px solid #d9a29a; }
 .lg-badge {
-  font-family: ui-monospace, Menlo, monospace; font-size: 9px; font-weight: 700;
+  font-family: ui-monospace, Menlo, monospace; font-size: 11px; font-weight: 700;
   color: #a85a2a; background: #faf3ea; border: 1px solid #ecd5bd;
   border-radius: 4px; padding: 0 4px; white-space: nowrap;
 }
@@ -2119,7 +2119,7 @@ html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button 
 .lineage-zoom-pct {
   min-width: 42px; height: 22px; padding: 0 4px;
   border-radius: 6px; border: 1px solid transparent; background: transparent;
-  font-size: 10.5px; font-weight: 700; color: var(--sto-fg-2, #57534e);
+  font-size: 12px; font-weight: 700; color: var(--sto-fg-2, #57534e);
   font-variant-numeric: tabular-nums; cursor: pointer;
 }
 .lineage-zoom-pct:hover { background: var(--sto-inset, #f5f5f5); }
@@ -2130,7 +2130,7 @@ html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button 
   border-radius: 14px; background: #f2f1e9; border: 1px solid #d8d4c2; color: #1b1b1d;
 }
 .lineage-root-title { font-size: 16px; font-weight: 800; letter-spacing: .3px; }
-.lineage-root-sub { margin-top: 4px; font-size: 10.5px; line-height: 1.4; color: #8a8478; }
+.lineage-root-sub { margin-top: 4px; font-size: 12px; line-height: 1.4; color: #8a8478; }
 
 .lineage-lane-head {
   position: absolute; box-sizing: border-box;
@@ -2138,8 +2138,8 @@ html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button 
 }
 .lineage-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #2f5d7c; }
 .lineage-lane-title { font-size: 12px; font-weight: 700; color: var(--sto-fg, #1b1b1d); line-height: 1.45; }
-.lineage-lane-id { font-family: ui-monospace, Menlo, monospace; font-size: 10px; font-weight: 700; color: #6d6862; }
-.lineage-lane-pts { font-size: 10.5px; font-weight: 800; color: #c45146; font-variant-numeric: tabular-nums; }
+.lineage-lane-id { font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 700; color: #6d6862; }
+.lineage-lane-pts { font-size: 12px; font-weight: 800; color: #c45146; font-variant-numeric: tabular-nums; }
 
 .lineage-card {
   position: absolute; box-sizing: border-box; padding: 10px 14px 12px;
@@ -2148,13 +2148,13 @@ html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button 
 }
 .lineage-card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .lineage-card-id {
-  font-family: ui-monospace, Menlo, monospace; font-size: 10px; font-weight: 700;
+  font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 700;
   color: #2f5d7c; letter-spacing: .3px;
 }
 .lineage-goal { font-size: 12px; font-weight: 600; line-height: 1.62; color: #26506c; word-break: break-word; }
 .lineage-goal b, .lineage-sec b { font-weight: 800; margin-right: 5px; }
 .lineage-goal b { color: #2f5d7c; }
-.lineage-sec { margin-top: 6px; font-size: 10.5px; line-height: 1.62; color: #2f5d7c; word-break: break-word; }
+.lineage-sec { margin-top: 6px; font-size: 12px; line-height: 1.62; color: #2f5d7c; word-break: break-word; }
 .lineage-sec b { color: #26506c; }
 
 .lineage-result {
@@ -2164,20 +2164,20 @@ html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button 
 }
 .lineage-result-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .lineage-result-pts {
-  font-size: 10px; font-weight: 800; color: #fff; background: #c45146;
+  font-size: 12px; font-weight: 800; color: #fff; background: #c45146;
   border-radius: 999px; padding: 2px 8px; letter-spacing: .2px;
 }
 .lineage-result-id {
   margin-left: auto; font-family: ui-monospace, Menlo, monospace;
-  font-size: 10px; font-weight: 700; color: #6d6862;
+  font-size: 12px; font-weight: 700; color: #6d6862;
 }
 .lineage-result-title { font-size: 12.5px; font-weight: 700; color: #1b1b1d; line-height: 1.5; word-break: break-word; }
-.lineage-result-desc { margin-top: 5px; font-size: 10.5px; line-height: 1.6; color: #57534e; word-break: break-word; }
+.lineage-result-desc { margin-top: 5px; font-size: 12px; line-height: 1.6; color: #57534e; word-break: break-word; }
 
 /* 被省略的中间意图：夹在两张卡之间的箭头旁标一句 */
 .lineage-gap {
   position: absolute; transform: translateX(-50%); white-space: nowrap;
-  font-size: 9.5px; font-weight: 600; color: #6d6862;
+  font-size: 11px; font-weight: 600; color: #6d6862;
   background: var(--sto-panel, #fff); border: 1px dashed #e0dbd3;
   border-radius: 999px; padding: 1px 7px;
 }
@@ -2193,7 +2193,7 @@ html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button 
 
 /* 跨链接力徽章：标在目标意图卡头部，说明这条事实是从哪条链接过来的 */
 .lineage-card-src {
-  font-family: ui-monospace, Menlo, monospace; font-size: 9px; font-weight: 700;
+  font-family: ui-monospace, Menlo, monospace; font-size: 11px; font-weight: 700;
   color: #a85a2a; background: #faf3ea; border: 1px solid #ecd5bd;
   border-radius: 4px; padding: 1px 5px; white-space: nowrap;
 }
@@ -2479,3 +2479,153 @@ select, textarea {
 /* 侧栏底部两个小按钮：.nav-label 自带 margin-left:auto，在居中布局里会把
    两字标签挤出容器（截成「改」「退」）。这里归零，让图标+文字正常居中。 */
 .sidebar-bottom .grid .nav-label { margin-left: 0; margin-right: 0; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   排版层 —— 颜色层之后，决定「好不好用」的那一半
+   ───────────────────────────────────────────────────────────────────
+   只做呈现：不改任何 JS 逻辑、接口与数据。
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── 1. 字号阶梯 ──────────────────────────────────────────────────
+   原先散落的 8/9/10/10.5px 已统一抬到 11~12px；这里定义阶梯供后续引用。
+   元信息要「退后」时用颜色分层（--sto-fg-3，5.5:1），不要用缩小字号。 */
+:root {
+  --fs-micro: 11px;   /* 角标、图例，最小档 */
+  --fs-meta:  12px;   /* 时间、计数、ID */
+  --fs-body:  13px;   /* 正文 */
+  --fs-lead:  14px;   /* 长文正文 */
+  --fs-title: 16px;
+}
+
+/* 模板里 483 处 text-[9px]/text-[10px]/text-[11px] 一次收敛 */
+.text-\[9px\]  { font-size: var(--fs-micro) !important; }
+.text-\[10px\] { font-size: var(--fs-meta) !important; }
+.text-\[11px\] { font-size: var(--fs-meta) !important; }
+
+/* ── 2. 散文限宽：容器满宽，只有「读的段落」收窄 ────────────────────
+   中文正文 30~45 字/行最舒服。14px × 62ch ≈ 44 字。
+   报文、表格、证据槽不受影响，它们本来就该用满宽度。 */
+/* 整块居中成一页：标题、元信息、正文、报文共用同一条 measure，
+   两侧留白对称。只给段落限宽会让标题横跨整行、正文缩在左边，两端反而不齐。 */
+.rp-doc {
+  max-width: 86ch;
+  margin-inline: auto;
+}
+.md-preview > p,
+.md-preview > li {
+  max-width: 62ch;
+}
+
+/* ── 3. 补两个一直缺失的 token ───────────────────────────────────
+   index.html 的登录卡引用它们但从未定义，导致一直走毛玻璃兜底值。 */
+:root {
+  --surface-modal:  #ffffff;
+  --border-default: var(--border);
+}
+
+/* ── 4. 焦点环：键盘走到哪必须看得见 ───────────────────────────────
+   全站原先只有 3 处 focus-visible，且大量元素 outline:none 后没补替代。 */
+:where(a, button, [role="button"], input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+/* 表格行用内嵌描边，避免被容器裁掉 */
+.ga-row:focus-within {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* ── 5. 数字等宽：表格与指标卡竖向对齐 ─────────────────────────── */
+table td, table th,
+.sto-num,
+.stat-value,
+.token-usage-panel,
+.rp-codes,
+.rp-stepno,
+.rp-chainno {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 6. 中文排版 ────────────────────────────────────────────────
+   text-spacing-trim 让全角标点挤压（Chrome 123+ 生效，其余浏览器自动忽略）。 */
+body {
+  text-spacing-trim: space-all;
+  font-feature-settings: "kern" 1;
+}
+
+/* ── 7. 守门审计：把「每条都亮」的绿色收掉 ─────────────────────────
+   判断结果靠例外的颜色，不靠每行都亮。放行改成中性，只有拦截着色。 */
+.ga-verdict.allow {
+  color: var(--sto-fg-2);
+  background: var(--sto-inset);
+  border: 1px solid var(--sto-line);
+}
+.ga-reason.allow { color: var(--sto-fg-3); }
+/* 调用内容列吃满余宽，右侧三列收窄，让路径多显示几个字符 */
+.ga-what { width: auto; }
+.ga-cell { white-space: nowrap; }
+
+/* ── 8. 布局：只有一张卡时不要只占半排 ─────────────────────────── */
+main.sto .grid.xl\:grid-cols-2 {
+  grid-template-columns: repeat(auto-fit, minmax(430px, 1fr)) !important;
+}
+
+/* ── 9. 长文详情列：限宽居中，避免内容贴左、右侧空一片 ───────────── */
+.sto-detail-col > *,
+.detail-scroll > * {
+  max-width: 1040px;
+}
+
+/* ── 首屏加载条的位移（替代原来的裸旋转框） ─────────────────────── */
+@keyframes axiomBootSlide {
+  0%   { transform: translateX(-110%); }
+  100% { transform: translateX(310%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .axiom-no-motion, [style*="axiomBootSlide"] { animation: none !important; }
+}
+
+/* ── 统一空状态组件（原先 4 个页面 4 种写法，2 个页面没有） ─────────── */
+.sto-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 5px; padding: 38px 20px; text-align: center; color: var(--sto-fg-3);
+}
+.sto-empty > svg { width: 22px; height: 22px; opacity: 0.5; margin-bottom: 2px; }
+.sto-empty-title {
+  margin: 0; font-size: var(--fs-body); font-weight: 600; color: var(--sto-fg-2);
+}
+.sto-empty-hint {
+  margin: 0; font-size: var(--fs-meta); line-height: 1.62; max-width: 34ch;
+}
+.sto-empty-hint code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: var(--fs-micro); color: var(--sto-fg-2);
+  background: var(--sto-inset); border: 1px solid var(--sto-line);
+  border-radius: var(--radius-xs); padding: 1px 5px;
+}
+
+/* 调用内容改成「反向截断」：省略号出现在左侧，行尾的命令保留下来。
+   这些命令有 70+ 字符的共同前缀，唯一的辨识信息在尾部——默认截尾会让
+   80 行看起来一模一样。注意：RTL 下首尾标点可能轻微移位，实测可读。 */
+.ga-content { direction: rtl; text-align: left; }
+
+/* ── 补齐 Tailwind 实心色的桥接（浅色档只做了 50/100，实心 500 漏了）──
+   红队进度条用的是 bg-rose-500，原始 #f43f5e 在纯白底上过于刺眼。 */
+.bg-rose-500, .bg-rose-600, .bg-red-500, .bg-red-600 { background: #8e4a5e !important; }
+.bg-blue-500, .bg-blue-600, .bg-sky-500 { background: #2f5d7c !important; }
+.bg-emerald-500, .bg-emerald-600, .bg-teal-500 { background: #4a7c59 !important; }
+.bg-amber-500, .bg-amber-600, .bg-orange-500 { background: #a3742c !important; }
+.bg-violet-500, .bg-purple-500, .bg-indigo-500 { background: #6b5b8e !important; }
+
+/* 模板里少量写死在 style 里的冷色（Token 分项条），用属性选择器兜住。
+   这些色值在项目里唯一，不会误伤别的元素。 */
+[style*="#3b82f6"] { background-color: #2f5d7c !important; }
+[style*="#8b5cf6"] { background-color: #6b5b8e !important; }
+[style*="#18a875"] { background-color: #4a7c59 !important; }
+[style*="#d88706"] { background-color: #a3742c !important; }
+[style*="#0b1020"] { background-color: #131417 !important; }
+
+/* 侧栏底部两个按钮：字号抬到 12px 后，图标+两字放不进 62px 的列宽，
+   被截成「改…」「退…」。收窄图标与间距把它们腾出来。 */
+.sidebar-bottom .grid .nav-item { gap: 3px; }
+.sidebar-bottom .grid .nav-item svg { width: 12px; height: 12px; }

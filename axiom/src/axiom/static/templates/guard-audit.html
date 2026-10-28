@@ -121,7 +121,7 @@
                   x-text="guardAuditStatusLabel(event)"></span>
               </td>
               <td class="ga-what">
-                <p class="ga-content" x-text="guardAuditContent(event)"></p>
+                <p class="ga-content" x-text="guardAuditContent(event)" :title="guardAuditContent(event)"></p>
                 <p class="ga-reason" :class="event.decision === 'BLOCK' ? 'block' : 'allow'"
                   x-text="guardAuditReason(event)"></p>
                 <!-- x-if 而不是 x-show：x-text 不管显示与否都会求值，300 行
