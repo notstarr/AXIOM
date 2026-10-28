@@ -63,6 +63,9 @@ VPS_ACCESS.md
 # 内部交接文档：含生产主机地址、SSH 口令与凭据文件路径
 axiom/HANDOFF_*.md
 
+# 会话工具留下的临时笔记，不属于仓库内容
+.workbuddy/
+
 # Worker 抓回来的临时页面与构建产物
 axiom/body.tmp
 axiom/idx.html

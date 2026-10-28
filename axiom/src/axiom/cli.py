@@ -14,6 +14,7 @@ from alembic.script import ScriptDirectory
 
 from axiom.cli_runner import register_runner_command
 from axiom.modules.token_usage.cli import register_token_usage_commands
+from axiom.modules.oob.cli import register_oob_commands
 from axiom.shared.database import (
     AXIOM_SCHEMA,
     POSTGRESQL_ALEMBIC_BRANCH,
@@ -237,5 +238,6 @@ register_skill_commands(main)
 register_worker_commands(main)
 register_token_usage_commands(main)
 register_browser_session_commands(main)
+register_oob_commands(main)
 
 from axiom.modules.integrations import cli as dingtalk_cli

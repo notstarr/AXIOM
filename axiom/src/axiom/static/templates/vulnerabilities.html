@@ -148,20 +148,20 @@
                 </div>
               </div>
               <ol class="rp-steps">
-                <template x-for="step in (selectedVulnerability().reproduction.steps || [])" :key="`step-${step.index}`">
+                <template x-for="(step, i) in (selectedVulnerability().reproduction.steps || [])" :key="`step-${i}`">
                   <li class="rp-step">
                     <div class="rp-stephead">
-                      <span class="rp-stepno" x-text="step.index"></span>
+                      <span class="rp-stepno" x-text="i + 1"></span>
                       <p class="rp-stepsum"><span x-text="step.title"></span><span x-show="step.proves" style="color:var(--rp-ink-2);" x-text="` ｜ ${step.proves}`"></span></p>
                     </div>
                     <pre class="rp-packet" x-text="step.request"></pre>
                     <div class="rp-resplabel">响应</div>
                     <pre class="rp-packet" x-text="step.response"></pre>
-                    <div class="rp-slots" x-show="vulnEvidenceForStep(step.index).length">
-                      <template x-for="ev in vulnEvidenceForStep(step.index)" :key="`ev-${ev.artifact_id}`">
+                    <div class="rp-slots" x-show="vulnEvidenceForStep(i + 1).length">
+                      <template x-for="ev in vulnEvidenceForStep(i + 1)" :key="`ev-${ev.artifact_id}`">
                         <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
                           <img :src="ev.url" :alt="ev.caption || '证据截图'">
-                          <span class="rp-shotcap" x-text="ev.caption || `步骤 ${step.index} 证据`"></span>
+                          <span class="rp-shotcap" x-text="ev.caption || `步骤 ${i + 1} 证据`"></span>
                         </a>
                       </template>
                     </div>
@@ -170,7 +170,7 @@
                         <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
                         <span>本步截图</span>
                         <input type="file" accept="image/*" style="display:none;"
-                               @change="uploadReportEvidence('vulnerability', selectedVulnerability().id, step.index, $event)">
+                               @change="uploadReportEvidence('vulnerability', selectedVulnerability().id, i + 1, $event)">
                       </label>
                     </div>
                   </li>
@@ -410,20 +410,20 @@
                 </div>
               </div>
               <ol class="rp-steps">
-                <template x-for="step in (selectedRtResult().reproduction ? selectedRtResult().reproduction.steps || [] : [])" :key="`rtstep-${step.index}`">
+                <template x-for="(step, i) in (selectedRtResult().reproduction ? selectedRtResult().reproduction.steps || [] : [])" :key="`rtstep-${i}`">
                   <li class="rp-step">
                     <div class="rp-stephead">
-                      <span class="rp-stepno" x-text="step.index"></span>
+                      <span class="rp-stepno" x-text="i + 1"></span>
                       <p class="rp-stepsum"><span x-text="step.title"></span><span x-show="step.proves" style="color:var(--rp-ink-2);" x-text="` ｜ ${step.proves}`"></span></p>
                     </div>
                     <pre class="rp-packet" x-text="step.request"></pre>
                     <div class="rp-resplabel">响应</div>
                     <pre class="rp-packet" x-text="step.response"></pre>
-                    <div class="rp-slots" x-show="rtEvidenceForStep(step.index).length">
-                      <template x-for="ev in rtEvidenceForStep(step.index)" :key="`rtev-${ev.artifact_id}`">
+                    <div class="rp-slots" x-show="rtEvidenceForStep(i + 1).length">
+                      <template x-for="ev in rtEvidenceForStep(i + 1)" :key="`rtev-${ev.artifact_id}`">
                         <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
                           <img :src="ev.url" :alt="ev.caption || '证据截图'">
-                          <span class="rp-shotcap" x-text="ev.caption || `步骤 ${step.index} 证据`"></span>
+                          <span class="rp-shotcap" x-text="ev.caption || `步骤 ${i + 1} 证据`"></span>
                         </a>
                       </template>
                     </div>
@@ -432,7 +432,7 @@
                         <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
                         <span>本步截图</span>
                         <input type="file" accept="image/*" style="display:none;"
-                               @change="uploadReportEvidence('redteam_result', selectedRtResult().id, step.index, $event)">
+                               @change="uploadReportEvidence('redteam_result', selectedRtResult().id, i + 1, $event)">
                       </label>
                     </div>
                   </li>

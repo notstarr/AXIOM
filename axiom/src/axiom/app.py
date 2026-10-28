@@ -133,6 +133,10 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
 
     app.state.service_token = _read_service_token(data_dir)
     app.include_router(router)
+    # /oob/<token> 是 payload 落点，不在 /api/v1 下：被测系统打过来时不会带凭据。
+    from axiom.modules.oob.api import public_router as oob_public_router
+
+    app.include_router(oob_public_router)
 
     # ── 钉钉 Stream 模式机器人：接收群消息并响应 /help 等指令 ──
     # 仅在配置了 AppKey/AppSecret 且启用钉钉时启动（守护线程，断线自动重连）。
@@ -168,6 +172,9 @@ def create_app(*, engine: Engine, data_dir: Path) -> FastAPI:
         # ── 1. 无条件放行：健康检查 / 登录接口 / 页面入口 / 登录卡公开资源 / 钉钉Webhook ──
         if (
             path == "/health"
+            # 带外回连口：payload 由被测系统发起，不可能带 AXIOM 的凭据。
+            # 写入口公开、读入口走 /api/v1/oob，权限不共享。
+            or path.startswith("/oob/")
             or path.startswith("/api/v1/auth/login")
             or path.startswith("/api/v1/auth/status")
             or path.startswith("/api/v1/integrations/dingtalk/webhook")

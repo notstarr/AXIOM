@@ -3719,3 +3719,34 @@ def test_red_team_points_capsule_is_editable_in_place() -> None:
     # 只送分值，文案由后端派生
     assert "/projects/${taskId}/target-points" in human
     assert "target_points: Number(body?.target_points)" in adapter
+
+
+def test_report_steps_are_numbered_by_loop_index_not_by_payload(client) -> None:
+    """The reproduction payload has no ``index`` field.
+
+    ``Reproduction.steps`` is a list; the step number only exists because the skeleton
+    prints it. Binding ``x-text="step.index"`` therefore rendered empty numbers and gave
+    every ``x-for`` row the same key, so only the first step ever appeared.
+    """
+    template = client.get("/static/templates/vulnerabilities.html").text
+
+    assert "step.index" not in template
+    assert "x-text=\"i + 1\"" in template
+    # both panels drive evidence lookup and uploads off the loop index too
+    assert "vulnEvidenceForStep(i + 1)" in template
+    assert "rtEvidenceForStep(i + 1)" in template
+    assert "uploadReportEvidence('vulnerability', selectedVulnerability().id, i + 1" in template
+    assert "uploadReportEvidence('redteam_result', selectedRtResult().id, i + 1" in template
+
+
+def test_report_document_fills_its_column(client) -> None:
+    """The report is the pane's content, not a narrow column inside it.
+
+    A capped measure left ~250px of dead space at 1011px pane width; the reading
+    measure is controlled by type size instead.
+    """
+    css = client.get("/static/custom.css").text
+    block = css[css.index(".rp-doc {"): css.index(".rp-dochead")]
+
+    assert "max-width: none;" in block
+    assert "width: 100%;" in block

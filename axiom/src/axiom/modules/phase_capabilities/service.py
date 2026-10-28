@@ -37,9 +37,11 @@ _BROWSER_BOOTSTRAP_MARKER = ".phase-capabilities-v2-browser-bootstrap"
 _SCORING_SCOPES_MARKER = ".phase-capabilities-v3-redteam-scoring-scopes"
 _JSFINDER_SCOPES_MARKER = ".phase-capabilities-v4-jsfinder-scopes"
 _RESOURCES_SCOPES_MARKER = ".phase-capabilities-v5-redteam-resources-scopes"
+_OOB_SCOPES_MARKER = ".phase-capabilities-v6-oob-capture-scopes"
 _REDTEAM_SCORING_EXTRA_SCOPES = ("bootstrap", "reason", "plan", "review")
 _JSFINDER_SCOPES = ("bootstrap", "reason", "explore")
 _RESOURCES_SCOPES = ("explore", "reason")
+_OOB_SCOPES = ("explore", "reason")
 _MCP_NAME_PART = re.compile(r"[^a-z0-9_]+")
 _DEFAULT_SKILL_SCOPES = {
     "vuln-review": ("review",),
@@ -48,6 +50,7 @@ _DEFAULT_SKILL_SCOPES = {
     "redteam-scoring": ("bootstrap", "reason", "explore", "plan", "review"),
     "redteam-review": ("review",),
     "redteam-resources": _RESOURCES_SCOPES,
+    "oob-capture": _OOB_SCOPES,
 }
 
 
@@ -629,6 +632,7 @@ class PhaseCapabilityService:
         scoring_marker = self.data_dir / _SCORING_SCOPES_MARKER
         jsfinder_marker = self.data_dir / _JSFINDER_SCOPES_MARKER
         resources_marker = self.data_dir / _RESOURCES_SCOPES_MARKER
+        oob_marker = self.data_dir / _OOB_SCOPES_MARKER
         skill_records = self.skills.list()
         with transaction(self.engine) as conn:
             if not marker.exists():
@@ -734,6 +738,27 @@ class PhaseCapabilityService:
                             capability_key="redteam-resources",
                             now=now,
                         )
+            # oob-capture（带外回连捕获 CLI 说明书）同理：老安装的 marker 已经
+            # 落过，新 Skill 不会自动绑作用域，这里补一次。之后用户解绑就保持解绑。
+            if not oob_marker.exists():
+                oob_skill = next(
+                    (skill for skill in skill_records if skill.name == "oob-capture"),
+                    None,
+                )
+                if (
+                    oob_skill is not None
+                    and oob_skill.enabled
+                    and Path(oob_skill.path).is_file()
+                ):
+                    now = utcnow()
+                    for scope in _OOB_SCOPES:
+                        self.repository.ensure(
+                            conn,
+                            scope=scope,
+                            capability_kind="skill",
+                            capability_key="oob-capture",
+                            now=now,
+                        )
             self._ensure_mandatory_locked(conn, skill_records=skill_records)
         if not marker.exists():
             marker.parent.mkdir(parents=True, exist_ok=True)
@@ -760,6 +785,11 @@ class PhaseCapabilityService:
             temporary = resources_marker.with_name(f".{resources_marker.name}.tmp")
             temporary.write_text(utcnow() + "\n", encoding="utf-8")
             temporary.replace(resources_marker)
+        if not oob_marker.exists():
+            oob_marker.parent.mkdir(parents=True, exist_ok=True)
+            temporary = oob_marker.with_name(f".{oob_marker.name}.tmp")
+            temporary.write_text(utcnow() + "\n", encoding="utf-8")
+            temporary.replace(oob_marker)
 
     def _ensure_mandatory_locked(self, conn, *, skill_records=None) -> None:
         now = utcnow()

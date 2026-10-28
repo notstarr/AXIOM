@@ -862,13 +862,14 @@
 
     display: flex; flex-direction: column;
     gap: 26px;
-    padding: 26px 30px 34px;
-    /* 单栏正文列：中文 13.5px 下约 42 字/行，落在 65~75ch 的舒适区间里。
-       容器更宽时靠 max-width 收住，不靠右留白撑出「页」的错觉。 */
-    max-width: 760px;
+    /* 铺满详情列：报告的「页」就是这块容器，右侧不留空。
+       行宽靠字号而不靠缩窄容器来控——缩容器在这里只会变成空白。 */
+    width: 100%;
+    max-width: none;
+    padding: 28px 34px 38px;
     color: var(--rp-ink);
-    font-size: 13.5px;
-    line-height: 1.75;
+    font-size: 14px;
+    line-height: 1.78;
   }
 
   /* —— 报头 —— */
@@ -876,11 +877,11 @@
   .rp-titleline { display: flex; align-items: flex-start; gap: 10px; }
   .rp-doctitle {
     flex: 1 1 auto; min-width: 0; margin: 0;
-    font-size: 17px; font-weight: 650; line-height: 1.4; letter-spacing: -0.011em;
+    font-size: 18.5px; font-weight: 650; line-height: 1.38; letter-spacing: -0.011em;
     color: var(--rp-ink); text-wrap: balance;
   }
   .rp-stamps { display: flex; flex-shrink: 0; align-items: center; gap: 6px; padding-top: 3px; }
-  .rp-meta { margin-top: 8px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; font-size: 11.5px; color: var(--rp-ink-3); }
+  .rp-meta { margin-top: 8px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; font-size: 12px; color: var(--rp-ink-3); }
   .rp-meta code, .rp-inlinecode {
     font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px;
     color: var(--rp-ink-2); letter-spacing: -0.01em;
@@ -894,7 +895,7 @@
   .rp-doc > .rp-block + .rp-block { margin-top: 2px; }
   /* 标题离自己的内容近、离上一段远：这是「结构」而不是「列表」的来源 */
   .rp-h {
-    margin: 0 0 7px; font-size: 11.5px; font-weight: 600;
+    margin: 0 0 8px; font-size: 12px; font-weight: 600;
     letter-spacing: 0.04em; color: var(--rp-ink-3);
   }
   .rp-p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -904,13 +905,13 @@
   .rp-proc { border: 1px solid var(--rp-rule); border-radius: 3px; }
   .rp-entry { padding: 11px 14px; background: var(--rp-wash); border-bottom: 1px solid var(--rp-rule); }
   .rp-entryrow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 8px; }
-  .rp-k { flex-shrink: 0; font-size: 11.5px; color: var(--rp-ink-3); }
+  .rp-k { flex-shrink: 0; font-size: 12px; color: var(--rp-ink-3); }
   .rp-codes {
-    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px;
     color: var(--rp-ink); overflow-wrap: anywhere;
   }
   .rp-req { margin: 5px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
-  .rp-req li { position: relative; padding-left: 13px; font-size: 12.5px; line-height: 1.6; color: var(--rp-ink-2); overflow-wrap: anywhere; }
+  .rp-req li { position: relative; padding-left: 13px; font-size: 13px; line-height: 1.6; color: var(--rp-ink-2); overflow-wrap: anywhere; }
   .rp-req li::before { content: "·"; position: absolute; left: 3px; color: var(--rp-ink-3); }
 
   .rp-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
@@ -922,7 +923,7 @@
     font-variant-numeric: tabular-nums; min-width: 13px; text-align: right;
   }
   /* 摘要一句连读：在做什么 ｜ 证明了什么。不拆成三个字段标签。 */
-  .rp-stepsum { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 13px; line-height: 1.6; color: var(--rp-ink); overflow-wrap: anywhere; }
+  .rp-stepsum { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 13.5px; line-height: 1.62; color: var(--rp-ink); overflow-wrap: anywhere; }
   .rp-stepsum em { font-style: normal; color: var(--rp-ink-2); }
 
   /* 报文：极浅底、无边框、等宽——它是引用的一段内容，不是代码控件 */
@@ -930,7 +931,7 @@
     margin: 10px 0 0; padding: 10px 12px; border-radius: 2px;
     background: var(--rp-wash); color: #232320;
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 11.5px; line-height: 1.62;
+    font-size: 12px; line-height: 1.65;
     white-space: pre-wrap; overflow-wrap: anywhere;
   }
   .rp-resplabel { margin-top: 12px; font-size: 10.5px; letter-spacing: 0.04em; color: var(--rp-ink-3); }
@@ -958,7 +959,7 @@
   .rp-chain { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
   .rp-chain li { display: grid; grid-template-columns: 17px 1fr; gap: 0 7px; align-items: baseline; }
   .rp-chainno { font-size: 11.5px; color: var(--rp-ink-3); font-variant-numeric: tabular-nums; }
-  .rp-chaintext { min-width: 0; font-size: 12.5px; line-height: 1.55; color: var(--rp-ink-2); overflow-wrap: anywhere; }
+  .rp-chaintext { min-width: 0; font-size: 13px; line-height: 1.55; color: var(--rp-ink-2); overflow-wrap: anywhere; }
   .rp-chaintext.cur { color: var(--rp-ink); font-weight: 600; }
   .rp-chaingain { display: block; font-size: 11.5px; font-weight: 400; color: var(--rp-ink-3); }
 
@@ -966,7 +967,7 @@
   .rp-act {
     display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
     padding: 0; border: 0; background: none; cursor: pointer;
-    font-size: 11.5px; color: var(--rp-ink-2);
+    font-size: 12px; color: var(--rp-ink-2);
     text-decoration: underline; text-decoration-color: transparent;
     text-underline-offset: 3px; transition: color .15s ease, text-decoration-color .15s ease;
   }
