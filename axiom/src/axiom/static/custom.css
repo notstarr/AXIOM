@@ -1,7 +1,7 @@
   [x-cloak] { display: none !important; }
   #cy {
     width: 100%; height: 100%;
-    background-color: #faf8f4;
+    background-color: #fafafa;
     background-image: radial-gradient(circle, #e0dbd3 1px, transparent 1px);
     background-size: 22px 22px;
   }
@@ -39,7 +39,7 @@
     font-size: 0.88em; font-family: ui-monospace, "SF Mono", Menlo, monospace;
   }
   .md-preview pre {
-    background: var(--sto-inset, #faf8f4); color: var(--sto-fg, #1b1b1d);
+    background: var(--sto-inset, #fafafa); color: var(--sto-fg, #1b1b1d);
     padding: 0.9em 1.1em; border-radius: 10px; overflow-x: auto; margin: 0.8em 0;
     border: 1px solid var(--sto-line, #e0dbd3); line-height: 1.6;
   }
@@ -52,8 +52,8 @@
   .md-preview blockquote p { margin: 0.35em 0; }
   .md-preview table { border-collapse: collapse; margin: 0.8em 0; width: 100%; font-size: 0.93em; }
   .md-preview th, .md-preview td { border: 1px solid var(--sto-line, #e0dbd3); padding: 0.45em 0.7em; text-align: left; }
-  .md-preview th { background: var(--sto-inset, #faf8f4); font-weight: 650; }
-  .md-preview tr:nth-child(even) td { background: color-mix(in srgb, var(--sto-inset, #faf8f4) 45%, transparent); }
+  .md-preview th { background: var(--sto-inset, #fafafa); font-weight: 650; }
+  .md-preview tr:nth-child(even) td { background: color-mix(in srgb, var(--sto-inset, #fafafa) 45%, transparent); }
   .md-preview a { color: #2f5d7c; text-decoration: none; border-bottom: 1px solid color-mix(in srgb, #2f5d7c 30%, transparent); }
   .md-preview a:hover { border-bottom-color: #2f5d7c; }
   .md-preview hr { border: none; border-top: 1px solid var(--sto-line, #e0dbd3); margin: 1.4em 0; }
@@ -93,7 +93,7 @@
     border: 1px solid var(--border-default, #e0dbd3);
     border-radius: 8px;
     color: var(--text-secondary, #57534e);
-    background: var(--surface-inset, #faf8f4);
+    background: var(--surface-inset, #fafafa);
     font-size: 11px;
     font-weight: 500;
     transition: all 140ms ease;
@@ -101,7 +101,7 @@
   }
   .worker-capability-scope-button:hover:not(:disabled) {
     border-color: #9dc0d8;
-    background: color-mix(in srgb, var(--surface-hover, #f4f1ec) 75%, #e2eaf0);
+    background: color-mix(in srgb, var(--surface-hover, #f5f5f5) 75%, #e2eaf0);
   }
   .worker-capability-scope-button.is-selected {
     border-color: #a8ccb2;
@@ -249,8 +249,8 @@
   .human-stage-failed { color: #8e4a5e; background: #f6e8ea; border-color: #e8ccd2; }
   /* Plan is a distinct planning stage, so its status marker remains
      indigo even while it is waiting for a Plan-capable backend. */
-  .human-stage-plan.human-stage-running { color: #2f5d7c; background: #f0ece4; border-color: #cdd6dc; }
-  .human-stage-plan.human-stage-waiting { color: #2f5d7c; background: #f0ece4; border-color: #cdd6dc; }
+  .human-stage-plan.human-stage-running { color: #2f5d7c; background: #f1f1f3; border-color: #cdd6dc; }
+  .human-stage-plan.human-stage-waiting { color: #2f5d7c; background: #f1f1f3; border-color: #cdd6dc; }
   .human-cycle-history { max-height: 28rem; overflow-y: auto; scrollbar-width: thin; }
   .human-link-card { cursor: pointer; }
   .dark .human-stage-running { color: #9dc0d8; background: rgba(37, 99, 235, 0.22); border-color: rgba(96, 165, 250, 0.38); }
@@ -477,7 +477,7 @@
   }
   .node-card__status.is-done  { background:#e3eee6; color:#3f6b4d; }
   .node-card__status.is-run   { background:#e2eaf0; color:#2f5d7c; }
-  .node-card__status.is-queue { background:#f4f1ec; color:#57534e; }
+  .node-card__status.is-queue { background:#f5f5f5; color:#57534e; }
   .node-card__status.is-block { background:#f0e6cc; color:#b45309; }
   .node-card__status.is-fail  { background:#f4e2df; color:#9c3025; }
   .node-card__status.is-done,
@@ -722,8 +722,8 @@
     /* 分隔用发丝线；表单边框另给一档，否则和纸面同色，看起来像禁用态 */
     --sto-line: #e0dbd3;
     --sto-line-field: #918b84;
-    --sto-panel: #fffefc;
-    --sto-inset: #f4f1ec;
+    --sto-panel: #ffffff;
+    --sto-inset: #f5f5f5;
     --sto-ok: #4a7c59;
     --sto-warn: #8a6420;
     --sto-danger: #b3392c;
@@ -1329,7 +1329,7 @@
     min-width: 0; flex: 1; display: flex; align-items: center; gap: 6px;
     padding: 4px 8px; margin-bottom: 2px; border-radius: 8px; border: 1px solid transparent;
   }
-  .chain-step.on .chain-step-body { background: #faf8f4; border-color: #cfc9c0; }
+  .chain-step.on .chain-step-body { background: #fafafa; border-color: #cfc9c0; }
   .chain-step:hover .chain-step-body { border-color: #e0dbd3; }
   .chain-step-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; color: #57534e; flex: none; }
   .chain-step-title { font-size: 11px; color: #57534e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -1928,7 +1928,7 @@
     display: inline-flex; align-items: center;
     padding: 1px 6px; border-radius: 999px;
     font-size: 10px; font-weight: 700; line-height: 1.5;
-    color: #2f5d7c; background: #f0ece4; border: 1px solid #cdd6dc;
+    color: #2f5d7c; background: #f1f1f3; border: 1px solid #cdd6dc;
     font-variant-numeric: tabular-nums;
     /* 一次点击即可展开/折叠（卡片本身 pointer-events:none，按钮单独打开） */
     pointer-events: auto; cursor: pointer; user-select: none;
@@ -2010,7 +2010,7 @@ html body .goal-sentence input.goal-points-input:focus {
   padding: 0.625rem 0.75rem;
   border: 1px solid var(--border, #e0dbd3);
   border-radius: var(--radius-lg, 12px);
-  background: var(--surface-inset, #faf8f4);
+  background: var(--surface-inset, #fafafa);
   color: var(--text-primary, #1b1b1d);
   font-size: 13px;
   line-height: 1.25rem;
@@ -2122,7 +2122,7 @@ html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button 
   font-size: 10.5px; font-weight: 700; color: var(--sto-fg-2, #57534e);
   font-variant-numeric: tabular-nums; cursor: pointer;
 }
-.lineage-zoom-pct:hover { background: var(--sto-inset, #f4f1ec); }
+.lineage-zoom-pct:hover { background: var(--sto-inset, #f5f5f5); }
 .sto-minibtn.is-on { border-color: #9dc0d8; background: #eff6ff; color: #2f5d7c; }
 
 .lineage-root {
@@ -2475,3 +2475,7 @@ select, textarea {
 }
 .sidebar:not(:hover) .sidebar-bottom .flex-1 p + p { display: none; }
 .sidebar:not(:hover) .sidebar-bottom .grid .nav-label { display: none; }
+
+/* 侧栏底部两个小按钮：.nav-label 自带 margin-left:auto，在居中布局里会把
+   两字标签挤出容器（截成「改」「退」）。这里归零，让图标+文字正常居中。 */
+.sidebar-bottom .grid .nav-label { margin-left: 0; margin-right: 0; }
