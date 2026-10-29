@@ -1771,6 +1771,66 @@
         .filter(item => item.status === 'verified')
         .reduce((sum, item) => sum + (Number(item.points_awarded) || 0), 0);
     },
+    // 成果的审核记录：与漏洞侧走同一个 request()，而不是兼容层 this.api
+    // （legacyApi 只有白名单路由，新路径会被判成「尚未映射」）。
+    async loadRtResultReviews(result = null) {
+      const selected = result || this.selectedRtResult();
+      const requestId = ++this._rtResultReviewRequestId;
+      if (!selected?.task_id || !selected?.id) {
+        this.rtResultReviews = [];
+        this.rtResultReviewsError = '';
+        return [];
+      }
+      this.rtResultReviewsLoading = true;
+      this.rtResultReviewsError = '';
+      try {
+        const rows = await request(
+          'GET',
+          `/tasks/${selected.task_id}/red-team/results/${selected.id}/reviews`,
+          null,
+          { signal: this._pageAbortController?.signal },
+        );
+        if (requestId !== this._rtResultReviewRequestId) return this.rtResultReviews;
+        this.rtResultReviews = (rows || []).map(mapVulnerabilityReviewRun);
+        return this.rtResultReviews;
+      } catch (error) {
+        if (error?.name === 'AbortError') return this.rtResultReviews;
+        if (requestId === this._rtResultReviewRequestId) {
+          this.rtResultReviews = [];
+          this.rtResultReviewsError = error?.message || '加载审核记录失败';
+        }
+        return [];
+      } finally {
+        if (requestId === this._rtResultReviewRequestId) this.rtResultReviewsLoading = false;
+      }
+    },
+
+    async triggerRtResultReview(result) {
+      const selected = result || this.selectedRtResult();
+      if (!selected?.task_id || !selected.id || !this.rtResultReviewCanRetry()) return;
+      if (!window.confirm(`确认重新审核 ${selected.id}？成果将回到审核中，等待审核者重新核定分数。`)) return;
+      this.rtResultReviewSubmitting = true;
+      try {
+        await request(
+          'POST',
+          `/tasks/${selected.task_id}/red-team/results/${selected.id}/reviews`,
+          { actor: this.actorName(), reason: '人工要求重新审核' },
+        );
+        await this.loadRedTeamResultPage();
+        await this.loadRtResultReviews(selected);
+        this.showToast('已创建审核任务');
+      } catch (error) {
+        this.showToast(error?.message || '重新审核失败', 'error');
+      } finally {
+        this.rtResultReviewSubmitting = false;
+      }
+    },
+
+    rtResultReviewCanRetry() {
+      return !this.rtResultReviewSubmitting && !(this.rtResultReviews || [])
+        .some(run => ['pending', 'claimed', 'running', 'concluding'].includes(run.status));
+    },
+
     async loadRedTeamResultPage() {
       const requestId = ++this._rtResultListRequestId;
       this.rtResultLoading = true;

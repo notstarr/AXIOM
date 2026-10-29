@@ -29,7 +29,6 @@ from axiom.modules.todos.tables import todos
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
 from axiom.modules.vulnerabilities.tables import vulnerabilities, vulnerability_artifacts
 from axiom.modules.redteam.tables import red_team_results
-from axiom.modules.reports.path import attack_path
 from axiom.shared.clock import utcnow
 from axiom.shared.database import transaction
 from axiom.shared.errors import ConflictError, NotFoundError
@@ -236,16 +235,8 @@ class ContextService:
                         target_payload = dict(target_payload)
                         target_payload["review_subject_type"] = "redteam_result"
                         # 审核者拿到的是上报的原始数据（含 reproduction_json），不是渲染后的
-                        # 报告。攻击链是唯一由代码补上的字段：它来自图谱，上报方无从得知。
-                        target_payload["attack_path"] = [
-                            link.as_dict()
-                            for link in attack_path(
-                                conn,
-                                task_id=task_id,
-                                intent_id=str(target_payload.get("intent_id") or ""),
-                                chain_id=target_payload.get("chain_id"),
-                            )
-                        ]
+                        # 报告。攻击链不再注入：审核的对象是这一条成果本身（做了什么、
+                        # 拿到了什么、能不能复现），整条链属于图谱与血缘视图。
                     else:
                         target = self.vulnerabilities.get(conn, task_id, review_row["vulnerability_id"])
                         if target is None or target.archived:

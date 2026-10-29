@@ -18,7 +18,6 @@ from axiom.modules.reports.evidence import (
     SUBJECT_VULNERABILITY,
     ReportEvidenceRepository,
 )
-from axiom.modules.reports.path import PathLink, attack_path, attack_paths, load_graph
 from axiom.modules.reports.skeleton import (
     EMPTY,
     NO_REPRODUCTION,
@@ -71,13 +70,7 @@ class ReportService:
             if result is None:
                 raise NotFoundError(f"RedTeam Result not found: {result_id}")
             images = self._images_by_step(conn, task_id, SUBJECT_RESULT, result_id)
-            path = attack_path(
-                conn,
-                task_id=task_id,
-                intent_id=result.intent_id,
-                chain_id=result.chain_id,
-            )
-        return to_dict(build_result_report(result, attack_path=path, images_by_step=images))
+        return to_dict(build_result_report(result, images_by_step=images))
 
 
 class ReportEvidenceService:
@@ -136,17 +129,13 @@ __all__ = [
     "SUBJECT_RESULT",
     "SUBJECT_VULNERABILITY",
     "Block",
-    "PathLink",
     "ReportDoc",
     "ReportEvidenceRepository",
     "ReportEvidenceService",
     "ReportService",
     "Section",
-    "attack_path",
-    "attack_paths",
     "build_result_report",
     "build_vulnerability_report",
-    "load_graph",
     "to_dict",
     "to_markdown",
 ]

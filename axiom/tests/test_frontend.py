@@ -3803,3 +3803,25 @@ def test_the_review_conclusion_lives_in_the_records_not_in_its_own_chapter(clien
     assert "人工判定" in template
     assert "selectedVulnerability().status_reason" in template
     assert "selectedRtResult().review_reason" in template
+
+
+def test_result_review_history_uses_the_shared_adapter_not_the_legacy_map(client) -> None:
+    """The Result review call must not go through ``api()``.
+
+    ``legacyApi`` is an allowlist of the pre-existing frontend surface; a new path
+    falls through to "Backend V2 尚未映射前端请求". The vulnerability side already
+    calls ``request()`` directly, so the Result side does the same and lives in the
+    adapter where that helper is in scope.
+    """
+    adapter = client.get("/static/js/v2-adapter.js").text
+    projects = client.get("/static/js/projects.js").text
+
+    assert "async loadRtResultReviews(" in adapter
+    assert "red-team/results/${selected.id}/reviews" in adapter
+    # 兼容层里不能有同名**定义**：两个方法表合并时它会盖掉 adapter 版本
+    assert "async loadRtResultReviews(" not in projects
+    assert "triggerRtResultReview(result) {" not in projects
+    # 调用是对的，走的是 adapter 那份
+    assert "this.loadRtResultReviews(" in projects
+    # 竞态序号必须初始化，否则 ++undefined 变成 NaN
+    assert "_rtResultReviewRequestId: 0" in client.get("/static/js/state.js").text

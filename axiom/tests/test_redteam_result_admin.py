@@ -51,8 +51,8 @@ def _task(client, *, running: bool = True) -> dict:
     return task
 
 
-def _seed_result(container, task_id: str, *, status: str = "verified", points: int = 35) -> None:
-    with container.engine.begin() as conn:
+def _seed_result(engine, task_id: str, *, status: str = "verified", points: int = 35) -> None:
+    with engine.begin() as conn:
         conn.execute(
             red_team_chains.insert().values(
                 id="ch001",
@@ -101,11 +101,10 @@ def _seed_result(container, task_id: str, *, status: str = "verified", points: i
         )
 
 
-def test_a_verified_result_can_be_sent_back_for_review(client) -> None:
+def test_a_verified_result_can_be_sent_back_for_review(client, engine) -> None:
     """A wrong award is worse than a late one, so a terminal Result can be reopened."""
     task = _task(client)
-    container = client.app.state.container
-    _seed_result(container, task["id"], status="verified", points=35)
+    _seed_result(engine, task["id"], status="verified", points=35)
 
     response = client.post(
         f"/api/v1/tasks/{task['id']}/red-team/results/x001/reviews",
@@ -124,10 +123,9 @@ def test_a_verified_result_can_be_sent_back_for_review(client) -> None:
     assert result["review_reason"] == ""
 
 
-def test_triggering_a_second_review_while_one_is_active_is_rejected(client) -> None:
+def test_triggering_a_second_review_while_one_is_active_is_rejected(client, engine) -> None:
     task = _task(client)
-    container = client.app.state.container
-    _seed_result(container, task["id"])
+    _seed_result(engine, task["id"])
 
     first = client.post(
         f"/api/v1/tasks/{task['id']}/red-team/results/x001/reviews",
@@ -143,10 +141,9 @@ def test_triggering_a_second_review_while_one_is_active_is_rejected(client) -> N
     assert "active ReviewRun" in second.text
 
 
-def test_review_history_for_a_result_is_listed(client) -> None:
+def test_review_history_for_a_result_is_listed(client, engine) -> None:
     task = _task(client)
-    container = client.app.state.container
-    _seed_result(container, task["id"])
+    _seed_result(engine, task["id"])
 
     client.post(
         f"/api/v1/tasks/{task['id']}/red-team/results/x001/reviews",
@@ -171,11 +168,10 @@ def test_reviewing_an_unknown_result_is_a_404(client) -> None:
     assert response.status_code == 404
 
 
-def test_editing_substance_reopens_the_verdict(client) -> None:
+def test_editing_substance_reopens_the_verdict(client, engine) -> None:
     """The reproduction is the evidence, so changing it invalidates the award."""
     task = _task(client)
-    container = client.app.state.container
-    _seed_result(container, task["id"], status="verified", points=35)
+    _seed_result(engine, task["id"], status="verified", points=35)
 
     response = client.patch(
         f"/api/v1/tasks/{task['id']}/red-team/results/x001",
@@ -194,11 +190,10 @@ def test_editing_substance_reopens_the_verdict(client) -> None:
     assert "title" in runs[0]["trigger_payload"]["changed_fields"]
 
 
-def test_editing_only_the_declared_score_keeps_the_verdict(client) -> None:
+def test_editing_only_the_declared_score_keeps_the_verdict(client, engine) -> None:
     """points_declared is the reporter's self-assessment; the verdict is untouched."""
     task = _task(client)
-    container = client.app.state.container
-    _seed_result(container, task["id"], status="verified", points=35)
+    _seed_result(engine, task["id"], status="verified", points=35)
 
     response = client.patch(
         f"/api/v1/tasks/{task['id']}/red-team/results/x001",
@@ -224,15 +219,14 @@ def test_editing_only_the_declared_score_keeps_the_verdict(client) -> None:
         {"intent_id": "i999"},
     ],
 )
-def test_identity_and_verdict_fields_cannot_be_edited(client, payload: dict) -> None:
+def test_identity_and_verdict_fields_cannot_be_edited(client, engine, payload: dict) -> None:
     """Editing content is allowed; editing the verdict is not — that is the reviewer's.
 
     ``extra="forbid"`` turns these into 422 instead of silently dropping them, so a
     caller cannot believe it changed something it did not.
     """
     task = _task(client)
-    container = client.app.state.container
-    _seed_result(container, task["id"])
+    _seed_result(engine, task["id"])
 
     response = client.patch(
         f"/api/v1/tasks/{task['id']}/red-team/results/x001", json=payload
@@ -241,11 +235,10 @@ def test_identity_and_verdict_fields_cannot_be_edited(client, payload: dict) -> 
     assert response.status_code == 422
 
 
-def test_editing_a_result_on_an_archived_task_is_rejected(client) -> None:
+def test_editing_a_result_on_an_archived_task_is_rejected(client, engine) -> None:
     task = _task(client)
-    container = client.app.state.container
-    _seed_result(container, task["id"])
-    with container.engine.begin() as conn:
+    _seed_result(engine, task["id"])
+    with engine.begin() as conn:
         from sqlalchemy import update
 
         from axiom.modules.tasks.tables import tasks
@@ -260,10 +253,9 @@ def test_editing_a_result_on_an_archived_task_is_rejected(client) -> None:
     assert "归档" in response.text
 
 
-def test_editing_a_reproduction_replaces_it(client) -> None:
+def test_editing_a_reproduction_replaces_it(client, engine) -> None:
     task = _task(client)
-    container = client.app.state.container
-    _seed_result(container, task["id"])
+    _seed_result(engine, task["id"])
 
     updated_repro = dict(REPRODUCTION)
     updated_repro["entry_point"] = "POST /api/member/role/v2"
@@ -276,10 +268,9 @@ def test_editing_a_reproduction_replaces_it(client) -> None:
     assert response.json()["reproduction"]["entry_point"] == "POST /api/member/role/v2"
 
 
-def test_editing_with_no_fields_is_a_no_op(client) -> None:
+def test_editing_with_no_fields_is_a_no_op(client, engine) -> None:
     task = _task(client)
-    container = client.app.state.container
-    _seed_result(container, task["id"], status="verified", points=35)
+    _seed_result(engine, task["id"], status="verified", points=35)
 
     response = client.patch(f"/api/v1/tasks/{task['id']}/red-team/results/x001", json={})
 

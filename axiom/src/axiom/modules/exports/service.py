@@ -20,7 +20,6 @@ from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.todos.repository import TodoRepository
 from axiom.modules.reports import ReportEvidenceRepository
 from axiom.modules.redteam.repository import RedTeamRepository
-from axiom.modules.reports.path import attack_path
 from axiom.modules.reports.skeleton import (
     build_result_report,
     build_vulnerability_report,
@@ -187,15 +186,7 @@ class ExportService:
             if result is None:
                 raise NotFoundError(f"RedTeam Result not found: {result_id}")
             images = self._images(conn, task_id, "redteam_result", result_id)
-            path = attack_path(
-                conn,
-                task_id=task_id,
-                intent_id=result.intent_id,
-                chain_id=result.chain_id,
-            )
-        doc = build_result_report(
-            result, attack_path=path, images_by_step=self._images_by_step(images)
-        )
+        doc = build_result_report(result, images_by_step=self._images_by_step(images))
         return to_markdown(doc)
 
     def _render_markdown(self, item, images: list[dict]) -> str:

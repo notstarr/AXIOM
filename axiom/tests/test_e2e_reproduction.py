@@ -163,7 +163,7 @@ def test_e2e_redteam_result_reports_with_a_reproduction_and_no_evidence_file(cli
 
     listed = client.get(f"/api/v1/tasks/{task['id']}/red-team/results").json()
     assert [item["id"] for item in listed] == ["x001"]
-    # 组装出来的攻击链不含分数
-    path = listed[0]["attack_path"]
-    assert [link["intent_id"] for link in path] == ["i002"]
-    assert "points" not in json.dumps(path)
+    # 报告不再携带攻击链：整条路径属于图谱与血缘视图，不属于单条成果的报告
+    assert "attack_path" not in listed[0]
+    # 但逐步的证据仍然是这份报告的一部分
+    assert listed[0]["evidence"] == []

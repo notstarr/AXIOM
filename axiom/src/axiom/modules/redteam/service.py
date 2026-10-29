@@ -24,7 +24,6 @@ from axiom.modules.redteam.schemas import (
 )
 from axiom.modules.redteam.tables import red_team_chains, red_team_results
 from axiom.modules.reports.evidence import ReportEvidenceRepository
-from axiom.modules.reports.path import attack_paths
 from axiom.modules.tasks.tables import tasks
 from axiom.shared.clock import utcnow
 from axiom.shared.database import run_transaction
@@ -103,25 +102,16 @@ def _chain_id_from_metadata(value) -> str | None:
     return chain_id.strip() if isinstance(chain_id, str) and chain_id.strip() else None
 
 
-def _attach_attack_paths(
+def _attach_report_evidence(
     conn: Connection,
     task_id: str,
     results: list[RedTeamResult],
 ) -> list[RedTeamResult]:
-    """Fill ``attack_path`` and ``evidence`` on each Result.
+    """Fill ``evidence`` on each Result.
 
-    Only red-team Results carry a path: a vulnerability-mode kill chain normally closes
-    inside one Intent and the reviewer replays it, so a separate chain adds nothing.
-
-    ``evidence`` is the pictures a reviewer attached afterwards; the report template
-    interleaves them under the step they belong to, so the list payload has to carry
-    them (the console renders the detail straight from this row).
+    The pictures a reviewer attached afterwards; the report template interleaves them
+    under the step they belong to, so the row the console renders has to carry them.
     """
-    paths = attack_paths(
-        conn,
-        task_id=task_id,
-        intents_with_results={item.intent_id for item in results if item.intent_id},
-    )
     evidence_by_id = ReportEvidenceRepository().for_subjects(
         conn,
         task_id,
@@ -129,12 +119,7 @@ def _attach_attack_paths(
         [item.id for item in results],
     )
     return [
-        item.model_copy(
-            update={
-                "attack_path": paths.get(item.intent_id, []),
-                "evidence": evidence_by_id.get(item.id, []),
-            }
-        )
+        item.model_copy(update={"evidence": evidence_by_id.get(item.id, [])})
         for item in results
     ]
 
@@ -385,7 +370,7 @@ class RedTeamService:
         with self.engine.connect() as conn:
             self._task(conn, task_id)
             results = self.repository.list_results(conn, task_id, chain_id=chain_id)
-            return _attach_attack_paths(conn, task_id, results)
+            return _attach_report_evidence(conn, task_id, results)
 
     def list_results_page(
         self,
@@ -418,7 +403,7 @@ class RedTeamService:
                 grouped.setdefault(result.task_id, []).append(result)
             enriched: list[RedTeamResult] = []
             for owner_task_id, batch in grouped.items():
-                enriched.extend(_attach_attack_paths(conn, owner_task_id, batch))
+                enriched.extend(_attach_report_evidence(conn, owner_task_id, batch))
             return enriched, total
 
     def list_chains_page(

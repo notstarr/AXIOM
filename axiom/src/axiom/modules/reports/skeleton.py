@@ -26,11 +26,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from axiom.modules.reproduction.schemas import Reproduction
-from axiom.modules.reports.path import PathLink
 
 if TYPE_CHECKING:
-    # Type-only: the redteam and vulnerability schemas import ``reports.path`` for
-    # PathLink, so a runtime import here would close a cycle.
+    # Type-only: these modules import the report package themselves, so a runtime
+    # import here would close a cycle.
     from axiom.modules.redteam.schemas import RedTeamResult
     from axiom.modules.vulnerabilities.schemas import Vulnerability
 
@@ -41,7 +40,7 @@ if TYPE_CHECKING:
 EMPTY = "未填写"
 NO_REPRODUCTION = "未提供结构化复现"
 
-BlockType = Literal["text", "kv", "bullets", "code", "steps", "chain", "verdict"]
+BlockType = Literal["text", "kv", "bullets", "code", "steps", "verdict"]
 
 SEVERITY_LABELS = {
     "critical": "严重",
@@ -80,7 +79,6 @@ class Block:
     key: str = ""
     items: tuple[str, ...] = ()
     steps: tuple[dict[str, Any], ...] = ()
-    links: tuple[dict[str, Any], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"type": self.type}
@@ -92,8 +90,6 @@ class Block:
             payload["items"] = list(self.items)
         if self.steps:
             payload["steps"] = list(self.steps)
-        if self.links:
-            payload["links"] = list(self.links)
         return payload
 
 
@@ -141,9 +137,9 @@ def build_vulnerability_report(
 ) -> ReportDoc:
     """The delivered vulnerability report.
 
-    No attack path: a vulnerability-mode kill chain normally closes inside one Intent
-    and the reviewer replays it, so a separate chain adds nothing (and the worker could
-    not have known it anyway).
+    The report stops at what was done and what it proved. How the engagement reached
+    this point is not part of it: that lives in the graph and the lineage view, and a
+    reviewer adjudicating one result does not need the whole path re-narrated.
     """
     sections: list[Section] = [
         Section(
@@ -173,7 +169,7 @@ def build_vulnerability_report(
             title="描述",
             blocks=(Block(type="text", text=vulnerability.description or EMPTY),),
         ),
-        _process_section(vulnerability.reproduction, attack_path=None, images_by_step=images_by_step),
+        _process_section(vulnerability.reproduction, images_by_step=images_by_step),
         Section(
             key="impact",
             title="影响",
@@ -208,7 +204,6 @@ def build_vulnerability_report(
 def build_result_report(
     result: "RedTeamResult",
     *,
-    attack_path: list[PathLink] | None = None,
     images_by_step: dict[int, list[dict[str, Any]]] | None = None,
 ) -> ReportDoc:
     """The delivered red-team Result report.
@@ -245,9 +240,7 @@ def build_result_report(
             title="利用前提",
             blocks=_prerequisite_blocks(reproduction),
         ),
-        _process_section(
-            reproduction, attack_path=attack_path or [], images_by_step=images_by_step
-        ),
+        _process_section(reproduction, images_by_step=images_by_step),
     ]
     sections.append(_verdict_section(
         decision=result.status,
@@ -271,10 +264,9 @@ def build_result_report(
 def _process_section(
     reproduction: Reproduction | None,
     *,
-    attack_path: list[PathLink] | None,
     images_by_step: dict[int, list[dict[str, Any]]] | None = None,
 ) -> Section:
-    """入口点 / 前置条件（含攻击链）/ 有序步骤 — the part a human walks again."""
+    """入口点 / 前置条件 / 有序步骤 — the part a human walks again."""
     if reproduction is None:
         return Section(
             key="process",
@@ -283,14 +275,6 @@ def _process_section(
         )
     blocks: list[Block] = [Block(type="kv", key="入口点", text=reproduction.entry_point)]
     blocks.append(Block(type="bullets", key="前置条件", items=tuple(_prerequisites(reproduction))))
-    if attack_path:
-        blocks.append(
-            Block(
-                type="chain",
-                key="攻击链",
-                links=tuple(link.as_dict() for link in attack_path),
-            )
-        )
     images = images_by_step or {}
     blocks.append(
         Block(
@@ -385,13 +369,6 @@ def _render_block(block: Block) -> list[str]:
         return [*rendered, ""]
     if block.type == "code":
         return ["```http", block.text, "```", ""]
-    if block.type == "chain":
-        lines = []
-        for index, link in enumerate(block.links, start=1):
-            gain = f" — {link['gain']}" if link.get("gain") else ""
-            current = "（本环）" if link.get("is_current") else ""
-            lines.append(f"{index}. {link['title']}{current}{gain}")
-        return [*lines, ""]
     if block.type == "verdict":
         return [_verdict_line(block), ""]
     if block.type == "steps":

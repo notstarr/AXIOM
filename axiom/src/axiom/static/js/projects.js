@@ -600,49 +600,6 @@ window.AxiomModules.projects = {
       }
     },
 
-    rtResultReviewCanRetry() {
-      return !this.rtResultReviewSubmitting && !(this.rtResultReviews || [])
-        .some(run => ['pending', 'claimed', 'running', 'concluding'].includes(run.status));
-    },
-
-    async loadRtResultReviews(result) {
-      if (!result?.task_id || !result?.id) {
-        this.rtResultReviews = [];
-        return;
-      }
-      this.rtResultReviewsLoading = true;
-      this.rtResultReviewsError = '';
-      try {
-        this.rtResultReviews = await this.api(
-          'GET', `/tasks/${result.task_id}/red-team/results/${result.id}/reviews`,
-        ) || [];
-      } catch (e) {
-        this.rtResultReviewsError = e.message || '审核记录加载失败';
-        this.rtResultReviews = [];
-      } finally {
-        this.rtResultReviewsLoading = false;
-      }
-    },
-
-    async triggerRtResultReview(result) {
-      if (!result?.task_id || !result.id || !this.rtResultReviewCanRetry()) return;
-      if (!window.confirm(`确认重新审核 ${result.id}？成果将回到审核中，等待审核者重新核定分数。`)) return;
-      this.rtResultReviewSubmitting = true;
-      try {
-        await this.api('POST', `/tasks/${result.task_id}/red-team/results/${result.id}/reviews`, {
-          actor: this.actorName ? this.actorName() : 'human',
-          reason: '人工要求重新审核',
-        });
-        await this.loadRedTeamResultPage?.();
-        await this.loadRtResultReviews(result);
-        this.showToast('已创建审核任务');
-      } catch (e) {
-        this.showToast(e.message || '重新审核失败', 'error');
-      } finally {
-        this.rtResultReviewSubmitting = false;
-      }
-    },
-
     editRtResult(result) {
       if (!result) return;
       const repro = result.reproduction || {};

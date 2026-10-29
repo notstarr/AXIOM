@@ -13,7 +13,6 @@ The rules that matter to a delivered report:
 from __future__ import annotations
 
 from axiom.modules.redteam.schemas import RedTeamResult
-from axiom.modules.reports.path import PathLink
 from axiom.modules.reports.skeleton import (
     EMPTY,
     NO_REPRODUCTION,
@@ -208,23 +207,23 @@ def test_an_image_caption_cannot_break_the_markdown() -> None:
     assert "![回显 \\[ok\\]](images/a.png)" in rendered
 
 
-def test_a_result_report_carries_the_attack_path() -> None:
-    path = [
-        PathLink(intent_id="i001", chain_id="ch001", title="SSRF 打到云元数据", gain="拿到 STS"),
-        PathLink(intent_id="i002", chain_id="ch001", title="横向到 192.168.0.95", gain="拿到 shell", is_current=True),
-    ]
-    doc = build_result_report(_result(), attack_path=path)
-    process = next(section for section in doc.sections if section.key == "process")
-    chain = next(block for block in process.blocks if block.type == "chain")
+def test_a_result_report_carries_no_attack_path() -> None:
+    """How the engagement got here belongs to the graph, not to this result's report.
 
-    assert [link["intent_id"] for link in chain.links] == ["i001", "i002"]
-    assert chain.links[1]["is_current"] is True
+    The reviewer adjudicates one result; narrating the whole path buries the thing
+    being judged and repeats what the lineage view already shows.
+    """
+    doc = build_result_report(_result())
+    rendered = to_dict(doc)
+    kinds = {block["type"] for section in rendered["sections"] for block in section["blocks"]}
+
+    assert "chain" not in kinds
+    assert "攻击链" not in to_markdown(doc)
 
 
 def test_a_result_report_shows_no_score_anywhere() -> None:
     """Points belong to the review verdict / scoring view, not the narrative."""
-    path = [PathLink(intent_id="i001", chain_id="ch001", title="SSRF", gain="拿到 STS")]
-    rendered = to_markdown(build_result_report(_result(points_awarded=35), attack_path=path))
+    rendered = to_markdown(build_result_report(_result(points_awarded=35)))
 
     assert "35" not in rendered
     assert "积分" not in rendered
@@ -254,14 +253,14 @@ def test_a_result_report_omits_capability_transitions_and_data_target() -> None:
 
 
 def test_a_result_without_a_path_still_renders_the_process() -> None:
-    doc = build_result_report(_result(), attack_path=[])
+    doc = build_result_report(_result())
     process = next(section for section in doc.sections if section.key == "process")
 
     assert [block.type for block in process.blocks] == ["kv", "bullets", "steps"]
 
 
 def test_the_prerequisites_section_leads_with_chain_input() -> None:
-    doc = build_result_report(_result(), attack_path=[])
+    doc = build_result_report(_result())
     prerequisites = next(section for section in doc.sections if section.key == "prerequisites")
 
     assert prerequisites.blocks[0].items[0] == "低权限账号会话"

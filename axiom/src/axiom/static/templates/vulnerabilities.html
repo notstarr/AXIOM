@@ -355,7 +355,7 @@
             <p class="rp-p" x-text="formatMultiline(selectedRtResult().description)"></p>
           </section>
 
-          <!-- 利用前提 + 攻击链 -->
+          <!-- 利用前提 -->
           <section class="rp-block">
             <h2 class="rp-h">利用前提</h2>
             <p class="rp-absent" x-show="!selectedRtResult().reproduction">未填写</p>
@@ -374,21 +374,6 @@
                   </ul>
                 </div>
               </div>
-            </div>
-            <!-- 攻击链：由图谱装配，只讲「这一环做了什么、拿到了什么」，不含分数 -->
-            <div x-show="(selectedRtResult().attack_path || []).length" style="margin-top:13px;">
-              <div class="rp-k">攻击链</div>
-              <ol class="rp-chain">
-                <template x-for="(link, idx) in (selectedRtResult().attack_path || [])" :key="`rtlink-${link.intent_id}`">
-                  <li>
-                    <span class="rp-chainno" x-text="`${idx + 1}.`"></span>
-                    <span class="rp-chaintext" :class="link.is_current ? 'cur' : ''">
-                      <span x-text="link.title"></span>
-                      <span x-show="link.gain" class="rp-chaingain" x-text="link.gain"></span>
-                    </span>
-                  </li>
-                </template>
-              </ol>
             </div>
           </section>
 

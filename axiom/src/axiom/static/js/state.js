@@ -118,6 +118,7 @@ window.AxiomModules.state = {
     vulnerabilityReviewsError: '',
     vulnerabilityReviewSubmitting: false,
     _vulnerabilityReviewRequestId: 0,
+    _rtResultReviewRequestId: 0,
     polling: true,
     pollTimer: null,
     intentActivityPollTimer: null,

@@ -1,8 +1,13 @@
-"""Attack-path assembly.
+"""Attack-path assembly (currently unused by the report).
 
-A reporting Intent only ever sees its own slice: it holds a panel token and can reach an
-internal host, but not that the token came from a metadata SSRF four Intents earlier.
-These tests pin the graph walk that reconstructs that history for the report.
+This walk reconstructs how an engagement reached a given Intent, and it was briefly
+rendered into every Result report. It was taken back out: the report is about one
+result (what was done, what it proved, whether it reproduces), and re-narrating the
+whole path buried that. The reconstruct still works and the lineage view has its own
+copy of the derivation, so the module and these tests stay — trimming them would mean
+re-deriving the caretakers' intent next time someone wants it.
+
+If nothing calls ``attack_path`` for a long while, delete both together.
 """
 
 from __future__ import annotations
