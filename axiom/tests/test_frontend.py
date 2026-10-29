@@ -3785,3 +3785,21 @@ def test_export_uses_the_server_filename_instead_of_guessing_the_extension(clien
     assert "content-disposition" in template_js
     assert "downloadReport" in dashboard
     assert "exportSingleVulnerability" in dashboard
+
+
+def test_the_review_conclusion_lives_in_the_records_not_in_its_own_chapter(client) -> None:
+    """The verdict is one of the review runs, not a separate section.
+
+    Rendering it twice — once as prose at the top, once inside each run — meant the
+    same sentence dominated the page and the copy inside the records was collapsed and
+    unread. The records are now the only home and open by default.
+    """
+    template = client.get("/static/templates/vulnerabilities.html").text
+
+    assert '<h2 class="rp-h">审核结论</h2>' not in template
+    # 记录默认展开：否则唯一还能读到裁决的地方要额外点一次
+    assert template.count("<details open>") == 2
+    # 人工改过状态、没有 ReviewRun 时，理由仍要能看到
+    assert "人工判定" in template
+    assert "selectedVulnerability().status_reason" in template
+    assert "selectedRtResult().review_reason" in template

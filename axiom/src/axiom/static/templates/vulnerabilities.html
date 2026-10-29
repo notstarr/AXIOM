@@ -190,20 +190,25 @@
             <p class="rp-p" x-text="formatMultiline(selectedVulnerability().remediation)"></p>
           </section>
 
-          <!-- 审核结论 -->
-          <section class="rp-block">
-            <h2 class="rp-h">审核结论</h2>
-            <p class="rp-p" x-text="formatMultiline(selectedVulnerability().status_reason || '未填写')"></p>
-          </section>
-
-          <!-- Reviewer 审核记录：页尾，收起 -->
-          <details>
+          <!-- 审核结论即记录：裁决与理由属于每一条 ReviewRun，不再单独占一节。
+               默认展开——现在它是页面上唯一的结论来源。 -->
+          <details open>
             <summary class="rp-h" style="cursor:pointer; margin:0;">
               Reviewer 审核记录<span x-show="latestVulnerabilityReview()" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400;" x-text="vulnerabilityReviewStateLabel(latestVulnerabilityReview())"></span>
             </summary>
             <p x-show="vulnerabilityReviewsLoading" class="rp-absent" style="margin-top:8px;">正在加载…</p>
             <p x-show="vulnerabilityReviewsError" class="sto-warnline" style="margin-top:8px;" x-text="vulnerabilityReviewsError"></p>
-            <p x-show="!vulnerabilityReviewsLoading && !vulnerabilityReviewsError && (vulnerabilityReviews || []).length === 0" class="rp-absent" style="margin-top:8px;">暂无审核记录。</p>
+            <p x-show="!vulnerabilityReviewsLoading && !vulnerabilityReviewsError && (vulnerabilityReviews || []).length === 0 && !selectedVulnerability().status_reason" class="rp-absent" style="margin-top:8px;">暂无审核记录。</p>
+            <!-- 人工直接改过状态（没有 ReviewRun）时，理由只剩 status_reason，兜成一条记录 -->
+            <div class="rp-runs" style="margin-top:9px;" x-show="!vulnerabilityReviewsLoading && !(vulnerabilityReviews || []).length && selectedVulnerability().status_reason">
+              <div class="rp-run">
+                <div class="rp-runhead">
+                  <span>人工判定</span>
+                  <span x-text="vulnStatusLabel(selectedVulnerability().status)"></span>
+                </div>
+                <p class="rp-runnote" style="white-space:pre-wrap;" x-text="formatMultiline(selectedVulnerability().status_reason)"></p>
+              </div>
+            </div>
             <div class="rp-runs" style="margin-top:9px;" x-show="(vulnerabilityReviews || []).length > 0">
               <template x-for="run in (vulnerabilityReviews || [])" :key="run.id">
                 <div class="rp-run">
@@ -430,18 +435,22 @@
             </div>
           </section>
 
-          <!-- 审核结论 -->
-          <section class="rp-block">
-            <h2 class="rp-h">审核结论</h2>
-            <p class="rp-p" x-text="formatMultiline(selectedRtResult().review_reason || '未填写')"></p>
-          </section>
-
-          <!-- 审核记录：页尾，收起 -->
-          <details>
+          <!-- 审核结论即记录：与漏洞面板一致，默认展开 -->
+          <details open>
             <summary class="rp-h" style="cursor:pointer; margin:0;">审核记录<span x-show="(rtResultReviews || []).length" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400;" x-text="`${(rtResultReviews || []).length} 次`"></span></summary>
             <p x-show="rtResultReviewsLoading" class="rp-absent" style="margin-top:8px;">正在加载…</p>
             <p x-show="rtResultReviewsError" class="sto-warnline" style="margin-top:8px;" x-text="rtResultReviewsError"></p>
-            <p x-show="!rtResultReviewsLoading && !rtResultReviewsError && (rtResultReviews || []).length === 0" class="rp-absent" style="margin-top:8px;">暂无审核记录。</p>
+            <p x-show="!rtResultReviewsLoading && !rtResultReviewsError && (rtResultReviews || []).length === 0 && !selectedRtResult().review_reason" class="rp-absent" style="margin-top:8px;">暂无审核记录。</p>
+            <!-- 有裁决理由但没有 ReviewRun 时，同样兜成一条 -->
+            <div class="rp-runs" style="margin-top:9px;" x-show="!rtResultReviewsLoading && !(rtResultReviews || []).length && selectedRtResult().review_reason">
+              <div class="rp-run">
+                <div class="rp-runhead">
+                  <span>审核结论</span>
+                  <span x-text="rtResultStatusLabel(selectedRtResult().status)"></span>
+                </div>
+                <p class="rp-runnote" style="white-space:pre-wrap;" x-text="formatMultiline(selectedRtResult().review_reason)"></p>
+              </div>
+            </div>
             <div class="rp-runs" style="margin-top:9px;" x-show="(rtResultReviews || []).length > 0">
               <template x-for="run in (rtResultReviews || [])" :key="`rtrun-${run.id}`">
                 <div class="rp-run">
