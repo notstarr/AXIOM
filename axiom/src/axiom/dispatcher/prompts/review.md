@@ -22,7 +22,7 @@
 3. **产出就是裁决，不写任何文件**：
    - 报告由代码从上报时提交的结构化复现（`review_target.json` 里的 `reproduction`）自动生成，**你不再写 `vuln_report-*.md`**，也不写 evidence/、work/。
    - 裁决为 `duplicate` / `ignored` / `needs-human` 时同样只提交裁决；重复项用 `--duplicate-of` 指回原漏洞。
-   - 需要补关键截图时用 `POST /api/v1/tasks/{task_id}/vulnerabilities/{vuln_id}/evidence`（先用 `/artifacts/upload` 上传图片拿 `artifact_id`，`step_index` 填挂到第几步、0 表示概览）。没有图就不补，不影响裁决。
+   - **每一步都要挂一张报文图**（该步真实回包在屏幕上的样子）：`axiom review evidence attach --step N --kind packet --file shot.png`（`--kind business` 是可选的效果图）。缺图时 `axiom review status` 不会 `ready`、裁决会被拒并点名缺第几步；越界的步骤号也会被拒。
    - 复现报文已在 `review_target.json` 里逐字给出；要复测就照它重打，不要凭描述臆测。
 4. **提交结构化裁决**：
    - 确认成立：`axiom review decision submit verified --reason "精炼理由(1-3句)"`；理由要精炼、专业、直击裁决要害。

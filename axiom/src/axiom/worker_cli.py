@@ -1038,6 +1038,57 @@ def register_worker_commands(main: click.Group) -> None:
             payload["points_awarded"] = points
         _echo(_review_request("decision", payload))
 
+    @review_group.group("evidence")
+    def review_evidence_group() -> None:
+        """截图：挂到复现的某一步上。"""
+
+    @review_evidence_group.command("attach")
+    @click.option("--step", type=click.IntRange(min=1), required=True, help="该图证明的是第几步")
+    @click.option(
+        "--kind",
+        type=click.Choice(("packet", "business")),
+        default="packet",
+        show_default=True,
+        help="packet=该步真实回包（每步必须有）；business=业务效果图（可选）",
+    )
+    @click.option("--file", "file_path", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
+    @click.option("--caption", default="")
+    def review_evidence_attach(step: int, kind: str, file_path: Path, caption: str) -> None:
+        """Upload one screenshot and hang it on step N of the reviewed subject.
+
+        The reviewer never has to know whether it is judging a Vulnerability or a Result:
+        the ReviewRun says which, and the subject id comes from it.  Both the upload and
+        the attachment happen server-side in one call, so a picture can never end up
+        stored but unattached.
+        """
+        task_id = _environment("AXIOM_TASK_ID")
+        review_run_id = _environment("AXIOM_REVIEW_RUN_ID")
+        run = _request(
+            "GET",
+            f"/tasks/{task_id}/vulnerability-review-runs/{review_run_id}",
+            None,
+        )
+        subject_type = run.get("review_subject_type") or "vulnerability"
+        if subject_type == "redteam_result":
+            subject_id = run.get("red_team_result_id") or ""
+            base = f"/tasks/{task_id}/red-team/results/{subject_id}/evidence/capture"
+        else:
+            subject_id = run.get("vulnerability_id") or ""
+            base = f"/tasks/{task_id}/vulnerabilities/{subject_id}/evidence/capture"
+        if not subject_id:
+            raise click.ClickException("审核对象标识缺失，无法挂截图")
+        payload = _upload_request(
+            base,
+            file_path=file_path,
+            data={
+                "step_index": str(step),
+                "kind": kind,
+                "caption": caption,
+                "created_by": os.environ.get("AXIOM_WORKER", "").strip() or "reviewer",
+            },
+        )
+        _echo(payload)
+
     @main.group("webshell")
     def webshell_group() -> None:
         """WebShell connection registry bound to the current red-team task."""
@@ -1285,6 +1336,45 @@ def _request(method: str, path: str, payload: dict[str, Any]) -> Any:
     try:
         with httpx.Client(base_url=base_url, headers=headers, timeout=20, trust_env=False) as client:
             response = client.request(method, path, json=payload)
+    except httpx.HTTPError as exc:
+        raise click.ClickException(f"AXIOM API unavailable: {exc}") from exc
+    if response.is_error:
+        try:
+            body = response.json()
+            detail = body.get("error", {}).get("message") or body.get("detail") or response.text
+        except (ValueError, AttributeError):
+            detail = response.text
+        if not isinstance(detail, str):
+            detail = json.dumps(detail, ensure_ascii=False)
+        raise click.ClickException(f"AXIOM API HTTP {response.status_code}: {detail}")
+    return response.json() if response.content else None
+
+
+def _upload_request(path: str, *, file_path: Path, data: dict[str, str]) -> Any:
+    """POST one file as multipart.
+
+    Separate from ``_request`` because the JSON helper cannot carry bytes, and the
+    screenshots this is for are always bytes on disk.  Errors are unwrapped the same way
+    so a rejected step number reads like every other CLI failure instead of a bare 409.
+    """
+    base_url = os.environ.get("AXIOM_SERVER", "http://127.0.0.1:8899").rstrip("/")
+    if not base_url.endswith("/api/v1"):
+        base_url += "/api/v1"
+    headers: dict[str, str] = {}
+    token = os.environ.get("AXIOM_SERVICE_TOKEN", "").strip()
+    if token:
+        headers["authorization"] = f"Bearer {token}"
+    try:
+        content = file_path.read_bytes()
+    except OSError as exc:
+        raise click.ClickException(f"cannot read {file_path}: {exc}") from exc
+    try:
+        with httpx.Client(base_url=base_url, headers=headers, timeout=60, trust_env=False) as client:
+            response = client.post(
+                path,
+                data=data,
+                files={"file": (file_path.name, content)},
+            )
     except httpx.HTTPError as exc:
         raise click.ClickException(f"AXIOM API unavailable: {exc}") from exc
     if response.is_error:

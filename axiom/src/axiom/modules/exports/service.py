@@ -52,9 +52,10 @@ class ExportService:
     def _images(self, conn, task_id: str, subject_type: str, subject_id: str) -> list[dict]:
         """The pictures attached to this report, named for a self-contained folder.
 
-        Filenames carry the step number so the folder sorts in reading order, and the
-        markdown references exactly the name written into the archive — a mismatch here
-        is a broken report that only shows up after delivery.
+        Filenames carry the step number and the kind so the folder sorts in reading order
+        and a reader can tell the packet shot (the response on the wire) from the business
+        shot (the effect).  The markdown references exactly the name written into the
+        archive — a mismatch here is a broken report that only shows up after delivery.
         """
         items = self.report_evidence.list(conn, task_id, subject_type, subject_id)
         artifacts = {item.id: item for item in self.artifacts.list(conn, task_id)}
@@ -72,11 +73,13 @@ class ExportService:
                 )
                 continue
             step = int(item.get("step_index") or 0)
+            kind = item.get("kind") or "business"
             name = path.name
             # 上传时人可能已经按步骤命名（step-02-id.png），再叠一层前缀会变成
-            # step-02-step-02-id.png。已经带了本步编号就原样用。
+            # step-02-step-02-id.png。已经带了本步编号就原样用——名字里缺种类无妨，
+            # 图片的先后顺序由这里决定，不靠文件名。
             prefix = f"step-{step:02d}-"
-            key = name if name.startswith(prefix) else f"{prefix}{name}"
+            key = name if name.startswith(prefix) else f"{prefix}{kind}-{name}"
             if key in used:
                 used[key] += 1
                 stem, dot, ext = key.rpartition(".")
@@ -86,6 +89,7 @@ class ExportService:
             collected.append(
                 {
                     "step": step,
+                    "kind": kind,
                     "path": f"images/{key}",
                     "caption": item.get("caption") or "",
                     "file": path,

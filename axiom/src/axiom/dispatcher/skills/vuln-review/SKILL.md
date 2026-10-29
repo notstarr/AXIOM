@@ -198,17 +198,13 @@ Reviewer 必须严格执行**“危害驱动”**审查，严厉剔除纸面告�
 - `duplicate` / `ignored` / `needs-human` 同样只提交裁决，在 `--reason` 里说明
   （1-3 句，精炼直击要害；重复项用 `--duplicate-of` 指回原漏洞）。
 - 复测时照 `reproduction.steps` 里的报文重打，不要凭描述臆测。
-- 需要补关键截图时走钩子接口，每条漏洞 **0-3 张**、只留能证明漏洞存在的关键画面：
+- **每一步都要挂一张报文图**（那一步真实回包在屏幕上的样子）。缺图时 `axiom review
+  status` 不会 `ready`，`axiom review decision submit` 会被拒并点名缺第几步：
   ```bash
-  # 1) 上传图片拿 artifact_id
-  curl -X POST "$AXIOM_SERVER/api/v1/tasks/$AXIOM_TASK_ID/artifacts/upload" \
-       -F file=@retest.png -F actor=reviewer -F summary=命令回显
-  # 2) 挂到第 2 步（step_index=0 表示概览图）
-  curl -X POST "$AXIOM_SERVER/api/v1/tasks/$AXIOM_TASK_ID/vulnerabilities/<vuln_id>/evidence" \
-       -H 'content-type: application/json' \
-       -d '{"artifact_id":"<id>","step_index":2,"caption":"命令回显"}'
+  axiom review evidence attach --step 2 --kind packet --file step-02.png --caption "步骤 2 回包"
   ```
-  没有图就不补，不影响裁决。
+  `--step` 必须是该漏洞复现步骤的 1..N（越界会被拒，报错里有真实步数）。业务效果图用
+  `--kind business`，可选，不计入闸门。
 
 ## 六、语言要求
 

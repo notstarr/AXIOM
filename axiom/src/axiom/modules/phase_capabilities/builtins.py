@@ -300,6 +300,17 @@ _CORE_BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = (
         invocation="axiom review decision submit ...",
         availability=_all_modes("review"),
     ),
+    BuiltinToolDefinition(
+        key="axiom.review.evidence.attach",
+        title="挂每步截图",
+        description=(
+            "把一张截图挂到复现的某一步上：kind=packet 为该步真实回包"
+            "（每一步都必须有，缺则提交不了裁决）；kind=business 为业务效果图（可选）。"
+        ),
+        source="axiom_internal",
+        invocation="axiom review evidence attach --step N --kind packet --file shot.png",
+        availability=_all_modes("review"),
+    ),
 )
 
 

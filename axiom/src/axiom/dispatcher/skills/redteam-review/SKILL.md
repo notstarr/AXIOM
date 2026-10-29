@@ -7,20 +7,20 @@ description: 红队成果审核前必读。按护网评分表核定分
 
 审核对象是红队成果。先读 `redteam-scoring`，按那张表核定 `points_awarded`。不以自评分为准。
 
-## 补截图（可选）
+## 每步报文图（必须）
 
-需要给某一步留证时，先上传图片拿 `artifact_id`，再挂到成果与步骤上：
+报告里的每一步都要有一张**报文图**——那一步真实回包在屏幕上的样子。没有它，`axiom review
+status` 不会 `ready`，`axiom review decision submit` 会直接被拒并点名缺第几步。
 
 ```bash
-curl -X POST "$AXIOM_SERVER/api/v1/tasks/$AXIOM_TASK_ID/artifacts/upload" \
-     -F file=@retest.png -F actor=reviewer -F summary=命令回显
-curl -X POST "$AXIOM_SERVER/api/v1/tasks/$AXIOM_TASK_ID/red-team/results/<result_id>/evidence" \
-     -H 'content-type: application/json' \
-     -d '{"artifact_id":"<id>","step_index":2,"caption":"命令回显"}'
+axiom review evidence attach --step 2 --kind packet --file step-02.png --caption "步骤 2 回包"
 ```
 
-`step_index` 是第几步（图会显示在那一步的响应之后）。**没有图就不补，不影响裁决**——
-报告正文里的报文本身就是证据。
+`--step` 必须落在该成果复现步骤的 1..N 之内（越界会被拒，报错里有真实步数）。
+**一张图挂在第几步，就只证明第几步**——不要用第 1 步的图去补第 4 步。
+
+业务效果图（后台列表、数据内容、shell 回显）用 `--kind business`，是**可选**的：
+它让报告好读，但不计入闸门，也别指望它能顶替报文图。
 
 ## 审查
 

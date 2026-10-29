@@ -544,25 +544,52 @@ window.AxiomModules.projects = {
       return vulns[0];
     },
 
-    // 报告骨架里「步骤 N」下面挂的证据图：审核者按 step_index 补的，
-    // 未补时返回空数组（模板留空槽，不占高度）。
-    vulnEvidenceForStep(stepIndex) {
+    // 报告骨架里「步骤 N」下面挂的截图：审核者按 step_index + kind 补的。
+    // packet = 该步真实回包（每步必须有，审核闸门就看它）；business = 业务效果图。
+    vulnStepShots(stepIndex, kind) {
       const list = this.selectedVulnerability()?.evidence || [];
-      return list.filter(item => Number(item.step_index) === Number(stepIndex));
+      return list.filter(
+        item => Number(item.step_index) === Number(stepIndex)
+          && (item.kind || 'business') === kind,
+      );
+    },
+
+    rtStepShots(stepIndex, kind) {
+      const list = this.selectedRtResult()?.evidence || [];
+      return list.filter(
+        item => Number(item.step_index) === Number(stepIndex)
+          && (item.kind || 'business') === kind,
+      );
+    },
+
+    // 只认 packet：一张业务图不代表这一步被证明过。
+    stepHasPacket(stepIndex, evidence) {
+      return (evidence || []).some(
+        item => Number(item.step_index) === Number(stepIndex) && item.kind === 'packet',
+      );
+    },
+
+    // 审核记录标题旁的进度：缺几步一眼看见，不用逐条数。
+    packetShotProgress(subject) {
+      const steps = subject?.reproduction?.steps || [];
+      if (!steps.length) return { have: 0, total: 0 };
+      const covered = new Set(
+        (subject?.evidence || [])
+          .filter(item => item.kind === 'packet')
+          .map(item => Number(item.step_index)),
+      );
+      let have = 0;
+      for (let i = 1; i <= steps.length; i += 1) if (covered.has(i)) have += 1;
+      return { have, total: steps.length };
     },
 
     // 未挂到具体步骤的图（step_index = 0）归「证据」一节。
-    vulnOverviewEvidence() {
-      return this.vulnEvidenceForStep(0);
+    vulnOverviewEvidence(kind = 'business') {
+      return this.vulnStepShots(0, kind);
     },
 
-    rtEvidenceForStep(stepIndex) {
-      const list = this.selectedRtResult()?.evidence || [];
-      return list.filter(item => Number(item.step_index) === Number(stepIndex));
-    },
-
-    rtOverviewEvidence() {
-      return this.rtEvidenceForStep(0);
+    rtOverviewEvidence(kind = 'business') {
+      return this.rtStepShots(0, kind);
     },
 
     // —— 成果的报告侧：导出 / 触发审核 / 审核记录 / 编辑 ——
@@ -686,9 +713,10 @@ window.AxiomModules.projects = {
       }
     },
 
-    // 证据上传：先落成普通 artifact，再挂到主体与步骤上（report_evidence）。
-    // 报告里每步的虚线槽调它，所以失败必须让人看见，不能静默。
-    async uploadReportEvidence(subjectType, subjectId, stepIndex, event) {
+    // 截图上传：一次 multipart 调用完成「落 artifact + 挂到该步」。
+    // 报告里每步的两个虚线槽调它，所以失败必须让人看见，不能静默。
+    // kind 决定这张图算不算该步的证据：packet 才计入审核闸门。
+    async uploadReportEvidence(subjectType, subjectId, stepIndex, event, kind = 'business') {
       const input = event?.target;
       const file = input?.files?.[0];
       if (!file) return;
@@ -697,26 +725,12 @@ window.AxiomModules.projects = {
         ? (this.selectedRtResult()?.task_id || '')
         : (this.selectedVulnerability()?.project_id || '');
       if (!taskId || !subjectId) {
-        this.showToast('缺少任务或主体标识，无法挂证据', 'error');
+        this.showToast('缺少任务或主体标识，无法挂截图', 'error');
         return;
       }
-      const actor = this.actorName ? this.actorName() : 'reviewer';
-      const form = new FormData();
-      form.append('file', file);
-      form.append('actor', actor);
-      form.append('summary', file.name);
       try {
-        const uploaded = await this.api('POST', `/tasks/${taskId}/artifacts/upload`, form);
-        const base = subjectType === 'redteam_result'
-          ? `/tasks/${taskId}/red-team/results/${subjectId}/evidence`
-          : `/tasks/${taskId}/vulnerabilities/${subjectId}/evidence`;
-        await this.api('POST', base, {
-          artifact_id: uploaded.id,
-          step_index: Number(stepIndex) || 0,
-          caption: '',
-          created_by: actor,
-        });
-        this.showToast('证据已挂到报告', 'success');
+        await this.attachStepShot(subjectType, taskId, subjectId, stepIndex, file, kind);
+        this.showToast(kind === 'packet' ? '报文图已挂到该步' : '业务图已挂到该步', 'success');
         // 重新拉一次列表以获得新的 evidence 数组（详情面板直接读它）。
         if (subjectType === 'redteam_result') {
           await this.loadRedTeamResultPage?.();
@@ -733,7 +747,7 @@ window.AxiomModules.projects = {
           }
         }
       } catch (e) {
-        this.showToast(e.message || '证据上传失败', 'error');
+        this.showToast(e.message || '截图上传失败', 'error');
       } finally {
         if (input) input.value = '';
       }

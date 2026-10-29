@@ -1831,6 +1831,22 @@
         .some(run => ['pending', 'claimed', 'running', 'concluding'].includes(run.status));
     },
 
+    // 每步截图的挂载：一次 multipart 到 /evidence/capture，服务端完成
+    // 「落 artifact + 挂到该步」。kind 决定它算不算该步的证据（packet 才算）。
+    // 走 request() 是因为 legacyApi 只有白名单路由，capture 是新路径。
+    async attachStepShot(subjectType, taskId, subjectId, stepIndex, file, kind = 'business') {
+      const base = subjectType === 'redteam_result'
+        ? `/tasks/${taskId}/red-team/results/${subjectId}/evidence/capture`
+        : `/tasks/${taskId}/vulnerabilities/${subjectId}/evidence/capture`;
+      const form = new FormData();
+      form.append('file', file);
+      form.append('step_index', String(Number(stepIndex) || 0));
+      form.append('kind', kind);
+      form.append('caption', '');
+      form.append('created_by', this.actorName ? this.actorName() : 'reviewer');
+      return request('POST', base, form);
+    },
+
     async loadRedTeamResultPage() {
       const requestId = ++this._rtResultListRequestId;
       this.rtResultLoading = true;

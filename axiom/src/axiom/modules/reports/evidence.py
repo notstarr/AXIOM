@@ -3,13 +3,20 @@
 Explore ships packets, not pictures.  A delivered report still usually wants the one or
 two key screenshots, and those are the reviewer's to take — they have already replayed
 the exploit to adjudicate it.  The images are stored as ordinary uploaded artifacts;
-this layer just records *which* report and *which step* each one belongs to, so the
-renderer can interleave them.
+this layer just records *which* report, *which step* and *which kind* each one belongs
+to, so the renderer can interleave them and the review gate can tell a packet shot from
+a business shot.
+
+The gate is why ``kind`` exists at all.  A picture of the admin table proves the outcome
+but not the step that got there; only a response captured off the wire does.  So
+``packet`` shots are required per step and ``business`` shots are not.
 """
 
 from __future__ import annotations
 
-from sqlalchemy import Connection, delete, select
+from typing import Any, Iterable
+
+from sqlalchemy import Connection, case, delete, select
 
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.reports.tables import report_evidence
@@ -21,9 +28,34 @@ SUBJECT_VULNERABILITY = "vulnerability"
 SUBJECT_RESULT = "redteam_result"
 SUBJECTS = frozenset({SUBJECT_VULNERABILITY, SUBJECT_RESULT})
 
-# Enough for the key steps of one report; a report with 20 pictures is a screenshot
-# dump, not evidence.
-MAX_EVIDENCE_PER_SUBJECT = 20
+KIND_PACKET = "packet"
+KIND_BUSINESS = "business"
+KINDS = frozenset({KIND_PACKET, KIND_BUSINESS})
+
+# Enough for 12 steps of packet shots plus the business pictures that make a report
+# readable; a report with 40 pictures is a screenshot dump, not evidence.
+MAX_EVIDENCE_PER_SUBJECT = 40
+
+# Packet shots must land on a real step, so the upper bound is the reproduction length.
+# Business shots keep the old free range: they are decoration, and historical rows were
+# attached before a report had any notion of steps.
+MAX_STEP_INDEX = 200
+
+
+def missing_packet_steps(step_count: int, evidence: Iterable[dict[str, Any]]) -> list[int]:
+    """Steps 1..``step_count`` that have no packet shot yet.
+
+    Pure so the review service, the API and the tests all agree on what "covered" means:
+    one packet shot anywhere in the step is enough, and extra business shots never count.
+    """
+    if step_count <= 0:
+        return []
+    covered = {
+        int(item.get("step_index") or 0)
+        for item in evidence
+        if (item.get("kind") or KIND_BUSINESS) == KIND_PACKET
+    }
+    return [step for step in range(1, step_count + 1) if step not in covered]
 
 
 class ReportEvidenceRepository:
@@ -32,6 +64,7 @@ class ReportEvidenceRepository:
             select(
                 report_evidence.c.artifact_id,
                 report_evidence.c.step_index,
+                report_evidence.c.kind,
                 report_evidence.c.caption,
                 report_evidence.c.display_order,
                 artifacts.c.storage_key,
@@ -48,12 +81,20 @@ class ReportEvidenceRepository:
                 report_evidence.c.subject_id == subject_id,
                 artifacts.c.archived.is_(False),
             )
-            .order_by(report_evidence.c.step_index, report_evidence.c.display_order)
+            # Packet shots first within a step: the wire response is what a reader checks,
+            # the business picture only illustrates it. Sorting here (rather than in each
+            # renderer) keeps the console, the skeleton and the export in the same order.
+            .order_by(
+                report_evidence.c.step_index,
+                case((report_evidence.c.kind == KIND_PACKET, 0), else_=1),
+                report_evidence.c.display_order,
+            )
         ).mappings()
         return [
             {
                 "artifact_id": row["artifact_id"],
                 "step_index": int(row["step_index"] or 0),
+                "kind": row["kind"] or KIND_BUSINESS,
                 "caption": row["caption"] or "",
                 "display_order": int(row["display_order"] or 0),
                 "storage_key": row["storage_key"],
@@ -75,9 +116,12 @@ class ReportEvidenceRepository:
         step_index: int,
         caption: str,
         created_by: str,
+        kind: str = KIND_BUSINESS,
     ) -> dict:
         if subject_type not in SUBJECTS:
             raise ConflictError(f"Unsupported report subject type: {subject_type}")
+        if kind not in KINDS:
+            raise ConflictError(f"不支持的截图种类：{kind}（只能是 packet 或 business）")
         if step_index < 0:
             raise ConflictError("step_index must be 0 (overview) or a positive step number")
         artifact = conn.execute(
@@ -96,10 +140,31 @@ class ReportEvidenceRepository:
                 f"该报告已关联 {len(existing)} 张证据，上限 {MAX_EVIDENCE_PER_SUBJECT}；"
                 "请先删除多余图片"
             )
-        if any(item["artifact_id"] == artifact_id for item in existing):
-            # Attaching the same picture twice is a no-op, not an error: the reviewer
-            # may have double-submitted.
-            return next(item for item in existing if item["artifact_id"] == artifact_id)
+        attached = next(
+            (item for item in existing if item["artifact_id"] == artifact_id), None
+        )
+        if attached is not None:
+            # Re-attaching is a no-op, not an error: the reviewer may have double-submitted
+            # or re-shot the same step.  But changing the kind of an existing picture is a
+            # real edit (a business shot re-labelled as the packet shot would move a step
+            # across the gate), so it is applied rather than ignored.
+            if attached["kind"] != kind:
+                conn.execute(
+                    report_evidence.update()
+                    .where(
+                        report_evidence.c.task_id == task_id,
+                        report_evidence.c.subject_type == subject_type,
+                        report_evidence.c.subject_id == subject_id,
+                        report_evidence.c.artifact_id == artifact_id,
+                    )
+                    .values(kind=kind, caption=caption.strip() or attached["caption"])
+                )
+                return next(
+                    item
+                    for item in self.list(conn, task_id, subject_type, subject_id)
+                    if item["artifact_id"] == artifact_id
+                )
+            return attached
 
         conn.execute(
             report_evidence.insert().values(
@@ -108,6 +173,7 @@ class ReportEvidenceRepository:
                 subject_id=subject_id,
                 artifact_id=artifact_id,
                 step_index=step_index,
+                kind=kind,
                 caption=caption.strip(),
                 display_order=len(existing),
                 created_by=created_by,

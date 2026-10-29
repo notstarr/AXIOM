@@ -132,6 +132,21 @@ def _chain_draft(completed: dict) -> dict:
     }
 
 
+def _attach_packet_shots(client, task_id: str, result_id: str, steps: int = 1) -> None:
+    """Satisfy the packet-shot gate the way a reviewer would.
+
+    Every reproduction step needs its own response screenshot before a verdict can be
+    filed; these lifecycle tests care about the verdict, so they hang the minimum.
+    """
+    for step in range(1, steps + 1):
+        response = client.post(
+            f"/api/v1/tasks/{task_id}/red-team/results/{result_id}/evidence/capture",
+            files={"file": (f"step-{step:02d}.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+            data={"step_index": str(step), "kind": "packet", "caption": f"步骤 {step} 回包"},
+        )
+        assert response.status_code == 201, response.text
+
+
 def _claim_explore(client, task_id: str, intent_id: str) -> tuple[dict, dict]:
     base = f"/api/v1/dispatch/tasks/{task_id}/intents/{intent_id}"
     claim = client.post(f"{base}/claim", json={"worker_name": "worker-a"})
@@ -590,6 +605,8 @@ def test_redteam_result_review_lifecycle(client, engine) -> None:
     )
     assert released.status_code == 200, released.text
     review_base = f"/api/v1/dispatch/tasks/{task['id']}/vulnerability-review-runs/{review_run_id}"
+    # 裁决前必须给每一步挂一张报文图（审核闸门）
+    _attach_packet_shots(client, task["id"], result_id, steps=len(REPRODUCTION["steps"]))
     claimed = client.post(f"{review_base}/claim", json={"worker_name": "worker-a"})
     assert claimed.status_code == 200, claimed.text
     review_lease = {"lease_id": claimed.json()["lease_id"]}
@@ -1300,6 +1317,7 @@ def test_redteam_notification_fires_when_review_run_completes(client, engine) ->
             json={"lease_id": claim_body["lease_id"], "failure_kind": "test_release"},
         )
         base = f"/api/v1/dispatch/tasks/{task['id']}/vulnerability-review-runs/{review_run_id}"
+        _attach_packet_shots(client, task["id"], result_id, steps=len(REPRODUCTION["steps"]))
         claimed = client.post(f"{base}/claim", json={"worker_name": "worker-a"})
         lease = {"lease_id": claimed.json()["lease_id"]}
         client.post(f"{base}/start", json=lease)

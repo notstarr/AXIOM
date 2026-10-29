@@ -281,3 +281,191 @@ def test_the_list_payload_carries_per_step_pictures_too(client) -> None:
     row = next(item for item in listed if item["id"] == vulnerability["id"])
     assert [item["artifact_id"] for item in row["evidence"]] == [artifact_id]
     assert row["evidence"][0]["step_index"] == 1
+
+
+# --------------------------------------------------------------- packet vs business
+
+TWO_STEPS = {
+    "entry_point": "POST /upload.php",
+    "prerequisites": ["无需认证"],
+    "steps": [
+        {
+            "title": "上传 PHP 文件",
+            "request": "POST /upload.php HTTP/1.1\r\nHost: a.example.com\r\n\r\n--X--",
+            "response": "HTTP/1.1 200 OK\r\n\r\n{\"url\":\"/uploads/shell.php\"}",
+            "proves": "上传接口不校验类型",
+        },
+        {
+            "title": "访问落地的 shell",
+            "request": "GET /uploads/shell.php?c=id HTTP/1.1\r\nHost: a.example.com\r\n\r\n",
+            "response": "HTTP/1.1 200 OK\r\n\r\nuid=0(root)",
+            "proves": "落地的文件被当作代码执行",
+        },
+    ],
+}
+
+
+def _two_step_vulnerability(client, task_id: str) -> dict:
+    response = client.post(
+        f"/api/v1/tasks/{task_id}/vulnerabilities",
+        json={
+            "title": "任意文件上传",
+            "type": "文件上传",
+            "severity": "critical",
+            "description": "上传 PHP 后可执行",
+            "prerequisites": "无需认证",
+            "impact": "服务器接管",
+            "reproduction": TWO_STEPS,
+            "source": "human",
+            "reported_by": "tester",
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_the_default_kind_is_business_so_nothing_silently_counts_as_a_packet(client) -> None:
+    """A caller that says nothing must not satisfy the packet gate.
+
+    Historical rows and hand-attached pictures predate the distinction; treating silence
+    as ``packet`` would let them claim a step was proven when no response was ever shown.
+    """
+    task = _project_task(client)
+    vulnerability = _vulnerability(client, task["id"])
+    artifact_id = _upload(client, task["id"], "step-01.png", b"\x89PNG\r\n\x1a\n")
+
+    attached = client.post(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities/{vulnerability['id']}/evidence",
+        json={"artifact_id": artifact_id, "step_index": 1},
+    )
+
+    assert attached.status_code == 201, attached.text
+    assert attached.json()["kind"] == "business"
+
+
+def test_a_packet_shot_needs_a_real_step(client) -> None:
+    """step_index 越界要被拒，并且报错要点名真实步数——不然审核者只能靠猜。"""
+    task = _project_task(client)
+    vulnerability = _two_step_vulnerability(client, task["id"])
+
+    response = client.post(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities/{vulnerability['id']}/evidence",
+        json={"artifact_id": _upload(client, task["id"], "x.png", b"\x89PNG\r\n\x1a\n"),
+              "step_index": 3, "kind": "packet"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert "2" in response.text and "1..2" in response.text
+
+
+def test_a_packet_shot_is_refused_when_there_is_no_reproduction(client) -> None:
+    task = _project_task(client)
+    vulnerability = _vulnerability(client, task["id"])
+    # 手工录入的漏洞没有复现步骤：没有「某一步」可以挂报文图
+    manual = client.post(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities",
+        json={
+            "title": "手工录入",
+            "type": "其他",
+            "severity": "low",
+            "description": "无复现",
+            "impact": "未知",
+            "source": "human",
+            "reported_by": "tester",
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities/{manual['id']}/evidence",
+        json={"artifact_id": _upload(client, task["id"], "x.png", b"\x89PNG\r\n\x1a\n"),
+              "step_index": 1, "kind": "packet"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert "结构化复现" in response.text
+
+
+def test_capture_uploads_and_attaches_in_one_call(client) -> None:
+    """截图侧只交字节、步号、种类；它不需要知道 artifact 或挂载表的存在。"""
+    task = _project_task(client)
+    vulnerability = _two_step_vulnerability(client, task["id"])
+    base = f"/api/v1/tasks/{task['id']}/vulnerabilities/{vulnerability['id']}/evidence"
+
+    captured = client.post(
+        f"{base}/capture",
+        files={"file": ("step-02.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        data={"step_index": "2", "kind": "packet", "caption": "shell 回显"},
+    )
+
+    assert captured.status_code == 201, captured.text
+    payload = captured.json()
+    assert payload["step_index"] == 2
+    assert payload["kind"] == "packet"
+    assert payload["caption"] == "shell 回显"
+    listed = client.get(base).json()
+    assert [item["artifact_id"] for item in listed] == [payload["artifact_id"]]
+    # 图片本身能被下载——报告里 <img> 指的就是这个 URL
+    assert client.get(payload["url"]).status_code == 200
+
+
+def test_a_rejected_capture_leaves_no_orphan_artifact(client) -> None:
+    """先校验再落盘：越界的挂载不能在上传目录里留一张没人认领的图。"""
+    task = _project_task(client)
+    vulnerability = _two_step_vulnerability(client, task["id"])
+    before = len(client.get(f"/api/v1/tasks/{task['id']}/artifacts").json())
+
+    response = client.post(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities/{vulnerability['id']}/evidence/capture",
+        files={"file": ("step-09.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        data={"step_index": "9", "kind": "packet"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert len(client.get(f"/api/v1/tasks/{task['id']}/artifacts").json()) == before
+
+
+def test_re_attaching_with_a_different_kind_is_an_edit_not_a_noop(client) -> None:
+    """把业务图改标成报文图会挪动闸门，必须真的落库。"""
+    task = _project_task(client)
+    vulnerability = _two_step_vulnerability(client, task["id"])
+    artifact_id = _upload(client, task["id"], "step-01.png", b"\x89PNG\r\n\x1a\n")
+    base = f"/api/v1/tasks/{task['id']}/vulnerabilities/{vulnerability['id']}/evidence"
+    client.post(base, json={"artifact_id": artifact_id, "step_index": 1})
+
+    flipped = client.post(
+        base, json={"artifact_id": artifact_id, "step_index": 1, "kind": "packet"}
+    )
+
+    assert flipped.status_code == 201, flipped.text
+    assert flipped.json()["kind"] == "packet"
+    assert [item["kind"] for item in client.get(base).json()] == ["packet"]
+
+
+def test_an_unknown_kind_is_rejected(client) -> None:
+    task = _project_task(client)
+    vulnerability = _vulnerability(client, task["id"])
+
+    response = client.post(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities/{vulnerability['id']}/evidence",
+        json={"artifact_id": "a001", "step_index": 1, "kind": "screenshot"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_missing_packet_steps_names_every_gap() -> None:
+    from axiom.modules.reports.evidence import missing_packet_steps
+
+    assert missing_packet_steps(0, []) == []
+    assert missing_packet_steps(3, []) == [1, 2, 3]
+    assert missing_packet_steps(
+        3,
+        [
+            {"step_index": 1, "kind": "packet"},
+            {"step_index": 2, "kind": "business"},
+        ],
+    ) == [2, 3]
+    # 一张报文图覆盖一步就够，多张不重复计
+    assert missing_packet_steps(
+        1, [{"step_index": 1, "kind": "packet"}, {"step_index": 1, "kind": "packet"}]
+    ) == []

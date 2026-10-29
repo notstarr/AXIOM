@@ -253,6 +253,7 @@ credentials --domain <domain> --session <id>   # axiom 定制
 ## 产物约定（axiom）
 
 - **Explore 阶段不截图**：`artifacts/evidence/` 已停用，证明内容是随上报提交的结构化复现报文。
-  截图由审核者事后补充（`POST /api/v1/tasks/{task_id}/vulnerabilities/{vuln_id}/evidence`）。
+  每步的报文图由审核者事后补，走 `POST /api/v1/tasks/{task_id}/vulnerabilities/{vuln_id}/evidence/capture`
+  （`kind=packet`、`step_index=N`），不是用 bsk 截完再传。
 - console/network 的原始输出重定向到运行目录临时文件即可，不要再往 `evidence/` 里放；
 - credentials 结果直接写进 `findings.md` / lead 结论（cookie/token 全文），不落 evidence 文件。

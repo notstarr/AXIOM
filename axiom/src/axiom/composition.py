@@ -125,6 +125,7 @@ class Container:
         interventions = InterventionService(engine, store)
         mcp = MCPService(engine, phase_capabilities=phase_capabilities)
         audit = AuditService(engine)
+        artifacts = ArtifactService(engine, store, archives=archives)
         return cls(
             engine=engine,
             projects=ProjectService(engine),
@@ -133,7 +134,7 @@ class Container:
             axiom_tools=axiom_tools,
             workers=WorkerService(engine),
             dispatch=DispatchService(engine, reviews=vulnerability_reviews),
-            artifacts=ArtifactService(engine, store, archives=archives),
+            artifacts=artifacts,
             archives=archives,
             audit=audit,
             store=store,
@@ -155,7 +156,12 @@ class Container:
             settings=settings,
             credentials=CredentialService(engine),
             vulnerabilities=vulnerability_service,
-            report_evidence=ReportEvidenceService(engine),
+            report_evidence=ReportEvidenceService(
+                engine,
+                vulnerabilities=vulnerability_service,
+                red_team=red_team,
+                artifacts=artifacts,
+            ),
             reports=ReportService(
                 engine,
                 vulnerabilities=vulnerability_service,

@@ -276,3 +276,50 @@ def test_editing_with_no_fields_is_a_no_op(client, engine) -> None:
 
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "verified"
+
+
+def test_a_result_verdict_waits_for_the_step_packet_shots(client, engine) -> None:
+    """成果的每一步也要有报文图。
+
+    漏洞侧与成果侧共用一条闸门：成果的自评分最容易虚高，而「每一步的回包」是唯一
+    不靠自述的东西。缺图时裁决必须被拒，补一张就放行一张。
+    """
+    task = _task(client)
+    _seed_result(engine, task["id"], status="reviewing")
+    client.put(
+        "/api/v1/workers/worker-a",
+        json={"capabilities": ["review"], "max_running": 1},
+    )
+    triggered = client.post(
+        f"/api/v1/tasks/{task['id']}/red-team/results/x001/reviews",
+        json={"actor": "human.operator", "reason": "复核"},
+    )
+    assert triggered.status_code == 201, triggered.text
+    run_id = triggered.json()["id"]
+    base = f"/api/v1/dispatch/tasks/{task['id']}/vulnerability-review-runs/{run_id}"
+    claimed = client.post(f"{base}/claim", json={"worker_name": "worker-a"})
+    assert claimed.status_code == 200, claimed.text
+    lease = {"lease_id": claimed.json()["lease_id"]}
+    assert client.post(f"{base}/start", json=lease).status_code == 200
+
+    refused = client.post(
+        f"{base}/decision",
+        json={**lease, "decision": "verified", "reason": "证据充分。", "points_awarded": 20},
+    )
+
+    assert refused.status_code == 409, refused.text
+    assert "步骤 1 缺少报文截图" in refused.text
+    assert client.post(
+        f"/api/v1/tasks/{task['id']}/red-team/results/x001/evidence/capture",
+        files={"file": ("step-01.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        data={"step_index": "1", "kind": "packet", "caption": "命令回显"},
+    ).status_code == 201
+
+    decided = client.post(
+        f"{base}/decision",
+        json={**lease, "decision": "verified", "reason": "证据充分。", "points_awarded": 20},
+    )
+
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["decision"] == "verified"
+    assert decided.json()["ready"] is True

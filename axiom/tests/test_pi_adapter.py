@@ -1345,7 +1345,7 @@ def test_review_prompt_enforces_single_target_decision_and_review_artifact() -> 
     assert "不得只复述文件内容后直接裁决" in prompt
     assert "至少一个关键对照结果" in prompt
     assert "精炼、专业、直击裁决要害" in prompt
-    assert "/evidence" in prompt  # 证据钩子接口
+    assert "axiom review evidence attach" in prompt  # 每步截图钩子
     assert "最后一条 assistant 消息必须只包含 6 个 ASCII 字符" in prompt
     assert "不修改漏洞原始正文" in conclude
     assert "不得仅根据旧 Finding/Evidence 强行提交" in conclude

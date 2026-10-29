@@ -9,14 +9,19 @@ from __future__ import annotations
 
 from sqlalchemy import Connection
 
-from axiom.shared.errors import NotFoundError
+from axiom.shared.errors import ConflictError, NotFoundError
 
 from axiom.modules.reports.evidence import (
+    KIND_BUSINESS,
+    KIND_PACKET,
+    KINDS,
     MAX_EVIDENCE_PER_SUBJECT,
+    MAX_STEP_INDEX,
     SUBJECTS,
     SUBJECT_RESULT,
     SUBJECT_VULNERABILITY,
     ReportEvidenceRepository,
+    missing_packet_steps,
 )
 from axiom.modules.reports.skeleton import (
     EMPTY,
@@ -74,15 +79,71 @@ class ReportService:
 
 
 class ReportEvidenceService:
-    """Thin transaction wrapper so the API layer never opens a connection itself."""
+    """Transaction wrapper around the evidence hook, plus the step-range rules.
 
-    def __init__(self, engine) -> None:
+    The API layer never opens a connection itself, and the two things a caller can get
+    wrong — hanging a packet shot on a step that does not exist, or claiming a kind
+    without saying which one — are rejected here rather than in each route.
+    """
+
+    def __init__(self, engine, *, vulnerabilities, red_team, artifacts) -> None:
         self.engine = engine
+        self.vulnerabilities = vulnerabilities
+        self.red_team = red_team
+        self.artifacts = artifacts
         self.repository = ReportEvidenceRepository()
 
     def list(self, task_id: str, subject_type: str, subject_id: str) -> list[dict]:
         with self.engine.connect() as conn:
             return self.repository.list(conn, task_id, subject_type, subject_id)
+
+    def missing_packet_steps(self, task_id: str, subject_type: str, subject_id: str) -> list[int]:
+        """Steps of the stored reproduction with no packet shot.
+
+        Empty when the subject has no structured reproduction: manual and historical
+        findings have no steps to shoot, and must not be blocked by a rule about steps.
+        """
+        return missing_packet_steps(
+            self._step_count(task_id, subject_type, subject_id),
+            self.list(task_id, subject_type, subject_id),
+        )
+
+    def _step_count(self, task_id: str, subject_type: str, subject_id: str) -> int:
+        reproduction = self._reproduction(task_id, subject_type, subject_id)
+        return len(reproduction.steps) if reproduction is not None else 0
+
+    def _reproduction(self, task_id: str, subject_type: str, subject_id: str):
+        if subject_type == SUBJECT_VULNERABILITY:
+            vulnerability = self.vulnerabilities.get(task_id, subject_id)
+            if vulnerability is None:
+                raise NotFoundError(f"Vulnerability not found: {subject_id}")
+            return vulnerability.reproduction
+        if subject_type == SUBJECT_RESULT:
+            with self.engine.connect() as conn:
+                result = self.red_team.repository.get_result(conn, task_id, subject_id)
+            if result is None:
+                raise NotFoundError(f"RedTeam Result not found: {subject_id}")
+            return result.reproduction
+        raise ConflictError(f"Unsupported report subject type: {subject_type}")
+
+    def _check_step(self, *, task_id: str, subject_type: str, subject_id: str, step_index: int, kind: str) -> None:
+        """Packet shots have to land on a real step; business shots keep the free range."""
+        if step_index < 0:
+            raise ConflictError("step_index must be 0 (overview) or a positive step number")
+        if kind == KIND_PACKET:
+            steps = self._step_count(task_id, subject_type, subject_id)
+            if steps == 0:
+                raise ConflictError(
+                    "该对象没有结构化复现，不能挂报文图：报文图要挂在某一步的真实回包上。"
+                )
+            if not 1 <= step_index <= steps:
+                raise ConflictError(
+                    f"该对象有 {steps} 步复现，报文图的 step_index 只能是 1..{steps}；"
+                    f"当前是 {step_index}"
+                )
+            return
+        if step_index > MAX_STEP_INDEX:
+            raise ConflictError(f"step_index 不能超过 {MAX_STEP_INDEX}")
 
     def attach(
         self,
@@ -94,7 +155,17 @@ class ReportEvidenceService:
         step_index: int,
         caption: str,
         created_by: str,
+        kind: str = KIND_BUSINESS,
     ) -> dict:
+        if kind not in KINDS:
+            raise ConflictError(f"不支持的截图种类：{kind}（只能是 packet 或 business）")
+        self._check_step(
+            task_id=task_id,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            step_index=step_index,
+            kind=kind,
+        )
         with self.engine.begin() as conn:
             return self.repository.attach(
                 conn,
@@ -105,7 +176,62 @@ class ReportEvidenceService:
                 step_index=step_index,
                 caption=caption,
                 created_by=created_by,
+                kind=kind,
             )
+
+    def capture(
+        self,
+        *,
+        task_id: str,
+        subject_type: str,
+        subject_id: str,
+        filename: str,
+        content: bytes,
+        step_index: int,
+        caption: str,
+        created_by: str,
+        kind: str = KIND_BUSINESS,
+    ) -> dict:
+        """Upload a picture and hang it on a step in one call.
+
+        This is the entry point a capture-side tool codes against: it hands over only
+        bytes, the step and the kind, and never has to know how artifacts or attachments
+        are stored.  The step is validated *before* anything is written, and a failed
+        attach archives the upload, so a rejected call leaves no orphan image.
+        """
+        if kind not in KINDS:
+            raise ConflictError(f"不支持的截图种类：{kind}（只能是 packet 或 business）")
+        self._check_step(
+            task_id=task_id,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            step_index=step_index,
+            kind=kind,
+        )
+        artifact = self.artifacts.upload(
+            task_id,
+            filename=filename,
+            content=content,
+            created_by=created_by,
+            summary=caption or filename,
+        )
+        try:
+            return self.attach(
+                task_id=task_id,
+                subject_type=subject_type,
+                subject_id=subject_id,
+                artifact_id=artifact.id,
+                step_index=step_index,
+                caption=caption,
+                created_by=created_by,
+                kind=kind,
+            )
+        except BaseException:
+            try:
+                self.artifacts.archive(task_id, artifact.id)
+            except BaseException:  # pragma: no cover - best effort cleanup
+                pass
+            raise
 
     def detach(self, *, task_id: str, subject_type: str, subject_id: str, artifact_id: str) -> None:
         with self.engine.begin() as conn:
@@ -121,9 +247,14 @@ class ReportEvidenceService:
         return self.repository.for_subjects(conn, task_id, subject_type, subject_ids)
 
 
+
 __all__ = [
     "EMPTY",
+    "KINDS",
+    "KIND_BUSINESS",
+    "KIND_PACKET",
     "MAX_EVIDENCE_PER_SUBJECT",
+    "MAX_STEP_INDEX",
     "NO_REPRODUCTION",
     "SUBJECTS",
     "SUBJECT_RESULT",
@@ -136,6 +267,7 @@ __all__ = [
     "Section",
     "build_result_report",
     "build_vulnerability_report",
+    "missing_packet_steps",
     "to_dict",
     "to_markdown",
 ]

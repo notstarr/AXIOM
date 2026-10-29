@@ -259,11 +259,12 @@ def test_a_report_with_images_exports_markdown_plus_the_images(client) -> None:
         report = archive.read("report.md").decode("utf-8")
     assert "report.md" in names
     image_names = [name for name in names if name.startswith("images/")]
-    assert [name for name in image_names] == ["images/step-02-shot.png"]
+    # 文件名带步骤号与种类：交付目录里一眼看出哪张是报文、哪张是业务图
+    assert [name for name in image_names] == ["images/step-02-business-shot.png"]
     # md 引用的路径必须与包内真实文件名逐字一致
-    assert "![命令回显](images/step-02-shot.png)" in report
+    assert "![命令回显](images/step-02-business-shot.png)" in report
     # 图片紧跟在第 2 步的响应之后，而不是堆在文末
-    assert report.index("### 步骤 2") < report.index("images/step-02-shot.png")
+    assert report.index("### 步骤 2") < report.index("images/step-02-business-shot.png")
     # 报告正文里不再有独立的「证据」章节
     assert "## 证据" not in report
 
@@ -403,3 +404,51 @@ def test_a_picture_already_named_for_its_step_is_not_prefixed_twice(client) -> N
     assert "images/step-02-shot.png" in names
     assert "images/step-02-step-02-shot.png" not in names
     assert "](images/step-02-shot.png)" in report
+
+
+def test_a_step_exports_its_packet_shot_before_its_business_shot(client) -> None:
+    """同一步的两张图：报文图在前，业务图在后。
+
+    ``kind`` 也进了文件名，所以在解压出来的目录里就能看出来哪张是回包、哪张是效果，
+    不用打开报告逐条对。顺序由服务端的排序保证，不靠审核者的挂载顺序。
+    """
+    task_id = _task(client)
+    client.post(
+        f"/api/v1/tasks/{task_id}/vulnerabilities",
+        json={
+            "title": "任意文件上传导致 RCE",
+            "type": "文件上传",
+            "severity": "critical",
+            "description": "上传 PHP 后可执行命令",
+            "prerequisites": "无需认证",
+            "impact": "服务器接管",
+            "reproduction": REPRODUCTION,
+            "source": "human",
+            "reported_by": "tester",
+        },
+    )
+    base = f"/api/v1/tasks/{task_id}/vulnerabilities/v001/evidence/capture"
+    # 故意先挂业务图，验证顺序不是挂载顺序
+    business = client.post(
+        base,
+        files={"file": ("admin.png", b"\x89PNG\r\n\x1a\nb", "image/png")},
+        data={"step_index": "1", "kind": "business", "caption": "后台可见"},
+    )
+    packet = client.post(
+        base,
+        files={"file": ("resp.png", b"\x89PNG\r\n\x1a\np", "image/png")},
+        data={"step_index": "1", "kind": "packet", "caption": "上传回包"},
+    )
+    assert business.status_code == 201, business.text
+    assert packet.status_code == 201, packet.text
+
+    response = client.get(f"/api/v1/tasks/{task_id}/vulnerabilities/v001/export")
+
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        names = [name for name in archive.namelist() if name.startswith("images/")]
+        report = archive.read("report.md").decode("utf-8")
+    assert names == [
+        "images/step-01-packet-resp.png",
+        "images/step-01-business-admin.png",
+    ]
+    assert report.index("step-01-packet-resp.png") < report.index("step-01-business-admin.png")

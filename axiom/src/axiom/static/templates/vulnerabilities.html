@@ -156,20 +156,34 @@
                     <pre class="rp-packet" x-text="step.request"></pre>
                     <div class="rp-resplabel">响应</div>
                     <pre class="rp-packet" x-text="step.response"></pre>
-                    <div class="rp-slots" x-show="vulnEvidenceForStep(i + 1).length">
-                      <template x-for="ev in vulnEvidenceForStep(i + 1)" :key="`ev-${ev.artifact_id}`">
+                    <div class="rp-slots" x-show="vulnStepShots(i + 1, 'packet').length">
+                      <template x-for="ev in vulnStepShots(i + 1, 'packet')" :key="`evp-${ev.artifact_id}`">
                         <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
-                          <img :src="ev.url" :alt="ev.caption || '证据截图'">
-                          <span class="rp-shotcap" x-text="ev.caption || `步骤 ${i + 1} 证据`"></span>
+                          <img :src="ev.url" :alt="ev.caption || '报文截图'">
+                          <span class="rp-shotcap"><b class="rp-shotkind">报文</b><span x-text="ev.caption || `步骤 ${i + 1} 回包`"></span></span>
+                        </a>
+                      </template>
+                    </div>
+                    <div class="rp-slots" x-show="vulnStepShots(i + 1, 'business').length">
+                      <template x-for="ev in vulnStepShots(i + 1, 'business')" :key="`evb-${ev.artifact_id}`">
+                        <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
+                          <img :src="ev.url" :alt="ev.caption || '业务截图'">
+                          <span class="rp-shotcap"><b class="rp-shotkind">业务</b><span x-text="ev.caption || `步骤 ${i + 1} 效果`"></span></span>
                         </a>
                       </template>
                     </div>
                     <div class="rp-slots">
-                      <label class="rp-slot" title="为这一步补截图">
+                      <label class="rp-slot" :class="stepHasPacket(i + 1, selectedVulnerability().evidence) ? '' : 'need'" title="重放该步报文后截下回包；每步必须有">
                         <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-                        <span>本步截图</span>
+                        <span x-text="stepHasPacket(i + 1, selectedVulnerability().evidence) ? '本步报文图' : '本步报文图（缺）'"></span>
                         <input type="file" accept="image/*" style="display:none;"
-                               @change="uploadReportEvidence('vulnerability', selectedVulnerability().id, i + 1, $event)">
+                               @change="uploadReportEvidence('vulnerability', selectedVulnerability().id, i + 1, $event, 'packet')">
+                      </label>
+                      <label class="rp-slot" title="业务效果截图（可选）">
+                        <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                        <span>本步业务图</span>
+                        <input type="file" accept="image/*" style="display:none;"
+                               @change="uploadReportEvidence('vulnerability', selectedVulnerability().id, i + 1, $event, 'business')">
                       </label>
                     </div>
                   </li>
@@ -194,7 +208,7 @@
                默认展开——现在它是页面上唯一的结论来源。 -->
           <details open>
             <summary class="rp-h" style="cursor:pointer; margin:0;">
-              Reviewer 审核记录<span x-show="latestVulnerabilityReview()" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400;" x-text="vulnerabilityReviewStateLabel(latestVulnerabilityReview())"></span>
+              Reviewer 审核记录<span x-show="latestVulnerabilityReview()" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400;" x-text="vulnerabilityReviewStateLabel(latestVulnerabilityReview())"></span><span x-show="packetShotProgress(selectedVulnerability()).total > 0" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400; color:var(--rp-ink-2);" x-text="`报文图 ${packetShotProgress(selectedVulnerability()).have}/${packetShotProgress(selectedVulnerability()).total} 步`"></span>
             </summary>
             <p x-show="vulnerabilityReviewsLoading" class="rp-absent" style="margin-top:8px;">正在加载…</p>
             <p x-show="vulnerabilityReviewsError" class="sto-warnline" style="margin-top:8px;" x-text="vulnerabilityReviewsError"></p>
@@ -398,20 +412,34 @@
                     <pre class="rp-packet" x-text="step.request"></pre>
                     <div class="rp-resplabel">响应</div>
                     <pre class="rp-packet" x-text="step.response"></pre>
-                    <div class="rp-slots" x-show="rtEvidenceForStep(i + 1).length">
-                      <template x-for="ev in rtEvidenceForStep(i + 1)" :key="`rtev-${ev.artifact_id}`">
+                    <div class="rp-slots" x-show="rtStepShots(i + 1, 'packet').length">
+                      <template x-for="ev in rtStepShots(i + 1, 'packet')" :key="`rtev-p-${ev.artifact_id}`">
                         <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
-                          <img :src="ev.url" :alt="ev.caption || '证据截图'">
-                          <span class="rp-shotcap" x-text="ev.caption || `步骤 ${i + 1} 证据`"></span>
+                          <img :src="ev.url" :alt="ev.caption || '报文截图'">
+                          <span class="rp-shotcap"><b class="rp-shotkind">报文</b><span x-text="ev.caption || `步骤 ${i + 1} 回包`"></span></span>
+                        </a>
+                      </template>
+                    </div>
+                    <div class="rp-slots" x-show="rtStepShots(i + 1, 'business').length">
+                      <template x-for="ev in rtStepShots(i + 1, 'business')" :key="`rtev-b-${ev.artifact_id}`">
+                        <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
+                          <img :src="ev.url" :alt="ev.caption || '业务截图'">
+                          <span class="rp-shotcap"><b class="rp-shotkind">业务</b><span x-text="ev.caption || `步骤 ${i + 1} 效果`"></span></span>
                         </a>
                       </template>
                     </div>
                     <div class="rp-slots">
-                      <label class="rp-slot" title="为这一步补截图">
+                      <label class="rp-slot" :class="stepHasPacket(i + 1, selectedRtResult().evidence) ? '' : 'need'" title="重放该步报文后截下回包；每步必须有">
                         <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-                        <span>本步截图</span>
+                        <span x-text="stepHasPacket(i + 1, selectedRtResult().evidence) ? '本步报文图' : '本步报文图（缺）'"></span>
                         <input type="file" accept="image/*" style="display:none;"
-                               @change="uploadReportEvidence('redteam_result', selectedRtResult().id, i + 1, $event)">
+                               @change="uploadReportEvidence('redteam_result', selectedRtResult().id, i + 1, $event, 'packet')">
+                      </label>
+                      <label class="rp-slot" title="业务效果截图（可选）">
+                        <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                        <span>本步业务图</span>
+                        <input type="file" accept="image/*" style="display:none;"
+                               @change="uploadReportEvidence('redteam_result', selectedRtResult().id, i + 1, $event, 'business')">
                       </label>
                     </div>
                   </li>
@@ -422,7 +450,7 @@
 
           <!-- 审核结论即记录：与漏洞面板一致，默认展开 -->
           <details open>
-            <summary class="rp-h" style="cursor:pointer; margin:0;">审核记录<span x-show="(rtResultReviews || []).length" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400;" x-text="`${(rtResultReviews || []).length} 次`"></span></summary>
+            <summary class="rp-h" style="cursor:pointer; margin:0;">审核记录<span x-show="(rtResultReviews || []).length" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400;" x-text="`${(rtResultReviews || []).length} 次`"></span><span x-show="packetShotProgress(selectedRtResult()).total > 0" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400; color:var(--rp-ink-2);" x-text="`报文图 ${packetShotProgress(selectedRtResult()).have}/${packetShotProgress(selectedRtResult()).total} 步`"></span></summary>
             <p x-show="rtResultReviewsLoading" class="rp-absent" style="margin-top:8px;">正在加载…</p>
             <p x-show="rtResultReviewsError" class="sto-warnline" style="margin-top:8px;" x-text="rtResultReviewsError"></p>
             <p x-show="!rtResultReviewsLoading && !rtResultReviewsError && (rtResultReviews || []).length === 0 && !selectedRtResult().review_reason" class="rp-absent" style="margin-top:8px;">暂无审核记录。</p>
@@ -556,13 +584,7 @@
         </div>
 
         <div class="vm-sec">
-          <div class="vm-seclabel">证据</div>
-          <div class="sto-field"><label>证据文件（可多选）</label>
-            <select multiple size="5" x-model="vulnEditor.evidence_artifact_ids" class="sto-input">
-              <template x-for="artifact in (vulnEditor.available_artifacts || []).filter(item => item.artifact_type === 'explore.evidence' || item.artifact_type === 'review.evidence' || item.artifact_type === 'upload')" :key="`evidence-${artifact.id}`"><option :value="artifact.id" x-text="`${artifact.path} · ${formatBytes(artifact.size)}`"></option></template>
-            </select>
-            <p class="vm-hint">按住 Command / Ctrl 可多选已有 Artifact。</p>
-          </div>
+          <div class="vm-seclabel">状态</div>
           <div class="sto-field"><label>状态原因</label>
             <textarea x-model="vulnEditor.status_reason" rows="2" placeholder="状态为「忽略」时必填，不少于 4 字" class="sto-input"></textarea>
           </div>

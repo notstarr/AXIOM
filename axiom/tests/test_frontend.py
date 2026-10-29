@@ -1773,7 +1773,10 @@ def test_frontend_and_static_assets_are_served(client):
     assert "finding_artifact" in vulnerabilities.text
     assert 'class="rp-doc"' in vulnerabilities.text
     assert "selectedVulnerability().reproduction" in vulnerabilities.text
-    assert "vulnEvidenceForStep" in vulnerabilities.text
+    assert "vulnStepShots" in vulnerabilities.text
+    # 每步两个槽：报文图（每步必须有）与业务图（可选）
+    assert "本步报文图" in vulnerabilities.text
+    assert "本步业务图" in vulnerabilities.text
     assert 'class="rp-packet"' in vulnerabilities.text
     # 证据槽是每步一个方块，不是通栏虚线框；且挂在步骤内部
     assert 'class="rp-slot"' in vulnerabilities.text
@@ -3733,10 +3736,15 @@ def test_report_steps_are_numbered_by_loop_index_not_by_payload(client) -> None:
     assert "step.index" not in template
     assert "x-text=\"i + 1\"" in template
     # both panels drive evidence lookup and uploads off the loop index too
-    assert "vulnEvidenceForStep(i + 1)" in template
-    assert "rtEvidenceForStep(i + 1)" in template
+    assert "vulnStepShots(i + 1, 'packet')" in template
+    assert "vulnStepShots(i + 1, 'business')" in template
+    assert "rtStepShots(i + 1, 'packet')" in template
+    assert "rtStepShots(i + 1, 'business')" in template
     assert "uploadReportEvidence('vulnerability', selectedVulnerability().id, i + 1" in template
     assert "uploadReportEvidence('redteam_result', selectedRtResult().id, i + 1" in template
+    # 种类必须跟着上传走，否则报文图会被当成业务图、闸门永远不满足
+    assert "i + 1, $event, 'packet'" in template
+    assert "i + 1, $event, 'business'" in template
 
 
 def test_report_document_fills_its_column(client) -> None:

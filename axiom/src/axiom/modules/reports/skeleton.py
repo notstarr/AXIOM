@@ -57,6 +57,14 @@ RESULT_TYPE_LABELS = {
     "pivot": "横向控制",
 }
 
+# What kind of picture this is. A packet shot shows the step's real response; a
+# business shot shows the effect it produced. The label rides along in captions so a
+# reader of the export knows which one they are looking at.
+KIND_LABELS = {
+    "packet": "报文图",
+    "business": "业务图",
+}
+
 STATUS_LABELS = {
     "待验证": "待验证",
     "已验证": "已验证",
@@ -302,9 +310,10 @@ def _process_section(
 
 
 def _image_label(item: dict[str, Any]) -> str:
-    caption = str(item.get("caption") or "").strip()
+    caption = str(item.get("caption") or "").strip() or "证据"
+    label = f"{KIND_LABELS.get(item.get('kind') or 'business', '证据')}·{caption}"
     path = str(item.get("path") or item.get("url") or "").strip()
-    return f"{caption}（{path}）" if caption else path
+    return f"{label}（{path}）" if path else label
 
 
 def _prerequisite_blocks(reproduction: Reproduction | None) -> tuple[Block, ...]:
@@ -403,7 +412,12 @@ def _image_markdown(image: dict[str, Any], step_index: int) -> str:
     The caption is user text, so brackets are escaped — an unescaped ``]`` would end the
     alt text early and break the image for every renderer.
     """
-    caption = str(image.get("caption") or "").strip() or f"步骤 {step_index} 证据"
+    caption = str(image.get("caption") or "").strip()
+    if not caption:
+        # An uncaptioned picture still says which kind it is: a bare "步骤 2 证据" on a
+        # business shot reads as if it proved the step.
+        kind = KIND_LABELS.get(str(image.get("kind") or "business"), "证据")
+        caption = f"步骤 {step_index} {kind}"
     for char in ("\\", "[", "]"):
         caption = caption.replace(char, "\\" + char)
     return f"![{caption}]({image.get('path') or ''})"

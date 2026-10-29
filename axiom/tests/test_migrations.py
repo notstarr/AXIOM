@@ -1118,3 +1118,93 @@ def test_sqlite_dynamic_todo_migration_preserves_sources_and_round_trips(tmp_pat
         raw.rollback()
     finally:
         engine.dispose()
+
+
+def test_report_evidence_kind_migration_defaults_to_business_and_round_trips(
+    isolated_postgresql_database,
+) -> None:
+    """既有的行必须落到 business：它们是人手挂的图，谁也说不清当时是不是报文图。
+
+    把它们当 packet 会让「每步一张报文图」这道闸门在存量数据上直接失效。
+    """
+    migrator_url, app_url = isolated_postgresql_database
+    config = alembic_config(migrator_url)
+    command.upgrade(config, POSTGRESQL_ALEMBIC_BRANCH)
+    command.downgrade(config, "20261027_pg0029")
+
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        assert "kind" not in {
+            item["name"]
+            for item in inspect(engine).get_columns("report_evidence", schema=AXIOM_SCHEMA)
+        }
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, POSTGRESQL_ALEMBIC_BRANCH)
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        columns = {
+            item["name"]: item
+            for item in inspect(engine).get_columns("report_evidence", schema=AXIOM_SCHEMA)
+        }
+        assert columns["kind"]["nullable"] is False
+        assert columns["kind"]["default"]
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    f'INSERT INTO "{AXIOM_SCHEMA}".projects '
+                    "(id, title, description, status, created_at, updated_at) "
+                    "VALUES ('prj_kind', 'kind', '', 'active', now(), now())"
+                )
+            )
+            conn.execute(
+                text(
+                    f'INSERT INTO "{AXIOM_SCHEMA}".tasks '
+                    "(id, project_id, title, origin_host, origin_input, goal, status, phase, "
+                    "scope_json, worker_pool_json, guard_enabled, external_report_enabled, "
+                    "legacy_readonly, archived, created_at, updated_at) "
+                    "VALUES ('t_kind', 'prj_kind', 'kind', NULL, '自然语言入口', 'goal', "
+                    "'running', 'explore', CAST('{}' AS jsonb), CAST('[]' AS jsonb), "
+                    "false, false, false, false, now(), now())"
+                )
+            )
+            conn.execute(
+                text(
+                    f'INSERT INTO "{AXIOM_SCHEMA}".artifacts '
+                    "(id, task_id, intent_id, review_run_id, artifact_type, storage_key, "
+                    "summary, content_hash, size, created_by, created_at, archived) "
+                    "VALUES ('a_kind', 't_kind', NULL, NULL, 'upload', "
+                    "'tasks/t_kind/uploads/x.png', 'x.png', 'deadbeef', 8, 'reviewer', now(), "
+                    "false)"
+                )
+            )
+            # 不写 kind：服务端默认值必须生效，且必须是 business
+            conn.execute(
+                text(
+                    f'INSERT INTO "{AXIOM_SCHEMA}".report_evidence '
+                    "(task_id, subject_type, subject_id, artifact_id, step_index, caption, "
+                    "display_order, created_by, created_at) "
+                    "VALUES ('t_kind', 'vulnerability', 'v001', 'a_kind', 1, '', 0, "
+                    "'reviewer', now())"
+                )
+            )
+            kind = conn.execute(
+                text(
+                    f'SELECT kind FROM "{AXIOM_SCHEMA}".report_evidence '
+                    "WHERE task_id = 't_kind' AND artifact_id = 'a_kind'"
+                )
+            ).scalar_one()
+            assert kind == "business"
+    finally:
+        engine.dispose()
+
+    command.downgrade(config, "20261027_pg0029")
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        assert "kind" not in {
+            item["name"]
+            for item in inspect(engine).get_columns("report_evidence", schema=AXIOM_SCHEMA)
+        }
+    finally:
+        engine.dispose()
