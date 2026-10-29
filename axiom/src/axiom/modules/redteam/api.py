@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
 from axiom.modules.redteam.schemas import (
+    UpdateRedTeamResult,
     RedTeamChain,
     RedTeamChainCreate,
     RedTeamResult,
@@ -33,6 +34,17 @@ def list_results(task_id: str, chain_id: str | None = Query(default=None), conta
 @router.post("/tasks/{task_id}/intents/{intent_id}/red-team-results", response_model=RedTeamResult, status_code=status.HTTP_201_CREATED)
 def report_result(task_id: str, intent_id: str, body: RedTeamResultReportRequest, reported_by: str = "explore", container: Container = Depends(get_container)) -> RedTeamResult:
     return container.red_team.report_result(task_id, intent_id, body.lease_id, body.report, reported_by=reported_by)
+
+
+@router.patch("/tasks/{task_id}/red-team/results/{result_id}", response_model=RedTeamResult)
+def update_result(
+    task_id: str,
+    result_id: str,
+    body: UpdateRedTeamResult,
+    container: Container = Depends(get_container),
+) -> RedTeamResult:
+    """人工编辑成果内容；改实质字段会自动重置为审核中并重新排队。"""
+    return container.red_team.update_result(task_id, result_id, body)
 
 
 @router.post("/tasks/{task_id}/red-team/results/{result_id}/review", response_model=RedTeamResult)

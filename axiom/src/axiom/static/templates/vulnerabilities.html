@@ -190,25 +190,6 @@
             <p class="rp-p" x-text="formatMultiline(selectedVulnerability().remediation)"></p>
           </section>
 
-          <!-- 证据：概览图 -->
-          <section class="rp-block">
-            <h2 class="rp-h">证据</h2>
-            <div class="rp-slots" style="margin-top:0;">
-              <template x-for="ev in vulnOverviewEvidence()" :key="`oev-${ev.artifact_id}`">
-                <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
-                  <img :src="ev.url" :alt="ev.caption || '证据截图'">
-                  <span class="rp-shotcap" x-text="ev.caption || '概览证据'"></span>
-                </a>
-              </template>
-              <label class="rp-slot" title="补一张概览截图">
-                <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-                <span>概览截图</span>
-                <input type="file" accept="image/*" style="display:none;"
-                       @change="uploadReportEvidence('vulnerability', selectedVulnerability().id, 0, $event)">
-              </label>
-            </div>
-          </section>
-
           <!-- 审核结论 -->
           <section class="rp-block">
             <h2 class="rp-h">审核结论</h2>
@@ -353,6 +334,14 @@
               <span x-text="selectedRtResult().chain_id || '—'"></span>
               <span x-text="`上报 ${selectedRtResult().reported_by || '—'}`"></span>
             </div>
+            <div class="rp-acts">
+              <button @click="triggerRtResultReview(selectedRtResult())" :disabled="!rtResultReviewCanRetry()" :title="rtResultReviewCanRetry() ? '让审核者重新核定这条成果' : '已有审核正在排队或运行'" class="rp-act primary" x-text="rtResultReviewSubmitting ? '正在排队…' : '重新审核'"></button>
+              <button @click="editRtResult(selectedRtResult())" class="rp-act">编辑</button>
+              <button @click="exportRtResult(selectedRtResult())" class="rp-act" title="导出这份报告（有图时连同图片打成压缩包）">
+                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                导出
+              </button>
+            </div>
           </header>
 
           <!-- 描述 -->
@@ -441,30 +430,35 @@
             </div>
           </section>
 
-          <!-- 证据：概览图 -->
-          <section class="rp-block">
-            <h2 class="rp-h">证据</h2>
-            <div class="rp-slots" style="margin-top:0;">
-              <template x-for="ev in rtOverviewEvidence()" :key="`rtoev-${ev.artifact_id}`">
-                <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
-                  <img :src="ev.url" :alt="ev.caption || '证据截图'">
-                  <span class="rp-shotcap" x-text="ev.caption || '概览证据'"></span>
-                </a>
-              </template>
-              <label class="rp-slot" title="补一张概览截图">
-                <svg fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-                <span>概览截图</span>
-                <input type="file" accept="image/*" style="display:none;"
-                       @change="uploadReportEvidence('redteam_result', selectedRtResult().id, 0, $event)">
-              </label>
-            </div>
-          </section>
-
           <!-- 审核结论 -->
           <section class="rp-block">
             <h2 class="rp-h">审核结论</h2>
             <p class="rp-p" x-text="formatMultiline(selectedRtResult().review_reason || '未填写')"></p>
           </section>
+
+          <!-- 审核记录：页尾，收起 -->
+          <details>
+            <summary class="rp-h" style="cursor:pointer; margin:0;">审核记录<span x-show="(rtResultReviews || []).length" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400;" x-text="`${(rtResultReviews || []).length} 次`"></span></summary>
+            <p x-show="rtResultReviewsLoading" class="rp-absent" style="margin-top:8px;">正在加载…</p>
+            <p x-show="rtResultReviewsError" class="sto-warnline" style="margin-top:8px;" x-text="rtResultReviewsError"></p>
+            <p x-show="!rtResultReviewsLoading && !rtResultReviewsError && (rtResultReviews || []).length === 0" class="rp-absent" style="margin-top:8px;">暂无审核记录。</p>
+            <div class="rp-runs" style="margin-top:9px;" x-show="(rtResultReviews || []).length > 0">
+              <template x-for="run in (rtResultReviews || [])" :key="`rtrun-${run.id}`">
+                <div class="rp-run">
+                  <div class="rp-runhead">
+                    <code x-text="run.id"></code>
+                    <span x-text="vulnerabilityReviewStateLabel(run)"></span>
+                    <span x-text="vulnerabilityReviewTriggerLabel(run.trigger)"></span>
+                    <span x-show="run.decision" x-text="vulnerabilityReviewDecisionLabel(run.decision)"></span>
+                    <span style="margin-left:auto;" x-text="formatDate(run.concluded_at || run.updated_at || run.created_at)"></span>
+                  </div>
+                  <p x-show="run.worker" class="rp-runnote"><strong>审查者</strong> <span x-text="run.worker"></span></p>
+                  <p x-show="run.decision_reason" class="rp-runnote"><strong>原因</strong> <span x-text="run.decision_reason"></span></p>
+                  <p x-show="run.status === 'failed' && run.last_failure_kind" class="rp-runnote"><strong>失败</strong> <span x-text="run.last_failure_kind"></span></p>
+                </div>
+              </template>
+            </div>
+          </details>
         </article>
       </template>
     </section>
@@ -587,6 +581,100 @@
         <button @click="saveVuln()" class="sto-btn">保存</button>
       </div>
 
+    </div>
+  </div>
+</div>
+
+<!-- 成果编辑：复用漏洞编辑弹窗的版式，字段按成果模型裁剪 -->
+<div x-show="rtEditor.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="rtEditor.open = false">
+  <div class="sto sto-vmodal">
+    <div class="sto-panel" style="display:flex; flex-direction:column; min-height:0; overflow:hidden;" @click.stop>
+      <div class="vm-head">
+        <div style="min-width:0;">
+          <div class="vm-title">编辑成果</div>
+          <div class="vm-sub" x-text="`${rtEditor.task_id} · ${rtEditor.id} · 改实质内容会自动重新审核`"></div>
+        </div>
+        <button type="button" class="vm-x" @click="rtEditor.open = false" aria-label="关闭">×</button>
+      </div>
+
+      <div class="vm-body">
+        <div class="vm-sec">
+          <div class="vm-seclabel">基本信息</div>
+          <div class="sto-field"><label>标题<span class="vm-req">*</span></label><input x-model="rtEditor.title" class="sto-input"></div>
+          <div class="sto-grid2">
+            <div class="sto-field"><label>成果类型</label>
+              <select x-model="rtEditor.result_type" class="sto-input">
+                <option value="permission">权限跃迁</option>
+                <option value="data">数据获取</option>
+                <option value="credential">凭证获取</option>
+                <option value="pivot">横向控制</option>
+              </select>
+            </div>
+            <div class="sto-field"><label>自评分</label><input type="number" min="1" x-model.number="rtEditor.points_declared" class="sto-input"></div>
+          </div>
+          <div class="sto-field"><label>描述<span class="vm-req">*</span></label><textarea x-model="rtEditor.description" rows="4" class="sto-input"></textarea></div>
+        </div>
+
+        <div class="vm-sec">
+          <div class="vm-seclabel">身份与对象</div>
+          <div class="sto-grid2">
+            <div class="sto-field"><label>执行身份</label><input x-model="rtEditor.principal" class="sto-input"></div>
+            <div class="sto-field"><label>租户</label><input x-model="rtEditor.tenant" class="sto-input"></div>
+          </div>
+          <div class="sto-field"><label>对象（公网入口）</label><input x-model="rtEditor.target_asset" class="sto-input" placeholder="如 api.kkgroup.cn"></div>
+        </div>
+
+        <div class="vm-sec" x-show="rtEditor.result_type === 'data'">
+          <div class="vm-seclabel">数据</div>
+          <div class="sto-grid2">
+            <div class="sto-field"><label>数据目标</label><input x-model="rtEditor.data_target_id" class="sto-input"></div>
+            <div class="sto-field"><label>字段（逗号分隔）</label><input x-model="rtEditor.data_fields" class="sto-input"></div>
+          </div>
+          <div class="sto-grid2">
+            <div class="sto-field"><label>记录数</label><input type="number" min="0" x-model.number="rtEditor.sample_count" class="sto-input"></div>
+            <div class="sto-field"><label>字节数</label><input type="number" min="0" x-model.number="rtEditor.sample_bytes" class="sto-input"></div>
+          </div>
+          <div class="sto-field"><label>样本说明</label><textarea x-model="rtEditor.data_summary" rows="2" class="sto-input"></textarea></div>
+        </div>
+
+        <div class="vm-sec" x-show="rtEditor.result_type === 'credential'">
+          <div class="vm-seclabel">凭证</div>
+          <div class="sto-field"><label>凭证引用（不写明文）</label><input x-model="rtEditor.credential_ref" class="sto-input"></div>
+        </div>
+
+        <div class="vm-sec">
+          <div class="vm-seclabel">复现</div>
+          <div class="sto-field"><label>入口点</label><input x-model="rtEditor.entry_point" class="sto-input" placeholder="POST /api/xxx"></div>
+          <div class="sto-grid2">
+            <div class="sto-field"><label>起始身份</label><input x-model="rtEditor.chain_input" class="sto-input"></div>
+            <div class="sto-field"><label>本环增量</label><input x-model="rtEditor.chain_gain" class="sto-input"></div>
+          </div>
+          <div class="sto-field"><label>前置条件（一行一条）</label><textarea x-model="rtEditor.prerequisites" rows="3" class="sto-input"></textarea></div>
+          <div style="display:flex; flex-direction:column; gap:9px;">
+            <template x-for="(step, idx) in rtEditor.steps" :key="`rts-${idx}`">
+              <div style="border:1px solid var(--sto-line); border-radius:7px; padding:9px 11px; display:flex; flex-direction:column; gap:7px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <span class="sto-num" style="font-size:11px; color:var(--sto-fg-3);" x-text="`步骤 ${idx + 1}`"></span>
+                  <span style="flex:1;"></span>
+                  <button type="button" class="sto-minibtn danger" @click="removeRtEditorStep(idx)">删除这一步</button>
+                </div>
+                <input x-model="step.title" class="sto-input" placeholder="这一步在做什么">
+                <textarea x-model="step.request" rows="4" class="sto-input" placeholder="真实请求报文（请求行 + header + 空行 + body）"></textarea>
+                <textarea x-model="step.response" rows="3" class="sto-input" placeholder="真实响应（状态行 + 关键内容）"></textarea>
+                <input x-model="step.proves" class="sto-input" placeholder="这一步证明了什么">
+              </div>
+            </template>
+            <button type="button" class="sto-minibtn" style="align-self:flex-start;" @click="addRtEditorStep()">+ 添加一步</button>
+          </div>
+        </div>
+
+        <p x-show="rtEditor.error" class="sto-warnline" x-text="rtEditor.error"></p>
+      </div>
+
+      <div class="vm-foot">
+        <button @click="rtEditor.open = false" class="sto-ghost">取消</button>
+        <button @click="saveRtResult()" :disabled="rtEditor.saving" class="sto-btn" x-text="rtEditor.saving ? '保存中…' : '保存'"></button>
+      </div>
     </div>
   </div>
 </div>

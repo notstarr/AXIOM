@@ -173,8 +173,9 @@ def test_a_negative_step_index_is_rejected(client) -> None:
     assert response.status_code == 422
 
 
-def test_the_report_payload_carries_the_attached_pictures() -> None:
-    """The detail payload is what the console renders; the hook must reach it."""
+def test_the_detail_payload_carries_the_attached_pictures() -> None:
+    """The console reads a flat ``evidence`` list with ``step_index`` and renders each
+    picture under its step; the API detail endpoint is what feeds it."""
     from axiom.modules.reports.skeleton import build_vulnerability_report
     from axiom.modules.vulnerabilities.schemas import Vulnerability
 
@@ -198,12 +199,12 @@ def test_the_report_payload_carries_the_attached_pictures() -> None:
     )
     doc = build_vulnerability_report(
         vulnerability,
-        evidence=[{"artifact_id": "a001", "step_index": 1, "url": "/x/step-01.png"}],
+        images_by_step={1: [{"path": "images/step-01-a.png", "caption": "上传成功"}]},
     )
-    evidence_section = next(section for section in doc.sections if section.key == "evidence")
+    process = next(section for section in doc.sections if section.key == "process")
+    steps = next(block for block in process.blocks if block.type == "steps")
 
-    assert evidence_section.blocks[0].evidence[0]["artifact_id"] == "a001"
-
+    assert steps.steps[0]["images"][0]["path"] == "images/step-01-a.png"
 
 def test_red_team_results_have_their_own_hook(client) -> None:
     """Both subject kinds share the table; the Result route works the same way."""
@@ -235,7 +236,6 @@ def test_vulnerability_report_view_returns_the_skeleton(client) -> None:
         "description",
         "process",
         "impact",
-        "evidence",
         "verdict",
     ]
     process = next(section for section in payload["sections"] if section["key"] == "process")
@@ -244,7 +244,7 @@ def test_vulnerability_report_view_returns_the_skeleton(client) -> None:
     assert "chain" not in kinds
 
 
-def test_the_report_view_includes_attached_evidence(client) -> None:
+def test_the_report_view_places_an_attached_picture_under_its_step(client) -> None:
     task = _project_task(client)
     vulnerability = _vulnerability(client, task["id"])
     artifact_id = _upload(client, task["id"], "step-01.png", b"\x89PNG\r\n\x1a\n")
@@ -257,5 +257,6 @@ def test_the_report_view_includes_attached_evidence(client) -> None:
         f"/api/v1/tasks/{task['id']}/vulnerabilities/{vulnerability['id']}/report"
     ).json()
 
-    evidence = next(section for section in payload["sections"] if section["key"] == "evidence")
-    assert evidence["blocks"][0]["evidence"][0]["artifact_id"] == artifact_id
+    process = next(section for section in payload["sections"] if section["key"] == "process")
+    steps = next(block for block in process["blocks"] if block["type"] == "steps")
+    assert steps["steps"][0]["images"][0]["artifact_id"] == artifact_id

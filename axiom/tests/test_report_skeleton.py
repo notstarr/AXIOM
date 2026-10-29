@@ -16,7 +16,6 @@ from axiom.modules.redteam.schemas import RedTeamResult
 from axiom.modules.reports.path import PathLink
 from axiom.modules.reports.skeleton import (
     EMPTY,
-    NO_EVIDENCE,
     NO_REPRODUCTION,
     build_result_report,
     build_vulnerability_report,
@@ -106,12 +105,12 @@ def _result(**overrides) -> RedTeamResult:
 def test_a_vulnerability_report_has_the_fixed_chapter_order() -> None:
     doc = build_vulnerability_report(_vulnerability())
 
+    # 报告不再有独立的「证据」章节：图片挂在它所属的步骤下面。
     assert [section.key for section in doc.sections] == [
         "basic",
         "description",
         "process",
         "impact",
-        "evidence",
         "verdict",
     ]
     assert doc.badge == "高危"
@@ -165,25 +164,48 @@ def test_a_missing_reproduction_renders_a_placeholder_not_a_crash() -> None:
     assert process.blocks[0].text == NO_REPRODUCTION
 
 
-def test_the_evidence_section_is_always_present_even_without_pictures() -> None:
-    """The hook must exist up front so the layout does not jump when a reviewer adds
-    screenshots later."""
+def test_a_report_has_no_standalone_evidence_chapter() -> None:
+    """Pictures belong to the step they prove, not to a chapter at the end."""
     doc = build_vulnerability_report(_vulnerability())
-    evidence = next(section for section in doc.sections if section.key == "evidence")
 
-    assert evidence.blocks[0].type == "evidence"
-    assert evidence.blocks[0].evidence == ()
-    assert NO_EVIDENCE in to_markdown(doc)
+    assert "evidence" not in [section.key for section in doc.sections]
+    assert "## 证据" not in to_markdown(doc)
 
 
-def test_attached_evidence_is_rendered_with_its_url() -> None:
+def test_a_step_carries_its_own_images_into_the_markdown() -> None:
     doc = build_vulnerability_report(
-        _vulnerability(),
-        evidence=[{"artifact_id": "a001", "url": "/api/findings/v001/evidence/step-01.png", "step_index": 1}],
+        _vulnerability(reproduction=_reproduction(steps=2)),
+        images_by_step={2: [{"path": "images/step-02-shell.png", "caption": "命令回显"}]},
     )
     rendered = to_markdown(doc)
 
-    assert "step-01.png" in rendered
+    # 图片跟在第 2 步之后，且不在第 1 步里
+    assert "![命令回显](images/step-02-shell.png)" in rendered
+    assert rendered.index("### 步骤 2") < rendered.index("images/step-02-shell.png")
+    assert rendered.index("images/step-02-shell.png") < rendered.index("## 影响")
+
+
+def test_an_image_whose_step_does_not_exist_is_still_listed() -> None:
+    """A picture attached to a step that no longer exists must not vanish silently."""
+    doc = build_vulnerability_report(
+        _vulnerability(reproduction=_reproduction(steps=1)),
+        images_by_step={0: [{"path": "images/overview.png", "caption": "概览"}]},
+    )
+    process = next(section for section in doc.sections if section.key == "process")
+    stray = next(block for block in process.blocks if block.key == "其他证据")
+
+    assert "overview.png" in " ".join(stray.items)
+
+
+def test_an_image_caption_cannot_break_the_markdown() -> None:
+    """Unescaped brackets in a caption would end the alt text and break the image."""
+    doc = build_vulnerability_report(
+        _vulnerability(reproduction=_reproduction(steps=1)),
+        images_by_step={1: [{"path": "images/a.png", "caption": "回显 [ok]"}]},
+    )
+    rendered = to_markdown(doc)
+
+    assert "![回显 \\[ok\\]](images/a.png)" in rendered
 
 
 def test_a_result_report_carries_the_attack_path() -> None:

@@ -7,6 +7,21 @@ description: 红队成果审核前必读。按护网评分表核定分
 
 审核对象是红队成果。先读 `redteam-scoring`，按那张表核定 `points_awarded`。不以自评分为准。
 
+## 补截图（可选）
+
+需要给某一步留证时，先上传图片拿 `artifact_id`，再挂到成果与步骤上：
+
+```bash
+curl -X POST "$AXIOM_SERVER/api/v1/tasks/$AXIOM_TASK_ID/artifacts/upload" \
+     -F file=@retest.png -F actor=reviewer -F summary=命令回显
+curl -X POST "$AXIOM_SERVER/api/v1/tasks/$AXIOM_TASK_ID/red-team/results/<result_id>/evidence" \
+     -H 'content-type: application/json' \
+     -d '{"artifact_id":"<id>","step_index":2,"caption":"命令回显"}'
+```
+
+`step_index` 是第几步（图会显示在那一步的响应之后）。**没有图就不补，不影响裁决**——
+报告正文里的报文本身就是证据。
+
 ## 审查
 
 1. 证据要能复现声明的控制、数据或穿透。只有扫描、接口存在、未取得权限 → 驳回。**但测绘本身 0 分不等于成果 0 分**：由测绘取得的权限与数据，按实际取得的资产照常全额核定，不要用「这是测绘阶段发现的」降档。

@@ -422,6 +422,45 @@ class RedTeamRepository:
         conn.execute(red_team_results.insert().values(**values))
         return self._with_evidence(conn, [self._result(values)])[0]
 
+    def update_result(
+        self,
+        conn: Connection,
+        *,
+        task_id: str,
+        result_id: str,
+        body,
+        now: str,
+    ) -> dict:
+        """写入人工可改的字段，返回被改动的字段名（供重审判定）。"""
+        fields = body.model_fields_set
+        if not fields:
+            return {}
+        values: dict = {}
+        for name in fields:
+            value = getattr(body, name)
+            if name == "reproduction":
+                values["reproduction_json"] = (
+                    value.model_dump(mode="json") if value is not None else {}
+                )
+            elif name in {"data_fields"}:
+                values[f"{name}_json"] = list(value or [])
+            elif name in {"sample_count", "sample_bytes", "data_target_id",
+                          "credential_ref", "data_summary"}:
+                values[name] = value
+            elif name in {"title", "description", "principal", "tenant",
+                          "target_asset", "result_type", "points_declared"}:
+                values[name] = value
+        values["updated_at"] = now
+        conn.execute(
+            update(red_team_results)
+            .where(
+                red_team_results.c.task_id == task_id,
+                red_team_results.c.id == result_id,
+            )
+            .values(**values)
+        )
+        return {name for name in fields}
+
     def set_result_status(
         self,
         conn: Connection,

@@ -22,7 +22,7 @@ from axiom.modules.redteam.schemas import (
     RedTeamResultReport,
     RedTeamResultReview,
 )
-from axiom.modules.redteam.tables import red_team_chains
+from axiom.modules.redteam.tables import red_team_chains, red_team_results
 from axiom.modules.reports.evidence import ReportEvidenceRepository
 from axiom.modules.reports.path import attack_paths
 from axiom.modules.tasks.tables import tasks
@@ -439,6 +439,72 @@ class RedTeamService:
                 limit=limit,
                 offset=offset,
             )
+
+    # 改这些字段会改变成果的实质内容，需要重审；改自评分不需要。
+    REVIEW_RELEVANT_FIELDS = frozenset(
+        {
+            "title",
+            "description",
+            "principal",
+            "tenant",
+            "target_asset",
+            "result_type",
+            "data_target_id",
+            "sample_count",
+            "sample_bytes",
+            "data_fields",
+            "data_summary",
+            "credential_ref",
+            "reproduction",
+        }
+    )
+
+    def update_result(self, task_id: str, result_id: str, command) -> RedTeamResult:
+        """人工编辑成果内容。
+
+        与漏洞侧同一条规则：改实质内容就重置成 `reviewing` 并重新排队，让审核基于新
+        内容重判；只改自评分不动状态机。裁决字段本身不在可改范围内（见
+        UpdateRedTeamResult），所以这里不存在「人工直接改判」的路径。
+        """
+
+        def work(conn):
+            task = self._task(conn, task_id)
+            if task["legacy_readonly"]:
+                raise ConflictError("Legacy Task is read-only")
+            if task["archived"]:
+                raise ConflictError("已归档任务不能修改成果，请先恢复任务")
+            current = self.repository.get_result(conn, task_id, result_id)
+            if current is None:
+                raise NotFoundError(f"RedTeam Result not found: {result_id}")
+            changed = self.repository.update_result(
+                conn, task_id=task_id, result_id=result_id, body=command, now=utcnow()
+            )
+            if not changed:
+                return current
+            review_relevant = bool(changed & self.REVIEW_RELEVANT_FIELDS)
+            if review_relevant:
+                conn.execute(
+                    update(red_team_results)
+                    .where(
+                        red_team_results.c.task_id == task_id,
+                        red_team_results.c.id == result_id,
+                    )
+                    .values(status="reviewing", review_reason="", updated_at=utcnow())
+                )
+                if self.reviews is not None:
+                    self.reviews.enqueue_redteam_in(
+                        conn,
+                        task_id=task_id,
+                        result_id=result_id,
+                        trigger="updated",
+                        trigger_payload={"changed_fields": sorted(changed)},
+                        now=utcnow(),
+                    )
+            updated = self.repository.get_result(conn, task_id, result_id)
+            assert updated is not None
+            return updated
+
+        return run_transaction(self.engine, work)
 
     def report_result(
         self,

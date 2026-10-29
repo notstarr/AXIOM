@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from axiom.modules.reproduction.schemas import Reproduction
 from axiom.modules.reports.path import PathLink
@@ -167,6 +167,47 @@ class RedTeamResultReport(BaseModel):
     def normalize_optional(cls, value: str | None) -> str | None:
         value = (value or "").strip()
         return value or None
+
+
+class UpdateRedTeamResult(BaseModel):
+    """人工编辑一条红队成果。
+
+    身份（id/task_id/chain_id/intent_id）、状态机与裁决（status/points_awarded/
+    reviewed_by/review_reason）都不在可改字段里：``extra="forbid"`` 会让越界字段直接
+    422，而不是被静默忽略。改裁决只能走审核流程。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = None
+    description: str | None = None
+    principal: str | None = None
+    tenant: str | None = None
+    target_asset: str | None = None
+    result_type: ResultType | None = None
+    data_target_id: str | None = None
+    sample_count: int | None = Field(default=None, ge=0)
+    sample_bytes: int | None = Field(default=None, ge=0)
+    data_fields: list[str] | None = Field(default=None, max_length=200)
+    data_summary: str | None = None
+    credential_ref: str | None = None
+    points_declared: int | None = Field(default=None, ge=1, le=MAX_RESULT_POINTS)
+    reproduction: Reproduction | None = None
+
+    @field_validator("title", "description", "principal")
+    @classmethod
+    def require_text_when_given(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("tenant", "target_asset", "data_summary")
+    @classmethod
+    def strip_text(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
 
 
 class RedTeamResultReportRequest(BaseModel):

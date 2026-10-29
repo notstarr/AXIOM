@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -18,10 +19,19 @@ from axiom.modules.projects.repository import ProjectRepository
 from axiom.modules.tasks.repository import TaskRepository
 from axiom.modules.todos.repository import TodoRepository
 from axiom.modules.reports import ReportEvidenceRepository
-from axiom.modules.reports.skeleton import build_vulnerability_report, to_markdown
+from axiom.modules.redteam.repository import RedTeamRepository
+from axiom.modules.reports.path import attack_path
+from axiom.modules.reports.skeleton import (
+    build_result_report,
+    build_vulnerability_report,
+    to_markdown,
+)
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
 from axiom.shared.errors import NotFoundError
 from axiom.shared.storage import FileStore
+
+
+logger = logging.getLogger(__name__)
 
 
 class ExportService:
@@ -40,61 +50,97 @@ class ExportService:
         self.goals = GoalRepository()
         self.audit = AuditService(engine)
 
-    def export_vulnerability_zip(self, task_id: str, vulnerability_id: str) -> tuple[bytes, str]:
-        """单漏洞交付包：报告正文 + 原始 Findings + 审核者补充的证据图。
+    def _images(self, conn, task_id: str, subject_type: str, subject_id: str) -> list[dict]:
+        """The pictures attached to this report, named for a self-contained folder.
 
-        The report body is generated from the stored reproduction (skeleton + attack
-        path), not from files — Explore no longer ships evidence documents, so the only
-        binary payload left is the pictures a reviewer attached afterwards.
+        Filenames carry the step number so the folder sorts in reading order, and the
+        markdown references exactly the name written into the archive — a mismatch here
+        is a broken report that only shows up after delivery.
+        """
+        items = self.report_evidence.list(conn, task_id, subject_type, subject_id)
+        artifacts = {item.id: item for item in self.artifacts.list(conn, task_id)}
+        collected: list[dict] = []
+        used: dict[str, int] = {}
+        for item in items:
+            artifact = artifacts.get(item["artifact_id"])
+            if artifact is None:
+                continue
+            path = self.store.resolve(artifact.storage_key)
+            if not path.is_file():
+                logger.warning(
+                    "report_image_missing task_id=%s subject=%s artifact=%s key=%s",
+                    task_id, subject_id, item["artifact_id"], artifact.storage_key,
+                )
+                continue
+            step = int(item.get("step_index") or 0)
+            name = path.name
+            key = f"step-{step:02d}-{name}"
+            if key in used:
+                used[key] += 1
+                stem, dot, ext = key.rpartition(".")
+                key = f"{stem}-{used[key]}{dot}{ext}" if dot else f"{key}-{used[key]}"
+            else:
+                used[key] = 1
+            collected.append(
+                {
+                    "step": step,
+                    "path": f"images/{key}",
+                    "caption": item.get("caption") or "",
+                    "file": path,
+                }
+            )
+        return collected
+
+    @staticmethod
+    def _images_by_step(images: list[dict]) -> dict[int, list[dict]]:
+        grouped: dict[int, list[dict]] = {}
+        for image in images:
+            grouped.setdefault(image["step"], []).append(image)
+        return grouped
+
+    def export_vulnerability_report(
+        self, task_id: str, vulnerability_id: str
+    ) -> tuple[bytes, str, str]:
+        """交付报告：md +（有图时）图片，返回 (bytes, filename, media_type)。
+
+        No images means no archive: wrapping a single markdown file in a zip makes the
+        recipient unzip to read one file.
         """
         self._require_task(task_id)
         with self.engine.connect() as conn:
             vuln = self.vulnerabilities.get(conn, task_id, vulnerability_id)
             if vuln is None:
                 raise NotFoundError(f"Vulnerability not found: {vulnerability_id}")
+            images = self._images(conn, task_id, "vulnerability", vulnerability_id)
 
-            intent_id = vuln.intent_id
-            artifacts_list = self.artifacts.list(conn, task_id)
-            evidence = self.report_evidence.list(
-                conn, task_id, "vulnerability", vulnerability_id
-            )
+        markdown = self.vulnerability_markdown(task_id, vulnerability_id)
+        return self._package(task_id, vulnerability_id, markdown, images)
 
-        vuln_md = self.vulnerability_markdown(task_id, vulnerability_id)
+    def export_result_report(
+        self, task_id: str, result_id: str
+    ) -> tuple[bytes, str, str]:
+        self._require_task(task_id)
+        with self.engine.connect() as conn:
+            result = RedTeamRepository().get_result(conn, task_id, result_id)
+            if result is None:
+                raise NotFoundError(f"RedTeam Result not found: {result_id}")
+            images = self._images(conn, task_id, "redteam_result", result_id)
 
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            zip_file.writestr("vulnerability.md", vuln_md)
+        markdown = self.result_markdown(task_id, result_id)
+        return self._package(task_id, result_id, markdown, images)
 
-            # 原始 findings.md（结论载体，仍在写）
-            intent_artifacts = [a for a in artifacts_list if a.intent_id == intent_id] if intent_id else []
-            findings_written = False
-            for art in intent_artifacts:
-                if not art.storage_key.replace("\\", "/").endswith("findings.md"):
-                    continue
-                art_path = self.store.resolve(art.storage_key)
-                if art_path.is_file():
-                    zip_file.writestr("findings.md", art_path.read_bytes())
-                    findings_written = True
-                    break
-            if not findings_written:
-                zip_file.writestr("findings.md", "# Findings\n\n暂无关联的原始 Findings 记录。\n")
-
-            # 审核者补充的证据图（按步骤号归档，与报告里的位置一致）
-            for item in evidence:
-                artifact = next(
-                    (a for a in artifacts_list if a.id == item["artifact_id"]), None
-                )
-                if artifact is None:
-                    continue
-                art_path = self.store.resolve(artifact.storage_key)
-                if art_path.is_file():
-                    step = int(item.get("step_index") or 0)
-                    zip_file.writestr(
-                        f"evidence/step-{step:02d}/{art_path.name}", art_path.read_bytes()
-                    )
-
-        zip_filename = f"{task_id}_{vulnerability_id}_export.zip"
-        return zip_buffer.getvalue(), zip_filename
+    def _package(
+        self, task_id: str, subject_id: str, markdown: str, images: list[dict]
+    ) -> tuple[bytes, str, str]:
+        base = f"{task_id}_{subject_id}_report"
+        if not images:
+            return markdown.encode("utf-8"), f"{base}.md", "text/markdown"
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("report.md", markdown)
+            for image in images:
+                archive.writestr(image["path"], image["file"].read_bytes())
+        return buffer.getvalue(), f"{base}.zip", "application/zip"
 
     def overview_yaml(self, task_id: str) -> str:
         data = self._overview(task_id)
@@ -117,14 +163,45 @@ class ExportService:
         return "\n".join(lines) + "\n"
 
     def vulnerability_markdown(self, task_id: str, vulnerability_id: str) -> str:
-        """交付用 Markdown：由代码从结构化复现生成，不经 AI 重写。"""
+        """交付用 Markdown：由代码从结构化复现生成，不经 AI 重写。
+
+        Images are referenced by the same ``images/…`` paths the archive writes, so the
+        markdown and the folder are one unit.  With no images the paths simply do not
+        resolve, which is why the package drops the archive in that case.
+        """
         self._require_task(task_id)
         with self.engine.connect() as conn:
             item = self.vulnerabilities.get(conn, task_id, vulnerability_id)
             if item is None:
                 raise NotFoundError(f"Vulnerability not found: {vulnerability_id}")
-            evidence = self.report_evidence.list(conn, task_id, "vulnerability", vulnerability_id)
-        return _render_vulnerability_markdown(item, evidence)
+            images = self._images(conn, task_id, "vulnerability", vulnerability_id)
+        return self._render_markdown(item, images)
+
+    def result_markdown(self, task_id: str, result_id: str) -> str:
+        self._require_task(task_id)
+        with self.engine.connect() as conn:
+            result = RedTeamRepository().get_result(conn, task_id, result_id)
+            if result is None:
+                raise NotFoundError(f"RedTeam Result not found: {result_id}")
+            images = self._images(conn, task_id, "redteam_result", result_id)
+            path = attack_path(
+                conn,
+                task_id=task_id,
+                intent_id=result.intent_id,
+                chain_id=result.chain_id,
+            )
+        doc = build_result_report(
+            result, attack_path=path, images_by_step=self._images_by_step(images)
+        )
+        return to_markdown(doc)
+
+    def _render_markdown(self, item, images: list[dict]) -> str:
+        if item.reproduction is None:
+            return _vulnerability_markdown(item.model_dump(mode="json"))
+        doc = build_vulnerability_report(
+            item, images_by_step=self._images_by_step(images)
+        )
+        return to_markdown(doc)
 
     def vulnerabilities_markdown(self, task_id: str) -> str:
         self._require_task(task_id)
@@ -140,7 +217,7 @@ class ExportService:
             return f"# 漏洞报告\n\n任务：{task_id}\n\n当前没有漏洞记录。\n"
         blocks = [f"# 漏洞报告\n\n任务：{task_id}\n"]
         blocks.extend(
-            _render_vulnerability_markdown(item, evidence_by_id.get(item.id, []))
+            self._render_markdown(item, evidence_by_id.get(item.id, []))
             for item in items
         )
         return "\n---\n\n".join(blocks)

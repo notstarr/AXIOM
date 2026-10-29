@@ -1791,6 +1791,7 @@
           this.selectedRtResultId = this.rtResultKey(this.rtResultItems[0]);
         }
         this.loadRtResultChain(this.selectedRtResult());
+        this.loadRtResultReviews?.(this.selectedRtResult());
       } catch (error) {
         if (error?.name === 'AbortError') return;
         this.showToast(error?.message || '红队成果加载失败', 'error');

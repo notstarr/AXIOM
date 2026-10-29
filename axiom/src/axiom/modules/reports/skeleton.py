@@ -40,9 +40,8 @@ if TYPE_CHECKING:
 # never silently loses a heading.
 EMPTY = "未填写"
 NO_REPRODUCTION = "未提供结构化复现"
-NO_EVIDENCE = "证据由审核者补充"
 
-BlockType = Literal["text", "kv", "bullets", "code", "steps", "chain", "evidence", "verdict"]
+BlockType = Literal["text", "kv", "bullets", "code", "steps", "chain", "verdict"]
 
 SEVERITY_LABELS = {
     "critical": "严重",
@@ -82,7 +81,6 @@ class Block:
     items: tuple[str, ...] = ()
     steps: tuple[dict[str, Any], ...] = ()
     links: tuple[dict[str, Any], ...] = ()
-    evidence: tuple[dict[str, Any], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"type": self.type}
@@ -96,8 +94,6 @@ class Block:
             payload["steps"] = list(self.steps)
         if self.links:
             payload["links"] = list(self.links)
-        if self.evidence:
-            payload["evidence"] = list(self.evidence)
         return payload
 
 
@@ -141,7 +137,7 @@ class ReportDoc:
 def build_vulnerability_report(
     vulnerability: "Vulnerability",
     *,
-    evidence: list[dict[str, Any]] | None = None,
+    images_by_step: dict[int, list[dict[str, Any]]] | None = None,
 ) -> ReportDoc:
     """The delivered vulnerability report.
 
@@ -177,7 +173,7 @@ def build_vulnerability_report(
             title="描述",
             blocks=(Block(type="text", text=vulnerability.description or EMPTY),),
         ),
-        _process_section(vulnerability.reproduction, attack_path=None),
+        _process_section(vulnerability.reproduction, attack_path=None, images_by_step=images_by_step),
         Section(
             key="impact",
             title="影响",
@@ -194,7 +190,6 @@ def build_vulnerability_report(
                 blocks=(Block(type="text", text=vulnerability.remediation),),
             )
         )
-    sections.append(_evidence_section(evidence))
     sections.append(_verdict_section(
         decision=vulnerability.status,
         reason=vulnerability.status_reason,
@@ -214,7 +209,7 @@ def build_result_report(
     result: "RedTeamResult",
     *,
     attack_path: list[PathLink] | None = None,
-    evidence: list[dict[str, Any]] | None = None,
+    images_by_step: dict[int, list[dict[str, Any]]] | None = None,
 ) -> ReportDoc:
     """The delivered red-team Result report.
 
@@ -250,9 +245,10 @@ def build_result_report(
             title="利用前提",
             blocks=_prerequisite_blocks(reproduction),
         ),
-        _process_section(reproduction, attack_path=attack_path or []),
+        _process_section(
+            reproduction, attack_path=attack_path or [], images_by_step=images_by_step
+        ),
     ]
-    sections.append(_evidence_section(evidence))
     sections.append(_verdict_section(
         decision=result.status,
         reason=result.review_reason,
@@ -276,6 +272,7 @@ def _process_section(
     reproduction: Reproduction | None,
     *,
     attack_path: list[PathLink] | None,
+    images_by_step: dict[int, list[dict[str, Any]]] | None = None,
 ) -> Section:
     """入口点 / 前置条件（含攻击链）/ 有序步骤 — the part a human walks again."""
     if reproduction is None:
@@ -294,6 +291,7 @@ def _process_section(
                 links=tuple(link.as_dict() for link in attack_path),
             )
         )
+    images = images_by_step or {}
     blocks.append(
         Block(
             type="steps",
@@ -304,12 +302,25 @@ def _process_section(
                     "request": step.request,
                     "response": step.response,
                     "proves": step.proves,
+                    # 该步的图片：md 导出时紧跟在响应之后，页面渲染也用它兜底
+                    "images": list(images.get(index, ())),
                 }
                 for index, step in enumerate(reproduction.steps, start=1)
             ),
         )
     )
+    # step_index 落在 1..N 之外的图（历史概览图、越界挂载）不能静默丢弃，
+    # 统一收在「其他证据」里，读者仍能看到。
+    stray = [item for step, items in sorted(images.items()) if step < 1 or step > len(reproduction.steps) for item in items]
+    if stray:
+        blocks.append(Block(type="bullets", key="其他证据", items=tuple(_image_label(item) for item in stray)))
     return Section(key="process", title="测试过程", blocks=tuple(blocks))
+
+
+def _image_label(item: dict[str, Any]) -> str:
+    caption = str(item.get("caption") or "").strip()
+    path = str(item.get("path") or item.get("url") or "").strip()
+    return f"{caption}（{path}）" if caption else path
 
 
 def _prerequisite_blocks(reproduction: Reproduction | None) -> tuple[Block, ...]:
@@ -332,21 +343,6 @@ def _prerequisite_blocks(reproduction: Reproduction | None) -> tuple[Block, ...]
 
 def _prerequisites(reproduction: Reproduction) -> list[str]:
     return list(reproduction.prerequisites)
-
-
-def _evidence_section(evidence: list[dict[str, Any]] | None) -> Section:
-    """The hook: reviewers attach the key screenshots after the fact.
-
-    Rendered as an empty slot rather than an empty chapter so the report layout does
-    not jump when pictures arrive later.
-    """
-    return Section(
-        key="evidence",
-        title="证据",
-        blocks=(
-            Block(type="evidence", evidence=tuple(evidence or ())),
-        ),
-    )
 
 
 def _verdict_section(*, decision: str, reason: str, points: int | None) -> Section:
@@ -396,10 +392,6 @@ def _render_block(block: Block) -> list[str]:
             current = "（本环）" if link.get("is_current") else ""
             lines.append(f"{index}. {link['title']}{current}{gain}")
         return [*lines, ""]
-    if block.type == "evidence":
-        if not block.evidence:
-            return [NO_EVIDENCE, ""]
-        return [f"- 证据：{item.get('url') or item.get('artifact_id')}" for item in block.evidence] + [""]
     if block.type == "verdict":
         return [_verdict_line(block), ""]
     if block.type == "steps":
@@ -419,8 +411,25 @@ def _render_block(block: Block) -> list[str]:
             lines.append(step["response"])
             lines.append("```")
             lines.append("")
+            # 证据图紧跟该步的响应：读者看到的就是这一步发生了什么，
+            # 不必翻到文末再对号入座。
+            for image in step.get("images") or ():
+                lines.append(_image_markdown(image, step["index"]))
+                lines.append("")
         return lines
     return []
+
+
+def _image_markdown(image: dict[str, Any], step_index: int) -> str:
+    """One markdown image line.
+
+    The caption is user text, so brackets are escaped — an unescaped ``]`` would end the
+    alt text early and break the image for every renderer.
+    """
+    caption = str(image.get("caption") or "").strip() or f"步骤 {step_index} 证据"
+    for char in ("\\", "[", "]"):
+        caption = caption.replace(char, "\\" + char)
+    return f"![{caption}]({image.get('path') or ''})"
 
 
 def _verdict_line(block: Block) -> str:

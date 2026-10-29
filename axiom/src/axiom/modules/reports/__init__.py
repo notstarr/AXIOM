@@ -21,7 +21,6 @@ from axiom.modules.reports.evidence import (
 from axiom.modules.reports.path import PathLink, attack_path, attack_paths, load_graph
 from axiom.modules.reports.skeleton import (
     EMPTY,
-    NO_EVIDENCE,
     NO_REPRODUCTION,
     Block,
     ReportDoc,
@@ -46,27 +45,39 @@ class ReportService:
         self.red_team = red_team
         self.evidence = ReportEvidenceRepository()
 
+    def _images_by_step(self, conn, task_id: str, subject_type: str, subject_id: str) -> dict:
+        """Group attached pictures by the step they belong to.
+
+        The page reads ``evidence`` (a flat list with ``step_index``) so it can render
+        whatever arrives; the report skeleton wants them pre-grouped, because its job is
+        to place each picture under its step.
+        """
+        grouped: dict[int, list[dict]] = {}
+        for item in self.evidence.list(conn, task_id, subject_type, subject_id):
+            grouped.setdefault(int(item.get("step_index") or 0), []).append(item)
+        return grouped
+
     def vulnerability_doc(self, task_id: str, vulnerability_id: str) -> dict:
         # The service applies the task-visibility rules (archived tasks, etc.); the
         # report view must not be a way around them.
         vulnerability = self.vulnerabilities.get(task_id, vulnerability_id)
         with self.engine.connect() as conn:
-            evidence = self.evidence.list(conn, task_id, SUBJECT_VULNERABILITY, vulnerability_id)
-        return to_dict(build_vulnerability_report(vulnerability, evidence=evidence))
+            images = self._images_by_step(conn, task_id, SUBJECT_VULNERABILITY, vulnerability_id)
+        return to_dict(build_vulnerability_report(vulnerability, images_by_step=images))
 
     def result_doc(self, task_id: str, result_id: str) -> dict:
         with self.engine.connect() as conn:
             result = self.red_team.repository.get_result(conn, task_id, result_id)
             if result is None:
                 raise NotFoundError(f"RedTeam Result not found: {result_id}")
-            evidence = self.evidence.list(conn, task_id, SUBJECT_RESULT, result_id)
+            images = self._images_by_step(conn, task_id, SUBJECT_RESULT, result_id)
             path = attack_path(
                 conn,
                 task_id=task_id,
                 intent_id=result.intent_id,
                 chain_id=result.chain_id,
             )
-        return to_dict(build_result_report(result, attack_path=path, evidence=evidence))
+        return to_dict(build_result_report(result, attack_path=path, images_by_step=images))
 
 
 class ReportEvidenceService:
@@ -120,7 +131,6 @@ class ReportEvidenceService:
 __all__ = [
     "EMPTY",
     "MAX_EVIDENCE_PER_SUBJECT",
-    "NO_EVIDENCE",
     "NO_REPRODUCTION",
     "SUBJECTS",
     "SUBJECT_RESULT",

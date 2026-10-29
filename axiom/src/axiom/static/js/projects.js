@@ -565,6 +565,170 @@ window.AxiomModules.projects = {
       return this.rtEvidenceForStep(0);
     },
 
+    // —— 成果的报告侧：导出 / 触发审核 / 审核记录 / 编辑 ——
+
+    async exportRtResult(result) {
+      if (!result?.task_id || !result?.id) return;
+      await this.downloadReport(
+        `/api/v1/tasks/${result.task_id}/red-team/results/${result.id}/export`,
+        `${result.task_id}_${result.id}_report`,
+      );
+    },
+
+    // 报告导出统一走这里：文件名以服务端 Content-Disposition 为准（有图是 .zip，
+    // 没图是 .md），前端不猜扩展名。
+    async downloadReport(url, fallbackName) {
+      try {
+        const token = localStorage.getItem('axiom_token');
+        const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+        if (!res.ok) throw new Error((await res.text()) || `导出失败 (HTTP ${res.status})`);
+        const disposition = res.headers.get('content-disposition') || '';
+        const match = /filename="?([^";]+)"?/.exec(disposition);
+        const filename = match ? match[1] : fallbackName;
+        const blob = await res.blob();
+        const href = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = href;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(href);
+        this.showToast(filename.endsWith('.zip') ? '已导出报告包（含图片）' : '已导出报告', 'success');
+      } catch (e) {
+        this.showToast(`导出失败: ${e.message}`, 'error');
+      }
+    },
+
+    rtResultReviewCanRetry() {
+      return !this.rtResultReviewSubmitting && !(this.rtResultReviews || [])
+        .some(run => ['pending', 'claimed', 'running', 'concluding'].includes(run.status));
+    },
+
+    async loadRtResultReviews(result) {
+      if (!result?.task_id || !result?.id) {
+        this.rtResultReviews = [];
+        return;
+      }
+      this.rtResultReviewsLoading = true;
+      this.rtResultReviewsError = '';
+      try {
+        this.rtResultReviews = await this.api(
+          'GET', `/tasks/${result.task_id}/red-team/results/${result.id}/reviews`,
+        ) || [];
+      } catch (e) {
+        this.rtResultReviewsError = e.message || '审核记录加载失败';
+        this.rtResultReviews = [];
+      } finally {
+        this.rtResultReviewsLoading = false;
+      }
+    },
+
+    async triggerRtResultReview(result) {
+      if (!result?.task_id || !result.id || !this.rtResultReviewCanRetry()) return;
+      if (!window.confirm(`确认重新审核 ${result.id}？成果将回到审核中，等待审核者重新核定分数。`)) return;
+      this.rtResultReviewSubmitting = true;
+      try {
+        await this.api('POST', `/tasks/${result.task_id}/red-team/results/${result.id}/reviews`, {
+          actor: this.actorName ? this.actorName() : 'human',
+          reason: '人工要求重新审核',
+        });
+        await this.loadRedTeamResultPage?.();
+        await this.loadRtResultReviews(result);
+        this.showToast('已创建审核任务');
+      } catch (e) {
+        this.showToast(e.message || '重新审核失败', 'error');
+      } finally {
+        this.rtResultReviewSubmitting = false;
+      }
+    },
+
+    editRtResult(result) {
+      if (!result) return;
+      const repro = result.reproduction || {};
+      this.rtEditor = {
+        open: true, saving: false, error: '',
+        id: result.id, task_id: result.task_id,
+        title: result.title || '',
+        description: result.description || '',
+        principal: result.principal || '',
+        tenant: result.tenant || '',
+        target_asset: result.target_asset || '',
+        result_type: result.result_type || 'permission',
+        data_target_id: result.data_target_id || '',
+        sample_count: result.sample_count ?? null,
+        sample_bytes: result.sample_bytes ?? null,
+        data_fields: (result.data_fields || []).join(', '),
+        data_summary: result.data_summary || '',
+        credential_ref: result.credential_ref || '',
+        points_declared: result.points_declared || 1,
+        entry_point: repro.entry_point || '',
+        prerequisites: (repro.prerequisites || []).join('\n'),
+        chain_input: repro.chain_input || '',
+        chain_gain: repro.chain_gain || '',
+        steps: (repro.steps || []).map(step => ({
+          title: step.title || '', request: step.request || '',
+          response: step.response || '', proves: step.proves || '',
+        })),
+      };
+    },
+
+    addRtEditorStep() {
+      this.rtEditor.steps.push({ title: '', request: '', response: '', proves: '' });
+    },
+
+    removeRtEditorStep(index) {
+      this.rtEditor.steps.splice(index, 1);
+    },
+
+    async saveRtResult() {
+      const ed = this.rtEditor;
+      if (!ed.id) return;
+      const body = {
+        title: ed.title.trim(),
+        description: ed.description.trim(),
+        principal: ed.principal.trim(),
+        tenant: ed.tenant,
+        target_asset: ed.target_asset,
+        result_type: ed.result_type,
+        points_declared: Number(ed.points_declared) || 1,
+      };
+      // 只带当前类型相关的字段，避免把另一类的空值写进去
+      if (ed.result_type === 'data') {
+        body.data_target_id = ed.data_target_id || null;
+        body.sample_count = ed.sample_count === null || ed.sample_count === '' ? null : Number(ed.sample_count);
+        body.sample_bytes = ed.sample_bytes === null || ed.sample_bytes === '' ? null : Number(ed.sample_bytes);
+        body.data_fields = ed.data_fields.split(',').map(x => x.trim()).filter(Boolean);
+        body.data_summary = ed.data_summary;
+      }
+      if (ed.result_type === 'credential') body.credential_ref = ed.credential_ref || null;
+      if (ed.steps.length) {
+        body.reproduction = {
+          entry_point: ed.entry_point.trim(),
+          prerequisites: ed.prerequisites.split('\n').map(x => x.trim()).filter(Boolean),
+          chain_input: ed.chain_input.trim(),
+          chain_gain: ed.chain_gain.trim(),
+          steps: ed.steps.map(step => ({
+            title: step.title.trim(), request: step.request.trim(),
+            response: step.response.trim(), proves: step.proves.trim(),
+          })),
+        };
+      }
+      ed.saving = true;
+      ed.error = '';
+      try {
+        await this.api('PATCH', `/tasks/${ed.task_id}/red-team/results/${ed.id}`, body);
+        ed.open = false;
+        await this.loadRedTeamResultPage?.();
+        await this.loadRtResultReviews(this.selectedRtResult());
+        this.showToast('已保存；实质内容变更会自动重新审核');
+      } catch (e) {
+        ed.error = e.message || '保存失败';
+      } finally {
+        ed.saving = false;
+      }
+    },
+
     // 证据上传：先落成普通 artifact，再挂到主体与步骤上（report_evidence）。
     // 报告里每步的虚线槽调它，所以失败必须让人看见，不能静默。
     async uploadReportEvidence(subjectType, subjectId, stepIndex, event) {

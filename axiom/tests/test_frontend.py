@@ -1777,8 +1777,8 @@ def test_frontend_and_static_assets_are_served(client):
     assert 'class="rp-packet"' in vulnerabilities.text
     # 证据槽是每步一个方块，不是通栏虚线框；且挂在步骤内部
     assert 'class="rp-slot"' in vulnerabilities.text
-    # 只允许一个实心主按钮（提交类动作）
-    assert vulnerabilities.text.count("rp-act primary") == 1
+    # 每个报告面板只允许一个实心主按钮（漏洞与成果各一个，分处两个面板）
+    assert vulnerabilities.text.count("rp-act primary") == 2
     assert "Reviewer 审核" in vulnerabilities.text
     assert "重新审核" in vulnerabilities.text
     assert "vulnerabilityReviewDecisionLabel" in vulnerabilities.text
@@ -3750,3 +3750,38 @@ def test_report_document_fills_its_column(client) -> None:
 
     assert "max-width: none;" in block
     assert "width: 100%;" in block
+
+
+def test_a_result_panel_has_review_edit_and_export(client) -> None:
+    """A Result is a report too: it needs the same three actions a vulnerability has."""
+    template = client.get("/static/templates/vulnerabilities.html").text
+
+    assert "triggerRtResultReview(selectedRtResult())" in template
+    assert "editRtResult(selectedRtResult())" in template
+    assert "exportRtResult(selectedRtResult())" in template
+    # 审核记录与编辑弹窗都在
+    assert "rtResultReviews" in template
+    assert 'x-show="rtEditor.open"' in template
+    assert "saveRtResult()" in template
+
+
+def test_the_report_has_no_evidence_overview_section(client) -> None:
+    """Pictures live under the step they prove; there is no separate 证据 chapter."""
+    template = client.get("/static/templates/vulnerabilities.html").text
+
+    assert '<h2 class="rp-h">证据</h2>' not in template
+    assert "vulnOverviewEvidence" not in template
+    assert "rtOverviewEvidence" not in template
+    # 每步的图片槽仍在（人工与审核 worker 的入口）
+    assert 'class="rp-slot"' in template
+    assert "uploadReportEvidence(" in template
+
+
+def test_export_uses_the_server_filename_instead_of_guessing_the_extension(client) -> None:
+    """The server decides md vs zip; the client must not hardcode .zip."""
+    template_js = client.get("/static/js/projects.js").text
+    dashboard = client.get("/static/js/dashboard.js").text
+
+    assert "content-disposition" in template_js
+    assert "downloadReport" in dashboard
+    assert "exportSingleVulnerability" in dashboard

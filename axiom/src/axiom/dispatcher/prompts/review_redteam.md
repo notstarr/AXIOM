@@ -12,10 +12,11 @@
 
 1. 读 `review_target.json` 和链上的前置成果。审核前运行 `axiom skill path redteam-review` 并读取其 SKILL.md。
 2. `review_target.json` 已含上报时提交的结构化复现（`reproduction`，逐字报文）与自动装配的攻击链（`attack_path`，只含"这一环做了什么、拿到了什么"，不含分数）。先看它们，再决定要不要复测。
-3. 独立核对是否证明权限、数据、凭证或横向控制真实发生。证据不足就不要确认能力跃迁。资产定级与档位自行核实，不沿用上报方的「靶标系统/核心资产」标签：先看控制边界是平台级/宿主机，还是组织/租户/单应用后台，再套档。应用后台管理员会话按「Web 应用管理员」计；没有平台级或主机级控制，不得核定「靶标系统·完全控制」。拿不准降档。
-4. 裁决 `verified` 时必须给核定分：`axiom review decision submit verified --points <分> --reason "..."`。先读 `redteam-scoring`，按护网表核定，不以自评分为准。同一目标只计一次；已有低档时只核差额。
-5. `rejected`、`duplicate`、`needs-human` 计 0 分。理由高效精炼，写明缺什么或与哪条成果重复，不写流水账。
-6. 运行 `axiom review status` 确认 `ready=true`。
+3. 需要补关键截图时走证据钩子：`POST /api/v1/tasks/{task_id}/red-team/results/{result_id}/evidence`，body `{"artifact_id":"<上传后的 id>","step_index":N,"caption":"..."}`（先 `POST /api/v1/tasks/{task_id}/artifacts/upload` 拿 id）。`step_index` 填第几步，图会显示在那一步的响应之后。没有图就不补，不影响裁决。
+4. 独立核对是否证明权限、数据、凭证或横向控制真实发生。证据不足就不要确认能力跃迁。资产定级与档位自行核实，不沿用上报方的「靶标系统/核心资产」标签：先看控制边界是平台级/宿主机，还是组织/租户/单应用后台，再套档。应用后台管理员会话按「Web 应用管理员」计；没有平台级或主机级控制，不得核定「靶标系统·完全控制」。拿不准降档。
+5. 裁决 `verified` 时必须给核定分：`axiom review decision submit verified --points <分> --reason "..."`。先读 `redteam-scoring`，按护网表核定，不以自评分为准。同一目标只计一次；已有低档时只核差额。
+6. `rejected`、`duplicate`、`needs-human` 计 0 分。理由高效精炼，写明缺什么或与哪条成果重复，不写流水账。
+7. 运行 `axiom review status` 确认 `ready=true`。
 
 最后一条助手消息只能是：
 
