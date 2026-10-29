@@ -152,6 +152,30 @@ credentials --domain <domain> --session <id>   # axiom 定制
 "$AXIOM_BSK" wheel --session <id>                         # 原生滚轮事件
 "$AXIOM_BSK" click <ref> --capture <capture-id> --image-x <x> --image-y <y>
 
+- **`get-html` 只认 `--ref`，没有位置参数**：`get-html @e1` 会报
+  `unexpected argument`，必须写 `get-html --ref @e1`；不带 `--ref` 返回整页 HTML。
+- **`focus` / `blur` 必须带目标**（`<ref>`、`--ref`、`--selector` 三者其一），
+  不存在无参的 `blur`。要清焦点就传刚聚焦的那个元素。
+- **`navigate-back` / `navigate-forward` 对 bfcache 恢复会假超时**：页面已经从
+  缓存回退成功（`final_url` 正确、DOM 已就绪），但 `load` 事件不再触发，命令等满
+  15s 后返回 `reached=timeout` 并以退出码 4 结束。**加长 `--timeout` 无效**
+  （实测 40s 仍超时）。正确用法是换等待级别，0.02s 即返回：
+
+  ```bash
+  "$AXIOM_BSK" navigate-back --session <id> --wait-until domcontentloaded
+  "$AXIOM_BSK" navigate-forward --session <id> --wait-until commit
+  ```
+
+  看到 `reached=timeout` 但 `final_url` 已变，**先回读 `location` 再判定**，
+  不要据此认定导航失败或重试。
+- `record start` 写的是 **trace v3 bundle 目录**，不能给 `.json` 文件路径：
+  `record start --output <目录>`（产出 `<目录>/trace.json` 与 `<目录>/states/`）。
+  它自己开 Agent Window 并阻塞，靠 `record stop` 从另一个终端结束。
+- `video status|stop|list` **不接受 `--session`**，用 `--recording <id>` /
+  `--browser <id>` 定位；只有 `video start` 要 `--session`。
+- 远程模式下 `upload` / `download` 恒返回 `not supported by the current build`，
+  这是协议层限制，不是配置问题；需要文件落地就在 VPS 侧用 curl/python 取。
+
 - `network` 是 DevTools 面板的 worker 版，**只返回索引**：每条一行（method / url /
   status / mime_type / resource_type / 失败原因），游标式取增量——先记 `--since`
   游标（或用返回的 `next_since`）再触发功能，然后按游标读增量。默认 50 条，
