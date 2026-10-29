@@ -37,12 +37,6 @@
                 <div class="pprog"><i :style="`width:${phase.capacity ? Math.round(phase.running / phase.capacity * 100) : 0}%`"></i></div>
               </div>
             </div>
-            <div class="pline">
-              <span>内置 <b x-text="builtinToolCount(phase.phase)"></b></span>
-              <span>Skill <b x-text="phaseCapabilityCount(phase.phase, 'skill')"></b></span>
-              <span>MCP <b x-text="phaseCapabilityCount(phase.phase, 'mcp_tool')"></b></span>
-              <span>扩展 <b x-text="phaseCapabilityCount(phase.phase, 'axiom_tool')"></b></span>
-            </div>
             <span class="pissue" x-show="workerCapabilityIssueCount(phase.phase) > 0" x-text="`${workerCapabilityIssueCount(phase.phase)} 个能力不可用`"></span>
           </button>
         </template>
@@ -131,7 +125,7 @@
               <div class="sto-statcell"><span class="sto-label">MCP Tool</span><b class="sto-num" x-text="workerCapabilityDraftCount(workerCapabilityDrawerPhase, 'mcp_tool')"></b><p class="sto-desc" x-text="`${workerCapabilityMcpServerCount(workerCapabilityDrawerPhase)} 个 Server`"></p></div>
               <div class="sto-statcell"><span class="sto-label">扩展 Tool</span><b class="sto-num" x-text="workerCapabilityDraftCount(workerCapabilityDrawerPhase, 'axiom_tool')"></b><p class="sto-desc">按 Lease 加载</p></div>
             </div>
-            <div class="grid grid-cols-1 lg:grid-cols-2" style="gap:13px;">
+            <div class="grid grid-cols-1 lg:grid-cols-2 items-start" style="gap:13px;">
               <div class="sto-panel" style="padding:15px 17px;">
                 <p class="sto-label" style="margin-bottom:10px;">模型后端池</p>
                 <div style="display:flex; flex-direction:column; gap:7px;">
@@ -151,14 +145,6 @@
                   :style="workerCapabilityIssueCount(workerCapabilityDrawerPhase) ? '' : 'border-color:color-mix(in srgb, var(--sto-ok) 30%, transparent); background:color-mix(in srgb, var(--sto-ok) 6%, transparent); color:var(--sto-ok);'"
                   x-text="workerCapabilityIssueCount(workerCapabilityDrawerPhase) ? `${workerCapabilityIssueCount(workerCapabilityDrawerPhase)} 个能力不可用` : '当前分配均可用'"></div>
                 <p class="sto-muted" style="margin-top:7px;">停用、缺失或 Server 异常的能力不会进入新 Lease。</p>
-                <div class="sto-grid2" style="grid-template-columns:repeat(3, 1fr); gap:7px; margin-top:11px;">
-                  <template x-for="kind in ['skill','mcp_tool','axiom_tool']" :key="`overview-kind-${kind}`">
-                    <button type="button" @click="workerCapabilityDrawerTab = kind === 'mcp_tool' ? 'mcp' : kind === 'axiom_tool' ? 'extension' : 'skill'" class="sto-statmini" style="cursor:pointer;">
-                      <div class="k" x-text="capabilityKindLabel(kind)"></div>
-                      <b x-text="workerCapabilityDraftCount(workerCapabilityDrawerPhase, kind)"></b>
-                    </button>
-                  </template>
-                </div>
               </div>
             </div>
           </div>

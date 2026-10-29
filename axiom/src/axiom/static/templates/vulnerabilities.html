@@ -39,8 +39,9 @@
       </template>
     </div>
     <div class="flex flex-wrap items-center" style="gap:16px; margin-top:11px;">
-      <span class="sto-muted sto-num" style="font-size:10.5px;" x-text="`显示 ${filteredVulnerabilities().length} / ${vulnerabilityTotal}`"></span>
+      <span class="sto-muted sto-num" style="font-size:10.5px;" x-text="`已载入 ${filteredVulnerabilities().length} / ${vulnerabilityTotal} 条`"></span>
       <span style="width:1px; height:14px; background:var(--sto-line);"></span>
+      <span class="sto-muted" style="font-size:11px;" title="以下分布只统计当前已载入的记录">本页</span>
       <template x-for="sev in ['critical','high','medium','low']" :key="`vstat-${sev}`">
         <span class="sto-status" :class="{critical:'err',high:'warn',medium:'warn',low:'ok'}[sev]" style="font-size:11px;">
           <i class="sto-sevdot" :class="`sto-sev-${sev}`" style="box-shadow:none;"></i>
@@ -68,11 +69,9 @@
             <span class="sto-num" style="font-size:10px; font-weight:700; color:var(--sto-fg-2);" x-text="v.id"></span>
             <span style="flex:1;"></span>
             <span x-show="v.human_reviewed" role="button" @click.stop="toggleVulnReviewed(v)"
-              title="人工已阅（点击取消）"
-              style="font-size:9.5px; color:var(--sto-fg-3); flex-shrink:0; cursor:pointer; letter-spacing:0.02em;">已阅</span>
+              class="vlist-reviewed" title="人工已阅（点击取消）">已阅</span>
             <span x-show="v.red_team_exploitable" role="button" @click.stop="toggleVulnRedTeamExploitable(v)"
-              title="红队可利用：新建红队任务时可作为种子线索批量注入（点击取消）"
-              style="font-size:9.5px; color:#b91c1c; background:#fef2f2; border:1px solid #fecaca; border-radius:4px; padding:0 4px; flex-shrink:0; cursor:pointer; letter-spacing:0.02em;">红队</span>
+              class="vlist-flag" title="红队可利用：新建红队任务时可作为种子线索批量注入（点击取消）">红队</span>
             <span class="sto-status" style="font-size:10px;" :class="({verified:'ok',pending:'warn',duplicate:'err',ignored:'off'})[vulnStatusKey(v.status)] || 'off'"><i></i><span x-text="vulnStatusLabel(v.status)"></span></span>
           </div>
           <p style="margin-top:5px; font-size:12.5px; font-weight:600; color:var(--sto-fg); line-height:1.45; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" x-text="v.title"></p>
@@ -295,8 +294,9 @@
       </select>
     </div>
     <div class="flex flex-wrap items-center" style="gap:16px; margin-top:11px;">
-      <span class="sto-muted sto-num" style="font-size:10.5px;" x-text="`显示 ${rtResultItems.length} / ${rtResultTotal}`"></span>
+      <span class="sto-muted sto-num" style="font-size:10.5px;" x-text="`已载入 ${rtResultItems.length} / ${rtResultTotal} 条`"></span>
       <span style="width:1px; height:14px; background:var(--sto-line);"></span>
+      <span class="sto-muted" style="font-size:11px;" title="以下分布只统计当前已载入的记录">本页</span>
       <template x-for="kind in [{id:'permission',label:'权限'},{id:'data',label:'数据'},{id:'credential',label:'凭证'},{id:'pivot',label:'横向'}]" :key="`rtstat-${kind.id}`">
         <span class="sto-status" :class="rtTypeClass(kind.id)" style="font-size:11px;">
           <i class="sto-sevdot" :class="rtTypeTone(kind.id)" style="box-shadow:none;"></i>

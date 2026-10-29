@@ -2621,3 +2621,30 @@ main.sto .grid.xl\:grid-cols-2 {
    被截成「改…」「退…」。收窄图标与间距把它们腾出来。 */
 .sidebar-bottom .grid .nav-item { gap: 3px; }
 .sidebar-bottom .grid .nav-item svg { width: 12px; height: 12px; }
+
+/* ── 列表行徽章收口：只有「异常」和「确认」允许带颜色 ────────────────
+   漏洞/成果列表一屏几十行，每行 2~3 个徽章时颜色会失效——红色铺满
+   等于没有红色。这里把类别标记与常态状态降为中性：
+     红队 / 已阅      → 中性描边（类别，不是状态）
+     待验证           → 中性（多数状态，不该抢眼）
+     已验证 / 重复    → 保留绿 / 红（真正的确认与异常）
+   严重度色点在最左，仍是唯一的扫描主轴。 */
+.vlist-flag,
+.vlist-reviewed {
+  flex-shrink: 0;
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  letter-spacing: 0;
+  padding: 0 4px;
+  border: 1px solid var(--sto-line);
+  border-radius: var(--radius-xs);
+  color: var(--sto-fg-3);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.vlist-reviewed { border-color: transparent; }
+.vlist-flag:hover,
+.vlist-reviewed:hover { border-color: var(--sto-fg-3); color: var(--sto-fg-2); }
+
+.sto-vlist .sto-status.warn { color: var(--sto-fg-3); }
+.sto-vlist .sto-status.warn > i { background: var(--sto-fg-3); }
