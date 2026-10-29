@@ -2505,15 +2505,12 @@ select, textarea {
 /* ── 2. 散文限宽：容器满宽，只有「读的段落」收窄 ────────────────────
    中文正文 30~45 字/行最舒服。14px × 62ch ≈ 44 字。
    报文、表格、证据槽不受影响，它们本来就该用满宽度。 */
-/* 整块居中成一页：标题、元信息、正文、报文共用同一条 measure，
-   两侧留白对称。只给段落限宽会让标题横跨整行、正文缩在左边，两端反而不齐。 */
+/* 详情列铺满卡片、左对齐。曾经试过整块居中限宽，结果卡片满宽但内容
+   缩成中间一条窄带，左侧留出大片空白，反而像内容没加载出来。 */
 .rp-doc {
-  max-width: 86ch;
-  margin-inline: auto;
-}
-.md-preview > p,
-.md-preview > li {
-  max-width: 62ch;
+  max-width: none;
+  margin-inline: 0;
+  width: 100%;
 }
 
 /* ── 3. 补两个一直缺失的 token ───────────────────────────────────
@@ -2570,11 +2567,6 @@ main.sto .grid.xl\:grid-cols-2 {
   grid-template-columns: repeat(auto-fit, minmax(430px, 1fr)) !important;
 }
 
-/* ── 9. 长文详情列：限宽居中，避免内容贴左、右侧空一片 ───────────── */
-.sto-detail-col > *,
-.detail-scroll > * {
-  max-width: 1040px;
-}
 
 /* ── 首屏加载条的位移（替代原来的裸旋转框） ─────────────────────── */
 @keyframes axiomBootSlide {
