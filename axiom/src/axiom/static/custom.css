@@ -720,11 +720,11 @@
     --sto-fg-2: #57534e;
     --sto-fg-3: #6d6862;
     /* 分隔用发丝线；表单边框另给一档，否则和纸面同色，看起来像禁用态 */
-    --sto-line: #e0dbd3;
-    --sto-line-field: #918b84;
+    --sto-line: #e6e5e0;
+    --sto-line-field: #95918a;
     --sto-panel: #ffffff;
-    --sto-inset: #f5f5f5;
-    --sto-ok: #4a7c59;
+    --sto-inset: #f7f5ec;
+    --sto-ok: #5f7d56;
     --sto-warn: #8a6420;
     --sto-danger: #b3392c;
     --sto-shadow: 0 1px 2px rgba(27, 27, 29, 0.04), 0 8px 24px -12px rgba(27, 27, 29, 0.10);
@@ -2230,20 +2230,22 @@ html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button 
   /* —— 纸面与层级：纯白为底，层次靠发丝线而不是底色差 ——
      底色一律 #fff / 中性浅灰，不加任何暖调；墨色只留在文字与发丝线上。 */
   --bg-primary:    #ffffff;
-  --bg-secondary:  #fafafa;
-  --bg-tertiary:   #f0f0f0;
+  /* 淡黄基底：只给页面底色一点点暖，卡片仍是纯白。
+     色相偏黄、饱和度极低（Δ 只有 4~13），放大看才看得出是黄，不是米色。 */
+  --bg-secondary:  #fbf9f3;
+  --bg-tertiary:   #f2f0e6;
   --bg-elevated:   #ffffff;
-  --bg-glass:      rgba(255, 255, 255, 0.82);
-  --bg-glass-dark: rgba(250, 250, 250, 0.66);
+  --bg-glass:      rgba(255, 255, 255, 0.84);
+  --bg-glass-dark: rgba(251, 249, 243, 0.68);
   --bg-overlay:    rgba(27, 27, 29, 0.42);
-  --surface-page:     #fafafa;
+  --surface-page:     #fbf9f3;
   --surface-panel:    #ffffff;
   --surface-card:     #ffffff;
-  --surface-inset:    #f5f5f5;
-  --surface-hover:    #ededed;
+  --surface-inset:    #f7f5ec;
+  --surface-hover:    #f4f1e6;
   --surface-selected: rgba(47, 93, 124, 0.10);
   --surface-disabled: rgba(109, 104, 98, 0.10);
-  --surface-graph:    #fbfbfb;
+  --surface-graph:    #fcfaf4;
   --graph-grid-dot:   rgba(27, 27, 29, 0.10);
 
   /* —— 墨色三档：三级也必须可读（原 #94a3b8 仅 2.56:1） —— */
@@ -2259,7 +2261,7 @@ html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button 
   --accent-mid:     rgba(47, 93, 124, 0.16);
   --danger:         #b3392c;
   --danger-light:   rgba(179, 57, 44, 0.09);
-  --success:        #4a7c59;
+  --success:        #5f7d56;
   --success-light:  rgba(74, 124, 89, 0.09);
   --warning:        #8a6420;
   --warning-light:  rgba(138, 100, 32, 0.10);
@@ -2276,7 +2278,7 @@ html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button 
   --status-info-fg:        #2f5d7c;
   --status-info-bg:        rgba(47, 93, 124, 0.09);
   --status-info-border:    rgba(47, 93, 124, 0.26);
-  --status-success-fg:     #3f6b4d;
+  --status-success-fg:     #4e6b49;
   --status-success-bg:     rgba(74, 124, 89, 0.10);
   --status-success-border: rgba(74, 124, 89, 0.26);
   --status-warning-fg:     #7a5a1c;
@@ -2290,8 +2292,8 @@ html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button 
   --status-purple-border:  rgba(107, 91, 142, 0.26);
 
   /* —— 边界：发丝线为主；交互元素另给可感知档 —— */
-  --border:        #e0dbd3;
-  --border-strong: #cfc9c0;
+  --border:        #e6e5e0;
+  --border-strong: #d5d3cc;
   --border-focus:  rgba(47, 93, 124, 0.45);
 
   /* —— 阴影：纸面靠留白分层，不靠投影堆叠 —— */
