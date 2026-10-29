@@ -70,3 +70,8 @@ axiom/HANDOFF_*.md
 axiom/body.tmp
 axiom/idx.html
 bsk-axiom-fork/target/
+# axiom-extension/ 是 apps/extension 的构建产物（带内容哈希的 assets/chunks），只提交源码
+bsk-axiom-fork/axiom-extension/
+bsk-axiom-fork/node_modules/
+bsk-axiom-fork/**/node_modules/
+
