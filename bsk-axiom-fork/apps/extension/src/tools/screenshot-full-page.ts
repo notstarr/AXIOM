@@ -1,4 +1,5 @@
 import { i18n } from "@browser-skill/i18n";
+import { type ScreencastLease, screencasts } from "@/browser-driver/screencast-coordinator";
 import { CAPTURE_SUPPRESS, type CaptureSuppressPhase } from "@/lib/capture-suppress-bridge";
 import { capturePage } from "@/long-screenshot/capture";
 import type { ScreenshotExports } from "@/long-screenshot/exports";
@@ -106,8 +107,11 @@ export async function handleFullPageScreenshot(
       if (frame?.documentId !== client.documentId) throw new ScreenshotError("changed");
     }
     checkOwnership();
+    return current;
   };
-  const client = createPageClient(target.tabId, id, controller.signal, checkTab);
+  const client = createPageClient(target.tabId, id, controller.signal, async () => {
+    await checkTab();
+  });
   const changed = () => controller.abort(new ScreenshotError("changed"));
   const navigated = (info: { tabId: number; frameId: number }) => {
     if (info.tabId === target.tabId && info.frameId === 0)
@@ -152,6 +156,13 @@ export async function handleFullPageScreenshot(
   chrome.runtime.onMessage.addListener(cancelled);
   const writer = new TileWriter(id, new URL(target.url).hostname);
   let retained = false;
+  let rendering = false;
+  let renderingLease: ScreencastLease | undefined;
+  const stopRendering = async () => {
+    if (!rendering) return;
+    rendering = false;
+    await renderingLease?.release().catch(() => {});
+  };
   let phase = "preparing";
   let frames = 0;
   let progress = 0;
@@ -167,6 +178,25 @@ export async function handleFullPageScreenshot(
     if (!attachmentId) throw new ScreenshotError("changed");
     const platform = await waitForReply(chrome.runtime.getPlatformInfo(), controller.signal);
     await client.prepare();
+    const ensureRendering = async (active: boolean) => {
+      if (platform.os !== "win" || active || rendering) return;
+      // Focus emulation keeps script execution alive, but Windows can stop
+      // producing compositor frames on an unselected tab after the first read.
+      // A tiny screencast holds the renderer awake without selecting/resizing it.
+      // Its pixels are unused; each tile still comes from captureScreenshot.
+      checkOwnership();
+      rendering = true;
+      renderingLease = await screencasts(deps.cdp).acquire(
+        target.tabId,
+        {
+          format: "png",
+          maxWidth: 32,
+          maxHeight: 32,
+        },
+        controller.signal,
+      );
+    };
+    await ensureRendering((await checkTab()).active);
     await withScreenshotOverlayHidden(
       target.tabId,
       client.documentId!,
@@ -181,7 +211,8 @@ export async function handleFullPageScreenshot(
           signal: controller.signal,
           screenshot: async () => {
             phase = "reading viewport pixels";
-            await checkTab();
+            const current = await checkTab();
+            await ensureRendering(current.active);
             checkOwnership();
             const shot = await waitForReply(
               deps.cdp.send<{ data?: string }>(target.tabId, "Page.captureScreenshot", {
@@ -211,6 +242,7 @@ export async function handleFullPageScreenshot(
         });
       },
     );
+    await stopRendering();
     controller.signal.throwIfAborted();
     await writer.finish();
     phase = "encoding";
@@ -285,6 +317,7 @@ export async function handleFullPageScreenshot(
       reason instanceof Error ? reason.message : String(reason),
     );
   } finally {
+    await stopRendering();
     clearTimeout(deadline);
     signal?.removeEventListener("abort", abort);
     chrome.webNavigation.onBeforeNavigate.removeListener(navigated);

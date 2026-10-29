@@ -7,7 +7,11 @@ members = [
 default-members = ["crates/bsk-cli"]
 
 [workspace.package]
-version = "0.3.0"
+# Upstream tag + build metadata. Build metadata is ignored by semver comparison,
+# so update checks still treat this as 0.3.3, while `bsk --version` makes the
+# fork obvious. Only the Rust workspace carries it: the Chrome manifest version
+# must stay numeric, and the npm packages feed it.
+version = "0.3.3+axiom.1"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -43,7 +47,7 @@ rand = "0.8"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 # Workspace crates (version required for `cargo publish` of dependents)
-bsk-protocol = { version = "0.3.0", path = "crates/bsk-protocol" }
+bsk-protocol = { version = "0.3.3", path = "crates/bsk-protocol" }
 
 [profile.release]
 strip = "symbols"

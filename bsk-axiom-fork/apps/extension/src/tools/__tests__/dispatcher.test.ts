@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { type CdpDebuggerApi, ChromiumCdp } from "@/browser-driver/chromium-cdp";
 import { SessionManager } from "@/session-manager/manager";
 import type { ConnectionStateHandler, FrameHandler, Transport } from "@/transport/transport";
 import type {
@@ -240,6 +241,261 @@ describe("ToolDispatcher", () => {
     expect(sent[0]).toEqual({ id: "r-1", result: {} });
   });
 
+  it.each([
+    "not_found",
+    "permission_denied",
+    "timeout",
+    "unsupported",
+    "cdp_failed",
+  ] as const)("preserves video %s errors and their diagnostic data", async (code) => {
+    const { transport, sent, deliver } = fakeTransport();
+    const error = { code, message: "original failure", data: { phase: "video" } };
+    const video = {
+      rpc: vi.fn(async () => {
+        throw error;
+      }),
+    } as unknown as NonNullable<ConstructorParameters<typeof ToolDispatcher>[0]["video"]>;
+    const dispatcher = new ToolDispatcher({ transport, sessions: new SessionManager(), video });
+    dispatcher.start();
+    try {
+      deliver(
+        makeRequest("tool.video", { action: "status", recording_id: "video", capability: "test" }),
+      );
+      await vi.waitFor(() => expect(sent).toHaveLength(1));
+      expect(sent[0]).toEqual({ id: "r-1", error });
+    } finally {
+      dispatcher.stop();
+    }
+  });
+
+  it("still cleans up a task when video finalization fails", async () => {
+    const { transport, sent, deliver } = fakeTransport();
+    const sessions = new SessionManager({
+      agentWindow: {
+        create: vi.fn(async () => ({ windowId: 4242, initialTabIds: [] })),
+        remove: vi.fn(async () => {}),
+        ensureActiveTab: vi.fn(async () => 1),
+      },
+    });
+    await sessions.start("video-task");
+    const video = {
+      stopSession: vi.fn(async () => {
+        throw new Error("encoder unavailable");
+      }),
+    } as unknown as NonNullable<ConstructorParameters<typeof ToolDispatcher>[0]["video"]>;
+    const dispatcher = new ToolDispatcher({ transport, sessions, video });
+    dispatcher.start();
+    try {
+      deliver(makeRequest("tool.session_stop", { session_id: "video-task" }));
+      await vi.waitFor(() => expect(sent).toHaveLength(1));
+      expect(sessions.has("video-task")).toBe(false);
+      expect(sent[0]).toEqual({ id: "r-1", result: {} });
+    } finally {
+      dispatcher.stop();
+    }
+  });
+
+  it("uses the persistent background lease before dispatching a click", async () => {
+    const tab = { id: 7, windowId: 4242, active: true, url: "https://example.test" };
+    vi.stubGlobal("chrome", {
+      tabs: {
+        get: vi.fn(async () => tab),
+        query: vi.fn(async () => [tab]),
+        sendMessage: vi.fn(async () => undefined),
+      },
+    });
+    const sessions = new SessionManager({
+      agentWindow: {
+        create: vi.fn(async () => ({ windowId: 4242, initialTabIds: [7] })),
+        remove: vi.fn(async () => {}),
+        ensureActiveTab: vi.fn(async () => 7),
+      },
+    });
+    const ctx = await sessions.start("aa11");
+    ctx.refStore.set("e1", 12, { tabId: 7 });
+    const { transport, sent, deliver } = fakeTransport();
+    const commands: string[] = [];
+    let leased = false;
+    let visibility = "visible";
+    let visibilityReads = 0;
+    const cdp = {
+      acquireBackgroundExecution: vi.fn(async (sessionId: string, tabId: number) => {
+        expect([sessionId, tabId]).toEqual(["aa11", 7]);
+        commands.push("acquire");
+        leased = true;
+      }),
+      ownsBackgroundExecution: vi.fn((sessionId: string, tabId: number) => {
+        expect([sessionId, tabId]).toEqual(["aa11", 7]);
+        commands.push("owns");
+        return leased;
+      }),
+      trackSessionTab: vi.fn(),
+      send: vi.fn(async (_tabId: number, method: string, params?: object) => {
+        commands.push(method);
+        if (
+          method === "Runtime.evaluate" &&
+          (params as { expression?: string })?.expression === "document.visibilityState"
+        ) {
+          visibilityReads++;
+          return { result: { value: visibility } };
+        }
+        if (method === "DOM.scrollIntoViewIfNeeded") return {};
+        if (method === "DOM.getContentQuads") return { quads: [[0, 0, 40, 0, 40, 20, 0, 20]] };
+        if (method === "DOM.getBoxModel")
+          return { model: { content: [0, 0, 40, 0, 40, 20, 0, 20] } };
+        if (method === "Page.getLayoutMetrics")
+          return { cssLayoutViewport: { clientWidth: 1280, clientHeight: 720 } };
+        if (method === "Runtime.evaluate")
+          return {
+            result: {
+              value: { overlayHostPresent: false, overlayHostConnected: false },
+            },
+          };
+        if (method === "Input.dispatchMouseEvent") return {};
+        throw new Error(`unexpected CDP call ${method}`);
+      }),
+    } as unknown as TestDispatcherCdp;
+    const dispatcher = new ToolDispatcher({ transport, sessions, cdp });
+    dispatcher.start();
+
+    deliver(makeRequest("tool.click", { session_id: "aa11", ref: "e1" }));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+
+    expect(sent[0]).toMatchObject({ result: { tab_id: 7, used_ref: "e1", x: 20, y: 10 } });
+    expect(cdp.acquireBackgroundExecution).toHaveBeenCalledOnce();
+    expect(cdp.ownsBackgroundExecution).toHaveBeenCalledWith("aa11", 7);
+    const acquireIndex = commands.indexOf("acquire");
+    const ownsIndex = commands.indexOf("owns");
+    expect(acquireIndex).toBeGreaterThanOrEqual(0);
+    expect(ownsIndex).toBeGreaterThanOrEqual(0);
+    expect(acquireIndex).toBeLessThan(ownsIndex);
+    expect(visibilityReads).toBe(1);
+    expect(commands).not.toContain("Emulation.setFocusEmulationEnabled");
+    expect(commands).not.toContain("Page.captureScreenshot");
+    expect(
+      vi.mocked(cdp.send).mock.calls.filter(([, method]) => method === "Input.dispatchMouseEvent"),
+    ).toHaveLength(3);
+
+    visibility = "hidden";
+    deliver(makeRequest("tool.click", { session_id: "aa11", ref: "e1" }));
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    expect(sent[1]).toMatchObject({
+      error: { code: "cdp_failed", data: { reason: "input_not_ready", effect_state: "none" } },
+    });
+    expect(visibilityReads).toBe(2);
+    expect(commands).not.toContain("Emulation.setFocusEmulationEnabled");
+    expect(
+      vi.mocked(cdp.send).mock.calls.filter(([, method]) => method === "Input.dispatchMouseEvent"),
+    ).toHaveLength(3);
+
+    visibility = "visible";
+    deliver(makeRequest("tool.click", { session_id: "aa11", ref: "e1" }));
+    await vi.waitFor(() => expect(sent).toHaveLength(3));
+    expect(sent[2]).toMatchObject({ result: { tab_id: 7, used_ref: "e1" } });
+    expect(visibilityReads).toBe(3);
+    expect(commands).not.toContain("Emulation.setFocusEmulationEnabled");
+    expect(
+      vi.mocked(cdp.send).mock.calls.filter(([, method]) => method === "Input.dispatchMouseEvent"),
+    ).toHaveLength(6);
+    dispatcher.stop();
+  });
+
+  it("recovers a leased click after Chrome drops the applied focus override", async () => {
+    const tab = { id: 7, windowId: 4242, active: false, url: "https://example.test" };
+    vi.stubGlobal("chrome", {
+      tabs: {
+        get: vi.fn(async () => tab),
+        query: vi.fn(async () => [tab]),
+        sendMessage: vi.fn(async () => undefined),
+      },
+    });
+    const sessions = new SessionManager({
+      agentWindow: {
+        create: vi.fn(async () => ({ windowId: 4242, initialTabIds: [7] })),
+        remove: vi.fn(async () => {}),
+        ensureActiveTab: vi.fn(async () => 7),
+      },
+    });
+    const ctx = await sessions.start("aa11");
+    ctx.refStore.set("e1", 12, { tabId: 7 });
+    // Chrome's actual override, independent of BackgroundExecution's applied-state cache.
+    let emulated = false;
+    const toggles: boolean[] = [];
+    let pointerEvents = 0;
+    const chromeEvent = {
+      addListener: () => {},
+      removeListener: () => {},
+    } as unknown as CdpDebuggerApi["onEvent"];
+    const api: CdpDebuggerApi = {
+      attach: vi.fn(async () => {}),
+      detach: vi.fn(async () => {}),
+      sendCommand: vi.fn(async (_target, method, params) => {
+        const p = (params ?? {}) as { enabled?: boolean; expression?: string };
+        if (method === "Emulation.setFocusEmulationEnabled") {
+          emulated = p.enabled === true;
+          toggles.push(emulated);
+          return {};
+        }
+        if (method === "Runtime.evaluate" && p.expression === "document.visibilityState")
+          return { result: { value: emulated ? "visible" : "hidden" } };
+        // Animation frames run only while the page is visible.
+        if (method === "Runtime.evaluate" && p.expression?.includes("requestAnimationFrame"))
+          return { result: { value: emulated } };
+        if (method === "DOM.getContentQuads") return { quads: [[0, 0, 40, 0, 40, 20, 0, 20]] };
+        if (method === "DOM.getBoxModel")
+          return { model: { content: [0, 0, 40, 0, 40, 20, 0, 20] } };
+        if (method === "Page.getLayoutMetrics")
+          return { cssLayoutViewport: { clientWidth: 1280, clientHeight: 720 } };
+        if (method === "Runtime.evaluate")
+          return {
+            result: { value: { overlayHostPresent: false, overlayHostConnected: false } },
+          };
+        if (method === "Input.dispatchMouseEvent") {
+          if (!emulated) throw new Error("input sent to a hidden page");
+          pointerEvents++;
+        }
+        return {};
+      }),
+      onEvent: chromeEvent,
+      onDetach: chromeEvent as unknown as CdpDebuggerApi["onDetach"],
+    };
+    const cdp = new ChromiumCdp(api);
+    const { transport, sent, deliver } = fakeTransport();
+    const dispatcher = new ToolDispatcher({ transport, sessions, cdp });
+    dispatcher.start();
+    const click = async (count: number) => {
+      deliver(makeRequest("tool.click", { session_id: "aa11", ref: "e1" }));
+      await vi.waitFor(() => expect(sent).toHaveLength(count));
+      return sent[count - 1];
+    };
+    try {
+      expect(await click(1)).toMatchObject({ result: { tab_id: 7, used_ref: "e1" } });
+      expect(toggles).toEqual([true]);
+      expect(pointerEvents).toBe(3);
+
+      // Turned off outside the cache, e.g. from the service worker.
+      emulated = false;
+      expect(await click(2)).toMatchObject({ result: { tab_id: 7, used_ref: "e1" } });
+      expect(toggles).toEqual([true, true]);
+      expect(pointerEvents).toBe(6);
+      expect(emulated).toBe(true);
+      expect(cdp.ownsBackgroundExecution("aa11", 7)).toBe(true);
+      expect(
+        vi
+          .mocked(api.sendCommand)
+          .mock.calls.some(([, method]) => method === "Page.captureScreenshot"),
+      ).toBe(false);
+
+      // The restored override stays with the lease for the next tool.
+      expect(await click(3)).toMatchObject({ result: { tab_id: 7, used_ref: "e1" } });
+      expect(toggles).toEqual([true, true]);
+      expect(pointerEvents).toBe(9);
+    } finally {
+      dispatcher.stop();
+      cdp.dispose();
+    }
+  });
+
   it("wires the production tab APIs into tool.session_stop so a surviving user tab releases the window", async () => {
     // Regression guard for the deps that session_stop reads directly: when
     // `tabManagement.tabs` / `tabsQuery` are not injected by the dispatcher,
@@ -341,7 +597,7 @@ describe("ToolDispatcher", () => {
     });
   });
 
-  it("bypasses and restores the control overlay for an upload trigger click", async () => {
+  it("leaves overlay state alone for an unobstructed upload trigger click", async () => {
     const sendMessage = vi.fn(async () => undefined);
     vi.stubGlobal("chrome", {
       tabs: {
@@ -383,15 +639,8 @@ describe("ToolDispatcher", () => {
       }
       if (method === "Runtime.evaluate") {
         const expression = (params as { expression?: string }).expression ?? "";
-        if (expression.includes("overlayDetails")) {
-          return { result: { value: { hitIndex: 0 } } } as T;
-        }
-        if (expression.includes("overlayHostPresent")) {
-          return {
-            result: {
-              value: { overlayHostPresent: true, overlayHostConnected: true },
-            },
-          } as T;
+        if (expression.includes('return "absent"')) {
+          return { result: { value: "clear" } } as T;
         }
         if (expression.includes("count:")) {
           return { result: { value: { count: 1, multiple: false } } } as T;
@@ -432,14 +681,7 @@ describe("ToolDispatcher", () => {
     await vi.waitFor(() => expect(sent).toHaveLength(1));
 
     expect(sent[0]).toMatchObject({ result: { tab_id: 7, file_names: ["test.png"] } });
-    expect(sendMessage).toHaveBeenNthCalledWith(1, 7, {
-      type: "bh-automation-bypass",
-      enabled: true,
-    });
-    expect(sendMessage).toHaveBeenNthCalledWith(2, 7, {
-      type: "bh-automation-bypass",
-      enabled: false,
-    });
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it("detaches CDP state before stopping a session", async () => {
@@ -1362,4 +1604,130 @@ describe("background execution dispatch integration", () => {
       dispatcher.stop();
     }
   });
+});
+
+it.each([
+  "tool.click",
+  "tool.press",
+])("tracks popups through the real %s dispatcher route", async (method) => {
+  const sessions = new SessionManager({
+    remote: () => true,
+    agentWindow: {
+      create: async () => ({ windowId: 10, initialTabIds: [] }),
+      remove: vi.fn(),
+      ensureActiveTab: async () => 10,
+    },
+  });
+  const task = await sessions.start("popup");
+  const listeners = new Set<
+    (e: { sourceTabId: number; sourceFrameId: number; tabId: number }) => void
+  >();
+  const event = {
+    addListener: (fn: (e: { sourceTabId: number; sourceFrameId: number; tabId: number }) => void) =>
+      listeners.add(fn),
+    removeListener: (
+      fn: (e: { sourceTabId: number; sourceFrameId: number; tabId: number }) => void,
+    ) => listeners.delete(fn),
+  };
+  vi.stubGlobal("chrome", {
+    tabs: {
+      get: async (id: number) => ({ id, windowId: 10 }),
+      onCreated: { addListener: vi.fn(), removeListener: vi.fn() },
+    },
+    webNavigation: { onCreatedNavigationTarget: event },
+  });
+  const f = fakeTransport();
+  const dispatcher = new ToolDispatcher({ transport: f.transport, sessions });
+  vi.spyOn(
+    dispatcher as unknown as {
+      invoke: (
+        req: RequestFrame,
+        signal: AbortSignal,
+        inputSent: (tabId: number) => void,
+      ) => Promise<unknown>;
+    },
+    "invoke",
+  ).mockImplementation(async (_req, _signal, inputSent) => {
+    inputSent(10);
+    for (const fn of listeners) fn({ sourceTabId: 10, sourceFrameId: 0, tabId: 20 });
+    return {};
+  });
+  dispatcher.start();
+  try {
+    f.deliver({ id: "open", method, params: { session_id: "popup", tab_id: 10 } });
+    await vi.waitFor(() => expect(f.sent.some((r) => "id" in r && r.id === "open")).toBe(true));
+    expect(task.observedTabs?.has(20)).toBe(true);
+    expect(task.agentCreatedTabs.has(20)).toBe(false);
+    expect(listeners.size).toBe(0);
+  } finally {
+    dispatcher.stop();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("passes dispatcher cancellation to popup tracking before the tool settles", async () => {
+  const sessions = new SessionManager({
+    remote: () => true,
+    agentWindow: {
+      create: async () => ({ windowId: 10, initialTabIds: [] }),
+      remove: vi.fn(),
+      ensureActiveTab: async () => 10,
+    },
+  });
+  const task = await sessions.start("popup");
+  const listeners = new Set<
+    (e: { sourceTabId: number; sourceFrameId: number; tabId: number }) => void
+  >();
+  vi.stubGlobal("chrome", {
+    tabs: {
+      get: async (id: number) => ({ id, windowId: 10 }),
+      onCreated: { addListener: vi.fn(), removeListener: vi.fn() },
+    },
+    webNavigation: {
+      onCreatedNavigationTarget: {
+        addListener: (fn: never) => listeners.add(fn),
+        removeListener: (fn: never) => listeners.delete(fn),
+      },
+    },
+  });
+  const f = fakeTransport();
+  const dispatcher = new ToolDispatcher({ transport: f.transport, sessions });
+  let finish!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const invoke = vi
+    .spyOn(
+      dispatcher as unknown as {
+        invoke: (
+          req: RequestFrame,
+          signal: AbortSignal,
+          inputSent: (tabId: number) => void,
+        ) => Promise<unknown>;
+      },
+      "invoke",
+    )
+    .mockImplementation(async (_req, _signal, inputSent) => {
+      inputSent(10);
+      await gate;
+      return {};
+    });
+  dispatcher.start();
+  try {
+    f.deliver({ id: "open", method: "tool.press", params: { session_id: "popup", tab_id: 10 } });
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalled());
+    f.deliver({ id: "cancel", method: "cancel", params: { rpc_id: "open" } });
+    await vi.waitFor(() =>
+      expect(f.sent).toContainEqual({ id: "cancel", result: { cancelled: true } }),
+    );
+    expect(invoke.mock.calls[0][1].aborted).toBe(true);
+    expect(listeners.size).toBe(0);
+    expect(task.agentCreatedTabs.has(20)).toBe(false);
+    finish();
+    await vi.waitFor(() => expect(f.sent.some((r) => "id" in r && r.id === "open")).toBe(true));
+  } finally {
+    finish();
+    dispatcher.stop();
+    vi.unstubAllGlobals();
+  }
 });

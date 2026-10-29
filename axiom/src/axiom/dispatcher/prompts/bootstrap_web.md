@@ -46,6 +46,13 @@
   "$AXIOM_BSK" credentials --domain <入口域名> --session <id>     # 该身份的 Cookie/Storage，写入 evidence/
   "$AXIOM_BSK" session stop <id>
   ```
+  登录态到手后**先**用 `extract` 把已登录可见的列表/表格导成结构化文件（比逐个
+  `get-html` 省轮次，且保留列序与分页来源），落 `<运行目录>/evidence/` 作为数据基线：
+  ```bash
+  "$AXIOM_BSK" extract discover --session <id>
+  "$AXIOM_BSK" extract table --session <id> --ref @e12 --format csv --out evidence/<名称>.csv
+  ```
+  被 `--max-rows` 截断时写明截了多少行，不要把部分结果当全量。
   对每个实例重复“start → **navigate** → 取证 → stop”；**取到就当场把该身份的组织/用户 ID 记进产物**，不要留到后面补——session 空闲过久会被自动回收，那时再读就取不到了。
 - 取证后确认多个实例是**同一身份**（同一账号）时，注明“实例 A 与 B 同身份”即可，不必重复罗列；**未真正打开取证过的实例不得凭推断合并**。
 - 实例打不开或取不到身份时，如实写“实例 `<id>` 未取证（原因）”，不得猜。

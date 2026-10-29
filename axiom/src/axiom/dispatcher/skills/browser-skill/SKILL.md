@@ -5,7 +5,8 @@ description: |
   唯一用途是获取 scope 内目标的登录态（Cookie/localStorage）；
   不用于内网访问、内网探测或利用。要求 Mac 扩展已 Remote 配对。
   本版本为 axiom 定制：凭据提取是渗透测试的合法产出；scope 外目标禁止访问。
-  命令面与上游 bsk 0.3.x 对齐（网站调试用 debug；network 仅索引）。
+  命令面与上游 bsk 0.3.3 对齐（网站调试用 debug；network 仅索引；
+  extract 结构化取数；credentials 是 fork 专有，上游从未提供）。
 ---
 
 # browser-skill（axiom 定制）
@@ -133,9 +134,10 @@ outcome：`continued`/`completed` → 恢复控制，先 observe 再继续；
 ```text
 session start|stop|list   browsers   status   doctor   logs
 navigate   navigate-back   navigate-forward   reload   wait-for-navigation   wait-ms
-observe   snapshot   get-html   screenshot   console   network   debug
+observe   snapshot   get-html   screenshot   console   network   debug   extract
 click   hover   wheel   scroll-to   focus   blur   fill   select   press   evaluate
 tab list|create|close|select   window resize   emulate
+wait-for-element   video start|stop
 request-help   record start|stop
 credentials --domain <domain> --session <id>   # axiom 定制
 ```
@@ -177,6 +179,24 @@ credentials --domain <domain> --session <id>   # axiom 定制
   （与操作关联的证据）。收口前 `debug stop` 结束采集；历史记录会保留，可 `debug export` 导出。
   **`rules`/`replay` 只能对 scope 内的公网目标重放**；把抓到的请求重放成内网地址
   （或改 Host/URL 指向私网）与直接 navigate 同等违规。
+- **`extract` 取表格/列表正文**（0.3.3 新增；比 `get-html` + 正则省一轮，且保留列序、
+  分页与跨 frame 来源）。后台列表页取数优先用它：
+
+  ```bash
+  "$AXIOM_BSK" extract discover --session <id>                          # 列出可抽取容器
+  "$AXIOM_BSK" extract table --session <id> --ref @e12 --format csv \
+      --out "<运行目录>/evidence/orders.csv"                             # 直接落 CSV
+  "$AXIOM_BSK" extract list --session <id> --selector "ul.rows" \
+      --item-selector "li" --fields-json '{"fields":["name","amount"]}'
+  ```
+
+  `--max-rows/--max-columns/--max-bytes` 是硬上限，`--timeout-ms` 是渲染层采集预算
+  （默认 5000）。返回里带完整性标记：**被上限截断时必须如实上报截了多少行**，
+  不要把部分结果说成全量。
+- `wait-for-element`（0.3.3 新增）替代 `wait-ms` 硬等：`--state visible|hidden|attached|detached`
+  带 deadline，元素永远不出现时按失败返回，而不是静默超时。
+- `video start/stop`（0.3.3 新增，**默认关**）录任务的 H.264 MP4，10 分钟 / 256 MiB /
+  浏览器侧保留 24h。仅在有明确复现需求时开，不要当默认取证手段（体积大且含页面全部内容）。
 - `emulate` 对单个 tab 应用视口/UA/触屏覆盖；新 tab 不继承；`--off` 恢复。
 - `scroll-to`/`wheel` 用于无限滚动与懒加载页：滚一段 → observe/network 看增量。
   优先走这两个原生输入路径；`wheel` 的 `--delta-x`/`--delta-y` 是输入量、

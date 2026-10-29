@@ -66,15 +66,15 @@ describe("page capture cleanup", () => {
     expect(cancel).not.toHaveBeenCalled();
   });
 
-  it("measures fractional CSS viewport dimensions while retaining scrollbar gutters", async () => {
+  it("keeps native inner dimensions separate from fractional content dimensions", async () => {
     vi.stubGlobal("innerWidth", 815);
     vi.stubGlobal("innerHeight", 615);
     vi.stubGlobal("visualViewport", { width: 800.4, height: 600.6, scale: 1 });
     expect(await send({ action: "probe" })).toMatchObject({
       viewportWidth: 800.4,
       viewportHeight: 600.6,
-      innerWidth: 815.4,
-      innerHeight: 615.6,
+      innerWidth: 815,
+      innerHeight: 615,
     });
   });
 
@@ -161,8 +161,8 @@ describe("page capture cleanup", () => {
         expect(await send({ action: "probe" })).toMatchObject({
           viewportWidth: 800.4,
           viewportHeight: 600.6,
-          innerWidth: 800.4,
-          innerHeight: 600.6,
+          innerWidth: 800,
+          innerHeight: 600,
         });
         await send({ action: "finish" });
         expect(root.getAttribute("style")).toBe(beforeStyle);
@@ -313,6 +313,24 @@ describe("page capture cleanup", () => {
     }
     expect(await send({ action: "inspect" })).toMatchObject({ bottomReady: true });
   });
+  it("waits for ARIA loading markers regardless of attribute case", async () => {
+    const loader = document.createElement("div");
+    loader.setAttribute("role", "PROGRESSBAR");
+    loader.setAttribute("aria-busy", "TRUE");
+    document.body.append(loader);
+    vi.spyOn(loader, "getBoundingClientRect").mockReturnValue({
+      top: 500,
+      bottom: 530,
+      width: 100,
+      height: 30,
+    } as DOMRect);
+    await send({ action: "begin", label: "Capture", cancelLabel: "Cancel" });
+    const moving = send({ action: "move", y: 1800, capture: true, final: true });
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(await moving).toMatchObject({ bottomReady: false, loading: true });
+    expect(await send({ action: "inspect" })).toMatchObject({ bottomReady: false, loading: true });
+  });
+
   it("does not treat article text, code examples or numeric progress widgets as loading", async () => {
     document.body.innerHTML +=
       '<p>Loading files in JavaScript</p><pre><code>Loading...</code></pre><div role="progressbar" aria-valuenow="100"></div>';

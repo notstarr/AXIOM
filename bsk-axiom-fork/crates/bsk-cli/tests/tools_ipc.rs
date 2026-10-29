@@ -1,5 +1,5 @@
 //! M6 integration: drive `tool.*` RPCs (tab_list / screenshot /
-//! snapshot / get_html) through the IPC + per-session queue + fake
+//! snapshot / get_html / extract) through the IPC + per-session queue + fake
 //! extension and assert the wire shapes line up.
 
 use std::path::PathBuf;
@@ -10,10 +10,11 @@ use bsk::daemon::{self, DaemonConfig};
 use bsk::ipc_client::IpcClient;
 use bsk_protocol::system::{HandshakeParams, HandshakeResult};
 use bsk_protocol::tools::{
-    ConsoleEntry, ConsoleEntryKind, ConsoleParams, ConsoleResult, GetHtmlParams, GetHtmlResult,
-    NetworkEntry, NetworkEntryKind, NetworkParams, NetworkResult, ObserveParams, ObserveResult,
-    ScreenshotParams, ScreenshotResult, SessionStartParams, SessionStartResult, SnapshotParams,
-    SnapshotResult, TabInfo, TabListParams, TabListResult, TabScope,
+    ConsoleEntry, ConsoleEntryKind, ConsoleParams, ConsoleResult, ExtractAction, ExtractParams,
+    ExtractResult, GetHtmlParams, GetHtmlResult, NetworkEntry, NetworkEntryKind, NetworkParams,
+    NetworkResult, ObserveParams, ObserveResult, ScreenshotParams, ScreenshotResult,
+    SessionStartParams, SessionStartResult, SnapshotParams, SnapshotResult, TabInfo, TabListParams,
+    TabListResult, TabScope,
 };
 use bsk_protocol::{
     BrowserPeerInfo, ErrorCode, Frame, Method, RequestFrame, ResponseBody, ResponseFrame, RpcError,
@@ -224,6 +225,66 @@ async fn tab_list_round_trips_through_ipc_queue_and_ws() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_call_in_flight_when_the_extension_disconnects_names_the_disconnect() {
+    let (handle, sock) = spawn_daemon().await;
+    let mut ws = connect_ext(handle.ws_addr()).await;
+    let _ = do_handshake(&mut ws).await;
+    // Answers session start, then drops the socket instead of answering the
+    // tool call, as a crashed service worker would.
+    let extension = tokio::spawn(async move {
+        while let Some(Ok(Message::Text(text))) = ws.next().await {
+            let Ok(Frame::Request(req)) = serde_json::from_str::<Frame>(&text) else {
+                continue;
+            };
+            match req.method {
+                Method::ToolSessionStart => {
+                    let resp = ResponseFrame {
+                        id: req.id,
+                        body: ResponseBody::Ok(
+                            serde_json::to_value(SessionStartResult {
+                                interaction: None,
+                                agent_window_id: Some(100),
+                            })
+                            .unwrap(),
+                        ),
+                    };
+                    ws.send(Message::Text(serde_json::to_string(&resp).unwrap()))
+                        .await
+                        .unwrap();
+                }
+                Method::ToolTabList => {
+                    let _ = ws.close(None).await;
+                    return;
+                }
+                _ => {}
+            }
+        }
+    });
+
+    let session_id = ipc_session_start(&sock).await;
+    let started = std::time::Instant::now();
+    let err = ipc_tool_call::<_, TabListResult>(
+        &sock,
+        Method::ToolTabList,
+        TabListParams {
+            session_id,
+            scope: TabScope::User,
+        },
+    )
+    .await
+    .expect_err("the socket closed before answering");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the disconnect must settle the call, elapsed {:?}",
+        started.elapsed()
+    );
+    assert_eq!(err.code, ErrorCode::ProtocolError);
+    assert_eq!(err.data.unwrap()["reason"], "extension_disconnected");
+    extension.await.unwrap();
+    handle.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn screenshot_returns_image_base64_with_dimensions() {
     let (handle, sock) = spawn_daemon().await;
     let mut ws = connect_ext(handle.ws_addr()).await;
@@ -398,15 +459,6 @@ async fn network_returns_buffered_entries() {
                     mime_type: Some("application/json".into()),
                     resource_type: Some("Fetch".into()),
                     error_text: None,
-                    response_body: Some("{\"ok\":true}".into()),
-                    request_headers: Some(
-                        [("x-timestamp".to_string(), "1770000000".to_string())]
-                            .into_iter()
-                            .collect(),
-                    ),
-                    request_body: Some("{\"q\":1}".into()),
-                    response_headers: None,
-                    duration_ms: Some(42.0),
                     timestamp: None,
                     truncated: false,
                 }],
@@ -427,10 +479,6 @@ async fn network_returns_buffered_entries() {
             since: Some(3),
             limit: Some(50),
             max_text_chars: Some(1000),
-            detail: None,
-            clear: None,
-            url_filter: None,
-            include_static: None,
         },
     )
     .await
@@ -438,8 +486,6 @@ async fn network_returns_buffered_entries() {
     assert_eq!(result.tab_id, 7);
     assert_eq!(result.next_since, 4);
     assert_eq!(result.entries[0].status, Some(404));
-    assert_eq!(result.entries[0].request_body.as_deref(), Some("{\"q\":1}"));
-    assert_eq!(result.entries[0].duration_ms, Some(42.0));
     handle.shutdown().await;
 }
 
@@ -571,6 +617,68 @@ async fn get_html_round_trips_with_ref_alias() {
     assert_eq!(result.byte_size, 28);
     assert!(!result.truncated);
     assert_eq!(result.tab_id, 4);
+    handle.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn extract_round_trips_with_ref_alias_and_row_values() {
+    let (handle, sock) = spawn_daemon().await;
+    let mut ws = connect_ext(handle.ws_addr()).await;
+    let _ = do_handshake(&mut ws).await;
+
+    run_extension(ws, |req| {
+        assert_eq!(req.method, Method::ToolExtract);
+        let params = req.params.clone().unwrap();
+        if let Value::Object(map) = &params {
+            assert!(map.contains_key("ref"));
+            assert!(!map.contains_key("ref_"));
+        }
+        let params: ExtractParams = serde_json::from_value(params).unwrap();
+        assert_eq!(params.action, ExtractAction::Table);
+        assert_eq!(params.max_rows, Some(2));
+        ResponseBody::Ok(json!({
+            "schema_version": 1, "kind": "table", "tab_id": 9,
+            "source": {"page_url": "https://example.com/", "frame_url": "https://example.com/",
+                "frame_id": "root", "title": "Orders", "captured_at": "2026-10-12T00:00:00Z"},
+            "columns": [
+                {"key": "c1", "name": "Order", "header_path": ["Order"], "name_source": "header"},
+                {"key": "c2", "name": "Note", "header_path": ["Note"], "name_source": "header"}
+            ],
+            "rows": [{"c1": "000123", "c2": null}],
+            "row_sources": [{"row": 0, "source_row": 2, "row_kind": "data", "locator": "#r1"}],
+            "spans": [],
+            "coverage": {"scope": "loaded_dom", "rows_returned": 1, "truncated": true,
+                "dataset_complete": "incomplete", "stop_reason": "row_limit"},
+            "warnings": ["partial_dom_dataset"]
+        }))
+    });
+
+    let session_id = ipc_session_start(&sock).await;
+    let result: ExtractResult = ipc_tool_call(
+        &sock,
+        Method::ToolExtract,
+        ExtractParams {
+            session_id,
+            action: ExtractAction::Table,
+            tab_id: Some(9),
+            selector: None,
+            ref_: Some("e4".into()),
+            target_id: None,
+            item_selector: None,
+            fields: None,
+            max_rows: Some(2),
+            max_columns: None,
+            max_bytes: None,
+            timeout_ms: None,
+        },
+    )
+    .await
+    .expect("extract ok");
+    assert_eq!(result.tab_id, 9);
+    // Leading zeroes and null (missing) cells survive the daemon relay.
+    assert_eq!(result.rows[0]["c1"].as_deref(), Some("000123"));
+    assert_eq!(result.rows[0]["c2"], None);
+    assert_eq!(result.coverage.stop_reason.as_deref(), Some("row_limit"));
     handle.shutdown().await;
 }
 

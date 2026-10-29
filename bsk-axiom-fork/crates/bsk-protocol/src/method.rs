@@ -21,6 +21,8 @@ pub enum MethodEffect {
 /// Namespaced method string (`system.handshake`, `tool.tab_list`, …).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Method {
+    #[serde(rename = "tool.video")]
+    ToolVideo,
     /// Extension-only local history API; browser identity comes from the peer.
     #[serde(rename = "audit.request")]
     AuditRequest,
@@ -104,6 +106,8 @@ pub enum Method {
     ToolObserve,
     #[serde(rename = "tool.get_html")]
     ToolGetHtml,
+    #[serde(rename = "tool.extract")]
+    ToolExtract,
     #[serde(rename = "tool.screenshot")]
     ToolScreenshot,
     #[serde(rename = "tool.screenshot_full_page")]
@@ -114,14 +118,19 @@ pub enum Method {
     ToolScreenshotRelease,
     #[serde(rename = "tool.console")]
     ToolConsole,
-    #[serde(rename = "tool.network")]
-    ToolNetwork,
+    #[serde(rename = "tool.debug")]
+    ToolDebug,
+    /// Axiom fork: cookie + web-storage extraction scoped to one domain.
     #[serde(rename = "tool.credentials")]
     ToolCredentials,
+    #[serde(rename = "tool.network")]
+    ToolNetwork,
     #[serde(rename = "tool.evaluate")]
     ToolEvaluate,
     #[serde(rename = "tool.wait_for_navigation")]
     ToolWaitForNavigation,
+    #[serde(rename = "tool.wait_for_element")]
+    ToolWaitForElement,
     #[serde(rename = "tool.wait_ms")]
     ToolWaitMs,
     #[serde(rename = "tool.request_help")]
@@ -217,12 +226,14 @@ impl Method {
             Method::ToolTabList
             | Method::ToolSnapshot
             | Method::ToolGetHtml
+            | Method::ToolExtract
             | Method::ToolScreenshot
             | Method::ToolScreenshotRead
             | Method::ToolConsole
             | Method::ToolNetwork
             | Method::ToolCredentials
             | Method::ToolWaitForNavigation
+            | Method::ToolWaitForElement
             | Method::ToolWaitMs
             | Method::ToolRequestHelp
             | Method::ToolRecordStop
@@ -239,7 +250,9 @@ impl Method {
             | Method::ToolSessionStop => MethodEffect::ControlPlane,
 
             // System / control — not gated.
-            Method::AuditRequest
+            Method::ToolDebug
+            | Method::ToolVideo
+            | Method::AuditRequest
             | Method::SystemHandshake
             | Method::SystemPing
             | Method::SystemStatus
@@ -252,6 +265,19 @@ impl Method {
             | Method::ToolScreenshotRelease
             | Method::Cancel => MethodEffect::ControlPlane,
         }
+    }
+
+    /// Debug reads/teardown remain available after interruption, while explicit
+    /// network interventions and replay are gated like other browser writes.
+    pub fn requires_interrupt_gate_with_params(&self, params: &serde_json::Value) -> bool {
+        self.requires_interrupt_gate()
+            || (matches!(self, Method::ToolVideo)
+                && params.get("action").and_then(|value| value.as_str()) == Some("start"))
+            || (matches!(self, Method::ToolDebug)
+                && matches!(
+                    params.get("action").and_then(|value| value.as_str()),
+                    Some("rule_add" | "rule_enable" | "replay")
+                ))
     }
 
     /// Whether this RPC drives browser/page state in the traditional sense.
@@ -275,6 +301,28 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn video_start_respects_interrupts_but_teardown_and_artifact_reads_remain_available() {
+        assert!(
+            super::Method::ToolVideo
+                .requires_interrupt_gate_with_params(&serde_json::json!({"action":"start"}))
+        );
+        for action in [
+            "capabilities",
+            "list",
+            "status",
+            "stop",
+            "read",
+            "exported",
+            "discard",
+        ] {
+            assert!(
+                !super::Method::ToolVideo
+                    .requires_interrupt_gate_with_params(&serde_json::json!({"action": action}))
+            );
+        }
+    }
+
+    #[test]
     fn cancel_method_round_trips() {
         let method: Method = serde_json::from_value(json!("cancel")).unwrap();
         assert_eq!(method, Method::Cancel);
@@ -293,16 +341,6 @@ mod tests {
         let method: Method = serde_json::from_value(json!("tool.network")).unwrap();
         assert_eq!(method, Method::ToolNetwork);
         assert_eq!(serde_json::to_value(method).unwrap(), json!("tool.network"));
-    }
-
-    #[test]
-    fn credentials_method_round_trips() {
-        let method: Method = serde_json::from_value(json!("tool.credentials")).unwrap();
-        assert_eq!(method, Method::ToolCredentials);
-        assert_eq!(
-            serde_json::to_value(method).unwrap(),
-            json!("tool.credentials")
-        );
     }
 
     #[test]
@@ -336,16 +374,42 @@ mod tests {
     }
 
     #[test]
+    fn debug_network_writes_respect_interrupts_without_blocking_teardown() {
+        for action in ["rule_add", "rule_enable", "replay"] {
+            assert!(
+                Method::ToolDebug
+                    .requires_interrupt_gate_with_params(&serde_json::json!({"action":action}))
+            );
+        }
+        for action in [
+            "request",
+            "rules",
+            "export",
+            "stop",
+            "rule_disable",
+            "rule_remove",
+        ] {
+            assert!(
+                !Method::ToolDebug
+                    .requires_interrupt_gate_with_params(&serde_json::json!({"action":action}))
+            );
+        }
+    }
+
+    #[test]
     fn is_mutating_classifies_read_only_tools_as_non_mutating() {
         assert!(!Method::ToolTabList.is_mutating());
         assert!(!Method::ToolSnapshot.is_mutating());
         assert!(!Method::ToolHover.is_mutating());
         assert!(!Method::ToolObserve.is_mutating());
         assert!(!Method::ToolGetHtml.is_mutating());
+        assert_eq!(Method::ToolExtract.effect(), MethodEffect::PassiveRead);
+        assert!(!Method::ToolExtract.is_mutating());
         assert!(!Method::ToolScreenshot.is_mutating());
         assert!(!Method::ToolConsole.is_mutating());
         assert!(!Method::ToolNetwork.is_mutating());
         assert!(!Method::ToolWaitForNavigation.is_mutating());
+        assert!(!Method::ToolWaitForElement.is_mutating());
         assert!(!Method::ToolWaitMs.is_mutating());
     }
 
@@ -353,8 +417,7 @@ mod tests {
     fn is_mutating_classifies_mutating_tools_as_mutating() {
         assert!(Method::ToolTabCreate.is_mutating());
         assert!(Method::ToolTabClose.is_mutating());
-        assert!(!Method::ToolNetwork.is_mutating());
-        assert!(!Method::ToolCredentials.is_mutating());
+        assert!(Method::ToolTabBorrow.is_mutating());
         assert!(Method::ToolTabReturn.is_mutating());
         assert!(Method::ToolTabSelect.is_mutating());
         assert!(Method::ToolNavigate.is_mutating());
