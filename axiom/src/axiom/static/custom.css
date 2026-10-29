@@ -723,7 +723,7 @@
     --sto-line: #e6e5e0;
     --sto-line-field: #95918a;
     --sto-panel: #ffffff;
-    --sto-inset: #f7f5ec;
+    --sto-inset: #f9f8f2;
     --sto-ok: #5f7d56;
     --sto-warn: #8a6420;
     --sto-danger: #b3392c;
@@ -2232,20 +2232,20 @@ html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button 
   --bg-primary:    #ffffff;
   /* 淡黄基底：只给页面底色一点点暖，卡片仍是纯白。
      色相偏黄、饱和度极低（Δ 只有 4~13），放大看才看得出是黄，不是米色。 */
-  --bg-secondary:  #fbf9f3;
-  --bg-tertiary:   #f2f0e6;
+  --bg-secondary:  #fcfbf8;
+  --bg-tertiary:   #f5f2e9;
   --bg-elevated:   #ffffff;
   --bg-glass:      rgba(255, 255, 255, 0.84);
-  --bg-glass-dark: rgba(251, 249, 243, 0.68);
+  --bg-glass-dark: rgba(252, 251, 248, 0.68);
   --bg-overlay:    rgba(27, 27, 29, 0.42);
-  --surface-page:     #fbf9f3;
+  --surface-page:     #fcfbf8;
   --surface-panel:    #ffffff;
   --surface-card:     #ffffff;
-  --surface-inset:    #f7f5ec;
-  --surface-hover:    #f4f1e6;
+  --surface-inset:    #f9f8f2;
+  --surface-hover:    #f5f2e9;
   --surface-selected: rgba(47, 93, 124, 0.10);
   --surface-disabled: rgba(109, 104, 98, 0.10);
-  --surface-graph:    #fcfaf4;
+  --surface-graph:    #fdfcf9;
   --graph-grid-dot:   rgba(27, 27, 29, 0.10);
 
   /* —— 墨色三档：三级也必须可读（原 #94a3b8 仅 2.56:1） —— */
