@@ -362,3 +362,44 @@ def test_a_result_report_exports_with_its_attack_path_and_no_score(client) -> No
     # 分数只属于裁决，不进报告正文
     assert "35" not in body
     assert "积分" not in body
+
+
+def test_a_picture_already_named_for_its_step_is_not_prefixed_twice(client) -> None:
+    """``step-02-shot.png`` attached to step 2 keeps its name.
+
+    Otherwise the archive ends up with ``step-02-step-02-shot.png``: harmless to a
+    machine, confusing to the person who attached it.
+    """
+    task_id = _task(client)
+    client.post(
+        f"/api/v1/tasks/{task_id}/vulnerabilities",
+        json={
+            "title": "任意文件上传导致 RCE",
+            "type": "文件上传",
+            "severity": "critical",
+            "description": "上传 PHP 后可执行命令",
+            "prerequisites": "无需认证",
+            "impact": "服务器接管",
+            "reproduction": REPRODUCTION,
+            "source": "human",
+            "reported_by": "tester",
+        },
+    )
+    upload = client.post(
+        f"/api/v1/tasks/{task_id}/artifacts/upload",
+        files={"file": ("step-02-shot.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        data={"actor": "reviewer"},
+    )
+    client.post(
+        f"/api/v1/tasks/{task_id}/vulnerabilities/v001/evidence",
+        json={"artifact_id": upload.json()["id"], "step_index": 2},
+    )
+
+    response = client.get(f"/api/v1/tasks/{task_id}/vulnerabilities/v001/export")
+
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        names = archive.namelist()
+        report = archive.read("report.md").decode("utf-8")
+    assert "images/step-02-shot.png" in names
+    assert "images/step-02-step-02-shot.png" not in names
+    assert "](images/step-02-shot.png)" in report

@@ -165,7 +165,7 @@ class VulnerabilityService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.archived:
                 raise ConflictError("已归档任务的漏洞不可见，请先恢复任务")
-            return self.repository.list(conn, task_id)
+            return self._with_evidence(conn, task_id, self.repository.list(conn, task_id))
 
     def list_all(self, **filters) -> list[Vulnerability]:
         with self.engine.connect() as conn:
@@ -180,7 +180,37 @@ class VulnerabilityService:
                     raise NotFoundError(f"Task not found: {task_id}")
                 if task.archived:
                     raise ConflictError("已归档任务的漏洞不可见，请先恢复任务")
-            return self.repository.list_page(conn, **filters)
+            items, total = self.repository.list_page(conn, **filters)
+            grouped: dict[str, list[dict]] = {}
+            by_task: dict[str, list] = {}
+            for item in items:
+                by_task.setdefault(item.task_id, []).append(item)
+            for owner_task_id, batch in by_task.items():
+                grouped.update(
+                    self.report_evidence.for_subjects(
+                        conn, owner_task_id, "vulnerability", [i.id for i in batch]
+                    )
+                )
+            return [
+                item.model_copy(update={"evidence": grouped.get(item.id, [])})
+                for item in items
+            ], total
+
+    def _with_evidence(self, conn, task_id: str, items: list[Vulnerability]) -> list[Vulnerability]:
+        """附带每步的证据图。
+
+        详情接口一直带这个字段；列表页也直接渲染报告骨架，不带就意味着从列表点进去
+        看不到图。批量取一次，避免每行一次查询。
+        """
+        if not items:
+            return items
+        grouped = self.report_evidence.for_subjects(
+            conn, task_id, "vulnerability", [item.id for item in items]
+        )
+        return [
+            item.model_copy(update={"evidence": grouped.get(item.id, [])})
+            for item in items
+        ]
 
     def update(self, task_id: str, vulnerability_id: str, body: UpdateVulnerability) -> Vulnerability:
         with self.engine.begin() as conn:

@@ -260,3 +260,24 @@ def test_the_report_view_places_an_attached_picture_under_its_step(client) -> No
     process = next(section for section in payload["sections"] if section["key"] == "process")
     steps = next(block for block in process["blocks"] if block["type"] == "steps")
     assert steps["steps"][0]["images"][0]["artifact_id"] == artifact_id
+
+
+def test_the_list_payload_carries_per_step_pictures_too(client) -> None:
+    """The console renders the report straight from the list row.
+
+    Fetching evidence only on the detail endpoint meant a picture attached while the
+    list was already loaded never appeared — the pane showed the step but no image.
+    """
+    task = _project_task(client)
+    vulnerability = _vulnerability(client, task["id"])
+    artifact_id = _upload(client, task["id"], "step-01.png", b"\x89PNG\r\n\x1a\n")
+    client.post(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities/{vulnerability['id']}/evidence",
+        json={"artifact_id": artifact_id, "step_index": 1},
+    )
+
+    listed = client.get(f"/api/v1/tasks/{task['id']}/vulnerabilities").json()
+
+    row = next(item for item in listed if item["id"] == vulnerability["id"])
+    assert [item["artifact_id"] for item in row["evidence"]] == [artifact_id]
+    assert row["evidence"][0]["step_index"] == 1

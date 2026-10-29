@@ -74,7 +74,10 @@ class ExportService:
                 continue
             step = int(item.get("step_index") or 0)
             name = path.name
-            key = f"step-{step:02d}-{name}"
+            # 上传时人可能已经按步骤命名（step-02-id.png），再叠一层前缀会变成
+            # step-02-step-02-id.png。已经带了本步编号就原样用。
+            prefix = f"step-{step:02d}-"
+            key = name if name.startswith(prefix) else f"{prefix}{name}"
             if key in used:
                 used[key] += 1
                 stem, dot, ext = key.rpartition(".")
