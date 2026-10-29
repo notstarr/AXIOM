@@ -139,11 +139,11 @@
   .token-metric-track { height: 7px; overflow: hidden; border-radius: 999px; background: var(--surface-inset); }
   .token-metric-fill { display: block; height: 100%; min-width: 0; border-radius: inherit; transition: width 240ms ease; }
   .token-fill-input, .token-segment-input { background: #2f5d7c; }
-  .token-fill-cache, .token-segment-cache-read { background: #4a7c59; }
+  .token-fill-cache, .token-segment-cache-read { background: #5f7d56; }
   .token-fill-cache-write, .token-segment-cache-write { background: #a3742c; }
   .token-fill-output, .token-segment-output { background: #6b5b8e; }
   .token-fg-input { color: #2f5d7c; }
-  .token-fg-cache { color: #4a7c59; }
+  .token-fg-cache { color: #5f7d56; }
   .token-fg-cache-write { color: #a3742c; }
   .token-fg-output { color: #6b5b8e; }
   .token-hit-rate { background: var(--surface-inset); border-color: var(--border); }
@@ -864,6 +864,8 @@
     --rp-rule: #e5e2dd;
     --rp-wash: #faf9f7;
     --rp-accent: #1b1b1d;
+    /* 唯一的暖色：只用于「这一步还缺报文图」和包内损坏提示，不参与排版 */
+    --rp-amber: #9a5b13;
 
     display: flex; flex-direction: column;
     gap: 26px;
@@ -953,12 +955,20 @@
   }
   .rp-slot:hover { border-color: var(--rp-ink-3); color: var(--rp-ink-2); background: var(--rp-wash); }
   .rp-slot svg { width: 13px; height: 13px; }
+  /* 缺报文图是「这一步还不能交裁决」，不是装饰性提示：给它一点分量，但仍不喧哗 */
+  .rp-slot.need { border-color: var(--rp-amber, #b4741f); color: var(--rp-amber, #b4741f); }
+  .rp-slot.need:hover { border-color: var(--rp-amber, #b4741f); }
   .rp-shot { display: block; text-decoration: none; }
   .rp-shot img {
     display: block; max-width: 214px; max-height: 148px; object-fit: contain;
     border: 1px solid var(--rp-rule); border-radius: 3px; background: var(--rp-wash);
   }
   .rp-shotcap { display: block; margin-top: 4px; font-size: 12px; color: var(--rp-ink-3); }
+  .rp-shotkind {
+    display: inline-block; margin-right: 5px; padding: 0 4px;
+    border: 1px solid var(--rp-rule); border-radius: 2px;
+    font-size: 10.5px; font-weight: 500; letter-spacing: 0.02em; color: var(--rp-ink-2);
+  }
 
   /* —— 攻击链：报告里的一段编年，不是流程图 —— */
   .rp-chain { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
@@ -1007,6 +1017,7 @@
     --rp-rule: #343a42;
     --rp-wash: #2a313a;
     --rp-accent: #e8e6e3;
+    --rp-amber: #d8a35a;
   }
   .dark .rp-doc .rp-act.primary { background: #e8e6e3; color: #17150f; }
   .dark .rp-doc .rp-act.primary:hover { background: #fff; color: #17150f; }
@@ -2611,13 +2622,9 @@ main.sto .grid.xl\:grid-cols-2 {
 .bg-amber-500, .bg-amber-600, .bg-orange-500 { background: #a3742c !important; }
 .bg-violet-500, .bg-purple-500, .bg-indigo-500 { background: #6b5b8e !important; }
 
-/* 模板里少量写死在 style 里的冷色（Token 分项条），用属性选择器兜住。
-   这些色值在项目里唯一，不会误伤别的元素。 */
-[style*="#3b82f6"] { background-color: #2f5d7c !important; }
-[style*="#8b5cf6"] { background-color: #6b5b8e !important; }
-[style*="#18a875"] { background-color: #4a7c59 !important; }
-[style*="#d88706"] { background-color: #a3742c !important; }
-[style*="#0b1020"] { background-color: #131417 !important; }
+/* 注意：这里曾用 [style*="#3b82f6"] 之类兜住模板内联色，是错的——
+   human-view 的 Token 标签写的是 color:#3b82f6，被一并加了深色背景，
+   深底深字糊成一片。内联色已改为直接写在模板里。
 
 /* 侧栏底部两个按钮：字号抬到 12px 后，图标+两字放不进 62px 的列宽，
    被截成「改…」「退…」。收窄图标与间距把它们腾出来。 */
@@ -2682,3 +2689,9 @@ main.sto .grid.xl\:grid-cols-2 {
 
 /* 品牌行与底部用户卡沿用同一底色系，避免又出现第三种白 */
 .sidebar-brand, .sidebar-logo-row { background: transparent; }
+
+/* ── 绿色文字收口：Tailwind 的 emerald 比色板里的苔绿艳一档 ────────
+   42 处 text-emerald-* 散落在各页面，和 --sto-ok 并存时会看出「两种绿」。
+   统一到苔绿，和已验证、命中率、成功态同一个绿。 */
+.text-emerald-500, .text-emerald-600, .text-emerald-700 { color: #5f7d56 !important; }
+.dark .text-emerald-500, .dark .text-emerald-600, .dark .text-emerald-700 { color: #9fc9ac !important; }
