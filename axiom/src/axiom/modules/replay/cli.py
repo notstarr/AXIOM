@@ -90,6 +90,7 @@ def _send_payload(
     follow: bool,
     allow_delete: bool,
     allow_private: bool,
+    compare_with_recorded: bool,
 ) -> dict:
     payload = {
         "task_id": task_id,
@@ -100,6 +101,7 @@ def _send_payload(
         "follow_redirects": follow,
         "allow_delete": allow_delete,
         "allow_private": allow_private,
+        "compare_with_recorded": compare_with_recorded,
     }
     return payload
 
@@ -176,6 +178,12 @@ def register_replay_commands(main: click.Group) -> None:
         function = click.option("--follow", is_flag=True, help="跟随重定向（默认否）")(function)
         function = click.option("--allow-delete", is_flag=True)(function)
         function = click.option("--allow-private", is_flag=True, help="仅测试用：放行私网目标")(function)
+        function = click.option(
+            "--compare",
+            "compare_with_recorded",
+            is_flag=True,
+            help="与上报的响应逐项比对（默认不比对：审核者是照步骤自己复现一遍）",
+        )(function)
         function = click.option("--json", "as_json", is_flag=True, help="输出机器可读 JSON")(function)
         return function
 
@@ -198,6 +206,7 @@ def register_replay_commands(main: click.Group) -> None:
         follow: bool,
         allow_delete: bool,
         allow_private: bool,
+        compare_with_recorded: bool,
         as_json: bool,
     ) -> None:
         """Send it for real and print the URL that renders the exchange."""
@@ -214,6 +223,7 @@ def register_replay_commands(main: click.Group) -> None:
                 follow=follow,
                 allow_delete=allow_delete,
                 allow_private=allow_private,
+                compare_with_recorded=compare_with_recorded,
             ),
         )
         if as_json:
@@ -246,6 +256,7 @@ def register_replay_commands(main: click.Group) -> None:
         follow: bool,
         allow_delete: bool,
         allow_private: bool,
+        compare_with_recorded: bool,
         as_json: bool,
     ) -> None:
         """Send it, render the page with playwright, and save the PNG.
@@ -269,6 +280,7 @@ def register_replay_commands(main: click.Group) -> None:
                 follow=follow,
                 allow_delete=allow_delete,
                 allow_private=allow_private,
+                compare_with_recorded=compare_with_recorded,
             ),
         )
 
@@ -342,6 +354,7 @@ def register_replay_commands(main: click.Group) -> None:
         follow: bool,
         allow_delete: bool,
         allow_private: bool,
+        compare_with_recorded: bool,
         as_json: bool,
     ) -> None:
         """Upload a picture and hang it on step N of the subject."""

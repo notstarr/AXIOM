@@ -607,11 +607,41 @@ def test_replay_service_reports_a_match_when_the_target_agrees(client, engine, r
         evidence=container.report_evidence,
     )
     outcome = service.replay(
-        task_id=task_id, result_id=result_id, step=1, allow_private=True, capture=False
+        task_id=task_id, result_id=result_id, step=1, allow_private=True, capture=False,
+        compare_with_recorded=True,
     )
     assert outcome.sent is True
     assert outcome.live.status_code == 200
     assert outcome.comparison.status == "match"
+
+
+def test_replay_does_not_compare_by_default(client, engine, replay_target) -> None:
+    """复核是「照步骤自己复现一遍」，不是逐字重放上报的报文。
+
+    所以默认不给「与上报一致」的结论：把两者逐字对比会把一个正常的复核判成不一致，
+    也会让审核者以为必须复制上报的报文。需要排查造假时才用 ``--compare`` 打开。
+    """
+    from axiom.modules.replay.service import ReplayService
+
+    port, _ = replay_target
+    task_id, result_id = _reported_result(
+        client,
+        engine,
+        request_packet=f"GET / HTTP/1.1\nHost: 127.0.0.1:{port}\n\n",
+        response_packet="HTTP/1.1 500 Deliberately Wrong\nContent-Type: text/html\n\nboom",
+    )
+    container = client.app.state.container
+    service = ReplayService(
+        engine,
+        tasks=container.tasks,
+        red_team=container.red_team,
+        evidence=container.report_evidence,
+    )
+    outcome = service.replay(
+        task_id=task_id, result_id=result_id, step=1, allow_private=True, capture=False
+    )
+    assert outcome.sent is True
+    assert outcome.comparison.status == "inconclusive"
 
 
 @pytest.mark.skipif(resolve_chromium() is None, reason="需要本机 chromium 才能验证截图")
@@ -648,6 +678,7 @@ def test_shot_attaches_a_packet_evidence_row_to_the_step(client, engine, replay_
         capture=True,
         attach=True,
         caption="越权读取他人订单",
+        compare_with_recorded=True,
     )
 
     assert outcome.sent is True
@@ -805,6 +836,7 @@ def test_replay_resolves_a_vulnerability_as_well_as_a_result(client, engine, rep
         step=1,
         allow_private=True,
         capture=False,
+        compare_with_recorded=True,
     )
     assert outcome.sent is True
     assert outcome.comparison.status == "match"

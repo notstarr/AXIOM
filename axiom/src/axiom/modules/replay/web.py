@@ -81,6 +81,8 @@ class SendRequest(BaseModel):
     follow_redirects: bool = False
     allow_delete: bool = False
     allow_private: bool = False
+    # 默认不比对：审核者自己复现一遍，报文不必与上报逐字相同。
+    compare_with_recorded: bool = False
 
 
 class SendResponse(BaseModel):
@@ -158,6 +160,7 @@ def create_replay_app(
                 allow_private=body.allow_private,
                 capture=False,
                 attach=False,
+                compare_with_recorded=body.compare_with_recorded,
                 actor="replay.tool",
             )
         except ReplayError as exc:

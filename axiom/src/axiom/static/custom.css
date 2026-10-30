@@ -2700,3 +2700,49 @@ main.sto .grid.xl\:grid-cols-2 {
    统一到苔绿，和已验证、命中率、成功态同一个绿。 */
 .text-emerald-500, .text-emerald-600, .text-emerald-700 { color: #5f7d56 !important; }
 .dark .text-emerald-500, .dark .text-emerald-600, .dark .text-emerald-700 { color: #9fc9ac !important; }
+
+/* ── 步骤截图：悬停出按钮 ────────────────────────────────────────────
+   默认只显示图，鼠标移上去才露出左上角删除、右上角放大。按住的区域是
+   整张图，不是按钮本身——按钮只在需要时出现，不占版面。 */
+.rp-shotbox { position: relative; display: block; line-height: 0; }
+.rp-shotbox img { display: block; cursor: zoom-in; }
+.rp-shotbtn {
+  position: absolute; top: 4px; width: 20px; height: 20px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(15, 23, 42, .28); border-radius: 4px;
+  background: rgba(255, 255, 255, .94); color: #334155;
+  opacity: 0; transform: translateY(-2px);
+  transition: opacity .12s ease, transform .12s ease, background .12s ease, color .12s ease;
+  cursor: pointer; z-index: 2;
+}
+.rp-shotbtn svg { width: 12px; height: 12px; }
+.rp-shotdel { left: 4px; }
+.rp-shotsee { right: 4px; }
+.rp-shotbox:hover .rp-shotbtn,
+.rp-shotbox:focus-within .rp-shotbtn { opacity: 1; transform: translateY(0); }
+.rp-shotdel:hover { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
+.rp-shotsee:hover { background: #e0f2fe; border-color: #7dd3fc; color: #0369a1; }
+/* 触屏没有 hover：按钮常显，否则永远点不到。 */
+@media (hover: none) {
+  .rp-shotbtn { opacity: 1; transform: none; }
+}
+
+/* 灯箱：整屏看一张图，Esc 或点背景关闭。 */
+.shot-lightbox {
+  position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center;
+  background: rgba(15, 23, 42, .82); padding: 32px; cursor: zoom-out;
+}
+.shot-lightbox img {
+  max-width: 100%; max-height: calc(100vh - 96px); object-fit: contain;
+  border-radius: 4px; box-shadow: 0 18px 48px rgba(0, 0, 0, .45); cursor: default;
+}
+.shot-lightbox .lbcaption {
+  position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%);
+  max-width: 80vw; color: #e2e8f0; font-size: 12.5px; text-align: center;
+}
+.shot-lightbox .lbclose {
+  position: absolute; top: 14px; right: 18px; width: 30px; height: 30px;
+  border: 1px solid rgba(226, 232, 240, .4); border-radius: 5px;
+  background: rgba(15, 23, 42, .5); color: #e2e8f0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; font-size: 18px; line-height: 1;
+}

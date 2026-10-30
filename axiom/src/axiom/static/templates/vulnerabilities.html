@@ -171,18 +171,38 @@
                     </template>
                     <div class="rp-slots" x-show="vulnStepShots(i + 1, 'packet').length">
                       <template x-for="ev in vulnStepShots(i + 1, 'packet')" :key="`evp-${ev.artifact_id}`">
-                        <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
-                          <img :src="ev.url" :alt="ev.caption || '报文截图'">
+                        <div class="rp-shot">
+                          <div class="rp-shotbox">
+                            <img :src="ev.url" :alt="ev.caption || '报文截图'" @click="openShotPreview(ev)">
+                            <button type="button" class="rp-shotbtn rp-shotdel" title="删除这张图"
+                              @click.stop.prevent="deleteStepShot('vulnerability', selectedVulnerability().id, ev)">
+                              <svg fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                            </button>
+                            <button type="button" class="rp-shotbtn rp-shotsee" title="放大查看"
+                              @click.stop.prevent="openShotPreview(ev)">
+                              <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.6"/></svg>
+                            </button>
+                          </div>
                           <span class="rp-shotcap"><b class="rp-shotkind">报文</b><span x-text="ev.caption || `步骤 ${i + 1} 回包`"></span></span>
-                        </a>
+                        </div>
                       </template>
                     </div>
                     <div class="rp-slots" x-show="vulnStepShots(i + 1, 'business').length">
                       <template x-for="ev in vulnStepShots(i + 1, 'business')" :key="`evb-${ev.artifact_id}`">
-                        <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
-                          <img :src="ev.url" :alt="ev.caption || '业务截图'">
+                        <div class="rp-shot">
+                          <div class="rp-shotbox">
+                            <img :src="ev.url" :alt="ev.caption || '业务截图'" @click="openShotPreview(ev)">
+                            <button type="button" class="rp-shotbtn rp-shotdel" title="删除这张图"
+                              @click.stop.prevent="deleteStepShot('vulnerability', selectedVulnerability().id, ev)">
+                              <svg fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                            </button>
+                            <button type="button" class="rp-shotbtn rp-shotsee" title="放大查看"
+                              @click.stop.prevent="openShotPreview(ev)">
+                              <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.6"/></svg>
+                            </button>
+                          </div>
                           <span class="rp-shotcap"><b class="rp-shotkind">业务</b><span x-text="ev.caption || `步骤 ${i + 1} 效果`"></span></span>
-                        </a>
+                        </div>
                       </template>
                     </div>
                     <div class="rp-slots">
@@ -427,18 +447,38 @@
                     </template>
                     <div class="rp-slots" x-show="rtStepShots(i + 1, 'packet').length">
                       <template x-for="ev in rtStepShots(i + 1, 'packet')" :key="`rtev-p-${ev.artifact_id}`">
-                        <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
-                          <img :src="ev.url" :alt="ev.caption || '报文截图'">
+                        <div class="rp-shot">
+                          <div class="rp-shotbox">
+                            <img :src="ev.url" :alt="ev.caption || '报文截图'" @click="openShotPreview(ev)">
+                            <button type="button" class="rp-shotbtn rp-shotdel" title="删除这张图"
+                              @click.stop.prevent="deleteStepShot('redteam_result', selectedRtResult().id, ev)">
+                              <svg fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                            </button>
+                            <button type="button" class="rp-shotbtn rp-shotsee" title="放大查看"
+                              @click.stop.prevent="openShotPreview(ev)">
+                              <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.6"/></svg>
+                            </button>
+                          </div>
                           <span class="rp-shotcap"><b class="rp-shotkind">报文</b><span x-text="ev.caption || `步骤 ${i + 1} 回包`"></span></span>
-                        </a>
+                        </div>
                       </template>
                     </div>
                     <div class="rp-slots" x-show="rtStepShots(i + 1, 'business').length">
                       <template x-for="ev in rtStepShots(i + 1, 'business')" :key="`rtev-b-${ev.artifact_id}`">
-                        <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
-                          <img :src="ev.url" :alt="ev.caption || '业务截图'">
+                        <div class="rp-shot">
+                          <div class="rp-shotbox">
+                            <img :src="ev.url" :alt="ev.caption || '业务截图'" @click="openShotPreview(ev)">
+                            <button type="button" class="rp-shotbtn rp-shotdel" title="删除这张图"
+                              @click.stop.prevent="deleteStepShot('redteam_result', selectedRtResult().id, ev)">
+                              <svg fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                            </button>
+                            <button type="button" class="rp-shotbtn rp-shotsee" title="放大查看"
+                              @click.stop.prevent="openShotPreview(ev)">
+                              <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.6"/></svg>
+                            </button>
+                          </div>
                           <span class="rp-shotcap"><b class="rp-shotkind">业务</b><span x-text="ev.caption || `步骤 ${i + 1} 效果`"></span></span>
-                        </a>
+                        </div>
                       </template>
                     </div>
                     <div class="rp-slots">

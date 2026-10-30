@@ -215,6 +215,8 @@ window.AxiomModules.state = {
     renameForm: { projectId: '', originalTitle: '', title: '' },
     // 概览页胶囊里的目标积分编辑态：open 时胶囊换成 number input。
     pointsEdit: { open: false, taskId: '', value: 0, saving: false },
+    // 截图灯箱：详情页点眼睛把图放大，Esc 关闭。
+    shotPreview: { open: false, url: '', caption: '', kind: '' },
     crawlerTargetUrl: '',
     crawlerStarting: false,
     crawlerStatus: null,

@@ -57,6 +57,9 @@ class RenderInput:
     source_label: str = ""
     elapsed_ms: int | None = None
     highlights: list[str] = field(default_factory=list)
+    # 默认不给比对结论：审核者是按 Explore 的步骤自己复现一遍，不是逐字重放
+    # 上报的报文，所以「与上报一致」既不成立也不需要。留字段是为了调用方
+    # 明确要求（比如排查上报是否造假）时还能显示。
     comparison: Comparison | None = None
     body_truncated: bool = False
     original_body_bytes: int = 0

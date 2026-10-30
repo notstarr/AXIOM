@@ -308,7 +308,7 @@ def test_a_result_verdict_waits_for_the_step_packet_shots(client, engine) -> Non
     )
 
     assert refused.status_code == 409, refused.text
-    assert "步骤 1 缺少报文截图" in refused.text
+    assert "步骤 1 缺 1 张" in refused.text
     assert client.post(
         f"/api/v1/tasks/{task['id']}/red-team/results/x001/evidence/capture",
         files={"file": ("step-01.png", b"\x89PNG\r\n\x1a\n", "image/png")},

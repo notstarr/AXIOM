@@ -151,6 +151,7 @@ class ReplayService:
         allow_private: bool = False,
         capture: bool = True,
         attach: bool = False,
+        compare_with_recorded: bool = False,
         actor: str = "axiom.replay",
     ) -> ReplayOutcome:
         """Send once.  ``result_id`` pins the packet to what was reported."""
@@ -206,13 +207,18 @@ class ReplayService:
                 recorded_body = parsed.body
                 recorded_content_type = parsed.content_type()
 
-        comparison = compare_module.compare(
-            recorded_body,
-            recorded_status,
-            recorded_content_type,
-            live,
-            extra_asserts=asserts or [],
-        )
+        # 审核者是照 Explore 的步骤自己复现，报文不必与上报逐字相同，所以默认
+        # 不算「与上报一致」。需要排查造假时用 --compare 显式打开。
+        if compare_with_recorded:
+            comparison = compare_module.compare(
+                recorded_body,
+                recorded_status,
+                recorded_content_type,
+                live,
+                extra_asserts=asserts or [],
+            )
+        else:
+            comparison = compare_module.Comparison(status=compare_module.INCONCLUSIVE)
 
         outcome = ReplayOutcome(
             result_id=result_id,

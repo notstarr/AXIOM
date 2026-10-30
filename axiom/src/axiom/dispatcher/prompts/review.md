@@ -22,15 +22,19 @@
 3. **产出就是裁决，不写任何文件**：
    - 报告由代码从上报时提交的结构化复现（`review_target.json` 里的 `reproduction`）自动生成，**你不再写 `vuln_report-*.md`**，也不写 evidence/、work/。
    - 裁决为 `duplicate` / `ignored` / `needs-human` 时同样只提交裁决；重复项用 `--duplicate-of` 指回原漏洞。
-   - **每一步都要挂一张报文图**——那一步真实回包在屏幕上的样子：
+   - **每个报文都要挂一张图**——那次真实收发在屏幕上的样子。`review_target.json` 里的复现
+     步骤是**参考**：照它自己复现一遍即可，报文不必与上报逐字相同（你自己造的请求也能挂）。
+     一步里有几个报文就截几张图，缺一张都会挡住裁决：
      ```bash
-     axiom replay shot --task-id {task_id} --result {vulnerability_id} --step 2 \
-       --output step-02.png --caption "步骤 2 回包"
-     axiom review evidence attach --step 2 --kind packet --file step-02.png
+     # ① 自己构造请求发一次并渲染截图（也可以传 --result/--step 预填上报的报文当参考）
+     axiom replay shot --task-id {task_id} --packet-file req.txt \
+       --output step-02-a.png --caption "步骤 2 报文 1 回包"
+     # ② 挂到该步（kind=packet 才计入闸门）
+     axiom review evidence attach --step 2 --kind packet --file step-02-a.png
      ```
-     `replay shot` 真实再发一次报文并截它渲染出的页面。只发包不截图用 `axiom replay send`，
-     返回的地址 10 分钟内有效。报文一律取自 `review_target.json` 的复现记录（`--result/--step`
-     就是从那儿读），**不要自己重写报文、也不要凭描述臆测**。
+     `--result {vulnerability_id} --step N` 会直接取上报记录里的报文，省去手写；两者都能用。
+     只发包不截图用 `axiom replay send`，返回的地址 10 分钟内有效。
+     `--compare` 才做「与上报是否一致」的比对——**默认不做**，因为你复现的是结论不是逐字重放。
    - **业务效果图用 bsk 截图**：`"$AXIOM_BSK" screenshot --out business.png --session <id>`，
      再 `axiom review evidence attach --step N --kind business --file business.png`。
      business 可选、不计入闸门。

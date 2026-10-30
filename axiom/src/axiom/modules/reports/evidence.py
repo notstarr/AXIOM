@@ -14,7 +14,7 @@ but not the step that got there; only a response captured off the wire does.  So
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 from sqlalchemy import Connection, case, delete, select
 
@@ -45,8 +45,9 @@ MAX_STEP_INDEX = 200
 def missing_packet_steps(step_count: int, evidence: Iterable[dict[str, Any]]) -> list[int]:
     """Steps 1..``step_count`` that have no packet shot yet.
 
-    Pure so the review service, the API and the tests all agree on what "covered" means:
-    one packet shot anywhere in the step is enough, and extra business shots never count.
+    Kept for callers that only know how many steps there are; one shot per step is the
+    floor, not the target.  :func:`packet_shot_gaps` is what the gate uses, because a
+    step with two packets needs two pictures.
     """
     if step_count <= 0:
         return []
@@ -56,6 +57,41 @@ def missing_packet_steps(step_count: int, evidence: Iterable[dict[str, Any]]) ->
         if (item.get("kind") or KIND_BUSINESS) == KIND_PACKET
     }
     return [step for step in range(1, step_count + 1) if step not in covered]
+
+
+def packet_shot_gaps(
+    exchanges_per_step: Sequence[int],
+    evidence: Iterable[dict[str, Any]],
+) -> list[tuple[int, int, int]]:
+    """``(step, required, attached)`` for every step short of pictures.
+
+    A step is a claim about *one* conclusion that sometimes takes several packets — ask
+    for a credential, then use it.  One picture cannot show both responses, so the
+    requirement is one packet shot per exchange, not per step.  A business shot never
+    counts: it shows the effect, not the wire.
+
+    Pure so the review service, the API and the tests all read "covered" the same way.
+    """
+    shots: dict[int, int] = {}
+    for item in evidence:
+        if (item.get("kind") or KIND_BUSINESS) != KIND_PACKET:
+            continue
+        step = int(item.get("step_index") or 0)
+        if step > 0:
+            shots[step] = shots.get(step, 0) + 1
+    gaps: list[tuple[int, int, int]] = []
+    for index, required in enumerate(exchanges_per_step, start=1):
+        need = max(1, int(required))
+        have = shots.get(index, 0)
+        if have < need:
+            gaps.append((index, need, have))
+    return gaps
+
+
+def exchanges_per_step(reproduction: Any) -> list[int]:
+    """How many packets each step declares, in step order."""
+    steps = getattr(reproduction, "steps", None) or []
+    return [max(1, len(getattr(step, "exchanges", None) or [])) for step in steps]
 
 
 class ReportEvidenceRepository:

@@ -530,3 +530,28 @@ def test_missing_packet_steps_names_every_gap() -> None:
     assert missing_packet_steps(
         1, [{"step_index": 1, "kind": "packet"}, {"step_index": 1, "kind": "packet"}]
     ) == []
+
+
+def test_a_shot_can_be_detached_and_the_step_becomes_missing_again(client) -> None:
+    """删除是补齐的反面：删掉之后闸门必须重新认为这一步缺图。"""
+    from axiom.modules.reports.evidence import packet_shot_gaps
+
+    task = _project_task(client)
+    vulnerability = _vulnerability(client, task["id"])
+    artifact_id = _upload(client, task["id"], "step-01.png", b"\x89PNG\r\n\x1a\n")
+    base = f"/api/v1/tasks/{task['id']}/vulnerabilities/{vulnerability['id']}/evidence"
+
+    attached = client.post(
+        base + "/capture",
+        files={"file": ("step-01.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        data={"step_index": "1", "kind": "packet", "caption": "步骤 1 回包"},
+    )
+    assert attached.status_code == 201, attached.text
+    shot_id = attached.json()["artifact_id"]
+
+    listed = client.get(base).json()
+    assert [item["artifact_id"] for item in listed] == [shot_id]
+
+    removed = client.delete(f"{base}/{shot_id}")
+    assert removed.status_code == 204, removed.text
+    assert client.get(base).json() == []

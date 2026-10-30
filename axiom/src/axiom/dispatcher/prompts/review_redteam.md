@@ -12,18 +12,18 @@
 
 1. 读 `review_target.json` 和链上的前置成果。审核前运行 `axiom skill path redteam-review` 并读取其 SKILL.md。
 2. `review_target.json` 已含上报时提交的结构化复现（`reproduction`，逐字报文）。先看它，再决定要不要复测。
-3. **每一步都要挂一张报文图**——那一步真实回包在屏幕上的样子。做法是让重放器真实再发一次，然后截它渲染出的页面：
+3. **每个报文都要挂一张图**——那次真实收发在屏幕上的样子。上报的复现步骤是**参考**：照它自己打一遍即可，报文不必与上报逐字相同。一步里有几个报文就截几张（`--result/--step` 只是省去手写，也可以自己构造请求）：
 
    ```bash
-   # ① 重放并自渲染：真实发包 + 截页面，一步到位
+   # ① 真实发一次并渲染截图
    axiom replay shot --task-id {task_id} --result {result_id} --step 2 \
-     --output step-02.png --caption "步骤 2 回包"
+     --output step-02-a.png --caption "步骤 2 报文 1 回包"
 
    # ② 挂到该步（kind=packet 才计入闸门）
-   axiom review evidence attach --step 2 --kind packet --file step-02.png
+   axiom review evidence attach --step 2 --kind packet --file step-02-a.png
    ```
 
-   只发包不截图就 `axiom replay send`，它返回一个 10 分钟内有效的地址；`--result/--step` 让报文取自上报记录，**不要自己重写报文**。缺图时 `axiom review status` 不会 `ready`，`axiom review decision submit` 会被拒并点名缺第几步；步骤号越界同样会被拒。
+   只发包不截图就 `axiom replay send`，它返回一个 10 分钟内有效的地址。`--compare` 才做「与上报是否一致」的比对——**默认不做**，因为复核的是结论不是逐字重放。缺图时 `axiom review status` 不会 `ready`，`axiom review decision submit` 会被拒并点名「步骤 N 需 M 张、已有 K 张」；步骤号越界同样会被拒。
 
    **业务效果图用 bsk 截图**（后台列表、数据内容、shell 回显这类）：`"$AXIOM_BSK" screenshot --out business.png --session <id>`，然后 `axiom review evidence attach --step N --kind business --file business.png`。business 可选、不计入闸门。
 

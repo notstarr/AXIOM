@@ -7,17 +7,23 @@ description: 红队成果审核前必读。按护网评分表核定分
 
 审核对象是红队成果。先读 `redteam-scoring`，按那张表核定 `points_awarded`。不以自评分为准。
 
-## 每步报文图（必须）
+## 每个报文一张图（必须）
 
-报告里的每一步都要有一张**报文图**——那一步真实回包在屏幕上的样子。没有它，`axiom review
-status` 不会 `ready`，`axiom review decision submit` 会直接被拒并点名缺第几步。
+上报的复现步骤是**参考**：照它自己复现一遍即可，报文不必与上报逐字相同。一步里有几个报文
+就要几张图——一个请求配一张回包截图，缺一张都会挡住裁决。
 
 ```bash
-axiom review evidence attach --step 2 --kind packet --file step-02.png --caption "步骤 2 回包"
+axiom replay shot --task-id t_231 --result x007 --step 2 \
+  --output step-02-a.png --caption "步骤 2 报文 1 回包"
+axiom review evidence attach --step 2 --kind packet --file step-02-a.png
 ```
 
 `--step` 必须落在该成果复现步骤的 1..N 之内（越界会被拒，报错里有真实步数）。
 **一张图挂在第几步，就只证明第几步**——不要用第 1 步的图去补第 4 步。
+
+`--result/--step` 只是省去手写报文；想自己构造请求就直接传 `--packet-file`，或者用
+`axiom replay send`（返回 10 分钟内有效的渲染地址）。`--compare` 才比对「与上报是否一致」，
+默认不比对：复核的是结论，不是逐字重放。
 
 业务效果图（后台列表、数据内容、shell 回显）用 `--kind business`，是**可选**的：
 它让报告好读，但不计入闸门，也别指望它能顶替报文图。

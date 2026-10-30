@@ -805,6 +805,60 @@ window.AxiomModules.projects = {
       }
     },
 
+    // 删除一张已挂的截图。证据行以 artifact 为键，所以删除就是 detach 那张图。
+    async deleteStepShot(subjectType, subjectId, item) {
+      if (!item?.artifact_id) return;
+      if (!confirm('删除这张截图？删除后该步骤会重新变成「缺图」。')) return;
+      const taskId = subjectType === 'redteam_result'
+        ? (this.selectedRtResult()?.task_id || '')
+        : (this.selectedVulnerability()?.project_id || '');
+      if (!taskId) {
+        this.showToast('缺少任务标识，无法删除', 'error');
+        return;
+      }
+      const base = subjectType === 'redteam_result'
+        ? `/tasks/${taskId}/red-team/results/${subjectId}/evidence`
+        : `/tasks/${taskId}/vulnerabilities/${subjectId}/evidence`;
+      try {
+        await this.api('DELETE', `${base}/${item.artifact_id}`);
+        this.showToast('截图已删除');
+        await this.refreshSubjectEvidence(subjectType, taskId, subjectId);
+      } catch (e) {
+        this.showToast(e.message || '删除失败', 'error');
+      }
+    },
+
+    // 删除/上传之后都要重新取一次 evidence 数组，详情面板直接读它。
+    async refreshSubjectEvidence(subjectType, taskId, subjectId) {
+      if (subjectType === 'redteam_result') {
+        await this.loadRedTeamResultPage?.();
+        return;
+      }
+      await this.loadVulnerabilityPage?.({ selectFirst: false });
+      const refreshed = (this.vulnerabilityItems || []).find(
+        item => item.project_id === taskId && item.id === subjectId,
+      );
+      if (refreshed) {
+        this.selectedVulnerabilityKey = this.vulnerabilityKey(refreshed);
+        await this.loadVulnerabilityReviews?.(refreshed);
+      }
+    },
+
+    // 灯箱：点眼睛时把图放大到全屏，Esc 或点背景关闭。
+    openShotPreview(item) {
+      if (!item?.url) return;
+      this.shotPreview = {
+        open: true,
+        url: item.url,
+        caption: item.caption || '',
+        kind: item.kind || 'business',
+      };
+    },
+
+    closeShotPreview() {
+      this.shotPreview = { open: false, url: '', caption: '', kind: '' };
+    },
+
     resetTaskDetailLoad(taskId = '') {
       const sectionNames = [
         'project_group', 'graph', 'hints', 'todos', 'vulnerabilities',
