@@ -292,7 +292,9 @@ def register_replay_commands(main: click.Group) -> None:
 
         raw_compare = result.get("compare") or {}
         comparison = None
-        if raw_compare.get("status"):
+        # 只有显式 --compare 才把比对结论画上。默认的 "inconclusive" 是一条噪音：
+        # 审核者是照步骤自己复现，本来就不该拿上报的报文逐字对比。
+        if raw_compare.get("status") and compare_with_recorded:
             comparison = Comparison(
                 status=str(raw_compare["status"]),
                 checks=[
