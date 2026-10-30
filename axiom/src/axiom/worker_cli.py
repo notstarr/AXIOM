@@ -873,6 +873,8 @@ def register_worker_commands(main: click.Group) -> None:
         reproduction_file: str,
         affected_target: str,
     ) -> None:
+        # 先解析复现：下面的 --prerequisites 是否必填，取决于复现里有没有条件。
+        reproduction = _reproduction_payload(reproduction_file)
         report = {
             "title": title,
             "type": vulnerability_type,
@@ -883,11 +885,13 @@ def register_worker_commands(main: click.Group) -> None:
                 "description",
                 required=True,
             ),
+            # 前提的正式位置是 repro.json 的 prerequisites（报告展示那一份）；
+            # 这里的 --prerequisites 是没有结构化条件时的兜底，两者至少给一个。
             "prerequisites": _text_value(
                 prerequisites,
                 prerequisites_file,
                 "prerequisites",
-                required=True,
+                required=not reproduction["prerequisites"],
             ),
             "impact": _text_value(impact, impact_file, "impact", required=True),
             "remediation": _text_value(
@@ -896,7 +900,7 @@ def register_worker_commands(main: click.Group) -> None:
                 "remediation",
                 required=False,
             ),
-            "reproduction": _reproduction_payload(reproduction_file),
+            "reproduction": reproduction,
             "affected_target": affected_target,
         }
         task_id = _environment("AXIOM_TASK_ID")

@@ -395,10 +395,41 @@ def test_explore_cli_requires_prerequisites_but_not_remediation(monkeypatch, tmp
         env=_env(),
     )
 
-    assert missing_prerequisites.exit_code == 2
-    assert "prerequisites is required" in missing_prerequisites.output
+    # 复现里已有 prerequisites，所以 --prerequisites 可以省略：它只是那句概括，
+    # 报告展示的是复现里那一条条条件，两边都写等于同一件事说两遍。
+    assert missing_prerequisites.exit_code == 0, missing_prerequisites.output
     assert without_remediation.exit_code == 0, without_remediation.output
-    assert calls[0][2]["report"]["remediation"] == ""
+    # 第一次调用带了 --remediation，第二次没带；后者应回落到空串
+    assert calls[0][2]["report"]["remediation"] == "增加服务端鉴权"
+    assert calls[-1][2]["report"]["remediation"] == ""
+    assert calls[0][2]["report"]["prerequisites"] == ""
+    assert calls[0][2]["report"]["reproduction"]["prerequisites"] == REPRODUCTION["prerequisites"]
+
+
+def test_explore_cli_still_requires_prerequisites_when_the_reproduction_has_none(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """两边都没有 = 没说清怎么利用。这时 --prerequisites 必须给。"""
+    monkeypatch.setattr(
+        "axiom.worker_cli._request", lambda method, path, payload: {"total": 1}
+    )
+    bare = dict(REPRODUCTION, prerequisites=[])
+    path = tmp_path / "bare.json"
+    path.write_text(json.dumps(bare, ensure_ascii=False), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "explore", "vulnerability", "report",
+            "--title", "对象级授权缺失", "--type", "越权", "--severity", "high",
+            "--description", "描述", "--impact", "影响",
+            "--reproduction-file", str(path),
+        ],
+        env=_env(),
+    )
+
+    assert result.exit_code == 2
+    assert "prerequisites is required" in result.output
 
 
 def test_explore_cli_reads_required_fields_from_files(monkeypatch, tmp_path: Path) -> None:

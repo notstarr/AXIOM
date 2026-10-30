@@ -35,11 +35,15 @@ axiom explore vulnerability report \
   --type '未授权访问' \
   --severity high \
   --description '普通用户可读取其他用户的敏感资料' \
-  --prerequisites '无需 Cookie 或 Authorization' \
   --impact '造成跨用户敏感数据泄露' \
   --reproduction-file repro.json \
   --affected-target '127.0.0.1:18083'
+# 前提已写在 repro.json 里，所以这里不传 --prerequisites
 ```
+
+**利用前提写进 `repro.json` 的 `prerequisites`**（数组，一条一个条件）——报告的「利用前提」一节
+展示的就是这一份，重放与审核也读它。`--prerequisites` 只是它的一行概括，仅在复现没有条件时才被
+渲染；复现里已经有条件时可以不传，别把同一批条件抄两遍。
 
 长文本可用对应的 `--*-file` 参数。
 `--remediation`（修复建议）**不是必填**：交付报告里的这一节由审核/AI 富化补。

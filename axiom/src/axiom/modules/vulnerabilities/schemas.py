@@ -75,7 +75,10 @@ class VulnerabilityDetails(BaseModel):
 class ExploreVulnerabilityReport(VulnerabilityDetails):
     """Worker fields. Execution identity, status and Artifact IDs are injected by AXIOM."""
 
-    prerequisites: str
+    # 前提的正式位置是 reproduction.prerequisites（报告、重放、审核都读那一份）。
+    # 这里这句是它的概括，只在没有结构化条件时才被渲染；既然复现里已经有条件，
+    # 就不该再逼 worker 把同一批条件抄一遍。两者至少给一个。
+    prerequisites: str = ""
     # 修复建议不再是 Explore 的必填项：本环节只负责证明漏洞成立，
     # 交付报告里的修复建议由 Review / AI 富化补。缺失时渲染器整节省略。
     remediation: str = ""
@@ -88,13 +91,21 @@ class ExploreVulnerabilityReport(VulnerabilityDetails):
         max_length=MAX_VULNERABILITY_EVIDENCE_ARTIFACTS,
     )
 
-    @field_validator("prerequisites")
-    @classmethod
-    def require_explore_text(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("must not be empty")
-        return value
+    @model_validator(mode="after")
+    def require_prerequisites_somewhere(self) -> "ExploreVulnerabilityReport":
+        """A finding with no exploit preconditions is not a finding.
+
+        They belong in ``reproduction.prerequisites`` — that is the copy the report shows
+        and the reviewer replays against.  The form field stays as a fallback for rows
+        whose reproduction has none, so requiring it unconditionally only produced two
+        renderings of the same list.
+        """
+        if not self.prerequisites.strip() and not self.reproduction.prerequisites:
+            raise ValueError(
+                "利用前提不能为空：写进 repro.json 的 prerequisites（推荐，报告会展示这一份），"
+                "或传 --prerequisites 作为兜底"
+            )
+        return self
 
     @field_validator("evidence_paths")
     @classmethod

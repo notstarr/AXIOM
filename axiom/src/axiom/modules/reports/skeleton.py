@@ -335,22 +335,25 @@ def _image_label(item: dict[str, Any]) -> str:
 def _vulnerability_prerequisite_blocks(vulnerability: "Vulnerability") -> tuple[Block, ...]:
     """What an attacker needs before the first packet.
 
-    Two sources, both kept: the reporter's own sentence (``prerequisites`` — the one they
-    typed on the report form) and the structured conditions the reproduction declares.
-    The prose usually explains *why*, the list enumerates *what*, and dropping either
-    loses something the next tester needs.
+    The same requirement reaches us twice: the reporter's own sentence on the report form
+    (``prerequisites``) and the conditions the reproduction declares.  A worker filling in
+    both writes the summary and then the detail of one list, and printing both reads as
+    the report saying it twice — "任意普通登录用户 JWT；organization-code 头填自身组织 000"
+    immediately above the two bullets that say exactly that.
+
+    So one source is shown, and the structured one wins: it is the list the replay and the
+    review read, and it is the more precise of the two.  The prose is what remains for
+    hand-entered findings and for rows that predate structured reproduction — the cases
+    where there is no list to prefer.
     """
-    blocks: list[Block] = []
+    reproduction = vulnerability.reproduction
+    conditions = tuple(reproduction.prerequisites) if reproduction is not None else ()
+    if conditions:
+        return (Block(type="bullets", items=conditions),)
     prose = (vulnerability.prerequisites or "").strip()
     if prose:
-        blocks.append(Block(type="text", text=prose))
-    reproduction = vulnerability.reproduction
-    conditions = list(reproduction.prerequisites) if reproduction is not None else []
-    if conditions:
-        blocks.append(Block(type="bullets", items=tuple(conditions)))
-    if not blocks:
-        return (Block(type="text", text=EMPTY),)
-    return tuple(blocks)
+        return (Block(type="text", text=prose),)
+    return (Block(type="text", text=EMPTY),)
 
 
 def _prerequisite_blocks(reproduction: Reproduction | None) -> tuple[Block, ...]:

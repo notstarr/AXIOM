@@ -667,19 +667,7 @@ def test_explore_rejects_worker_supplied_status(client) -> None:
     assert "status" in response.text
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("prerequisites", None),
-        ("prerequisites", "   "),
-        ("reproduction", None),
-    ],
-)
-def test_explore_api_requires_prerequisites_and_reproduction(
-    client,
-    field: str,
-    value: str | None,
-) -> None:
+def test_explore_api_requires_a_reproduction(client) -> None:
     task, intents = _task_with_explore_intents(client)
     claim = client.post(
         f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}/claim",
@@ -694,7 +682,44 @@ def test_explore_api_requires_prerequisites_and_reproduction(
         "description": "低权限用户可以读取其他用户对象。",
         "prerequisites": "需要任意低权限账号。",
         "impact": "导致跨用户数据泄露。",
-        "remediation": "服务端校验对象归属。",
+        "reproduction": REPRODUCTION,
+    }
+    report.pop("reproduction")
+
+    response = client.post(
+        f"{base}/explore-vulnerabilities",
+        json={"lease_id": claim["lease_id"], "report": report},
+    )
+
+    assert response.status_code == 422
+    assert "reproduction" in response.text
+
+
+@pytest.mark.parametrize(("field", "value"), [("prerequisites", None), ("prerequisites", "   ")])
+def test_explore_api_accepts_omitted_prose_when_the_reproduction_has_conditions(
+    client,
+    field: str,
+    value: str | None,
+) -> None:
+    """前提的正式位置是 repro.json 的 prerequisites。
+
+    逼 worker 再把同一批条件抄进 --prerequisites，只会让报告把同一件事说两遍；
+    复现里已经有条件时，那一行概括可以不写。
+    """
+    task, intents = _task_with_explore_intents(client)
+    claim = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}/claim",
+        json={"worker_name": "worker-a"},
+    ).json()
+    base = f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}"
+    client.post(f"{base}/start", json={"lease_id": claim["lease_id"]})
+    report = {
+        "title": "对象级授权缺失",
+        "type": "越权",
+        "severity": "high",
+        "description": "低权限用户可以读取其他用户对象。",
+        "prerequisites": "需要任意低权限账号。",
+        "impact": "导致跨用户数据泄露。",
         "reproduction": REPRODUCTION,
     }
     if value is None:
@@ -707,8 +732,38 @@ def test_explore_api_requires_prerequisites_and_reproduction(
         json={"lease_id": claim["lease_id"], "report": report},
     )
 
+    # 该端点回报的是「本轮上报了几条」，不是单条漏洞对象
+    assert response.status_code == 200, response.text
+    assert response.json()["total"] == 1
+    # 报告里只呈现一次前提（结构化条件那份），不由这个端点在读路径上验证：
+    # 「同一批条件不渲染两遍」由 test_report_skeleton 覆盖。
+
+
+def test_explore_api_rejects_a_report_with_no_conditions_anywhere(client) -> None:
+    """两边都没有就等于没说清怎么利用，这不是一个已确认漏洞。"""
+    task, intents = _task_with_explore_intents(client)
+    claim = client.post(
+        f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}/claim",
+        json={"worker_name": "worker-a"},
+    ).json()
+    base = f"/api/v1/dispatch/tasks/{task['id']}/intents/{intents[0]}"
+    client.post(f"{base}/start", json={"lease_id": claim["lease_id"]})
+    report = {
+        "title": "对象级授权缺失",
+        "type": "越权",
+        "severity": "high",
+        "description": "低权限用户可以读取其他用户对象。",
+        "impact": "导致跨用户数据泄露。",
+        "reproduction": {**REPRODUCTION, "prerequisites": []},
+    }
+
+    response = client.post(
+        f"{base}/explore-vulnerabilities",
+        json={"lease_id": claim["lease_id"], "report": report},
+    )
+
     assert response.status_code == 422
-    assert field in response.text
+    assert "利用前提不能为空" in response.text
 
 
 def test_explore_api_treats_remediation_as_optional(client) -> None:

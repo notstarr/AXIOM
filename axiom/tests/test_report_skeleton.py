@@ -153,9 +153,9 @@ def test_prerequisites_are_their_own_chapter_above_the_process() -> None:
     process = next(section for section in doc.sections if section.key == "process")
 
     assert prerequisites.title == "利用前提"
-    # 上报人写的那句话 + 复现声明的结构化条件，两者都留
-    assert prerequisites.blocks[0].text == "需要任意低权限账号。"
-    assert prerequisites.blocks[1].items == ("需要低权限账号", "订单接口可达")
+    # 结构化条件优先：表单里那句话通常是同一批条件的概括，两句都说等于说两遍
+    assert [block.type for block in prerequisites.blocks] == ["bullets"]
+    assert prerequisites.blocks[0].items == ("需要低权限账号", "订单接口可达")
     # 测试过程只留入口点与步骤
     assert [block.type for block in process.blocks] == ["kv", "steps"]
     assert process.blocks[0].text == "POST /api/orders"
@@ -376,3 +376,24 @@ def test_a_written_out_nothing_is_not_prose() -> None:
             + list(prerequisites.blocks[-1].items if prerequisites.blocks else ())
         )
         assert placeholder.strip().lower() not in rendered.lower(), placeholder
+
+def test_prerequisites_fall_back_to_the_reporters_sentence_without_a_reproduction() -> None:
+    """手工录入、以及复现之前的存量行，只有那一句话可展示。"""
+    vulnerability = _vulnerability(reproduction=None, prerequisites="需要任意低权限账号。")
+    doc = build_vulnerability_report(vulnerability)
+
+    prerequisites = next(section for section in doc.sections if section.key == "prerequisites")
+    assert [block.type for block in prerequisites.blocks] == ["text"]
+    assert prerequisites.blocks[0].text == "需要任意低权限账号。"
+
+
+def test_conditions_win_so_the_same_list_is_not_printed_twice() -> None:
+    """worker 既写 --prerequisites 又写复现条件时，报告里只该出现一次。"""
+    vulnerability = _vulnerability(prerequisites="任意普通登录用户 JWT；organization-code 头填 000")
+    doc = build_vulnerability_report(vulnerability)
+    rendered = to_markdown(doc)
+    section = rendered.split("## 利用前提")[1].split("## 测试过程")[0]
+
+    assert "任意普通登录用户 JWT" not in section
+    assert "需要低权限账号" in section
+    assert "订单接口可达" in section

@@ -129,12 +129,14 @@
 
           <!-- 利用前提：和「描述」「影响」同一级别的内容节。
                不套 rp-proc/rp-entry——那个带边框和底色的卡片是「测试过程」的语言，
-               把一句前提装进去会像一张空表单。 -->
+               把一句前提装进去会像一张空表单。
+               有结构化条件时只展条件：表单里那句话通常是同一批条件的概括，
+               两句都说等于同一件事说两遍。 -->
           <section class="rp-block">
             <h2 class="rp-h">利用前提</h2>
-            <p class="rp-absent" x-show="!vulnPrerequisiteProse() && !vulnPrerequisiteLines().length">未填写</p>
-            <p class="rp-p" x-show="vulnPrerequisiteProse()" x-text="formatMultiline(vulnPrerequisiteProse())"></p>
-            <ul class="rp-req" x-show="vulnPrerequisiteLines().length" :style="vulnPrerequisiteProse() ? 'margin-top:7px;' : ''">
+            <p class="rp-absent" x-show="!vulnPrerequisiteLines().length && !vulnPrerequisiteProse()">未填写</p>
+            <p class="rp-p" x-show="!vulnPrerequisiteLines().length && vulnPrerequisiteProse()" x-text="formatMultiline(vulnPrerequisiteProse())"></p>
+            <ul class="rp-req" x-show="vulnPrerequisiteLines().length">
               <template x-for="(item, idx) in vulnPrerequisiteLines()" :key="`vpre-${idx}`">
                 <li x-text="item"></li>
               </template>
