@@ -699,11 +699,97 @@ def test_cross_task_result_and_chain_listing(client) -> None:
     assert by_search.headers["X-Total-Count"] == "1"
     by_status = client.get("/api/v1/red-team/results", params={"status": "verified"})
     assert by_status.headers["X-Total-Count"] == "0"
+    # 核定分是筛选集的全量聚合：还没有 verified 时必须是 0，而不是缺头。
+    assert by_status.headers["X-Total-Points"] == "0"
 
     chains = client.get("/api/v1/red-team/chains")
     assert chains.status_code == 200, chains.text
     assert chains.headers["X-Total-Count"] == "1"
     assert chains.json()[0]["id"] == chain_id
+
+
+def test_cross_task_result_paging_keeps_the_full_awarded_total(client, engine) -> None:
+    """翻页只改返回的行，不改核定总分。
+
+    控制台的「核定 X 分」曾经是对本页 items 求和得出的；加上分页以后那样会
+    变成「本页核定多少分」，翻到第 2 页数字就掉一截。这条测试锁住：
+    X-Total-Points 必须覆盖整个筛选集。
+    """
+
+    from sqlalchemy import insert
+
+    from axiom.modules.redteam.tables import red_team_chains, red_team_results
+
+    project = client.post("/api/v1/projects", json={"title": "分页"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "分页任务",
+            "origin": "b.example.com",
+            "goal": "对该资产进行渗透测试，并取得100积分",
+            "worker_pool": ["worker-a"],
+            "engagement_mode": "red_team",
+        },
+    ).json()
+
+    now = "2026-10-14T00:00:00Z"
+    with engine.begin() as conn:
+        conn.execute(
+            insert(red_team_chains).values(
+                id="chPAGE01", task_id=task["id"], title="链",
+                initial_principal_json={"id": "user:initial", "label": "初始身份", "tenant": "", "credential_id": None},
+                target_capabilities_json=[], target_assets_json=[], current_state_json={},
+                source_fact_ids_json=[], source_intent_ids_json=[],
+                status="open", created_by="worker.reason", created_at=now, updated_at=now,
+            )
+        )
+        for index, points in enumerate([30, 20, 10], start=1):
+            # created_at 递减，让 DESC 排序固定成 rrPAGE01(30)、rrPAGE02(20)、rrPAGE03(10)，
+            # 这样两页的本页求和才分别是 50 和 10，可以直接和全量 60 对比。
+            stamp = f"2026-10-14T00:00:0{4 - index}Z"
+            conn.execute(
+                insert(red_team_results).values(
+                    id=f"rrPAGE0{index}", task_id=task["id"], chain_id="chPAGE01", intent_id="i001",
+                    result_type="permission", title=f"成果{index}", description="desc",
+                    principal="user:initial", tenant="",
+                    capabilities_before_json=[], capabilities_gained_json=["tenant:admin"],
+                    capabilities_after_json=["tenant:admin"],
+                    target_asset="member-management", data_target_id=None, sample_count=None,
+                    sample_bytes=None, data_fields_json=[], data_summary="", credential_ref=None,
+                    evidence_refs_json=[], status="verified", reported_by="worker-a",
+                    reviewed_by="reviewer-a", review_reason="ok",
+                    points_declared=points, points_awarded=points,
+                    created_at=stamp, updated_at=stamp,
+                )
+            )
+
+    first = client.get("/api/v1/red-team/results", params={"task_id": task["id"], "limit": 2})
+    second = client.get(
+        "/api/v1/red-team/results", params={"task_id": task["id"], "limit": 2, "offset": 2}
+    )
+    assert first.status_code == 200 and second.status_code == 200
+    assert first.headers["X-Total-Count"] == "3"
+    assert second.headers["X-Total-Count"] == "3"
+    assert len(first.json()) == 2
+    assert len(second.json()) == 1
+    # 两页的行不相交 —— offset 生效，不是恒返回第一页
+    assert {item["id"] for item in first.json()}.isdisjoint(
+        {item["id"] for item in second.json()}
+    )
+    # 总分在两页上一致：30 + 20 + 10
+    assert first.headers["X-Total-Points"] == "60"
+    assert second.headers["X-Total-Points"] == "60"
+    # 但本页求和只有 50 / 10 —— 正是不能拿来当总分的那个数
+    assert sum(item["points_awarded"] for item in first.json()) == 50
+    assert sum(item["points_awarded"] for item in second.json()) == 10
+
+    # 筛选集缩小后总分跟着变，说明聚合用的是同一组 conditions
+    verified_only = client.get(
+        "/api/v1/red-team/results", params={"task_id": task["id"], "status": "reviewing"}
+    )
+    assert verified_only.headers["X-Total-Count"] == "0"
+    assert verified_only.headers["X-Total-Points"] == "0"
 
 
 def test_vulnerability_task_rejects_redteam_result(client) -> None:

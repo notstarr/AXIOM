@@ -270,13 +270,13 @@
   <div x-show="factViewMode === 'result'" x-cloak class="shrink-0 px-5 py-3 border-b border-slate-100" style="background:var(--sto-panel);">
     <div class="flex items-center" style="gap:9px;">
       <input x-model="rtResultFilter.keyword" @input="scheduleRtResultSearch()" placeholder="搜索标题、描述、身份" class="sto-input" style="flex:1;">
-      <select x-model="rtResultFilter.projectId" @change="loadRedTeamResultPage()" class="sto-input" style="width:auto;">
+      <select x-model="rtResultFilter.projectId" @change="applyRtResultFilters()" class="sto-input" style="width:auto;">
         <option value="">全部任务</option>
         <template x-for="p in projects.filter(item => !item.archived && item.engagement_mode === 'red_team')" :key="`rt-filter-${p.id}`">
           <option :value="p.id" x-text="`${p.id} ${p.title}`"></option>
         </template>
       </select>
-      <select x-model="rtResultFilter.status" @change="loadRedTeamResultPage()" class="sto-input" style="width:auto;">
+      <select x-model="rtResultFilter.status" @change="applyRtResultFilters()" class="sto-input" style="width:auto;">
         <option value="">全部状态</option>
         <option value="reported">已上报</option>
         <option value="reviewing">审核中</option>
@@ -285,7 +285,7 @@
         <option value="duplicate">重复</option>
         <option value="needs-human">需人工</option>
       </select>
-      <select x-model="rtResultFilter.type" @change="loadRedTeamResultPage()" class="sto-input" style="width:auto;">
+      <select x-model="rtResultFilter.type" @change="applyRtResultFilters()" class="sto-input" style="width:auto;">
         <option value="">全部类型</option>
         <option value="permission">权限跃迁</option>
         <option value="data">数据获取</option>
@@ -330,6 +330,11 @@
           <p style="margin-top:5px; font-size:12.5px; font-weight:600; color:var(--sto-fg); line-height:1.45; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" x-text="r.title"></p>
         </button>
       </template>
+      <div class="sto-pager" style="border-top:1px solid var(--sto-line); margin-top:10px; padding-top:10px;">
+        <button @click="setRtResultPage(rtResultPage - 1)" :disabled="rtResultLoading || rtResultPage <= 0" class="sto-minibtn">上一页</button>
+        <span class="sto-num" x-text="`${rtResultPage + 1} / ${rtResultPageCount()}`"></span>
+        <button @click="setRtResultPage(rtResultPage + 1)" :disabled="rtResultLoading || rtResultPage + 1 >= rtResultPageCount()" class="sto-minibtn">下一页</button>
+      </div>
     </aside>
     <section class="sto-panel overflow-y-auto" style="overflow-x:hidden;">
       <template x-if="!selectedRtResult()">

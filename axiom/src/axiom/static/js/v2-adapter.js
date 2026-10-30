@@ -122,9 +122,15 @@
       if (response.status === 401 && !path.startsWith('/auth/')) onUnauthorized();
       throw new Error(items?.detail || text || `HTTP ${response.status}`);
     }
+    // 可选的全量聚合（如核定总分）。缺头时保持 null，调用方自己决定怎么退化。
+    // 只读 get()、不读 has()：测试与老浏览器里的 headers 桩不一定实现 has。
+    const rawTotalPoints = response.headers.get('X-Total-Points');
     return {
       items: Array.isArray(items) ? items : [],
       total: Number(response.headers.get('X-Total-Count') || items.length || 0),
+      totalPoints: rawTotalPoints === null || rawTotalPoints === undefined || rawTotalPoints === ''
+        ? null
+        : Number(rawTotalPoints),
     };
   }
 
@@ -1767,6 +1773,11 @@
       return ({ reported: 'info', reviewing: 'warn', verified: 'ok', rejected: 'err', duplicate: 'off', 'needs-human': 'warn' })[status] || 'off';
     },
     rtVerifiedPoints() {
+      // 服务端给的是当前筛选下的全量核定分（X-Total-Points）。分页后不能再对本页
+      // items 求和，那样翻页会把总分显示成「本页已核定多少分」。
+      if (this.rtResultTotalPoints !== null && this.rtResultTotalPoints !== undefined) {
+        return Number(this.rtResultTotalPoints) || 0;
+      }
       return (this.rtResultItems || [])
         .filter(item => item.status === 'verified')
         .reduce((sum, item) => sum + (Number(item.points_awarded) || 0), 0);
@@ -1851,7 +1862,11 @@
       const requestId = ++this._rtResultListRequestId;
       this.rtResultLoading = true;
       try {
-        const params = new URLSearchParams({ limit: '100', offset: '0' });
+        const pageSize = Math.max(1, Number(this.rtResultPageSize) || 50);
+        const params = new URLSearchParams({
+          limit: String(pageSize),
+          offset: String(Math.max(0, Number(this.rtResultPage) || 0) * pageSize),
+        });
         const keyword = String(this.rtResultFilter.keyword || '').trim();
         if (keyword) params.set('search', keyword);
         if (this.rtResultFilter.projectId) params.set('task_id', this.rtResultFilter.projectId);
@@ -1863,6 +1878,13 @@
         if (requestId !== this._rtResultListRequestId) return;
         this.rtResultItems = resultPage.items;
         this.rtResultTotal = resultPage.total;
+        this.rtResultTotalPoints = resultPage.totalPoints;
+        // 翻到空页（例如筛选后总数变少）时退回最后一页，而不是显示空白列表。
+        const pageCount = this.rtResultPageCount();
+        if (this.rtResultTotal > 0 && this.rtResultPage >= pageCount) {
+          this.rtResultPage = pageCount - 1;
+          return this.loadRedTeamResultPage();
+        }
         if (!this.rtResultItems.some(item => this.rtResultKey(item) === this.selectedRtResultId)) {
           this.selectedRtResultId = this.rtResultKey(this.rtResultItems[0]);
         }
@@ -1872,12 +1894,26 @@
         if (error?.name === 'AbortError') return;
         this.showToast(error?.message || '红队成果加载失败', 'error');
       } finally {
-        this.rtResultLoading = false;
+        if (requestId === this._rtResultListRequestId) this.rtResultLoading = false;
       }
+    },
+    rtResultPageCount() {
+      return Math.max(1, Math.ceil((this.rtResultTotal || 0) / (Number(this.rtResultPageSize) || 50)));
+    },
+    async setRtResultPage(page) {
+      const next = Math.max(0, Math.min(this.rtResultPageCount() - 1, Number(page) || 0));
+      if (next === this.rtResultPage) return;
+      this.rtResultPage = next;
+      await this.loadRedTeamResultPage();
     },
     scheduleRtResultSearch() {
       clearTimeout(this._rtResultSearchTimer);
-      this._rtResultSearchTimer = setTimeout(() => this.loadRedTeamResultPage(), 250);
+      this._rtResultSearchTimer = setTimeout(() => this.applyRtResultFilters(), 250);
+    },
+    async applyRtResultFilters() {
+      // 任何筛选条件变化都回到第一页，否则会停在一个不存在的 offset 上。
+      this.rtResultPage = 0;
+      await this.loadRedTeamResultPage();
     },
     v2Request(method, path, body) {
       return request(method, path, body);

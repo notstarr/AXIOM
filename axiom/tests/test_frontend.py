@@ -2535,6 +2535,103 @@ def test_broken_vulnerability_deep_link_never_selects_a_different_record(
     }
 
 
+def _run_red_team_result_paging_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    helper = ROOT / "src/axiom/static/js/helpers.js"
+    adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{
+  state: {{ state: {{}} }}, core: {{ methods: {{}} }}, projects: {{ methods: {{}} }},
+  dashboard: {{ methods: {{}} }}, graph: {{ methods: {{}} }}, files: {{ methods: {{}} }},
+}} }};
+global.location = {{ origin:'http://testserver', hash:'#/facts' }};
+global.window.history = {{ replaceState: () => {{}} }};
+const calls = [];
+global.fetch = async (url) => {{
+  calls.push(url);
+  const parsed = new URL(url, 'http://testserver');
+  const offset = Number(parsed.searchParams.get('offset') || 0);
+  const id = offset === 0 ? 'x001' : `x${{String(offset + 1).padStart(3, '0')}}`;
+  const items = [{{
+    id, task_id:'t_234', chain_id:'ch001', result_type:'permission',
+    title:`成果 ${{id}}`, description:'d', principal:'user:a', tenant:'',
+    status:'verified', points_declared:10, points_awarded:10,
+    evidence_artifacts:[], evidence_refs:[], created_at:'2026-10-14T00:00:00Z',
+  }}];
+  return {{
+    ok:true, status:200,
+    headers:{{ get: name => name === 'X-Total-Count' ? '615'
+      : name === 'X-Total-Points' ? '866' : null }},
+    text: async () => JSON.stringify(items),
+  }};
+}};
+for (const script of [{json.dumps(str(helper))}, {json.dumps(str(adapter))}]) eval(fs.readFileSync(script, 'utf8'));
+const methods = Object.assign({{}}, window.AxiomModules.helpers.methods, window.AxiomModules.projects.methods);
+const ctx = Object.assign({{}}, methods, {{
+  rtResultFilter: {{ keyword:'', projectId:'', status:'', type:'' }},
+  rtResultItems:[], rtResultTotal:0, rtResultTotalPoints:0,
+  rtResultPage:0, rtResultPageSize:50, rtResultLoading:false,
+  selectedRtResultId:'', rtResultReviews:[], rtChainView:null,
+  _rtResultListRequestId:0,
+  loadRtResultChain(){{}}, loadRtResultReviews(){{}},
+  showToast: message => calls.push({{ toast:message }}),
+}});
+(async () => {{
+  await ctx.loadRedTeamResultPage();
+  const firstPage = {{
+    page: ctx.rtResultPage,
+    ids: ctx.rtResultItems.map(item => item.id),
+    points: ctx.rtVerifiedPoints(),
+    count: ctx.rtResultPageCount(),
+  }};
+  await ctx.setRtResultPage(1);
+  const secondPage = {{
+    page: ctx.rtResultPage,
+    ids: ctx.rtResultItems.map(item => item.id),
+    points: ctx.rtVerifiedPoints(),
+  }};
+  ctx.rtResultFilter.status = 'verified';
+  await ctx.applyRtResultFilters();
+  const afterFilter = {{ page: ctx.rtResultPage }};
+  process.stdout.write(JSON.stringify({{
+    firstPage, secondPage, afterFilter,
+    urls: calls.filter(item => typeof item === 'string'),
+  }}));
+}})();
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def test_red_team_results_page_by_offset_and_keep_the_full_awarded_total() -> None:
+    """成果列表分页与漏洞视图对齐：翻页改 offset，核定分保持全量。"""
+
+    result = _run_red_team_result_paging_fixture()
+
+    assert result["firstPage"] == {
+        "page": 0,
+        "ids": ["x001"],
+        # 全量 866，而不是本页 10 —— 分页前那种「对 items 求和」的写法做不到
+        "points": 866,
+        # 615 条 / 每页 50 → 13 页
+        "count": 13,
+    }
+    assert result["secondPage"] == {"page": 1, "ids": ["x051"], "points": 866}
+    assert result["afterFilter"] == {"page": 0}
+    # offset 真的进了请求，而不是恒发 offset=0
+    assert any("offset=0" in url for url in result["urls"])
+    assert any("offset=50" in url for url in result["urls"])
+
+
 def test_graph_visual_updates_do_not_trigger_layout() -> None:
     result = _run_graph_visual_update_fixture()
 

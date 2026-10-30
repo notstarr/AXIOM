@@ -246,8 +246,13 @@ class RedTeamRepository:
         search: str = "",
         limit: int,
         offset: int,
-    ) -> tuple[list[RedTeamResult], int]:
-        """Cross-task Result listing for the management console (重要事实·成果视图)."""
+    ) -> tuple[list[RedTeamResult], int, int]:
+        """Cross-task Result listing for the management console (重要事实·成果视图).
+
+        Returns ``(items, total, awarded_points)``. ``awarded_points`` covers the
+        whole filtered set, not the requested page — the console shows it as the
+        核定 score and must not shrink when the user pages through results.
+        """
 
         conditions = []
         if task_id:
@@ -270,6 +275,16 @@ class RedTeamRepository:
         total = conn.execute(
             select(func.count()).select_from(red_team_results).where(*conditions)
         ).scalar_one()
+        # 核定分合计必须覆盖整个筛选集，不能由前端对本页求和：分页后那会变成
+        # 「本页核定多少分」。只统计 verified，口径与 points_progress 一致。
+        awarded = conn.execute(
+            select(
+                func.coalesce(func.sum(red_team_results.c.points_awarded), 0)
+            ).where(
+                *conditions,
+                red_team_results.c.status == "verified",
+            )
+        ).scalar_one()
         rows = conn.execute(
             select(red_team_results)
             .where(*conditions)
@@ -277,7 +292,11 @@ class RedTeamRepository:
             .offset(offset)
             .limit(limit)
         ).mappings()
-        return self._with_evidence(conn, [self._result(row) for row in rows]), int(total)
+        return (
+            self._with_evidence(conn, [self._result(row) for row in rows]),
+            int(total),
+            int(awarded or 0),
+        )
 
     # 取数逻辑以模块级函数为唯一实现（通知与评审都能直接用连接调用），
     # 这里只做薄委托，避免两份口径漂移。

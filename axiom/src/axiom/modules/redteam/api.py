@@ -66,7 +66,7 @@ def list_all_red_team_results(
 ) -> list[RedTeamResult]:
     """跨任务成果列表（重要事实·成果视图）。"""
 
-    items, total = container.red_team.list_results_page(
+    items, total, awarded = container.red_team.list_results_page(
         task_id=task_id,
         chain_id=chain_id,
         status=status_filter,
@@ -76,6 +76,8 @@ def list_all_red_team_results(
         offset=offset,
     )
     response.headers["X-Total-Count"] = str(total)
+    # 核定分是筛选集的全量聚合，前端翻页时要用它显示总分而不是对本页求和。
+    response.headers["X-Total-Points"] = str(awarded)
     return items
 
 

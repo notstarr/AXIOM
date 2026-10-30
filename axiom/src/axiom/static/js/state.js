@@ -36,6 +36,12 @@ window.AxiomModules.state = {
     factViewMode: 'vulnerability',
     rtResultItems: [],
     rtResultTotal: 0,
+    // 分页与漏洞视图对齐：每页 50 条，服务端 offset 翻页。
+    // rtResultTotalPoints 由 X-Total-Points 头给出，是当前筛选下的全量核定分，
+    // 不能再用本页 items 求和——翻页后那会变成「本页分」。
+    rtResultPage: 0,
+    rtResultPageSize: 50,
+    rtResultTotalPoints: 0,
     rtResultLoading: false,
     rtResultFilter: { keyword: '', projectId: '', status: '', type: '' },
     selectedRtResultId: '',

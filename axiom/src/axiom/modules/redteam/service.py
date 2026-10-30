@@ -382,11 +382,11 @@ class RedTeamService:
         search: str = "",
         limit: int = 50,
         offset: int = 0,
-    ) -> tuple[list[RedTeamResult], int]:
+    ) -> tuple[list[RedTeamResult], int, int]:
         """Cross-task listing for the 重要事实·成果 view (management console)."""
 
         with self.engine.connect() as conn:
-            results, total = self.repository.list_results_page(
+            results, total, awarded = self.repository.list_results_page(
                 conn,
                 task_id=task_id,
                 chain_id=chain_id,
@@ -404,7 +404,7 @@ class RedTeamService:
             enriched: list[RedTeamResult] = []
             for owner_task_id, batch in grouped.items():
                 enriched.extend(_attach_report_evidence(conn, owner_task_id, batch))
-            return enriched, total
+            return enriched, total, awarded
 
     def list_chains_page(
         self,
