@@ -35,6 +35,18 @@ from axiom.modules.replay.packet import (
 # Matches MAX_PACKET_BYTES so a replayed packet and a recorded one have the same
 # ceiling; the report shows both in the same box.
 MAX_RESPONSE_BYTES = 16 * 1024
+# The picture is the deliverable, and a 2000-line body turns it into a wall of text
+# nobody can read.  Keep the head and the tail — that is where the status, the shape and
+# the ending live — and say what was skipped in between.
+MAX_BODY_LINES = 40
+BODY_KEEP_HEAD_LINES = 22
+BODY_KEEP_TAIL_LINES = 12
+# Anything that is not text: dumping the bytes produces mojibake on the picture and
+# tells the reader nothing.  One line naming the size is the useful fact.
+_TEXTUAL_HINTS = (
+    "json", "text/", "xml", "javascript", "x-www-form-urlencoded",
+    "html", "css", "csv", "yaml",
+)
 CONNECT_TIMEOUT_SECONDS = 10.0
 READ_TIMEOUT_SECONDS = 20.0
 SCHEMES = ("https", "http")
@@ -286,6 +298,7 @@ def _attempt(
         body = raw.decode("utf-8")
     except UnicodeDecodeError:
         body = raw.decode("utf-8", "replace")
+    body = summarize_body(body, body_bytes, dict(response.headers))
 
     return SendResult(
         sent=True,
@@ -313,6 +326,34 @@ def _headers_for_send(packet: RequestPacket) -> dict[str, str]:
             continue
         headers[name] = value
     return headers
+
+
+def summarize_body(body: str, total_bytes: int, headers: dict[str, str]) -> str:
+    """Make a body fit on a readable picture: keep the head and tail, elide the middle.
+
+    A tall screenshot is not more evidence — at some point the reader stops being able to
+    read it, and a 2 MB binary dump renders as mojibake that says only "there was data".
+    So: binaries collapse to one line naming their size, and long text keeps the edges
+    with an explicit marker saying how much was skipped.  The marker is part of the
+    render on purpose — a silently shortened response would be a false record.
+    """
+    content_type = ""
+    for name, value in headers.items():
+        if name.lower() == "content-type":
+            content_type = value.lower()
+            break
+    if content_type and not any(hint in content_type for hint in _TEXTUAL_HINTS):
+        shown = f"（已解码 {len(body)} 字符）" if body else ""
+        return f"[二进制内容 {total_bytes} 字节，未在图中显示] {shown}".strip()
+
+    lines = body.split("\n")
+    if len(lines) <= MAX_BODY_LINES:
+        return body
+    head = lines[:BODY_KEEP_HEAD_LINES]
+    tail = lines[-BODY_KEEP_TAIL_LINES:]
+    skipped = len(lines) - len(head) - len(tail)
+    marker = f"…… 中间省略 {skipped} 行（原始 {total_bytes} 字节）……"
+    return "\n".join([*head, marker, *tail])
 
 
 def _failure(
@@ -343,6 +384,7 @@ def recorded_response(text: str) -> ResponsePacket | None:
 
 
 __all__ = [
+    "MAX_BODY_LINES",
     "MAX_RESPONSE_BYTES",
     "ReplayBlocked",
     "SendResult",

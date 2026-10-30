@@ -181,18 +181,22 @@ class VulnerabilityService:
                 if task.archived:
                     raise ConflictError("已归档任务的漏洞不可见，请先恢复任务")
             items, total = self.repository.list_page(conn, **filters)
-            grouped: dict[str, list[dict]] = {}
+            # 键必须带 task_id：这是跨任务的列表，`v011` 在 t_238/t_080/t_060 各有一条，
+            # 只按 subject_id 归并会让后一个任务的结果盖掉前一个——表现就是「某个任务的
+            # 截图全没了」，而详情接口（按任务查）却是对的。
+            grouped: dict[tuple[str, str], list[dict]] = {}
             by_task: dict[str, list] = {}
             for item in items:
                 by_task.setdefault(item.task_id, []).append(item)
             for owner_task_id, batch in by_task.items():
-                grouped.update(
-                    self.report_evidence.for_subjects(
-                        conn, owner_task_id, "vulnerability", [i.id for i in batch]
-                    )
-                )
+                for subject_id, rows in self.report_evidence.for_subjects(
+                    conn, owner_task_id, "vulnerability", [i.id for i in batch]
+                ).items():
+                    grouped[(owner_task_id, subject_id)] = rows
             return [
-                item.model_copy(update={"evidence": grouped.get(item.id, [])})
+                item.model_copy(
+                    update={"evidence": grouped.get((item.task_id, item.id), [])}
+                )
                 for item in items
             ], total
 

@@ -555,3 +555,40 @@ def test_a_shot_can_be_detached_and_the_step_becomes_missing_again(client) -> No
     removed = client.delete(f"{base}/{shot_id}")
     assert removed.status_code == 204, removed.text
     assert client.get(base).json() == []
+
+
+def test_the_cross_task_list_keeps_each_tasks_shots(client) -> None:
+    """跨任务列表里 `v001` 会重名；按 subject_id 归并会让后一个任务盖掉前一个。
+
+    表现是「某个任务的截图全没了」，而详情接口（按任务查）却是对的——所以这个
+    用例必须走列表接口，不能只查详情。
+    """
+    first = _project_task(client)
+    second = _project_task(client)
+    one = _vulnerability(client, first["id"])
+    two = _vulnerability(client, second["id"])
+    # 两个任务各自都叫 v001。
+    assert one["id"] == two["id"] == "v001"
+
+    for task, subject in ((first, one), (second, two)):
+        attached = client.post(
+            f"/api/v1/tasks/{task['id']}/vulnerabilities/{subject['id']}/evidence/capture",
+            files={"file": (f"{task['id']}.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+            data={"step_index": "1", "kind": "packet", "caption": task["id"]},
+        )
+        assert attached.status_code == 201, attached.text
+
+    response = client.get("/api/v1/vulnerabilities", params={"limit": 50})
+    assert response.status_code == 200, response.text
+    listed = response.json()
+    rows = listed["items"] if isinstance(listed, dict) else listed
+    # 列表行用 task_id；详情接口把它映射成 project_id（同一件事，两个名字）。
+    by_task = {
+        item.get("task_id") or item.get("project_id"): item
+        for item in rows
+        if item["id"] == "v001"
+    }
+    assert len(by_task) >= 2, listed
+    for task_id in (first["id"], second["id"]):
+        assert by_task[task_id]["evidence"], f"{task_id} 的截图被另一个任务覆盖了"
+        assert by_task[task_id]["evidence"][0]["caption"] == task_id

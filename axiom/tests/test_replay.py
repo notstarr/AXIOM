@@ -894,3 +894,57 @@ def test_send_returns_the_request_it_actually_sent(client, engine, replay_target
     # 这就是 /api/send 回给 CLI 的字段。
     assert outcome.request_text.startswith("GET /wanted HTTP/1.1")
     assert "Host:" in outcome.request_text
+
+
+# ── 响应体在图上要能看 ──────────────────────────────────────────────────────
+
+
+def test_a_long_body_keeps_its_head_and_tail() -> None:
+    """图片是给客户看的，两千行正文只会变成一堵墙。
+
+    所以留下头尾——状态、形状、结尾都在那儿——中间说清楚省了什么。标记本身是
+    渲染的一部分：悄悄截断的响应就是一份假记录。
+    """
+    from axiom.modules.replay.sender import (
+        BODY_KEEP_HEAD_LINES,
+        BODY_KEEP_TAIL_LINES,
+        MAX_BODY_LINES,
+        summarize_body,
+    )
+
+    body = "\n".join(f"line-{i}" for i in range(500))
+    out = summarize_body(body, len(body.encode()), {"content-type": "application/json"})
+    lines = out.split("\n")
+
+    assert len(lines) == BODY_KEEP_HEAD_LINES + 1 + BODY_KEEP_TAIL_LINES
+    assert lines[0] == "line-0"
+    assert lines[-1] == "line-499"
+    marker = lines[BODY_KEEP_HEAD_LINES]
+    assert "省略" in marker and "行" in marker
+    # 省掉多少要算对：总数减掉留下的头尾。
+    assert str(500 - BODY_KEEP_HEAD_LINES - BODY_KEEP_TAIL_LINES) in marker
+    assert MAX_BODY_LINES < 500
+
+
+def test_a_body_at_the_limit_is_untouched() -> None:
+    from axiom.modules.replay.sender import MAX_BODY_LINES, summarize_body
+
+    body = "\n".join(f"l{i}" for i in range(MAX_BODY_LINES))
+    assert summarize_body(body, 99, {"content-type": "text/plain"}) == body
+
+
+def test_a_binary_body_collapses_to_one_line() -> None:
+    """二进制直接铺出来是乱码，读者只能看出「有数据」，看不出是什么。"""
+    from axiom.modules.replay.sender import summarize_body
+
+    out = summarize_body("\x00\x01\x02junk\uFFFD", 2_506_200, {"content-type": "application/octet-stream"})
+    assert "\n" not in out
+    assert "二进制" in out
+    assert "2506200" in out
+
+
+def test_a_json_body_is_not_treated_as_binary() -> None:
+    from axiom.modules.replay.sender import summarize_body
+
+    body = '{"code":0,"data":[1,2,3]}'
+    assert summarize_body(body, len(body), {"content-type": "application/json; charset=utf-8"}) == body
