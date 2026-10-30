@@ -153,7 +153,9 @@ class ReplayService:
             if not request_text:
                 raise ReplayError("自由重放需要提供报文（--packet-file 或 stdin）")
             recorded = None
-            title = "自由重放"
+            # Name the page after what was sent, so the screenshot carries its own label.
+            first_line = (request_text.splitlines() or [""])[0].strip()
+            title = first_line or "自由重放"
             step = step or 0
 
         try:
@@ -227,14 +229,21 @@ class ReplayService:
         attach: bool,
         actor: str,
     ) -> None:
-        payload = render_module.render_input_for(
+        live = outcome.live
+        payload = render_module.RenderInput(
             packet_text=outcome.request_text,
-            live=outcome.live,
-            comparison=outcome.comparison,
+            response_text=render_module.response_text_of(
+                live.status_code, live.reason, live.headers, live.body
+            ),
             title=title,
             caption=caption,
-            highlights=highlights,
             source_label=self._source_label(),
+            elapsed_ms=live.elapsed_ms,
+            highlights=highlights,
+            comparison=outcome.comparison,
+            body_truncated=live.body_truncated,
+            original_body_bytes=live.body_bytes,
+            scheme_note=f"实际使用 {live.scheme_used}" if live.scheme_used else "",
         )
         try:
             png = render_module.screenshot(
@@ -269,6 +278,42 @@ class ReplayService:
         )
         outcome.artifact_id = str(record.get("artifact_id") or "")
         outcome.evidence_id = outcome.artifact_id
+
+    def capture_evidence(
+        self,
+        *,
+        task_id: str,
+        subject_type: str,
+        subject_id: str,
+        filename: str,
+        content: bytes,
+        step: int,
+        kind: str,
+        caption: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        """Upload bytes and hang them on a step.  One call, no orphan on failure.
+
+        ``kind=packet`` counts toward the review gate; ``business`` never does.  The
+        evidence layer validates the step against the stored reproduction *before*
+        writing anything, so a rejected attach leaves no artifact behind.
+        """
+        from axiom.modules.reports import KIND_BUSINESS, KIND_PACKET
+
+        if kind not in {KIND_PACKET, KIND_BUSINESS}:
+            raise ReplayError(f"不支持的截图种类：{kind}")
+        record = self.evidence.capture(
+            task_id=task_id,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            filename=filename,
+            content=content,
+            step_index=step,
+            caption=caption,
+            created_by=actor,
+            kind=kind,
+        )
+        return dict(record)
 
     # ── helpers ──────────────────────────────────────────────────────────────
 

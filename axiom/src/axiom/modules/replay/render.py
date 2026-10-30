@@ -1,13 +1,18 @@
-"""Render a replay as the packet screenshot a report needs.
+"""Render a replay as the packet document a report needs.
 
 Reports get submitted to clients, and a client reads a plain HTTP exchange far more
 readily than a paragraph describing one.  The picture is generated from what was
 actually sent and actually returned — never from text a worker supplied — so the
 screenshot cannot show something the target did not do.
 
-This module owns the only HTML in the replay path.  Callers supply data (packet
-text, response text, highlight fragments, a caption); they never supply markup,
-which keeps the renderer from becoming a general-purpose HTML-to-image service.
+The layout is a two-column wire view: the request on the left, the response on the
+right, each with line numbers and light syntax colouring.  That is the shape reviewers
+already read in a proxy, and it survives being scaled into a Word document.  White
+background on purpose: a delivered report is printed.
+
+This module owns the only HTML in the replay path.  Callers supply data (packet text,
+response text, highlight fragments, a caption); they never supply markup, which keeps
+the renderer from becoming a general-purpose HTML-to-image service.
 """
 
 from __future__ import annotations
@@ -18,10 +23,8 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
 
 from axiom.modules.replay.compare import Comparison
-from axiom.modules.replay.sender import SendResult
 
 
 RENDER_WIDTH = 1440
@@ -30,10 +33,14 @@ SCREENSHOT_TIMEOUT_MS = 30_000
 
 BEIJING = timezone(timedelta(hours=8))
 
-# One chromium at a time.  The VPS has ~3.6G total and a single instance costs a
-# few hundred MB; running two in parallel during an engagement is how the API
-# process gets OOM-killed.
+# One chromium at a time.  The VPS has ~3.6G total and a single instance costs a few
+# hundred MB; running two in parallel during an engagement is how the API process gets
+# OOM-killed.
 _RENDER_LOCK = threading.Lock()
+
+_REQUEST_LINE = re.compile(r"^([A-Z]+)\s+(\S+)\s+(HTTP/\d(?:\.\d)?)$")
+_STATUS_LINE = re.compile(r"^(HTTP/\d(?:\.\d)?)\s+(\d{3})(.*)$")
+_HEADER_LINE = re.compile(r"^([!#$%&'*+\-.^_`|~0-9A-Za-z]+):\s?(.*)$")
 
 
 class RenderError(RuntimeError):
@@ -64,35 +71,104 @@ def _escape(text: str) -> str:
     return html.escape(text, quote=False)
 
 
-def _highlight(text: str, fragments: list[str]) -> str:
-    """Escape first, then wrap matches. Fragments are matched on the escaped text."""
+def _highlight_fragments(text: str, fragments: list[str]) -> str:
+    """Escape first, then wrap matches; fragments are matched on the escaped text."""
     escaped = _escape(text)
     for fragment in sorted({item for item in fragments if item}, key=len, reverse=True):
         needle = _escape(fragment)
         if not needle:
             continue
         escaped = escaped.replace(needle, f"<mark>{needle}</mark>")
-    # A fragment can appear inside a tag we just inserted (``mark`` contains no
-    # ``<``), so a second pass would only risk nesting; one pass is enough.
     return escaped
 
 
+def _split_packet(text: str) -> tuple[list[str], list[str]]:
+    """Head lines and body lines, so each can be coloured for what it is."""
+    normalized = (text or "").replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
+    if not normalized:
+        return [], []
+    head, _, body = normalized.partition("\n\n")
+    head_lines = [line for line in head.split("\n")]
+    body_lines = body.split("\n") if body else []
+    return head_lines, body_lines
+
+
+def _packet_rows(text: str, kind: str, highlights: list[str]) -> str:
+    """Numbered rows.  ``kind`` decides which line of the head is the interesting one."""
+    head_lines, body_lines = _split_packet(text)
+    rows: list[str] = []
+    number = 0
+
+    def emit(markup: str, css: str = "") -> None:
+        nonlocal number
+        number += 1
+        rows.append(
+            f'<tr class="{css}"><td class="ln">{number}</td>'
+            f'<td class="src">{markup}</td></tr>'
+        )
+
+    for index, line in enumerate(head_lines):
+        cells: str
+        if index == 0 and kind == "request":
+            match = _REQUEST_LINE.match(line)
+            if match:
+                method, target, version = match.groups()
+                cells = (
+                    f'<span class="m">{_escape(method)}</span> '
+                    f'{_highlight_fragments(target, highlights)} '
+                    f'<span class="v">{_escape(version)}</span>'
+                )
+            else:
+                cells = _highlight_fragments(line, highlights)
+            emit(cells, "first")
+        elif index == 0 and kind == "response":
+            match = _STATUS_LINE.match(line)
+            if match:
+                version, code, reason = match.groups()
+                tone = "ok" if code.startswith("2") else ("warn" if code.startswith("3") else "bad")
+                cells = (
+                    f'<span class="v">{_escape(version)}</span> '
+                    f'<span class="s {tone}">{_escape(code)}</span>'
+                    f'<span class="r">{_escape(reason)}</span>'
+                )
+            else:
+                cells = _highlight_fragments(line, highlights)
+            emit(cells, "first")
+        else:
+            match = _HEADER_LINE.match(line)
+            if match:
+                name, value = match.groups()
+                cells = (
+                    f'<span class="h">{_escape(name)}</span>'
+                    f'<span class="c">:</span> '
+                    f'{_highlight_fragments(value, highlights)}'
+                )
+            else:
+                cells = _highlight_fragments(line, highlights)
+            emit(cells, "hdr")
+        if index == 0:
+            pass
+
+    if body_lines:
+        # A blank row keeps the visual break between head and body without faking a line.
+        rows.append('<tr class="gap"><td class="ln"></td><td class="src"></td></tr>')
+        for line in body_lines:
+            emit(_highlight_fragments(line, highlights), "body")
+
+    return "".join(rows)
+
+
 def build_html(payload: RenderInput) -> str:
-    """The whole document. Kept readable rather than compact: it is the report art."""
     sent_at = payload.sent_at or _beijing_now()
     stamp = sent_at.astimezone(BEIJING).strftime("%Y-%m-%d %H:%M:%S")
-    title = payload.title or "HTTP 重放"
+    title = payload.title or "HTTP"
+
     meta_bits = [f"{stamp} (UTC+8)"]
     if payload.source_label:
         meta_bits.append(payload.source_label)
-    meta = " · ".join(meta_bits)
-
-    request_html = _highlight(payload.packet_text, payload.highlights)
-    response_html = _highlight(payload.response_text, payload.highlights)
-
-    elapsed = ""
     if payload.elapsed_ms is not None:
-        elapsed = f'<span class="elapsed">{payload.elapsed_ms} ms</span>'
+        meta_bits.append(f"{payload.elapsed_ms} ms")
+    meta = " · ".join(meta_bits)
 
     truncation = ""
     if payload.body_truncated:
@@ -101,89 +177,104 @@ def build_html(payload: RenderInput) -> str:
 
     scheme_note = ""
     if payload.scheme_note:
-        scheme_note = f'<div class="note">{_escape(payload.scheme_note)}</div>'
-
-    verdict = ""
-    if payload.comparison is not None:
-        verdict = _verdict_html(payload.comparison)
+        scheme_note = f'<span class="note">{_escape(payload.scheme_note)}</span>'
 
     caption = ""
     if payload.caption:
         caption = f'<div class="caption">{_escape(payload.caption)}</div>'
 
+    verdict = _verdict_html(payload.comparison) if payload.comparison is not None else ""
+
+    request_rows = _packet_rows(payload.packet_text, "request", payload.highlights)
+    response_rows = _packet_rows(payload.response_text, "response", payload.highlights)
+
+    extra = "".join(part for part in (scheme_note, verdict, caption) if part)
+    footer = f'<div class="foot">{extra}</div>' if extra else ""
+
     return f"""<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8">
+<html lang="zh-CN"><head><meta charset="utf-8"><title>{_escape(title)}</title>
 <style>
   * {{ box-sizing: border-box; }}
+  html, body {{ margin: 0; background: #ffffff; }}
   body {{
-    margin: 0; padding: 20px; background: #eef1f5;
-    font-family: ui-monospace, SFMono-Regular, Menlo, "WenQuanYi Zen Hei", monospace;
-    font-size: 13px; line-height: 1.55; color: #0f172a;
+    padding: 18px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas,
+                 "WenQuanYi Zen Hei", "PingFang SC", monospace;
+    font-size: 12.5px; line-height: 1.62; color: #1e293b;
   }}
-  .frame {{ background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; }}
-  .head {{ padding: 10px 16px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }}
-  .head .title {{ font-weight: 700; font-size: 14px; }}
-  .head .meta {{ color: #64748b; font-size: 11px; margin-top: 2px; }}
+  .head {{
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    padding: 0 2px 8px; border-bottom: 1px solid #e2e8f0;
+  }}
+  .head .title {{ font-weight: 700; font-size: 13.5px; color: #0f172a; }}
+  .head .meta {{ color: #94a3b8; font-size: 11px; }}
   .cols {{ display: flex; align-items: stretch; }}
   .col {{ width: 50%; min-width: 0; }}
   .col + .col {{ border-left: 1px solid #e2e8f0; }}
   .col-head {{
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 6px 14px; font-size: 11px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: .04em;
+    padding: 7px 12px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; color: #64748b; background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
   }}
-  .req .col-head {{ background: #eff6ff; color: #1d4ed8; border-bottom: 1px solid #dbeafe; }}
-  .res .col-head {{ background: #ecfdf5; color: #047857; border-bottom: 1px solid #d1fae5; }}
-  .elapsed {{ font-weight: 400; letter-spacing: 0; text-transform: none; color: #475569; }}
-  pre {{
-    margin: 0; padding: 12px 14px; white-space: pre-wrap; word-break: break-all;
-    font: inherit;
+  table.pk {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
+  table.pk td {{ padding: 0 0 0 2px; vertical-align: top; }}
+  td.ln {{
+    width: 34px; padding: 0 9px 0 4px; text-align: right; color: #cbd5e1;
+    font-size: 10px; user-select: none; vertical-align: top;
   }}
+  td.src {{
+    padding: 0 14px 0 8px; white-space: pre-wrap;
+    word-break: break-all; color: #334155;
+  }}
+  tr.first td.src {{ color: #0f172a; }}
+  tr.gap td {{ height: 8px; }}
+  .m {{ color: #7c3aed; font-weight: 700; }}
+  .v {{ color: #94a3b8; }}
+  .s {{ font-weight: 700; }}
+  .s.ok {{ color: #047857; }}
+  .s.warn {{ color: #b45309; }}
+  .s.bad {{ color: #be123c; }}
+  .r {{ color: #475569; }}
+  .h {{ color: #0f766e; }}
+  .c {{ color: #94a3b8; }}
   mark {{ background: #fde68a; color: #111827; padding: 0 1px; border-radius: 2px; }}
-  .truncated {{ padding: 4px 14px 10px; color: #b91c1c; font-size: 11px; font-weight: 700; }}
-  .foot {{ border-top: 1px solid #e2e8f0; background: #f8fafc; padding: 8px 16px; }}
-  .verdict {{ display: flex; gap: 16px; flex-wrap: wrap; align-items: center; font-size: 12px; }}
-  .verdict .badge {{ font-weight: 700; padding: 2px 8px; border-radius: 4px; }}
+  .truncated {{
+    padding: 5px 12px; color: #b91c1c; font-weight: 700; font-size: 11px;
+    border-top: 1px solid #fee2e2; background: #fef2f2;
+  }}
+  .foot {{ border-top: 1px solid #e2e8f0; padding: 8px 12px; }}
+  .verdict {{ display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-size: 11.5px; }}
+  .badge {{ font-weight: 700; padding: 1px 7px; border-radius: 3px; }}
   .badge.match {{ background: #d1fae5; color: #065f46; }}
   .badge.mismatch {{ background: #fee2e2; color: #991b1b; }}
   .badge.inconclusive {{ background: #fef3c7; color: #92400e; }}
   .check {{ color: #334155; }}
   .check.bad {{ color: #b91c1c; font-weight: 700; }}
-  .note {{ color: #92400e; font-size: 11px; margin-top: 4px; }}
-  .caption {{ margin-top: 6px; color: #475569; font-size: 12px; }}
+  .note {{ color: #92400e; font-size: 11px; }}
+  .caption {{ margin-top: 5px; color: #475569; font-size: 11.5px; }}
 </style></head>
 <body>
-  <div class="frame">
-    <div class="head">
-      <div class="title">{_escape(title)}</div>
-      <div class="meta">{_escape(meta)}</div>
+  <div class="head">
+    <span class="title">{_escape(title)}</span>
+    <span class="meta">{_escape(meta)}</span>
+  </div>
+  <div class="cols">
+    <div class="col">
+      <div class="col-head">请求</div>
+      <table class="pk"><tbody>{request_rows}</tbody></table>
     </div>
-    <div class="cols">
-      <div class="col req">
-        <div class="col-head"><span>请求</span></div>
-        <pre>{request_html}</pre>
-      </div>
-      <div class="col res">
-        <div class="col-head"><span>响应</span>{elapsed}</div>
-        <pre>{response_html}</pre>
-        {truncation}
-      </div>
-    </div>
-    <div class="foot">
-      {verdict}
-      {scheme_note}
-      {caption}
+    <div class="col">
+      <div class="col-head">响应</div>
+      <table class="pk"><tbody>{response_rows}</tbody></table>
+      {truncation}
     </div>
   </div>
+  {footer}
 </body></html>"""
 
 
 def _verdict_html(comparison: Comparison) -> str:
-    labels = {
-        "match": "与上报一致",
-        "mismatch": "与上报不一致",
-        "inconclusive": "无法比对",
-    }
+    labels = {"match": "与上报一致", "mismatch": "与上报不一致", "inconclusive": "无法比对"}
     badge = labels.get(comparison.status, comparison.status)
     parts = [f'<span class="badge {comparison.status}">{badge}</span>']
     for check in comparison.checks:
@@ -196,17 +287,14 @@ def _verdict_html(comparison: Comparison) -> str:
             )
     summary = f'<div class="verdict">{"".join(parts)}</div>'
     if comparison.notes:
-        notes = "".join(f'<div class="note">{_escape(item)}</div>' for item in comparison.notes)
-        summary += notes
+        summary += "".join(
+            f'<div class="note">{_escape(item)}</div>' for item in comparison.notes
+        )
     return summary
 
 
 def resolve_chromium(explicit: str = "") -> str | None:
-    """Find the browser, Linux first: the API runs on the VPS, not a laptop.
-
-    The macOS branches exist so the same code path can be exercised locally, not
-    because the service is expected to run there.
-    """
+    """Find the browser, Linux first: the API runs on the VPS, not a laptop."""
     if explicit:
         path = Path(explicit).expanduser()
         # An explicit path that does not exist is a configuration error: falling back
@@ -228,8 +316,7 @@ def resolve_chromium(explicit: str = "") -> str | None:
         if not root.is_dir():
             continue
         for pattern in patterns:
-            found = sorted(root.glob(pattern), reverse=True)
-            for candidate in found:
+            for candidate in sorted(root.glob(pattern), reverse=True):
                 if candidate.is_file():
                     return str(candidate)
 
@@ -239,7 +326,6 @@ def resolve_chromium(explicit: str = "") -> str | None:
         found = which(name)
         if found:
             return found
-    # macOS app bundles: local development convenience only.
     for bundle in (
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         "/Applications/Chromium.app/Contents/MacOS/Chromium",
@@ -278,13 +364,11 @@ def screenshot(payload: RenderInput, *, chromium: str = "") -> bytes:
                     )
                     page.set_content(document, wait_until="load")
                     page.wait_for_timeout(80)
-                    # Size the viewport to the content before capturing: a
-                    # full_page shot of a 900px-tall viewport leaves a large empty
-                    # band under a two-line exchange, which looks like a bug in the
-                    # report.  Measured in CSS pixels, so the 2x scale still applies.
+                    # Size the viewport to the content before capturing: a full_page
+                    # shot of a 900px-tall viewport leaves a large empty band under a
+                    # two-line exchange, which looks like a bug in the report.
                     height = page.evaluate(
-                        "() => Math.ceil(document.querySelector('.frame').getBoundingClientRect().height)"
-                        " + 40"
+                        "() => Math.ceil(document.body.getBoundingClientRect().height) + 40"
                     )
                     page.set_viewport_size(
                         {"width": RENDER_WIDTH, "height": max(160, min(4000, int(height)))}
@@ -297,53 +381,23 @@ def screenshot(payload: RenderInput, *, chromium: str = "") -> bytes:
             raise RenderError(f"截图失败：{exc}") from exc
 
 
-def render_input_for(
-    *,
-    packet_text: str,
-    live: SendResult,
-    comparison: Comparison | None,
-    title: str,
-    caption: str,
-    highlights: list[str],
-    source_label: str,
-) -> RenderInput:
-    """Assemble the payload from a live result, keeping the picture honest."""
-    # The response box shows the live exchange, rebuilt from what the client
-    # actually received — not the recorded text, which would let a stale capture
-    # pose as this run's evidence.
-    head = f"HTTP/1.1 {live.status_code or 0} {live.reason}".rstrip()
-    header_lines = [f"{name}: {value}" for name, value in live.headers.items()]
-    joined = "\n".join([head, *header_lines])
-    response_text = f"{joined}\n\n{live.body}" if live.body else f"{joined}\n"
-
-    scheme_note = ""
-    if live.scheme_fell_back:
-        scheme_note = f"https 不可用，实际使用 {live.scheme_used}"
-    elif live.scheme_used:
-        scheme_note = f"实际使用 {live.scheme_used}"
-
-    return RenderInput(
-        packet_text=packet_text,
-        response_text=response_text,
-        title=title,
-        caption=caption,
-        sent_at=_beijing_now(),
-        source_label=source_label,
-        elapsed_ms=live.elapsed_ms,
-        highlights=highlights,
-        comparison=comparison,
-        body_truncated=live.body_truncated,
-        original_body_bytes=live.body_bytes,
-        scheme_note=scheme_note,
-    )
+def response_text_of(status_code: int | None, reason: str, headers: dict[str, str], body: str) -> str:
+    """The response box shows what the client actually received, rebuilt in order."""
+    head = f"HTTP/1.1 {status_code or 0} {reason}".rstrip()
+    lines = [head]
+    lines.extend(f"{name}: {value}" for name, value in headers.items())
+    joined = "\n".join(lines)
+    return f"{joined}\n\n{body}" if body else joined
 
 
 __all__ = [
     "BEIJING",
+    "DEVICE_SCALE",
+    "RENDER_WIDTH",
     "RenderError",
     "RenderInput",
     "build_html",
-    "render_input_for",
     "resolve_chromium",
+    "response_text_of",
     "screenshot",
 ]

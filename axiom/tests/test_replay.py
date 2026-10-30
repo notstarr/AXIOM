@@ -699,3 +699,49 @@ def test_a_covered_step_closes_the_review_gate(client, engine, replay_target) ->
         1, container.report_evidence.list(task_id, "redteam_result", result_id)
     )
     assert after == []
+
+
+# ── 一次性渲染页的数据存储 ──────────────────────────────────────────────────
+
+
+def test_store_expires_entries_after_the_ttl() -> None:
+    """数据只活到截图那一刻；留久了等于把会话 cookie 和响应体挂在内存里。"""
+    from axiom.modules.replay.store import ExchangeStore
+
+    store = ExchangeStore(ttl_seconds=10)
+    entry = store.put(request_text="GET / HTTP/1.1\nHost: a.test\n\n", response_text="HTTP/1.1 200 OK\n\n")
+    assert store.get(entry.key) is not None
+    # 把创建时间往前拨，模拟过期
+    entry.created_at -= 11
+    assert store.get(entry.key) is None
+
+
+def test_store_bounds_itself_by_dropping_the_oldest() -> None:
+    from axiom.modules.replay.store import ExchangeStore
+
+    store = ExchangeStore(ttl_seconds=600, max_entries=3)
+    keys = [
+        store.put(request_text=f"GET /{i} HTTP/1.1\nHost: a.test\n\n", response_text="HTTP/1.1 200 OK\n\n").key
+        for i in range(5)
+    ]
+    assert store.stats()["entries"] == 3
+    assert store.get(keys[0]) is None        # 最早的被挤掉
+    assert store.get(keys[-1]) is not None   # 最新的还在
+
+
+def test_store_keys_are_unguessable() -> None:
+    from axiom.modules.replay.store import ExchangeStore
+
+    store = ExchangeStore()
+    first = store.put(request_text="GET / HTTP/1.1\nHost: a.test\n\n", response_text="HTTP/1.1 200 OK\n\n")
+    second = store.put(request_text="GET / HTTP/1.1\nHost: a.test\n\n", response_text="HTTP/1.1 200 OK\n\n")
+    assert first.key != second.key
+    assert len(first.key) >= 20
+
+
+def test_expired_page_is_gone_not_blank() -> None:
+    """过期要有明确说法，否则审核者以为是渲染坏了。"""
+    from axiom.modules.replay.web import _EXPIRED_HTML
+
+    assert "过期" in _EXPIRED_HTML
+    assert "10 分钟" in _EXPIRED_HTML
