@@ -178,24 +178,27 @@ def _vuln_payload(**overrides):
     return base
 
 
-def test_vulnerability_reproduction_is_optional_by_default(monkeypatch) -> None:
-    """手工录入没有报文可贴，默认不强制；否则人工路径会被堵死。"""
+def test_vulnerability_reproduction_is_required_by_default(monkeypatch) -> None:
+    """没有可复现路径的漏洞无法被审核，也无法生成报文截图。"""
     from axiom.modules.vulnerabilities.schemas import VulnerabilityReport, reproduction_required
 
     monkeypatch.delenv("AXIOM_REQUIRE_REPRODUCTION", raising=False)
-    assert reproduction_required() is False
-    report = VulnerabilityReport(**_vuln_payload())
-    assert report.reproduction is None
-
-
-def test_the_switch_makes_it_mandatory(monkeypatch) -> None:
-    from axiom.modules.vulnerabilities.schemas import VulnerabilityReport
-
-    monkeypatch.setenv("AXIOM_REQUIRE_REPRODUCTION", "1")
+    assert reproduction_required() is True
     with pytest.raises(ValueError) as excinfo:
         VulnerabilityReport(**_vuln_payload())
     assert "复现过程" in str(excinfo.value)
+    # The message has to say how, not just refuse — curl is the cheap path.
     assert "curl" in str(excinfo.value)
+
+
+def test_the_switch_can_reopen_manual_entry(monkeypatch) -> None:
+    """过渡期可以不改代码就放开人工无报文录入。"""
+    from axiom.modules.vulnerabilities.schemas import VulnerabilityReport, reproduction_required
+
+    monkeypatch.setenv("AXIOM_REQUIRE_REPRODUCTION", "0")
+    assert reproduction_required() is False
+    report = VulnerabilityReport(**_vuln_payload())
+    assert report.reproduction is None
 
 
 def test_with_the_switch_on_a_reproduction_satisfies_it(monkeypatch) -> None:

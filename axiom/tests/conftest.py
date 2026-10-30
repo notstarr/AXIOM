@@ -15,6 +15,13 @@ from axiom.shared.database import create_database_engine, metadata
 
 # 测试环境关闭鉴权中间件拦截（鉴权路由本身仍可用）
 os.environ.setdefault("AXIOM_AUTH_DISABLED", "1")
+# **生产默认要求漏洞必须带复现**；测试环境固定放开。
+#
+# 绝大多数测试用 `_vulnerability()` 这类辅助函数造数据，关心的是审核流程、导出、
+# 归档，而不是「复现是否必填」。让它们每条都贴报文，等于给每个用例加一条与它无关
+# 的前置条件，还掩埋了真正的断言。必填策略本身由 test_reproduction_curl.py 里
+# 三个显式用例覆盖（它们用 monkeypatch 自己拨开关，不受这里影响）。
+os.environ.setdefault("AXIOM_REQUIRE_REPRODUCTION", "0")
 # 测试环境固定管理员初始密码，便于 auth 单测登录
 os.environ.setdefault("AXIOM_ADMIN_USER", "axiom")
 os.environ.setdefault("AXIOM_ADMIN_PASSWORD", "axiom-test-password-123")

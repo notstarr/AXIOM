@@ -299,7 +299,12 @@ def _patch_probe(monkeypatch, verdict: bool | None) -> list[str]:
 
     seen: list[str] = []
 
-    def fake_probe(base_url, api_key, model, provider_api, *, proxy=None, timeout=None):
+    def fake_probe(
+        base_url, api_key, model, provider_api, *, extra_headers=None, proxy=None, timeout=None
+    ):
+        # ``extra_headers`` carries per-connection headers (e.g. the opencode session
+        # cookie); the probe signature grew it and this double must follow, or the
+        # runner's call fails before the test can observe anything.
         seen.append(base_url)
         return verdict
 

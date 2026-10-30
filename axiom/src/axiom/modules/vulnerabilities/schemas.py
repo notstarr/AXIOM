@@ -15,13 +15,16 @@ from axiom.modules.reproduction.schemas import Reproduction
 def reproduction_required() -> bool:
     """Whether a new Vulnerability must carry a structured reproduction.
 
-    Off by default, because manual entry is a supported path today: a human recording a
-    finding from a scan report has no packets to paste, and the review gate already
-    treats "no reproduction" as "no steps to require".  Turning this on makes a
-    reproduction mandatory for every new Vulnerability, including hand-written ones, so
-    it is an operator decision rather than something this module should assume.
+    On by default: a finding with no replayable steps cannot be verified, cannot be
+    captured, and reads as an assertion in the delivered report.  Manual entry is the
+    case this deliberately closes — a hand-recorded finding needs the packets more than
+    a worker does, because nobody else can retrace it.  ``curl`` input is accepted and
+    translated, so the cost is one paste.
+
+    Set it to ``0`` to reopen manual entry without packets for a transition period;
+    what gets through stays visible as a report with no packets and no shots.
     """
-    raw = os.environ.get("AXIOM_REQUIRE_REPRODUCTION", "0").strip().lower()
+    raw = os.environ.get("AXIOM_REQUIRE_REPRODUCTION", "1").strip().lower()
     return raw not in {"0", "false", "no", "off"}
 
 
@@ -144,8 +147,8 @@ class VulnerabilityReport(VulnerabilityDetails):
     status_reason: str = ""
     finding_artifact_id: str | None = None
     # 复现过程：没有可复现路径的漏洞无法被审核者验证，也无法生成报文截图，交付报告
-    # 里就只剩一句结论。是否需要必填由 ``AXIOM_REQUIRE_REPRODUCTION`` 控制（默认关，
-    # 因为人工录入是受支持的路径），与报文截图闸门用同一个开关思路。
+    # 里就只剩一句结论。默认必填；``AXIOM_REQUIRE_REPRODUCTION=0`` 可为过渡期重新放开
+    # 人工无报文录入，与报文截图闸门用同一个开关思路。
     # 读取走 ``Vulnerability``，它的同名字段始终允许为空，以兼容本字段出现之前的行。
     reproduction: Reproduction | None = None
 

@@ -5,6 +5,23 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from axiom.modules.webshell.service import WebShellService
+from axiom.shared.errors import ConflictError
+
+
+# The guard refuses loopback targets, which is correct for production but makes the
+# local fixture shell server unreachable.  Keep a handle on the real implementation so
+# the rule itself stays covered below, then patch it out for the API-level tests.
+_REAL_ASSERT_SAFE_TARGET = WebShellService._assert_safe_target
+
+
+@pytest.fixture(autouse=True)
+def _allow_loopback_shell_targets(monkeypatch):
+    """Fixture servers live on 127.0.0.1; the real guard exists to stop that."""
+    monkeypatch.setattr(
+        WebShellService, "_assert_safe_target", staticmethod(lambda url: None)
+    )
+
 
 class _ShellHandler(BaseHTTPRequestHandler):
     commands: list[str] = []
@@ -206,3 +223,23 @@ def test_webshell_request_template_requires_placeholder(client) -> None:
         json={"name": "坏模板", "url": "http://127.0.0.1:9/x", "request": {"body": "cmd=id"}},
     )
     assert response.status_code == 422
+
+
+def test_webshell_refuses_a_loopback_target() -> None:
+    """A WebShell pointing at this host would be an SSRF gadget against AXIOM itself.
+
+    Called through the real implementation, not the API: the fixture patches the guard
+    out so its local server is reachable, and this is where the rule stays honest.
+    """
+    with pytest.raises(ConflictError, match="本机|链路本地|保留地址"):
+        _REAL_ASSERT_SAFE_TARGET("http://127.0.0.1:8080/shell")
+
+
+def test_webshell_refuses_a_link_local_target() -> None:
+    with pytest.raises(ConflictError):
+        _REAL_ASSERT_SAFE_TARGET("http://169.254.169.254/latest/meta-data/")
+
+
+def test_webshell_refuses_a_target_without_a_host() -> None:
+    with pytest.raises(ConflictError, match="缺少主机"):
+        _REAL_ASSERT_SAFE_TARGET("http:///shell")
