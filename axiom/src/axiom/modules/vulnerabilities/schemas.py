@@ -227,6 +227,19 @@ class Vulnerability(VulnerabilityReport):
     red_team_exploitable_at: str | None = None
     red_team_exploitable_by: str | None = None
 
+    @model_validator(mode="after")
+    def require_reproduction_when_enforced(self) -> "Vulnerability":
+        """读取不施加「必须有复现」这条写入策略。
+
+        ``VulnerabilityReport`` 是新建漏洞时提交的载荷，那里的校验管的是「现在还允许
+        这样录吗」；``Vulnerability`` 是数据库里已经存在的行。父类的同名校验器会被继
+        承，不覆盖就变成「读取也要过写入策略」——库里有几千条策略上线之前的记录，那会
+        让整个漏洞列表 500。这里覆盖成空实现，策略本身仍由父类对每次新建/上报执行。
+
+        父类注释里「读取走 Vulnerability，它的同名字段始终允许为空」说的就是这一层。
+        """
+        return self
+
 
 class SetVulnerabilityHumanReviewed(BaseModel):
     model_config = ConfigDict(extra="forbid")

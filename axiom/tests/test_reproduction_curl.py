@@ -222,3 +222,36 @@ def test_with_the_switch_on_a_reproduction_satisfies_it(monkeypatch) -> None:
     )
     # The curl became a packet on the way in.
     assert report.reproduction.steps[0].exchanges[0].request.startswith("GET /api/order HTTP/1.1")
+
+
+def test_stored_rows_without_a_reproduction_stay_readable(monkeypatch) -> None:
+    """「必须有复现」是写入策略，不能连读取一起拒。
+
+    库里绝大多数记录产生在这条策略之前（上线时 1559 条里 0 条带复现）。校验器挂在
+    ``VulnerabilityReport`` 上、由读模型 ``Vulnerability`` 继承，若不覆盖，漏洞列表
+    与报告在开关打开的瞬间全部 500——这正是 2026-10-30 上线上发生的事。
+    """
+    from axiom.modules.vulnerabilities.schemas import Vulnerability, VulnerabilityReport
+
+    monkeypatch.setenv("AXIOM_REQUIRE_REPRODUCTION", "1")
+    stored = {
+        "id": "v001",
+        "task_id": "t001",
+        "title": "越权读取订单",
+        "type": "越权",
+        "severity": "medium",
+        "description": "普通用户可读他人订单",
+        "impact": "泄露用户订单数据",
+        "status": "待验证",
+        "source": "human",
+        "reported_by": "tester",
+        "created_at": "2026-10-27T00:00:00Z",
+        "updated_at": "2026-10-27T00:00:00Z",
+    }
+
+    row = Vulnerability.model_validate(stored)
+
+    assert row.reproduction is None
+    # 同一个开关下，新建仍然被拦——覆盖只发生在读模型上
+    with pytest.raises(ValueError, match="复现过程"):
+        VulnerabilityReport(**_vuln_payload())
