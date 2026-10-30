@@ -556,8 +556,23 @@ window.AxiomModules.projects = {
     },
 
     // 利用前提：上报人写的那句（字符串）+ 复现声明的结构化条件（数组），两者都留。
+    // 后者是数组、前者是一段话，模板分开渲染：一段话不该排成一条竖线的列表。
+    vulnPrerequisiteProse() {
+      return String(this.selectedVulnerability()?.prerequisites || '').trim();
+    },
+
     vulnPrerequisiteLines() {
       const repro = this.selectedVulnerability()?.reproduction;
+      return (repro && Array.isArray(repro.prerequisites)) ? repro.prerequisites : [];
+    },
+
+    rtChainInput() {
+      const repro = this.selectedRtResult()?.reproduction;
+      return String((repro && repro.chain_input) || '').trim();
+    },
+
+    rtPrerequisiteLines() {
+      const repro = this.selectedRtResult()?.reproduction;
       return (repro && Array.isArray(repro.prerequisites)) ? repro.prerequisites : [];
     },
 

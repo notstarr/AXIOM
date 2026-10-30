@@ -357,3 +357,22 @@ def test_a_step_with_two_packets_exports_both_in_order() -> None:
     assert "报文 2：" in rendered
     # 每个请求后面紧跟它自己的响应，不是先列完请求再列响应
     assert rendered.index('{"t":1}') < second
+
+def test_a_written_out_nothing_is_not_prose() -> None:
+    """worker 有时把「没有」写成 None，渲染出来就是一整章「None」。
+
+    占位词在入库时就归一成空串，报告里才不会出现一个看起来像内容的字段。
+    """
+    for placeholder in ("None", " nonE ", "无", "-", "N/A"):
+        vulnerability = _vulnerability(prerequisites=placeholder)
+        doc = build_vulnerability_report(vulnerability)
+        prerequisites = next(
+            section for section in doc.sections if section.key == "prerequisites"
+        )
+        # 不出现占位词本身：剩下的表述要么是复现声明的结构化条件，
+        # 要么是一个明确的「未填写」占位。
+        rendered = " ".join(
+            [b.text or "" for b in prerequisites.blocks]
+            + list(prerequisites.blocks[-1].items if prerequisites.blocks else ())
+        )
+        assert placeholder.strip().lower() not in rendered.lower(), placeholder

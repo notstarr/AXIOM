@@ -2029,7 +2029,8 @@ def test_frontend_and_static_assets_are_served(client):
     # 因此「未填写」兜底断言按新契约调整。
     assert '<h2 class="rp-h">利用前提</h2>' in vulnerabilities.text
     assert "vulnPrerequisiteLines()" in vulnerabilities.text
-    assert "selectedVulnerability().prerequisites" in vulnerabilities.text
+    assert "vulnPrerequisiteProse()" in vulnerabilities.text
+    assert "rtPrerequisiteLines()" in vulnerabilities.text
     # 修复建议缺失时整节省略（用 x-show 控制，不渲染空标题）
     assert 'x-show="selectedVulnerability().remediation"' in vulnerabilities.text
     assert "按列表查看证据、影响和修复建议" in vulnerabilities.text

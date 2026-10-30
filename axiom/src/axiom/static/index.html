@@ -4,11 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>axiom</title>
-<link rel="icon" href="/static/logo.jpg?v=20261030-steps" type="image/jpeg">
-<link rel="stylesheet" href="/static/apple.css?v=20261030-steps">
-<link rel="stylesheet" href="/static/tailwind.generated.css?v=20261030-steps">
-<script defer src="/static/vendor/alpine.min.js?v=20261030-steps"></script>
-<link rel="stylesheet" href="/static/custom.css?v=20261030-steps">
+<link rel="icon" href="/static/logo.jpg?v=20261030-fix1" type="image/jpeg">
+<link rel="stylesheet" href="/static/apple.css?v=20261030-fix1">
+<link rel="stylesheet" href="/static/tailwind.generated.css?v=20261030-fix1">
+<script defer src="/static/vendor/alpine.min.js?v=20261030-fix1"></script>
+<link rel="stylesheet" href="/static/custom.css?v=20261030-fix1">
 </head>
 <body class="h-screen overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="axiomApp()" style="background:var(--bg-secondary);color:var(--text-primary)">
 
@@ -17,7 +17,7 @@
   <div class="fixed inset-0 z-[100] flex items-center justify-center" style="background:var(--bg-secondary)">
     <div class="flex flex-col items-center gap-4">
       <div class="w-12 h-12 rounded-lg overflow-hidden" style="box-shadow:var(--shadow-sm)">
-        <img src="/static/logo.jpg?v=20261030-steps" alt="axiom" class="w-full h-full object-cover">
+        <img src="/static/logo.jpg?v=20261030-fix1" alt="axiom" class="w-full h-full object-cover">
       </div>
       <div class="w-40 h-[3px] rounded-full overflow-hidden" style="background:var(--border)">
         <div class="h-full w-1/3 rounded-full" style="background:var(--accent);animation:axiomBootSlide 1.1s ease-in-out infinite"></div>
@@ -32,7 +32,7 @@
       <div class="p-8 sm:p-10"
            style="background:var(--surface-modal); border:1px solid var(--border-default); border-radius:var(--radius-xl); box-shadow:var(--shadow-lg)">
         <div class="flex flex-col items-center text-center">
-          <div class="w-14 h-14 overflow-hidden" style="border-radius:var(--radius-md);box-shadow:var(--shadow-sm)"><img src="/static/logo.jpg?v=20261030-steps" alt="axiom" class="w-full h-full object-cover"></div>
+          <div class="w-14 h-14 overflow-hidden" style="border-radius:var(--radius-md);box-shadow:var(--shadow-sm)"><img src="/static/logo.jpg?v=20261030-fix1" alt="axiom" class="w-full h-full object-cover"></div>
           <h1 class="mt-4 text-xl font-bold tracking-tight" style="color:var(--text-primary)">AXIOM 控制台</h1>
           <p class="mt-1" style="font-size:var(--fs-meta);color:var(--text-tertiary)">安全测试编排平台 · 请登录后继续</p>
         </div>
@@ -73,7 +73,7 @@
 </button>
 <div class="mobile-sidebar-backdrop" x-show="mobileSidebarOpen" x-cloak @click="mobileSidebarOpen = false"></div>
 <aside class="sidebar" :class="{ 'is-collapsed': sidebarCollapsed, 'is-mobile-open': mobileSidebarOpen }">
-  <div class="sidebar-logo-row"><div class="sidebar-logo"><img src="/static/logo.jpg?v=20261030-steps" alt="axiom"></div><span class="sidebar-brand">AXIOM</span><button type="button" class="sidebar-collapse" @click="toggleSidebar()" :aria-label="sidebarCollapsed ? '展开侧栏' : '折叠侧栏'"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path :d="sidebarCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'"/></svg></button></div>
+  <div class="sidebar-logo-row"><div class="sidebar-logo"><img src="/static/logo.jpg?v=20261030-fix1" alt="axiom"></div><span class="sidebar-brand">AXIOM</span><button type="button" class="sidebar-collapse" @click="toggleSidebar()" :aria-label="sidebarCollapsed ? '展开侧栏' : '折叠侧栏'"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path :d="sidebarCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'"/></svg></button></div>
   <button type="button" class="nav-item nav-back" data-tooltip="返回上一页" x-show="pageHistory.length > 0" @click="goBack()"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg><span class="nav-label">返回</span></button>
   <nav class="sidebar-nav">
     <button type="button" class="nav-item" data-tooltip="仪表盘" :class="{ 'is-active': activePage === 'dashboard' }" @click="navigateTo('dashboard')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6V4h-6v16ZM4 20h6v-4H4v4Z"/></svg><span class="nav-label">仪表盘</span></button>
@@ -550,27 +550,27 @@
   sentinel 区间在未登录请求时被 app.py 替换为单条 login.js 引用。
   ═══════════════════════════════════════════════════════════════════ -->
 <!--AXIOM_AUTH_SCRIPTS_START-->
-<script src="/static/js/state.js?v=20261030-steps"></script>
-<script src="/static/js/helpers.js?v=20261030-steps"></script>
-<script src="/static/js/core.js?v=20261030-steps"></script>
-<script src="/static/js/projects.js?v=20261030-steps"></script>
-<script src="/static/js/dashboard.js?v=20261030-steps"></script>
-<script src="/static/js/skills.js?v=20261030-steps"></script>
-<script src="/static/js/files.js?v=20261030-steps"></script>
-<script src="/static/js/mcp.js?v=20261030-steps"></script>
-<script src="/static/js/graph.js?v=20261030-steps"></script>
-<script src="/static/js/human.js?v=20261030-steps"></script>
-<script src="/static/js/lineage.js?v=20261030-steps"></script>
-<script src="/static/js/archives.js?v=20261030-steps"></script>
-<script src="/static/js/timeline.js?v=20261030-steps"></script>
-<script src="/static/js/actions.js?v=20261030-steps"></script>
-<script src="/static/js/dispatch.js?v=20261030-steps"></script>
-<script src="/static/js/worker-tools.js?v=20261030-steps"></script>
-<script src="/static/js/prompts.js?v=20261030-steps"></script>
-<script src="/static/js/storage.js?v=20261030-steps"></script>
-<script src="/static/js/redteam-resources.js?v=20261030-steps"></script>
-<script src="/static/js/v2-adapter.js?v=20261030-steps"></script>
-<script src="/static/js/app.js?v=20261030-steps"></script>
+<script src="/static/js/state.js?v=20261030-fix1"></script>
+<script src="/static/js/helpers.js?v=20261030-fix1"></script>
+<script src="/static/js/core.js?v=20261030-fix1"></script>
+<script src="/static/js/projects.js?v=20261030-fix1"></script>
+<script src="/static/js/dashboard.js?v=20261030-fix1"></script>
+<script src="/static/js/skills.js?v=20261030-fix1"></script>
+<script src="/static/js/files.js?v=20261030-fix1"></script>
+<script src="/static/js/mcp.js?v=20261030-fix1"></script>
+<script src="/static/js/graph.js?v=20261030-fix1"></script>
+<script src="/static/js/human.js?v=20261030-fix1"></script>
+<script src="/static/js/lineage.js?v=20261030-fix1"></script>
+<script src="/static/js/archives.js?v=20261030-fix1"></script>
+<script src="/static/js/timeline.js?v=20261030-fix1"></script>
+<script src="/static/js/actions.js?v=20261030-fix1"></script>
+<script src="/static/js/dispatch.js?v=20261030-fix1"></script>
+<script src="/static/js/worker-tools.js?v=20261030-fix1"></script>
+<script src="/static/js/prompts.js?v=20261030-fix1"></script>
+<script src="/static/js/storage.js?v=20261030-fix1"></script>
+<script src="/static/js/redteam-resources.js?v=20261030-fix1"></script>
+<script src="/static/js/v2-adapter.js?v=20261030-fix1"></script>
+<script src="/static/js/app.js?v=20261030-fix1"></script>
 <!--AXIOM_AUTH_SCRIPTS_END-->
 </body>
 </html>

@@ -127,21 +127,18 @@
             <p class="rp-p" x-text="formatMultiline(selectedVulnerability().description)"></p>
           </section>
 
-          <!-- 利用前提：与红队面板同构，独立成章放在描述之后 -->
+          <!-- 利用前提：和「描述」「影响」同一级别的内容节。
+               不套 rp-proc/rp-entry——那个带边框和底色的卡片是「测试过程」的语言，
+               把一句前提装进去会像一张空表单。 -->
           <section class="rp-block">
             <h2 class="rp-h">利用前提</h2>
-            <p class="rp-absent" x-show="!vulnPrerequisiteLines().length && !(selectedVulnerability().prerequisites || '').trim()">未填写</p>
-            <div class="rp-proc" x-show="vulnPrerequisiteLines().length || (selectedVulnerability().prerequisites || '').trim()">
-              <div class="rp-entry">
-                <p class="rp-p" style="margin:0;" x-show="(selectedVulnerability().prerequisites || '').trim()"
-                   x-text="formatMultiline(selectedVulnerability().prerequisites)"></p>
-                <ul class="rp-req" x-show="vulnPrerequisiteLines().length" style="margin-top:6px;">
-                  <template x-for="(item, idx) in vulnPrerequisiteLines()" :key="`vpre-${idx}`">
-                    <li x-text="item"></li>
-                  </template>
-                </ul>
-              </div>
-            </div>
+            <p class="rp-absent" x-show="!vulnPrerequisiteProse() && !vulnPrerequisiteLines().length">未填写</p>
+            <p class="rp-p" x-show="vulnPrerequisiteProse()" x-text="formatMultiline(vulnPrerequisiteProse())"></p>
+            <ul class="rp-req" x-show="vulnPrerequisiteLines().length" :style="vulnPrerequisiteProse() ? 'margin-top:7px;' : ''">
+              <template x-for="(item, idx) in vulnPrerequisiteLines()" :key="`vpre-${idx}`">
+                <li x-text="item"></li>
+              </template>
+            </ul>
           </section>
 
           <!-- 测试过程 -->
@@ -388,26 +385,16 @@
             <p class="rp-p" x-text="formatMultiline(selectedRtResult().description)"></p>
           </section>
 
-          <!-- 利用前提 -->
+          <!-- 利用前提：与漏洞面板同构，都是纯内容节，不套报文卡片 -->
           <section class="rp-block">
             <h2 class="rp-h">利用前提</h2>
-            <p class="rp-absent" x-show="!selectedRtResult().reproduction">未填写</p>
-            <div class="rp-proc" x-show="selectedRtResult().reproduction">
-              <div class="rp-entry">
-                <div class="rp-entryrow" x-show="selectedRtResult().reproduction && selectedRtResult().reproduction.chain_input">
-                  <span class="rp-k">起始身份</span>
-                  <span x-text="selectedRtResult().reproduction ? selectedRtResult().reproduction.chain_input : ''"></span>
-                </div>
-                <div x-show="(selectedRtResult().reproduction && selectedRtResult().reproduction.prerequisites || []).length">
-                  <div class="rp-k" style="margin-top:5px;">前置条件</div>
-                  <ul class="rp-req">
-                    <template x-for="(item, idx) in (selectedRtResult().reproduction ? selectedRtResult().reproduction.prerequisites || [] : [])" :key="`rtpre-${idx}`">
-                      <li x-text="item"></li>
-                    </template>
-                  </ul>
-                </div>
-              </div>
-            </div>
+            <p class="rp-absent" x-show="!rtPrerequisiteLines().length && !rtChainInput()">未填写</p>
+            <p class="rp-p" x-show="rtChainInput()"><span class="rp-k">起始身份</span> <span x-text="rtChainInput()"></span></p>
+            <ul class="rp-req" x-show="rtPrerequisiteLines().length" :style="rtChainInput() ? 'margin-top:7px;' : ''">
+              <template x-for="(item, idx) in rtPrerequisiteLines()" :key="`rtpre-${idx}`">
+                <li x-text="item"></li>
+              </template>
+            </ul>
           </section>
 
           <!-- 测试过程 -->

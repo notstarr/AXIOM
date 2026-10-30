@@ -4,10 +4,37 @@ import re
 from pathlib import PurePosixPath
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+import os
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from axiom.modules.artifacts.schemas import Artifact
 from axiom.modules.reproduction.schemas import Reproduction
+
+
+def reproduction_required() -> bool:
+    """Whether a new Vulnerability must carry a structured reproduction.
+
+    Off by default, because manual entry is a supported path today: a human recording a
+    finding from a scan report has no packets to paste, and the review gate already
+    treats "no reproduction" as "no steps to require".  Turning this on makes a
+    reproduction mandatory for every new Vulnerability, including hand-written ones, so
+    it is an operator decision rather than something this module should assume.
+    """
+    raw = os.environ.get("AXIOM_REQUIRE_REPRODUCTION", "0").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+# A worker that has nothing to say sometimes writes the word for it.  "None" is not
+# prose: rendered as-is it fills a whole chapter with the string a Python program uses
+# for absence, and a reviewer cannot tell it apart from a real (if terse) statement.
+_PLACEHOLDERS = {"", "none", "null", "undefined", "n/a", "na", "nil", "-", "—", "无", "暂无", "未填写"}
+
+
+def normalize_optional_text(value: str | None) -> str:
+    """Strip an optional prose field, and treat a written-out "nothing" as nothing."""
+    text = (value or "").strip()
+    return "" if text.lower() in _PLACEHOLDERS else text
 
 
 Severity = Literal["critical", "high", "medium", "low", "info"]
@@ -39,7 +66,7 @@ class VulnerabilityDetails(BaseModel):
     @field_validator("prerequisites", "remediation", "affected_target")
     @classmethod
     def normalize_optional(cls, value: str | None) -> str:
-        return (value or "").strip()
+        return normalize_optional_text(value)
 
 
 class ExploreVulnerabilityReport(VulnerabilityDetails):
@@ -116,8 +143,21 @@ class VulnerabilityReport(VulnerabilityDetails):
     status: VulnerabilityStatus = "待验证"
     status_reason: str = ""
     finding_artifact_id: str | None = None
-    # 人工录入的漏洞可能没有结构化复现（存量或手工补录），Explore 上报的必需。
+    # 复现过程：没有可复现路径的漏洞无法被审核者验证，也无法生成报文截图，交付报告
+    # 里就只剩一句结论。是否需要必填由 ``AXIOM_REQUIRE_REPRODUCTION`` 控制（默认关，
+    # 因为人工录入是受支持的路径），与报文截图闸门用同一个开关思路。
+    # 读取走 ``Vulnerability``，它的同名字段始终允许为空，以兼容本字段出现之前的行。
     reproduction: Reproduction | None = None
+
+    @model_validator(mode="after")
+    def require_reproduction_when_enforced(self) -> "VulnerabilityReport":
+        if self.reproduction is None and reproduction_required():
+            raise ValueError(
+                "必须提供复现过程（reproduction）：写明入口、前置与真实收发报文。"
+                "没有可复现路径的漏洞无法被审核，也无法生成报文截图。"
+                "报文可以直接粘贴 curl 命令，会自动转换。"
+            )
+        return self
     evidence_artifact_ids: list[str] = Field(
         default_factory=list,
         max_length=MAX_VULNERABILITY_EVIDENCE_ARTIFACTS,
