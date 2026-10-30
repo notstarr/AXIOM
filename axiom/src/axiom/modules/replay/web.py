@@ -88,6 +88,8 @@ class SendRequest(BaseModel):
 class SendResponse(BaseModel):
     ok: bool = True
     url: str
+    # 实际发出的报文。`replay shot` 用它渲染左栏；没有它左栏就是空的。
+    request_text: str = ""
     status_code: int | None = None
     reason: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
@@ -185,10 +187,11 @@ def create_replay_app(
             request_text=outcome.request_text,
             response_text=response_text,
             summary={
-                # A free-form send has no recorded response to compare against; saying
-                # "无法比对" on the picture is noise, so only carry a real verdict.
                 "title": outcome.step_title or _first_line(outcome.request_text),
-                "show_compare": outcome.step > 0,
+                # 只有显式 --compare 才把比对结论画到图上。审核者是照步骤自己复现，
+                # 报文不必与上报逐字相同；默认摆一个「与上报一致」会误导读者以为
+                # 复核等于逐字重放。
+                "show_compare": body.compare_with_recorded,
                 "elapsed_ms": live.elapsed_ms,
                 "scheme_used": live.scheme_used,
                 "scheme_fell_back": live.scheme_fell_back,
@@ -199,6 +202,7 @@ def create_replay_app(
         )
         return SendResponse(
             url=f"{base_url(request)}/x/{entry.key}?t={token}",
+            request_text=outcome.request_text,
             status_code=live.status_code,
             reason=live.reason,
             headers=live.headers,

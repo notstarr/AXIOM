@@ -868,3 +868,29 @@ def test_a_missing_vulnerability_is_a_404_not_a_silent_empty(client, engine) -> 
     with pytest.raises(ReplayError) as excinfo:
         service.steps(task["id"], "v999")
     assert excinfo.value.status == 404
+
+
+def test_send_returns_the_request_it_actually_sent(client, engine, replay_target) -> None:
+    """`replay shot` 用这个字段渲染左栏；没有它截图就只有右半边。"""
+    from axiom.modules.replay.service import ReplayService
+
+    port, _ = replay_target
+    task_id, result_id = _reported_result(
+        client,
+        engine,
+        request_packet=f"GET /wanted HTTP/1.1\nHost: 127.0.0.1:{port}\n\n",
+        response_packet="HTTP/1.1 200 OK\n\n{}",
+    )
+    container = client.app.state.container
+    service = ReplayService(
+        engine,
+        tasks=container.tasks,
+        red_team=container.red_team,
+        evidence=container.report_evidence,
+    )
+    outcome = service.replay(
+        task_id=task_id, result_id=result_id, step=1, allow_private=True, capture=False
+    )
+    # 这就是 /api/send 回给 CLI 的字段。
+    assert outcome.request_text.startswith("GET /wanted HTTP/1.1")
+    assert "Host:" in outcome.request_text

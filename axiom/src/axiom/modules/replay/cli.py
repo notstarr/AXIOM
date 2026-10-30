@@ -307,8 +307,11 @@ def register_replay_commands(main: click.Group) -> None:
                 notes=[str(item) for item in raw_compare.get("notes") or []],
             )
 
+        # 左栏永远是服务端实际发出的那份报文：--result 时它取自入库的复现，
+        # 自由发包时就是 stdin 那一份。用「本地变量优先」会让 --result 模式下
+        # 左栏直接空白（本地 packet 是空串），截图就成了半张纸。
         payload = RenderInput(
-            packet_text=packet or result.get("request_text") or "",
+            packet_text=result.get("request_text") or packet or "",
             response_text=response_text,
             title=caption or "HTTP",
             caption="",
