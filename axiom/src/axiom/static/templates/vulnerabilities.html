@@ -173,7 +173,10 @@
                       <template x-for="ev in vulnStepShots(i + 1, 'packet')" :key="`evp-${ev.artifact_id}`">
                         <div class="rp-shot">
                           <div class="rp-shotbox">
-                            <img :src="ev.url" :alt="ev.caption || '报文截图'" @click="openShotPreview(ev)">
+                            <img :src="ev.url" :alt="ev.caption || '报文截图'" title="点击替换这张图"
+                              @click="$el.parentElement.querySelector('input[type=file]').click()">
+                            <input type="file" accept="image/*" style="display:none;"
+                              @change="replaceStepShot('vulnerability', selectedVulnerability().id, ev, $event)">
                             <button type="button" class="rp-shotbtn rp-shotdel" title="删除这张图"
                               @click.stop.prevent="deleteStepShot('vulnerability', selectedVulnerability().id, ev)">
                               <svg fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -191,7 +194,10 @@
                       <template x-for="ev in vulnStepShots(i + 1, 'business')" :key="`evb-${ev.artifact_id}`">
                         <div class="rp-shot">
                           <div class="rp-shotbox">
-                            <img :src="ev.url" :alt="ev.caption || '业务截图'" @click="openShotPreview(ev)">
+                            <img :src="ev.url" :alt="ev.caption || '业务截图'" title="点击替换这张图"
+                              @click="$el.parentElement.querySelector('input[type=file]').click()">
+                            <input type="file" accept="image/*" style="display:none;"
+                              @change="replaceStepShot('vulnerability', selectedVulnerability().id, ev, $event)">
                             <button type="button" class="rp-shotbtn rp-shotdel" title="删除这张图"
                               @click.stop.prevent="deleteStepShot('vulnerability', selectedVulnerability().id, ev)">
                               <svg fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -449,7 +455,10 @@
                       <template x-for="ev in rtStepShots(i + 1, 'packet')" :key="`rtev-p-${ev.artifact_id}`">
                         <div class="rp-shot">
                           <div class="rp-shotbox">
-                            <img :src="ev.url" :alt="ev.caption || '报文截图'" @click="openShotPreview(ev)">
+                            <img :src="ev.url" :alt="ev.caption || '报文截图'" title="点击替换这张图"
+                              @click="$el.parentElement.querySelector('input[type=file]').click()">
+                            <input type="file" accept="image/*" style="display:none;"
+                              @change="replaceStepShot('redteam_result', selectedRtResult().id, ev, $event)">
                             <button type="button" class="rp-shotbtn rp-shotdel" title="删除这张图"
                               @click.stop.prevent="deleteStepShot('redteam_result', selectedRtResult().id, ev)">
                               <svg fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -467,7 +476,10 @@
                       <template x-for="ev in rtStepShots(i + 1, 'business')" :key="`rtev-b-${ev.artifact_id}`">
                         <div class="rp-shot">
                           <div class="rp-shotbox">
-                            <img :src="ev.url" :alt="ev.caption || '业务截图'" @click="openShotPreview(ev)">
+                            <img :src="ev.url" :alt="ev.caption || '业务截图'" title="点击替换这张图"
+                              @click="$el.parentElement.querySelector('input[type=file]').click()">
+                            <input type="file" accept="image/*" style="display:none;"
+                              @change="replaceStepShot('redteam_result', selectedRtResult().id, ev, $event)">
                             <button type="button" class="rp-shotbtn rp-shotdel" title="删除这张图"
                               @click.stop.prevent="deleteStepShot('redteam_result', selectedRtResult().id, ev)">
                               <svg fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>

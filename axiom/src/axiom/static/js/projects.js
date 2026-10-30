@@ -805,6 +805,44 @@ window.AxiomModules.projects = {
       }
     },
 
+    // 点图换图：先挂新的，成功了再删旧的。
+    // 反过来会先出现「这一步缺图」再补上，中途那一刻的截图会是空的。
+    async replaceStepShot(subjectType, subjectId, item, event) {
+      const input = event?.target;
+      const file = input?.files?.[0];
+      if (!file || !item?.artifact_id) {
+        if (input) input.value = '';
+        return;
+      }
+      const taskId = subjectType === 'redteam_result'
+        ? (this.selectedRtResult()?.task_id || '')
+        : (this.selectedVulnerability()?.project_id || '');
+      if (!taskId) {
+        this.showToast('缺少任务标识，无法换图', 'error');
+        if (input) input.value = '';
+        return;
+      }
+      const stepIndex = Number(item.step_index) || 0;
+      const kind = item.kind || 'business';
+      try {
+        await this.attachStepShot(subjectType, taskId, subjectId, stepIndex, file, kind);
+        try {
+          await this.detachStepShot(subjectType, taskId, subjectId, item.artifact_id);
+        } catch (e) {
+          // 新图已经挂上，旧图没删掉：说明白，让人自己决定，别假装成功。
+          this.showToast('新图已挂上，但旧图未删除：' + (e.message || ''), 'error');
+          await this.refreshSubjectEvidence(subjectType, taskId, subjectId);
+          return;
+        }
+        this.showToast('截图已替换');
+        await this.refreshSubjectEvidence(subjectType, taskId, subjectId);
+      } catch (e) {
+        this.showToast(e.message || '换图失败', 'error');
+      } finally {
+        if (input) input.value = '';
+      }
+    },
+
     // 删除一张已挂的截图。证据行以 artifact 为键，所以删除就是 detach 那张图。
     async deleteStepShot(subjectType, subjectId, item) {
       if (!item?.artifact_id) return;
@@ -816,16 +854,21 @@ window.AxiomModules.projects = {
         this.showToast('缺少任务标识，无法删除', 'error');
         return;
       }
-      const base = subjectType === 'redteam_result'
-        ? `/tasks/${taskId}/red-team/results/${subjectId}/evidence`
-        : `/tasks/${taskId}/vulnerabilities/${subjectId}/evidence`;
       try {
-        await this.api('DELETE', `${base}/${item.artifact_id}`);
+        await this.detachStepShot(subjectType, taskId, subjectId, item.artifact_id);
         this.showToast('截图已删除');
         await this.refreshSubjectEvidence(subjectType, taskId, subjectId);
       } catch (e) {
         this.showToast(e.message || '删除失败', 'error');
       }
+    },
+
+    // 只删不刷新，供删除与替换两条路径共用。
+    async detachStepShot(subjectType, taskId, subjectId, artifactId) {
+      const base = subjectType === 'redteam_result'
+        ? `/tasks/${taskId}/red-team/results/${subjectId}/evidence`
+        : `/tasks/${taskId}/vulnerabilities/${subjectId}/evidence`;
+      return this.api('DELETE', `${base}/${artifactId}`);
     },
 
     // 删除/上传之后都要重新取一次 evidence 数组，详情面板直接读它。

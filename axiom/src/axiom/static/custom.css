@@ -963,7 +963,9 @@
   /* 缺报文图是「这一步还不能交裁决」，不是装饰性提示：给它一点分量，但仍不喧哗 */
   .rp-slot.need { border-color: var(--rp-amber, #b4741f); color: var(--rp-amber, #b4741f); }
   .rp-slot.need:hover { border-color: var(--rp-amber, #b4741f); }
-  .rp-shot { display: block; text-decoration: none; }
+  /* 宽度贴合图片本身：图注是一句可能很长的话，不能让它把容器撑宽，
+     否则右上角的放大按钮会飘到图注末尾，看起来像挂在段落上。 */
+  .rp-shot { display: block; text-decoration: none; width: fit-content; max-width: 100%; }
   .rp-shot img {
     display: block; max-width: 214px; max-height: 148px; object-fit: contain;
     border: 1px solid var(--rp-rule); border-radius: 3px; background: var(--rp-wash);
@@ -2704,8 +2706,9 @@ main.sto .grid.xl\:grid-cols-2 {
 /* ── 步骤截图：悬停出按钮 ────────────────────────────────────────────
    默认只显示图，鼠标移上去才露出左上角删除、右上角放大。按住的区域是
    整张图，不是按钮本身——按钮只在需要时出现，不占版面。 */
-.rp-shotbox { position: relative; display: block; line-height: 0; }
-.rp-shotbox img { display: block; cursor: zoom-in; }
+.rp-shotbox { position: relative; display: block; width: fit-content; line-height: 0; }
+/* 点图 = 换图（编辑），不是看图；看图走右上角那只眼睛。 */
+.rp-shotbox img { display: block; cursor: pointer; }
 .rp-shotbtn {
   position: absolute; top: 4px; width: 20px; height: 20px; padding: 0;
   display: flex; align-items: center; justify-content: center;
