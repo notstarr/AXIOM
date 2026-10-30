@@ -116,6 +116,7 @@ def create_replay_app(
         tasks=container.tasks,
         red_team=container.red_team,
         evidence=container.report_evidence,
+        vulnerabilities=container.vulnerabilities,
     )
     app.state.replay = service
     app.state.store = store_module.store()

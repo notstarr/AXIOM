@@ -22,8 +22,20 @@
 3. **产出就是裁决，不写任何文件**：
    - 报告由代码从上报时提交的结构化复现（`review_target.json` 里的 `reproduction`）自动生成，**你不再写 `vuln_report-*.md`**，也不写 evidence/、work/。
    - 裁决为 `duplicate` / `ignored` / `needs-human` 时同样只提交裁决；重复项用 `--duplicate-of` 指回原漏洞。
-   - **每一步都要挂一张报文图**（该步真实回包在屏幕上的样子）：`axiom review evidence attach --step N --kind packet --file shot.png`（`--kind business` 是可选的效果图）。缺图时 `axiom review status` 不会 `ready`、裁决会被拒并点名缺第几步；越界的步骤号也会被拒。
-   - 复现报文已在 `review_target.json` 里逐字给出；要复测就照它重打，不要凭描述臆测。
+   - **每一步都要挂一张报文图**——那一步真实回包在屏幕上的样子：
+     ```bash
+     axiom replay shot --task-id {task_id} --result {vulnerability_id} --step 2 \
+       --output step-02.png --caption "步骤 2 回包"
+     axiom review evidence attach --step 2 --kind packet --file step-02.png
+     ```
+     `replay shot` 真实再发一次报文并截它渲染出的页面。只发包不截图用 `axiom replay send`，
+     返回的地址 10 分钟内有效。报文一律取自 `review_target.json` 的复现记录（`--result/--step`
+     就是从那儿读），**不要自己重写报文、也不要凭描述臆测**。
+   - **业务效果图用 bsk 截图**：`"$AXIOM_BSK" screenshot --out business.png --session <id>`，
+     再 `axiom review evidence attach --step N --kind business --file business.png`。
+     business 可选、不计入闸门。
+   - 缺图时 `axiom review status` 不会 `ready`、裁决会被拒并点名缺第几步；越界的步骤号也会被拒。
+     截图里出现 Cookie/Token 是可接受的，不要为打码把会话身份遮掉。
 4. **提交结构化裁决**：
    - 确认成立：`axiom review decision submit verified --reason "精炼理由(1-3句)"`；理由要精炼、专业、直击裁决要害。
    - 历史重复：`axiom review decision submit duplicate --duplicate-of vXXX --reason "..."`

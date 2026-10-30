@@ -127,23 +127,29 @@ class ReportEvidenceService:
         raise ConflictError(f"Unsupported report subject type: {subject_type}")
 
     def _check_step(self, *, task_id: str, subject_type: str, subject_id: str, step_index: int, kind: str) -> None:
-        """Packet shots have to land on a real step; business shots keep the free range."""
+        """Validate the subject always; the step only matters for packet shots.
+
+        A business shot may sit on any step in range, because it illustrates the
+        finding rather than proving one step.  It still has to belong to a subject that
+        exists — otherwise a typo in the result id files a picture against nothing and
+        the report silently loses it.
+        """
         if step_index < 0:
             raise ConflictError("step_index must be 0 (overview) or a positive step number")
-        if kind == KIND_PACKET:
-            steps = self._step_count(task_id, subject_type, subject_id)
-            if steps == 0:
-                raise ConflictError(
-                    "该对象没有结构化复现，不能挂报文图：报文图要挂在某一步的真实回包上。"
-                )
-            if not 1 <= step_index <= steps:
-                raise ConflictError(
-                    f"该对象有 {steps} 步复现，报文图的 step_index 只能是 1..{steps}；"
-                    f"当前是 {step_index}"
-                )
-            return
         if step_index > MAX_STEP_INDEX:
             raise ConflictError(f"step_index 不能超过 {MAX_STEP_INDEX}")
+        steps = self._step_count(task_id, subject_type, subject_id)
+        if kind != KIND_PACKET:
+            return
+        if steps == 0:
+            raise ConflictError(
+                "该对象没有结构化复现，不能挂报文图：报文图要挂在某一步的真实回包上。"
+            )
+        if not 1 <= step_index <= steps:
+            raise ConflictError(
+                f"该对象有 {steps} 步复现，报文图的 step_index 只能是 1..{steps}；"
+                f"当前是 {step_index}"
+            )
 
     def attach(
         self,

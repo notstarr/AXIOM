@@ -745,3 +745,94 @@ def test_expired_page_is_gone_not_blank() -> None:
 
     assert "过期" in _EXPIRED_HTML
     assert "10 分钟" in _EXPIRED_HTML
+
+
+def test_replay_resolves_a_vulnerability_as_well_as_a_result(client, engine, replay_target) -> None:
+    """A reviewer replays whatever it is judging; the prefix is the only difference."""
+    from axiom.modules.replay.service import ReplayService
+
+    port, _ = replay_target
+    project = client.post("/api/v1/projects", json={"title": "漏洞重放"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "漏洞重放",
+            "origin": "a.example.com",
+            "goal": "挖漏洞",
+            "worker_pool": ["worker-a"],
+        },
+    ).json()
+    created = client.post(
+        f"/api/v1/tasks/{task['id']}/vulnerabilities",
+        json={
+            "title": "越权读取",
+            "type": "越权",
+            "severity": "high",
+            "description": "普通用户可读他人订单",
+            "impact": "数据泄露",
+            "reproduction": {
+                "entry_point": "GET /",
+                "steps": [
+                    {
+                        "title": "越权",
+                        "request": f"GET / HTTP/1.1\nHost: 127.0.0.1:{port}\n\n",
+                        "response": 'HTTP/1.1 200 OK\nContent-Type: application/json\n\n{"code":0,"order_id":8801}',
+                        "proves": "读到了别人的订单",
+                    }
+                ],
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    vulnerability_id = created.json()["id"]
+
+    container = client.app.state.container
+    service = ReplayService(
+        engine,
+        tasks=container.tasks,
+        red_team=container.red_team,
+        evidence=container.report_evidence,
+        vulnerabilities=container.vulnerabilities,
+    )
+    steps = service.steps(task["id"], vulnerability_id)
+    assert len(steps) == 1
+    assert steps[0].index == 1
+
+    outcome = service.replay(
+        task_id=task["id"],
+        result_id=vulnerability_id,
+        step=1,
+        allow_private=True,
+        capture=False,
+    )
+    assert outcome.sent is True
+    assert outcome.comparison.status == "match"
+
+
+def test_a_missing_vulnerability_is_a_404_not_a_silent_empty(client, engine) -> None:
+    from axiom.modules.replay.service import ReplayError, ReplayService
+
+    project = client.post("/api/v1/projects", json={"title": "找不到"}).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "找不到",
+            "origin": "a.example.com",
+            "goal": "挖漏洞",
+            "worker_pool": ["worker-a"],
+        },
+    ).json()
+
+    container = client.app.state.container
+    service = ReplayService(
+        engine,
+        tasks=container.tasks,
+        red_team=container.red_team,
+        evidence=container.report_evidence,
+        vulnerabilities=container.vulnerabilities,
+    )
+    with pytest.raises(ReplayError) as excinfo:
+        service.steps(task["id"], "v999")
+    assert excinfo.value.status == 404

@@ -206,17 +206,77 @@ def test_the_detail_payload_carries_the_attached_pictures() -> None:
 
     assert steps.steps[0]["images"][0]["path"] == "images/step-01-a.png"
 
-def test_red_team_results_have_their_own_hook(client) -> None:
+def test_red_team_results_have_their_own_hook(client, engine) -> None:
     """Both subject kinds share the table; the Result route works the same way."""
+    from axiom.modules.graph.tables import intents
+    from axiom.modules.redteam.tables import red_team_chains, red_team_results
+    from axiom.modules.reproduction.schemas import Reproduction, ReproStep
+    from axiom.shared.clock import utcnow
+    from sqlalchemy import insert
+
     task = _project_task(client, red_team=True)
     artifact_id = _upload(client, task["id"], "pivot.png", b"\x89PNG\r\n\x1a\n")
+    now = utcnow()
+    reproduction = Reproduction(
+        entry_point="GET /x",
+        steps=[
+            ReproStep(
+                title="越权",
+                request="GET /x HTTP/1.1\nHost: a.example.com\n\n",
+                response="HTTP/1.1 200 OK\n\n{}",
+                proves="读到了别人的数据",
+            )
+        ],
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            insert(red_team_chains).values(
+                id="ch001", task_id=task["id"], title="链",
+                initial_principal_json={"id": "user:member", "label": "成员", "tenant": "", "credential_id": None},
+                status="open", created_by="t", created_at=now, updated_at=now,
+            )
+        )
+        conn.execute(
+            insert(intents).values(
+                id="i002", task_id=task["id"], chain_id="ch001", kind="explore",
+                description="越权", status="completed", creator="t", created_at=now,
+            )
+        )
+        conn.execute(
+            insert(red_team_results).values(
+                id="x001", task_id=task["id"], chain_id="ch001", intent_id="i002",
+                result_type="data", title="越权读取", description="d", principal="成员",
+                target_asset="a.example.com", sample_count=1, sample_bytes=10,
+                data_fields_json="[]", reproduction_json=reproduction.model_dump_json(),
+                status="reported", reported_by="e", points_declared=1, points_awarded=0,
+                created_at=now, updated_at=now,
+            )
+        )
     base = f"/api/v1/tasks/{task['id']}/red-team/results/x001/evidence"
 
-    attached = client.post(base, json={"artifact_id": artifact_id, "step_index": 2})
+    attached = client.post(base, json={"artifact_id": artifact_id, "step_index": 1})
 
     assert attached.status_code == 201, attached.text
-    assert attached.json()["step_index"] == 2
+    assert attached.json()["step_index"] == 1
     assert [item["artifact_id"] for item in client.get(base).json()] == [artifact_id]
+
+
+def test_evidence_cannot_be_attached_to_a_subject_that_does_not_exist(client) -> None:
+    """A typo in the result id must not file a picture against nothing.
+
+    Business shots skip step validation by design, but skipping *existence* would let a
+    report lose a picture silently — nothing would ever read a row keyed to a missing
+    result.
+    """
+    task = _project_task(client, red_team=True)
+    artifact_id = _upload(client, task["id"], "ghost.png", b"\x89PNG\r\n\x1a\n")
+
+    attached = client.post(
+        f"/api/v1/tasks/{task['id']}/red-team/results/x999/evidence",
+        json={"artifact_id": artifact_id, "step_index": 1, "kind": "business"},
+    )
+
+    assert attached.status_code == 404, attached.text
 
 
 def test_vulnerability_report_view_returns_the_skeleton(client) -> None:

@@ -27,6 +27,7 @@ import axiom.modules.replay.sender as sender_module
 from axiom.modules.replay.packet import PacketError, parse_request, parse_response
 from axiom.modules.reports import KIND_PACKET, ReportEvidenceService
 from axiom.modules.tasks.service import TaskService
+from axiom.shared.errors import NotFoundError
 
 
 class ReplayError(ValueError):
@@ -87,11 +88,13 @@ class ReplayService:
         tasks: TaskService,
         red_team: RedTeamService,
         evidence: ReportEvidenceService,
+        vulnerabilities: Any = None,
     ):
         self.engine = engine
         self.tasks = tasks
         self.red_team = red_team
         self.evidence = evidence
+        self.vulnerabilities = vulnerabilities
 
     # ── reading ──────────────────────────────────────────────────────────────
 
@@ -100,8 +103,8 @@ class ReplayService:
         reproduction = result.reproduction
         if reproduction is None or not reproduction.steps:
             raise ReplayError(
-                "该成果没有结构化复现，无法重放",
-                hint="只有带 reproduction 的成果可以复核；请让 Explore 重新上报",
+                f"{result_id} 没有结构化复现，无法重放",
+                hint="只有带 reproduction 的对象可以复核；请让 Explore 重新上报",
             )
         return [
             StepView(index=index, title=step.title, request=step.request,
@@ -110,6 +113,21 @@ class ReplayService:
         ]
 
     def _result(self, task_id: str, result_id: str):
+        """Resolve a red-team Result or a Vulnerability.
+
+        A reviewer replays whichever subject it is judging, and both carry a
+        reproduction; the prefix is the only thing that differs.
+        """
+        if result_id.startswith("v"):
+            # ``vulnerabilities.get`` raises rather than returning None; surface it as the
+            # replay error so the CLI reports "not found" instead of a stack trace.
+            try:
+                vulnerability = self.vulnerabilities.get(task_id, result_id)
+            except NotFoundError as exc:
+                raise ReplayError(f"找不到漏洞 {result_id}", status=404) from exc
+            if vulnerability is None:
+                raise ReplayError(f"找不到漏洞 {result_id}", status=404)
+            return vulnerability
         results = self.red_team.list_results(task_id)
         for item in results:
             if item.id == result_id:
