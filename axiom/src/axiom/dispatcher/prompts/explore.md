@@ -67,13 +67,23 @@
      "steps": [
        {
          "title": "上传 PHP 文件到头像接口",
-         "request": "POST /upload.php HTTP/1.1\nHost: target.test\nContent-Type: multipart/form-data; boundary=----X\n\n------X\nContent-Disposition: form-data; name=\"avatar\"; filename=\"shell.php\"\n\n<?php echo 1; ?>\n------X--",
-         "response": "HTTP/1.1 200 OK\nContent-Type: application/json\n\n{\"uploaded\":\"/uploads/shell.php\"}",
+         "exchanges": [
+           {
+             "request": "POST /upload.php HTTP/1.1\nHost: target.test\nContent-Type: multipart/form-data; boundary=----X\n\n------X\nContent-Disposition: form-data; name=\"avatar\"; filename=\"shell.php\"\n\n<?php echo 1; ?>\n------X--",
+             "response": "HTTP/1.1 200 OK\nContent-Type: application/json\n\n{\"uploaded\":\"/uploads/shell.php\"}"
+           }
+         ],
          "proves": "上传接口不校验类型，任意 .php 落地并可直接访问"
        }
      ]
    }
    ```
+   - **一步可以有多个报文**：`exchanges` 是按执行顺序的一组组 `{request, response}`（单步最多 8 组）。
+     同一个结论要两个请求才成立时（先申领上传凭证、再拿凭证覆盖文件），**各开一组**；
+     不要把两个请求拼进同一个 `request`——拼起来的报文读者分不清哪行响应对应哪个请求，也没法重放。
+     一步只放证明**同一个结论**的报文，换了结论就另开一步。
+   - 只用一组报文时也可以沿用旧的 `request`/`response` 两个字段（等价于 `exchanges` 里唯一的一组），
+     但同一步不能两种写法并用。
    - `remediation`（修复建议）**不再必填**：交付报告里的这一节由审核/AI 富化补。
    - 记忆口诀：`已确认漏洞/事实 -> findings.md`；`未完成线索/资产变更 -> leads.md`；`有效漏洞 -> 写 repro.json 再 CLI 上报`。
 7. **人工干预标记**：

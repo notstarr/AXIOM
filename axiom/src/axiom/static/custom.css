@@ -943,6 +943,11 @@
   }
   .rp-resplabel { margin-top: 12px; font-size: 12px; letter-spacing: 0.04em; color: var(--rp-ink-3); }
 
+  /* 一步里的多组报文：同一结论下的第 2、3 组用发丝线隔开，读的时候能看出
+     一个请求/响应在哪里结束。只有一组时这些样式不出现。 */
+  .rp-xchg + .rp-xchg { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--rp-rule); }
+  .rp-xchgno { margin-top: 8px; font-size: 11.5px; letter-spacing: 0.04em; color: var(--rp-ink-3); }
+
   /* 证据：小方槽（不是通栏虚线），与参考报告一致 */
   .rp-slots { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 9px; }
   .rp-slot {

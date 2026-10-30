@@ -234,6 +234,7 @@ def test_vulnerability_report_view_returns_the_skeleton(client) -> None:
     assert [section["key"] for section in payload["sections"]] == [
         "basic",
         "description",
+        "prerequisites",
         "process",
         "impact",
         "verdict",

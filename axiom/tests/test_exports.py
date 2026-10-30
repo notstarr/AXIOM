@@ -452,3 +452,47 @@ def test_a_step_exports_its_packet_shot_before_its_business_shot(client) -> None
         "images/step-01-business-admin.png",
     ]
     assert report.index("step-01-packet-resp.png") < report.index("step-01-business-admin.png")
+
+
+def test_a_two_packet_step_exports_both_packets_and_one_description(client) -> None:
+    """一步两组报文：导出里两组都按顺序出现，描述只写一次。"""
+    task_id = _task(client)
+    client.post(
+        f"/api/v1/tasks/{task_id}/vulnerabilities",
+        json={
+            "title": "覆盖他人客户导入文件",
+            "type": "越权",
+            "severity": "high",
+            "description": "仅凭出库凭证即可覆盖他人客户文件",
+            "prerequisites": "持有任意登录账号",
+            "impact": "可篡改他人客户主数据",
+            "reproduction": {
+                "entry_point": "POST /admin/v1/file/temporary-credential",
+                "prerequisites": ["持有任意登录账号"],
+                "steps": [
+                    {
+                        "title": "申领凭证并覆盖文件",
+                        "exchanges": [
+                            {"request": "POST /admin/v1/file/temporary-credential HTTP/1.1\r\nHost: e.test\r\n\r\n{}",
+                             "response": "HTTP/1.1 200 OK\r\n\r\n{\"code\":1000}"},
+                            {"request": "POST https://oss.test/ HTTP/1.1\r\n\r\nkey=000/poc.xlsx",
+                             "response": "HTTP/1.1 200 OK\r\n\r\n{\"ok\":true}"},
+                        ],
+                        "proves": "文件被覆盖到他人客户目录",
+                    }
+                ],
+            },
+            "source": "human",
+            "reported_by": "tester",
+        },
+    )
+
+    report = client.get(f"/api/v1/tasks/{task_id}/vulnerabilities/v001/export?format=markdown").text
+
+    assert "### 步骤 1" in report
+    assert report.count("描述：文件被覆盖到他人客户目录") == 1
+    assert "报文 2：" in report
+    assert report.index("temporary-credential") < report.index("oss.test")
+    assert "## 利用前提" in report
+    # 利用前提排在描述之后、测试过程之前
+    assert report.index("## 描述") < report.index("## 利用前提") < report.index("## 测试过程")

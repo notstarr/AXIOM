@@ -105,9 +105,11 @@ def test_a_vulnerability_report_has_the_fixed_chapter_order() -> None:
     doc = build_vulnerability_report(_vulnerability())
 
     # 报告不再有独立的「证据」章节：图片挂在它所属的步骤下面。
+    # 利用前提是独立一章，位置与红队报告一致（描述之后、测试过程之前）。
     assert [section.key for section in doc.sections] == [
         "basic",
         "description",
+        "prerequisites",
         "process",
         "impact",
         "verdict",
@@ -138,13 +140,25 @@ def test_steps_are_numbered_by_position_not_by_the_worker() -> None:
     assert [step["title"] for step in steps_block.steps] == ["第 1 步", "第 2 步", "第 3 步"]
 
 
-def test_the_entry_point_and_prerequisites_come_before_the_steps() -> None:
+def test_prerequisites_are_their_own_chapter_above_the_process() -> None:
+    """利用前提讲的是「开打之前需要什么」，和「怎么打」不是一个问题。
+
+    把它塞进测试过程里，漏洞报告与红队报告读起来前后不一致——同一个信息在两块
+    面板里落到了不同的位置。
+    """
     doc = build_vulnerability_report(_vulnerability())
+    prerequisites = next(
+        section for section in doc.sections if section.key == "prerequisites"
+    )
     process = next(section for section in doc.sections if section.key == "process")
 
-    assert [block.type for block in process.blocks] == ["kv", "bullets", "steps"]
+    assert prerequisites.title == "利用前提"
+    # 上报人写的那句话 + 复现声明的结构化条件，两者都留
+    assert prerequisites.blocks[0].text == "需要任意低权限账号。"
+    assert prerequisites.blocks[1].items == ("需要低权限账号", "订单接口可达")
+    # 测试过程只留入口点与步骤
+    assert [block.type for block in process.blocks] == ["kv", "steps"]
     assert process.blocks[0].text == "POST /api/orders"
-    assert process.blocks[1].items == ("需要低权限账号", "订单接口可达")
 
 
 def test_remediation_disappears_when_empty_instead_of_showing_a_blank_heading() -> None:
@@ -256,7 +270,8 @@ def test_a_result_without_a_path_still_renders_the_process() -> None:
     doc = build_result_report(_result())
     process = next(section for section in doc.sections if section.key == "process")
 
-    assert [block.type for block in process.blocks] == ["kv", "bullets", "steps"]
+    # 前置条件已在「利用前提」一章；测试过程只剩入口点与步骤。
+    assert [block.type for block in process.blocks] == ["kv", "steps"]
 
 
 def test_the_prerequisites_section_leads_with_chain_input() -> None:
@@ -299,3 +314,46 @@ def test_an_empty_affected_target_falls_back_to_the_placeholder() -> None:
     target = next(block for block in basic.blocks if block.key == "影响目标")
 
     assert target.text == EMPTY
+
+
+def test_the_export_labels_a_step_as_描述_not_证明() -> None:
+    """「证明」是给这一步下的结论，报告只陈述做了什么。
+
+    裁决归审核，正文里出现「证明」会让读者以为这句话是经核实的事实。
+    """
+    doc = build_vulnerability_report(_vulnerability())
+    rendered = to_markdown(doc)
+
+    assert "描述：" in rendered
+    assert "证明：" not in rendered
+
+
+def test_a_step_with_two_packets_exports_both_in_order() -> None:
+    """两组报文各占一块，中间有编号，读者能看出哪行响应属于哪个请求。"""
+    reproduction = Reproduction.model_validate(
+        {
+            "entry_point": "POST /api/orders",
+            "prerequisites": ["需要低权限账号"],
+            "steps": [
+                {
+                    "title": "先申领凭证再覆盖文件",
+                    "exchanges": [
+                        {"request": "POST /cred HTTP/1.1\r\nHost: a\r\n\r\n{}",
+                         "response": "HTTP/1.1 200 OK\r\n\r\n{\"t\":1}"},
+                        {"request": "POST /upload HTTP/1.1\r\nHost: a\r\n\r\nk=1",
+                         "response": "HTTP/1.1 200 OK\r\n\r\n{\"ok\":true}"},
+                    ],
+                    "proves": "仅凭出库凭证即可覆盖他人文件",
+                }
+            ],
+        }
+    )
+    doc = build_vulnerability_report(_vulnerability(reproduction=reproduction))
+    rendered = to_markdown(doc)
+
+    first = rendered.index("POST /cred HTTP/1.1")
+    second = rendered.index("POST /upload HTTP/1.1")
+    assert first < second
+    assert "报文 2：" in rendered
+    # 每个请求后面紧跟它自己的响应，不是先列完请求再列响应
+    assert rendered.index('{"t":1}') < second

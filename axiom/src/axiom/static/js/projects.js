@@ -544,6 +544,23 @@ window.AxiomModules.projects = {
       return vulns[0];
     },
 
+    // 一步可以有多个报文（先申领凭证、再上传），旧数据只有单组 request/response。
+    // 渲染统一走这里，模板不关心存的是哪种形状。
+    stepExchanges(step) {
+      const list = step?.exchanges;
+      if (Array.isArray(list) && list.length) return list;
+      if (step && (step.request || step.response)) {
+        return [{ request: step.request || '', response: step.response || '' }];
+      }
+      return [];
+    },
+
+    // 利用前提：上报人写的那句（字符串）+ 复现声明的结构化条件（数组），两者都留。
+    vulnPrerequisiteLines() {
+      const repro = this.selectedVulnerability()?.reproduction;
+      return (repro && Array.isArray(repro.prerequisites)) ? repro.prerequisites : [];
+    },
+
     // 报告骨架里「步骤 N」下面挂的截图：审核者按 step_index + kind 补的。
     // packet = 该步真实回包（每步必须有，审核闸门就看它）；business = 业务效果图。
     vulnStepShots(stepIndex, kind) {
@@ -651,18 +668,35 @@ window.AxiomModules.projects = {
         chain_input: repro.chain_input || '',
         chain_gain: repro.chain_gain || '',
         steps: (repro.steps || []).map(step => ({
-          title: step.title || '', request: step.request || '',
-          response: step.response || '', proves: step.proves || '',
+          title: step.title || '',
+          // 一步可能有多组报文；编辑器逐组编辑，保存时原样写回 exchanges，
+          // 否则第二组会被静默丢掉。
+          exchanges: (this.stepExchanges(step)).map(x => ({
+            request: x.request || '', response: x.response || '',
+          })),
+          proves: step.proves || '',
         })),
       };
     },
 
     addRtEditorStep() {
-      this.rtEditor.steps.push({ title: '', request: '', response: '', proves: '' });
+      this.rtEditor.steps.push({
+        title: '', exchanges: [{ request: '', response: '' }], proves: '',
+      });
     },
 
     removeRtEditorStep(index) {
       this.rtEditor.steps.splice(index, 1);
+    },
+
+    addRtEditorExchange(step) {
+      step.exchanges.push({ request: '', response: '' });
+    },
+
+    removeRtEditorExchange(step, index) {
+      // 至少留一组：没有报文的步骤不是复现，服务端也会拒。
+      if (step.exchanges.length <= 1) return;
+      step.exchanges.splice(index, 1);
     },
 
     async saveRtResult() {
@@ -693,8 +727,11 @@ window.AxiomModules.projects = {
           chain_input: ed.chain_input.trim(),
           chain_gain: ed.chain_gain.trim(),
           steps: ed.steps.map(step => ({
-            title: step.title.trim(), request: step.request.trim(),
-            response: step.response.trim(), proves: step.proves.trim(),
+            title: step.title.trim(),
+            exchanges: step.exchanges
+              .filter(x => (x.request || '').trim() || (x.response || '').trim())
+              .map(x => ({ request: x.request.trim(), response: x.response.trim() })),
+            proves: step.proves.trim(),
           })),
         };
       }

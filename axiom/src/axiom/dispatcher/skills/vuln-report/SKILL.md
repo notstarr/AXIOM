@@ -19,6 +19,10 @@ Bootstrap 只记录线索；Reason 不得上报漏洞。
   提交前会本地校验，交 curl 会直接报错。
 - `response` 必须是**状态行 + 关键响应内容**。不要用 `...` 省略掉证明问题的片段（回显、token、报错）。
 - `steps` 按执行顺序，1~12 步。每步要有 `title`（在做什么）和 `proves`（证明了什么）。
+- 每步的报文放在 `exchanges` 里：一组 `{request, response}` 就是一次真实收发，按顺序 1~8 组。
+  **一步可以有多个报文**：同一个结论要两个请求才成立时（先申领上传凭证、再拿凭证覆盖文件），
+  各开一组。不要把两个请求拼进同一个 `request`——拼起来的报文读者分不清哪行响应对应哪个请求，
+  也没法重放。换了结论就另开一步。
 
 ## 上报命令
 
@@ -49,15 +53,27 @@ axiom explore vulnerability report \
   "prerequisites": ["无需认证，任意匿名访问者即可上传", "上传目录可写且 PHP 可解析（实测成立）"],
   "steps": [
     {
-      "title": "上传 PHP 文件到头像接口",
-      "request": "POST /upload.php HTTP/1.1\nHost: target.test\nContent-Type: multipart/form-data; boundary=----X\n\n------X\nContent-Disposition: form-data; name=\"avatar\"; filename=\"shell.php\"\nContent-Type: application/x-php\n\n<?php echo \"PWNED\"; ?>\n------X--",
-      "response": "HTTP/1.1 200 OK\nContent-Type: application/json\n\n{\"code\":1000,\"url\":\"/uploads/shell.php\"}",
-      "proves": "上传接口不校验扩展名与 MIME，任意 .php 落地并可直接访问"
+      "title": "申领上传凭证并用他人客户编码上传覆盖文件",
+      "exchanges": [
+        {
+          "request": "POST /admin/v1/file/temporary-credential HTTP/1.1\nHost: erp.example.com\nauthorization: <攻击者 JWT>\nContent-Type: application/json\n\n{\"storage\":\"file_service\",\"dir\":\"erp/import/customer/\",\"file_name\":\"poc.xlsx\"}",
+          "response": "HTTP/1.1 200 OK\n\n{\"code\":1000,\"data\":{\"path\":\"000/erp/import/customer/poc.xlsx\"}}"
+        },
+        {
+          "request": "POST https://oss.example.com/ HTTP/1.1\nContent-Type: multipart/form-data; boundary=----X\n\n(key=000/erp/import/customer/poc.xlsx, 文件内容中客户编码为他人客户)",
+          "response": "HTTP/1.1 200 OK\n\n{\"code\":1000,\"message\":\"请求成功\"}"
+        }
+      ],
+      "proves": "攻击者仅用出库凭证即可向他人客户编码的导入目录覆盖文件"
     },
     {
       "title": "访问落地的 webshell",
-      "request": "GET /uploads/shell.php?c=id HTTP/1.1\nHost: target.test\n\n",
-      "response": "HTTP/1.1 200 OK\n\nuid=33(www-data) gid=33(www-data)",
+      "exchanges": [
+        {
+          "request": "GET /uploads/shell.php?c=id HTTP/1.1\nHost: target.test\n\n",
+          "response": "HTTP/1.1 200 OK\n\nuid=33(www-data) gid=33(www-data)"
+        }
+      ],
       "proves": "落地的 PHP 被解析执行，取得命令执行"
     }
   ]
@@ -74,6 +90,7 @@ axiom explore vulnerability report \
 | `response` 只写 `{"code":1000}` | 缺状态行，无法判断是哪次请求 |
 | 步骤里没有 `proves` | 读者不知道这一步证明了什么 |
 | 一条请求塞十几个断言 | 拆成多步，每步一个结论 |
+| 两个请求拼进同一个 `request` | 读者分不清哪行响应对应哪个请求，且无法重放；应各开一组 `exchanges` |
 | 单条报文超过 16KB | 只保留能证明问题的关键 header 与 body 片段 |
 
 服务端会自动补齐 `intent_id`、`source=explore`、`reported_by` 和 `status=待验证`，

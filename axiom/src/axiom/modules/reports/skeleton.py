@@ -177,6 +177,11 @@ def build_vulnerability_report(
             title="描述",
             blocks=(Block(type="text", text=vulnerability.description or EMPTY),),
         ),
+        Section(
+            key="prerequisites",
+            title="利用前提",
+            blocks=_vulnerability_prerequisite_blocks(vulnerability),
+        ),
         _process_section(vulnerability.reproduction, images_by_step=images_by_step),
         Section(
             key="impact",
@@ -274,7 +279,12 @@ def _process_section(
     *,
     images_by_step: dict[int, list[dict[str, Any]]] | None = None,
 ) -> Section:
-    """入口点 / 前置条件 / 有序步骤 — the part a human walks again."""
+    """入口点 + 有序步骤 — the part a human walks again.
+
+    What the exploit needed before it could start is its own chapter (利用前提), above
+    this one: it answers a different question, and burying it under 测试过程 made two
+    reports of the same engagement read differently depending on the panel.
+    """
     if reproduction is None:
         return Section(
             key="process",
@@ -282,7 +292,6 @@ def _process_section(
             blocks=(Block(type="text", text=NO_REPRODUCTION),),
         )
     blocks: list[Block] = [Block(type="kv", key="入口点", text=reproduction.entry_point)]
-    blocks.append(Block(type="bullets", key="前置条件", items=tuple(_prerequisites(reproduction))))
     images = images_by_step or {}
     blocks.append(
         Block(
@@ -291,6 +300,13 @@ def _process_section(
                 {
                     "index": index,
                     "title": step.title,
+                    # A step may take several packets; each one is its own block so the
+                    # reader (and the export) can see where one exchange ended.
+                    "exchanges": [
+                        {"request": exchange.request, "response": exchange.response}
+                        for exchange in step.exchanges
+                    ],
+                    # First pair, for readers written against the single-packet shape.
                     "request": step.request,
                     "response": step.response,
                     "proves": step.proves,
@@ -316,6 +332,27 @@ def _image_label(item: dict[str, Any]) -> str:
     return f"{label}（{path}）" if path else label
 
 
+def _vulnerability_prerequisite_blocks(vulnerability: "Vulnerability") -> tuple[Block, ...]:
+    """What an attacker needs before the first packet.
+
+    Two sources, both kept: the reporter's own sentence (``prerequisites`` — the one they
+    typed on the report form) and the structured conditions the reproduction declares.
+    The prose usually explains *why*, the list enumerates *what*, and dropping either
+    loses something the next tester needs.
+    """
+    blocks: list[Block] = []
+    prose = (vulnerability.prerequisites or "").strip()
+    if prose:
+        blocks.append(Block(type="text", text=prose))
+    reproduction = vulnerability.reproduction
+    conditions = list(reproduction.prerequisites) if reproduction is not None else []
+    if conditions:
+        blocks.append(Block(type="bullets", items=tuple(conditions)))
+    if not blocks:
+        return (Block(type="text", text=EMPTY),)
+    return tuple(blocks)
+
+
 def _prerequisite_blocks(reproduction: Reproduction | None) -> tuple[Block, ...]:
     """What this step needed before it could run.
 
@@ -332,10 +369,6 @@ def _prerequisite_blocks(reproduction: Reproduction | None) -> tuple[Block, ...]
     if not items:
         return (Block(type="text", text=EMPTY),)
     return (Block(type="bullets", items=tuple(items)),)
-
-
-def _prerequisites(reproduction: Reproduction) -> list[str]:
-    return list(reproduction.prerequisites)
 
 
 def _verdict_section(*, decision: str, reason: str, points: int | None) -> Section:
@@ -385,18 +418,27 @@ def _render_block(block: Block) -> list[str]:
         for step in block.steps:
             lines.append(f"### 步骤 {step['index']} — {step['title']}")
             lines.append("")
-            lines.append(f"证明：{step['proves']}")
+            # 「描述」而不是「证明」：这一步做了什么，读者自己判断它证明了什么。
+            lines.append(f"描述：{step['proves']}")
             lines.append("")
-            lines.append("```http")
-            lines.append(step["request"])
-            lines.append("```")
-            lines.append("")
-            lines.append("响应：")
-            lines.append("")
-            lines.append("```http")
-            lines.append(step["response"])
-            lines.append("```")
-            lines.append("")
+            for position, exchange in enumerate(
+                step.get("exchanges") or [{"request": step["request"], "response": step["response"]}],
+                start=1,
+            ):
+                if position > 1:
+                    # 一组报文一个分节：两组挤在同一块里，读者分不清哪行响应属于哪个请求。
+                    lines.append(f"报文 {position}：")
+                    lines.append("")
+                lines.append("```http")
+                lines.append(exchange["request"])
+                lines.append("```")
+                lines.append("")
+                lines.append("响应：")
+                lines.append("")
+                lines.append("```http")
+                lines.append(exchange["response"])
+                lines.append("```")
+                lines.append("")
             # 证据图紧跟该步的响应：读者看到的就是这一步发生了什么，
             # 不必翻到文末再对号入座。
             for image in step.get("images") or ():

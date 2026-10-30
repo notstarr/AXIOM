@@ -1778,6 +1778,8 @@ def test_frontend_and_static_assets_are_served(client):
     assert "本步报文图" in vulnerabilities.text
     assert "本步业务图" in vulnerabilities.text
     assert 'class="rp-packet"' in vulnerabilities.text
+    # 一步可以有多组报文：模板循环 exchanges，单组时退回 request/response
+    assert "stepExchanges(step)" in vulnerabilities.text
     # 证据槽是每步一个方块，不是通栏虚线框；且挂在步骤内部
     assert 'class="rp-slot"' in vulnerabilities.text
     # 每个报告面板只允许一个实心主按钮（漏洞与成果各一个，分处两个面板）
@@ -2022,9 +2024,12 @@ def test_frontend_and_static_assets_are_served(client):
     assert "Plan 排队列表（FIFO）" in graph.text
     assert "planDecisionLabel(project.project.last_plan_decision)" in graph.text
     assert "project.project.reason && project.project.phase !== 'plan'" in graph.text
-    # 前置条件现在渲染自 reproduction.prerequisites；修复建议缺失时整节省略，
-    # 因此两个「未填写」兜底断言按新契约调整。
-    assert "(selectedVulnerability().reproduction.prerequisites || [])" in vulnerabilities.text
+    # 利用前提是独立一章（与红队面板同构，位置在描述之后），渲染两处来源：
+    # 上报人写的那句话 + 复现声明的结构化条件。修复建议缺失时整节省略，
+    # 因此「未填写」兜底断言按新契约调整。
+    assert '<h2 class="rp-h">利用前提</h2>' in vulnerabilities.text
+    assert "vulnPrerequisiteLines()" in vulnerabilities.text
+    assert "selectedVulnerability().prerequisites" in vulnerabilities.text
     # 修复建议缺失时整节省略（用 x-show 控制，不渲染空标题）
     assert 'x-show="selectedVulnerability().remediation"' in vulnerabilities.text
     assert "按列表查看证据、影响和修复建议" in vulnerabilities.text

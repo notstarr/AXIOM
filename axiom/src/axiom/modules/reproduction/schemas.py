@@ -22,6 +22,8 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from axiom.modules.reproduction.curl import is_curl_command
+
 
 # A single request/response packet.  Real packets in this platform are a few KB; the
 # cap stops a worker from dumping a 40 MB download into a JSONB column.
@@ -31,6 +33,9 @@ MAX_PACKET_BYTES = 16 * 1024
 # fragment that proves the point.
 MAX_REPRODUCTION_BYTES = 64 * 1024
 MAX_STEPS = 12
+# One step can legitimately need several packets (get a credential, then use it).  The
+# bound is per step, so a step cannot become a transcript of the whole session.
+MAX_EXCHANGES_PER_STEP = 8
 
 # ``METHOD target HTTP/1.1`` — the target may be an origin-form path or an absolute
 # URL (a proxy-style request line is still a valid packet).
@@ -53,23 +58,19 @@ def _utf8_len(text: str) -> int:
     return len(text.encode("utf-8"))
 
 
-class ReproStep(BaseModel):
-    """One ordered step: the real request, the real response, and what it proves."""
+class ReproExchange(BaseModel):
+    """One request/response pair, and nothing else.
+
+    A step is often two packets, not one: ask for a temporary credential, then use it to
+    upload.  With a single ``request``/``response`` per step the worker had nowhere to put
+    the second pair, so it concatenated them into one field — which renders as a packet
+    that never existed, cannot be replayed, and hides where one exchange ended.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(description="这一步在做什么（自然语言，给读者看的一句话）")
-    request: str = Field(description="该步真实发出的 HTTP 请求报文（不是 curl/命令）")
-    response: str = Field(description="该步真实返回的 HTTP 响应（状态行 + 关键内容）")
-    proves: str = Field(description="这一步证明了什么")
-
-    @field_validator("title", "proves")
-    @classmethod
-    def require_text(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("不能为空：每一步都要说清在做什么、证明了什么")
-        return value
+    request: str = Field(description="该次真实发出的 HTTP 请求报文（不是 curl/命令）")
+    response: str = Field(description="该次真实返回的 HTTP 响应（状态行 + 关键内容）")
 
     @field_validator("request")
     @classmethod
@@ -77,18 +78,30 @@ class ReproStep(BaseModel):
         packet = value.strip()
         if not packet:
             raise ValueError("请求报文不能为空")
+        # A pasted curl command is translated rather than rejected: it is what a worker
+        # actually types, and hand-expanding -H flags is where packets go wrong.  The
+        # translation is deterministic and refuses flags it cannot represent, so the
+        # stored packet is always one that could really have been sent.
+        if is_curl_command(packet):
+            from axiom.modules.reproduction.curl import CurlParseError, curl_to_packet
+
+            try:
+                packet = curl_to_packet(packet)
+            except CurlParseError as exc:
+                raise ValueError(f"curl 命令无法转成报文：{exc}") from exc
         head = _first_line(packet)
         lowered = head.lower()
         for prefix in _COMMAND_PREFIXES:
             if lowered.startswith(prefix):
                 raise ValueError(
-                    "request 必须是标准 HTTP 请求报文，不能是 curl/shell 命令"
-                    "（把命令还原成等价报文：请求行 + 关键 header + 空行 + body）"
+                    "request 必须是标准 HTTP 请求报文，不能是 shell 命令"
+                    "（curl 会自动转换；其它命令请写成请求行 + 关键 header + 空行 + body）"
                 )
         if not _REQUEST_LINE.match(head):
             raise ValueError(
                 "request 首行必须形如 `POST /path?query HTTP/1.1`；"
-                f"当前首行是 `{head[:120]}`"
+                f"当前首行是 `{head[:120]}`。"
+                "一次报文只放一个请求；同一组动作里的第二个请求请另开一组 exchanges"
             )
         if _utf8_len(packet) > MAX_PACKET_BYTES:
             raise ValueError(
@@ -110,7 +123,8 @@ class ReproStep(BaseModel):
         if not _STATUS_LINE.match(head):
             raise ValueError(
                 "response 首行必须是 HTTP 状态行，如 `HTTP/1.1 200 OK`；"
-                f"当前首行是 `{head[:120]}`"
+                f"当前首行是 `{head[:120]}`。"
+                "一次报文只放一个响应；多个请求的响应请按顺序各自成组"
             )
         if _utf8_len(packet) > MAX_PACKET_BYTES:
             raise ValueError(
@@ -118,6 +132,86 @@ class ReproStep(BaseModel):
                 "只保留能证明问题的关键片段（回显 / token / 报错）"
             )
         return packet
+
+
+class ReproStep(BaseModel):
+    """One ordered step: the packets it took, and what the step proves.
+
+    The wire record lives in ``exchanges`` — one entry per request/response pair, in the
+    order they were sent.  Most steps have exactly one; a step that needs a credential
+    and then an upload has two, and they must stay separate entries so both the rendered
+    report and the reviewer's replay see real packets.
+
+    ``request`` / ``response`` remain readable as the first pair.  They are what every
+    stored row written before this change contains, and what the replay console sends
+    when it retries a step; accepting them on input and exposing them as properties keeps
+    both working without storing the same bytes twice.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(description="这一步在做什么（自然语言，给读者看的一句话）")
+    exchanges: list[ReproExchange] = Field(
+        default_factory=list,
+        description=(
+            f"这一步真实收发的报文，按顺序 1~{MAX_EXCHANGES_PER_STEP} 组。"
+            "每组一个请求配一个响应；不要把两个请求塞进同一组"
+        ),
+    )
+    proves: str = Field(description="这一步证明了什么")
+
+    @model_validator(mode="before")
+    @classmethod
+    def fold_single_packet(cls, data: object) -> object:
+        """Accept the old ``request``/``response`` shape as a one-exchange step."""
+        if not isinstance(data, dict):
+            return data
+        request = data.get("request")
+        response = data.get("response")
+        if request is None and response is None:
+            return data
+        if data.get("exchanges"):
+            raise ValueError(
+                "同一步不能同时给 `request`/`response` 和 `exchanges`："
+                "只留 `exchanges`（一组报文写成 [{request, response}]）"
+            )
+        moved = dict(data)
+        moved.pop("request", None)
+        moved.pop("response", None)
+        moved["exchanges"] = [{"request": request or "", "response": response or ""}]
+        return moved
+
+    @field_validator("title", "proves")
+    @classmethod
+    def require_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("不能为空：每一步都要说清在做什么、证明了什么")
+        return value
+
+    @field_validator("exchanges")
+    @classmethod
+    def require_packets(cls, exchanges: list[ReproExchange]) -> list[ReproExchange]:
+        if not exchanges:
+            raise ValueError(
+                "每一步至少要有一组请求/响应（exchanges 不能为空）："
+                "没有报文的步骤不是复现"
+            )
+        if len(exchanges) > MAX_EXCHANGES_PER_STEP:
+            raise ValueError(
+                f"单步报文最多 {MAX_EXCHANGES_PER_STEP} 组，当前 {len(exchanges)} 组；"
+                "同一步只放证明同一结论的报文，其余拆成下一步"
+            )
+        return exchanges
+
+    @property
+    def request(self) -> str:
+        """The first request. Kept for the replay console and old read models."""
+        return self.exchanges[0].request if self.exchanges else ""
+
+    @property
+    def response(self) -> str:
+        return self.exchanges[0].response if self.exchanges else ""
 
 
 class Reproduction(BaseModel):

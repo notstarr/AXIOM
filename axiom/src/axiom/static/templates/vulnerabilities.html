@@ -127,6 +127,23 @@
             <p class="rp-p" x-text="formatMultiline(selectedVulnerability().description)"></p>
           </section>
 
+          <!-- 利用前提：与红队面板同构，独立成章放在描述之后 -->
+          <section class="rp-block">
+            <h2 class="rp-h">利用前提</h2>
+            <p class="rp-absent" x-show="!vulnPrerequisiteLines().length && !(selectedVulnerability().prerequisites || '').trim()">未填写</p>
+            <div class="rp-proc" x-show="vulnPrerequisiteLines().length || (selectedVulnerability().prerequisites || '').trim()">
+              <div class="rp-entry">
+                <p class="rp-p" style="margin:0;" x-show="(selectedVulnerability().prerequisites || '').trim()"
+                   x-text="formatMultiline(selectedVulnerability().prerequisites)"></p>
+                <ul class="rp-req" x-show="vulnPrerequisiteLines().length" style="margin-top:6px;">
+                  <template x-for="(item, idx) in vulnPrerequisiteLines()" :key="`vpre-${idx}`">
+                    <li x-text="item"></li>
+                  </template>
+                </ul>
+              </div>
+            </div>
+          </section>
+
           <!-- 测试过程 -->
           <section class="rp-block">
             <h2 class="rp-h">测试过程</h2>
@@ -137,14 +154,6 @@
                   <span class="rp-k">入口点</span>
                   <span class="rp-codes" x-text="selectedVulnerability().reproduction.entry_point"></span>
                 </div>
-                <div x-show="(selectedVulnerability().reproduction.prerequisites || []).length">
-                  <div class="rp-k" style="margin-top:5px;">前置条件</div>
-                  <ul class="rp-req">
-                    <template x-for="(item, idx) in (selectedVulnerability().reproduction.prerequisites || [])" :key="`pre-${idx}`">
-                      <li x-text="item"></li>
-                    </template>
-                  </ul>
-                </div>
               </div>
               <ol class="rp-steps">
                 <template x-for="(step, i) in (selectedVulnerability().reproduction.steps || [])" :key="`step-${i}`">
@@ -153,9 +162,14 @@
                       <span class="rp-stepno" x-text="i + 1"></span>
                       <p class="rp-stepsum"><span x-text="step.title"></span><span x-show="step.proves" style="color:var(--rp-ink-2);" x-text="` ｜ ${step.proves}`"></span></p>
                     </div>
-                    <pre class="rp-packet" x-text="step.request"></pre>
-                    <div class="rp-resplabel">响应</div>
-                    <pre class="rp-packet" x-text="step.response"></pre>
+                    <template x-for="(x, xi) in stepExchanges(step)" :key="`x-${i}-${xi}`">
+                      <div class="rp-xchg">
+                        <div class="rp-xchgno" x-show="stepExchanges(step).length > 1" x-text="`报文 ${xi + 1} / ${stepExchanges(step).length}`"></div>
+                        <pre class="rp-packet" x-text="x.request"></pre>
+                        <div class="rp-resplabel">响应</div>
+                        <pre class="rp-packet" x-text="x.response"></pre>
+                      </div>
+                    </template>
                     <div class="rp-slots" x-show="vulnStepShots(i + 1, 'packet').length">
                       <template x-for="ev in vulnStepShots(i + 1, 'packet')" :key="`evp-${ev.artifact_id}`">
                         <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
@@ -414,9 +428,14 @@
                       <span class="rp-stepno" x-text="i + 1"></span>
                       <p class="rp-stepsum"><span x-text="step.title"></span><span x-show="step.proves" style="color:var(--rp-ink-2);" x-text="` ｜ ${step.proves}`"></span></p>
                     </div>
-                    <pre class="rp-packet" x-text="step.request"></pre>
-                    <div class="rp-resplabel">响应</div>
-                    <pre class="rp-packet" x-text="step.response"></pre>
+                    <template x-for="(x, xi) in stepExchanges(step)" :key="`rx-${i}-${xi}`">
+                      <div class="rp-xchg">
+                        <div class="rp-xchgno" x-show="stepExchanges(step).length > 1" x-text="`报文 ${xi + 1} / ${stepExchanges(step).length}`"></div>
+                        <pre class="rp-packet" x-text="x.request"></pre>
+                        <div class="rp-resplabel">响应</div>
+                        <pre class="rp-packet" x-text="x.response"></pre>
+                      </div>
+                    </template>
                     <div class="rp-slots" x-show="rtStepShots(i + 1, 'packet').length">
                       <template x-for="ev in rtStepShots(i + 1, 'packet')" :key="`rtev-p-${ev.artifact_id}`">
                         <a class="rp-shot" :href="ev.url" target="_blank" rel="noopener">
@@ -680,8 +699,19 @@
                   <button type="button" class="sto-minibtn danger" @click="removeRtEditorStep(idx)">删除这一步</button>
                 </div>
                 <input x-model="step.title" class="sto-input" placeholder="这一步在做什么">
-                <textarea x-model="step.request" rows="4" class="sto-input" placeholder="真实请求报文（请求行 + header + 空行 + body）"></textarea>
-                <textarea x-model="step.response" rows="3" class="sto-input" placeholder="真实响应（状态行 + 关键内容）"></textarea>
+                <template x-for="(x, xi) in step.exchanges" :key="`rtx-${idx}-${xi}`">
+                  <div style="border-left:2px solid var(--sto-line); padding-left:9px; display:flex; flex-direction:column; gap:6px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                      <span class="sto-num" style="font-size:11px; color:var(--sto-fg-3);" x-text="`报文 ${xi + 1} / ${step.exchanges.length}`"></span>
+                      <span style="flex:1;"></span>
+                      <button type="button" class="sto-minibtn danger" x-show="step.exchanges.length > 1"
+                              @click="removeRtEditorExchange(step, xi)">删除这组</button>
+                    </div>
+                    <textarea x-model="x.request" rows="4" class="sto-input" placeholder="真实请求报文（请求行 + header + 空行 + body）"></textarea>
+                    <textarea x-model="x.response" rows="3" class="sto-input" placeholder="真实响应（状态行 + 关键内容）"></textarea>
+                  </div>
+                </template>
+                <button type="button" class="sto-minibtn" style="align-self:flex-start;" @click="addRtEditorExchange(step)">+ 添加一组报文</button>
                 <input x-model="step.proves" class="sto-input" placeholder="这一步证明了什么">
               </div>
             </template>

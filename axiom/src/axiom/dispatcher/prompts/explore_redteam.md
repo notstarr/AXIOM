@@ -47,11 +47,13 @@
      "chain_input": "本环开始时的身份与权限（如：已持有 v004 面板 token，可访问 172.21.x）",
      "chain_gain": "本环新增的能力（如：拿到 192.168.0.95 的 shell，可执行命令）",
      "steps": [
-       {"title": "这一步在做什么", "request": "GET /api/x HTTP/1.1\\nHost: a.example.com\\n\\n", "response": "HTTP/1.1 200 OK\\n\\n{...}", "proves": "这一步证明了什么"}
+       {"title": "这一步在做什么", "exchanges": [{"request": "GET /api/x HTTP/1.1\\nHost: a.example.com\\n\\n", "response": "HTTP/1.1 200 OK\\n\\n{...}"}], "proves": "这一步做了什么"}
      ]
    }
    ```
    - `request` 必须是**标准 HTTP 报文**（不是 curl/命令）；`response` 必须是**状态行 + 关键内容**，不要用 `...` 省略证明点。
+   - 一步可以有多个报文：`exchanges` 按顺序放一组组 `{request, response}`（单步最多 8 组）。同一个结论要两个请求才成立时
+     （先申领凭证、再拿凭证操作），各开一组；**不要把两个请求拼进同一个 `request`**，那样读者分不清哪行响应对应哪个请求。
    - `chain_input` / `chain_gain` 只写**本环**的增量与起点，不要写整条历史——攻击链由图谱自动装配，你写不准也不需要写。
 5. 只有必须人类完成的物理动作才调用 `axiom explore human-intervention mark`。
 6. 收到预算提醒后停止扩展，把未完成部分写入 leads.md。
