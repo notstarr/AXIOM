@@ -50,15 +50,21 @@ def export_vulnerability(
     task_id: str,
     vulnerability_id: str,
     format: str = Query(default="auto"),
+    images: str = Query(default="include"),
     container: Container = Depends(get_container),
 ) -> Response:
     """导出一份报告：md，有图时是 md + images 的压缩包。
 
     ``auto`` 按有没有图决定包形；显式 ``md`` / ``markdown`` 只出正文（图片路径仍在，
     需要调用方自己取图），``zip`` 强制打包（没有图时就是一个只含 md 的包）。
+
+    ``images=omit`` 连图片引用一起去掉。这是复制到剪贴板用的：读者手里没有那个文件，
+    留一条指不过去的路径不如不留。
     """
     if format in {"md", "markdown"}:
-        payload = container.exports.vulnerability_markdown(task_id, vulnerability_id)
+        payload = container.exports.vulnerability_markdown(
+            task_id, vulnerability_id, with_images=images != "omit"
+        )
         return _attachment(
             payload.encode("utf-8"), f"{task_id}_{vulnerability_id}_report.md", "text/markdown"
         )

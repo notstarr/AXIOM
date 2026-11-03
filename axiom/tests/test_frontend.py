@@ -3996,3 +3996,61 @@ def test_the_task_report_export_only_fires_once_a_task_is_picked() -> None:
     assert result["calls"] == [["/api/v1/tasks/t_239/report", "t_239_report"]]
     # 打包完要放开按钮，否则连点两下会打两个包。
     assert result["exporting"] is False
+
+
+def _run_copy_markdown_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    dashboard = ROOT / "src/axiom/static/js/dashboard.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+global.localStorage = {{ getItem: () => 'tok' }};
+let requested = '';
+global.fetch = async (url) => {{
+  requested = url;
+  return {{ ok: true, status: 200, text: async () => '# 标题\\n\\n正文' }};
+}};
+let copied = '';
+Object.defineProperty(globalThis, 'navigator', {{
+  value: {{ clipboard: {{ writeText: async (text) => {{ copied = text; }} }} }},
+  configurable: true,
+}});
+global.window.isSecureContext = true;
+eval(fs.readFileSync({json.dumps(str(dashboard))}, 'utf8'));
+const methods = window.AxiomModules.dashboard.methods;
+const toasts = [];
+const ctx = Object.assign({{}}, methods);
+ctx.showToast = (message, type) => {{ toasts.push([message, type]); }};
+(async () => {{
+  await ctx.copyVulnerabilityMarkdown({{ task_id: 't_004', id: 'v001' }});
+  process.stdout.write(JSON.stringify({{ requested, copied, toasts }}));
+}})();
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def test_the_copy_markdown_button_asks_for_the_image_free_markdown() -> None:
+    """按钮要的是「不要图片」的正文——图带不走，引用指不到文件反而误导人。"""
+    template = (ROOT / "src/axiom/static/templates/vulnerabilities.html").read_text(
+        encoding="utf-8"
+    )
+    assert '@click="copyVulnerabilityMarkdown(selectedVulnerability())"' in template
+    assert "复制 Markdown" in template
+
+
+def test_copying_the_markdown_fetches_it_without_images_and_puts_it_on_the_clipboard() -> None:
+    result = _run_copy_markdown_fixture()
+    assert result["requested"] == (
+        "/api/v1/tasks/t_004/vulnerabilities/v001/export?format=markdown&images=omit"
+    )
+    assert result["copied"] == "# 标题\n\n正文"
+    assert result["toasts"] == [["已复制 Markdown（不含图片）", "success"]]

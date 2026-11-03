@@ -126,6 +126,13 @@
               <button @click="toggleVulnReviewed(selectedVulnerability())" class="rp-act" :class="selectedVulnerability().human_reviewed ? 'on' : ''" x-text="selectedVulnerability().human_reviewed ? '已阅' : '标记已阅'"></button>
               <button @click="toggleVulnRedTeamExploitable(selectedVulnerability())" class="rp-act" :class="selectedVulnerability().red_team_exploitable ? 'on' : ''" x-text="selectedVulnerability().red_team_exploitable ? '红队可利用' : '标记红队可利用'"></button>
               <button @click="deleteVuln(selectedVulnerability())" class="rp-act danger">删除</button>
+              <span style="flex:1 1 auto;"></span>
+              <!-- 复制 Markdown：粘到别处（周报、聊天、工单）时用。图带不走，
+                   引用指不到文件反而误导人，所以由服务端连图片一起去掉。 -->
+              <button @click="copyVulnerabilityMarkdown(selectedVulnerability())" class="rp-act" title="复制这条漏洞的 Markdown 正文（不含图片）">
+                <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>
+                复制 Markdown
+              </button>
             </div>
           </header>
 

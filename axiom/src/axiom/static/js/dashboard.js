@@ -644,5 +644,44 @@ window.AxiomModules.dashboard = {
         `${v.task_id}_${v.id}_report`,
       );
     },
+
+    async copyVulnerabilityMarkdown(v) {
+      if (!v?.task_id || !v?.id) return;
+      try {
+        const token = localStorage.getItem('axiom_token');
+        // 图片引用由服务端去掉：报文原文里也可能长着 ![..](..) 的样子，前端正则会把
+        // 响应体里的内容一起误伤。
+        const response = await fetch(
+          `/api/v1/tasks/${v.task_id}/vulnerabilities/${v.id}/export?format=markdown&images=omit`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+        );
+        if (!response.ok) {
+          throw new Error((await response.text()) || `复制失败 (HTTP ${response.status})`);
+        }
+        await this.copyText(await response.text());
+        this.showToast('已复制 Markdown（不含图片）', 'success');
+      } catch (e) {
+        this.showToast(`复制失败: ${e.message}`, 'error');
+      }
+    },
+
+    async copyText(text) {
+      // clipboard API 只在安全上下文里有；局域网 http 访问时退回 execCommand。
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.top = '-1000px';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      const copied = document.execCommand('copy');
+      area.remove();
+      if (!copied) throw new Error('浏览器拒绝了复制');
+    },
   }
 };

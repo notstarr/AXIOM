@@ -170,19 +170,29 @@ class ExportService:
             lines.append("暂无执行事件。")
         return "\n".join(lines) + "\n"
 
-    def vulnerability_markdown(self, task_id: str, vulnerability_id: str) -> str:
+    def vulnerability_markdown(
+        self, task_id: str, vulnerability_id: str, *, with_images: bool = True
+    ) -> str:
         """交付用 Markdown：由代码从结构化复现生成，不经 AI 重写。
 
         Images are referenced by the same ``images/…`` paths the archive writes, so the
         markdown and the folder are one unit.  With no images the paths simply do not
         resolve, which is why the package drops the archive in that case.
+
+        ``with_images=False`` is for the clipboard: a pasted image reference points at a
+        file the reader does not have, so the lines are dropped rather than shipped
+        pointing nowhere.
         """
         self._require_task(task_id)
         with self.engine.connect() as conn:
             item = self.vulnerabilities.get(conn, task_id, vulnerability_id)
             if item is None:
                 raise NotFoundError(f"Vulnerability not found: {vulnerability_id}")
-            images = self._images(conn, task_id, "vulnerability", vulnerability_id)
+            images = (
+                self._images(conn, task_id, "vulnerability", vulnerability_id)
+                if with_images
+                else []
+            )
         return self._render_markdown(item, images)
 
     def result_markdown(self, task_id: str, result_id: str) -> str:

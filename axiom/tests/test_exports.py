@@ -596,3 +596,52 @@ def test_the_task_report_can_be_forced_into_an_archive(client) -> None:
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         assert archive.namelist() == ["report.md"]
         assert "漏洞统计" in archive.read("report.md").decode("utf-8")
+
+
+def test_the_markdown_can_be_copied_without_the_images(client) -> None:
+    """复制到剪贴板的正文里不该有图片引用。
+
+    读者手里没有那个文件，留一条指不过去的路径不如不留。而去掉图片必须由服务端做：
+    复现的报文原文里也可能长着 ``![..](..)`` 的样子，前端拿正则扫会把响应体一起误伤。
+    """
+    task_id = _task(client)
+    client.post(
+        f"/api/v1/tasks/{task_id}/vulnerabilities",
+        json={
+            "title": "任意文件上传导致 RCE",
+            "type": "文件上传",
+            "severity": "critical",
+            "description": "上传 PHP 后可执行命令",
+            "prerequisites": "无需认证",
+            "impact": "服务器接管",
+            "reproduction": REPRODUCTION,
+            "source": "human",
+            "reported_by": "tester",
+        },
+    )
+    upload = client.post(
+        f"/api/v1/tasks/{task_id}/artifacts/upload",
+        files={"file": ("shot.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        data={"actor": "reviewer"},
+    )
+    client.post(
+        f"/api/v1/tasks/{task_id}/vulnerabilities/v001/evidence",
+        json={"artifact_id": upload.json()["id"], "step_index": 2, "caption": "命令回显"},
+    )
+
+    # 默认档位带图片引用——交付包里的 md 就是这个样子。
+    with_images = client.get(
+        f"/api/v1/tasks/{task_id}/vulnerabilities/v001/export?format=markdown"
+    )
+    assert "![命令回显](images/step-02-business-shot.png)" in with_images.text
+
+    without = client.get(
+        f"/api/v1/tasks/{task_id}/vulnerabilities/v001/export?format=markdown&images=omit"
+    )
+    assert without.status_code == 200
+    assert "![" not in without.text
+    assert "images/" not in without.text
+    # 正文一个字都不能少：去掉的是图，不是内容。
+    assert "任意文件上传导致 RCE" in without.text
+    assert "服务器接管" in without.text
+    assert "### 步骤 1" in without.text
