@@ -72,12 +72,14 @@ session 创建的所有标签都在 Agent Window；只使用 `tab list --scope a
 |---|---|
 | 用户在页面上点了/输了（人工干预） | 失效，等人工结束重新 sync |
 | `observe` / `snapshot` 读了一次（ref 换代） | **失效**，读完必须重新 sync 才能操作 |
-| 页面文本自己变了（时钟/倒计时/实时数据） | **动作被拒**，重新 sync 后同一处不再挡 |
+| 页面文本自己变了（时钟/倒计时/实时数据） | **动作被拒**，重新 sync 后**立即**行动可过 |
 | 动作本身成功 | 不失效 |
 
 所以「先 snapshot 看一眼再 click」这类组合必须拆成
 `snapshot → cooperate sync → click --context`。被拒时**不要原样重放**动作：
-重新 sync、用新 context 重发一次；再被拒按无进展上报。
+重新 sync、用新 context 重发一次；再被拒按无进展上报。动态页面上
+sync 与动作要**一气呵成**——实测 sync 后立刻 click 一次成功，隔几秒等
+时钟 tick 一下就会再被拒。
 
 `step` 把「一个动作 + 等待已知条件 + 返回新 sync 态」合成一步，优先用于已知
 后置条件的动作（`--action click --params '{"ref":"@e3"}'`），减少往返。
