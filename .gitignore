@@ -16,6 +16,9 @@ package-lock.json
 !axiom/package.json
 !axiom/package-lock.json
 
+# 临时工作目录（渲染产物、实验脚本），只留在本地
+.scratch/
+
 # 本地测试残留(不提交)
 axiom/token.txt
 axiom/evidence/
