@@ -496,3 +496,108 @@ def test_a_two_packet_step_exports_both_packets_and_one_description(client) -> N
     assert "## 利用前提" in report
     # 利用前提排在描述之后、测试过程之前
     assert report.index("## 描述") < report.index("## 利用前提") < report.index("## 测试过程")
+
+
+def _seed_findings(client, task_id, rows) -> None:
+    """直接落库：这些记录只用来验证报告怎么分档，不经过写入策略。"""
+    from axiom.modules.vulnerabilities.tables import vulnerabilities
+
+    container = client.app.state.container
+    with container.engine.begin() as conn:
+        for finding_id, status in rows:
+            conn.execute(
+                vulnerabilities.insert().values(
+                    id=finding_id,
+                    task_id=task_id,
+                    intent_id="i001",
+                    title=f"漏洞 {finding_id}",
+                    type="xss",
+                    severity="high",
+                    description="描述正文。",
+                    impact="影响正文。",
+                    status=status,
+                    reported_by="system",
+                    source="explore",
+                    created_at="2026-11-03T00:00:00Z",
+                    updated_at="2026-11-03T00:00:00Z",
+                    archived=False,
+                )
+            )
+
+
+def test_the_task_report_keeps_what_the_scope_left_out_in_its_appendix(client) -> None:
+    """默认档位下被排除的记录仍然要出现在附录里。
+
+    这条曾经坏过：服务层在把记录交给报告之前就按状态过滤了一遍，于是默认档位下附录
+    永远是空的——封面写着「仅已验证漏洞」，被忽略和判重的那十几条记录在报告里消失
+    无影，读者拿到的不是一份完整的报告。
+    """
+    task_id = _task(client)
+    _seed_findings(
+        client,
+        task_id,
+        (("v001", "已验证"), ("v002", "待验证"), ("v003", "忽略"), ("v004", "重复")),
+    )
+
+    response = client.get(f"/api/v1/tasks/{task_id}/report?format=md")
+    assert response.status_code == 200, response.text
+    text = response.text
+
+    body, appendix = text.split("## 附录 A：未纳入正文的漏洞", 1)
+    # 正文只有已验证的那一条
+    assert "漏洞 v001" in body
+    assert "漏洞 v002" not in body
+    # 其余三条都在附录里，一条都不能少
+    assert "v002" in appendix
+    assert "v003" in appendix
+    assert "v004" in appendix
+    # 封面上的统计和读者能看到的条数一致
+    assert "正文 1 条" in text
+    assert "未纳入正文：3 条" in text
+
+
+def test_the_all_scope_pulls_the_pending_findings_into_the_body(client) -> None:
+    task_id = _task(client)
+    _seed_findings(
+        client,
+        task_id,
+        (("v001", "已验证"), ("v002", "待验证"), ("v003", "忽略"), ("v004", "重复")),
+    )
+
+    response = client.get(f"/api/v1/tasks/{task_id}/report?format=md&scope=all")
+    assert response.status_code == 200, response.text
+    text = response.text
+
+    body, appendix = text.split("## 附录 A：未纳入正文的漏洞", 1)
+    assert "漏洞 v001" in body
+    assert "漏洞 v002" in body
+    # 忽略和判重的仍然只进附录
+    assert "v003" in appendix
+    assert "v004" in appendix
+    assert "v003" not in body
+    assert "v004" not in body
+    assert "正文 2 条" in text
+    assert "未纳入正文：2 条" in text
+
+
+def test_the_task_report_refuses_a_scope_it_does_not_know(client) -> None:
+    task_id = _task(client)
+    response = client.get(f"/api/v1/tasks/{task_id}/report?format=md&scope=whatever")
+    assert response.status_code == 409
+
+
+def test_the_task_report_can_be_forced_into_an_archive(client) -> None:
+    """显式要 zip 就给 zip——没有图时也要是一个包，而不是一份 md。
+
+    和单条导出的约定保持一致：调用方要的是包，不该由服务端替他改主意。
+    """
+    task_id = _task(client)
+    _seed_findings(client, task_id, (("v001", "已验证"),))
+
+    response = client.get(f"/api/v1/tasks/{task_id}/report?format=zip")
+    assert response.status_code == 200
+    assert response.headers.get("content-type") == "application/zip"
+    assert f"{task_id}_report.zip" in response.headers.get("content-disposition", "")
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert archive.namelist() == ["report.md"]
+        assert "漏洞统计" in archive.read("report.md").decode("utf-8")

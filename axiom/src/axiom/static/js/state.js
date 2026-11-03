@@ -31,6 +31,9 @@ window.AxiomModules.state = {
     vulnerabilityPage: 0,
     vulnerabilityPageSize: 50,
     vulnerabilityLoading: false,
+    // 任务级报告导出中：打包几十兆图片要几秒，按钮在这期间锁住，
+    // 免得重复点击生成两个压缩包。
+    taskReportExporting: false,
     _vulnerabilityListRequestId: 0,
     // 重要事实双视图：漏洞 | 成果（红队）
     factViewMode: 'vulnerability',

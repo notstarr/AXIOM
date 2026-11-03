@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 EMPTY = "未填写"
 NO_REPRODUCTION = "未提供结构化复现"
 
-BlockType = Literal["text", "kv", "bullets", "code", "steps", "verdict"]
+BlockType = Literal["text", "kv", "bullets", "code", "steps", "verdict", "table"]
 
 SEVERITY_LABELS = {
     "critical": "严重",
@@ -87,6 +87,10 @@ class Block:
     key: str = ""
     items: tuple[str, ...] = ()
     steps: tuple[dict[str, Any], ...] = ()
+    # ``table``：表头 + 行。任务级报告的「资产与接口」两章用它；单元格全是字符串，
+    # 渲染器不做任何推断（宽度、对齐由 Markdown 自己决定）。
+    headers: tuple[str, ...] = ()
+    rows: tuple[tuple[str, ...], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"type": self.type}
@@ -98,6 +102,10 @@ class Block:
             payload["items"] = list(self.items)
         if self.steps:
             payload["steps"] = list(self.steps)
+        if self.headers:
+            payload["headers"] = list(self.headers)
+        if self.rows:
+            payload["rows"] = [list(row) for row in self.rows]
         return payload
 
 
@@ -131,6 +139,38 @@ class ReportDoc:
             "title": self.title,
             "badge": self.badge,
             "status": self.status,
+            "sections": [section.as_dict() for section in self.sections],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class TaskReportDoc:
+    """One delivered report for a whole engagement task.
+
+    Differs from :class:`ReportDoc` in what surrounds the sections rather than in how they
+    are shaped: a task report needs a cover (scope, window, when it was generated) and a
+    contents list, because it is hundreds of pages when the task was large.  The sections
+    themselves are the same :class:`Section` objects, so ``_render_block`` is shared and a
+    chapter reads identically in both report kinds.
+
+    ``generated_at`` and ``counts`` are printed on the cover deliberately: the report is
+    not a frozen snapshot in the database, so re-exporting after a re-adjudication has to
+    show the reader that the numbers moved.
+    """
+
+    task_id: str
+    title: str
+    sections: tuple[Section, ...]
+    cover: tuple[tuple[str, str], ...] = ()
+    counts: tuple[tuple[str, str], ...] = ()
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "subject_type": "task",
+            "subject_id": self.task_id,
+            "title": self.title,
+            "cover": [{"key": key, "value": value} for key, value in self.cover],
+            "counts": [{"key": key, "value": value} for key, value in self.counts],
             "sections": [section.as_dict() for section in self.sections],
         }
 
@@ -391,6 +431,80 @@ def to_dict(doc: ReportDoc) -> dict[str, Any]:
     return doc.as_dict()
 
 
+def _render_table(block: Block) -> list[str]:
+    """A GitHub-flavoured table.
+
+    Cell text is escaped for the one character that actually breaks a table row: a literal
+    ``|`` (paths and regexes carry them).  Newlines are folded to a space — a Markdown
+    table cannot hold a line break, and silently truncating at the first one would drop the
+    rest of the cell.
+    """
+    headers = block.headers or ()
+    rows = block.rows or ()
+    if not headers and not rows:
+        return [EMPTY]
+    width = len(headers) or max(len(row) for row in rows)
+    if not headers:
+        headers = tuple("" for _ in range(width))
+    lines = [
+        "| " + " | ".join(_table_cell(cell) for cell in headers) + " |",
+        "| " + " | ".join("---" for _ in range(width)) + " |",
+    ]
+    for row in rows:
+        padded = tuple(row) + tuple("" for _ in range(width - len(row)))
+        lines.append("| " + " | ".join(_table_cell(cell) for cell in padded[:width]) + " |")
+    return lines
+
+
+def _table_cell(value: Any) -> str:
+    text = str(value if value is not None else "").replace("|", "\\|")
+    return " ".join(text.split())
+
+
+def to_task_markdown(doc: TaskReportDoc) -> str:
+    """The delivered task report: cover, contents, then every chapter.
+
+    Unlike :func:`to_markdown` nothing is skipped — a task report has no single "basic"
+    section to fold into the header, and the reader needs the generated-at line.
+    """
+    lines = [f"# {doc.title}", ""]
+    if doc.cover:
+        for key, value in doc.cover:
+            lines.append(f"- {key}：{value}")
+        lines.append("")
+    if doc.counts:
+        for key, value in doc.counts:
+            lines.append(f"- {key}：{value}")
+        lines.append("")
+    if len(doc.sections) > 1:
+        lines.extend(["## 目录", ""])
+        findings = 0
+        listed = 0
+        for section in doc.sections:
+            # 漏洞明细一章有几十条小节，把它们全列出来会占掉两页纸，读者还是得往下翻。
+            # 目录只收章节，漏洞数量单独一行说明。编号跟着列出来的章节走——按真实位置
+            # 编号会在「3. 漏洞明细」和「41. 附录 A」之间留三十八个空洞。
+            if section.key.startswith("finding-"):
+                findings += 1
+                if findings == 1:
+                    listed += 1
+                    lines.append(f"{listed}. 漏洞明细（{_finding_count(doc)} 条）")
+                continue
+            listed += 1
+            lines.append(f"{listed}. {section.title}")
+        lines.append("")
+    for section in doc.sections:
+        lines.extend([f"## {section.title}", ""])
+        for block in section.blocks:
+            lines.extend(_render_block(block))
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _finding_count(doc: TaskReportDoc) -> int:
+    return sum(1 for section in doc.sections if section.key.startswith("finding-"))
+
+
 def to_markdown(doc: ReportDoc) -> str:
     lines = [f"# {doc.title}", "", f"- 类型：{doc.badge}", f"- 状态：{doc.status}", ""]
     for section in doc.sections:
@@ -412,6 +526,8 @@ def _render_block(block: Block) -> list[str]:
     if block.type == "bullets":
         rendered = [f"- {item}" for item in block.items] or [f"- {EMPTY}"]
         return [*rendered, ""]
+    if block.type == "table":
+        return [*_render_table(block), ""]
     if block.type == "code":
         return ["```http", block.text, "```", ""]
     if block.type == "verdict":

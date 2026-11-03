@@ -634,6 +634,22 @@ window.AxiomModules.projects = {
       );
     },
 
+    // 一个任务一整份报告。任务 id 就是漏洞筛选里选中的那个任务——报告按任务汇总，
+    // 没选任务就没有「这份报告」，所以看板上那个按钮是禁用的。
+    async exportTaskReport() {
+      const taskId = String(this.vulnFilter?.projectId || '').trim();
+      if (!taskId || this.taskReportExporting) return;
+      this.taskReportExporting = true;
+      try {
+        await this.downloadReport(
+          `/api/v1/tasks/${encodeURIComponent(taskId)}/report`,
+          `${taskId}_report`,
+        );
+      } finally {
+        this.taskReportExporting = false;
+      }
+    },
+
     // 报告导出统一走这里：文件名以服务端 Content-Disposition 为准（有图是 .zip，
     // 没图是 .md），前端不猜扩展名。
     async downloadReport(url, fallbackName) {

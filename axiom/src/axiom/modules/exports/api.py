@@ -90,3 +90,41 @@ def export_result(
         )
     payload, filename, media_type = container.exports.export_result_report(task_id, result_id)
     return _attachment(payload, filename, media_type)
+
+
+@router.get("/{task_id}/report")
+def export_task_report(
+    task_id: str,
+    format: str = Query(default="auto"),
+    scope: str = Query(default="verified"),
+    container: Container = Depends(get_container),
+) -> Response:
+    """一个任务一整份报告。
+
+    包形与单条导出完全一致：有图是 md + images 的压缩包，没图就是一份 md。
+    ``scope=verified``（默认）只收已验证的漏洞，``scope=all`` 把待验证也收进正文；
+    忽略/重复永远只进附录，不进执行摘要。
+    """
+    if scope not in {"verified", "all"}:
+        from axiom.shared.errors import ConflictError
+
+        raise ConflictError(f"Unsupported report scope: {scope}")
+    if format in {"md", "markdown"}:
+        payload = container.exports.task_report_markdown(task_id, scope=scope)
+        return _attachment(
+            payload.encode("utf-8"), f"{task_id}_report.md", "text/markdown"
+        )
+    payload, filename, media_type = container.exports.export_task_report(
+        task_id, scope=scope
+    )
+    if format == "zip" and media_type != "application/zip":
+        import io as _io
+        import zipfile as _zipfile
+
+        buffer = _io.BytesIO()
+        with _zipfile.ZipFile(buffer, "w", _zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("report.md", payload)
+        return _attachment(
+            buffer.getvalue(), filename.replace(".md", ".zip"), "application/zip"
+        )
+    return _attachment(payload, filename, media_type)

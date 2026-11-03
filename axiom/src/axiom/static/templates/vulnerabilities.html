@@ -52,6 +52,14 @@
       <span style="width:1px; height:14px; background:var(--sto-line);"></span>
       <span class="sto-status ok" style="font-size:11px;"><i></i><span>已验证</span><b class="sto-num" style="color:var(--sto-fg);" x-text="filteredVulnerabilities().filter(v => vulnStatusKey(v.status) === 'verified').length"></b></span>
       <span class="sto-status warn" style="font-size:11px;"><i></i><span>待验证</span><b class="sto-num" style="color:var(--sto-fg);" x-text="filteredVulnerabilities().filter(v => vulnStatusKey(v.status) === 'pending').length"></b></span>
+      <span style="flex:1;"></span>
+      <!-- 任务级报告：报告按任务汇总，没选任务就没有「这份报告」可导。
+           禁用而不是隐藏——按钮消失会让人以为功能不存在。 -->
+      <button type="button" @click="exportTaskReport()"
+        :disabled="!vulnFilter.projectId || taskReportExporting"
+        class="sto-btn" style="padding:7px 13px; white-space:nowrap;"
+        :title="vulnFilter.projectId ? '导出该任务的完整报告（漏洞明细 + 资产与接口）' : '先在左侧筛选里选一个任务'"
+        x-text="taskReportExporting ? '正在打包…' : '导出任务报告'"></button>
     </div>
   </div>
 

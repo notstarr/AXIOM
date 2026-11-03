@@ -3936,3 +3936,63 @@ def test_result_review_history_uses_the_shared_adapter_not_the_legacy_map(client
     assert "this.loadRtResultReviews(" in projects
     # 竞态序号必须初始化，否则 ++undefined 变成 NaN
     assert "_rtResultReviewRequestId: 0" in client.get("/static/js/state.js").text
+
+
+def _run_task_report_export_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    projects = ROOT / "src/axiom/static/js/projects.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{}} }};
+global.localStorage = {{ getItem: () => null }};
+global.fetch = async () => {{ throw new Error('unexpected request'); }};
+eval(fs.readFileSync({json.dumps(str(projects))}, 'utf8'));
+const methods = window.AxiomModules.projects.methods;
+const calls = [];
+const ctx = Object.assign({{
+  vulnFilter: {{ projectId: '', keyword: '' }},
+  taskReportExporting: false,
+}}, methods);
+// 下载这一步不是这里要验的，替掉它，只看按钮有没有发起请求。
+ctx.downloadReport = async (url, name) => {{ calls.push([url, name]); }};
+(async () => {{
+  await ctx.exportTaskReport();
+  const withoutTask = calls.length;
+  ctx.vulnFilter.projectId = 't_239';
+  await ctx.exportTaskReport();
+  process.stdout.write(JSON.stringify({{
+    withoutTask,
+    calls,
+    exporting: ctx.taskReportExporting,
+  }}));
+}})();
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def test_the_task_report_button_stays_disabled_until_a_task_is_picked() -> None:
+    """报告是按任务汇总的，没选任务就没有「这份报告」可导。"""
+    template = (ROOT / "src/axiom/static/templates/vulnerabilities.html").read_text(
+        encoding="utf-8"
+    )
+    assert '@click="exportTaskReport()"' in template
+    assert ':disabled="!vulnFilter.projectId || taskReportExporting"' in template
+    # 禁用而不是隐藏：按钮消失会让人以为功能不存在。
+    assert "先在左侧筛选里选一个任务" in template
+
+
+def test_the_task_report_export_only_fires_once_a_task_is_picked() -> None:
+    result = _run_task_report_export_fixture()
+    assert result["withoutTask"] == 0
+    assert result["calls"] == [["/api/v1/tasks/t_239/report", "t_239_report"]]
+    # 打包完要放开按钮，否则连点两下会打两个包。
+    assert result["exporting"] is False

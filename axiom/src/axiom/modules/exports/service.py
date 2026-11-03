@@ -24,7 +24,9 @@ from axiom.modules.reports.skeleton import (
     build_result_report,
     build_vulnerability_report,
     to_markdown,
+    to_task_markdown,
 )
+from axiom.modules.reports.task_report import build_task_report, split_by_scope
 from axiom.modules.vulnerabilities.repository import VulnerabilityRepository
 from axiom.shared.errors import NotFoundError
 from axiom.shared.storage import FileStore
@@ -192,6 +194,101 @@ class ExportService:
             images = self._images(conn, task_id, "redteam_result", result_id)
         doc = build_result_report(result, images_by_step=self._images_by_step(images))
         return to_markdown(doc)
+
+    # —— 任务级报告：一个任务一整份，含资产与接口章 ——
+
+    def _task_images(
+        self, conn, task_id: str, items: list[Any]
+    ) -> dict[str, dict[int, list[dict]]]:
+        """Every finding's pictures, grouped by step and filed under the finding's folder.
+
+        ``_images`` already names a file ``step-NN-<kind>-<name>``; across 50 findings those
+        names collide constantly (``step-01`` appears in most of them).  Prefixing the
+        folder with the finding id keeps one interface rule — the markdown path is exactly
+        the name written into the archive — while letting the archive stay one flat
+        directory of per-finding subfolders.
+        """
+        collected: dict[str, dict[int, list[dict]]] = {}
+        for item in items:
+            pictures = self._images(conn, task_id, "vulnerability", item.id)
+            if not pictures:
+                continue
+            renamed = []
+            for picture in pictures:
+                name = str(picture.get("path") or "").split("/", 1)[-1]
+                renamed.append({**picture, "path": f"images/{item.id}/{name}"})
+            collected[item.id] = self._images_by_step(renamed)
+        return collected
+
+    def task_report_document(self, task_id: str, *, scope: str = "verified"):
+        """Assemble the task report document together with its picture index.
+
+        Returns ``(doc, images)``: the markdown needs only the document, but the archive
+        needs the flat picture list, and rebuilding it a second time would re-read every
+        artifact row.
+
+        Every finding of the task is handed to the builder — the ignored and duplicate
+        rows are part of the report, they belong in appendix A.  Filtering them out here
+        would leave the appendix empty and make the cover's counts disagree with the
+        records the reader can see.
+        """
+        task = self._require_task(task_id)
+        with self.engine.connect() as conn:
+            items = self.vulnerabilities.list(conn, task_id)
+            # Pictures belong to the findings the body is built from; an appendix row is
+            # one line in a table and references no image.
+            body, _appendix = split_by_scope(items, scope)
+            images_by_finding = self._task_images(conn, task_id, body)
+        doc = build_task_report(
+            task=task,
+            vulnerabilities=items,
+            images_by_finding=images_by_finding,
+            scope=scope,
+        )
+        images = [
+            picture
+            for by_step in images_by_finding.values()
+            for group in by_step.values()
+            for picture in group
+        ]
+        return doc, images
+
+    def task_report_markdown(self, task_id: str, *, scope: str = "verified") -> str:
+        doc, _images = self.task_report_document(task_id, scope=scope)
+        return to_task_markdown(doc)
+
+    def export_task_report(
+        self, task_id: str, *, scope: str = "verified"
+    ) -> tuple[bytes, str, str]:
+        """交付报告：md +（有图时）图片，与单条导出同一套包形。
+
+        Pictures sit in a folder per finding (``images/v047/step-02-packet-….png``); a
+        50-finding task otherwise puts several hundred files with repeated ``step-01``
+        names into one directory.
+        """
+        doc, images = self.task_report_document(task_id, scope=scope)
+        markdown = to_task_markdown(doc)
+        return self._package_task(task_id, markdown, images)
+
+    def _package_task(
+        self, task_id: str, markdown: str, images: list[dict]
+    ) -> tuple[bytes, str, str]:
+        base = f"{task_id}_report"
+        if not images:
+            return markdown.encode("utf-8"), f"{base}.md", "text/markdown"
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("report.md", markdown)
+            for image in images:
+                # A picture can be attached twice (two steps, same file). Writing the same
+                # name twice would make the archive depend on insertion order and emit a
+                # duplicate-name warning; the markdown references the name once per step,
+                # so keeping the first copy is enough.
+                if image["path"] in archive.namelist():
+                    continue
+                archive.writestr(image["path"], image["file"].read_bytes())
+        return buffer.getvalue(), f"{base}.zip", "application/zip"
+
 
     def _render_markdown(self, item, images: list[dict]) -> str:
         if item.reproduction is None:
