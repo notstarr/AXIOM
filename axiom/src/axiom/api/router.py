@@ -17,6 +17,7 @@ from axiom.modules.exports.api import router as exports_router
 from axiom.modules.knowledge.api import router as knowledge_router
 from axiom.modules.skills.api import router as skills_router
 from axiom.modules.guard.api import router as guard_router
+from axiom.modules.mac_bridge.api import router as mac_bridge_router
 from axiom.modules.goals.api import router as goals_router
 from axiom.modules.graph.api import router as graph_router
 from axiom.modules.projects.api import router as projects_router
@@ -79,6 +80,7 @@ router.include_router(mcp_router)
 router.include_router(knowledge_router)
 router.include_router(skills_router)
 router.include_router(guard_router)
+router.include_router(mac_bridge_router)
 router.include_router(goals_router)
 router.include_router(token_usage_router)
 router.include_router(interventions_router)

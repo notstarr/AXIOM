@@ -27,6 +27,7 @@ from axiom.modules.phase_capabilities.service import PhaseCapabilityService
 from axiom.modules.knowledge.service import KnowledgeService
 from axiom.modules.skills.service import SkillService
 from axiom.modules.guard.service import GuardService
+from axiom.modules.mac_bridge.service import MacBridgeService
 from axiom.modules.goals.service import GoalService
 from axiom.modules.settings.service import RuntimeSettingsService
 from axiom.modules.tasks.service import TaskService
@@ -85,6 +86,7 @@ class Container:
     interventions: InterventionService
     auth: AuthService
     sandboxes: TaskSandboxManager
+    mac_bridge: MacBridgeService
 
     @classmethod
     def build(
@@ -184,4 +186,5 @@ class Container:
             interventions=interventions,
             auth=AuthService(data_dir),
             sandboxes=sandboxes,
+            mac_bridge=MacBridgeService(data_dir),
         )

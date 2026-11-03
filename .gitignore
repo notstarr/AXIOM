@@ -76,3 +76,9 @@ bsk-axiom-fork/node_modules/
 bsk-axiom-fork/**/node_modules/
 
 bsk-axiom-fork/axiom-extension-0.3.0-backup/
+# 升级前的扩展快照：只用来本地回退，不是源码。版本号会变，所以按通配忽略。
+bsk-axiom-fork/axiom-extension-*-backup-*/
+# mac-bridge 的构建产物：二进制、签名后的 .app 和 .dmg 都跟平台绑定，只提交源码
+mac-bridge/bin/
+mac-bridge/build/
+mac-bridge/dist/
