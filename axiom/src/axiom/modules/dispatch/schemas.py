@@ -57,6 +57,19 @@ class AutoRecoveredWork(BaseModel):
     recovery_round: int = 0
 
 
+class ResetRetryBudgetReport(BaseModel):
+    """What a Task-level retry-budget reset actually changed.
+
+    ``reset_by_phase`` is keyed by queue (``intent`` / ``reason`` / ``plan`` /
+    ``review``) so the console can say which queue was blocked rather than
+    just "something was reset".
+    """
+
+    task_id: str
+    reset_by_phase: dict[str, int] = Field(default_factory=dict)
+    total: int = 0
+
+
 class RecoveryReport(BaseModel):
     recovered: list[RecoveredIntent] = Field(default_factory=list)
     recovered_reason_runs: list[RecoveredReasonRun] = Field(default_factory=list)

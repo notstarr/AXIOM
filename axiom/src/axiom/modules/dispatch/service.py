@@ -11,6 +11,10 @@ from axiom.modules.dispatch.retry import retry_outcome
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
 from axiom.modules.dispatch.pool import usable_pool
+from axiom.modules.dispatch.budget_reset import (
+    ResetOutcome,
+    reset_task_retry_budget,
+)
 from axiom.modules.dispatch.recovery import recover_parked
 from axiom.modules.dispatch.repository import DispatchRepository
 from axiom.modules.dispatch.schemas import (
@@ -84,6 +88,30 @@ class DispatchService:
             ],
             recovery_failed_queues=list(outcome.failed_queues),
         )
+
+    def reset_task_retry_budget(self, task_id: str) -> ResetOutcome:
+        """Clear the retry budget of every pending work item of one Task.
+
+        The Task-level counterpart of the per-item ``reset-retries`` endpoints:
+        one call unblocks all four queues (Intent, ReasonRun, PlanRun,
+        ReviewRun) so the workers can pick the work up again without waiting
+        out the recovery quiet period.
+        """
+
+        with transaction(self.engine) as conn:
+            task = conn.execute(
+                select(tasks.c.id, tasks.c.project_id, tasks.c.status).where(
+                    tasks.c.id == task_id
+                )
+            ).mappings().one_or_none()
+            if task is None:
+                raise NotFoundError(f"Task not found: {task_id}")
+            return reset_task_retry_budget(
+                conn,
+                task_id=task_id,
+                audit=self.audit,
+                project_id=task["project_id"],
+            )
 
     def observe_stall(self, observation: DispatchStallObservation) -> DispatchStallObservation:
         """Record that a Task has been idle with nothing claiming its work.

@@ -55,6 +55,9 @@
           :title="project.project.guard_enabled ? '关闭当前任务的 Guard 守卫' : '开启当前任务的 Guard 守卫'"
           x-text="project.project.guard_enabled ? '关闭守卫' : '开启守卫'"></button>
         <button x-show="project?.project?.status === 'completed' && !project?.project?.archived && !project?.project?.legacy_readonly" @click="openTaskContinuation(project.project)" class="sto-ghost is-warn">继续任务</button>
+        <button x-show="!project?.project?.archived && !project?.project?.legacy_readonly" @click="resetTaskRetryBudget()"
+          class="sto-ghost is-warn"
+          title="把本任务所有排队项（Intent/Reason/Plan/Review）的重试预算清零，被阻塞的队列立即恢复认领，不用等自动恢复的静默期">重置重试预算</button>
         <button x-show="!project?.project?.archived && !project?.project?.legacy_readonly" @click="archiveProjectById(project.project.id, project.project.title)" :disabled="project.project.status === 'active'" :title="project.project.status === 'active' ? '请先暂停任务' : '保留历史并停止后续 Worker 调度'" class="sto-ghost" style="font-size: 12px;" disabled:cursor-not-allowed disabled:opacity-40>归档任务</button>
         <button x-show="project?.project?.archived && !project?.project?.legacy_readonly" @click="unarchiveProjectById(project.project.id, project.project.title)" class="sto-ghost is-ok">恢复任务</button>
         <button x-show="project?.project?.archived && !project?.project?.legacy_readonly" @click="deleteProjectById(project.project.id, project.project.title)" class="px-2.5 py-1 rounded-lg border border-rose-200 text-xs text-rose-600 hover:bg-rose-50 transition">永久删除</button>

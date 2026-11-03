@@ -2415,6 +2415,30 @@ window.AxiomModules.projects = {
         this.showToast(e.message, 'error');
       }
     },
+    async resetTaskRetryBudget() {
+      const taskId = this.selectedProjectId;
+      if (!taskId) return;
+      if (!confirm(
+        `确定重置任务「${this.projectLabel(taskId)}」所有 Worker 的重试预算？\n` +
+        'Intent、Reason、Plan、Review 四类排队项的重试计数将全部清零，' +
+        '被阻塞的队列会立即恢复认领，不用再等自动恢复的静默期。'
+      )) return;
+      try {
+        const report = await this.api('POST', `/dispatch/tasks/${taskId}/reset-retry-budget`, {});
+        const parts = Object.entries(report?.reset_by_phase || {})
+          .filter(([, count]) => count > 0)
+          .map(([phase, count]) => `${phase} ${count} 条`);
+        this.showToast(
+          report?.total > 0
+            ? `已重置 ${report.total} 条重试预算（${parts.join('，') || '无'}），Worker 可立即认领`
+            : '没有可重置的排队项（要么没被阻塞过，要么正在执行中）',
+          report?.total > 0 ? 'success' : 'info'
+        );
+        await this.loadProject(taskId);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
     openEditHint(h) {
       if (!h) return;
       this.editForm = { type: 'hint', id: h.id, title: `编辑 Hint ${h.id}`, content: h.content };

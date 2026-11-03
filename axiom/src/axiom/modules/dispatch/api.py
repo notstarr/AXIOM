@@ -13,6 +13,7 @@ from axiom.modules.dispatch.schemas import (
     DispatchStallObservation,
     RecoverStaleIntents,
     RecoveryReport,
+    ResetRetryBudgetReport,
 )
 from axiom.modules.tasks.schemas import RunDeadlineReconcileReport
 
@@ -25,6 +26,26 @@ def reconcile_task_deadlines(
     container: Container = Depends(get_container),
 ) -> RunDeadlineReconcileReport:
     return container.tasks.reconcile_run_deadlines()
+
+
+@router.post("/tasks/{task_id}/reset-retry-budget", response_model=ResetRetryBudgetReport)
+def reset_task_retry_budget(
+    task_id: str,
+    container: Container = Depends(get_container),
+) -> ResetRetryBudgetReport:
+    """Clear the retry budget of every pending work item of one Task.
+
+    One button for the operator-facing case "this Task is stuck": all four
+    dispatch queues are unblocked at once, so the workers can claim the work
+    again instead of waiting out the recovery quiet period.
+    """
+
+    outcome = container.dispatch.reset_task_retry_budget(task_id)
+    return ResetRetryBudgetReport(
+        task_id=task_id,
+        reset_by_phase=outcome.reset_by_phase,
+        total=outcome.total,
+    )
 
 
 @router.get("/snapshot", response_model=DispatcherSnapshot)

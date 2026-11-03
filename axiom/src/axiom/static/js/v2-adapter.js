@@ -1325,6 +1325,15 @@
       return request(method, `${path}${url.search}`, body);
     }
 
+    // The dispatch control plane is addressed by its own V2 vocabulary and has
+    // no legacy frontend equivalent, so it is passed through verbatim.  The
+    // task-level retry-budget reset lives here: it unblocks all four dispatch
+    // queues of a Task in one call, which is the operator-facing action the
+    // per-item reset buttons cannot express.
+    if (path === '/dispatch' || path.startsWith('/dispatch/')) {
+      return request(method, `${path}${url.search}`, body);
+    }
+
     throw new Error(`Backend V2 尚未映射前端请求：${method} ${rawPath}`);
   }
 
