@@ -5,8 +5,8 @@ description: |
   唯一用途是获取 scope 内目标的登录态（Cookie/localStorage）；
   不用于内网访问、内网探测或利用。要求 Mac 扩展已 Remote 配对。
   本版本为 axiom 定制：凭据提取是渗透测试的合法产出；scope 外目标禁止访问。
-  命令面与上游 bsk 0.3.3 对齐（网站调试用 debug；network 仅索引；
-  extract 结构化取数；credentials 是 fork 专有，上游从未提供）。
+  命令面与上游 bsk 0.4.0 对齐（sync/context 协作模型；网站调试用 debug；
+  network 仅索引；extract 结构化取数；credentials 是 fork 专有，上游从未提供）。
 ---
 
 # browser-skill（axiom 定制）
@@ -50,22 +50,43 @@ session 创建的所有标签都在 Agent Window；只使用 `tab list --scope a
 
 ## 单一可观察目标
 
-从任务请求推导具体成功条件。走最短路径：观察 → 操作 → 至多一次观察确认。
+从任务请求推导具体成功条件。走最短路径：sync → 操作 → 至多一次 sync 确认。
 成功可见后不再点击/刷新/导航/换 tab。两次尝试无进展或遇到人工步骤 → request-help。
 
-## 观察-操作-观察（默认循环）
+## sync-操作-sync（0.4.0 协作模型，默认循环）
+
+0.4.0 起动作必须携带「页面状态凭据」：先 `cooperate sync` 拿 `context`，
+动作带 `--context <id>`，下个动作前重新 sync。旧写法里的 `observe` 一律换成
+`cooperate sync`（一一对应，调用次数持平）：
 
 ```text
-"$AXIOM_BSK" navigate <url> --session <id>
-"$AXIOM_BSK" observe --session <id>
-"$AXIOM_BSK" click|hover|fill|select|press ... --session <id>
-"$AXIOM_BSK" observe --session <id>
+"$AXIOM_BSK" navigate <url> --session <id>                    # 首次导航不需要 context
+"$AXIOM_BSK" cooperate sync --session <id>                    # 返回 @eN refs + context id
+"$AXIOM_BSK" click <ref> --context <ctx> --session <id>       # 每个动作都带 --context
+"$AXIOM_BSK" cooperate sync --session <id>                    # 下个动作前重新 sync
 ```
 
+`context` 失效（动作会被拒绝，报错要求重新 sync）的时机：
+
+| 时机 | 结果 |
+|---|---|
+| 用户在页面上点了/输了（人工干预） | 失效，等人工结束重新 sync |
+| `observe` / `snapshot` 读了一次（ref 换代） | **失效**，读完必须重新 sync 才能操作 |
+| 页面文本自己变了（时钟/倒计时/实时数据） | **动作被拒**，重新 sync 后同一处不再挡 |
+| 动作本身成功 | 不失效 |
+
+所以「先 snapshot 看一眼再 click」这类组合必须拆成
+`snapshot → cooperate sync → click --context`。被拒时**不要原样重放**动作：
+重新 sync、用新 context 重发一次；再被拒按无进展上报。
+
+`step` 把「一个动作 + 等待已知条件 + 返回新 sync 态」合成一步，优先用于已知
+后置条件的动作（`--action click --params '{"ref":"@e3"}'`），减少往返。
+
 优先用新鲜的 `@eN` ref 而非 CSS 选择器。导航会使 ref 失效；大 DOM 变化同样。
-悬停才出现的菜单：observe 不主动悬停；当预期控件缺失且无标记指向触发器时，
-用一次 `observe --probe-hover`；找到触发器后 `hover <ref>` 再 observe 再操作。
-读取升级顺序：observe → probe-hover → snapshot → get-html → screenshot。
+悬停才出现的菜单：sync 不主动悬停；当预期控件缺失且无标记指向触发器时，
+用一次 `observe --probe-hover`（读完重新 sync）；找到触发器后 `hover <ref>
+--context <ctx>` 再 sync 再操作。
+读取升级顺序：cooperate sync → probe-hover → snapshot → get-html → screenshot。
 不要一上来就用原始 HTML 或截图找普通控件。
 
 ## 多标签与可见范围
@@ -74,14 +95,15 @@ Agent Window 内可以有多个标签；后台标签不用选中也能被操作�
 
 ```bash
 "$AXIOM_BSK" tab create --url <url> --no-active --session <id>   # 后台开 tab，记下返回的 tab_id
-"$AXIOM_BSK" observe --tab-id <tab_id> --session <id>            # 后续命令都带 --tab-id 指向它
+"$AXIOM_BSK" cooperate sync --tab-id <tab_id> --session <id>     # 后续命令都带 --tab-id 指向它
 "$AXIOM_BSK" navigate <url> --tab-id <tab_id> --session <id>
+"$AXIOM_BSK" cooperate sync --tab-id <tab_id> --session <id>     # 拿新 context 再操作
 "$AXIOM_BSK" tab select <tab_id> --session <id>                  # 需要用户看见时才切到前台
 ```
 
-`--tab-id` 可加在 observe / snapshot / get-html / screenshot / console / network /
-navigate / click / fill / select / press / evaluate 等命令上；不加时默认作用于 Agent
-Window 的当前活动标签。后台标签里的页面继续运行，viewport 与整页截图在后台也可用。
+`--tab-id` 可加在 cooperate sync / observe / snapshot / get-html / screenshot /
+console / network / navigate / click / fill / select / press / evaluate 等命令上；
+动作类命令同时要 `--context`。不加时默认作用于 Agent Window 的当前活动标签。后台标签里的页面继续运行，viewport 与整页截图在后台也可用。
 不要自己编 tab id，也不要跨无关任务一直占着标签。
 **`tab create --url` 与 `navigate` 的地址同样受上文「用途边界」约束**——换到后台
 标签开一个内网地址，和直接 navigate 是同一次违规。
@@ -126,16 +148,18 @@ cookie，才可以判定会话不在 cookie 里**（可能在 localStorage，或
 "$AXIOM_BSK" request-help --session <id> --prompt "请在弹出的页面完成 domery.cn 登录"
 ```
 
-outcome：`continued`/`completed` → 恢复控制，先 observe 再继续；
+outcome：`continued`/`completed` → 恢复控制，先 cooperate sync 再继续；
 `cancelled` → 视为拒绝；`timed_out`/`disabled` → 记为阻塞上报，不要蛮力重试。
 
 ## 命令清单（封闭，不要发明清单外的命令）
 
 ```text
 session start|stop|list   browsers   status   doctor   logs
+cooperate sync            step       # 0.4.0：拿 context / 一步动作+同步
 navigate   navigate-back   navigate-forward   reload   wait-for-navigation   wait-ms
 observe   snapshot   get-html   screenshot   console   network   debug   extract
-click   hover   wheel   scroll-to   focus   blur   fill   select   press   evaluate
+click   hover   drag   wheel   scroll-to   focus   blur   fill   select   press   evaluate
+dialog status|accept|dismiss   operation await|cancel   # 原生 JS 弹窗
 tab list|create|close|select   window resize   emulate
 wait-for-element   video start|stop
 request-help   record start|stop
@@ -145,12 +169,13 @@ credentials --domain <domain> --session <id>   # axiom 定制
 常用易错参数：
 
 ```text
-"$AXIOM_BSK" fill <ref> --value <text>
-"$AXIOM_BSK" select <ref> --value <option-value>
+"$AXIOM_BSK" fill <ref> --value <text> --context <ctx>
+"$AXIOM_BSK" select <ref> --value <option-value> --context <ctx>
 "$AXIOM_BSK" screenshot --full-page --out <path>          # 整页拼接(默认 --scope follow 跟随追加内容)
-"$AXIOM_BSK" scroll-to <ref> --session <id>               # 滚动到指定元素(触发懒加载)
-"$AXIOM_BSK" wheel --session <id>                         # 原生滚轮事件
-"$AXIOM_BSK" click <ref> --capture <capture-id> --image-x <x> --image-y <y>
+"$AXIOM_BSK" scroll-to <ref> --context <ctx> --session <id>   # 滚动到指定元素(触发懒加载)
+"$AXIOM_BSK" wheel --context <ctx> --session <id>         # 原生滚轮事件
+"$AXIOM_BSK" click <ref> --capture <capture-id> --image-x <x> --image-y <y> --context <ctx>
+"$AXIOM_BSK" drag <ref> --to <ref2> --context <ctx>       # 拖拽/滑块；range 选区加 --mode click-move-click
 
 - **`get-html` 只认 `--ref`，没有位置参数**：`get-html @e1` 会报
   `unexpected argument`，必须写 `get-html --ref @e1`；不带 `--ref` 返回整页 HTML。
@@ -212,7 +237,10 @@ credentials --domain <domain> --session <id>   # axiom 定制
   （与操作关联的证据）。收口前 `debug stop` 结束采集；历史记录会保留，可 `debug export` 导出。
   **`rules`/`replay` 只能对 scope 内的公网目标重放**；把抓到的请求重放成内网地址
   （或改 Host/URL 指向私网）与直接 navigate 同等违规。
-- **`extract` 取表格/列表正文**（0.3.3 新增；比 `get-html` + 正则省一轮，且保留列序、
+- **原生 JS 弹窗（alert/confirm/prompt）会卡住渲染进程**：动作返回
+  `dialog_pending` 时**不要重复动作**。`dialog status` 看挂起的弹窗，
+  `dialog accept --text <输入>` / `dialog dismiss` 处置后 cooperate sync 再继续。
+- **`extract` 取表格/列表正文**（比 `get-html` + 正则省一轮，且保留列序、
   分页与跨 frame 来源）。后台列表页取数优先用它：
 
   ```bash
@@ -226,9 +254,9 @@ credentials --domain <domain> --session <id>   # axiom 定制
   `--max-rows/--max-columns/--max-bytes` 是硬上限，`--timeout-ms` 是渲染层采集预算
   （默认 5000）。返回里带完整性标记：**被上限截断时必须如实上报截了多少行**，
   不要把部分结果说成全量。
-- `wait-for-element`（0.3.3 新增）替代 `wait-ms` 硬等：`--state visible|hidden|attached|detached`
+- `wait-for-element` 替代 `wait-ms` 硬等：`--state visible|hidden|attached|detached`
   带 deadline，元素永远不出现时按失败返回，而不是静默超时。
-- `video start/stop`（0.3.3 新增，**默认关**）录任务的 H.264 MP4，10 分钟 / 256 MiB /
+- `video start/stop`（**默认关**）录任务的 H.264 MP4，10 分钟 / 256 MiB /
   浏览器侧保留 24h。仅在有明确复现需求时开，不要当默认取证手段（体积大且含页面全部内容）。
 - `emulate` 对单个 tab 应用视口/UA/触屏覆盖；新 tab 不继承；`--off` 恢复。
 - `scroll-to`/`wheel` 用于无限滚动与懒加载页：滚一段 → observe/network 看增量。
@@ -248,7 +276,8 @@ credentials --domain <domain> --session <id>   # axiom 定制
 - `evaluate` 是 observe + 常规交互无法完成时的最后手段；`--json` 时检查 `.ok`。
   **不要用它在页面里 `fetch`/`XMLHttpRequest`/`WebSocket` 打内网地址**——那是
   绕开「用途边界」的同一件事。
-- 恢复协议：ref 失效 → observe 一次重试；fill 不一致 → 先观察字段；不可恢复 → 上报并 stop。
+- 恢复协议：动作被拒/`context` 失效 → cooperate sync 拿新 context 重发一次；
+  fill 不一致 → 先 sync 观察字段；不可恢复 → 上报并 stop。
 
 ## 产物约定（axiom）
 
