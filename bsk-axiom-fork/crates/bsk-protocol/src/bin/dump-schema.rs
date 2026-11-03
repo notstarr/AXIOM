@@ -28,6 +28,11 @@ macro_rules! dump {
 }
 
 fn main() {
+    dump!(PendingJavaScriptDialog, "pending_javascript_dialog");
+    dump!(DialogStatusParams, "tool_dialog_status_params");
+    dump!(DialogHandleParams, "tool_dialog_handle_params");
+    dump!(OperationParams, "tool_operation_params");
+    dump!(CooperateParams, "tool_cooperate_params");
     dump!(VideoParams, "tool_video_params");
     dump!(VideoRecording, "video_recording");
     dump!(VideoGrant, "video_grant");
@@ -83,6 +88,8 @@ fn main() {
     dump!(ClickResult, "tool_click_result");
     dump!(HoverParams, "tool_hover_params");
     dump!(HoverResult, "tool_hover_result");
+    dump!(DragParams, "tool_drag_params");
+    dump!(DragResult, "tool_drag_result");
     dump!(WheelParams, "tool_wheel_params");
     dump!(WheelResult, "tool_wheel_result");
     dump!(ScrollToParams, "tool_scroll_to_params");

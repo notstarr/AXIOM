@@ -5,6 +5,91 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 Starting from 0.2.0, CLI / Extension / DSH Plugin share the same version number.
 
+## [0.4.0] - 2026-10-30
+
+### Changed
+
+- **Breaking — extension compatibility:** the extension now requires daemon
+  protocol 1.6 or later; CLI/daemon 0.3.3 uses protocol 1.3 and cannot connect.
+  Update the CLI and restart the running daemon before updating the extension,
+  then update the DSH plugin. CLI/daemon and extension 0.4.0 use protocol 1.7.
+- **Breaking — shared browser control:** new sessions and their task tabs enable
+  human/agent collaboration automatically. After initial navigation, synchronize
+  with `bsk cooperate sync` and pass its single-use `--context` to each action;
+  DSH uses `bsk_session action:sync` and `contextId`. Human input or changed page
+  evidence can revoke a pending action; synchronize and reconsider the result
+  instead of replaying it. Reload the updated skill in existing conversations.
+- Moving any controlled tab out of its original Agent Window ends the whole
+  session, preserves pages in place and removes control indicators. Moving the
+  tab back does not restart the task. Normal session stop preserves pages with
+  human participation and cleans up untouched task-created pages.
+- macOS CLI releases require Developer ID signing and Apple notarization for
+  both architectures, alongside the existing Windows EV signature checks.
+  `Publish CLI` verifies both platforms before publishing the complete release;
+  archive names and installation commands remain unchanged.
+- English and Chinese privacy policies cover shared-control observations,
+  explicitly saved observation files, incognito tasks and `tabGroups`. Upgrade
+  and publishing instructions use CLI-first rollout for this compatibility change.
+
+### Added
+
+- Human/agent collaboration with visible control indicators, manual hold and
+  resume, bounded activity evidence, page-change guards and explicit decision
+  regions. Native JavaScript dialogs participate in control and recovery.
+- Native drag interactions, including cross-origin frame targets, and a
+  click–move–click mode for selecting ranges. CLI and DSH expose the new actions.
+- `bsk step` executes one chosen action, optionally waits for an element and then
+  synchronizes, preserving the action receipt if a later stage fails. Explicit
+  observation saving, baseline reuse and `bsk view` let agents read and search
+  historical evidence locally without another browser call. DSH exposes these
+  through `step`, `view`, `saveFull` and baseline options.
+- Incognito Agent Windows through `session start --incognito`, with explicit
+  browser incognito permission and no borrowing of ordinary tabs. Incognito
+  windows in one profile share their incognito login state.
+- Orange BrowserSkill tab groups mark controlled Agent Window tabs using the
+  new `tabGroups` permission; grouping is removed when the task ends.
+
+### Fixed
+
+- Browser interactions retain current element references for dynamic menus,
+  dispatch shadow-DOM input events correctly, handle plus-key chords, and reject
+  select controls that become disabled during focus. Extraction respects
+  `content-visibility`, and observation token estimates and evidence scope are
+  more consistent.
+- Website debugging preserves failed request-body metadata and primitive console
+  exceptions. Video capture respects human control, and playback regressions wait
+  for decoded frames before checking colors.
+- Windows DSH child-process cancellation preserves its termination grace period;
+  remote authorization handles a busy store, and WebSocket connection limits
+  bound incoming peers. Foreground daemon consoles remain visible.
+- Browser evaluation scaffolding handles Windows cross-drive paths, relative
+  import URLs and long run IDs; child output preserves UTF-8. Extension types are
+  prepared during dependency installation.
+- Extension: explain when the running bsk daemon is too old to connect, with
+  its version, a copyable update command and restart guidance in the popup.
+  A toolbar warning and a notification make the problem visible before opening
+  the popup; repeated reconnects do not repeat the notification.
+- CLI: argument parsing failures now honor `--json`, returning an
+  `invalid_params` error on stdout with `data.reason: "cli_parse_error"`
+  instead of leaving stdout empty. A misplaced `--session` / `--tab-id` now
+  explains that it belongs after a supporting subcommand, replacing the
+  misleading `--version` suggestion and usage line
+  ([#387](https://github.com/Tencent/BrowserSkill/issues/387)).
+- DSH Plugin: the right-sidebar observation tab auto-opens again on DSH
+  0.2.0+, which removed `current` from the `sessions.list` snapshot. The
+  auto-open target now falls back to the `uiSession` main binding (exposed by
+  DSH 0.1.5 and 0.2.x alike), and conversation switches on 0.2.x hosts keep
+  re-triggering it
+  ([#484](https://github.com/Tencent/BrowserSkill/issues/484)).
+- Extension: shared-control actions no longer refuse forever on pages with
+  self-updating text such as clocks or counters. The first change is reported
+  with its before/after text and requires a sync; after that, changes to that
+  text stop blocking actions on a ref or selector unless it shares a form,
+  list, dialog, panel or other container with the target. Actions without a
+  target, form values, modal layers and `--depends-on` regions stay exact,
+  and a refused context can no longer be retried
+  ([#495](https://github.com/Tencent/BrowserSkill/issues/495)).
+
 ## [0.3.3] - 2026-10-14
 
 ### Changed
@@ -55,6 +140,11 @@ Starting from 0.2.0, CLI / Extension / DSH Plugin share the same version number.
   background-execution lease resends the override and waits for a rendered frame; the
   input is sent only once the page reports `visible`, and otherwise still fails before
   dispatch.
+- Extension: an agent session no longer keeps the browser's GPU and CPU busy while the
+  agent is idle ([#391](https://github.com/Tencent/BrowserSkill/issues/391)). The control
+  glow is painted once and pulses only its opacity, twice, instead of repainting the
+  viewport every frame, and stays still under reduced motion. Observation disables
+  Chrome's Accessibility domain again once it has read the accessibility trees.
 - Fill editable controls and editor paragraphs through their editing host while
   preserving the target paragraph's scope; reject noneditable targets and use a
   consistent line model for reading editor text.

@@ -121,6 +121,10 @@ const ACTION_ROUTES: Record<string, readonly [string, string]> = {
   "session.start": ["bsk_session", "start"],
   "session.stop": ["bsk_session", "stop"],
   "session.list": ["bsk_session", "list"],
+  "session.cooperate.enable": ["bsk_session", "share"],
+  "session.cooperate.sync": ["bsk_session", "sync"],
+  "session.cooperate.wait": ["bsk_session", "wait-user"],
+  "session.cooperate.status": ["bsk_session", "cooperation-status"],
   "page.navigate": ["bsk_page", "navigate"],
   "page.back": ["bsk_page", "back"],
   "page.forward": ["bsk_page", "forward"],
@@ -135,9 +139,12 @@ const ACTION_ROUTES: Record<string, readonly [string, string]> = {
   "inspect.network": ["bsk_inspect", "network"],
   "inspect.debug": ["bsk_inspect", "debug"],
   "inspect.extract": ["bsk_inspect", "extract"],
+  "inspect.view": ["bsk_inspect", "view"],
   "interact.click": ["bsk_interact", "click"],
   "interact.hover": ["bsk_interact", "hover"],
   "interact.wheel": ["bsk_interact", "wheel"],
+  "interact.drag": ["bsk_interact", "drag"],
+  "interact.step": ["bsk_interact", "step"],
   "interact.scroll-to": ["bsk_interact", "scroll-to"],
   "interact.focus": ["bsk_interact", "focus"],
   "interact.blur": ["bsk_interact", "blur"],
@@ -242,8 +249,35 @@ async function startSession(tools: Map<string, ToolDefinition>, sessionId = "s1"
 
 const START_REPLY = (id: string) => ({ session_id: id, browser_instance_id: "chrome-1" });
 
+it("forwards only the context explicitly supplied by the caller, never a cached sync context", async () => {
+  const { tools, calls } = setup({
+    "session start": START_REPLY("s1"),
+    "cooperate sync": { context_id: "new-context", kind: "delta", changes: [] },
+    click: { tab_id: 7, x: 10, y: 20 },
+  });
+  await startSession(tools);
+  await tools.get("session.cooperate.sync")!.execute({}, makeExec());
+  await tools
+    .get("interact.click")!
+    .execute(
+      { target: "@e1", contextId: "observed-context", dependsOn: ["@e1", "@e2"] },
+      makeExec(),
+    );
+  await tools.get("interact.click")!.execute({ target: "@e1" }, makeExec());
+  const actions = calls.filter((call) => call.args[0] === "click");
+  expect(actions[0].args.slice(-6)).toEqual([
+    "--context",
+    "observed-context",
+    "--depends-on",
+    "@e1",
+    "--depends-on",
+    "@e2",
+  ]);
+  expect(actions[1].args).not.toContain("--context");
+});
+
 const EXPECTED_ACTIONS = {
-  bsk_session: ["start", "stop", "list"],
+  bsk_session: ["start", "stop", "list", "share", "sync", "wait-user", "cooperation-status"],
   bsk_page: ["navigate", "back", "forward", "reload", "wait", "wait-for-element"],
   bsk_inspect: [
     "observe",
@@ -255,21 +289,347 @@ const EXPECTED_ACTIONS = {
     "debug",
     "video",
     "extract",
+    "view",
   ],
   bsk_interact: [
     "click",
     "hover",
     "wheel",
+    "drag",
+    "step",
     "scroll-to",
     "focus",
     "blur",
     "fill",
     "select",
     "press",
+    "evaluate",
+    "upload",
+    "download",
   ],
   bsk_tabs: ["list", "create", "select", "close", "borrow", "return"],
-  bsk_assist: ["resize", "emulate", "request-help"],
+  bsk_assist: [
+    "resize",
+    "emulate",
+    "request-help",
+    "dialog-status",
+    "dialog-accept",
+    "dialog-dismiss",
+    "operation-await",
+    "operation-cancel",
+  ],
 } as const;
+
+describe("gesture and saved observation actions", () => {
+  it("routes drag through the owned session with the caller's context and gesture options", async () => {
+    const reply = { tab_id: 7, source: { x: 10, y: 20 }, target: { x: 50, y: 60 } };
+    const { tools, calls } = setup({ "session start": START_REPLY("s1"), drag: reply });
+    await startSession(tools);
+    const args = {
+      target: "@e1",
+      to: "#destination",
+      tabId: 7,
+      dragMode: "click-move-click",
+      durationMs: 300,
+      holdMs: 0,
+      fromOffsetX: -2,
+      toOffsetY: 3,
+      button: "left",
+      modifiers: ["shift"],
+      timeoutMs: 40000,
+      observationId: "obs-1",
+      contextId: "ctx-1",
+      dependsOn: ["@e1", "#destination"],
+    };
+    const tool = tools.get("interact.drag")!;
+    expect(await tool.execute(args, makeExec())).toMatchObject(reply);
+    const call = calls.find((c) => c.args[0] === "drag")!;
+    for (const pair of [
+      ["--session", "s1"],
+      ["--to", "#destination"],
+      ["--mode", "click-move-click"],
+      ["--duration", "300ms"],
+      ["--hold", "0ms"],
+      ["--from-offset-x", "-2"],
+      ["--to-offset-y", "3"],
+      ["--observation-id", "obs-1"],
+      ["--context", "ctx-1"],
+    ])
+      expect(call.args.slice(call.args.indexOf(pair[0]), call.args.indexOf(pair[0]) + 2)).toEqual(
+        pair,
+      );
+    expect(call.args).toContain("@e1");
+    expect(call.options).toMatchObject({ tag: "s1", signal: expect.any(AbortSignal) });
+    expect(call.options.timeoutMs).toBeGreaterThanOrEqual(55000);
+    expect(tool.isConcurrencySafe?.(args)).toBe(false);
+  });
+
+  it.each([
+    { target: "@e1" },
+    { target: "@e1", to: "@e2", deltaX: 1 },
+    { target: "@e1", deltaY: 0 },
+    { target: "@e1", deltaX: 1, toOffsetY: 2 },
+    { target: "@e1", deltaX: 1, dragMode: "click-move-click" },
+    { target: "@e1", to: "@e2", dragMode: "click-move-click", holdMs: 1 },
+    { target: "@e1", to: "@e2", durationMs: 5001 },
+  ])("rejects invalid drag geometry before dispatch: %j", async (args) => {
+    const { tools, calls } = setup({ "session start": START_REPLY("s1") });
+    await startSession(tools);
+    await expect(tools.get("interact.drag")!.execute(args, makeExec())).rejects.toThrow();
+    expect(calls.filter((c) => c.args[0] === "drag")).toHaveLength(0);
+  });
+
+  it.each([
+    { action: "drag", target: "@e1", to: "@e2" },
+    { action: "step", stepAction: "click", params: '{"ref":"e1"}' },
+  ])("preserves session ownership for $action", async (args) => {
+    const { tools, calls } = setup({});
+    await expect(
+      tools.get("bsk_interact")!.execute({ ...args, session: "not-owned" }, makeExec()),
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(0);
+  });
+
+  const partialStep = {
+    ok: false,
+    phase: "needs_attention",
+    action_replayed: false,
+    rpc_calls: 3,
+    action: { result: { tab_id: 7, used_ref: "e1" } },
+    readiness: { tab_id: 7, satisfied: false },
+    post: { tab_id: 7, context_id: "ctx-after", kind: "baseline" },
+    timing_ms: { action: 1, readiness: 5000, sync: 1, total: 5002 },
+  };
+
+  it("reports readiness failure without repeating the completed action", async () => {
+    const { tools, calls } = setup({
+      "session start": START_REPLY("s1"),
+      step: {
+        __result: {
+          code: 1,
+          stdout: JSON.stringify(partialStep),
+          stderr: "",
+          timedOut: false,
+          aborted: false,
+        },
+      },
+    });
+    await startSession(tools);
+    const args = {
+      stepAction: "click",
+      params: '{"ref":"e1"}',
+      untilVisible: "#ready",
+      waitTimeoutMs: 5000,
+      saveFull: "/tmp/after.json",
+      contextId: "ctx-before",
+      dependsOn: ["@e1"],
+    };
+    const tool = tools.get("interact.step")!;
+    await expect(tool.execute(args, makeExec())).rejects.toMatchObject({
+      code: "BSK_STEP_NEEDS_ATTENTION",
+    });
+    const callsForStep = calls.filter((c) => c.args[0] === "step");
+    expect(callsForStep).toHaveLength(1);
+    expect(callsForStep[0].args).toEqual(
+      expect.arrayContaining([
+        "--session",
+        "s1",
+        "--action",
+        "click",
+        "--params",
+        '{"ref":"e1"}',
+        "--until-visible",
+        "#ready",
+        "--save-full",
+        "/tmp/after.json",
+        "--context",
+        "ctx-before",
+      ]),
+    );
+    expect(callsForStep[0].options.timeoutMs).toBeGreaterThan(120000);
+  });
+
+  it.each([
+    { params: "[]" },
+    { params: "not json" },
+    { params: '{"session_id":"foreign"}' },
+  ])("rejects invalid or overridden step ownership before dispatch: %j", async (args) => {
+    const { tools, calls } = setup({ "session start": START_REPLY("s1") });
+    await startSession(tools);
+    await expect(
+      tools.get("interact.step")!.execute({ stepAction: "click", ...args }, makeExec()),
+    ).rejects.toThrow();
+    expect(calls.filter((c) => c.args[0] === "step")).toHaveLength(0);
+  });
+
+  it("does not retry a step when the child reports session contention", async () => {
+    const { tools, calls } = setup({
+      "session start": START_REPLY("s1"),
+      step: {
+        __result: {
+          code: 4,
+          stdout: JSON.stringify({
+            code: "timeout",
+            message: "busy",
+            data: { reason: "session_busy" },
+          }),
+          stderr: "",
+          timedOut: false,
+          aborted: false,
+        },
+      },
+    });
+    await startSession(tools);
+    await expect(
+      tools
+        .get("interact.step")!
+        .execute({ stepAction: "click", params: '{"ref":"e1"}' }, makeExec()),
+    ).rejects.toThrow("busy");
+    expect(calls.filter((c) => c.args[0] === "step")).toHaveLength(1);
+  });
+
+  it("reports an acknowledged cancellation as a host error", async () => {
+    const receipt = { ...partialStep, phase: "cancelled", cancelled: true };
+    const { tools } = setup({
+      "session start": START_REPLY("s1"),
+      step: {
+        __result: {
+          code: 2,
+          stdout: JSON.stringify(receipt),
+          stderr: "",
+          timedOut: false,
+          aborted: true,
+        },
+      },
+    });
+    await startSession(tools);
+    await expect(
+      tools
+        .get("interact.step")!
+        .execute({ stepAction: "click", params: '{"ref":"e1"}' }, makeExec()),
+    ).rejects.toMatchObject({ code: "ABORTED" });
+  });
+
+  it("forwards saving and conservative folding on sync", async () => {
+    const { tools, calls } = setup({
+      "session start": START_REPLY("s1"),
+      "cooperate sync": { context_id: "ctx" },
+    });
+    await startSession(tools);
+    await tools.get("session.cooperate.sync")!.execute(
+      {
+        saveFull: "/tmp/new.json",
+        baseline: "/tmp/old.json",
+        matchText: ["item 20", "Buy"],
+        contextLines: 0,
+        settle: true,
+        maxTokens: 2000,
+      },
+      makeExec(),
+    );
+    const command = calls.find((c) => c.args[0] === "cooperate")!.args;
+    expect(command).toEqual(
+      expect.arrayContaining([
+        "--save-full",
+        "/tmp/new.json",
+        "--baseline",
+        "/tmp/old.json",
+        "--settle",
+        "--context-lines",
+        "0",
+        "--max-tokens",
+        "2000",
+      ]),
+    );
+    expect(command.filter((arg) => arg.startsWith("--match-text="))).toEqual([
+      "--match-text=item 20",
+      "--match-text=Buy",
+    ]);
+  });
+
+  it.each([
+    { operation: "session.cooperate.sync", command: "cooperate", args: {} },
+    {
+      operation: "interact.step",
+      command: "step",
+      args: { stepAction: "click", params: '{"ref":"e1"}' },
+    },
+  ])("preserves option-like matchText literals through $operation", async ({
+    operation,
+    command,
+    args,
+  }) => {
+    const literals = ["- warning", "--help", "--session=foreign", "item -3"];
+    const { tools, calls } = setup({
+      "session start": START_REPLY("s1"),
+      "cooperate sync": { context_id: "ctx" },
+      step: {
+        ...partialStep,
+        ok: true,
+        phase: "observed",
+        readiness: { requested: false },
+        rpc_calls: 2,
+      },
+    });
+    await startSession(tools);
+    await tools.get(operation)!.execute({ ...args, matchText: literals }, makeExec());
+    const argv = calls.find((call) => call.args[0] === command)!.args;
+    expect(argv.filter((arg) => arg.startsWith("--match-text="))).toEqual(
+      literals.map((literal) => `--match-text=${literal}`),
+    );
+    for (const literal of literals) expect(argv).not.toContain(literal);
+    expect(argv.filter((arg) => arg === "--session")).toHaveLength(1);
+    expect(argv[argv.indexOf("--session") + 1]).toBe("s1");
+  });
+
+  it.each([
+    "- warning",
+    "--help",
+    "--session=foreign",
+  ])("preserves option-like find literal %s in an offline view", async (find) => {
+    const { tools, calls } = setup({ view: { historical: true } });
+    await tools.get("inspect.view")!.execute({ file: "/tmp/saved.json", find }, makeExec());
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args).toEqual(["view", "/tmp/saved.json", `--find=${find}`]);
+    expect(calls[0].options.tag).toBeUndefined();
+  });
+
+  it("reads historical files without any owned session or browser context", async () => {
+    const reply = { historical: true, matches: [2], text: "button Buy" };
+    const { tools, calls } = setup({ view: reply });
+    const result = await tools
+      .get("inspect.view")!
+      .execute({ file: "/tmp/saved.json", find: "Buy", startLine: 2, lineCount: 10 }, makeExec());
+    expect(result).toEqual(reply);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args).toEqual(
+      expect.arrayContaining([
+        "view",
+        "/tmp/saved.json",
+        "--find=Buy",
+        "--start-line",
+        "2",
+        "--line-count",
+        "10",
+      ]),
+    );
+    expect(calls[0].args).not.toContain("--session");
+    expect(calls[0].options.tag).toBeUndefined();
+  });
+
+  it.each([
+    { session: "s1" },
+    { tabId: 7 },
+    { contextId: "old-context" },
+    { dependsOn: ["@e1"] },
+  ])("does not treat a historical view as live authority: %j", async (args) => {
+    const { tools, calls } = setup({});
+    await expect(
+      tools.get("inspect.view")!.execute({ file: "/tmp/saved.json", ...args }, makeExec()),
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(0);
+  });
+});
 
 describe("tool registration", () => {
   it("registers exactly six public schemas with the complete action contract", () => {
@@ -300,6 +660,17 @@ describe("tool registration", () => {
     expect(tool.description).toMatch(/unacknowledged stop/);
   });
 
+  it("exposes opt-in incognito Agent Windows in the public session schema", () => {
+    const { tools } = setup({});
+    const tool = tools.get("bsk_session")!;
+    const properties = tool.parameters.properties as Record<string, unknown> | undefined;
+    expect(properties?.incognito).toMatchObject({
+      type: "boolean",
+      description: expect.stringMatching(/Allow in incognito/),
+    });
+    expect(tool.description).toMatch(/incognito/);
+  });
+
   it("requires an action on every public tool", async () => {
     const { tools } = setup({});
     for (const name of Object.keys(EXPECTED_ACTIONS)) {
@@ -315,6 +686,39 @@ describe("tool registration", () => {
 });
 
 describe("action dispatch", () => {
+  it("lets a model choose prompt text and retrieve the original operation through bsk_assist", async () => {
+    const { tools, calls } = setup({
+      "session start": START_REPLY("s1"),
+      "dialog status": { dialogs: [{ id: "dlg", type: "prompt", message: "Name" }] },
+      "dialog accept": { dialog: { handled: "accepted" } },
+      "operation await": { state: "completed", result: { value: "" } },
+    });
+    await startSession(tools);
+    const assist = tools.get("bsk_assist")!;
+    expect(await assist.execute({ action: "dialog-status" }, makeExec())).toMatchObject({
+      dialogs: [{ id: "dlg" }],
+    });
+    await assist.execute({ action: "dialog-accept", dialogId: "dlg", text: "" }, makeExec());
+    expect(
+      await assist.execute(
+        { action: "operation-await", operationId: "op-original", waitMs: 500 },
+        makeExec(),
+      ),
+    ).toMatchObject({ state: "completed", result: { value: "" } });
+    expect(calls.slice(1).map(({ args }) => args)).toEqual([
+      ["dialog", "status", "--session", "s1"],
+      ["dialog", "accept", "dlg", "--session", "s1", "--text", ""],
+      ["operation", "await", "op-original", "--session", "s1", "--wait-ms", "500"],
+    ]);
+    await expect(
+      assist.execute({ action: "dialog-dismiss", dialogId: "dlg", text: "ignored" }, makeExec()),
+    ).rejects.toThrow("text is only valid");
+    await expect(assist.execute({ action: "operation-cancel" }, makeExec())).rejects.toThrow(
+      "operationId is required",
+    );
+    expect(calls).toHaveLength(4);
+  });
+
   it("rejects actions outside the public contract", async () => {
     const { tools } = setup({});
     await expect(
@@ -379,6 +783,81 @@ describe("session.start", () => {
     expect(calls[0].args.filter((arg) => arg === "--focus" || arg === "--no-focus")).toEqual(
       flag ? [flag] : [],
     );
+  });
+
+  it.each([
+    [undefined, false],
+    [false, false],
+    [true, true],
+  ])("maps incognito=%s to --incognito (expected %s)", async (incognito, expected) => {
+    const { tools, calls } = setup({ "session start": START_REPLY("s1") });
+    const tool = tools.get("bsk_session");
+    if (!tool) throw new Error("bsk_session not registered");
+    await tool.execute(
+      { action: "start", ...(incognito === undefined ? {} : { incognito }) },
+      makeExec(),
+    );
+    expect(calls[0].args.includes("--incognito")).toBe(expected);
+  });
+
+  it.each([
+    {
+      case: "missing Allow in incognito",
+      code: "protocol_error",
+      message:
+        "Incognito access is disabled. Open chrome://extensions → BrowserSkill → Details → Allow in incognito, then retry.",
+    },
+    {
+      case: "unsupported protocol",
+      code: "unsupported",
+      message:
+        "Incognito sessions require extension protocol 1.4 (connected: 1.3); update the BrowserSkill extension and retry",
+    },
+  ])("surfaces an incognito start failure for $case without fallback", async ({
+    code,
+    message,
+  }) => {
+    const failure = {
+      __result: {
+        code: 3,
+        stdout: JSON.stringify({ code, message }),
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+      },
+    };
+    const { tools, calls, registry } = setup({ "session start": failure });
+    const tool = tools.get("bsk_session");
+    if (!tool) throw new Error("bsk_session not registered");
+    const escaped = message.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    await expect(
+      tool.execute(
+        {
+          action: "start",
+          incognito: true,
+          browser: "chrome-1",
+          url: "https://example.com",
+          device: "iphone-14",
+        },
+        makeExec(),
+      ),
+    ).rejects.toThrow(new RegExp(escaped));
+
+    const starts = calls.filter((call) => call.args[0] === "session" && call.args[1] === "start");
+    expect(starts).toHaveLength(1);
+    expect(starts[0].args).toContain("--incognito");
+    expect(calls.some((call) => call.args[0] === "navigate")).toBe(false);
+    expect(calls.some((call) => call.args[0] === "emulate")).toBe(false);
+    expect(registry.current()).toBeUndefined();
+    expect(
+      calls.some(
+        (call) =>
+          call.args[0] === "session" &&
+          call.args[1] === "request" &&
+          call.args.includes("--cancel"),
+      ),
+    ).toBe(true);
   });
 
   it("maps the start reply and tracks the session as current", async () => {
@@ -493,6 +972,45 @@ describe("session.start", () => {
     };
     expect(observed).toMatchObject({ session: "s1", refCount: 1 });
     expect(calls.some((c) => c.args[0] === "observe" && c.args.includes("s1"))).toBe(true);
+  });
+
+  it.each([
+    "none",
+    "unknown",
+  ])("preserves startup human progress with effect state %s", async (effect) => {
+    const { tools, calls, registry } = setup({
+      "session start": START_REPLY("s1"),
+      navigate: {
+        __result: {
+          code: 5,
+          stdout: JSON.stringify({
+            code: "permission_denied",
+            message: "Page changed",
+            data: { reason: "cooperation_sync_required", effect_state: effect },
+          }),
+          stderr: "",
+          timedOut: false,
+          aborted: false,
+        },
+      },
+      "cooperate sync": { context_id: "after-human", kind: "baseline" },
+    });
+    const result = await tools
+      .get("session.start")!
+      .execute({ url: "https://example.test" }, makeExec());
+    expect(result).toMatchObject({
+      sessionId: "s1",
+      warning: expect.stringContaining("wait-user"),
+    });
+    expect(result).not.toHaveProperty("url");
+    expect(registry.current()).toBe("s1");
+    expect(calls.some((call) => call.args.includes("--cancel"))).toBe(false);
+    expect(calls.some((call) => call.args[0] === "cooperate" && call.args[1] === "enable")).toBe(
+      false,
+    );
+    expect(await tools.get("session.cooperate.sync")!.execute({}, makeExec())).toMatchObject({
+      context_id: "after-human",
+    });
   });
 
   it("still cleans up when exit 4 lacks reached: timeout on combined start", async () => {
@@ -2266,5 +2784,142 @@ describe("website debug", () => {
         tools.get("bsk_inspect")!.execute({ action: "debug", ...args }, makeExec()),
       ).rejects.toThrow();
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("script and file actions share the existing runtime", () => {
+  it.each([
+    {
+      action: "evaluate",
+      args: { expression: "'$(literal); `text`'", awaitPromise: false, returnByValue: false },
+      expected: [
+        "evaluate",
+        "'$(literal); `text`'",
+        "--session",
+        "s1",
+        "--tab-id",
+        "7",
+        "--await-promise",
+        "false",
+        "--return-by-value",
+        "false",
+      ],
+    },
+    {
+      action: "upload",
+      args: {
+        target: "#drop",
+        files: ["/tmp/one file.bin", "/tmp/$(literal).bin"],
+        mode: "drop",
+        timeoutMs: 6000,
+      },
+      expected: [
+        "upload",
+        "#drop",
+        "--session",
+        "s1",
+        "--tab-id",
+        "7",
+        "--file",
+        "/tmp/one file.bin",
+        "--file",
+        "/tmp/$(literal).bin",
+        "--mode",
+        "drop",
+        "--timeout",
+        "6000ms",
+      ],
+    },
+    {
+      action: "download",
+      args: {
+        target: "#download",
+        output: "/tmp/local result.bin",
+        overwrite: true,
+        timeoutMs: 6000,
+      },
+      expected: [
+        "download",
+        "#download",
+        "--session",
+        "s1",
+        "--out",
+        "/tmp/local result.bin",
+        "--tab-id",
+        "7",
+        "--overwrite",
+        "--timeout",
+        "6000ms",
+      ],
+    },
+  ])("forwards literal arguments and the observed context for $action", async ({
+    action,
+    args,
+    expected,
+  }) => {
+    const { tools, calls } = setup({ "session start": START_REPLY("s1"), [action]: { ok: true } });
+    await startSession(tools);
+    await tools
+      .get("bsk_interact")!
+      .execute(
+        { action, ...args, tabId: 7, contextId: "observed", dependsOn: ["@e1"] },
+        makeExec(),
+      );
+    expect(calls.at(-1)?.args).toEqual([
+      ...expected,
+      "--context",
+      "observed",
+      "--depends-on",
+      "@e1",
+    ]);
+  });
+  it.each([
+    { action: "evaluate", expression: "1+1" },
+    { action: "upload", target: "#file", files: ["/tmp/input.bin"] },
+    { action: "download", target: "#file", output: "/tmp/result.bin" },
+  ])("rejects an unowned session before invoking $action", async (args) => {
+    const { tools, calls } = setup({});
+    await expect(
+      tools.get("bsk_interact")!.execute({ ...args, session: "unknown" }, makeExec()),
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(0);
+  });
+  it.each([
+    { action: "evaluate", expression: " " },
+    { action: "upload", target: "#file", files: [] },
+    { action: "upload", target: "#file", files: [""] },
+    { action: "download", target: "#file", output: " " },
+  ])("rejects incomplete $action arguments without launching a command", async (args) => {
+    const { tools, calls } = setup({ "session start": START_REPLY("s1") });
+    await startSession(tools);
+    const before = calls.length;
+    await expect(tools.get("bsk_interact")!.execute(args, makeExec())).rejects.toThrow();
+    expect(calls).toHaveLength(before);
+  });
+  it("preserves intervention metadata instead of retrying an uncertain script", async () => {
+    const result = {
+      code: "permission_denied",
+      message: "User intervened",
+      data: { reason: "cooperation_sync_required", effect_state: "unknown" },
+    };
+    const { tools, calls } = setup({
+      "session start": START_REPLY("s1"),
+      evaluate: {
+        __result: {
+          code: 1,
+          stdout: JSON.stringify(result),
+          stderr: "",
+          timedOut: false,
+          aborted: false,
+        },
+      },
+    });
+    await startSession(tools);
+    await expect(
+      tools
+        .get("bsk_interact")!
+        .execute({ action: "evaluate", expression: "submit()", contextId: "observed" }, makeExec()),
+    ).rejects.toMatchObject({ data: result.data });
+    expect(calls.filter((call) => call.args[0] === "evaluate")).toHaveLength(1);
   });
 });
