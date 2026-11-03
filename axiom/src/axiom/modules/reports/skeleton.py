@@ -462,10 +462,12 @@ def _table_cell(value: Any) -> str:
 
 
 def to_task_markdown(doc: TaskReportDoc) -> str:
-    """The delivered task report: cover, contents, then every chapter.
+    """The delivered task report: cover, then every chapter.
 
-    Unlike :func:`to_markdown` nothing is skipped — a task report has no single "basic"
-    section to fold into the header, and the reader needs the generated-at line.
+    No 目录 — the cover is four lines and the chapters are named, so a table of contents is
+    a page of navigation for a document that does not need navigating.  Unlike
+    :func:`to_markdown` nothing is skipped either: there is no single "basic" section to
+    fold into the header, and the reader needs the generated-at line.
     """
     lines = [f"# {doc.title}", ""]
     if doc.cover:
@@ -476,33 +478,12 @@ def to_task_markdown(doc: TaskReportDoc) -> str:
         for key, value in doc.counts:
             lines.append(f"- {key}：{value}")
         lines.append("")
-    if len(doc.sections) > 1:
-        lines.extend(["## 目录", ""])
-        findings = 0
-        listed = 0
-        for section in doc.sections:
-            # 漏洞明细一章有几十条小节，把它们全列出来会占掉两页纸，读者还是得往下翻。
-            # 目录只收章节，漏洞数量单独一行说明。编号跟着列出来的章节走——按真实位置
-            # 编号会在「3. 漏洞明细」和「41. 附录 A」之间留三十八个空洞。
-            if section.key.startswith("finding-"):
-                findings += 1
-                if findings == 1:
-                    listed += 1
-                    lines.append(f"{listed}. 漏洞明细（{_finding_count(doc)} 条）")
-                continue
-            listed += 1
-            lines.append(f"{listed}. {section.title}")
-        lines.append("")
     for section in doc.sections:
         lines.extend([f"## {section.title}", ""])
         for block in section.blocks:
             lines.extend(_render_block(block))
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
-
-
-def _finding_count(doc: TaskReportDoc) -> int:
-    return sum(1 for section in doc.sections if section.key.startswith("finding-"))
 
 
 def to_markdown(doc: ReportDoc) -> str:

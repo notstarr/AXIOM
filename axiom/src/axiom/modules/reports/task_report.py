@@ -1,23 +1,22 @@
 """One delivered report for a whole engagement task.
 
-The single-finding export answers "what is this bug".  A task report has to answer four
-more questions before the reader gets to the bugs, and they are the ones a client asks
-first: what was in scope, how much surface was touched, what was found in total, and which
-interfaces carry the risk.
+The single-finding export answers "what is this bug".  A task report answers what was
+tested, when, how many findings there were and how bad, and which interfaces carry the
+risk.
 
 Chapters, in delivery order:
 
-1. 执行摘要 — scope, window, generated-at, counts by severity and type
-2. 资产与接口 — hosts reached, interfaces called (the chapter this whole module exists for)
-3. 漏洞明细 — every finding, worst first, each with its own reproduced steps
-4. 附录：未纳入正文的漏洞 — everything the scope left out (pending under the confirmed
-   scope, ignored, duplicate), so the report is complete but the body stays about what
-   matters
-5. 附录：证据索引 — every screenshot, by finding and step
+1. 资产与接口 — hosts reached, interfaces called (the chapter this whole module exists for)
+2. 每条漏洞 — worst first, each with its own reproduced steps and screenshots
+
+The cover carries the four things a decision-maker asks first: the target, the export
+time, the finding count with its severity breakdown, and how many records were left out.
+目录 / 执行摘要 / 附录 are deliberately absent — a chapter of prose before the first bug is
+a page the reader skips, and the pictures already sit under their own steps.
 
 The scope decides what the body holds: ``verified`` (the default) is the confirmed
-findings only, ``all`` adds the pending ones.  Everything else lands in appendix A, so
-the counts on the cover always add up to the records the reader can see.
+findings only, ``all`` adds the pending ones.  Everything else is counted on the cover
+and left out of the report.
 
 Two things this module deliberately does **not** do:
 
@@ -112,9 +111,14 @@ def build_task_report(
     """Assemble the task report.
 
     ``vulnerabilities`` is every finding the task has; ``scope`` decides which of them the
-    body is built from and where the rest go.  ``images_by_finding`` maps a finding id to
-    the step-grouped pictures the archive wrote for it — the same shape
-    ``build_vulnerability_report`` takes, so the pictures land under their steps here too.
+    body is built from.  ``images_by_finding`` maps a finding id to the step-grouped
+    pictures the archive wrote for it — the same shape ``build_vulnerability_report``
+    takes, so the pictures land under their steps here too.
+
+    Deliberately absent: 目录, 执行摘要 and the two appendices.  The cover carries what a
+    decision-maker asks first — what was tested, when, how many findings and how bad, and
+    how many records were left out — and everything after that is either the asset chapter
+    or a finding.  A chapter of prose before the first bug is a page the reader skips.
     """
     findings = list(vulnerabilities)
     body, appendix = split_by_scope(findings, scope)
@@ -128,99 +132,21 @@ def build_task_report(
     by_finding = images_by_finding or {}
 
     sections: list[Section] = [
-        _summary_section(task=task, body=body, appendix=appendix, index=index, scope=scope),
         _surface_section(index=index, findings=body, hosts_risk=hosts_risk, body_ids=body_ids),
     ]
     sections.extend(
         _finding_section(item, images_by_step=by_finding.get(item.id, {})) for item in body
     )
-    if appendix:
-        sections.append(_appendix_section(appendix))
-    # 证据索引与「步骤下的图」读同一份数据：分开传两份，迟早一份更新一份没更新。
-    evidence = _evidence_section(body, images_by_finding=by_finding)
-    if evidence is not None:
-        sections.append(evidence)
 
     return TaskReportDoc(
         task_id=str(getattr(task, "id", "")),
         title=f"{getattr(task, 'title', '') or '渗透测试'} — 渗透测试报告",
         sections=tuple(sections),
-        cover=_cover(task=task, generated_at=generated_at),
-        counts=_counts(body=body, appendix=appendix, index=index),
+        cover=_cover(task=task, generated_at=generated_at, body=body, appendix=appendix),
     )
 
 
 # --------------------------------------------------------------------------- chapters
-
-
-def _summary_section(
-    *,
-    task: Any,
-    body: list["Vulnerability"],
-    appendix: list["Vulnerability"],
-    index: InterfaceIndex,
-    scope: str,
-) -> Section:
-    severity_counts = Counter(str(item.severity) for item in body)
-    severity_items = tuple(
-        f"{SEVERITY_LABELS.get(sev, sev)}：{severity_counts[sev]}"
-        for sev in ("critical", "high", "medium", "low", "info")
-        if severity_counts.get(sev)
-    )
-    type_counts = Counter(str(item.type).strip() for item in body if str(item.type).strip())
-    type_items = tuple(f"{name}：{count}" for name, count in type_counts.most_common(12))
-
-    blocks: list[Block] = []
-    goal = str(getattr(task, "goal", "") or "").strip()
-    if goal:
-        blocks.append(Block(type="kv", key="测试目标", text=goal))
-    blocks.append(
-        Block(
-            type="kv",
-            key="收录范围",
-            text=(
-                "仅已验证漏洞"
-                if scope == "verified"
-                else "已验证与待验证漏洞"
-            )
-            + (f"；另有 {len(appendix)} 条未纳入正文，列于附录" if appendix else ""),
-        )
-    )
-    blocks.append(
-        Block(
-            type="kv",
-            key="测试结论",
-            text=_conclusion(body=body, index=index, scope=scope),
-        )
-    )
-    if severity_items:
-        blocks.append(Block(type="bullets", key="按严重等级", items=severity_items))
-    if type_items:
-        blocks.append(Block(type="bullets", key="按漏洞类型", items=type_items))
-    return Section(key="summary", title="执行摘要", blocks=tuple(blocks))
-
-
-def _conclusion(*, body: list["Vulnerability"], index: InterfaceIndex, scope: str = "verified") -> str:
-    """One sentence a decision-maker can quote.
-
-    Written from the counts rather than from a template with blanks: it has to be true for
-    a two-finding task and for a fifty-finding one, and it must not claim a risk level the
-    evidence does not support.  The verb follows the scope — under ``verified`` every
-    finding in the body has been confirmed, and calling a pending one "confirmed" would
-    overstate what the report actually proves.
-    """
-    critical = sum(1 for item in body if str(item.severity) == "critical")
-    high = sum(1 for item in body if str(item.severity) == "high")
-    if not body:
-        return "本次测试未产出漏洞。" if scope == "all" else "本次测试未产出已验证漏洞。"
-    verb = "确认" if scope == "verified" else "收录"
-    parts = [f"本次测试在 {index.host_count} 个域名上{verb} {len(body)} 个漏洞"]
-    if critical or high:
-        parts.append(f"其中严重 {critical} 个、高危 {high} 个")
-    if index.interface_count:
-        parts.append(f"涉及 {index.interface_count} 个接口")
-    worst = "严重" if critical else ("高危" if high else "中低危")
-    return "，".join(parts) + f"；整体风险判定为{worst}，建议按各条修复建议逐项整改。"
 
 
 def _body_attribution(
@@ -281,7 +207,7 @@ def _surface_section(
             type="text",
             text=(
                 "本章统计本次任务复现出的全部报文，因此包含未纳入正文的漏洞碰过的接口；"
-                "「关联漏洞」一列只列正文中的漏洞，其余记录见附录 A。"
+                "「关联漏洞」一列只列正文中的漏洞。"
             ),
         ),
         Block(
@@ -393,124 +319,63 @@ def _finding_section(
     )
 
 
-def _appendix_section(appendix: list["Vulnerability"]) -> Section:
-    rows = tuple(
-        (
-            item.id,
-            str(item.title),
-            str(item.type),
-            SEVERITY_LABELS.get(str(item.severity), str(item.severity)),
-            STATUS_LABELS.get(str(item.status), str(item.status)),
-            (str(item.status_reason or "").strip() or EMPTY)[:80],
-        )
-        for item in appendix
-    )
-    return Section(
-        key="appendix-findings",
-        title="附录 A：未纳入正文的漏洞",
-        blocks=(
-            Block(
-                type="text",
-                text="以下记录未纳入正文（待验证、已忽略或判为重复），不计入执行摘要中的统计，列出以保证报告完整。",
-            ),
-            Block(
-                type="table",
-                headers=("编号", "标题", "类型", "等级", "状态", "理由"),
-                rows=rows,
-            ),
-        ),
-    )
-
-
-def _evidence_section(
-    body: list["Vulnerability"],
-    *,
-    images_by_finding: dict[str, dict[int, list[dict[str, Any]]]],
-) -> Section | None:
-    """附录 B：every picture in the package, so a reader can find the file they need."""
-    rows: list[tuple[str, ...]] = []
-    for item in body:
-        for group in images_by_finding.get(item.id, {}).values():
-            for picture in group:
-                rows.append(
-                    (
-                        item.id,
-                        str(picture.get("step") or 0),
-                        str(picture.get("kind") or ""),
-                        str(picture.get("caption") or EMPTY),
-                        str(picture.get("path") or ""),
-                    )
-                )
-    if not rows:
-        return None
-    rows.sort(key=lambda row: (row[0], int(row[1]) if row[1].isdigit() else 0))
-    return Section(
-        key="appendix-evidence",
-        title="附录 B：证据索引",
-        blocks=(
-            Block(
-                type="text",
-                text="图片文件与本报告同在压缩包内，路径相对于报告根目录。",
-            ),
-            Block(
-                type="table",
-                headers=("漏洞", "步骤", "类型", "说明", "文件"),
-                rows=tuple(rows),
-            ),
-        ),
-    )
-
-
 # ----------------------------------------------------------------------------- cover
 
 
-def _cover(*, task: Any, generated_at: datetime | None) -> tuple[tuple[str, str], ...]:
+def _cover(
+    *,
+    task: Any,
+    generated_at: datetime | None,
+    body: list["Vulnerability"],
+    appendix: list["Vulnerability"],
+) -> tuple[tuple[str, str], ...]:
+    """The lines a decision-maker reads before the findings.
+
+    Deliberately few.  任务编号/名称/状态 are in the title and in the system anyway, and a
+    资产面 line is just the first table of the next chapter.  What is left is what cannot
+    be looked up later: what was tested, when this export was made, and what the numbers
+    were at that moment.
+    """
     stamp = generated_at or datetime.now(timezone.utc)
-    created = getattr(task, "created_at", None)
-    items = [
-        ("任务编号", str(getattr(task, "id", "") or EMPTY)),
-        ("任务名称", str(getattr(task, "title", "") or EMPTY)),
-        ("任务状态", str(getattr(task, "status", "") or EMPTY)),
-    ]
-    input_text = _origin_text(task)
-    if input_text:
-        items.append(("测试范围", input_text))
-    if created:
-        items.append(("开始时间", str(created)[:19]))
+    items: list[tuple[str, str]] = []
+    target = _origin_text(task)
+    if target:
+        items.append(("测试范围", target))
+    goal = str(getattr(task, "goal", "") or "").strip()
+    if goal:
+        items.append(("测试目标", " ".join(goal.split())))
     items.append(("报告生成时间", stamp.strftime("%Y-%m-%d %H:%M UTC")))
+    items.append(("漏洞统计", _severity_summary(body)))
+    items.append(("未纳入正文", f"{len(appendix)} 条"))
     return tuple(items)
 
 
-def _origin_text(task: Any) -> str:
-    origin = getattr(task, "origin", None)
-    if origin is None:
-        return ""
-    for attribute in ("input", "host", "url"):
-        value = str(getattr(origin, attribute, "") or "").strip()
-        if value:
-            return value
-    return ""
-
-
-def _counts(
-    *,
-    body: list["Vulnerability"],
-    appendix: list["Vulnerability"],
-    index: InterfaceIndex,
-) -> tuple[tuple[str, str], ...]:
+def _severity_summary(body: list["Vulnerability"]) -> str:
+    """``正文 29 条（高危 8、中危 20、低危 1）`` — a count plus the worst-first breakdown."""
     severity_counts = Counter(str(item.severity) for item in body)
     parts = [
         f"{SEVERITY_LABELS.get(sev, sev)} {severity_counts[sev]}"
         for sev in ("critical", "high", "medium", "low", "info")
         if severity_counts.get(sev)
     ]
-    items = [
-        ("漏洞统计", f"正文 {len(body)} 条" + (f"（{'、'.join(parts)}）" if parts else "")),
-    ]
-    if appendix:
-        items.append(("未纳入正文", f"{len(appendix)} 条"))
-    items.append(("资产面", f"{index.host_count} 个域名 / {index.interface_count} 个接口"))
-    return tuple(items)
+    return f"正文 {len(body)} 条" + (f"（{'、'.join(parts)}）" if parts else "")
+
+
+def _origin_text(task: Any) -> str:
+    """What the engagement was pointed at.
+
+    ``Origin`` carries the raw input the operator typed (``original_input``) plus the
+    parsed host/scheme/port.  This used to look for ``input``, which has never been a
+    field of that model — so the cover silently printed no target at all.
+    """
+    origin = getattr(task, "origin", None)
+    if origin is not None:
+        for attribute in ("original_input", "host"):
+            value = str(getattr(origin, attribute, "") or "").strip()
+            if value:
+                # 多行输入（URL 加一行备注）在列表项里会把清单劈开，压成一行。
+                return " ".join(value.split())
+    return ""
 
 
 def _status_of(vulnerability: "Vulnerability") -> str:

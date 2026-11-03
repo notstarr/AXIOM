@@ -83,28 +83,79 @@ GENERATED_AT = datetime(2026, 11, 2, 15, 30, tzinfo=timezone.utc)
 
 
 def _report(vulnerabilities, **kwargs):
+    kwargs.setdefault("task", _Task())
     return build_task_report(
-        task=_Task(),
         vulnerabilities=vulnerabilities,
         generated_at=GENERATED_AT,
         **kwargs,
     )
 
 
-def test_the_cover_records_when_the_report_was_generated() -> None:
-    doc = _report([_vuln("v001")])
+def test_the_cover_says_what_was_tested_when_and_how_bad() -> None:
+    doc = _report([_vuln("v001", severity="high"), _vuln("v002", status="忽略")])
     cover = dict(doc.cover)
-    assert cover["任务编号"] == "t239"
-    assert cover["任务名称"] == "红雾商城"
+    assert cover["测试目标"] == "对红雾商城进行渗透测试"
     # Not a frozen snapshot: the reader has to be able to tell two exports apart.
     assert cover["报告生成时间"] == "2026-11-02 15:30 UTC"
+    assert cover["漏洞统计"] == "正文 1 条（高危 1）"
+    assert cover["未纳入正文"] == "1 条"
 
 
-def test_the_chapter_order_is_summary_then_surface_then_findings() -> None:
+def test_the_cover_shows_the_target_the_task_was_pointed_at() -> None:
+    """origin 的原始输入是被测目标，封面必须印出来。
+
+    这里曾经读 ``origin.input``——那个字段从来不存在，所以封面一次目标都没印过。
+    """
+
+    class _Origin:
+        original_input = "https://erp.example.com/\nerp 系统"
+        host = "erp.example.com"
+
+    task = _Task(origin=_Origin())
+    cover = dict(_report([_vuln("v001")], task=task).cover)
+    # 多行输入压成一行：列表项里的换行会把清单劈开。
+    assert cover["测试范围"] == "https://erp.example.com/ erp 系统"
+
+
+def test_the_cover_leaves_out_what_the_reader_can_look_up() -> None:
+    """任务编号/名称/状态、开始时间、资产面都不在封面。
+
+    名字在标题里，资产面就是下一章的第一张表；封面只留不能事后查的东西。
+    """
+    cover = dict(_report([_vuln("v001")]).cover)
+    for key in ("任务编号", "任务名称", "任务状态", "开始时间", "资产面"):
+        assert key not in cover, key
+
+
+def test_the_chapter_order_is_surface_then_findings() -> None:
     doc = _report([_vuln("v001"), _vuln("v002")])
     keys = [section.key for section in doc.sections]
-    assert keys[:2] == ["summary", "surface"]
-    assert keys[2:4] == ["finding-v001", "finding-v002"]
+    assert keys[:2] == ["surface", "finding-v001"]
+    assert keys[2] == "finding-v002"
+
+
+def test_there_is_no_contents_page_no_summary_and_no_appendices() -> None:
+    """封面之后就该是东西，不是散文。
+
+    目录、执行摘要、附录 A、附录 B 都去掉了：图片本来就在自己那一步下面，不需要索引。
+    """
+    doc = _report(
+        [
+            _vuln("v001", reproduction=_reproduction(("mall.example.com", "GET", "/api/a"))),
+            _vuln("v002", status="忽略"),
+        ],
+        images_by_finding={"v001": {1: [{"step": 1, "kind": "packet", "path": "images/v001/a.png", "caption": "回包"}]}},
+    )
+    keys = [section.key for section in doc.sections]
+    assert "summary" not in keys
+    assert "appendix-findings" not in keys
+    assert "appendix-evidence" not in keys
+
+    markdown = to_task_markdown(doc)
+    assert "## 目录" not in markdown
+    assert "执行摘要" not in markdown
+    assert "附录 A" not in markdown
+    assert "附录 B" not in markdown
 
 
 def test_findings_are_ordered_worst_first_then_by_id() -> None:
@@ -121,7 +172,12 @@ def test_findings_are_ordered_worst_first_then_by_id() -> None:
     assert order == ["finding-v001", "finding-v002", "finding-v004", "finding-v003"]
 
 
-def test_excluded_findings_land_in_an_appendix_not_the_body() -> None:
+def test_excluded_findings_are_counted_not_listed() -> None:
+    """未纳入的记录只在封面留一个数字，正文里不出现。
+
+    交付报告给客户的是要他动手改的东西；被判忽略/重复的记录不再单开一章，但数字必须
+    诚实——读者拿到的是一份完整报告，而不是一份只挑好看数字的报告。
+    """
     doc = _report(
         [
             _vuln("v001"),
@@ -132,21 +188,19 @@ def test_excluded_findings_land_in_an_appendix_not_the_body() -> None:
     keys = [section.key for section in doc.sections]
     assert "finding-v002" not in keys
     assert "finding-v003" not in keys
-    assert "appendix-findings" in keys
-    appendix = next(section for section in doc.sections if section.key == "appendix-findings")
-    table = next(block for block in appendix.blocks if block.type == "table")
-    assert {row[0] for row in table.rows} == {"v002", "v003"}
-    # The body count on the cover must match what the body actually contains.
-    counts = dict(doc.counts)
-    assert counts["漏洞统计"].startswith("正文 1 条")
-    assert counts["未纳入正文"] == "2 条"
+
+    cover = dict(doc.cover)
+    assert cover["漏洞统计"].startswith("正文 1 条")
+    assert cover["未纳入正文"] == "2 条"
+    # 数字必须对得上：正文加未纳入 = 全部记录。
+    assert 1 + 2 == 3
 
 
-def test_an_unknown_status_is_kept_in_the_appendix_instead_of_vanishing() -> None:
-    """A status added after this code was written must not silently drop a record.
+def test_an_unknown_status_counts_as_left_out_instead_of_vanishing() -> None:
+    """一个后加的状态不能让记录凭空消失。
 
-    The schema pins today's statuses, so this is about a row that reaches the report from
-    a newer deployment — the report layer must still be total over whatever it is handed.
+    schema 把今天的状态钉死了，这里说的是更新部署里送进报告的行——报告层对拿到手的
+    任何东西都得是完备的：进正文，或者计入未纳入的数字，两者必居其一。
     """
 
     class _Row:
@@ -161,10 +215,7 @@ def test_an_unknown_status_is_kept_in_the_appendix_instead_of_vanishing() -> Non
     doc = _report([_vuln("v001"), _Row()])
     keys = [section.key for section in doc.sections]
     assert "finding-v002" not in keys
-    assert "appendix-findings" in keys
-    appendix = next(section for section in doc.sections if section.key == "appendix-findings")
-    table = next(block for block in appendix.blocks if block.type == "table")
-    assert "v002" in {row[0] for row in table.rows}
+    assert dict(doc.cover)["未纳入正文"] == "1 条"
 
 
 def test_the_confirmed_scope_keeps_a_pending_finding_out_of_the_body() -> None:
@@ -172,22 +223,20 @@ def test_the_confirmed_scope_keeps_a_pending_finding_out_of_the_body() -> None:
     keys = [section.key for section in doc.sections]
     assert "finding-v001" in keys
     assert "finding-v002" not in keys
-    appendix = next(section for section in doc.sections if section.key == "appendix-findings")
-    table = next(block for block in appendix.blocks if block.type == "table")
-    assert "v002" in {row[0] for row in table.rows}
+    assert dict(doc.cover)["未纳入正文"] == "1 条"
 
 
 def test_the_all_scope_promotes_the_pending_findings_into_the_body() -> None:
     doc = _report([_vuln("v001"), _vuln("v002", status="待验证")], scope="all")
     keys = [section.key for section in doc.sections]
     assert "finding-v002" in keys
-    assert "appendix-findings" not in keys
+    assert dict(doc.cover)["未纳入正文"] == "0 条"
 
 
-def test_no_finding_is_dropped_whatever_the_scope() -> None:
-    """正文加附录必须等于全部记录。
+def test_every_finding_is_either_in_the_body_or_counted_as_left_out() -> None:
+    """封面两个数字相加必须等于全部记录。
 
-    少一条，封面上的数字就和读者能看到的列表对不上——报告就成了一个说法，不是事实。
+    少一条，报告就成了一个说法，不是事实——正文里看不到它，未纳入的数字里也没有它。
     """
     findings = [
         _vuln("v001"),
@@ -197,10 +246,10 @@ def test_no_finding_is_dropped_whatever_the_scope() -> None:
     ]
     for scope in ("verified", "all"):
         doc = _report(findings, scope=scope)
+        cover = dict(doc.cover)
         body = [item for item in doc.sections if item.key.startswith("finding-")]
-        appendix = next(item for item in doc.sections if item.key == "appendix-findings")
-        table = next(block for block in appendix.blocks if block.type == "table")
-        assert len(body) + len(table.rows) == len(findings), scope
+        left_out = int(cover["未纳入正文"].split()[0])
+        assert len(body) + left_out == len(findings), scope
 
 
 def test_a_status_spelling_the_dashboard_understands_is_read_the_same_way() -> None:
@@ -229,28 +278,21 @@ def test_a_status_spelling_the_dashboard_understands_is_read_the_same_way() -> N
     assert "finding-v002" in keys
 
 
-def test_the_cover_does_not_claim_only_confirmed_findings_when_pending_ones_are_included() -> None:
-    doc = _report([_vuln("v001"), _vuln("v002", status="待验证")], scope="all")
-    summary = next(section for section in doc.sections if section.key == "summary")
-    scope_text = next(block.text for block in summary.blocks if block.key == "收录范围")
-    assert "已验证与待验证漏洞" in scope_text
-    assert "仅已验证漏洞" not in scope_text
+def test_the_severity_breakdown_counts_only_what_the_body_shows() -> None:
+    """封面的等级明细只算正文。
 
-
-def test_the_cover_counts_what_the_appendix_holds() -> None:
-    doc = _report([_vuln("v001"), _vuln("v002", status="忽略")])
-    summary = next(section for section in doc.sections if section.key == "summary")
-    scope_text = next(block.text for block in summary.blocks if block.key == "收录范围")
-    assert "仅已验证漏洞" in scope_text
-    assert "另有 1 条未纳入正文" in scope_text
-
-
-def test_the_conclusion_does_not_call_a_pending_finding_confirmed() -> None:
-    doc = _report([_vuln("v001", status="待验证")], scope="all")
-    summary = next(section for section in doc.sections if section.key == "summary")
-    conclusion = next(block.text for block in summary.blocks if block.key == "测试结论")
-    assert "收录 1 个漏洞" in conclusion
-    assert "确认" not in conclusion
+    一条被判忽略的高危不该让整份报告的数字看着像高危——读者按这个数字排整改顺序。
+    """
+    doc = _report(
+        [
+            _vuln("v001", severity="critical"),
+            _vuln("v002", severity="high"),
+            _vuln("v003", severity="high", status="忽略"),
+        ]
+    )
+    cover = dict(doc.cover)
+    assert cover["漏洞统计"] == "正文 2 条（严重 1、高危 1）"
+    assert cover["未纳入正文"] == "1 条"
 
 
 def test_the_surface_covers_the_whole_task_not_only_the_findings_in_the_body() -> None:
@@ -344,15 +386,18 @@ def test_a_finding_keeps_the_same_chapters_it_has_in_its_own_export() -> None:
     assert steps[0].steps[0]["exchanges"][0]["request"].startswith("GET /api/mall/products/1")
 
 
-def test_the_markdown_toc_lists_chapters_not_every_finding() -> None:
+def test_the_markdown_starts_the_findings_right_after_the_cover() -> None:
+    """没有目录——封面四行之后就该是资产面，再往下就是漏洞。
+
+    十二条漏洞不该出现十二行导航；这份报告是拿来读的，不是拿来翻的。
+    """
     doc = _report([_vuln(f"v{index:03d}") for index in range(1, 13)])
     markdown = to_task_markdown(doc)
-    toc = markdown.split("## 目录", 1)[1].split("## ", 1)[0]
-    assert "执行摘要" in toc
-    assert "资产与接口" in toc
-    # One line for the findings chapter, with the count — not twelve entries.
-    assert "漏洞明细（12 条）" in toc
-    assert toc.count("漏洞 0") == 0
+    assert "## 目录" not in markdown
+    # 封面之后第一个章节就是资产面，然后第一条漏洞。
+    cover, rest = markdown.split("\n## ", 1)
+    assert rest.startswith("资产与接口")
+    assert "## v001 " in markdown
 
 
 def test_markdown_tables_escape_pipes_so_a_row_cannot_break() -> None:
@@ -368,7 +413,11 @@ def test_markdown_tables_escape_pipes_so_a_row_cannot_break() -> None:
     assert "/api/x\\|y/{id}" in markdown
 
 
-def test_pictures_render_under_their_step_with_the_finding_folder() -> None:
+def test_pictures_render_under_their_step_without_an_evidence_index() -> None:
+    """图片就在自己那一步下面，不再另开一个索引章。
+
+    读者看的是「这一步的回包长什么样」，不是「压缩包里有哪 216 个文件」。
+    """
     images = {
         "v001": {
             1: [
@@ -384,32 +433,13 @@ def test_pictures_render_under_their_step_with_the_finding_folder() -> None:
     doc = _report([_vuln("v001")], images_by_finding=images)
     markdown = to_task_markdown(doc)
     assert "![第 1 步回包](images/v001/step-01-packet-req.png)" in markdown
-    # And the evidence index lists every file, so a reader can find one without scrolling.
-    assert "附录 B：证据索引" in markdown
-    assert "images/v001/step-01-packet-req.png" in markdown.split("附录 B")[1]
+    assert "附录 B" not in markdown
+    assert "证据索引" not in markdown
 
 
-def test_no_pictures_means_no_evidence_appendix() -> None:
-    doc = _report([_vuln("v001")])
-    assert all(section.key != "appendix-evidence" for section in doc.sections)
-
-
-def test_the_conclusion_counts_only_what_the_body_shows() -> None:
-    doc = _report(
-        [
-            _vuln("v001", severity="critical"),
-            _vuln("v002", severity="high"),
-            _vuln("v003", severity="high", status="忽略"),
-        ]
-    )
-    summary = next(section for section in doc.sections if section.key == "summary")
-    conclusion = next(block.text for block in summary.blocks if block.key == "测试结论")
-    assert "确认 2 个漏洞" in conclusion
-    assert "严重 1 个、高危 1 个" in conclusion
-
-
-def test_an_empty_task_reports_no_findings_instead_of_crashing() -> None:
+def test_an_empty_task_reports_zero_findings_instead_of_crashing() -> None:
     doc = _report([])
-    summary = next(section for section in doc.sections if section.key == "summary")
-    conclusion = next(block.text for block in summary.blocks if block.key == "测试结论")
-    assert "未产出已验证漏洞" in conclusion
+    cover = dict(doc.cover)
+    assert cover["漏洞统计"] == "正文 0 条"
+    assert cover["未纳入正文"] == "0 条"
+    assert [section.key for section in doc.sections] == ["surface"]

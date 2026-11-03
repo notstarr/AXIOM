@@ -525,12 +525,11 @@ def _seed_findings(client, task_id, rows) -> None:
             )
 
 
-def test_the_task_report_keeps_what_the_scope_left_out_in_its_appendix(client) -> None:
-    """默认档位下被排除的记录仍然要出现在附录里。
+def test_the_task_report_counts_what_the_scope_left_out(client) -> None:
+    """被排除的记录要出现在封面的数字里，不能凭空消失。
 
-    这条曾经坏过：服务层在把记录交给报告之前就按状态过滤了一遍，于是默认档位下附录
-    永远是空的——封面写着「仅已验证漏洞」，被忽略和判重的那十几条记录在报告里消失
-    无影，读者拿到的不是一份完整的报告。
+    这条曾经坏过：服务层在把记录交给报告之前就按状态过滤了一遍，于是默认档位下那十几条
+    记录在报告里消失无影——正文里没有，计数里也没有，读者拿到的不是一份完整的报告。
     """
     task_id = _task(client)
     _seed_findings(
@@ -543,17 +542,16 @@ def test_the_task_report_keeps_what_the_scope_left_out_in_its_appendix(client) -
     assert response.status_code == 200, response.text
     text = response.text
 
-    body, appendix = text.split("## 附录 A：未纳入正文的漏洞", 1)
-    # 正文只有已验证的那一条
-    assert "漏洞 v001" in body
-    assert "漏洞 v002" not in body
-    # 其余三条都在附录里，一条都不能少
-    assert "v002" in appendix
-    assert "v003" in appendix
-    assert "v004" in appendix
-    # 封面上的统计和读者能看到的条数一致
+    # 正文只有已验证的那一条，被排除的三条一条都不该出现在报告里
+    assert "漏洞 v001" in text
+    assert "漏洞 v002" not in text
+    assert "v002" not in text
+    assert "v003" not in text
+    assert "v004" not in text
+    # 但封面必须报出它们的数量——读者拿到的是一份完整报告，不是只挑好看数字的那份
     assert "正文 1 条" in text
     assert "未纳入正文：3 条" in text
+    assert "附录" not in text
 
 
 def test_the_all_scope_pulls_the_pending_findings_into_the_body(client) -> None:
@@ -568,14 +566,11 @@ def test_the_all_scope_pulls_the_pending_findings_into_the_body(client) -> None:
     assert response.status_code == 200, response.text
     text = response.text
 
-    body, appendix = text.split("## 附录 A：未纳入正文的漏洞", 1)
-    assert "漏洞 v001" in body
-    assert "漏洞 v002" in body
-    # 忽略和判重的仍然只进附录
-    assert "v003" in appendix
-    assert "v004" in appendix
-    assert "v003" not in body
-    assert "v004" not in body
+    assert "漏洞 v001" in text
+    assert "漏洞 v002" in text
+    # 忽略和判重的不进正文，也不单开一章，只计入未纳入的数字
+    assert "v003" not in text
+    assert "v004" not in text
     assert "正文 2 条" in text
     assert "未纳入正文：2 条" in text
 
