@@ -1013,7 +1013,10 @@ def register_worker_commands(main: click.Group) -> None:
     )
     @click.option("--reason")
     @click.option("--reason-file", type=click.Path(path_type=Path, dir_okay=False))
-    @click.option("--duplicate-of")
+    @click.option(
+        "--duplicate-of",
+        help="重复目标：漏洞模式填 vXXX，红队模式填 xXXX。",
+    )
     @click.option(
         "--points",
         type=click.IntRange(1, MAX_RESULT_POINTS),
@@ -1028,16 +1031,20 @@ def register_worker_commands(main: click.Group) -> None:
         points: int | None,
     ) -> None:
         duplicate_of = (duplicate_of or "").strip() or None
-        if decision == "duplicate" and not duplicate_of:
-            raise click.UsageError("duplicate requires --duplicate-of vXXX")
         if decision != "duplicate" and duplicate_of:
             raise click.UsageError("--duplicate-of is only valid for duplicate")
         payload: dict[str, Any] = {
             "lease_id": _lease_id(),
             "decision": decision,
             "reason": _text_value(reason, reason_file, "reason", required=True),
-            "duplicate_of": duplicate_of,
         }
+        if duplicate_of:
+            # 漏洞的重复目标是一条漏洞实体（vXXX），红队成果的重复目标是另一条成果
+            # （xXXX）。两者落在不同的列上，所以按当前审核对象分流。
+            if _review_subject_type() == "redteam_result":
+                payload["duplicate_of_result_id"] = duplicate_of
+            else:
+                payload["duplicate_of"] = duplicate_of
         if points is not None:
             payload["points_awarded"] = points
         _echo(_review_request("decision", payload))
@@ -1405,6 +1412,26 @@ def _lease_id() -> str:
 
 
 _RED_TEAM_MODE_CACHE: dict[str, str] = {}
+
+
+_REVIEW_SUBJECT_CACHE: dict[str, str] = {}
+
+
+def _review_subject_type() -> str:
+    """当前审核对象是漏洞还是红队成果。
+
+    两者都叫「重复」，但重复目标的类型不同：漏洞指向另一条漏洞（vXXX），
+    红队成果指向另一条成果（xXXX）。CLI 需要先知道自己在审什么，才能把
+    ``--duplicate-of`` 投递到正确的字段上。
+    """
+    review_run_id = _environment("AXIOM_REVIEW_RUN_ID")
+    cached = _REVIEW_SUBJECT_CACHE.get(review_run_id)
+    if cached is not None:
+        return cached
+    status = _review_request("status", {"lease_id": _lease_id()})
+    subject = str((status or {}).get("review_subject_type") or "vulnerability")
+    _REVIEW_SUBJECT_CACHE[review_run_id] = subject
+    return subject
 
 
 def _red_team_task_id() -> str:

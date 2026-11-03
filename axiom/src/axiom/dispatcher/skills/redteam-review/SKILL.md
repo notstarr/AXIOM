@@ -48,8 +48,16 @@ axiom review evidence attach --step 2 --kind packet --file step-02-a.png
 
 ## 裁决
 
+命令只认这四个词：`verified`、`duplicate`、`ignored`、`needs-human`。
+
 - `verified`：必须给 `--points`。落库以核定分为准。
-- `rejected`、`duplicate`、`needs-human`：0 分。理由写明缺什么，或与哪条成果、哪个目标重复。
+- `duplicate`：0 分。**这条成立、只是撞了同一条已经计过分的成果**，按「同一资产只计一次」不重复给分。
+- `ignored`：0 分。**这条不成立**——证据不足、没取得权限、结论错了。
+- `needs-human`：0 分。拿不准，交给人工。
+
+`duplicate` 和 `ignored` 不要再混用：前者是「真漏洞但重复」，后者是「不算数」。判重就写 `duplicate`，别用 `ignored` 冒充——报表要靠这两个状态区分「不成立」和「成立但已计过」。
+
+重复目标用 `--duplicate-of` 指定（填另一条成果的编号，如 `x006`）；说不清撞的是哪条时可以省略，在理由里写明即可。
 
 ## 示例
 
@@ -80,8 +88,16 @@ axiom review decision submit verified \
 证据不足：
 
 ```bash
-axiom review decision submit rejected \
+axiom review decision submit ignored \
   --reason '只有接口存在性，没有成功取得权限或数据的可复现证据。'
+```
+
+与另一条成果重复（成立，但同一资产只计一次）：
+
+```bash
+axiom review decision submit duplicate \
+  --duplicate-of x006 \
+  --reason '与 x006 为同一事实的重复上报：同一改 username=admin 绕过全部节点鉴权，本条只计一次。'
 ```
 
 重复：
