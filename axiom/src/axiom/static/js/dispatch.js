@@ -412,6 +412,7 @@ window.AxiomModules.dispatch = {
     guardAuditModeLabel(event) {
       const mode = event?.engagement_mode || event?.mode || '';
       if (mode === 'red_team') return '红队';
+      if (mode === 'client') return '客户端漏洞';
       if (mode === 'vulnerability') return '漏洞';
       return mode || '未知模式';
     },

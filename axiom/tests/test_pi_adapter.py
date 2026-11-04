@@ -273,6 +273,63 @@ def test_pi_adapter_uses_no_bash_context_rule_for_bootstrap_conclude(tmp_path) -
     assert "复用当前会话执行阶段已经读取的 whatisvul/SKILL.md" in argv[index + 1]
 
 
+@pytest.mark.parametrize("phase", ["bootstrap", "reason", "explore", "plan", "review"])
+@pytest.mark.parametrize("run_mode", ["execute", "conclude"])
+def test_client_tasks_expose_mac_bash_in_every_phase(
+    tmp_path: Path, phase: str, run_mode: str
+) -> None:
+    executor = PiBootstrapExecutor(pi_worker(tmp_path / "unused-pi"))
+    argv = executor._build_argv(
+        "测试提示",
+        tmp_path / "sessions",
+        native_tool_names(phase, run_mode),
+        engagement_mode="client",
+    )
+
+    allowed = argv[argv.index("--tools") + 1].split(",")
+    assert "mac_bash" in allowed
+    extensions = [
+        argv[index + 1]
+        for index, value in enumerate(argv)
+        if value == "--extension"
+    ]
+    mac_bash_extension = str(
+        Path(__file__).parents[1]
+        / "src/axiom/dispatcher/extensions/axiom-mac-bash/index.ts"
+    )
+    assert mac_bash_extension in extensions
+
+
+def test_client_bootstrap_conclude_uses_the_shell_aware_context_rule(tmp_path: Path) -> None:
+    executor = PiBootstrapExecutor(pi_worker(tmp_path / "unused-pi"))
+    argv = executor._build_argv(
+        "收口提示",
+        tmp_path / "sessions",
+        native_tool_names("bootstrap", "conclude"),
+        engagement_mode="client",
+    )
+
+    attention = argv[argv.index("--append-system-prompt") + 1]
+    assert attention == CONTEXT_ATTENTION_SYSTEM_PROMPT
+    assert attention != NO_BASH_CONTEXT_ATTENTION_SYSTEM_PROMPT
+
+
+@pytest.mark.parametrize("engagement_mode", ["vulnerability", "red_team"])
+def test_non_client_tasks_never_load_the_mac_bash_extension(
+    tmp_path: Path, engagement_mode: str
+) -> None:
+    executor = PiBootstrapExecutor(pi_worker(tmp_path / "unused-pi"))
+    argv = executor._build_argv(
+        "测试提示",
+        tmp_path / "sessions",
+        ["read", "write", "edit", "bash"],
+        engagement_mode=engagement_mode,
+    )
+
+    assert "mac_bash" not in argv[argv.index("--tools") + 1].split(",")
+    assert "axiom-mac-bash" not in " ".join(argv)
+
+
 @pytest.mark.parametrize("mode", ["json", "rpc"])
 def test_pi_adapter_loads_only_selected_axiom_tool_extensions(
     tmp_path: Path, mode: str
@@ -650,6 +707,26 @@ def test_native_tool_contracts_are_fixed_by_phase_and_run_mode() -> None:
     ]
     assert native_tool_names("review", "execute") == ["read", "write", "edit", "bash"]
     assert native_tool_names("review", "conclude") == ["read", "write", "edit", "bash"]
+
+
+def test_cube_runtime_sync_includes_mac_bash_extension(tmp_path: Path) -> None:
+    uploaded: list[str] = []
+
+    class FakeCubeBackend:
+        def exists(self, _handle, *, path: str) -> bool:
+            return False
+
+        def upload_file(self, _handle, *, source: Path, destination: str) -> None:
+            uploaded.append(destination)
+
+    paths = PiBootstrapExecutor._sync_cube_runtime_extensions(
+        FakeCubeBackend(),  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
+    )
+
+    expected = "/workspace/axiom/shared/runtime/extensions/axiom-mac-bash/index.ts"
+    assert paths["axiom-mac-bash"] == expected
+    assert expected in uploaded
 
 
 @pytest.mark.parametrize(

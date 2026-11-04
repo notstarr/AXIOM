@@ -1430,7 +1430,9 @@ window.AxiomModules.projects = {
     },
 
     setEngagementMode(mode) {
-      this.newProject.engagement_mode = mode === 'red_team' ? 'red_team' : 'vulnerability';
+      this.newProject.engagement_mode = ['vulnerability', 'red_team', 'client'].includes(mode)
+        ? mode
+        : 'vulnerability';
       if (this.newProject.engagement_mode !== 'red_team') {
         this.newProject.seed_vulnerability_task_id = '';
       } else {
@@ -1447,6 +1449,12 @@ window.AxiomModules.projects = {
       } else if (isTemplateGoal) {
         this.newProject.goal = vulnerabilityGoal;
       }
+    },
+
+    engagementModeLabel(mode) {
+      if (mode === 'red_team') return '红队';
+      if (mode === 'client') return '客户端漏洞';
+      return '漏洞挖掘';
     },
 
     isRedTeamGoalText(value) {
@@ -1507,7 +1515,9 @@ window.AxiomModules.projects = {
         }
         const taskScopeTargets = String(this.newProject.task_scope_targets || '').split(/\n|,/).map(x => x.trim()).filter(Boolean);
         const taskScopeExclude = String(this.newProject.task_scope_exclude || '').split(/\n|,/).map(x => x.trim()).filter(Boolean);
-        const engagementMode = this.newProject.engagement_mode === 'red_team' ? 'red_team' : 'vulnerability';
+        const engagementMode = ['vulnerability', 'red_team', 'client'].includes(this.newProject.engagement_mode)
+          ? this.newProject.engagement_mode
+          : 'vulnerability';
         if (engagementMode === 'red_team') this.syncRedTeamGoal();
         const body = {
           parent_project_id: parentProjectId,

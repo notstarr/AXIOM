@@ -44,7 +44,10 @@ def _resolve_profile(config, engagement_mode: str) -> tuple[str, list]:
     prompt = config.guard_system_prompt
     rules = list(config.guard_hard_block_rules)
     profiles = getattr(config, "guard_profiles", None) or {}
-    profile = profiles.get(engagement_mode) if engagement_mode else None
+    # 客户端漏洞任务只改变 Pi 的工具注入，不新增 Guard 流程；它沿用普通
+    # 漏洞任务的问法和硬规则，而不是退回一份可能与当前漏洞配置脱节的全局值。
+    profile_mode = "vulnerability" if engagement_mode == "client" else engagement_mode
+    profile = profiles.get(profile_mode) if profile_mode else None
     if profile is not None:
         if profile.system_prompt:
             prompt = profile.system_prompt

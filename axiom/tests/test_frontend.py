@@ -3340,7 +3340,10 @@ const ctx = Object.assign({{}}, methods, {{
 (async () => {{
   await ctx.createProject();
   const create = calls.find(item => item.method === 'POST' && item.path === '/projects');
-  process.stdout.write(JSON.stringify({{ seed: create ? create.body.seed_vulnerability_task_id : 'missing' }}));
+  process.stdout.write(JSON.stringify({{
+    seed: create ? create.body.seed_vulnerability_task_id : 'missing',
+    mode: create ? create.body.engagement_mode : 'missing',
+  }}));
 }})();
 """
     result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
@@ -3363,6 +3366,57 @@ def test_red_team_exploitable_toggle_posts_dedicated_route_and_optimistic_state(
 def test_seed_vulnerability_task_id_only_sent_for_red_team_tasks() -> None:
     assert _run_seed_task_create_payload_fixture("red_team")["seed"] == "t_220"
     assert _run_seed_task_create_payload_fixture("vulnerability")["seed"] is None
+    client = _run_seed_task_create_payload_fixture("client")
+    assert client["seed"] is None
+    assert client["mode"] == "client"
+
+
+def _run_engagement_mode_selection_fixture(mode: str) -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    projects = ROOT / "src/axiom/static/js/projects.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{ projects: {{ methods: {{}} }} }} }};
+global.location = {{ hash: '#/tasks' }};
+eval(fs.readFileSync({json.dumps(str(projects))}, 'utf8'));
+const methods = window.AxiomModules.projects.methods;
+const ctx = Object.assign({{}}, methods, {{
+  refreshSeedVulnerabilityCounts: async () => {{}},
+  newProject: {{
+    engagement_mode: 'vulnerability',
+    goal: '对该资产进行渗透测试，并挖掘10个高置信度的漏洞',
+    seed_vulnerability_task_id: 't_220',
+  }},
+}});
+ctx.setEngagementMode({json.dumps(mode)});
+process.stdout.write(JSON.stringify({{
+  mode: ctx.newProject.engagement_mode,
+  seed: ctx.newProject.seed_vulnerability_task_id,
+}}));
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def test_client_mode_selection_is_not_coerced_to_vulnerability() -> None:
+    result = _run_engagement_mode_selection_fixture("client")
+
+    assert result == {"mode": "client", "seed": ""}
+
+
+def test_client_mode_is_available_in_composer_and_visible_after_reload() -> None:
+    task_list = (ROOT / "src/axiom/static/templates/task-list.html").read_text(encoding="utf-8")
+    projects = (ROOT / "src/axiom/static/js/projects.js").read_text(encoding="utf-8")
+
+    assert "@click=\"setEngagementMode('client')\"" in task_list
+    assert ">客户端漏洞</button>" in task_list
+    assert "newProject.engagement_mode === 'vulnerability'" in task_list
+    assert "engagementModeLabel(selectedTaskSummary().engagement_mode)" in task_list
+    assert "if (mode === 'client') return '客户端漏洞';" in projects
+    assert "['vulnerability', 'red_team', 'client'].includes(this.newProject.engagement_mode)" in projects
 
 
 def _run_red_team_goal_points_fixture(points: int) -> dict[str, object]:

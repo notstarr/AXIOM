@@ -76,7 +76,10 @@ tasks = Table(
     Column("run_deadline_at", UTCDateTimeText),
     Column("last_pause_reason", String),
     CheckConstraint("status IN ('running','stopped','completed','failed')", name="status"),
-    CheckConstraint("engagement_mode IN ('vulnerability','red_team')", name="engagement_mode"),
+    CheckConstraint(
+        "engagement_mode IN ('vulnerability','red_team','client')",
+        name="engagement_mode",
+    ),
     ForeignKeyConstraint(
         ["seed_vulnerability_task_id"],
         ["tasks.id"],

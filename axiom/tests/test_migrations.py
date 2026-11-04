@@ -15,6 +15,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from axiom.cli import alembic_config, database_heads, migration_head
 from axiom.migration import sqlite_to_postgresql as importer
@@ -175,6 +176,121 @@ def test_postgresql_baseline_upgrade_has_no_metadata_drift_and_native_types(
             assert compare_metadata(context, metadata) == []
     finally:
         engine.dispose()
+
+
+def test_postgresql_client_engagement_mode_constraint_accepts_client(
+    isolated_postgresql_database,
+) -> None:
+    migrator_url, app_url = isolated_postgresql_database
+    _upgrade(migrator_url)
+    engine = create_database_engine(app_url, application_name="axiom-migration-test")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    f'INSERT INTO "{AXIOM_SCHEMA}".projects '
+                    "(id, title, description, status, created_at, updated_at) "
+                    "VALUES ('prj_client', 'client', '', 'active', now(), now())"
+                )
+            )
+            conn.execute(
+                text(
+                    f'INSERT INTO "{AXIOM_SCHEMA}".tasks '
+                    "(id, project_id, title, origin_input, goal, engagement_mode, "
+                    "status, phase, scope_json, worker_pool_json, guard_enabled, "
+                    "external_report_enabled, legacy_readonly, created_at, updated_at) "
+                    "VALUES ('t_client', 'prj_client', 'client task', "
+                    "'/System/Applications/Calculator.app', 'inspect the app', 'client', "
+                    "'running', 'bootstrap', CAST('{}' AS jsonb), CAST('[]' AS jsonb), "
+                    "false, false, false, now(), now())"
+                )
+            )
+            assert conn.execute(
+                text(
+                    f'SELECT engagement_mode FROM "{AXIOM_SCHEMA}".tasks '
+                    "WHERE id = 't_client'"
+                )
+            ).scalar_one() == "client"
+
+        checks = inspect(engine).get_check_constraints("tasks", schema=AXIOM_SCHEMA)
+        engagement_checks = [
+            str(item.get("sqltext") or "")
+            for item in checks
+            if "engagement_mode" in str(item.get("sqltext") or "").lower()
+        ]
+        assert engagement_checks
+        assert all("client" in clause.lower() for clause in engagement_checks)
+
+        with pytest.raises(DBAPIError):
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        f'UPDATE "{AXIOM_SCHEMA}".tasks '
+                        "SET engagement_mode = 'mobile' WHERE id = 't_client'"
+                    )
+                )
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_client_engagement_mode_migration_round_trips(tmp_path) -> None:
+    source = tmp_path / "client-mode.sqlite3"
+    raw = sqlite3.connect(source)
+    raw.executescript(
+        """
+        CREATE TABLE tasks (
+            id VARCHAR PRIMARY KEY,
+            engagement_mode VARCHAR NOT NULL DEFAULT 'vulnerability',
+            CONSTRAINT ck_tasks_engagement_mode
+                CHECK (engagement_mode IN ('vulnerability','red_team'))
+        );
+        INSERT INTO tasks (id, engagement_mode)
+        VALUES ('t_old', 'vulnerability');
+        """
+    )
+    raw.commit()
+    engine = create_engine("sqlite://", creator=lambda: raw)
+    migration_path = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "20261104_0056_client_engagement_mode.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "client_engagement_mode_sqlite_migration",
+        migration_path,
+    )
+    migration = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(migration)
+
+    with engine.begin() as conn:
+        original = migration.op
+        migration.op = Operations(
+            MigrationContext.configure(conn, opts={"render_as_batch": True})
+        )
+        try:
+            migration.upgrade()
+            conn.exec_driver_sql(
+                "INSERT INTO tasks (id, engagement_mode) VALUES ('t_client', 'client')"
+            )
+            assert conn.exec_driver_sql(
+                "SELECT engagement_mode FROM tasks WHERE id = 't_client'"
+            ).scalar_one() == "client"
+
+            with pytest.raises(RuntimeError, match="client tasks exist"):
+                migration.downgrade()
+
+            conn.exec_driver_sql("DELETE FROM tasks WHERE id = 't_client'")
+            migration.downgrade()
+        finally:
+            migration.op = original
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "INSERT INTO tasks (id, engagement_mode) VALUES ('t_bad', 'client')"
+            )
 
 
 def test_postgresql_baseline_downgrades_and_reupgrades(isolated_postgresql_database) -> None:

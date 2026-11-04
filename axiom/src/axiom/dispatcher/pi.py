@@ -754,12 +754,15 @@ class PiBootstrapExecutor:
         binary: str | None = None,
         runtime_extension_paths: dict[str, str] | None = None,
     ) -> list[str]:
+        mac_bash_enabled = engagement_mode == "client"
+        if mac_bash_enabled:
+            tool_names = list(dict.fromkeys([*tool_names, "mac_bash"]))
         if engagement_mode == "red_team":
             attention_prompt = REDTEAM_CONTEXT_ATTENTION_SYSTEM_PROMPT
         else:
             attention_prompt = (
                 CONTEXT_ATTENTION_SYSTEM_PROMPT
-                if "bash" in tool_names
+                if "bash" in tool_names or "mac_bash" in tool_names
                 else NO_BASH_CONTEXT_ATTENTION_SYSTEM_PROMPT
             )
         if injected_system_context.strip():
@@ -838,6 +841,13 @@ class PiBootstrapExecutor:
             extension = runtime_paths.get("axiom-browser") or str(
                 Path(__file__).with_name("extensions")
                 / "axiom-browser"
+                / "index.ts"
+            )
+            argv.extend(["--extension", str(extension)])
+        if mac_bash_enabled:
+            extension = runtime_paths.get("axiom-mac-bash") or str(
+                Path(__file__).with_name("extensions")
+                / "axiom-mac-bash"
                 / "index.ts"
             )
             argv.extend(["--extension", str(extension)])
@@ -1001,6 +1011,7 @@ class PiBootstrapExecutor:
                 "axiom-mcp-tools",
                 "axiom-native-mcp",
                 "axiom-browser",
+                "axiom-mac-bash",
                 "axiom-tool-activation",
             )
         ]
@@ -1029,6 +1040,7 @@ class PiBootstrapExecutor:
                 "axiom-mcp-tools",
                 "axiom-native-mcp",
                 "axiom-browser",
+                "axiom-mac-bash",
                 "axiom-tool-activation",
             )
         }

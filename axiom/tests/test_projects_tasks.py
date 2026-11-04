@@ -17,6 +17,57 @@ def create_project(client, title: str = "示例系统") -> dict:
     return response.json()
 
 
+def test_client_engagement_mode_is_persisted_read_and_listed(client) -> None:
+    project = create_project(client)
+    response = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "客户端 App 漏洞",
+            "origin": "/System/Applications/Calculator.app",
+            "goal": "分析客户端签名与二进制实现",
+            "engagement_mode": "client",
+        },
+    )
+    assert response.status_code == 201, response.text
+    task = response.json()
+    assert task["engagement_mode"] == "client"
+    assert task["red_team_objective"] is None
+
+    fetched = client.get(f"/api/v1/tasks/{task['id']}")
+    assert fetched.status_code == 200
+    assert fetched.json()["engagement_mode"] == "client"
+
+    listed = client.get("/api/v1/tasks", params={"project_id": project["id"]})
+    assert listed.status_code == 200
+    assert [item["engagement_mode"] for item in listed.json()] == ["client"]
+
+    # UpdateTask deliberately has no engagement_mode field; a stale client
+    # cannot turn an existing client task into a red-team task.
+    patched = client.patch(
+        f"/api/v1/tasks/{task['id']}",
+        json={"engagement_mode": "red_team"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["engagement_mode"] == "client"
+
+
+def test_unknown_engagement_mode_is_rejected(client) -> None:
+    project = create_project(client)
+    response = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "非法模式",
+            "origin": "example.com",
+            "goal": "测试非法模式",
+            "engagement_mode": "mobile",
+        },
+    )
+    assert response.status_code == 422
+    assert client.get("/api/v1/tasks").json() == []
+
+
 def test_task_creation_is_atomic_and_seeds_graph(client) -> None:
     project = create_project(client)
     response = client.post(

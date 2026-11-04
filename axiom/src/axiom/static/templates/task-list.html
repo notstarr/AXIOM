@@ -96,7 +96,10 @@
               <div class="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs">
                 <button type="button" @click="setEngagementMode('vulnerability')"
                   class="px-3 py-1.5 rounded-md transition"
-                  :class="newProject.engagement_mode !== 'red_team' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">漏洞挖掘</button>
+                  :class="newProject.engagement_mode === 'vulnerability' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">漏洞挖掘</button>
+                <button type="button" @click="setEngagementMode('client')"
+                  class="px-3 py-1.5 rounded-md transition"
+                  :class="newProject.engagement_mode === 'client' ? 'bg-teal-500 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">客户端漏洞</button>
                 <button type="button" @click="setEngagementMode('red_team')"
                   class="px-3 py-1.5 rounded-md transition"
                   :class="newProject.engagement_mode === 'red_team' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'">红队</button>
@@ -269,6 +272,8 @@
               <div>
                 <div class="flex items-center gap-2">
                   <span class="font-mono text-xs text-slate-400" x-text="selectedTaskSummary().id"></span>
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 text-slate-600"
+                    x-text="engagementModeLabel(selectedTaskSummary().engagement_mode)"></span>
                   <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="selectedTaskSummary().guard_enabled ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-500'" x-text="selectedTaskSummary().guard_enabled ? '监管开启' : '监管关闭'"></span>
                   <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold" :class="projectStatusBadgeClass(selectedTaskSummary().status)" x-text="projectStatusLabel(selectedTaskSummary().status)"></span>
                   <span x-show="selectedTaskSummary().archived" class="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-200 text-slate-600">已归档</span>

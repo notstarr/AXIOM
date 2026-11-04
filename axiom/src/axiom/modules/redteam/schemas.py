@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from axiom.modules.reproduction.schemas import Reproduction
 
 
-EngagementMode = Literal["vulnerability", "red_team"]
+EngagementMode = Literal["vulnerability", "red_team", "client"]
 ResultType = Literal["permission", "data", "credential", "pivot"]
 ChainStatus = Literal["open", "partial", "blocked", "completed", "abandoned"]
 LEGACY_CHAIN_STATUS_MAP = {
