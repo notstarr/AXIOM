@@ -9,7 +9,11 @@ DIST     := dist
 all: build
 
 build:
-	CGO_ENABLED=0 go build -trimpath \
+	# fyne 的 darwin 驱动是 cgo，CGO_ENABLED=0 会直接编不过
+	CGO_ENABLED=1 MACOSX_DEPLOYMENT_TARGET=15.0 \
+	CGO_CFLAGS="-I$$(xcrun --show-sdk-path)/usr/include" \
+	CGO_LDFLAGS="-F$$(xcrun --show-sdk-path)/System/Library/Frameworks" \
+	go build -trimpath \
 		-ldflags "-s -w -X main.version=$(VERSION)" \
 		-o bin/$(BINARY) ./cmd/axiom-mac-bridge
 

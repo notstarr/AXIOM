@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,17 +21,16 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
-
-	"fyne.io/systray"
 
 	"axiom/mac-bridge/internal/config"
 	"axiom/mac-bridge/internal/control"
 	"axiom/mac-bridge/internal/core"
 	"axiom/mac-bridge/internal/envresolve"
 	"axiom/mac-bridge/internal/link"
-	"axiom/mac-bridge/internal/tray"
+	"axiom/mac-bridge/internal/ui"
 )
 
 var version = "dev"
@@ -302,23 +302,31 @@ func cmdCtl(args []string) int {
 }
 
 func cmdGUI(args []string) int {
-	noTray := false
+	headless := false
+	autoShow := true
 	for _, a := range args {
-		if a == "--no-tray" {
-			noTray = true
+		switch a {
+		case "--headless", "--no-tray":
+			headless = true
+		case "--background":
+			// LaunchAgent 用：只出托盘，不自动弹设置窗
+			autoShow = false
 		}
 	}
 
 	lock, err := control.AcquireInstanceLock()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		return 1
+		// Bug 2 修复：拿不到锁**不能静默退出**。先试着唤起已有实例的设置窗，
+		// 唤不起来就弹一个系统可见的提示框——stderr 在 Finder 双击下是看不见的。
+		notifyAlreadyRunning()
+		return 0
 	}
 	defer control.ReleaseInstanceLock(lock)
 
 	cfg, err := config.LoadOrCreate()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "读配置失败: %v\n", err)
+		notifyAlert("读取配置失败", err.Error())
 		return 1
 	}
 
@@ -326,7 +334,10 @@ func cmdGUI(args []string) int {
 	disp := core.NewDispatcher(cfg.DeviceID, version, runtime.GOOS, runtime.GOARCH, hostname)
 	disp.SetEnabled(cfg.Enabled)
 
-	ctrl := &controller{disp: disp, cfg: cfg}
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	ctrl := newController(disp, cfg, rootCtx)
 	srv := control.NewServer(ctrl)
 	if err := srv.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "本地控制通道启动失败: %v\n", err)
@@ -334,77 +345,116 @@ func cmdGUI(args []string) int {
 	}
 	defer srv.Close()
 
-	// 开关未配置时不要静默跑：明确告诉用户下一步该干什么
-	if cfg.ServerURL == "" || cfg.Token == "" {
-		fmt.Fprintln(os.Stderr, "axiom-mac-bridge 尚未配置。请先编辑 ~/.axiom-mac-bridge/config.json 填 server_url 与 token，")
-		fmt.Fprintln(os.Stderr, "或用 AXIOM_MAC_BRIDGE_URL / AXIOM_MAC_BRIDGE_TOKEN 环境变量提供。")
-		fmt.Fprintln(os.Stderr, "配置好之后执行: axiom-mac-bridge ctl on")
-		// 不退出：控制通道已经起来了，用户可以 ctl status 看状态
-	}
-
-	client := link.New(cfg.ServerURL, cfg.Token, cfg.InsecureSkipVerify, disp)
-	ctrl.client = client
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	fmt.Printf("axiom-mac-bridge %s  device=%s  server=%s  enabled=%v\n",
 		version, cfg.DeviceID, cfg.ServerURL, cfg.Enabled)
 
-	// 链路放在后台跑；主流程等退出信号
-	go func() { _ = client.Run(ctx) }()
-
-	if !noTray {
-		go tray.Run(tray.Callbacks{
-			OnToggle: func(on bool) {
-				if err := ctrl.SetEnabled(on); err != nil {
-					fmt.Fprintf(os.Stderr, "切换开关失败: %v\n", err)
-				}
-			},
-			OnQuit: func() { stop() },
-			Enabled: func() bool { return disp.Enabled() },
-			Status: func() string {
-				switch {
-				case !disp.Enabled():
-					return "已关闭（开关）"
-				case client.Connected():
-					return "已连接"
-				default:
-					return "连接中…"
-				}
-			},
-		})
+	if headless {
+		// 无 UI 模式：LaunchAgent / 调试用。保留旧的阻塞等待。
+		<-rootCtx.Done()
+		if disp.Enabled() {
+			ctrl.client.SignalOff("operator_off")
+		}
+		fmt.Println("axiom-mac-bridge 已退出")
+		return 0
 	}
 
-	<-ctx.Done()
-	// 操作员主动退出：告诉服务端这是"人关的"，别当网络故障
-	if disp.Enabled() {
-		client.SignalOff("operator_off")
-	}
-	fmt.Println("axiom-mac-bridge 已退出")
-	if !noTray {
-		systray.Quit()
-	}
-	return 0
-}
+	// ── GUI 模式 ─────────────────────────────────────────────────
+	// 链路在后台跑；UI 在主 goroutine 阻塞。
+	go ctrl.runLink()
 
-func runUntilSignal(ctx context.Context, client *link.Client, disp *core.Dispatcher, cfg *config.Config, ctrl *controller) int {
-	<-ctx.Done()
-	if disp.Enabled() {
-		client.SignalOff("operator_off")
+	uiHooks := ui.Hooks{
+		State:        ctrl.uiState,
+		Config:       ctrl.uiConfig,
+		SaveConfig:   ctrl.SaveConfig,
+		SetEnabled:   ctrl.SetEnabled,
+		Quit:         func() { stop() },
+		RegisterShow: ctrl.setShowFn,
+		Version:      version,
+	}
+
+	// ★ 铁律：ui.Run 必须在 main goroutine 阻塞调用 ★
+	// 之前写成 `go ui.Run(...)`，把 NSApp 的事件循环丢进 goroutine，
+	// AppKit 死锁，菜单栏永远建不起来——那就是"装完什么都没发生"的原因。
+	ui.Run(uiHooks, autoShow)
+
+	// 事件循环返回（用户点了退出）
+	if disp.Enabled() && ctrl.client != nil {
+		ctrl.client.SignalOff("operator_off")
 	}
 	fmt.Println("axiom-mac-bridge 已退出")
 	return 0
 }
 
-// controller 把控制通道的命令落到 Dispatcher 上。
+// notifyAlreadyRunning 第二个实例启动时的可见反馈。
+func notifyAlreadyRunning() {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	resp, err := control.Send(ctx, "show")
+	if err == nil {
+		if ok, _ := resp["ok"].(bool); ok {
+			return // 已有实例的设置窗被唤起来了
+		}
+	}
+	// 旧版本实例不认识 show，或者 socket 不通：弹系统提示框
+	notifyAlert("AXIOM Mac Bridge 已在运行",
+		"菜单栏里应该已经有一个 AXIOM 图标。\n如果没看到，先执行：axiom-mac-bridge ctl quit")
+}
+
+// notifyAlert 弹一个系统可见的提示框。
+//
+// 用 osascript 而不是自己画：此时要么进程里没有 NSApp，要么事件循环没跑，
+// 自己画是画不出来的。osascript 是独立进程，无此问题。
+func notifyAlert(title, msg string) {
+	script := fmt.Sprintf(`display alert %q message %q as warning`, title, msg)
+	cmd := exec.Command("/usr/bin/osascript", "-e", script)
+	_ = cmd.Run()
+}
+
+// controller 把控制通道 / UI 的命令落到 Dispatcher 与 link 上。
+//
+// 之所以要加锁：控制通道的 goroutine 和 UI 的 goroutine 都会调
+// SetEnabled / SaveConfig，而 client 会被热替换（改配置后重建连接）。
 type controller struct {
-	disp   *core.Dispatcher
-	cfg    *config.Config
-	client *link.Client
+	mu           sync.Mutex
+	disp         *core.Dispatcher
+	cfg          *config.Config
+	client       *link.Client
+	clientCancel context.CancelFunc
+	rootCtx      context.Context
+	showFn       func()
+}
+
+func newController(disp *core.Dispatcher, cfg *config.Config, rootCtx context.Context) *controller {
+	c := &controller{disp: disp, cfg: cfg, rootCtx: rootCtx}
+	c.startLink()
+	return c
+}
+
+// startLink 按当前配置起一条连接。调用方需持锁。
+func (c *controller) startLink() {
+	if !c.cfg.Configured() {
+		return
+	}
+	ctx, cancel := context.WithCancel(c.rootCtx)
+	c.clientCancel = cancel
+	c.client = link.New(c.cfg.ServerURL, c.cfg.Token, c.cfg.InsecureSkipVerify, c.disp)
+	go func() { _ = c.client.Run(ctx) }()
+}
+
+func (c *controller) runLink() {
+	// 连接在 startLink 里就起了，这里不需要额外动作
+}
+
+// setShowFn 由 ui.Run 初始化时回调，注册"唤起设置窗口"的能力。
+func (c *controller) setShowFn(fn func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.showFn = fn
 }
 
 func (c *controller) SetEnabled(on bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	was := c.disp.Enabled()
 	c.disp.SetEnabled(on)
 	c.cfg.Enabled = on
@@ -419,18 +469,93 @@ func (c *controller) SetEnabled(on bool) error {
 	return nil
 }
 
+// SaveConfig 保存配置并热生效，不重启。
+//
+// 顺序很重要：先断旧连接并等它退出，再建新的。反过来会两条连接并存，
+// 在途命令的结果会串到新会话上。
+func (c *controller) SaveConfig(next *config.Config) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := next.Validate(); err != nil {
+		return err
+	}
+	next.DeviceID = c.cfg.DeviceID // 设备身份不随配置变
+	if err := config.Save(next); err != nil {
+		return err
+	}
+
+	if c.clientCancel != nil {
+		if c.client != nil {
+			c.client.SignalOff("config_changed")
+		}
+		c.clientCancel()
+	}
+	*c.cfg = *next
+	c.startLink()
+	fmt.Println("配置已保存，连接已重建")
+	return nil
+}
+
+// Show 把设置窗口唤到前台（ctl show / 第二实例用）。
+func (c *controller) Show() error {
+	c.mu.Lock()
+	fn := c.showFn
+	headless := fn == nil
+	c.mu.Unlock()
+	if headless {
+		return errors.New("GUI 未启用（headless 模式）")
+	}
+	fn()
+	return nil
+}
+
 func (c *controller) Status() (map[string]any, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	connected, lastErr := false, ""
+	if c.client != nil {
+		connected, lastErr = c.client.Snapshot()
+	}
+	s := ui.State{Configured: c.cfg.Configured(), Enabled: c.disp.Enabled(), Connected: connected, LastErr: lastErr}
 	return map[string]any{
-		"device_id": c.cfg.DeviceID,
-		"server":    c.cfg.ServerURL,
-		"enabled":   c.disp.Enabled(),
-		"version":   version,
+		"device_id":  c.cfg.DeviceID,
+		"server":     c.cfg.ServerURL,
+		"enabled":    c.disp.Enabled(),
+		"version":    version,
+		"state":      s.Kind().Label(),
+		"connected":  connected,
+		"last_error": lastErr,
 	}, nil
 }
 
 func (c *controller) Quit() error {
 	p, _ := os.FindProcess(os.Getpid())
 	return p.Signal(syscall.SIGTERM)
+}
+
+// ── 给 UI 的三个取数方法 ────────────────────────────────────────
+
+func (c *controller) uiState() ui.State {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	connected, lastErr := false, ""
+	if c.client != nil {
+		connected, lastErr = c.client.Snapshot()
+	}
+	return ui.State{
+		Configured: c.cfg.Configured(),
+		Enabled:    c.disp.Enabled(),
+		Connected:  connected,
+		LastErr:    lastErr,
+	}
+}
+
+func (c *controller) uiConfig() *config.Config {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cp := *c.cfg
+	return &cp
 }
 
 func cmdInstallAgent(args []string) int {
@@ -476,6 +601,7 @@ func cmdInstallAgent(args []string) int {
 	<array>
 		<string>%s</string>
 		<string>gui</string>
+		<string>--background</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>

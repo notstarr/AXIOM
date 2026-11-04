@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Config 是设备侧的全部配置。刻意保持极简：只有三样东西需要人填。
@@ -80,6 +82,33 @@ func Save(c *Config) error {
 
 // ErrNotFound 配置文件不存在。
 var ErrNotFound = errors.New("config not found")
+
+// Configured 配置是否已经填好。首启用它决定要不要自动弹设置窗口。
+func (c *Config) Configured() bool {
+	return strings.TrimSpace(c.ServerURL) != "" && strings.TrimSpace(c.Token) != ""
+}
+
+// Validate 校验配置。保存前调用，错误文案直接给用户看。
+func (c *Config) Validate() error {
+	u := strings.TrimSpace(c.ServerURL)
+	if u == "" {
+		return errors.New("服务器地址不能为空")
+	}
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return fmt.Errorf("服务器地址格式不对：%w", err)
+	}
+	if parsed.Scheme != "ws" && parsed.Scheme != "wss" {
+		return errors.New("服务器地址必须以 ws:// 或 wss:// 开头")
+	}
+	if parsed.Host == "" {
+		return errors.New("服务器地址缺少主机名")
+	}
+	if strings.TrimSpace(c.Token) == "" {
+		return errors.New("Token 不能为空")
+	}
+	return nil
+}
 
 // LoadOrCreate 读配置；不存在则生成一份带新 DeviceID 的默认配置。
 func LoadOrCreate() (*Config, error) {

@@ -77,6 +77,32 @@ def test_call_without_device_returns_error(data_dir: Path):
     assert resp.code == "E_NO_DEVICE"
 
 
+def test_call_with_multiple_online_devices_is_explicitly_ambiguous(data_dir: Path):
+    bridge = MacBridgeService(data_dir)
+    fake1, fake2 = _FakeDevice(), _FakeDevice()
+
+    async def go():
+        await bridge.attach(
+            device_id="dev-1",
+            info=DeviceInfo(device_id="dev-1"),
+            send=fake1.send,
+            close=fake1.close,
+        )
+        await bridge.attach(
+            device_id="dev-2",
+            info=DeviceInfo(device_id="dev-2"),
+            send=fake2.send,
+            close=fake2.close,
+        )
+        return await bridge.call(op="exec", args={"command": "uname"})
+
+    resp = _run(go())
+    assert resp.ok is False
+    assert resp.code == "E_MULTIPLE_DEVICES"
+    assert fake1.sent == []
+    assert fake2.sent == []
+
+
 def test_call_exec_roundtrip(data_dir: Path):
     bridge = MacBridgeService(data_dir)
     fake = _FakeDevice()
@@ -116,6 +142,51 @@ def test_call_exec_roundtrip(data_dir: Path):
     assert resp.ok is True
     assert resp.result["stdout"] == "Darwin mac 24.6.0"
     assert resp.result["exit_code"] == 0
+
+
+def test_nonzero_exit_and_truncation_are_normal_result_fields(data_dir: Path):
+    bridge = MacBridgeService(data_dir)
+    fake = _FakeDevice()
+
+    async def go():
+        await bridge.attach(
+            device_id="dev-1",
+            info=DeviceInfo(device_id="dev-1"),
+            send=fake.send,
+            close=fake.close,
+        )
+        task = asyncio.create_task(
+            bridge.call(op="exec", args={"command": "printf 'ok\\n'; exit 7"}, timeout_ms=5_000)
+        )
+        for _ in range(50):
+            if fake.sent:
+                break
+            await asyncio.sleep(0.01)
+        await bridge.on_frame(
+            bridge._devices["dev-1"],
+            json.dumps({
+                "v": 1,
+                "id": fake.sent[0]["id"],
+                "type": "result",
+                "payload": {
+                    "ok": True,
+                    "stdout": "ok\n",
+                    "stderr": "",
+                    "exit_code": 7,
+                    "duration_ms": 12,
+                    "truncated_bytes": 4096,
+                },
+            }),
+        )
+        return await task
+
+    resp = _run(go())
+    assert resp.ok is True
+    assert resp.device_id == "dev-1"
+    assert resp.result["stdout"] == "ok\n"
+    assert resp.result["exit_code"] == 7
+    assert resp.result["duration_ms"] == 12
+    assert resp.result["truncated_bytes"] == 4096
 
 
 def test_device_error_is_translated(data_dir: Path):
@@ -171,6 +242,31 @@ def test_operator_off_keeps_state_but_refuses_calls(data_dir: Path):
     resp = _run(go())
     assert resp.ok is False
     assert resp.code == "E_NO_DEVICE"
+
+
+def test_explicit_disabled_device_reports_disabled(data_dir: Path):
+    bridge = MacBridgeService(data_dir)
+    fake = _FakeDevice()
+
+    async def go():
+        conn = await bridge.attach(
+            device_id="dev-1",
+            info=DeviceInfo(device_id="dev-1"),
+            send=fake.send,
+            close=fake.close,
+        )
+        await bridge.on_frame(
+            conn, json.dumps({"v": 1, "type": "bye", "reason": "operator_off"})
+        )
+        return await bridge.call(
+            op="exec",
+            args={"command": "id"},
+            device_id="dev-1",
+        )
+
+    resp = _run(go())
+    assert resp.ok is False
+    assert resp.code == "E_DISABLED"
 
 
 def test_reconnect_kicks_old_connection(data_dir: Path):

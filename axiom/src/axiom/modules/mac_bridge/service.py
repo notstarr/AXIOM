@@ -129,9 +129,19 @@ class MacBridgeService:
         device_id: str = "",
         timeout_ms: int = DEFAULT_CALL_TIMEOUT_MS,
     ) -> CallResponse:
-        conn = self._pick(device_id)
+        conn, error_code = self._select(device_id)
         if conn is None:
-            return CallResponse(ok=False, code="E_NO_DEVICE", error="没有在线的设备（开关是否打开？）")
+            if error_code == "E_MULTIPLE_DEVICES":
+                return CallResponse(
+                    ok=False,
+                    code=error_code,
+                    error="当前有多台在线 Mac；v1 只支持一台，请关闭多余设备的连接开关",
+                )
+            return CallResponse(
+                ok=False,
+                code=error_code,
+                error="没有在线的设备（开关是否打开？）",
+            )
         if conn.info.state != "online":
             return CallResponse(
                 ok=False, code="E_DISABLED",
@@ -251,14 +261,19 @@ class MacBridgeService:
     def list_devices(self) -> list[DeviceInfo]:
         return [c.info for c in self._devices.values()]
 
-    def _pick(self, device_id: str) -> DeviceConn | None:
-        # 只挑 online 的。注册表里可能还留着 operator_off / offline 的记录，
-        # 那些是"状态展示用"，不能再接请求。
+    def _select(self, device_id: str) -> tuple[DeviceConn | None, str]:
+        # 注册表里可能还留着 operator_off / offline 的记录，那些是"状态展示用"。
+        # 未显式指定时只挑 online 的唯一设备；指定时保留记录，让调用方拿到
+        # 准确的 E_DISABLED，而不是把所有非在线状态都说成"没有设备"。
         if device_id:
             conn = self._devices.get(device_id)
-            return conn if conn is not None and conn.info.state == "online" else None
+            return (conn, "") if conn is not None else (None, "E_NO_DEVICE")
         online = [c for c in self._devices.values() if c.info.state == "online"]
-        return online[0] if len(online) == 1 else None
+        if not online:
+            return None, "E_NO_DEVICE"
+        if len(online) > 1:
+            return None, "E_MULTIPLE_DEVICES"
+        return online[0], ""
 
     # ── 失活巡检 ────────────────────────────────────────────────────────
     def _ensure_watchdog(self) -> None:

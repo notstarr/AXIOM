@@ -56,6 +56,8 @@ type Client struct {
 
 	conn     *websocket.Conn
 	writeMu  sync.Mutex
+	stateMu  sync.Mutex
+	lastErr  string
 	backoff  time.Duration
 	lastPong time.Time
 }
@@ -93,11 +95,13 @@ func (c *Client) Run(ctx context.Context) error {
 		if err == nil || errors.Is(err, errOperatorOff) {
 			// 正常下线（bye{operator_off}）：退回等待，不重连
 			c.backoff = time.Second
+			c.noteErr(nil)
 			continue
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		c.noteErr(err)
 		log.Printf("link: session ended: %v; retry in %s", err, c.backoff)
 		select {
 		case <-ctx.Done():
@@ -147,6 +151,7 @@ func (c *Client) session(ctx context.Context) error {
 	}
 	c.backoff = time.Second
 	c.lastPong = time.Now()
+	c.noteErr(nil) // 握手成功，清掉上一次的失败原因
 
 	// 读循环 + 心跳 + 失联巡检三件事并行
 	readErr := make(chan error, 1)
@@ -337,6 +342,27 @@ func (c *Client) Connected() bool {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	return c.conn != nil
+}
+
+// Snapshot 给 UI 用的连接状态快照。
+//
+// lastErr 只在"开关开着但连不上"时才有内容：拨号失败、握手失败会记下来，
+// 握手成功清空。这样 UI 能区分「连接中」和「连接失败」，而不是都显示一个
+// 永远转圈的"连接中"。
+func (c *Client) Snapshot() (connected bool, lastErr string) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	return c.Connected(), c.lastErr
+}
+
+func (c *Client) noteErr(err error) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if err == nil {
+		c.lastErr = ""
+		return
+	}
+	c.lastErr = err.Error()
 }
 
 // SignalOff 由开关调用：先告诉服务端这是操作员关的，再断开连接。

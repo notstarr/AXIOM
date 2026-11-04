@@ -36,6 +36,9 @@ type Controller interface {
 	SetEnabled(on bool) error
 	Status() (map[string]any, error)
 	Quit() error
+	// Show 把设置窗口唤到前台。第二个实例启动时会调它，
+	// 免得用户点了没反应。headless 模式下可以返回错误。
+	Show() error
 }
 
 // Server 本地控制服务器。
@@ -111,6 +114,8 @@ func (s *Server) serve(conn net.Conn) {
 		}
 	case cmd == "quit":
 		resp = s.wrap(s.ctrl.Quit())
+	case cmd == "show":
+		resp = s.wrap(s.ctrl.Show())
 	default:
 		resp = map[string]any{"ok": false, "error": "unknown command: " + cmd}
 	}
