@@ -2106,6 +2106,8 @@ html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button 
 }
 .lineage-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .lineage-legend .lg-spacer { flex: 1; }
+/* 平移提示：只给知道去哪找的人看，别抢图例的视觉权重 */
+.lineage-legend .lg-hint { font-size: 11px; color: var(--sto-fg-3, #a49e96); }
 .lg-line { display: inline-block; width: 24px; height: 0; border-top-width: 2px; border-top-style: solid; }
 .lg-line-fan { border-color: #6d6862; }
 .lg-line-flow { border-color: #2f5d7c; }
@@ -2120,7 +2122,10 @@ html body .points-capsule input.points-capsule-input::-webkit-inner-spin-button 
   border-radius: 4px; padding: 0 4px; white-space: nowrap;
 }
 
-.lineage-scroll { background: var(--sto-panel, #fff); }
+.lineage-scroll { background: var(--sto-panel, #fff); cursor: grab; overscroll-behavior: contain; }
+/* 拖动中：光标变抓手并禁选，否则平移会拖出一片蓝色选中区。 */
+.lineage-scroll.is-panning { cursor: grabbing; user-select: none; }
+.lineage-scroll.is-panning * { cursor: grabbing; }
 /* 缩放壳：宽度/高度由脚本设成「画布尺寸 × 缩放」，滚动条才对得上；
    画布本身用 transform: scale，布局尺寸不变，实测高度不会被缩放污染。 */
 .lineage-zoomwrap { position: relative; overflow: hidden; flex: none; }

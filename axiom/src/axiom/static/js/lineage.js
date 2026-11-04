@@ -162,6 +162,9 @@ window.AxiomModules.lineage = {
     renderLineage(pass = 1) {
       const host = document.getElementById('lineage-stage');
       if (!host) return;
+      // 绑定放在数据判断之前：空状态分支会提前 return，放后面就漏绑。
+      // 重复调用由 __lineagePanBound 挡住。
+      this.bindLineagePan();
       const model = this.lineageModel();
       if (!model.hasData) {
         host.style.height = '';
@@ -424,6 +427,60 @@ window.AxiomModules.lineage = {
         }, 160);
       };
       window.addEventListener('resize', this._lineageResizeHandler);
+    },
+
+    // ── 拖拽平移 ─────────────────────────────────────────────────
+    // 画布动辄几千像素高，靠滚动条找某一条链很累，所以按住就能拖着走。
+    // 但卡片里的判据/边界是要复制的中文长句，左键一拖就平移会让人选不住字，
+    // 所以按住 Alt（或 Ctrl/⌘）时完全不接管，把拖动交还给浏览器的文本选择。
+    bindLineagePan() {
+      const vp = document.querySelector('.lineage-scroll');
+      if (!vp || vp.__lineagePanBound) return;
+      vp.__lineagePanBound = true;
+
+      vp.addEventListener('pointerdown', ev => {
+        if (ev.button !== 0 && ev.button !== 1) return;
+        if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+        if (ev.target.closest('button, a, input, select, textarea, [contenteditable="true"]')) return;
+        // 落点在滚动条上（offsetX/Y 超出 clientWidth/Height 就是滚动条区域）不平移，
+        // 否则下面的 preventDefault 会把拖滚动条一起挡掉。
+        if (ev.offsetX > vp.clientWidth || ev.offsetY > vp.clientHeight) return;
+        // 选区是在 pointerdown/mousedown 那一刻起头的，等越过阈值再补 user-select:none
+        // 已经来不及了——选区照样拖出来。只能在源头挡掉。
+        ev.preventDefault();
+        const sel = window.getSelection && window.getSelection();
+        if (sel && sel.rangeCount) sel.removeAllRanges();
+        vp.__lineagePanMoved = false;
+        const start = { x: ev.clientX, y: ev.clientY, l: vp.scrollLeft, t: vp.scrollTop };
+        let moved = false;
+        try { vp.setPointerCapture(ev.pointerId); } catch (err) { /* 老浏览器没有捕获，不影响平移 */ }
+        const move = e => {
+          const dx = e.clientX - start.x;
+          const dy = e.clientY - start.y;
+          if (!moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+          if (!moved) { moved = true; vp.classList.add('is-panning'); }
+          vp.scrollLeft = start.l - dx;
+          vp.scrollTop = start.t - dy;
+        };
+        const end = () => {
+          vp.classList.remove('is-panning');
+          vp.removeEventListener('pointermove', move);
+          vp.removeEventListener('pointerup', end);
+          vp.removeEventListener('pointercancel', end);
+          // 松手会补一个 click，吞掉它，否则拖完像误点了卡片
+          if (moved) vp.__lineagePanMoved = true;
+        };
+        vp.addEventListener('pointermove', move);
+        vp.addEventListener('pointerup', end);
+        vp.addEventListener('pointercancel', end);
+      });
+
+      vp.addEventListener('click', ev => {
+        if (!vp.__lineagePanMoved) return;
+        vp.__lineagePanMoved = false;
+        ev.preventDefault();
+        ev.stopPropagation();
+      }, true);
     },
 
     lineageScalePercent() {
