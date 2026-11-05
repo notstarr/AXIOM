@@ -31,6 +31,20 @@ def list_results(task_id: str, chain_id: str | None = Query(default=None), conta
     return container.red_team.list_results(task_id, chain_id=chain_id)
 
 
+@router.get("/tasks/{task_id}/red-team/results/{result_id}", response_model=RedTeamResult)
+def get_result(
+    task_id: str,
+    result_id: str,
+    container: Container = Depends(get_container),
+) -> RedTeamResult:
+    """单条成果的完整读取（含复现报文）。
+
+    列表走 ``summary`` 时不带报文，选中某条再按 id 取这一条——一次翻页就不用
+    把几十 KB × 50 条的报文全拖回来。
+    """
+    return container.red_team.get_result(task_id, result_id)
+
+
 @router.post("/tasks/{task_id}/intents/{intent_id}/red-team-results", response_model=RedTeamResult, status_code=status.HTTP_201_CREATED)
 def report_result(task_id: str, intent_id: str, body: RedTeamResultReportRequest, reported_by: str = "explore", container: Container = Depends(get_container)) -> RedTeamResult:
     return container.red_team.report_result(task_id, intent_id, body.lease_id, body.report, reported_by=reported_by)
@@ -62,9 +76,15 @@ def list_all_red_team_results(
     search: str = "",
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    summary: bool = Query(default=False),
     container: Container = Depends(get_container),
 ) -> list[RedTeamResult]:
-    """跨任务成果列表（重要事实·成果视图）。"""
+    """跨任务成果列表（重要事实·成果视图）。
+
+    ``summary=1`` 时不返回 ``reproduction``（那条复现过程带着该环全部原始报文，
+    几十 KB 一条）。列表只画标题、状态、分值和描述，报文要等选中某条再单取。
+    默认仍返回完整内容，既有调用方不受影响。
+    """
 
     items, total, awarded = container.red_team.list_results_page(
         task_id=task_id,
@@ -74,6 +94,7 @@ def list_all_red_team_results(
         search=search,
         limit=limit,
         offset=offset,
+        summary=summary,
     )
     response.headers["X-Total-Count"] = str(total)
     # 核定分是筛选集的全量聚合，前端翻页时要用它显示总分而不是对本页求和。

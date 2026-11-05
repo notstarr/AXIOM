@@ -31,6 +31,10 @@ window.AxiomModules.state = {
     vulnerabilityPage: 0,
     vulnerabilityPageSize: 50,
     vulnerabilityLoading: false,
+    // 漏洞列表同样只取摘要；选中哪条再按 id 单取那一条的复现报文。
+    vulnerabilityDetailCache: {},
+    vulnerabilityDetailLoading: '',
+    vulnerabilityDetailError: '',
     // 任务级报告导出中：打包几十兆图片要几秒，按钮在这期间锁住，
     // 免得重复点击生成两个压缩包。
     taskReportExporting: false,
@@ -46,6 +50,11 @@ window.AxiomModules.state = {
     rtResultPageSize: 50,
     rtResultTotalPoints: 0,
     rtResultLoading: false,
+    // 列表只取摘要（不带复现报文），选中某条再按 id 单取这一条的完整内容。
+    // 缓存按 "task_id:id" 存，key 与 selectedRtResultId 同一套，命中就不再拉。
+    rtResultDetailCache: {},
+    rtResultDetailLoading: '',
+    rtResultDetailError: '',
     rtResultFilter: { keyword: '', projectId: '', status: '', type: '' },
     selectedRtResultId: '',
     rtChainView: null,

@@ -382,8 +382,16 @@ class RedTeamService:
         search: str = "",
         limit: int = 50,
         offset: int = 0,
+        summary: bool = False,
     ) -> tuple[list[RedTeamResult], int, int]:
-        """Cross-task listing for the 重要事实·成果 view (management console)."""
+        """Cross-task listing for the 重要事实·成果 view (management console).
+
+        ``summary=True`` drops ``reproduction`` from every row. That field holds
+        the whole raw packet trail of one chain link — tens of KB per row — and the
+        console list only draws the title, status, score and description. Leaving
+        it in made one page of fifty rows a megabyte of JSON to parse and proxy.
+        The detail panel fetches the single row it needs by id instead.
+        """
 
         with self.engine.connect() as conn:
             results, total, awarded = self.repository.list_results_page(
@@ -404,7 +412,23 @@ class RedTeamService:
             enriched: list[RedTeamResult] = []
             for owner_task_id, batch in grouped.items():
                 enriched.extend(_attach_report_evidence(conn, owner_task_id, batch))
+            if summary:
+                enriched = [
+                    item.model_copy(update={"reproduction": None}) for item in enriched
+                ]
             return enriched, total, awarded
+
+    def get_result(self, task_id: str, result_id: str) -> RedTeamResult:
+        """单条成果的完整读取（含复现报文）。
+
+        列表走 summary 时不带报文；详情面板选中某条后按 id 取这一条。
+        """
+        with self.engine.connect() as conn:
+            self._task(conn, task_id)
+            result = self.repository.get_result(conn, task_id, result_id)
+            if result is None:
+                raise NotFoundError(f"RedTeam Result not found: {result_id}")
+            return result
 
     def list_chains_page(
         self,

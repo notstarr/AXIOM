@@ -1527,7 +1527,41 @@
       if (!vulnerability) return;
       this.vulnerabilitySelectionBlocked = false;
       this.selectedVulnerabilityKey = this.vulnerabilityKey(vulnerability);
+      void this.loadVulnerabilityDetail(vulnerability);
       void this.loadVulnerabilityReviews(vulnerability);
+    },
+    // 列表拿的是摘要（无报文），选中哪条再按 id 取那一条的完整内容。
+    // 只把 reproduction / evidence 补回列表里那条，其他映射字段不动。
+    async loadVulnerabilityDetail(vulnerability) {
+      if (!vulnerability?.task_id || !vulnerability?.id) return;
+      if (vulnerability.reproduction) return;   // 已经是完整的（如深链接直接取的那条）
+      const key = this.vulnerabilityKey(vulnerability);
+      if (this.vulnerabilityDetailCache?.[key]) return;
+      this.vulnerabilityDetailLoading = key;
+      this.vulnerabilityDetailError = '';
+      try {
+        const full = await request(
+          'GET',
+          `/tasks/${vulnerability.task_id}/vulnerabilities/${vulnerability.id}`,
+          null,
+          { signal: this._pageAbortController?.signal },
+        );
+        if (!full) return;
+        this.vulnerabilityDetailCache = { ...(this.vulnerabilityDetailCache || {}), [key]: full };
+        const index = (this.vulnerabilityItems || []).findIndex(row => this.vulnerabilityKey(row) === key);
+        if (index >= 0) {
+          this.vulnerabilityItems.splice(index, 1, {
+            ...this.vulnerabilityItems[index],
+            reproduction: full.reproduction ?? null,
+            evidence: full.evidence ?? this.vulnerabilityItems[index].evidence,
+          });
+        }
+      } catch (error) {
+        if (error?.name === 'AbortError') return;
+        this.vulnerabilityDetailError = String(error?.message || error);
+      } finally {
+        if (this.vulnerabilityDetailLoading === key) this.vulnerabilityDetailLoading = '';
+      }
     },
     async loadVulnerabilityReviews(vulnerability = null) {
       const selected = vulnerability || this.selectedVulnerability();
@@ -1699,7 +1733,46 @@
     },
     selectRtResult(item) {
       this.selectedRtResultId = this.rtResultKey(item);
+      this.loadRtResultDetail(item);
       this.loadRtResultChain(item);
+    },
+    // 复现报文只随选中项来：列表拿的是摘要（无报文），选中哪条才按 id 取那一条。
+    // 取回来的完整对象直接写回列表里对应那条，详情面板照旧读 selectedRtResult()。
+    async loadRtResultDetail(item) {
+      if (!item?.task_id || !item?.id) return;
+      const key = this.rtResultKey(item);
+      if (this.rtResultDetailCache?.[key]) return;
+      this.rtResultDetailLoading = key;
+      this.rtResultDetailError = '';
+      try {
+        const full = await request('GET', `/tasks/${item.task_id}/red-team/results/${item.id}`);
+        if (!full) return;
+        this.rtResultDetailCache = { ...(this.rtResultDetailCache || {}), [key]: full };
+        const index = (this.rtResultItems || []).findIndex(row => this.rtResultKey(row) === key);
+        if (index >= 0) this.rtResultItems.splice(index, 1, full);
+      } catch (error) {
+        this.rtResultDetailError = String(error?.message || error);
+      } finally {
+        if (this.rtResultDetailLoading === key) this.rtResultDetailLoading = '';
+      }
+    },
+    // 图与链都是任务级的，不随选中的链变。翻页换一条成果就重拉一遍 1.4 MB 的图
+    // 是纯浪费——同一个任务内缓存起来。TTL 短一点：任务跑起来图会变，不能留太久。
+    async _rtTaskGraph(taskId) {
+      const now = Date.now();
+      const hit = this._rtGraphCache?.[taskId];
+      if (hit && now - hit.at < 30000) return hit.data;
+      const data = await request('GET', `/tasks/${taskId}/graph`);
+      this._rtGraphCache = { ...(this._rtGraphCache || {}), [taskId]: { at: now, data } };
+      return data;
+    },
+    async _rtTaskChains(taskId) {
+      const now = Date.now();
+      const hit = this._rtChainListCache?.[taskId];
+      if (hit && now - hit.at < 30000) return hit.data;
+      const data = await request('GET', `/tasks/${taskId}/red-team/chains`).catch(() => []);
+      this._rtChainListCache = { ...(this._rtChainListCache || {}), [taskId]: { at: now, data } };
+      return data;
     },
     async loadRtResultChain(result) {
       if (!result?.task_id || !result.chain_id) {
@@ -1719,8 +1792,8 @@
       this.rtChainLoading = true;
       try {
         const [graph, chains] = await Promise.all([
-          request('GET', `/tasks/${result.task_id}/graph`),
-          request('GET', `/tasks/${result.task_id}/red-team/chains`).catch(() => []),
+          this._rtTaskGraph(result.task_id),
+          this._rtTaskChains(result.task_id),
         ]);
         if (requestId !== this._rtChainRequestId) return;
         const chain = (chains || []).find(item => item.id === result.chain_id);
@@ -1875,6 +1948,9 @@
         const params = new URLSearchParams({
           limit: String(pageSize),
           offset: String(Math.max(0, Number(this.rtResultPage) || 0) * pageSize),
+          // 列表只画标题/状态/分值/描述；复现报文几十 KB 一条，五十条就是 1 MB。
+          // 报文由详情面板按 id 单取，这里要摘要。
+          summary: '1',
         });
         const keyword = String(this.rtResultFilter.keyword || '').trim();
         if (keyword) params.set('search', keyword);
@@ -1897,6 +1973,7 @@
         if (!this.rtResultItems.some(item => this.rtResultKey(item) === this.selectedRtResultId)) {
           this.selectedRtResultId = this.rtResultKey(this.rtResultItems[0]);
         }
+        this.loadRtResultDetail(this.selectedRtResult());
         this.loadRtResultChain(this.selectedRtResult());
         this.loadRtResultReviews?.(this.selectedRtResult());
       } catch (error) {
@@ -1942,6 +2019,8 @@
         const params = new URLSearchParams({
           limit: String(this.vulnerabilityPageSize),
           offset: String(this.vulnerabilityPage * this.vulnerabilityPageSize),
+          // 复现报文只随选中项来：列表要摘要，否则一页五十条就是 1.6 MB。
+          summary: '1',
         });
         const keyword = String(this.vulnFilter.keyword || '').trim();
         if (keyword) params.set('search', keyword);
@@ -1988,6 +2067,8 @@
         if (requestId !== this._vulnerabilityListRequestId) return;
         this.vulnerabilityItems = items;
         this.vulnerabilityTotal = page.total;
+        // 列表是摘要；翻页/筛选后选中的那条要补上复现报文。
+        void this.loadVulnerabilityDetail(this.selectedVulnerability?.());
         if (routeTarget) {
           this.vulnerabilitySelectionBlocked = false;
           this.selectedVulnerabilityKey = this.vulnerabilityKey(routeTarget);

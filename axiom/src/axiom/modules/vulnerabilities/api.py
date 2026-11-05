@@ -136,6 +136,7 @@ def list_vulnerabilities(
     sort: str = Query(default="updated", pattern="^(updated|severity|unreviewed|newest)$"),
     limit: int | None = Query(default=None, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    summary: bool = Query(default=False),
     container: Container = Depends(get_container),
 ) -> list[Vulnerability]:
     filters = dict(
@@ -147,6 +148,7 @@ def list_vulnerabilities(
         red_team_exploitable=red_team_exploitable,
         include_archived=include_archived,
         sort=sort,
+        summary=summary,
     )
     if limit is None:
         items = container.vulnerabilities.list_all(**filters)

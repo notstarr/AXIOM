@@ -168,10 +168,16 @@ class VulnerabilityService:
             return self._with_evidence(conn, task_id, self.repository.list(conn, task_id))
 
     def list_all(self, **filters) -> list[Vulnerability]:
+        summary = bool(filters.pop("summary", False))
         with self.engine.connect() as conn:
-            return self.repository.list_all(conn, **filters)
+            items = self.repository.list_all(conn, **filters)
+            if summary:
+                items = [item.model_copy(update={"reproduction": None}) for item in items]
+            return items
 
     def list_page(self, **filters) -> tuple[list[Vulnerability], int]:
+        # summary 是展示层的开关，不是查询条件——摘掉，别让 repository 拿去拼 SQL。
+        summary = bool(filters.pop("summary", False))
         with self.engine.connect() as conn:
             task_id = filters.get("task_id")
             if task_id is not None:
@@ -193,12 +199,17 @@ class VulnerabilityService:
                     conn, owner_task_id, "vulnerability", [i.id for i in batch]
                 ).items():
                     grouped[(owner_task_id, subject_id)] = rows
-            return [
+            enriched = [
                 item.model_copy(
                     update={"evidence": grouped.get((item.task_id, item.id), [])}
                 )
                 for item in items
-            ], total
+            ]
+            if summary:
+                enriched = [
+                    item.model_copy(update={"reproduction": None}) for item in enriched
+                ]
+            return enriched, total
 
     def _with_evidence(self, conn, task_id: str, items: list[Vulnerability]) -> list[Vulnerability]:
         """附带每步的证据图。

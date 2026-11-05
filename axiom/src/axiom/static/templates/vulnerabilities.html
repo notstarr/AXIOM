@@ -161,7 +161,9 @@
           <!-- 测试过程 -->
           <section class="rp-block">
             <h2 class="rp-h">测试过程</h2>
-            <p class="rp-absent" x-show="!selectedVulnerability().reproduction">未提供结构化复现，本报告只有描述与影响。</p>
+            <p class="rp-absent" x-show="!selectedVulnerability().reproduction && !vulnerabilityDetailLoading">未提供结构化复现，本报告只有描述与影响。</p>
+            <p class="rp-absent" x-show="!selectedVulnerability().reproduction && vulnerabilityDetailLoading">正在载入复现报文…</p>
+            <p class="rp-absent" x-show="vulnerabilityDetailError" x-text="vulnerabilityDetailError"></p>
             <div class="rp-proc" x-show="selectedVulnerability().reproduction">
               <div class="rp-entry">
                 <div class="rp-entryrow">
@@ -419,6 +421,13 @@
                 <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                 导出
               </button>
+              <span style="flex:1 1 auto;"></span>
+              <!-- 复制 Markdown：粘到别处（周报、聊天、工单）时用。图带不走，
+                   引用指不到文件反而误导人，所以由服务端连图片一起去掉。 -->
+              <button @click="copyRtResultMarkdown(selectedRtResult())" class="rp-act" title="复制这条成果的 Markdown 正文（不含图片）">
+                <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>
+                复制 Markdown
+              </button>
             </div>
           </header>
 
@@ -443,7 +452,9 @@
           <!-- 测试过程 -->
           <section class="rp-block">
             <h2 class="rp-h">测试过程</h2>
-            <p class="rp-absent" x-show="!selectedRtResult().reproduction">未提供结构化复现。</p>
+            <p class="rp-absent" x-show="!selectedRtResult().reproduction && !rtResultDetailLoading">未提供结构化复现。</p>
+            <p class="rp-absent" x-show="!selectedRtResult().reproduction && rtResultDetailLoading">正在载入复现报文…</p>
+            <p class="rp-absent" x-show="rtResultDetailError" x-text="rtResultDetailError"></p>
             <div class="rp-proc" x-show="selectedRtResult().reproduction">
               <div class="rp-entry">
                 <div class="rp-entryrow">
