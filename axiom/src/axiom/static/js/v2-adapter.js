@@ -380,8 +380,13 @@
   }
 
   function mapVulnerabilityReviewRun(item) {
+    // 人工覆盖记录由审计事件派生，状态与积分放在 trigger_payload 里；提到顶层
+    // 方便模板直接读，也让「审核记录」能显示改判后的结论和核定分。
+    const human = item.trigger === 'human-review' ? (item.trigger_payload || {}) : {};
     return {
       ...item,
+      human_status: human.status || '',
+      human_points: human.points_awarded ?? null,
       artifacts: (item.artifacts || []).map(mapArtifact),
       // 复测两列可能缺失（审核行），显式给默认值，别让 undefined 流进模板。
       retest_verdict: item.retest_verdict || null,
@@ -1671,6 +1676,7 @@
         restored: '归档恢复',
         migration: '历史补队列',
         retest: '人工复测',
+        'human-review': '人工审核',
       }[trigger] || trigger || '未知触发');
     },
     vulnerabilityRetestVerdictLabel(run) {

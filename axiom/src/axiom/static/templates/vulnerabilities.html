@@ -589,13 +589,16 @@
               <template x-for="run in (rtResultReviews || [])" :key="`rtrun-${run.id}`">
                 <div class="rp-run">
                   <div class="rp-runhead">
-                    <code x-text="run.id"></code>
-                    <span x-text="vulnerabilityReviewStateLabel(run)"></span>
-                    <span x-text="vulnerabilityReviewTriggerLabel(run.trigger)"></span>
+                    <code x-show="run.trigger !== 'human-review'" x-text="run.id"></code>
+                    <span x-show="run.trigger === 'human-review'" style="font-weight:600;">人工审核</span>
+                    <span x-text="run.trigger === 'human-review' ? '已生效' : vulnerabilityReviewStateLabel(run)"></span>
+                    <span x-show="run.trigger !== 'human-review'" x-text="vulnerabilityReviewTriggerLabel(run.trigger)"></span>
                     <span x-show="run.decision" x-text="vulnerabilityReviewDecisionLabel(run.decision)"></span>
+                    <span x-show="run.trigger === 'human-review' && run.human_status" x-text="rtResultStatusLabel(run.human_status)"></span>
+                    <span x-show="run.trigger === 'human-review'" x-text="`积分 ${run.human_points ?? 0}`"></span>
                     <span style="margin-left:auto;" x-text="formatDate(run.concluded_at || run.updated_at || run.created_at)"></span>
                   </div>
-                  <p x-show="run.worker" class="rp-runnote"><strong>审查者</strong> <span x-text="run.worker"></span></p>
+                  <p x-show="run.worker" class="rp-runnote"><strong x-text="run.trigger === 'human-review' ? '操作人' : '审查者'"></strong> <span x-text="run.worker"></span></p>
                   <p x-show="run.decision_reason" class="rp-runnote"><strong>原因</strong> <span x-text="run.decision_reason"></span></p>
                   <p x-show="run.status === 'failed' && run.last_failure_kind" class="rp-runnote"><strong>失败</strong> <span x-text="run.last_failure_kind"></span></p>
                 </div>

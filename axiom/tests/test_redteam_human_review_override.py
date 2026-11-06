@@ -225,3 +225,85 @@ def test_single_result_detail_carries_step_packet_shots(client, engine) -> None:
     assert detail["evidence"][0]["kind"] == "packet"
     assert detail["evidence"][0]["step_index"] == 1
     assert listed["evidence"] == detail["evidence"]
+
+
+def test_human_override_appears_in_review_history(client, engine) -> None:
+    """人工改判没经过 worker，但「审核记录」里必须能看见这次裁决。"""
+    task = _task(client)
+    _seed_result(engine, task["id"], status="verified", points=35)
+
+    override = _override(client, task["id"], {
+        "status": "rejected", "reason": "调用了 bsk 拿到了登录态不算",
+        "points_awarded": 0, "actor": "hexin",
+    })
+    assert override.status_code == 200, override.text
+
+    rows = client.get(
+        f"/api/v1/tasks/{task['id']}/red-team/results/x001/reviews"
+    ).json()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["trigger"] == "human-review"
+    assert row["status"] == "completed"
+    assert row["review_subject_type"] == "redteam_result"
+    assert row["red_team_result_id"] == "x001"
+    assert row["worker"] == "human:hexin"
+    assert row["decision_reason"] == "调用了 bsk 拿到了登录态不算"
+    assert row["trigger_payload"]["status"] == "rejected"
+    assert row["trigger_payload"]["points_awarded"] == 0
+    assert row["trigger_payload"]["actor"] == "hexin"
+    assert row["trigger_payload"]["before"]["status"] == "verified"
+    assert row["trigger_payload"]["before"]["points_awarded"] == 35
+
+
+def test_human_override_history_keeps_every_change_and_stays_scoped(client, engine) -> None:
+    """改判几次就显示几次，原有审核 Run 不被抹掉，别的成果的事件不串进来。"""
+    task = _task(client)
+    _seed_result(engine, task["id"], status="verified", points=35)
+    triggered = client.post(
+        f"/api/v1/tasks/{task['id']}/red-team/results/x001/reviews",
+        json={"actor": "human.operator", "reason": "复核"},
+    )
+    assert triggered.status_code == 201, triggered.text
+    run_id = triggered.json()["id"]
+
+    first = _override(client, task["id"], {
+        "status": "rejected", "reason": "第一次人工驳回", "actor": "hexin",
+    })
+    second = _override(client, task["id"], {
+        "status": "verified", "reason": "人工核定通过", "points_awarded": 7,
+        "actor": "niuniu",
+    })
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+
+    # 同任务里另一条成果的人工改判，不能出现在 x001 的审核记录里。
+    with engine.begin() as conn:
+        conn.execute(
+            audit_events.insert().values(
+                id="evt_other_result", project_id=None, task_id=task["id"],
+                worker="human:someone", event_type="redteam.result.review_overridden",
+                level="info", message="人工覆盖审核者的评估结论",
+                payload_json=json.dumps({
+                    "result_id": "x002", "reason": "别的结果不算",
+                    "after": {"status": "rejected", "points_awarded": 0},
+                }),
+                created_at=utcnow(),
+            )
+        )
+
+    rows = client.get(
+        f"/api/v1/tasks/{task['id']}/red-team/results/x001/reviews"
+    ).json()
+    human = [row for row in rows if row["trigger"] == "human-review"]
+    assert len(human) == 2
+    assert {row["decision_reason"] for row in human} == {
+        "第一次人工驳回", "人工核定通过",
+    }
+    approved = next(row for row in human if row["decision_reason"] == "人工核定通过")
+    assert approved["trigger_payload"]["status"] == "verified"
+    assert approved["trigger_payload"]["points_awarded"] == 7
+    assert approved["worker"] == "human:niuniu"
+    assert any(row["id"] == run_id and row["status"] == "cancelled" for row in rows)
+    assert all(row["decision_reason"] != "别的结果不算" for row in rows)
+    assert len(rows) == 3
