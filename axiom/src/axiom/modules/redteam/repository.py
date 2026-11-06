@@ -441,6 +441,35 @@ class RedTeamRepository:
         conn.execute(red_team_results.insert().values(**values))
         return self._with_evidence(conn, [self._result(values)])[0]
 
+    def update_description(
+        self,
+        conn: Connection,
+        *,
+        task_id: str,
+        result_id: str,
+        values: dict,
+        now: str,
+    ) -> bool:
+        """写审核者改写的描述类字段。
+
+        与 ``update_result`` 分开是刻意的：那条路的语义是「人工改了实质内容 →
+        判定失效」，会把 status 复位成 reviewing 并重新排队审核；审核者在自己的
+        审核期里改描述不能触发这件事，否则它会把自己踢出队列。这里只碰描述列，
+        状态、分数、裁决理由一概不动。
+        """
+        if not values:
+            return False
+        payload = {**values, "updated_at": now}
+        result = conn.execute(
+            update(red_team_results)
+            .where(
+                red_team_results.c.task_id == task_id,
+                red_team_results.c.id == result_id,
+            )
+            .values(**payload)
+        )
+        return bool(result.rowcount)
+
     def update_result(
         self,
         conn: Connection,

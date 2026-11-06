@@ -251,6 +251,34 @@ class VulnerabilityRepository:
         )
         return self._models(conn, rows), int(total)
 
+    def update_description(
+        self,
+        conn: Connection,
+        *,
+        task_id: str,
+        vulnerability_id: str,
+        values: dict,
+        now: str,
+    ) -> bool:
+        """写审核者改写的描述类字段（描述、前提、影响、修复建议、复现）。
+
+        与 ``update`` 分开是刻意的：那条路会把漏洞打回待验证并重新排队，而审核者
+        在自己的审核期里改描述不能触发这件事。这里只碰描述列，等级、标题、类型、
+        受影响资产一概不动。
+        """
+        if not values:
+            return False
+        payload = {**values, "updated_at": now}
+        result = conn.execute(
+            update(vulnerabilities)
+            .where(
+                vulnerabilities.c.task_id == task_id,
+                vulnerabilities.c.id == vulnerability_id,
+            )
+            .values(**payload)
+        )
+        return bool(result.rowcount)
+
     def update(
         self,
         conn: Connection,

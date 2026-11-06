@@ -266,7 +266,10 @@ class Reconciler:
             *(
                 item
                 for item in task.review_runs
-                if task.status == "running" and item.status == "pending"
+                # 审核是对已有结论的事后复核，与任务「是否正在跑」无关：任务暂停
+                # （stopped）之后仍然可以再审一条成果。已完成（completed）不在
+                # 此列——那是终局结果，重审会改写已定稿的分数。
+                if task.status in {"running", "stopped"} and item.status == "pending"
             ),
         ]
         candidates.sort(

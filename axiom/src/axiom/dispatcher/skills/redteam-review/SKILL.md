@@ -46,6 +46,24 @@ axiom review evidence attach --step 2 --kind packet --file step-02-a.png
     - 反例：`192.168.0.95` 有 `shk.kkguan.com` 公网直达 → 公网档；`git.kkgroup.cn` 经 VPN 可达 → 公网档。
     - 正例：`10.192.192.205` 公网无入口 → 内网档。
 
+## 描述可以自己写
+
+上报时提交的描述是上报方写的，常常漏掉前提、步骤文字有误、影响面判断偏差。复核之后你觉得它不够清楚，可以自己改写「描述」与「复现」：
+
+```bash
+# 复现写成 JSON 文件（entry_point / prerequisites / chain_input / chain_gain /
+# steps / notes），描述从文件读
+axiom review description submit \
+  --description-file description.md \
+  --reproduction-file reproduction.json
+```
+
+- **上报已经写清楚就不必写**。写得清楚就别动它——没有别的理由就改一遍，只会把上报方的原意搅乱。
+- **只放开描述类内容**：描述、复现。标题、资产、数据条数、数据摘要、结果类型、分值是定档字段，不能改，也不该由你替上报方重新定档。
+- **复现的步骤数与每步的报文数不能增删**：报文截图要求是按报文数算的（见上节），改结构等于放松证据要求。步骤的文字、报文的请求/响应内容、入口点、前置、身份与新增能力都可以改。
+- 红队成果没有「前提/影响/修复建议」三项，传了会被拒。
+- 改完不需要重新走一遍审核；直接提交裁决即可。
+
 ## 裁决
 
 命令只认这四个词：`verified`、`duplicate`、`ignored`、`needs-human`。

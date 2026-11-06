@@ -1424,11 +1424,45 @@ def test_review_prompt_enforces_single_target_decision_and_review_artifact() -> 
     assert "精炼、专业、直击裁决要害" in prompt
     assert "axiom review evidence attach" in prompt  # 每步截图钩子
     assert "最后一条 assistant 消息必须只包含 6 个 ASCII 字符" in prompt
-    assert "不修改漏洞原始正文" in conclude
+    # 定档字段不改，但描述类内容可改写：审核者能自己写描述、前提、复现、影响与修复建议
+    assert "不改漏洞的定档字段" in conclude
+    assert "axiom review description submit" in conclude
+    assert "上报已经写清楚就不必改" in conclude
     assert "不得仅根据旧 Finding/Evidence 强行提交" in conclude
     assert "references/*-example.md" in conclude
     assert "写 vuln_report" not in conclude
     assert "axiom review status" in conclude
+
+
+def test_redteam_review_prompt_allows_rewriting_description_but_locks_the_step_shape() -> None:
+    """红队侧：审核者能自己写描述，步骤与报文数不可增删。"""
+    values = {
+        "task_id": "t_001",
+        "review_run_id": "vr000001",
+        "result_id": "x001",
+        "review_reason": "复核红队成果",
+        "origin": "terp.t.kkguan.com",
+        "goal": "取得 100 积分",
+        "scope_guidance": _scope_guidance(
+            {"enabled": True, "targets": ["terp.t.kkguan.com"], "exclude": []}
+        ),
+        "context_manifest_path": "/tmp/context/manifest.json",
+        "run_dir": "/tmp/run",
+        "skill_directories": "- /tmp/skills/redteam-review",
+    }
+
+    prompt = PromptRenderer().render("review_redteam.md", values)
+    conclude = PromptRenderer().render("review_conclude_redteam.md", values)
+
+    assert "axiom review description submit" in prompt
+    assert "explore 已经写清楚就不必写" in prompt
+    # 定档字段不许动
+    assert "定档字段" in prompt
+    # 结构锁死：截图要求按报文数算
+    assert "步骤数与每步的报文数不能增删" in prompt
+    # 红队成果没有前提/影响/修复建议三列
+    assert "红队成果没有「前提/影响/修复建议」这三项" in prompt
+    assert "axiom review description submit" in conclude
 
 
 def test_review_execute_and_conclude_use_json_mode_and_reuse_session(tmp_path) -> None:

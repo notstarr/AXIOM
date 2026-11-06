@@ -22,6 +22,22 @@
 3. **产出就是裁决，不写任何文件**：
    - 报告由代码从上报时提交的结构化复现（`review_target.json` 里的 `reproduction`）自动生成，**你不再写 `vuln_report-*.md`**，也不写 evidence/、work/。
    - 裁决为 `duplicate` / `ignored` / `needs-human` 时同样只提交裁决；重复项用 `--duplicate-of` 指回原漏洞。
+   - **描述类内容你可以自己改写**（不是写文件，是走命令）：上报的描述常常缺前提、步骤文字有误、影响面判断偏差。看完复核觉得不够清楚时：
+
+     ```bash
+     # 把改好的复现写成 JSON 文件（entry_point / prerequisites / chain_input /
+     # chain_gain / steps / notes），再提交
+     axiom review description submit \
+       --description-file description.md \
+       --prerequisites-file prerequisites.md \
+       --impact-file impact.md \
+       --remediation-file remediation.md \
+       --reproduction-file reproduction.json
+     ```
+
+     - **上报已经写清楚就不必写**。写得清楚就别动它。
+     - 只放开描述类内容：**描述**、**前提**、**复现**、**影响**、**修复建议**。标题、类型、等级、受影响资产是定档字段，**不能改**。
+     - 复现的**步骤数与每步的报文数不能增删**——报文截图要求按报文数算，改结构等于放松证据要求。文字随便改。
    - **每个报文都要挂一张图**——那次真实收发在屏幕上的样子。`review_target.json` 里的复现
      步骤是**参考**：照它自己复现一遍即可，报文不必与上报逐字相同（你自己造的请求也能挂）。
      一步里有几个报文就截几张图，缺一张都会挡住裁决：

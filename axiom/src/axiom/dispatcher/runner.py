@@ -384,7 +384,14 @@ class AxiomRunner:
         self._dispatch_wakeup.set()
 
     def _cancel_inactive_tasks(self, snapshot) -> None:
-        active_task_ids = {task.id for task in snapshot.tasks if task.status == "running"}
+        # 审核与任务是否在跑解耦：任务停下后仍可能有 ReviewRun 在跑，不能当成
+        # 「任务已不活跃」把它取消掉。
+        active_task_ids = {
+            task.id
+            for task in snapshot.tasks
+            if task.status == "running"
+            or any(item.status in ACTIVE_WORK_STATUSES for item in task.review_runs)
+        }
         with self._lock:
             for work, cancellation in self._futures.values():
                 if work.task_id not in active_task_ids:

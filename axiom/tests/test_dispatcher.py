@@ -297,6 +297,34 @@ def test_reconciler_assigns_pending_intents_to_idle_workers_without_reason_assig
     ]
 
 
+def test_reconciler_schedules_reviews_on_a_stopped_task():
+    """审核与任务是否在跑解耦：任务停下后，排着的审核仍要被派出去。
+
+    任务级排序早就把「有 pending 审核的非 running 任务」收了进来，如果候选筛选
+    还卡 ``task.status == "running"``，重审请求就会永远选不到 —— 表现为控制台
+    点「重新审核」后什么也不发生。
+    """
+    review = ReviewRunSnapshot(
+        task_id="t_001",
+        id="vr000001",
+        red_team_result_id="x001",
+        review_subject_type="redteam_result",
+        status="pending",
+        worker_pool=["worker-r"],
+        created_at=NOW,
+    )
+    snapshot = DispatcherSnapshot(
+        tasks=[TaskSnapshot(id="t_001", status="stopped", review_runs=[review])],
+        workers=[worker("worker-r", capabilities=("review",))],
+    )
+
+    actions = Reconciler(now=lambda: NOW).calculate(snapshot)
+
+    assert [(item.claim.review_run_id, item.claim.worker_name) for item in actions] == [
+        ("vr000001", "worker-r")
+    ]
+
+
 def test_reconciler_randomizes_equal_priority_workers(monkeypatch):
     monkeypatch.setattr(
         "axiom.dispatcher.reconciler.random.choice",

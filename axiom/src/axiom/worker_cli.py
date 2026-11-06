@@ -1049,6 +1049,71 @@ def register_worker_commands(main: click.Group) -> None:
             payload["points_awarded"] = points
         _echo(_review_request("decision", payload))
 
+    @review_group.group("description")
+    def review_description_group() -> None:
+        """改写描述类内容：描述、前提、复现（漏洞侧另有影响与修复建议）。
+
+        只写内容，不动定档字段（标题、等级、类型、资产、数据条数、分值）。
+        explore 已经写清楚就不必调用；上报的描述缺前提、步骤文字有误、影响面判断
+        偏差时由审核者自己改写。
+        """
+
+    @review_description_group.command("submit")
+    @click.option("--description", help="改写后的描述正文。")
+    @click.option(
+        "--description-file",
+        type=click.Path(path_type=Path, dir_okay=False),
+        help="从文件读描述正文（与 --description 二选一）。",
+    )
+    @click.option("--prerequisites", help="改写后的前置条件（仅漏洞侧）。")
+    @click.option(
+        "--prerequisites-file",
+        type=click.Path(path_type=Path, dir_okay=False),
+        help="从文件读前置条件（仅漏洞侧）。",
+    )
+    @click.option("--impact", help="改写后的影响说明（仅漏洞侧）。")
+    @click.option(
+        "--impact-file",
+        type=click.Path(path_type=Path, dir_okay=False),
+        help="从文件读影响说明（仅漏洞侧）。",
+    )
+    @click.option("--remediation", help="改写后的修复建议（仅漏洞侧）。")
+    @click.option(
+        "--remediation-file",
+        type=click.Path(path_type=Path, dir_okay=False),
+        help="从文件读修复建议（仅漏洞侧）。",
+    )
+    @click.option(
+        "--reproduction-file",
+        default=None,
+        help="改写后的结构化复现 JSON 路径；传 - 从标准输入读。报文有换行，不要用命令行参数传。",
+    )
+    def review_description_submit(
+        description: str | None,
+        description_file: Path | None,
+        prerequisites: str | None,
+        prerequisites_file: Path | None,
+        impact: str | None,
+        impact_file: Path | None,
+        remediation: str | None,
+        remediation_file: Path | None,
+        reproduction_file: str | None,
+    ) -> None:
+        payload: dict[str, Any] = {"lease_id": _lease_id()}
+        # 复现可以只字不改：只想修描述时不该被迫把整份报文重交一遍。
+        if reproduction_file is not None:
+            payload["reproduction"] = _reproduction_payload(reproduction_file)
+        for name, value, path in (
+            ("description", description, description_file),
+            ("prerequisites", prerequisites, prerequisites_file),
+            ("impact", impact, impact_file),
+            ("remediation", remediation, remediation_file),
+        ):
+            if value is None and path is None:
+                continue
+            payload[name] = _text_value(value, path, name)
+        _echo(_review_request("description", payload))
+
     @review_group.group("evidence")
     def review_evidence_group() -> None:
         """截图：挂到复现的某一步上。"""

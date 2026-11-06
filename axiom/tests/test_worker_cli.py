@@ -740,6 +740,148 @@ def test_review_cli_rejects_invalid_duplicate_options_before_request(monkeypatch
     assert calls == []
 
 
+def test_review_cli_description_submit_posts_the_description_to_the_review_run(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return {"applied_fields": ["description", "reproduction_json"], "ready": False}
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+    reproduction = _reproduction_file(tmp_path)
+    description = tmp_path / "description.md"
+    description.write_text("审核者改写后的描述。", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "review",
+            "description",
+            "submit",
+            "--description-file",
+            str(description),
+            "--reproduction-file",
+            str(reproduction),
+        ],
+        env=_review_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(calls) == 1
+    method, path, payload = calls[0]
+    assert method == "POST"
+    assert path == "/dispatch/tasks/t_001/vulnerability-review-runs/vr000001/description"
+    assert payload["lease_id"] == "lease-1"
+    assert payload["description"] == "审核者改写后的描述。"
+    # 复现在本地就被解析并规范化：旧的 request/response 形状会折成 exchanges 数组
+    assert payload["reproduction"]["entry_point"] == "GET /api/users/2"
+    assert len(payload["reproduction"]["steps"]) == 1
+    assert len(payload["reproduction"]["steps"][0]["exchanges"]) == 1
+    assert payload["reproduction"]["steps"][0]["exchanges"][0]["request"].startswith(
+        "GET /api/users/2 HTTP/1.1"
+    )
+
+
+def test_review_cli_description_submit_allows_description_without_reproduction(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """只想修描述时不该被迫把整份复现重交一遍。"""
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, payload: dict):
+        calls.append((method, path, payload))
+        return {"applied_fields": ["description"], "ready": True}
+
+    monkeypatch.setattr("axiom.worker_cli._request", fake_request)
+    description = tmp_path / "description.md"
+    description.write_text("只改描述。", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "review",
+            "description",
+            "submit",
+            "--description-file",
+            str(description),
+        ],
+        env=_review_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(calls) == 1
+    assert calls[0][2] == {"lease_id": "lease-1", "description": "只改描述。"}
+
+
+def test_review_cli_description_submit_rejects_a_malformed_reproduction_file(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """坏报文要在本地就报错：审核者拿到的是可读提示，不是一个裸 422。"""
+    calls: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        "axiom.worker_cli._request",
+        lambda method, path, payload: calls.append((method, path, payload)),
+    )
+    broken = tmp_path / "reproduction.json"
+    broken.write_text(json.dumps({"steps": []}), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "review",
+            "description",
+            "submit",
+            "--description",
+            "改写后的描述",
+            "--reproduction-file",
+            str(broken),
+        ],
+        env=_review_env(),
+    )
+
+    assert result.exit_code != 0
+    assert calls == []
+
+
+def test_review_cli_description_submit_rejects_two_sources_for_one_field(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """同一字段同时给 --x 和 --x-file 是用法错误，不该发请求。"""
+    calls: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        "axiom.worker_cli._request",
+        lambda method, path, payload: calls.append((method, path, payload)),
+    )
+    reproduction = _reproduction_file(tmp_path)
+    description = tmp_path / "description.md"
+    description.write_text("改写后的描述", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "review",
+            "description",
+            "submit",
+            "--description",
+            "改写后的描述",
+            "--description-file",
+            str(description),
+            "--reproduction-file",
+            str(reproduction),
+        ],
+        env=_review_env(),
+    )
+
+    assert result.exit_code == 2
+    assert calls == []
+
+
 def test_credential_cli_supports_review_run_identity(monkeypatch) -> None:
     calls: list[tuple[str, str, dict]] = []
 

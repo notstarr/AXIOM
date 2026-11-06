@@ -206,6 +206,31 @@ Reviewer 必须严格执行**“危害驱动”**审查，严厉剔除纸面告�
   `--step` 必须是该漏洞复现步骤的 1..N（越界会被拒，报错里有真实步数）。业务效果图用
   `--kind business`，可选，不计入闸门。
 
+## 五点五、描述可以自己写
+
+上报时提交的描述是上报方写的。上报方常常漏掉前提、把步骤文字写错、把影响面判断
+偏小。复核之后你觉得它不够清楚，可以自己改写：
+
+```bash
+# 复现写成 JSON 文件（entry_point / prerequisites / chain_input / chain_gain /
+# steps / notes），文字内容从文件读
+axiom review description submit \
+  --description-file description.md \
+  --prerequisites-file prerequisites.md \
+  --impact-file impact.md \
+  --remediation-file remediation.md \
+  --reproduction-file reproduction.json
+```
+
+- **上报已经写清楚就不必写**。写得清楚就别动它——没有别的理由就改一遍，只会把
+  上报方的原意搅乱。
+- **只放开描述类内容**：描述、前提、复现、影响、修复建议。标题、类型、等级、
+  受影响资产是定档字段，不能改，也不该由你替上报方重新定档。
+- **复现的步骤数与每步的报文数不能增删**：报文截图要求是按报文数算的（见第五节），
+  改结构等于放松证据要求。步骤的文字、报文的请求/响应内容、入口点、前置、身份与
+  新增能力都可以改。
+- 改完不需要重新走一遍审核；直接提交裁决即可。
+
 ## 六、语言要求
 
 漏洞报告正文与裁决理由**一律使用中文**（仅代码、命令、URL、字段名保留原文）。
@@ -216,4 +241,5 @@ Reviewer 必须严格执行**“危害驱动”**审查，严厉剔除纸面告�
 - 优先重放已有请求并建立单变量对照，禁止扩大扫描、批量枚举或引入新攻击面。
 - 禁止破坏性操作、持久化、社工、拒绝服务或越出 Scope 的第三方访问。
 - 无法安全验证时停止并选择 `needs-human`，不得为了获得确定结论越界。
-- Reviewer 只提交结构化裁决和审核 Artifact；不创建 Fact、Todo 或 Intent，不改写漏洞标题、描述、等级、影响或修复建议。
+- Reviewer 只提交结构化裁决和审核 Artifact；不创建 Fact、Todo 或 Intent。
+- Reviewer **不改写漏洞的定档字段**（标题、类型、等级、受影响资产）。描述、前提、复现、影响与修复建议可以改写，见下节。

@@ -634,7 +634,12 @@ class DispatchService:
             raise ConflictError("Legacy Task is read-only")
         if task_state["archived"]:
             raise ConflictError("已归档任务不再接受 Worker 调度")
-        if task_state["status"] != "running":
+        # 审核与「任务是否在跑」解耦：任务暂停（stopped）后仍可复核已有结论。
+        # 已完成 / 失败的任务是终局状态，不重审。其余阶段只能在 running 上派发。
+        if kind == "review":
+            if task_state["status"] not in {"running", "stopped"}:
+                raise ConflictError("已结束的任务不再重审，请先恢复任务")
+        elif task_state["status"] != "running":
             raise ConflictError("Only a running Task can dispatch work")
         if (
             kind != "review"

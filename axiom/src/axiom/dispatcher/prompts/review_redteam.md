@@ -29,9 +29,23 @@
 
    截图里出现 Cookie/Token 是可接受的（报告要证明身份），不要为此打码到看不出是哪个会话。
 4. 独立核对是否证明权限、数据、凭证或横向控制真实发生。证据不足就不要确认能力跃迁。资产定级与档位自行核实，不沿用上报方的「靶标系统/核心资产」标签：先看控制边界是平台级/宿主机，还是组织/租户/单应用后台，再套档。应用后台管理员会话按「Web 应用管理员」计；没有平台级或主机级控制，不得核定「靶标系统·完全控制」。拿不准降档。
-5. 裁决 `verified` 时必须给核定分：`axiom review decision submit verified --points <分> --reason "..."`。先读 `redteam-scoring`，按护网表核定，不以自评分为准。同一目标只计一次；已有低档时只核差额。
-6. `duplicate`、`ignored`、`needs-human` 计 0 分。`duplicate` 是「这条成立，但与另一条成果重复，同一资产只计一次」，`ignored` 是「这条不成立」——两者不要混用，判重请用 `duplicate`。理由高效精炼，写明缺什么或与哪条成果重复，不写流水账。
-7. 运行 `axiom review status` 确认 `ready=true`。
+5. **描述可以自己写。** 上报的描述是上报方写的，常常缺前提、步骤文字有误、影响面判断偏差。看完复核后觉得它不够清楚，你可以自己改写「描述」与「复现」：
+
+   ```bash
+   # 把改好的复现写成 JSON 文件（entry_point / prerequisites / chain_input /
+   # chain_gain / steps / notes），再提交
+   axiom review description submit \
+     --description-file description.md \
+     --reproduction-file reproduction.json
+   ```
+
+   - **explore 已经写清楚就不必写**。写得清楚就别动它——没别的理由就改一遍，只会把上报方的原意搅乱。
+   - 只放开描述类内容：**描述**、**复现**。标题、资产、数据条数、数据摘要、结果类型、分值这些是定档字段，**不能改**，也不该由你替上报方重新定档。
+   - 复现的**步骤数与每步的报文数不能增删**——报文截图要求是按报文数算的，改结构等于放松证据要求。每一步的文字、报文的请求/响应内容、入口点、前置、身份与新增能力都可以改。
+   - 红队成果没有「前提/影响/修复建议」这三项，只有漏洞侧有；给红队成果传这三项会被拒。
+6. 裁决 `verified` 时必须给核定分：`axiom review decision submit verified --points <分> --reason "..."`。先读 `redteam-scoring`，按护网表核定，不以自评分为准。同一目标只计一次；已有低档时只核差额。
+7. `duplicate`、`ignored`、`needs-human` 计 0 分。`duplicate` 是「这条成立，但与另一条成果重复，同一资产只计一次」，`ignored` 是「这条不成立」——两者不要混用，判重请用 `duplicate`。理由高效精炼，写明缺什么或与哪条成果重复，不写流水账。
+8. 运行 `axiom review status` 确认 `ready=true`。
 
 最后一条助手消息只能是：
 
