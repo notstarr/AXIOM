@@ -19,6 +19,7 @@ from axiom.modules.redteam.schemas import (
     RedTeamChain,
     RedTeamChainCreate,
     RedTeamResult,
+    RedTeamResultHumanReview,
     RedTeamResultReport,
     RedTeamResultReview,
 )
@@ -428,7 +429,10 @@ class RedTeamService:
             result = self.repository.get_result(conn, task_id, result_id)
             if result is None:
                 raise NotFoundError(f"RedTeam Result not found: {result_id}")
-            return result
+            # 详情面板按 id 单取这一条，列表已经把 report_evidence 装配进 evidence。
+            # 这里若原样返回空 evidence，选中后整表覆盖会把列表里的每步截图抹掉，
+            # 表现为「审核完了却看不到报文截图」。
+            return _attach_report_evidence(conn, task_id, [result])[0]
 
     def list_chains_page(
         self,
@@ -679,3 +683,68 @@ class RedTeamService:
         if notification:
             dispatch_result_reviewed(**notification)
         return outcome
+
+    def override_human_review(
+        self, task_id: str, result_id: str, command: RedTeamResultHumanReview
+    ) -> RedTeamResult:
+        """人工直接覆盖审核者评估：原因、状态、积分数量。
+
+        这是控制台的人工裁决通道，刻意不做 ``reviewed_by.startswith("reviewer")``
+        与「终态不可改判」两道限制：审核结论错了要能当场改回来。写回前撤销该成果
+        在途的审核 Run，避免后台审核稍后完成又把人工结论覆盖回去。不发钉钉通知，
+        人工改判只留审计事件。
+        """
+
+        def work(conn):
+            self._task(conn, task_id)
+            current = self.repository.get_result(conn, task_id, result_id)
+            if current is None:
+                raise NotFoundError(f"RedTeam Result not found: {result_id}")
+            points = 0
+            if command.status == "verified":
+                if command.points_awarded is None or command.points_awarded < 1:
+                    raise ConflictError("人工核定为 verified 时必须给出积分数量")
+                points = int(command.points_awarded)
+            actor = f"human:{command.actor.strip()}"
+            cancelled = 0
+            if self.reviews is not None:
+                cancelled = self.reviews.cancel_result_in(
+                    conn,
+                    task_id=task_id,
+                    result_id=result_id,
+                    reason="human_review_override",
+                    now=utcnow(),
+                )
+            updated = self.repository.set_result_status(
+                conn,
+                task_id=task_id,
+                result_id=result_id,
+                status=command.status,
+                reviewed_by=actor,
+                review_reason=command.reason,
+                points_awarded=points,
+                now=utcnow(),
+            )
+            assert updated is not None
+            task = conn.execute(select(tasks).where(tasks.c.id == task_id)).mappings().one()
+            self.audit.record_in(conn, RecordAuditEvent(
+                project_id=task["project_id"], task_id=task_id, worker=actor,
+                event_type="redteam.result.review_overridden",
+                message="人工覆盖审核者的评估结论",
+                payload={
+                    "result_id": result_id,
+                    "actor": command.actor,
+                    "reason": command.reason,
+                    "before": {
+                        "status": current.status,
+                        "points_awarded": current.points_awarded,
+                        "reviewed_by": current.reviewed_by,
+                        "review_reason": (current.review_reason or "")[:300],
+                    },
+                    "after": {"status": command.status, "points_awarded": points},
+                    "cancelled_review_runs": cancelled,
+                },
+            ))
+            return _attach_report_evidence(conn, task_id, [updated])[0]
+
+        return run_transaction(self.engine, work)

@@ -1535,11 +1535,32 @@
     },
     // 列表拿的是摘要（无报文），选中哪条再按 id 取那一条的完整内容。
     // 只把 reproduction / evidence 补回列表里那条，其他映射字段不动。
+    _spliceVulnerabilityDetail(key, full) {
+      const index = (this.vulnerabilityItems || []).findIndex(row => this.vulnerabilityKey(row) === key);
+      if (index < 0) return;
+      this.vulnerabilityItems.splice(index, 1, {
+        ...this.vulnerabilityItems[index],
+        reproduction: full.reproduction ?? this.vulnerabilityItems[index].reproduction,
+        evidence: full.evidence ?? this.vulnerabilityItems[index].evidence,
+      });
+    },
+    _forgetVulnerabilityDetail(taskId, vulnerabilityId) {
+      const key = this.vulnerabilityKey({ task_id: taskId, project_id: taskId, id: vulnerabilityId });
+      if (!key || !this.vulnerabilityDetailCache?.[key]) return;
+      const next = { ...this.vulnerabilityDetailCache };
+      delete next[key];
+      this.vulnerabilityDetailCache = next;
+    },
     async loadVulnerabilityDetail(vulnerability) {
       if (!vulnerability?.task_id || !vulnerability?.id) return;
       if (vulnerability.reproduction) return;   // 已经是完整的（如深链接直接取的那条）
       const key = this.vulnerabilityKey(vulnerability);
-      if (this.vulnerabilityDetailCache?.[key]) return;
+      // 同 RT 侧：缓存命中必须补回列表，否则重新审核后的重载会把报文清掉。
+      const cached = this.vulnerabilityDetailCache?.[key];
+      if (cached) {
+        this._spliceVulnerabilityDetail(key, cached);
+        return;
+      }
       this.vulnerabilityDetailLoading = key;
       this.vulnerabilityDetailError = '';
       try {
@@ -1551,14 +1572,7 @@
         );
         if (!full) return;
         this.vulnerabilityDetailCache = { ...(this.vulnerabilityDetailCache || {}), [key]: full };
-        const index = (this.vulnerabilityItems || []).findIndex(row => this.vulnerabilityKey(row) === key);
-        if (index >= 0) {
-          this.vulnerabilityItems.splice(index, 1, {
-            ...this.vulnerabilityItems[index],
-            reproduction: full.reproduction ?? null,
-            evidence: full.evidence ?? this.vulnerabilityItems[index].evidence,
-          });
-        }
+        this._spliceVulnerabilityDetail(key, full);
       } catch (error) {
         if (error?.name === 'AbortError') return;
         this.vulnerabilityDetailError = String(error?.message || error);
@@ -1722,6 +1736,8 @@
           `/tasks/${selected.project_id}/vulnerabilities/${selected.id}/reviews`,
           { actor: this.actorName(), reason: '人工要求重新审核' },
         );
+        // 同 RT 侧：重审可能改写描述/报文，先作废该条的详情缓存。
+        this._forgetVulnerabilityDetail(selected.project_id, selected.id);
         await this.loadVulnerabilityPage({ selectFirst: false });
         const refreshed = (this.vulnerabilityItems || []).find(
           item => item.project_id === selected.project_id && item.id === selected.id,
@@ -1803,20 +1819,46 @@
       this.loadRtResultDetail(item);
       this.loadRtResultChain(item);
     },
+    // 列表接口只给摘要（不含复现报文）。缓存里若已有同一条的完整内容，就把它补回
+    // 列表那一行——缓存命中时直接 return 而不补，会让「重新审核」这类触发重载的
+    // 操作把面板上已经显示过的报文清空，看起来像内容被审核流程删掉了。
+    //
+    // 只覆盖报文/证据这类重字段：status、分值、updated_at 仍取列表里的新值，否则
+    // 重审后会把旧状态（如 verified）又画回去。这也避开了「缓存里的状态过期」。
+    _spliceRtResultDetail(key, full) {
+      const index = (this.rtResultItems || []).findIndex(row => this.rtResultKey(row) === key);
+      if (index < 0) return;
+      const row = this.rtResultItems[index];
+      this.rtResultItems.splice(index, 1, {
+        ...row,
+        reproduction: full.reproduction ?? row.reproduction,
+        evidence: full.evidence ?? row.evidence,
+      });
+    },
+    _forgetRtResultDetail(taskId, resultId) {
+      const key = this.rtResultKey({ task_id: taskId, id: resultId });
+      if (!key || !this.rtResultDetailCache?.[key]) return;
+      const next = { ...this.rtResultDetailCache };
+      delete next[key];
+      this.rtResultDetailCache = next;
+    },
     // 复现报文只随选中项来：列表拿的是摘要（无报文），选中哪条才按 id 取那一条。
     // 取回来的完整对象直接写回列表里对应那条，详情面板照旧读 selectedRtResult()。
     async loadRtResultDetail(item) {
       if (!item?.task_id || !item?.id) return;
       const key = this.rtResultKey(item);
-      if (this.rtResultDetailCache?.[key]) return;
+      const cached = this.rtResultDetailCache?.[key];
+      if (cached) {
+        this._spliceRtResultDetail(key, cached);
+        return;
+      }
       this.rtResultDetailLoading = key;
       this.rtResultDetailError = '';
       try {
         const full = await request('GET', `/tasks/${item.task_id}/red-team/results/${item.id}`);
         if (!full) return;
         this.rtResultDetailCache = { ...(this.rtResultDetailCache || {}), [key]: full };
-        const index = (this.rtResultItems || []).findIndex(row => this.rtResultKey(row) === key);
-        if (index >= 0) this.rtResultItems.splice(index, 1, full);
+        this._spliceRtResultDetail(key, full);
       } catch (error) {
         this.rtResultDetailError = String(error?.message || error);
       } finally {
@@ -1976,6 +2018,8 @@
           `/tasks/${selected.task_id}/red-team/results/${selected.id}/reviews`,
           { actor: this.actorName(), reason: '人工要求重新审核' },
         );
+        // 重审期间审核者可能改写描述/报文，重审前的详情缓存不再可信。
+        this._forgetRtResultDetail(selected.task_id, selected.id);
         await this.loadRedTeamResultPage();
         await this.loadRtResultReviews(selected);
         this.showToast('已创建审核任务');
@@ -1989,6 +2033,65 @@
     rtResultReviewCanRetry() {
       return !this.rtResultReviewSubmitting && !(this.rtResultReviews || [])
         .some(run => ['pending', 'claimed', 'running', 'concluding'].includes(run.status));
+    },
+
+    // 人工覆盖审核者评估：原因 / 状态 / 积分数量。
+    // 与 triggerRtResultReview 不同，这里不让审核者重跑，而是直接写最终结论。
+    openRtHumanReview(result) {
+      const selected = result || this.selectedRtResult();
+      if (!selected?.task_id || !selected.id) return;
+      const status = ['verified', 'rejected', 'duplicate', 'needs-human'].includes(selected.status)
+        ? selected.status : 'rejected';
+      this.rtHumanReview = {
+        open: true, id: selected.id, task_id: selected.task_id,
+        title: selected.title || '', status,
+        reason: '', points_awarded: Number(selected.points_awarded) || 0,
+        saving: false, error: '',
+      };
+    },
+    closeRtHumanReview() {
+      this.rtHumanReview.open = false;
+      this.rtHumanReview.error = '';
+    },
+    pickRtHumanReviewStatus(status) {
+      this.rtHumanReview.status = status;
+      this.rtHumanReview.error = '';
+    },
+    async confirmRtHumanReview() {
+      const form = this.rtHumanReview;
+      if (!form?.id || form.saving) return;
+      const reason = String(form.reason || '').trim();
+      const points = Number(form.points_awarded) || 0;
+      if (reason.length < 4) { form.error = '原因不少于 4 个字'; return; }
+      if (form.status === 'verified' && points < 1) {
+        form.error = '核定通过时必须给出积分数量'; return;
+      }
+      const awarded = form.status === 'verified' ? points : 0;
+      if (!window.confirm(`确认人工覆盖 ${form.id} 的审核结论？\n状态 ${form.status} · 积分 ${awarded}\n在途审核会被撤销，原有评估说明会被替换。`)) return;
+      form.saving = true; form.error = '';
+      try {
+        await request(
+          'POST',
+          `/tasks/${form.task_id}/red-team/results/${form.id}/human-review`,
+          {
+            status: form.status,
+            reason,
+            points_awarded: awarded,
+            actor: this.actorName ? this.actorName() : 'human',
+          },
+        );
+        // 覆盖后详情缓存里的 status / review_reason 已过期，必须失效再刷新。
+        this._forgetRtResultDetail(form.task_id, form.id);
+        await this.loadRedTeamResultPage();
+        await this.loadRtResultReviews({ task_id: form.task_id, id: form.id });
+        form.open = false;
+        this.showToast('已人工覆盖审核结论');
+      } catch (error) {
+        form.error = error?.message || '人工审核失败';
+        this.showToast(form.error, 'error');
+      } finally {
+        form.saving = false;
+      }
     },
 
     // 每步截图的挂载：一次 multipart 到 /evidence/capture，服务端完成

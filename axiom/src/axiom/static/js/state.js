@@ -64,6 +64,9 @@ window.AxiomModules.state = {
     rtResultReviewsLoading: false,
     rtResultReviewsError: '',
     rtResultReviewSubmitting: false,
+    // 人工覆盖审核者的评估：原因 / 状态 / 积分数量（控制台直接落库，不走 Reviewer）
+    rtHumanReview: { open: false, id: '', task_id: '', title: '', status: 'rejected',
+      reason: '', points_awarded: 0, saving: false, error: '' },
     rtEditor: { open: false, id: '', task_id: '', saving: false, error: '',
       title: '', description: '', principal: '', tenant: '', target_asset: '',
       result_type: 'permission', data_target_id: '', sample_count: null, sample_bytes: null,

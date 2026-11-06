@@ -296,6 +296,21 @@ class RedTeamResultReview(BaseModel):
     points_awarded: int | None = Field(default=None, ge=0, le=MAX_RESULT_POINTS)
 
 
+class RedTeamResultHumanReview(BaseModel):
+    """人工覆盖审核者的评估结论：原因 / 状态 / 积分数量。
+
+    与 ``RedTeamResultReview`` 的区别：不受 Reviewer 身份与「终态不可改」限制，
+    由控制台操作人直接落库；服务层会撤销在途审核 Run，避免人工结论被后台回写。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["verified", "rejected", "duplicate", "needs-human"]
+    reason: str = Field(min_length=4, max_length=8_000)
+    points_awarded: int | None = Field(default=None, ge=0, le=MAX_RESULT_POINTS)
+    actor: str = Field(default="human", min_length=1, max_length=64)
+
+
 # Reason/Plan own the operational lifecycle, the same way they own Todo
 # status.  Points stay on verified Results; a completed Chain only means this
 # path should not receive another Intent.

@@ -9,6 +9,7 @@ from axiom.modules.redteam.schemas import (
     RedTeamChain,
     RedTeamChainCreate,
     RedTeamResult,
+    RedTeamResultHumanReview,
     RedTeamResultReview,
     RedTeamResultReportRequest,
 )
@@ -64,6 +65,20 @@ def update_result(
 @router.post("/tasks/{task_id}/red-team/results/{result_id}/review", response_model=RedTeamResult)
 def review_result(task_id: str, result_id: str, body: RedTeamResultReview, container: Container = Depends(get_container)) -> RedTeamResult:
     return container.red_team.review_result(task_id, result_id, body)
+
+
+@router.post("/tasks/{task_id}/red-team/results/{result_id}/human-review", response_model=RedTeamResult)
+def human_review_result(
+    task_id: str,
+    result_id: str,
+    body: RedTeamResultHumanReview,
+    container: Container = Depends(get_container),
+) -> RedTeamResult:
+    """人工覆盖审核者的评估结论：原因、状态、积分数量。
+
+    不受终态限制；在途审核 Run 会被撤销，并在审计事件里留下 before/after。
+    """
+    return container.red_team.override_human_review(task_id, result_id, body)
 
 
 @router.get("/red-team/results", response_model=list[RedTeamResult])
