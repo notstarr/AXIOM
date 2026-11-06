@@ -634,6 +634,26 @@ window.AxiomModules.projects = {
       );
     },
 
+    // 复制 Markdown：粘到别处（周报、聊天、工单）时用。图带不走，引用指不到
+    // 文件反而误导人，所以由服务端连图片一起去掉。
+    async copyRtResultMarkdown(result) {
+      if (!result?.task_id || !result?.id) return;
+      try {
+        const token = localStorage.getItem('axiom_token');
+        const response = await fetch(
+          `/api/v1/tasks/${result.task_id}/red-team/results/${result.id}/export?format=markdown&images=omit`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+        );
+        if (!response.ok) {
+          throw new Error((await response.text()) || `复制失败 (HTTP ${response.status})`);
+        }
+        await this.copyText(await response.text());
+        this.showToast('已复制 Markdown（不含图片）', 'success');
+      } catch (e) {
+        this.showToast(`复制失败: ${e.message}`, 'error');
+      }
+    },
+
     // 一个任务一整份报告。任务 id 就是漏洞筛选里选中的那个任务——报告按任务汇总，
     // 没选任务就没有「这份报告」，所以看板上那个按钮是禁用的。
     async exportTaskReport() {
@@ -1477,7 +1497,7 @@ window.AxiomModules.projects = {
     },
 
     seedSourceTasks() {
-      return (this.projects || []).filter(item => (item.engagement_mode || 'vulnerability') !== 'red_team');
+      return (this.projects || []).filter(item => (item.engagement_mode || 'vulnerability') === 'vulnerability');
     },
 
     seedSourceLabel(task) {
@@ -2133,6 +2153,10 @@ window.AxiomModules.projects = {
       } else if (this.activePage === 'vulnerabilities') {
         await Promise.all([this.loadProjectGroups({ signal }), this.loadProjects({ signal })]);
         await this.loadVulnerabilityPage({ selectFirst: false });
+        // 审核/复测在跑时才多取一次记录：空闲页面不该为这个多打一次请求。
+        if (this.vulnerabilityReviewHasActiveRun()) {
+          await this.loadVulnerabilityReviews(this.selectedVulnerability());
+        }
       } else if (this.activePage === 'files') {
         await this.loadArtifactCenter();
       } else if (this.activePage === 'projects') {

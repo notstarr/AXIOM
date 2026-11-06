@@ -135,6 +135,9 @@ window.AxiomModules.state = {
     vulnerabilityReviewsLoading: false,
     vulnerabilityReviewsError: '',
     vulnerabilityReviewSubmitting: false,
+    // 复测与审核共用同一条 /reviews 列表（按 trigger 拆分），只有「正在排队」这个
+    // 瞬时状态需要单独一份，否则两个按钮会互相锁住对方的文案。
+    vulnerabilityRetestSubmitting: false,
     _vulnerabilityReviewRequestId: 0,
     _rtResultReviewRequestId: 0,
     polling: true,

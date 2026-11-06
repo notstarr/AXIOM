@@ -116,7 +116,8 @@
               <span x-text="`${selectedVulnerability().project_group_title || '未归属项目'} / ${selectedVulnerability().task_title || selectedVulnerability().project_id}`"></span>
             </div>
             <div class="rp-acts">
-              <button @click="triggerVulnerabilityReview(selectedVulnerability())" :disabled="!vulnerabilityReviewCanRetry()" :title="vulnerabilityReviewCanRetry() ? '创建一次新的 Reviewer 审核' : '已有审核正在排队或运行'" class="rp-act primary" x-text="vulnerabilityReviewSubmitting ? '正在排队…' : '重新审核'"></button>
+              <button @click="triggerVulnerabilityReview(selectedVulnerability())" :disabled="!vulnerabilityReviewCanRetry()" :title="vulnerabilityReviewCanRetry() ? '创建一次新的 Reviewer 审核' : '已有审核或复测正在排队或运行'" class="rp-act primary" x-text="vulnerabilityReviewSubmitting ? '正在排队…' : '重新审核'"></button>
+              <button @click="triggerVulnerabilityRetest(selectedVulnerability())" :disabled="!vulnerabilityRetestCanStart()" :title="vulnerabilityRetestCanStart() ? '复测：检验这条漏洞现在是否仍然成立（不改变漏洞状态）' : '已有审核或复测正在排队或运行'" class="rp-act" x-text="vulnerabilityRetestSubmitting ? '正在排队…' : '复测'"></button>
               <button @click="editVuln(selectedVulnerability())" class="rp-act">编辑</button>
               <button @click="exportSingleVulnerability(selectedVulnerability())" class="rp-act" title="导出正文、Findings 与证据图">
                 <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
@@ -264,13 +265,13 @@
                默认展开——现在它是页面上唯一的结论来源。 -->
           <details open>
             <summary class="rp-h" style="cursor:pointer; margin:0;">
-              Reviewer 审核记录<span x-show="latestVulnerabilityReview()" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400;" x-text="vulnerabilityReviewStateLabel(latestVulnerabilityReview())"></span><span x-show="packetShotProgress(selectedVulnerability()).total > 0" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400; color:var(--rp-ink-2);" x-text="`报文图 ${packetShotProgress(selectedVulnerability()).have}/${packetShotProgress(selectedVulnerability()).total} 步`"></span>
+              Reviewer 审核记录<span x-show="vulnerabilityAuditReviews().length" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400;" x-text="`${vulnerabilityAuditReviews().length} 次`"></span><span x-show="latestVulnerabilityReview()" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400;" x-text="vulnerabilityReviewStateLabel(latestVulnerabilityReview())"></span><span x-show="packetShotProgress(selectedVulnerability()).total > 0" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400; color:var(--rp-ink-2);" x-text="`报文图 ${packetShotProgress(selectedVulnerability()).have}/${packetShotProgress(selectedVulnerability()).total} 步`"></span>
             </summary>
             <p x-show="vulnerabilityReviewsLoading" class="rp-absent" style="margin-top:8px;">正在加载…</p>
             <p x-show="vulnerabilityReviewsError" class="sto-warnline" style="margin-top:8px;" x-text="vulnerabilityReviewsError"></p>
-            <p x-show="!vulnerabilityReviewsLoading && !vulnerabilityReviewsError && (vulnerabilityReviews || []).length === 0 && !selectedVulnerability().status_reason" class="rp-absent" style="margin-top:8px;">暂无审核记录。</p>
+            <p x-show="!vulnerabilityReviewsLoading && !vulnerabilityReviewsError && vulnerabilityAuditReviews().length === 0 && !selectedVulnerability().status_reason" class="rp-absent" style="margin-top:8px;">暂无审核记录。</p>
             <!-- 人工直接改过状态（没有 ReviewRun）时，理由只剩 status_reason，兜成一条记录 -->
-            <div class="rp-runs" style="margin-top:9px;" x-show="!vulnerabilityReviewsLoading && !(vulnerabilityReviews || []).length && selectedVulnerability().status_reason">
+            <div class="rp-runs" style="margin-top:9px;" x-show="!vulnerabilityReviewsLoading && !vulnerabilityAuditReviews().length && selectedVulnerability().status_reason">
               <div class="rp-run">
                 <div class="rp-runhead">
                   <span>人工判定</span>
@@ -279,8 +280,8 @@
                 <p class="rp-runnote" style="white-space:pre-wrap;" x-text="formatMultiline(selectedVulnerability().status_reason)"></p>
               </div>
             </div>
-            <div class="rp-runs" style="margin-top:9px;" x-show="(vulnerabilityReviews || []).length > 0">
-              <template x-for="run in (vulnerabilityReviews || [])" :key="run.id">
+            <div class="rp-runs" style="margin-top:9px;" x-show="vulnerabilityAuditReviews().length > 0">
+              <template x-for="run in vulnerabilityAuditReviews()" :key="run.id">
                 <div class="rp-run">
                   <div class="rp-runhead">
                     <code x-text="run.id"></code>
@@ -294,6 +295,34 @@
                   <p x-show="run.decision_reason" class="rp-runnote"><strong>原因</strong> <span x-text="run.decision_reason"></span></p>
                   <p x-show="run.status === 'failed' && run.last_failure_kind" class="rp-runnote"><strong>失败</strong> <span x-text="run.last_failure_kind"></span></p>
                   <button x-show="run.duplicate_of_vulnerability_id" @click="openReviewDuplicate(run)" class="rp-act" style="margin-top:3px;">重复于 <span x-text="run.duplicate_of_vulnerability_id"></span></button>
+                </div>
+              </template>
+            </div>
+          </details>
+
+          <!-- 复测记录：与审核并列，不合流。复测结论只有三态，和审核的四态裁决
+               是两套词汇，混在一列会让人以为「已修复」是一种裁决。 -->
+          <details open>
+            <summary class="rp-h" style="cursor:pointer; margin:0;">
+              复测记录<span x-show="vulnerabilityRetestReviews().length" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400;" x-text="`${vulnerabilityRetestReviews().length} 次`"></span><span x-show="latestVulnerabilityRetest()" style="margin-left:7px; text-transform:none; letter-spacing:0; font-weight:400;" x-text="vulnerabilityRetestVerdictLabel(latestVulnerabilityRetest())"></span>
+            </summary>
+            <p x-show="vulnerabilityReviewsLoading" class="rp-absent" style="margin-top:8px;">正在加载…</p>
+            <p x-show="!vulnerabilityReviewsLoading && vulnerabilityRetestReviews().length === 0" class="rp-absent" style="margin-top:8px;">暂无复测记录。复测只检验漏洞现在是否仍然成立，不会改变漏洞状态。</p>
+            <div class="rp-runs" style="margin-top:9px;" x-show="vulnerabilityRetestReviews().length > 0">
+              <template x-for="run in vulnerabilityRetestReviews()" :key="`retest-${run.id}`">
+                <div class="rp-run">
+                  <div class="rp-runhead">
+                    <code x-text="run.id"></code>
+                    <span x-text="vulnerabilityReviewStateLabel(run)"></span>
+                    <span class="sto-status" :class="vulnerabilityRetestVerdictClass(run)" x-show="run.retest_verdict">
+                      <i></i><span x-text="vulnerabilityRetestVerdictLabel(run)"></span>
+                    </span>
+                    <span style="margin-left:auto;" x-text="formatDate(run.concluded_at || run.updated_at || run.created_at)"></span>
+                  </div>
+                  <p x-show="run.worker" class="rp-runnote"><strong>复测者</strong> <span x-text="run.worker"></span></p>
+                  <p x-show="run.activity_summary && ['pending','claimed','running','concluding'].includes(run.status)" class="rp-runnote" x-text="run.activity_summary"></p>
+                  <p x-show="run.retest_reason" class="rp-runnote"><strong>结论</strong> <span x-text="run.retest_reason"></span></p>
+                  <p x-show="run.status === 'failed' && run.last_failure_kind" class="rp-runnote"><strong>失败</strong> <span x-text="run.last_failure_kind"></span></p>
                 </div>
               </template>
             </div>

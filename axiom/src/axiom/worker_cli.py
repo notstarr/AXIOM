@@ -1165,6 +1165,34 @@ def register_worker_commands(main: click.Group) -> None:
         )
         _echo(payload)
 
+    @review_group.group("retest")
+    def review_retest_group() -> None:
+        """复测结论：这条漏洞现在是否仍然成立（不改状态、不改描述）。"""
+
+    @review_retest_group.command("submit")
+    @click.argument("verdict", type=click.Choice(("exists", "fixed", "inconclusive")))
+    @click.option("--reason")
+    @click.option("--reason-file", type=click.Path(path_type=Path, dir_okay=False))
+    def review_retest_submit(
+        verdict: str,
+        reason: str | None,
+        reason_file: Path | None,
+    ) -> None:
+        """exists=仍然成立 / fixed=已修复 / inconclusive=无法判定。
+
+        三态是复测唯一的词汇：没有「重复」也没有「忽略」，判重与定档是审核的事。
+        """
+        _echo(
+            _review_request(
+                "retest",
+                {
+                    "lease_id": _lease_id(),
+                    "verdict": verdict,
+                    "reason": _text_value(reason, reason_file, "reason", required=True),
+                },
+            )
+        )
+
     @main.group("webshell")
     def webshell_group() -> None:
         """WebShell connection registry bound to the current red-team task."""

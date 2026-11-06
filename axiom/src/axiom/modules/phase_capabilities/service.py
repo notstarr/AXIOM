@@ -38,6 +38,7 @@ _SCORING_SCOPES_MARKER = ".phase-capabilities-v3-redteam-scoring-scopes"
 _JSFINDER_SCOPES_MARKER = ".phase-capabilities-v4-jsfinder-scopes"
 _RESOURCES_SCOPES_MARKER = ".phase-capabilities-v5-redteam-resources-scopes"
 _OOB_SCOPES_MARKER = ".phase-capabilities-v6-oob-capture-scopes"
+_RETEST_SKILL_MARKER = ".phase-capabilities-v7-vuln-retest-scope"
 _REDTEAM_SCORING_EXTRA_SCOPES = ("bootstrap", "reason", "plan", "review")
 _JSFINDER_SCOPES = ("bootstrap", "reason", "explore")
 _RESOURCES_SCOPES = ("explore", "reason")
@@ -45,6 +46,9 @@ _OOB_SCOPES = ("explore", "reason")
 _MCP_NAME_PART = re.compile(r"[^a-z0-9_]+")
 _DEFAULT_SKILL_SCOPES = {
     "vuln-review": ("review",),
+    # 复测与审核同属 Reviewer 阶段，但方法论不同；两个 skill 都挂在 review 下，
+    # 由复测 run 的提示词指定读哪一个（并在挂载目录里屏蔽另一个）。
+    "vuln-retest": ("review",),
     "browser-control": ("bootstrap", "explore"),
     "jsfinder": _JSFINDER_SCOPES,
     "redteam-scoring": ("bootstrap", "reason", "explore", "plan", "review"),
@@ -633,6 +637,7 @@ class PhaseCapabilityService:
         jsfinder_marker = self.data_dir / _JSFINDER_SCOPES_MARKER
         resources_marker = self.data_dir / _RESOURCES_SCOPES_MARKER
         oob_marker = self.data_dir / _OOB_SCOPES_MARKER
+        retest_marker = self.data_dir / _RETEST_SKILL_MARKER
         skill_records = self.skills.list()
         with transaction(self.engine) as conn:
             if not marker.exists():
@@ -759,6 +764,26 @@ class PhaseCapabilityService:
                             capability_key="oob-capture",
                             now=now,
                         )
+            # vuln-retest（复测方法论）是后加的 Skill：老安装的 marker 都已经落过，
+            # 不补这一次绑定，复测 run 的提示词会让模型去读一个拿不到的 skill。
+            # 与前面几块一致：绑一次，之后用户解绑就保持解绑。
+            if not retest_marker.exists():
+                retest_skill = next(
+                    (skill for skill in skill_records if skill.name == "vuln-retest"),
+                    None,
+                )
+                if (
+                    retest_skill is not None
+                    and retest_skill.enabled
+                    and Path(retest_skill.path).is_file()
+                ):
+                    self.repository.ensure(
+                        conn,
+                        scope="review",
+                        capability_kind="skill",
+                        capability_key="vuln-retest",
+                        now=utcnow(),
+                    )
             self._ensure_mandatory_locked(conn, skill_records=skill_records)
         if not marker.exists():
             marker.parent.mkdir(parents=True, exist_ok=True)
@@ -790,6 +815,11 @@ class PhaseCapabilityService:
             temporary = oob_marker.with_name(f".{oob_marker.name}.tmp")
             temporary.write_text(utcnow() + "\n", encoding="utf-8")
             temporary.replace(oob_marker)
+        if not retest_marker.exists():
+            retest_marker.parent.mkdir(parents=True, exist_ok=True)
+            temporary = retest_marker.with_name(f".{retest_marker.name}.tmp")
+            temporary.write_text(utcnow() + "\n", encoding="utf-8")
+            temporary.replace(retest_marker)
 
     def _ensure_mandatory_locked(self, conn, *, skill_records=None) -> None:
         now = utcnow()

@@ -3417,6 +3417,7 @@ def test_client_mode_is_available_in_composer_and_visible_after_reload() -> None
     assert "engagementModeLabel(selectedTaskSummary().engagement_mode)" in task_list
     assert "if (mode === 'client') return '客户端漏洞';" in projects
     assert "['vulnerability', 'red_team', 'client'].includes(this.newProject.engagement_mode)" in projects
+    assert "(item.engagement_mode || 'vulnerability') === 'vulnerability'" in projects
 
 
 def _run_red_team_goal_points_fixture(points: int) -> dict[str, object]:
@@ -3962,8 +3963,9 @@ def test_the_review_conclusion_lives_in_the_records_not_in_its_own_chapter(clien
     template = client.get("/static/templates/vulnerabilities.html").text
 
     assert '<h2 class="rp-h">审核结论</h2>' not in template
-    # 记录默认展开：否则唯一还能读到裁决的地方要额外点一次
-    assert template.count("<details open>") == 2
+    # 记录默认展开：否则唯一还能读到裁决的地方要额外点一次。
+    # 三块：漏洞审核记录、漏洞复测记录、红队成果审核记录——每块都是某类结论的唯一去处。
+    assert template.count("<details open>") == 3
     # 人工改过状态、没有 ReviewRun 时，理由仍要能看到
     assert "人工判定" in template
     assert "selectedVulnerability().status_reason" in template
@@ -4108,3 +4110,151 @@ def test_copying_the_markdown_fetches_it_without_images_and_puts_it_on_the_clipb
     )
     assert result["copied"] == "# 标题\n\n正文"
     assert result["toasts"] == [["已复制 Markdown（不含图片）", "success"]]
+
+
+def _run_vulnerability_retest_ui_fixture() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    adapter = ROOT / "src/axiom/static/js/v2-adapter.js"
+    program = f"""
+const fs = require('fs');
+const calls = [];
+const toasts = [];
+let queued = false;
+const vulnerability = {{
+  id:'v002', project_id:'t_153', task_id:'t_153', title:'已验证漏洞', status:'已验证', archived:false,
+}};
+const base = {{
+  task_id:'t_153', vulnerability_id:'v002', artifacts:[], input_fingerprint:'fp', worker_pool:[],
+  settings_version:1, execute_timeout_seconds:300, conclude_timeout_seconds:120, retry_count:0,
+  infrastructure_retry_count:0, last_failure_kind:'', failure_class:'', activity_kind:'completed',
+  activity_summary:'done', activity_tool:'', decision:null, decision_reason:'',
+  duplicate_of_vulnerability_id:null, duplicate_of_result_id:null,
+  created_at:'now', updated_at:'now', concluded_at:'now',
+}};
+const audit = {{ ...base, id:'vr000010', status:'completed', trigger:'manual',
+  decision:'verified', decision_reason:'首次审核证据充分' }};
+const retestDone = {{ ...base, id:'vr000011', status:'completed', trigger:'retest',
+  retest_verdict:'fixed', retest_reason:'403 被归属校验拦住' }};
+const retestPending = {{ ...retestDone, id:'vr000012', status:'pending', retest_verdict:null,
+  retest_reason:'', concluded_at:null }};
+global.window = {{ AxiomModules: {{
+  state: {{ state: {{}} }}, core: {{ methods: {{}} }}, projects: {{ methods: {{}} }},
+  graph: {{ methods: {{}} }}, files: {{ methods: {{}} }},
+}} }};
+global.location = {{ origin:'http://testserver', hash:'#/vulnerabilities?task=t_153&vulnerability=v002' }};
+global.window.history = {{ replaceState: (_state, _title, url) => {{ global.location.hash = url; }} }};
+global.window.confirm = () => true;
+global.confirm = global.window.confirm;
+global.fetch = async (url, init = {{}}) => {{
+  const method = init.method || 'GET';
+  const body = init.body ? JSON.parse(init.body) : null;
+  calls.push({{ url, method, body }});
+  let payload;
+  if (method === 'GET' && url === '/api/v1/tasks/t_153/vulnerabilities/v002/reviews') {{
+    payload = queued ? [retestPending, retestDone, audit] : [retestDone, audit];
+  }} else if (method === 'POST' && url === '/api/v1/tasks/t_153/vulnerabilities/v002/retests') {{
+    queued = true;
+    payload = retestPending;
+  }} else {{
+    throw new Error(`unexpected request: ${{method}} ${{url}}`);
+  }}
+  return {{ status:200, ok:true, text:async () => JSON.stringify(payload) }};
+}};
+eval(fs.readFileSync({json.dumps(str(adapter))}, 'utf8'));
+const methods = Object.assign(
+  {{}},
+  window.AxiomModules.projects.methods,
+  window.AxiomModules.files.methods,
+);
+const ctx = Object.assign({{}}, methods, {{
+  vulnerabilityReviews:[], vulnerabilityReviewsLoading:false, vulnerabilityReviewsError:'',
+  vulnerabilityReviewSubmitting:false, vulnerabilityRetestSubmitting:false,
+  _vulnerabilityReviewRequestId:0,
+  vulnerabilityItems:[vulnerability], selectedVulnerabilityKey:'t_153:v002',
+  selectedVulnerability:() => vulnerability,
+  vulnerabilityKey:item => `${{item.project_id || item.task_id}}:${{item.id}}`,
+  actorName:() => '人工',
+  loadVulnerabilityPage:async () => calls.push({{ action:'reload-page' }}),
+  showToast:(message, type='success') => toasts.push({{ message, type }}),
+  artifactCenterSelectedTask:'', artifactCenterFolderKey:'', artifactCenterRouteArtifactId:'',
+  artifactCenterSearch:'', artifactCenterType:'all', artifactCenterPhase:'all', artifactCenterSource:'all',
+  artifactCenterPage:0, artifactCenterFolderPage:0, artifactCenterSelected:null,
+}});
+(async () => {{
+  await ctx.loadVulnerabilityReviews(vulnerability);
+  const loaded = {{
+    auditCount:ctx.vulnerabilityAuditReviews().length,
+    retestCount:ctx.vulnerabilityRetestReviews().length,
+    latestAudit:ctx.latestVulnerabilityReview().id,
+    latestRetest:ctx.latestVulnerabilityRetest().id,
+    verdict:ctx.vulnerabilityRetestVerdictLabel(ctx.latestVulnerabilityRetest()),
+    verdictClass:ctx.vulnerabilityRetestVerdictClass(ctx.latestVulnerabilityRetest()),
+    reviewCanRetry:ctx.vulnerabilityReviewCanRetry(),
+    retestCanStart:ctx.vulnerabilityRetestCanStart(),
+  }};
+  await ctx.triggerVulnerabilityRetest(vulnerability);
+  const afterTrigger = {{
+    retestCount:ctx.vulnerabilityRetestReviews().length,
+    auditCount:ctx.vulnerabilityAuditReviews().length,
+    active:ctx.vulnerabilityReviewHasActiveRun(),
+    reviewCanRetry:ctx.vulnerabilityReviewCanRetry(),
+    retestCanStart:ctx.vulnerabilityRetestCanStart(),
+    submitting:ctx.vulnerabilityRetestSubmitting,
+    verdict:ctx.vulnerabilityRetestVerdictLabel(ctx.latestVulnerabilityRetest()),
+  }};
+  process.stdout.write(JSON.stringify({{ loaded, afterTrigger, calls, toasts }}));
+}})();
+"""
+    result = subprocess.run(
+        [node, "-e", program],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def test_vulnerability_retest_records_are_split_from_audit_records() -> None:
+    """一个接口返回两种 run，前端必须按 trigger 拆开。
+
+    混在一列会让人以为「已修复」是一种裁决；而两套词汇是不同的东西。
+    """
+    result = _run_vulnerability_retest_ui_fixture()
+    loaded = result["loaded"]
+
+    assert loaded["auditCount"] == 1
+    assert loaded["retestCount"] == 1
+    assert loaded["latestAudit"] == "vr000010"
+    assert loaded["latestRetest"] == "vr000011"
+    assert loaded["verdict"] == "已修复"
+    assert loaded["verdictClass"] == "ok"
+    # 没有在跑的 run，两个按钮都能点
+    assert loaded["reviewCanRetry"] is True
+    assert loaded["retestCanStart"] is True
+
+
+def test_triggering_a_retest_posts_the_dedicated_endpoint_and_locks_both_buttons() -> None:
+    result = _run_vulnerability_retest_ui_fixture()
+    posts = [
+        call for call in result["calls"]
+        if call.get("method") == "POST"
+    ]
+
+    assert len(posts) == 1
+    assert posts[0]["url"] == "/api/v1/tasks/t_153/vulnerabilities/v002/retests"
+    assert posts[0]["body"] == {"actor": "人工", "reason": "人工要求复测"}
+
+    after = result["afterTrigger"]
+    # 复测排队后：记录里多一条 pending，两个入口都锁住（同一条漏洞只能跑一件事）
+    assert after["retestCount"] == 2
+    assert after["auditCount"] == 1
+    assert after["active"] is True
+    assert after["reviewCanRetry"] is False
+    assert after["retestCanStart"] is False
+    assert after["submitting"] is False
+    assert after["verdict"] == "未出结论"
+
+    assert result["toasts"][-1]["message"] == "已创建 Reviewer 复测任务"

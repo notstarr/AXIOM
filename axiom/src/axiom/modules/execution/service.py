@@ -75,6 +75,8 @@ _COVERAGE_SKILLS = frozenset({
     "whatisvul",
     "vuln-report",
     "vuln-review",
+    # 复测是第七个覆盖率类 skill：同样只在漏洞模式挂载，红队租约里要剔除。
+    "vuln-retest",
     "web-attack-playbook",
 })
 
@@ -738,12 +740,21 @@ class ExecutionService:
             review_run_id=review_run_id,
             lease_id=command.lease_id,
         )
+        # 复测的「触发原因」要带上复测前的状态：复测者需要知道自己是在推翻一个
+        # 已验证的结论，还是在一个待验证的漏洞上补一次检验——两种情况的说服标准不同。
+        prior_status = str(run.trigger_payload.get("prior_status") or "").strip()
+        prior_reason = str(run.trigger_payload.get("prior_status_reason") or "").strip()
+        retest_summary = "复测该漏洞现在是否仍然成立"
+        if prior_status:
+            retest_summary += f"（复测前状态：{prior_status}"
+            retest_summary += f"；上次结论：{prior_reason}）" if prior_reason else "）"
         trigger_summary = {
             "reported": "审核新上报的待验证漏洞",
             "updated": "关键 Finding、Evidence 或漏洞字段已更新，重新审核",
             "manual": "人工要求重新审核该漏洞",
             "restored": "归档恢复后重新审核该待验证漏洞",
             "migration": "审核部署前已有的待验证漏洞",
+            "retest": retest_summary,
         }.get(run.trigger, f"根据触发原因 {run.trigger} 审核该漏洞")
         manual_reason = str(run.trigger_payload.get("reason") or "").strip()
         if manual_reason:
@@ -786,6 +797,7 @@ class ExecutionService:
             review_run_id=review_run_id,
             vulnerability_id=vulnerability.id if vulnerability is not None else None,
             red_team_result_id=run.red_team_result_id,
+            review_purpose="retest" if run.trigger == "retest" else "review",
             lease_id=command.lease_id,
             worker_name=run.worker or "",
             intent_kind="review",

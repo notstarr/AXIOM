@@ -100,6 +100,10 @@ class ExecutionInput(BaseModel):
     review_run_id: str | None = None
     vulnerability_id: str | None = None
     red_team_result_id: str | None = None
+    # Review 阶段有两种用途：审核（复核结论、会改状态）与复测（只回答还成不成立）。
+    # 两者共用同一个 worker 阶段与同一套工具，只有提示词与收口校验不同，所以这是个
+    # 纯提示字段，不参与执行归属校验。
+    review_purpose: Literal["review", "retest"] = "review"
     lease_id: str
     worker_name: str
     intent_kind: Literal["bootstrap", "reason", "explore", "review"] = "bootstrap"

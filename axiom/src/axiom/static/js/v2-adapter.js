@@ -383,6 +383,9 @@
     return {
       ...item,
       artifacts: (item.artifacts || []).map(mapArtifact),
+      // 复测两列可能缺失（审核行），显式给默认值，别让 undefined 流进模板。
+      retest_verdict: item.retest_verdict || null,
+      retest_reason: item.retest_reason || '',
     };
   }
 
@@ -1596,8 +1599,25 @@
         }
       }
     },
+    // 同一个 /reviews 接口同时返回审核与复测两种 run，按 trigger 拆开：
+    // 审核记录只放审核，复测记录只放复测。两套结论词汇不同，混在一起会互相误导。
+    vulnerabilityRetestReviews() {
+      return (this.vulnerabilityReviews || []).filter(run => run.trigger === 'retest');
+    },
+    vulnerabilityAuditReviews() {
+      return (this.vulnerabilityReviews || []).filter(run => run.trigger !== 'retest');
+    },
     latestVulnerabilityReview() {
-      return (this.vulnerabilityReviews || [])[0] || null;
+      return this.vulnerabilityAuditReviews()[0] || null;
+    },
+    latestVulnerabilityRetest() {
+      return this.vulnerabilityRetestReviews()[0] || null;
+    },
+    // 一个漏洞同时只能有一条在跑的 run（数据库有部分唯一索引），所以两个按钮共用
+    // 这一个判断：复测在跑时「重新审核」也不能点，否则必然 409。
+    vulnerabilityReviewHasActiveRun() {
+      const active = ['pending', 'claimed', 'running', 'concluding'];
+      return (this.vulnerabilityReviews || []).some(run => active.includes(run.status));
     },
     vulnerabilityReviewStateLabel(run) {
       return ({
@@ -1636,13 +1656,60 @@
         manual: '人工重审',
         restored: '归档恢复',
         migration: '历史补队列',
+        retest: '人工复测',
       }[trigger] || trigger || '未知触发');
+    },
+    vulnerabilityRetestVerdictLabel(run) {
+      return ({
+        exists: '仍存在',
+        fixed: '已修复',
+        inconclusive: '无法判定',
+      }[run?.retest_verdict] || '未出结论');
+    },
+    vulnerabilityRetestVerdictClass(run) {
+      // 复用 .sto-status 的语义色：仍存在=红（要返工），已修复=绿，无法判定=黄。
+      return ({
+        exists: 'err',
+        fixed: 'ok',
+        inconclusive: 'warn',
+      }[run?.retest_verdict] || '');
     },
     vulnerabilityReviewCanRetry() {
       const selected = this.selectedVulnerability();
-      const latest = this.latestVulnerabilityReview();
       if (!selected || selected.archived || this.vulnerabilityReviewSubmitting) return false;
-      return !latest || !['pending', 'claimed', 'running', 'concluding'].includes(latest.status);
+      return !this.vulnerabilityReviewHasActiveRun();
+    },
+    vulnerabilityRetestCanStart() {
+      const selected = this.selectedVulnerability();
+      if (!selected || selected.archived || this.vulnerabilityRetestSubmitting) return false;
+      return !this.vulnerabilityReviewHasActiveRun();
+    },
+    async triggerVulnerabilityRetest(vulnerability = null) {
+      const selected = vulnerability || this.selectedVulnerability();
+      if (!selected || !this.vulnerabilityRetestCanStart()) return;
+      if (!window.confirm(
+        `确认复测 ${selected.id}？复测只检验漏洞现在是否仍然成立，不会改变漏洞状态。`
+      )) return;
+      this.vulnerabilityRetestSubmitting = true;
+      try {
+        await request(
+          'POST',
+          `/tasks/${selected.project_id}/vulnerabilities/${selected.id}/retests`,
+          { actor: this.actorName(), reason: '人工要求复测' },
+        );
+        await this.loadVulnerabilityPage({ selectFirst: false });
+        const refreshed = (this.vulnerabilityItems || []).find(
+          item => item.project_id === selected.project_id && item.id === selected.id,
+        ) || selected;
+        this.selectedVulnerabilityKey = this.vulnerabilityKey(refreshed);
+        await this.loadVulnerabilityReviews(refreshed);
+        this.showToast('已创建 Reviewer 复测任务');
+      } catch (error) {
+        if (error?.status === 409) await this.loadVulnerabilityReviews(selected);
+        this.showToast(error?.message || '复测请求失败', 'error');
+      } finally {
+        this.vulnerabilityRetestSubmitting = false;
+      }
     },
     async triggerVulnerabilityReview(vulnerability = null) {
       const selected = vulnerability || this.selectedVulnerability();

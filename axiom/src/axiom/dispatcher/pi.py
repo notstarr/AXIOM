@@ -1395,10 +1395,12 @@ class PiReviewExecutor(PiBootstrapExecutor):
         ):
             raise TransientWorkerError("Reviewer execution identity is incomplete")
         self._session_id = self._session_id or uuid.uuid4().hex
+        execute_prompt, _ = _review_prompt_names(execution_input)
+        is_retest = execution_input.review_purpose == "retest"
         result = self._run(
             execution_input,
             self.prompts.render(
-                "review_redteam.md" if execution_input.red_team_result_id else "review.md",
+                execute_prompt,
                 {
                     "task_id": execution_input.task_id,
                     "review_run_id": execution_input.review_run_id,
@@ -1413,6 +1415,7 @@ class PiReviewExecutor(PiBootstrapExecutor):
                     "skill_directories": _format_skill_directories(
                         execution_input.skill_directories,
                         "red_team" if execution_input.red_team_result_id else "vulnerability",
+                        exclude=frozenset({"vuln-review"}) if is_retest else frozenset(),
                     ),
                 },
             ),
@@ -1436,10 +1439,11 @@ class PiReviewExecutor(PiBootstrapExecutor):
     ) -> object:
         if not self._session_id:
             raise TransientWorkerError("Reviewer session is unavailable for conclude")
+        _, conclude_prompt = _review_prompt_names(execution_input)
         result = self._run(
             execution_input,
             self.prompts.render(
-                "review_conclude_redteam.md" if execution_input.red_team_result_id else "review_conclude.md",
+                conclude_prompt,
                 {
                     "task_id": execution_input.task_id,
                     "review_run_id": execution_input.review_run_id or "",
@@ -1560,6 +1564,7 @@ _REDTEAM_HIDDEN_SKILLS = frozenset({
     "whatisvul",
     "vuln-report",
     "vuln-review",
+    "vuln-retest",
     "web-attack-playbook",
 })
 
@@ -1571,13 +1576,37 @@ def _stage_prompt(name: str, engagement_mode: str) -> str:
     return f"{stem}_redteam.{ext}" if dot else f"{name}_redteam"
 
 
-def _format_skill_directories(paths: list[str], engagement_mode: str = "vulnerability") -> str:
+def _review_prompt_names(execution_input: ExecutionInput) -> tuple[str, str]:
+    """Pick the (execute, conclude) prompt pair for this ReviewRun.
+
+    One place, because the two call sites used to each carry their own ternary and a
+    swapped order would silently turn a retest into an audit — the worker would then
+    file a verdict instead of a three-state conclusion, and nothing would look wrong
+    until the vulnerability's status changed.
+    """
+    if execution_input.review_purpose == "retest":
+        return "review_retest.md", "review_retest_conclude.md"
+    if execution_input.red_team_result_id:
+        return "review_redteam.md", "review_conclude_redteam.md"
+    return "review.md", "review_conclude.md"
+
+
+def _format_skill_directories(
+    paths: list[str],
+    engagement_mode: str = "vulnerability",
+    *,
+    exclude: frozenset[str] = frozenset(),
+) -> str:
     selected = paths
     if engagement_mode == "red_team":
         selected = [
             path for path in paths
             if Path(path).name not in _REDTEAM_HIDDEN_SKILLS
         ]
+    if exclude:
+        # 复测时把审核那份 skill 从目录里摘掉：与其在提示词里写「不要读 vuln-review」，
+        # 不如让它根本拿不到——两份方法论对「结论」的定义是冲突的。
+        selected = [path for path in selected if Path(path).name not in exclude]
     return "\n".join(f"- `{path}`" for path in selected) or "- （当前没有可用 Skill 目录）"
 
 

@@ -559,3 +559,23 @@ def test_mcp_snapshot_contains_only_selected_tool_and_freezes_server_config(clie
     )
     frozen = json.loads(Path(same_snapshot.capability_snapshot_path).read_text(encoding="utf-8"))
     assert frozen["mcp_servers"][0]["config"]["command"] == "echo"
+
+
+def test_vuln_retest_skill_defaults_only_to_reviewer(client) -> None:
+    """复测方法论只挂 review 阶段：它和 vuln-review 同阶段，但内容互斥。"""
+    body = client.get("/api/v1/phase-capabilities").json()
+    item = _item(body, "skill", "vuln-retest")
+
+    assert item["scopes"] == ["review"]
+    service = client.app.state.container.phase_capabilities
+    assert "vuln-retest" in service.effective_keys(phase="review", kind="skill")
+    for phase in ("bootstrap", "reason", "explore", "plan"):
+        assert "vuln-retest" not in service.effective_keys(phase=phase, kind="skill")
+
+
+def test_retest_verdict_tool_is_listed_for_the_review_stage(client) -> None:
+    """工具清单里要有复测提交，否则设置页看不到这条命令。"""
+    body = client.get("/api/v1/phase-capabilities").json()
+    tools = {item["key"]: item for item in body["builtin_tools"]}
+    assert "axiom.review.retest.submit" in tools
+    assert "review" in tools["axiom.review.retest.submit"]["phases"]

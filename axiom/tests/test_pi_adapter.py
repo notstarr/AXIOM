@@ -17,8 +17,10 @@ from axiom.dispatcher.pi import (
     PromptRenderer,
     _ExploreArtifactProgressProbe,
     _explore_soft_reminder_timing,
+    _format_skill_directories,
     _intent_targets_text,
     _reason_target_guidance,
+    _review_prompt_names,
     _scope_guidance,
 )
 from axiom.dispatcher.process import ProcessResult
@@ -1571,3 +1573,94 @@ class _RecordingRpcSupervisor:
             stderr_path=stderr_path,
             last_assistant_text="FINISH",
         )
+
+
+def test_retest_prompt_speaks_three_states_and_never_the_audit_vocabulary() -> None:
+    """复测提示词必须只说三态，且不能把审核那套裁决词汇带给模型。
+
+    两份提示词共用同一个 worker；如果复测提示词里漏进 verified/ignored 或指向
+    vuln-review，模型会把复测当成审核，最后提交一个会改状态机的裁决。
+    """
+    values = {
+        "task_id": "t_001",
+        "review_run_id": "vr000001",
+        "vulnerability_id": "v001",
+        "result_id": "v001",
+        "review_reason": "复测该漏洞现在是否仍然成立（复测前状态：已验证）",
+        "origin": "review.example.com",
+        "goal": "确认修复是否生效",
+        "scope_guidance": _scope_guidance(
+            {"enabled": True, "targets": ["review.example.com"], "exclude": []}
+        ),
+        "context_manifest_path": "/tmp/context/manifest.json",
+        "run_dir": "/tmp/run",
+        "skill_directories": "- /tmp/skills/vuln-retest",
+    }
+    renderer = PromptRenderer()
+    prompt = renderer.render("review_retest.md", values)
+    conclude = renderer.render("review_retest_conclude.md", values)
+
+    # 三态与提交命令
+    assert "axiom review retest submit" in prompt
+    for verdict in ("exists", "fixed", "inconclusive"):
+        assert verdict in prompt
+    # 不许碰状态、不许改描述、不许写报告
+    assert "禁止**调用 `axiom review decision submit`" in prompt
+    assert "axiom review description submit" in prompt
+    assert "vuln_report-" in prompt
+    # 账号基线会变，是复测与审核的核心差别
+    assert "账号基线" in prompt
+    # 收口也走复测词汇
+    assert "axiom review retest submit" in conclude
+    # 审核词汇一个都不许露头
+    for banned in ("verified", "duplicate", "ignored", "needs-human", "vuln-review"):
+        assert banned not in prompt
+        assert banned not in conclude
+
+
+def test_review_prompt_selection_prefers_retest_over_every_other_purpose() -> None:
+    """模板选择只有一个入口，顺序写反会让复测静默变成审核。"""
+    base = dict(
+        task_id="t_001",
+        lease_id="lease",
+        worker_name="worker-a",
+        origin="o",
+        goal="g",
+        scope={},
+        run_dir="/tmp/run",
+    )
+    retest_input = ExecutionInput(
+        **base,
+        review_run_id="vr1",
+        vulnerability_id="v001",
+        intent_kind="review",
+        review_purpose="retest",
+    )
+    assert _review_prompt_names(retest_input) == (
+        "review_retest.md",
+        "review_retest_conclude.md",
+    )
+
+    # 带 red_team_result_id 的复测仍然走复测提示词（用途比主体优先）
+    red_retest = retest_input.model_copy(update={"red_team_result_id": "x001"})
+    assert _review_prompt_names(red_retest)[0] == "review_retest.md"
+
+    redteam = retest_input.model_copy(
+        update={"review_purpose": "review", "red_team_result_id": "x001", "vulnerability_id": None}
+    )
+    assert _review_prompt_names(redteam) == (
+        "review_redteam.md",
+        "review_conclude_redteam.md",
+    )
+
+    plain = retest_input.model_copy(update={"review_purpose": "review"})
+    assert _review_prompt_names(plain) == ("review.md", "review_conclude.md")
+
+
+def test_retest_hides_the_audit_skill_from_the_skill_directory_list() -> None:
+    """与其在提示词里写「别读 vuln-review」，不如让它根本不在目录里。"""
+    paths = ["/skills/vuln-review", "/skills/vuln-retest", "/skills/whatisvul"]
+    listed = _format_skill_directories(paths, "vulnerability", exclude=frozenset({"vuln-review"}))
+    assert "vuln-review" not in listed
+    assert "vuln-retest" in listed
+    assert "whatisvul" in listed

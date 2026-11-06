@@ -1324,3 +1324,94 @@ def test_report_evidence_kind_migration_defaults_to_business_and_round_trips(
         }
     finally:
         engine.dispose()
+
+
+def test_sqlite_retest_verdict_migration_round_trips(tmp_path) -> None:
+    """复测两列与 retest 触发值：加得上、拦得住、能回滚。
+
+    这套约束是三件事的物理保证：触发值白名单里必须有 retest（否则排队直接 500）、
+    复测结论只能是三态（否则「已修复」会被写成任意字符串）、并且回滚时不许把已有的
+    复测记录悄悄丢掉。
+    """
+    source = tmp_path / "retest.sqlite3"
+    raw = sqlite3.connect(source)
+    raw.executescript(
+        """
+        CREATE TABLE vulnerability_review_runs (
+            id VARCHAR PRIMARY KEY,
+            task_id VARCHAR NOT NULL,
+            trigger VARCHAR NOT NULL,
+            status VARCHAR NOT NULL DEFAULT 'pending',
+            CONSTRAINT ck_vulnerability_review_runs_trigger
+                CHECK (trigger IN ('reported','updated','manual','restored','migration'))
+        );
+        INSERT INTO vulnerability_review_runs (id, task_id, trigger)
+        VALUES ('vr_old', 't_old', 'manual');
+        """
+    )
+    raw.commit()
+    engine = create_engine("sqlite://", creator=lambda: raw)
+    migration_path = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "20261106_0057_retest_verdict.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "retest_verdict_sqlite_migration",
+        migration_path,
+    )
+    migration = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(migration)
+
+    with engine.begin() as conn:
+        original = migration.op
+        migration.op = Operations(
+            MigrationContext.configure(conn, opts={"render_as_batch": True})
+        )
+        try:
+            migration.upgrade()
+            columns = {
+                item["name"]
+                for item in inspect(conn).get_columns("vulnerability_review_runs")
+            }
+            assert {"retest_verdict", "retest_reason"} <= columns
+
+            conn.exec_driver_sql(
+                "INSERT INTO vulnerability_review_runs (id, task_id, trigger, retest_verdict) "
+                "VALUES ('vr_retest', 't_old', 'retest', 'fixed')"
+            )
+            # 三态之外的值必须被 CHECK 拦住
+            with pytest.raises(IntegrityError):
+                conn.exec_driver_sql(
+                    "INSERT INTO vulnerability_review_runs "
+                    "(id, task_id, trigger, retest_verdict) "
+                    "VALUES ('vr_bad_verdict', 't_old', 'retest', 'maybe')"
+                )
+            with pytest.raises(IntegrityError):
+                conn.exec_driver_sql(
+                    "INSERT INTO vulnerability_review_runs (id, task_id, trigger) "
+                    "VALUES ('vr_bad_trigger', 't_old', 'bogus')"
+                )
+
+            # 有复测记录时不许回滚，否则结论会被悄悄丢掉
+            with pytest.raises(RuntimeError, match="retest runs exist"):
+                migration.downgrade()
+
+            conn.exec_driver_sql("DELETE FROM vulnerability_review_runs WHERE id = 'vr_retest'")
+            migration.downgrade()
+            columns = {
+                item["name"]
+                for item in inspect(conn).get_columns("vulnerability_review_runs")
+            }
+            assert "retest_verdict" not in columns
+        finally:
+            migration.op = original
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "INSERT INTO vulnerability_review_runs (id, task_id, trigger) "
+                "VALUES ('vr_after', 't_old', 'retest')"
+            )

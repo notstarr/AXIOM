@@ -311,6 +311,16 @@ _CORE_BUILTIN_TOOLS: tuple[BuiltinToolDefinition, ...] = (
         invocation="axiom review evidence attach --step N --kind packet --file shot.png",
         availability=_all_modes("review"),
     ),
+    BuiltinToolDefinition(
+        key="axiom.review.retest.submit",
+        title="提交复测结论",
+        description=(
+            "复测专用：提交仍然成立 / 已修复 / 无法判定。不改变漏洞状态、定档字段与描述。"
+        ),
+        source="axiom_internal",
+        invocation="axiom review retest submit exists|fixed|inconclusive --reason ...",
+        availability=_all_modes("review"),
+    ),
 )
 
 
