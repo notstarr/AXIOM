@@ -174,10 +174,7 @@
                 <p class="mt-0.5 text-[11px] leading-5 text-slate-600" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" x-text="item.content"></p>
               </div>
             </template>
-            <div x-show="!(project.directives || []).length" class="text-[11px] leading-5 text-slate-400">
-              <p>还没有指令。建任务时可以选预设，也可以在这里补发。</p>
-              <button @click="openDirectiveModal()" class="mt-1.5 text-[11px] font-medium text-indigo-600 hover:underline">下发第一条 →</button>
-            </div>
+            <p x-show="!(project.directives || []).length" class="text-[11px] leading-5 text-slate-400">还没有指令。建任务时可以选预设，也可以在这里补发。</p>
           </div>
         </section>
 
