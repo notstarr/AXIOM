@@ -328,6 +328,13 @@
           <div class="sto-field span2"><label>通道二 · Webhook URL</label><input type="text" x-model="dispatchSettings.dingtalk_activity_webhook_url" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." class="sto-input mono"></div>
           <div class="sto-field span2"><label>通道二 · 加签 Secret（可选）</label><input type="password" x-model="dispatchSettings.dingtalk_activity_secret" placeholder="SEC..." class="sto-input mono"></div>
         </div>
+        <div class="sto-foot" style="margin-top:14px;">
+          <div class="msg" x-show="dingtalkActivityTestResult" :class="dingtalkActivityTestResult && dingtalkActivityTestResult.ok ? 'ok' : 'err'">
+            <span x-text="dingtalkActivityTestResult ? dingtalkActivityTestResult.message : ''"></span>
+          </div>
+          <button @click="testDingTalkActivity()" :disabled="dingtalkActivityTesting" class="sto-ghost" x-text="dingtalkActivityTesting ? '发送中...' : '发送测试消息（通道二）'"></button>
+          <span class="sto-muted">会发一条标注「测试消息」的样例，便于确认业务方群能收到。</span>
+        </div>
       </div>
 
       <!-- Stream 模式 -->
@@ -350,7 +357,7 @@
         <div class="msg" x-show="dingtalkTestResult" :class="dingtalkTestResult && dingtalkTestResult.ok ? 'ok' : 'err'">
           <span x-text="dingtalkTestResult ? dingtalkTestResult.message : ''"></span>
         </div>
-        <button @click="testDingTalkSettings()" :disabled="dingtalkTesting" class="sto-ghost" x-text="dingtalkTesting ? '发送中...' : '发送测试通知'"></button>
+        <button @click="testDingTalkSettings()" :disabled="dingtalkTesting" class="sto-ghost" x-text="dingtalkTesting ? '发送中...' : '发送测试通知（通道一）'"></button>
         <button @click="saveServerSettings()" class="sto-btn">保存钉钉配置</button>
       </div>
     </section>

@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -509,13 +510,42 @@ from pydantic import BaseModel
 class DingTalkTestPayload(BaseModel):
     webhook_url: str | None = None
     secret: str | None = None
+    # main = 成果上报/审核通道；activity = 业务方公示通道（另一台机器人）
+    channel: str = "main"
 
 
 @router.post("/test")
 async def dingtalk_test_notification(payload: DingTalkTestPayload | None = None) -> dict[str, Any]:
     """一键测试钉钉 Webhook 连通性（支持直接传入输入框中的 URL 与 Secret 进行即时测试）"""
+    channel = (payload.channel.strip().lower() if payload and payload.channel else "main")
     url = (payload.webhook_url.strip() if payload and payload.webhook_url else None)
     secret = (payload.secret.strip() if payload and payload.secret else None)
+
+    if channel == "activity":
+        if not url:
+            raise HTTPException(status_code=400, detail="请先填写通道二（业务方公示）的 Webhook URL。")
+        notifier = DingTalkNotifier(
+            DingTalkConfig(
+                webhook_url="",
+                enabled=True,
+                activity_webhook_url=url,
+                activity_secret=secret,
+            )
+        )
+        ok = notifier.notify_redteam_activity_notice(
+            task_id="t_test",
+            result_id="x_test",
+            result_type="permission",
+            target_asset="（测试）业务对象",
+            occurred_at=datetime.now(timezone.utc),
+            test=True,
+        )
+        if not ok:
+            raise HTTPException(
+                status_code=400,
+                detail="业务方公示通道发送失败，请检查 Webhook URL 和加签 Secret 是否正确。",
+            )
+        return {"status": "ok", "message": "测试消息已发送至业务方公示群！"}
 
     if url:
         notifier = DingTalkNotifier(DingTalkConfig(webhook_url=url, secret=secret, enabled=True))

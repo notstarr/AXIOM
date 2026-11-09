@@ -360,3 +360,26 @@ def test_public_result_labels_cover_every_domain_value():
         label = public_result_type_label(value)
         assert value not in label
         assert label
+
+
+def test_activity_test_notice_is_marked_as_test():
+    """连通性自检消息必须标成测试，避免业务方误当真实红队活动。"""
+
+    notifier = _two_channel_notifier()
+    sent = _capture_all(
+        notifier,
+        "notify_redteam_activity_notice",
+        task_id="t_test",
+        result_id="x_test",
+        result_type="permission",
+        target_asset="（测试）业务对象",
+        occurred_at="2026-11-09T07:42:00+00:00",
+        test=True,
+    )
+
+    url, text, title = sent[0]
+    assert "access_token=activity" in url
+    assert "【测试消息】" in text
+    assert "【测试消息】" in title
+    assert "连通性测试" in text
+    assert "非真实红队活动" in text

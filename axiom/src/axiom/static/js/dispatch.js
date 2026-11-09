@@ -188,6 +188,26 @@ window.AxiomModules.dispatch = {
       }
     },
 
+    async testDingTalkActivity() {
+      // 通道二（业务方公示）连通性自检：发一条标着「测试消息」的样例过去。
+      try {
+        this.dingtalkActivityTesting = true;
+        this.dingtalkActivityTestResult = null;
+        const res = await this.api('POST', '/integrations/dingtalk/test', {
+          channel: 'activity',
+          webhook_url: this.dispatchSettings.dingtalk_activity_webhook_url || '',
+          secret: this.dispatchSettings.dingtalk_activity_secret || '',
+        });
+        this.dingtalkActivityTestResult = { ok: true, message: res.message || '测试消息已发送' };
+        this.showToast('业务方公示通道测试消息已发送', 'success');
+      } catch (e) {
+        this.dingtalkActivityTestResult = { ok: false, message: e.message };
+        this.showToast(e.message, 'error');
+      } finally {
+        this.dingtalkActivityTesting = false;
+      }
+    },
+
     async loadGuardAuditEvents() {
       // 第一页。库里什么都不删，更早的记录按需向后翻，所以「总记录」是
       // 全库真值而不是当前页码的累加。

@@ -515,15 +515,19 @@ class DingTalkNotifier:
         target_asset: str = "",
         occurred_at: Any = None,
         status: str = "",
+        test: bool = False,
     ) -> bool:
         """业务方公示通道（独立机器人）：只说什么时间·对什么业务·做了什么。
 
         与上报主通道并存：主通道给红队内部看完整卡片，本通道给业务方对号，
         不含漏洞描述、证据、积分与任何攻击细节。
+        ``test=True`` 时标题与首行带「测试消息」标记，供连通性自检使用。
         """
         notice = public_notice_line(
             occurred_at=occurred_at, target_asset=target_asset, result_type=result_type
         )
+        if test:
+            notice = f"【测试消息】{notice}"
         lines = [
             f"### {notice}",
             f"**时间**: {format_notice_time(occurred_at) or '未记录'}",
@@ -533,10 +537,16 @@ class DingTalkNotifier:
         ]
         if status:
             lines.append(f"**状态**: {result_status_label(status)}")
-        lines.append("\n*AXIOM 自动化安全测试平台 · 红队活动公示*")
-        return self.send_activity_markdown(
-            f"【红队活动】{target_asset or task_id}", "\n\n".join(lines)
+        if test:
+            lines.append("*本条为 AXIOM 通道二（业务方公示机器人）的连通性测试消息，非真实红队活动，请忽略。*")
+        else:
+            lines.append("\n*AXIOM 自动化安全测试平台 · 红队活动公示*")
+        title = (
+            "【测试消息】红队测试同步 · 连通性验证"
+            if test
+            else f"【红队活动】{target_asset or task_id}"
         )
+        return self.send_activity_markdown(title, "\n\n".join(lines))
 
 
 

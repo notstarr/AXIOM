@@ -312,6 +312,8 @@ window.AxiomModules.state = {
     judgeTesting: false,
     dingtalkTestResult: null,
     dingtalkTesting: false,
+    dingtalkActivityTestResult: null,
+    dingtalkActivityTesting: false,
     // all_events is the task-scoped set the counters read; events is the same
     // list filtered by the selected verdict for display.
     // limit 是每页取回条数，page_window 是每次放进 DOM 的行数：300 行整表
