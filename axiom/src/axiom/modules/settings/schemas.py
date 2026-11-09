@@ -192,8 +192,10 @@ class RuntimeConfig(BaseModel):
     dingtalk_enabled: bool = False
     dingtalk_webhook_url: str = ""
     dingtalk_secret: str = ""
-    # 红队成果只发业务方简版卡（时间·业务·动作），不带漏洞描述/证据/积分等内部细节。
-    dingtalk_redteam_public_only: bool = False
+    # 业务方公示通道：另一个机器人（独立 webhook + 独立加签密钥）。
+    # 与上报主通道并存，主通道卡片文案不变；此处只推「时间·业务·动作」简版播报。
+    dingtalk_activity_webhook_url: str = ""
+    dingtalk_activity_secret: str = ""
     # 钉钉 Stream 模式机器人（企业内部应用），用于接收群消息并响应 /help 等指令
     dingtalk_app_key: str = ""
     dingtalk_app_secret: str = ""

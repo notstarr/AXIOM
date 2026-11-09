@@ -534,6 +534,8 @@ window.AxiomModules.dispatch = {
         dingtalk_enabled: !!data.dingtalk_enabled,
         dingtalk_webhook_url: data.dingtalk_webhook_url || '',
         dingtalk_secret: data.dingtalk_secret || '',
+        dingtalk_activity_webhook_url: data.dingtalk_activity_webhook_url || '',
+        dingtalk_activity_secret: data.dingtalk_activity_secret || '',
         dingtalk_app_key: data.dingtalk_app_key || '',
         dingtalk_app_secret: data.dingtalk_app_secret || '',
       };
@@ -1002,6 +1004,8 @@ window.AxiomModules.dispatch = {
         dingtalk_enabled: Boolean(this.dispatchSettings.dingtalk_enabled),
         dingtalk_webhook_url: String(this.dispatchSettings.dingtalk_webhook_url || ''),
         dingtalk_secret: String(this.dispatchSettings.dingtalk_secret || ''),
+        dingtalk_activity_webhook_url: String(this.dispatchSettings.dingtalk_activity_webhook_url || ''),
+        dingtalk_activity_secret: String(this.dispatchSettings.dingtalk_activity_secret || ''),
         dingtalk_app_key: String(this.dispatchSettings.dingtalk_app_key || ''),
         dingtalk_app_secret: String(this.dispatchSettings.dingtalk_app_secret || ''),
       };

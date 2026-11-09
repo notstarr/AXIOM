@@ -158,18 +158,44 @@ def test_redteam_labels_cover_every_domain_value():
         assert value not in result_status_label(value)
 
 
-# ── 业务方公示表达（时间·业务·动作）────────────────────────────────────
+# ── 业务方公示通道（独立机器人，与上报主通道并存）──────────────────────
 
 
-def test_redteam_card_carries_public_notice_line():
-    """默认卡片正文前带一行业务方公示：什么时间·对什么业务·做了什么。"""
+def _capture_all(notifier, method, **kwargs):
+    """跑一次通知并返回 [(投递 URL, markdown 文本, markdown 标题), ...]。"""
 
+    with patch("httpx.Client.post") as mock_post:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"errcode": 0, "errmsg": "ok"}
+        mock_resp.raise_for_status.return_value = None
+        mock_post.return_value = mock_resp
+        ok = getattr(notifier, method)(**kwargs)
+        assert ok is True
+        sent = []
+        for call in mock_post.call_args_list:
+            url = call.args[0] if call.args else call.kwargs.get("url", "")
+            payload = call.kwargs["json"]
+            sent.append((url, payload["markdown"]["text"], payload["markdown"]["title"]))
+        return sent
+
+
+def _two_channel_notifier():
     from axiom.shared.dingtalk import DingTalkConfig, DingTalkNotifier
 
-    notifier = DingTalkNotifier(
-        DingTalkConfig(webhook_url="https://oapi.dingtalk.com/robot/send?access_token=test", enabled=True)
+    return DingTalkNotifier(
+        DingTalkConfig(
+            webhook_url="https://oapi.dingtalk.com/robot/send?access_token=main",
+            enabled=True,
+            activity_webhook_url="https://oapi.dingtalk.com/robot/send?access_token=activity",
+        )
     )
-    text, _title = _capture(
+
+
+def test_redteam_report_card_keeps_original_wording():
+    """上报主通道文案不变：不加公示行，内部细节照旧。"""
+
+    notifier = _two_channel_notifier()
+    sent = _capture_all(
         notifier,
         "notify_redteam_result_reported",
         task_id="t_231",
@@ -180,87 +206,22 @@ def test_redteam_card_carries_public_notice_line():
         target_asset="erp-web.kkgroup.work",
         points_declared=10,
         evidence_names=["packet-1"],
-        occurred_at="2026-11-09T07:42:00+00:00",
     )
 
-    assert "[红队]" in text
-    assert "11-09 15:42" in text  # UTC 07:42 → 业务所在时区 15:42
-    assert "erp-web.kkgroup.work" in text
-    assert "越权访问" in text
-    # 红队内部细节照旧保留给内部同学
+    assert len(sent) == 1
+    url, text, _title = sent[0]
+    assert "access_token=main" in url
+    assert "[红队]" not in text
+    assert "AXIOM 红队成果上报" in text
     assert "低权限账号可读他人订单" in text
     assert "证据" in text
 
 
-def test_redteam_public_only_card_omits_internal_details():
-    """简版卡只留时间·业务·动作，不带漏洞描述、证据与积分。"""
+def test_redteam_review_card_keeps_original_wording():
+    """审核主通道同样不动。"""
 
-    from axiom.shared.dingtalk import DingTalkConfig, DingTalkNotifier
-
-    notifier = DingTalkNotifier(
-        DingTalkConfig(webhook_url="https://oapi.dingtalk.com/robot/send?access_token=test", enabled=True)
-    )
-    text, _title = _capture(
-        notifier,
-        "notify_redteam_result_reported",
-        task_id="t_231",
-        result_id="x001",
-        title="订单越权读取",
-        result_type="permission",
-        description="低权限账号可读他人订单",
-        target_asset="erp-web.kkgroup.work",
-        points_declared=10,
-        evidence_names=["packet-1"],
-        occurred_at="2026-11-09T07:42:00+00:00",
-        public_only=True,
-    )
-
-    assert "11-09 15:42" in text
-    assert "erp-web.kkgroup.work" in text
-    assert "越权访问" in text
-    assert "低权限账号可读他人订单" not in text
-    assert "证据" not in text
-    assert "自评分" not in text
-    assert "packet-1" not in text
-
-
-def test_redteam_public_only_follows_runtime_config():
-    """运行配置打开简版时，默认就走业务方口径。"""
-
-    from axiom.shared.dingtalk import DingTalkConfig, DingTalkNotifier
-
-    notifier = DingTalkNotifier(
-        DingTalkConfig(
-            webhook_url="https://oapi.dingtalk.com/robot/send?access_token=test",
-            enabled=True,
-            redteam_public_only=True,
-        )
-    )
-    text, _title = _capture(
-        notifier,
-        "notify_redteam_result_reported",
-        task_id="t_231",
-        result_id="x001",
-        title="订单越权读取",
-        result_type="permission",
-        description="低权限账号可读他人订单",
-        target_asset="erp-web.kkgroup.work",
-        occurred_at="2026-11-09T07:42:00+00:00",
-    )
-
-    assert "低权限账号可读他人订单" not in text
-    assert "11-09 15:42" in text
-
-
-def test_redteam_review_card_also_carries_public_notice():
-    """审核卡同样带公示行，业务方能看到成果状态变化对应哪个业务。"""
-
-    from axiom.shared.dingtalk import DingTalkConfig, DingTalkNotifier
-
-    notifier = DingTalkNotifier(
-        DingTalkConfig(webhook_url="https://oapi.dingtalk.com/robot/send?access_token=test", enabled=True)
-    )
-    text, _title = _capture(
+    notifier = _two_channel_notifier()
+    sent = _capture_all(
         notifier,
         "notify_redteam_result_reviewed",
         task_id="t_231",
@@ -269,12 +230,112 @@ def test_redteam_review_card_also_carries_public_notice():
         result_type="permission",
         status="verified",
         target_asset="erp-web.kkgroup.work",
+    )
+
+    assert len(sent) == 1
+    url, text, _title = sent[0]
+    assert "access_token=main" in url
+    assert "[红队]" not in text
+    assert "AXIOM 红队成果审核结果" in text
+
+
+def test_activity_notice_goes_to_its_own_robot():
+    """业务方公示通道发到另一个机器人，只说时间·业务·动作。"""
+
+    notifier = _two_channel_notifier()
+    sent = _capture_all(
+        notifier,
+        "notify_redteam_activity_notice",
+        task_id="t_231",
+        result_id="x001",
+        result_type="permission",
+        target_asset="erp-web.kkgroup.work",
         occurred_at="2026-11-09T07:42:00+00:00",
     )
 
+    assert len(sent) == 1
+    url, text, title = sent[0]
+    assert "access_token=activity" in url
+    assert "access_token=main" not in url
     assert "[红队]" in text
+    assert "11-09 15:42" in text  # UTC 07:42 → 业务所在时区 15:42
     assert "erp-web.kkgroup.work" in text
     assert "越权访问" in text
+    assert "【红队活动】" in title
+    # 只留对号三要素，不带内部细节
+    assert "证据" not in text
+    assert "自评分" not in text
+    assert "核定分" not in text
+
+
+def test_activity_channel_is_silent_when_not_configured():
+    """没配公示机器人时不发消息，也不抛异常。"""
+
+    from axiom.shared.dingtalk import DingTalkConfig, DingTalkNotifier
+
+    notifier = DingTalkNotifier(
+        DingTalkConfig(
+            webhook_url="https://oapi.dingtalk.com/robot/send?access_token=main",
+            enabled=True,
+        )
+    )
+    with patch("httpx.Client.post") as mock_post:
+        ok = notifier.notify_redteam_activity_notice(
+            task_id="t_231",
+            result_id="x001",
+            result_type="permission",
+            target_asset="erp-web.kkgroup.work",
+            occurred_at="2026-11-09T07:42:00+00:00",
+        )
+    assert ok is False
+    assert not mock_post.called
+
+
+def test_two_channels_do_not_interfere():
+    """主通道与公示通道各自投递，互不影响。"""
+
+    from axiom.modules.redteam import notifications
+
+    calls = []
+
+    class FakeNotifier:
+        is_enabled = True
+
+        def notify_redteam_result_reported(self, **kwargs):
+            calls.append(("main", kwargs))
+
+        def notify_redteam_result_reviewed(self, **kwargs):
+            calls.append(("main", kwargs))
+
+        def notify_redteam_activity_notice(self, **kwargs):
+            calls.append(("activity", kwargs))
+
+    result = {
+        "task_id": "t_231",
+        "id": "x001",
+        "title": "订单越权读取",
+        "result_type": "permission",
+        "description": "低权限账号可读他人订单",
+        "principal": "tester",
+        "target_asset": "erp-web.kkgroup.work",
+        "created_at": "2026-11-09T07:42:00+00:00",
+        "points_declared": 10,
+    }
+
+    original = notifications._notifier
+    notifications._notifier = lambda: FakeNotifier()
+    try:
+        notifications.dispatch_result_reported(result, chain_label="ch001")
+        notifications.dispatch_activity_notice(result)
+    finally:
+        notifications._notifier = original
+
+    assert [channel for channel, _ in calls] == ["main", "activity"]
+    main_kwargs = calls[0][1]
+    activity_kwargs = calls[1][1]
+    assert "occurred_at" not in main_kwargs
+    assert activity_kwargs["occurred_at"] == "2026-11-09T07:42:00+00:00"
+    assert activity_kwargs["target_asset"] == "erp-web.kkgroup.work"
 
 
 def test_notice_time_uses_business_timezone_and_never_invents():

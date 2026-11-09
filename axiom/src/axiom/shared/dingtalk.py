@@ -133,8 +133,10 @@ class DingTalkConfig:
     enabled: bool = True
     app_key: str | None = None
     app_secret: str | None = None
-    # 红队成果只发业务方简版卡（时间·业务·动作），不带红队内部详情。
-    redteam_public_only: bool = False
+    # 业务方公示通道：独立机器人（独立 webhook），只推红队活动的简版播报。
+    # 与上报主通道并存，互不影响；未配置时该通道自然静默。
+    activity_webhook_url: str = ""
+    activity_secret: str | None = None
 
     @classmethod
     def from_runtime(cls) -> DingTalkConfig | None:
@@ -153,7 +155,8 @@ class DingTalkConfig:
                     enabled=config.dingtalk_enabled,
                     app_key=config.dingtalk_app_key.strip() or None,
                     app_secret=config.dingtalk_app_secret.strip() or None,
-                    redteam_public_only=bool(config.dingtalk_redteam_public_only),
+                    activity_webhook_url=config.dingtalk_activity_webhook_url.strip(),
+                    activity_secret=config.dingtalk_activity_secret.strip() or None,
                 )
         except Exception:
             pass
@@ -163,10 +166,15 @@ class DingTalkConfig:
             return None
         secret = os.getenv("AXIOM_DINGTALK_SECRET") or os.getenv("DINGTALK_SECRET")
         enabled = os.getenv("AXIOM_DINGTALK_ENABLED", "true").lower() in ("true", "1", "yes")
-        public_only = os.getenv("AXIOM_DINGTALK_REDTEAM_PUBLIC_ONLY", "false").lower() in (
-            "true",
-            "1",
-            "yes",
+        activity_url = (
+            os.getenv("AXIOM_DINGTALK_ACTIVITY_WEBHOOK_URL")
+            or os.getenv("DINGTALK_ACTIVITY_WEBHOOK_URL")
+            or ""
+        )
+        activity_secret = (
+            os.getenv("AXIOM_DINGTALK_ACTIVITY_SECRET")
+            or os.getenv("DINGTALK_ACTIVITY_SECRET")
+            or ""
         )
         return cls(
             webhook_url=url.strip(),
@@ -174,7 +182,8 @@ class DingTalkConfig:
             enabled=enabled,
             app_key=os.getenv("AXIOM_DINGTALK_APP_KEY") or None,
             app_secret=os.getenv("AXIOM_DINGTALK_APP_SECRET") or None,
-            redteam_public_only=public_only,
+            activity_webhook_url=activity_url.strip(),
+            activity_secret=activity_secret.strip() or None,
         )
 
     @property
@@ -215,8 +224,21 @@ class DingTalkNotifier:
         if not cfg or not cfg.enabled or not cfg.webhook_url:
             logger.debug("DingTalk notification skipped (not configured or disabled)")
             return False
+        return self._post_markdown(cfg.webhook_url, cfg.secret, title, text)
 
-        target_url = self._get_signed_url(cfg.webhook_url, cfg.secret)
+    def send_activity_markdown(self, title: str, text: str) -> bool:
+        """业务方公示通道：独立机器人，与上报主通道各走各的 webhook。"""
+
+        cfg = self.config
+        if not cfg or not cfg.enabled or not cfg.activity_webhook_url:
+            logger.debug("DingTalk activity notification skipped (not configured)")
+            return False
+        return self._post_markdown(cfg.activity_webhook_url, cfg.activity_secret, title, text)
+
+    def _post_markdown(
+        self, webhook_url: str, secret: str | None, title: str, text: str
+    ) -> bool:
+        target_url = self._get_signed_url(webhook_url, secret)
         payload = {
             "msgtype": "markdown",
             "markdown": {
@@ -392,14 +414,6 @@ class DingTalkNotifier:
         right = "、".join(f"`{item}`" for item in gained_list) or "—"
         return f"{left} → {right}"
 
-    def _resolve_public_only(self, override: bool | None) -> bool:
-        """简版卡开关：调用方显式指定优先，否则用运行配置里的默认值。"""
-
-        if override is not None:
-            return bool(override)
-        cfg = self.config
-        return bool(cfg.redteam_public_only) if cfg else False
-
     def notify_redteam_result_reported(
         self,
         *,
@@ -417,33 +431,10 @@ class DingTalkNotifier:
         points_declared: int = 0,
         evidence_names: list[str] | None = None,
         progress: tuple[int, int] | None = None,
-        occurred_at: Any = None,
-        public_only: bool | None = None,
     ) -> bool:
-        """【红队第 1 次推送】：成果上报、进入审核队列
-
-        表达分两层：正文前永远带一行业务方公示（什么时间·对什么业务·做了什么），
-        便于业务侧把告警和我们的动作对上号；``public_only=True`` 时只发简版卡，
-        不带漏洞描述、证据与积分等内部细节。
-        """
-        notice = public_notice_line(
-            occurred_at=occurred_at, target_asset=target_asset, result_type=result_type
-        )
-        if self._resolve_public_only(public_only):
-            lines = [
-                "### [红队] 红队测试活动公示",
-                f"**时间**: {format_notice_time(occurred_at) or '未记录'}",
-                f"**业务**: {target_asset or '未标注'}",
-                f"**动作**: {public_result_type_label(result_type)}",
-                f"**任务**: `{task_id}` · 成果 `{result_id}`",
-                "\n*AXIOM 自动化安全测试平台 · 红队活动公示*",
-            ]
-            return self.send_markdown(
-                f"【红队活动】{target_asset or task_id}", "\n\n".join(lines)
-            )
+        """【红队第 1 次推送】：成果上报、进入审核队列（上报主通道，文案不变）"""
         lines = [
             "### 🎯 AXIOM 红队成果上报（待审核）",
-            notice,
             f"**任务编号**: `{task_id}`",
             f"**成果编号**: `{result_id}`",
             f"**成果类型**: {result_type_label(result_type)}",
@@ -489,32 +480,10 @@ class DingTalkNotifier:
         review_reason: str = "",
         reviewed_by: str = "",
         progress: tuple[int, int] | None = None,
-        occurred_at: Any = None,
-        public_only: bool | None = None,
     ) -> bool:
-        """【红队第 2 次推送】：成果审核裁决
-
-        与上报卡保持同一套表达：正文前带业务方公示行，``public_only`` 时只发简版卡。
-        """
-        notice = public_notice_line(
-            occurred_at=occurred_at, target_asset=target_asset, result_type=result_type
-        )
-        if self._resolve_public_only(public_only):
-            lines = [
-                "### [红队] 红队测试活动公示",
-                f"**时间**: {format_notice_time(occurred_at) or '未记录'}",
-                f"**业务**: {target_asset or '未标注'}",
-                f"**动作**: {public_result_type_label(result_type)}",
-                f"**状态**: {result_status_label(status)}",
-                f"**任务**: `{task_id}` · 成果 `{result_id}`",
-                "\n*AXIOM 自动化安全测试平台 · 红队活动公示*",
-            ]
-            return self.send_markdown(
-                f"【红队活动】{target_asset or task_id}", "\n\n".join(lines)
-            )
+        """【红队第 2 次推送】：成果审核裁决（上报主通道，文案不变）"""
         lines = [
             "### ⚖️ AXIOM 红队成果审核结果",
-            notice,
             f"**任务编号**: `{task_id}`",
             f"**成果编号**: `{result_id}`",
             f"**成果标题**: {title}",
@@ -535,6 +504,38 @@ class DingTalkNotifier:
         lines.append("\n*AXIOM 自动化安全测试平台 · 红队审核通知*")
         return self.send_markdown(
             f"【红队审核结果】{title} -> {status}", "\n\n".join(lines)
+        )
+
+    def notify_redteam_activity_notice(
+        self,
+        *,
+        task_id: str,
+        result_id: str,
+        result_type: str,
+        target_asset: str = "",
+        occurred_at: Any = None,
+        status: str = "",
+    ) -> bool:
+        """业务方公示通道（独立机器人）：只说什么时间·对什么业务·做了什么。
+
+        与上报主通道并存：主通道给红队内部看完整卡片，本通道给业务方对号，
+        不含漏洞描述、证据、积分与任何攻击细节。
+        """
+        notice = public_notice_line(
+            occurred_at=occurred_at, target_asset=target_asset, result_type=result_type
+        )
+        lines = [
+            f"### {notice}",
+            f"**时间**: {format_notice_time(occurred_at) or '未记录'}",
+            f"**业务**: {target_asset or '未标注'}",
+            f"**动作**: {public_result_type_label(result_type)}",
+            f"**任务**: `{task_id}` · 成果 `{result_id}`",
+        ]
+        if status:
+            lines.append(f"**状态**: {result_status_label(status)}")
+        lines.append("\n*AXIOM 自动化安全测试平台 · 红队活动公示*")
+        return self.send_activity_markdown(
+            f"【红队活动】{target_asset or task_id}", "\n\n".join(lines)
         )
 
 

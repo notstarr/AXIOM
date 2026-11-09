@@ -378,6 +378,8 @@ window.AxiomModules.state = {
       dingtalk_enabled: false,
       dingtalk_webhook_url: '',
       dingtalk_secret: '',
+      dingtalk_activity_webhook_url: '',
+      dingtalk_activity_secret: '',
       dingtalk_app_key: '',
       dingtalk_app_secret: '',
       workers: [],

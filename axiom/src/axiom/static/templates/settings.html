@@ -306,8 +306,27 @@
           </div>
         </div>
         <div class="sto-grid2" style="margin-top:16px;">
-          <div class="sto-field span2"><label>Webhook URL</label><input type="text" x-model="dispatchSettings.dingtalk_webhook_url" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." class="sto-input mono"></div>
-          <div class="sto-field span2"><label>加签 Secret（可选）</label><input type="password" x-model="dispatchSettings.dingtalk_secret" placeholder="SEC..." class="sto-input mono"></div>
+          <div class="sto-field span2">
+            <label>通道一 · Webhook URL（成果上报 / 审核）</label>
+            <input type="text" x-model="dispatchSettings.dingtalk_webhook_url" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." class="sto-input mono">
+            <p class="sto-muted" style="margin-top:6px;">红队内部通道：漏洞上报、评审结论、红队成果卡与审核卡都推到这里。</p>
+          </div>
+          <div class="sto-field span2"><label>通道一 · 加签 Secret（可选）</label><input type="password" x-model="dispatchSettings.dingtalk_secret" placeholder="SEC..." class="sto-input mono"></div>
+        </div>
+      </div>
+
+      <!-- 业务方公示通道：另一台机器人 -->
+      <div class="sto-panel inset" style="padding:16px 18px;">
+        <div class="sto-cardhead">
+          <div class="flex items-center" style="gap:10px;">
+            <span class="sto-badge neutral">通道二</span>
+            <h3>红队测试同步（业务方公示）</h3>
+          </div>
+          <p>另一台钉钉机器人，只推「什么时间 · 对什么业务 · 做了什么」的简版播报，不含漏洞描述、证据与积分。留空则该通道静默，不影响通道一。</p>
+        </div>
+        <div class="sto-grid2">
+          <div class="sto-field span2"><label>通道二 · Webhook URL</label><input type="text" x-model="dispatchSettings.dingtalk_activity_webhook_url" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." class="sto-input mono"></div>
+          <div class="sto-field span2"><label>通道二 · 加签 Secret（可选）</label><input type="password" x-model="dispatchSettings.dingtalk_activity_secret" placeholder="SEC..." class="sto-input mono"></div>
         </div>
       </div>
 

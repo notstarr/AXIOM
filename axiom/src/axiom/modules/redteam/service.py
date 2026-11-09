@@ -10,6 +10,7 @@ from axiom.modules.graph.tables import intents
 from axiom.modules.graph.tables import facts
 from axiom.modules.redteam.repository import RedTeamRepository
 from axiom.modules.redteam.notifications import (
+    dispatch_activity_notice,
     dispatch_result_reported,
     dispatch_result_reviewed,
 )
@@ -530,9 +531,10 @@ class RedTeamService:
     ) -> RedTeamResult:
         # 通知载荷在事务内取数、事务外投递，避免钉钉超时拖住业务事务。
         notification: dict | None = None
+        activity: dict | None = None
 
         def work(conn):
-            nonlocal notification
+            nonlocal notification, activity
             task = self._task(conn, task_id)
             intent = conn.execute(
                 select(intents).where(intents.c.task_id == task_id, intents.c.id == intent_id)
@@ -631,16 +633,21 @@ class RedTeamService:
                 "chain_label": f"{chain.id} {chain.title}".strip(),
                 "evidence_names": self.repository.evidence_names(conn, task_id, result.evidence_refs),
                 "progress": self.repository.points_progress(conn, task_id),
-                # 业务方对号要的是「对什么业务」：成果没写对象时回落到任务起点，
-                # 否则公示行里业务一栏会是空的。
-                "target_asset": str(result.target_asset or task.get("origin_host") or ""),
+            }
+            # 业务方公示通道（另一台机器人）：只带时间·业务·动作。
+            # 成果没写对象时回落到任务起点，否则业务一栏会空着。
+            activity = {
+                "result": result,
                 "occurred_at": result.created_at,
+                "target_asset": str(result.target_asset or task.get("origin_host") or ""),
             }
             return result.model_copy(update={"status": "reviewing"})
 
         outcome = run_transaction(self.engine, work)
         if notification:
             dispatch_result_reported(**notification)
+        if activity:
+            dispatch_activity_notice(**activity)
         return outcome
 
     def review_result(self, task_id: str, result_id: str, command: RedTeamResultReview) -> RedTeamResult:
