@@ -46,8 +46,16 @@ def dispatch_result_reported(
     chain_label: str = "",
     evidence_names: Iterable[str] | None = None,
     progress: tuple[int, int] | None = None,
+    occurred_at: Any = None,
+    public_only: bool | None = None,
+    target_asset: str | None = None,
 ) -> None:
-    """成果上报进审核队列时推送（第 1 次推送）。"""
+    """成果上报进审核队列时推送（第 1 次推送）。
+
+    ``occurred_at`` 是成果发生时间，用于业务方按告警时刻对号；缺省时卡片不编造时间。
+    ``public_only`` 为真时只发业务方简版卡（时间·业务·动作），不带内部细节。
+    ``target_asset`` 可指定对外公示的业务对象；留空则用成果自身的对象字段。
+    """
 
     try:
         notifier = _notifier()
@@ -61,13 +69,17 @@ def dispatch_result_reported(
             description=str(_value(result, "description") or ""),
             principal=str(_value(result, "principal") or ""),
             tenant=str(_value(result, "tenant") or ""),
-            target_asset=str(_value(result, "target_asset") or ""),
+            target_asset=str(
+                target_asset if target_asset is not None else (_value(result, "target_asset") or "")
+            ),
             chain_label=chain_label,
             capabilities_before=_as_list(_value(result, "capabilities_before")),
             capabilities_gained=_as_list(_value(result, "capabilities_gained")),
             points_declared=int(_value(result, "points_declared") or 0),
             evidence_names=_as_list(evidence_names),
             progress=progress,
+            occurred_at=occurred_at if occurred_at is not None else _value(result, "created_at"),
+            public_only=public_only,
         )
     except Exception:
         logger.exception(
@@ -83,6 +95,8 @@ def dispatch_result_reviewed(
     review_reason: str = "",
     reviewed_by: str = "",
     progress: tuple[int, int] | None = None,
+    occurred_at: Any = None,
+    public_only: bool | None = None,
 ) -> None:
     """成果审核裁决后推送（第 2 次推送）。"""
 
@@ -102,6 +116,8 @@ def dispatch_result_reviewed(
             review_reason=review_reason,
             reviewed_by=reviewed_by,
             progress=progress,
+            occurred_at=occurred_at if occurred_at is not None else _value(result, "created_at"),
+            public_only=public_only,
         )
     except Exception:
         logger.exception(

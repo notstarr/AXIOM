@@ -631,6 +631,10 @@ class RedTeamService:
                 "chain_label": f"{chain.id} {chain.title}".strip(),
                 "evidence_names": self.repository.evidence_names(conn, task_id, result.evidence_refs),
                 "progress": self.repository.points_progress(conn, task_id),
+                # 业务方对号要的是「对什么业务」：成果没写对象时回落到任务起点，
+                # 否则公示行里业务一栏会是空的。
+                "target_asset": str(result.target_asset or task.get("origin_host") or ""),
+                "occurred_at": result.created_at,
             }
             return result.model_copy(update={"status": "reviewing"})
 

@@ -11,6 +11,7 @@ import threading
 import time
 import urllib.parse
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any
 
 import httpx
@@ -23,6 +24,15 @@ RESULT_TYPE_LABELS: dict[str, str] = {
     "data": "🗄️ 数据获取",
     "credential": "🔑 凭证获取",
     "pivot": "↔️ 横向控制",
+}
+
+# 业务方视角的成果动作：业务侧看到的是「对哪个业务做了什么」，
+# 不是红队护网术语。这份表只用于公示行与简版卡，不进红队内部详情。
+PUBLIC_RESULT_TYPE_LABELS: dict[str, str] = {
+    "permission": "越权访问",
+    "data": "数据访问",
+    "credential": "凭据获取",
+    "pivot": "横向移动",
 }
 
 RESULT_STATUS_LABELS: dict[str, str] = {
@@ -40,9 +50,70 @@ def result_type_label(value: str | None) -> str:
     return RESULT_TYPE_LABELS.get(key, f"• {value}" if value else "• 未知")
 
 
+def public_result_type_label(value: str | None) -> str:
+    """业务方口径的成果动作；未知类型回落到原始值，不编造语义。"""
+
+    key = str(value or "").strip().lower()
+    return PUBLIC_RESULT_TYPE_LABELS.get(key, str(value or "").strip() or "测试行为")
+
+
 def result_status_label(value: str | None) -> str:
     key = str(value or "").strip().lower()
     return RESULT_STATUS_LABELS.get(key, str(value) if value else "未知")
+
+
+def _notice_timezone() -> tzinfo:
+    """公示时间统一按业务所在地时区展示；缺 tzdata 时退回固定 UTC+8。"""
+
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo("Asia/Shanghai")
+    except Exception:  # pragma: no cover - 取决于容器是否带 tzdata
+        return timezone(timedelta(hours=8))
+
+
+def format_notice_time(value: Any) -> str:
+    """把成果时间转成业务方能读的 ``MM-DD HH:mm``；认不出来就原样返回，不编造时间。"""
+
+    if value is None:
+        return ""
+    moment: datetime | None = None
+    if isinstance(value, datetime):
+        moment = value
+    else:
+        text = str(value).strip()
+        if not text:
+            return ""
+        try:
+            moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return text
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(_notice_timezone()).strftime("%m-%d %H:%M")
+
+
+def public_notice_line(
+    *,
+    occurred_at: Any,
+    target_asset: str,
+    result_type: str,
+) -> str:
+    """公示行：什么时间、对什么业务、做了什么。
+
+    只保留业务方对号需要的三要素，不带漏洞细节、证据与攻击载荷。
+    """
+
+    parts = ["[红队]"]
+    when = format_notice_time(occurred_at)
+    if when:
+        parts.append(when)
+    asset = str(target_asset or "").strip()
+    if asset:
+        parts.append(asset)
+    parts.append(public_result_type_label(result_type))
+    return " · ".join(parts)
 
 # dingtalk-stream SDK 为可选依赖（Stream 双向交互才需要）；未安装时
 # Webhook 单向推送不受影响，DingTalkStreamBot 启动会报错并由调用方捕获。
@@ -62,6 +133,8 @@ class DingTalkConfig:
     enabled: bool = True
     app_key: str | None = None
     app_secret: str | None = None
+    # 红队成果只发业务方简版卡（时间·业务·动作），不带红队内部详情。
+    redteam_public_only: bool = False
 
     @classmethod
     def from_runtime(cls) -> DingTalkConfig | None:
@@ -80,6 +153,7 @@ class DingTalkConfig:
                     enabled=config.dingtalk_enabled,
                     app_key=config.dingtalk_app_key.strip() or None,
                     app_secret=config.dingtalk_app_secret.strip() or None,
+                    redteam_public_only=bool(config.dingtalk_redteam_public_only),
                 )
         except Exception:
             pass
@@ -89,12 +163,18 @@ class DingTalkConfig:
             return None
         secret = os.getenv("AXIOM_DINGTALK_SECRET") or os.getenv("DINGTALK_SECRET")
         enabled = os.getenv("AXIOM_DINGTALK_ENABLED", "true").lower() in ("true", "1", "yes")
+        public_only = os.getenv("AXIOM_DINGTALK_REDTEAM_PUBLIC_ONLY", "false").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
         return cls(
             webhook_url=url.strip(),
             secret=secret.strip() if secret else None,
             enabled=enabled,
             app_key=os.getenv("AXIOM_DINGTALK_APP_KEY") or None,
             app_secret=os.getenv("AXIOM_DINGTALK_APP_SECRET") or None,
+            redteam_public_only=public_only,
         )
 
     @property
@@ -312,6 +392,14 @@ class DingTalkNotifier:
         right = "、".join(f"`{item}`" for item in gained_list) or "—"
         return f"{left} → {right}"
 
+    def _resolve_public_only(self, override: bool | None) -> bool:
+        """简版卡开关：调用方显式指定优先，否则用运行配置里的默认值。"""
+
+        if override is not None:
+            return bool(override)
+        cfg = self.config
+        return bool(cfg.redteam_public_only) if cfg else False
+
     def notify_redteam_result_reported(
         self,
         *,
@@ -329,10 +417,33 @@ class DingTalkNotifier:
         points_declared: int = 0,
         evidence_names: list[str] | None = None,
         progress: tuple[int, int] | None = None,
+        occurred_at: Any = None,
+        public_only: bool | None = None,
     ) -> bool:
-        """【红队第 1 次推送】：成果上报、进入审核队列"""
+        """【红队第 1 次推送】：成果上报、进入审核队列
+
+        表达分两层：正文前永远带一行业务方公示（什么时间·对什么业务·做了什么），
+        便于业务侧把告警和我们的动作对上号；``public_only=True`` 时只发简版卡，
+        不带漏洞描述、证据与积分等内部细节。
+        """
+        notice = public_notice_line(
+            occurred_at=occurred_at, target_asset=target_asset, result_type=result_type
+        )
+        if self._resolve_public_only(public_only):
+            lines = [
+                "### [红队] 红队测试活动公示",
+                f"**时间**: {format_notice_time(occurred_at) or '未记录'}",
+                f"**业务**: {target_asset or '未标注'}",
+                f"**动作**: {public_result_type_label(result_type)}",
+                f"**任务**: `{task_id}` · 成果 `{result_id}`",
+                "\n*AXIOM 自动化安全测试平台 · 红队活动公示*",
+            ]
+            return self.send_markdown(
+                f"【红队活动】{target_asset or task_id}", "\n\n".join(lines)
+            )
         lines = [
             "### 🎯 AXIOM 红队成果上报（待审核）",
+            notice,
             f"**任务编号**: `{task_id}`",
             f"**成果编号**: `{result_id}`",
             f"**成果类型**: {result_type_label(result_type)}",
@@ -378,10 +489,32 @@ class DingTalkNotifier:
         review_reason: str = "",
         reviewed_by: str = "",
         progress: tuple[int, int] | None = None,
+        occurred_at: Any = None,
+        public_only: bool | None = None,
     ) -> bool:
-        """【红队第 2 次推送】：成果审核裁决"""
+        """【红队第 2 次推送】：成果审核裁决
+
+        与上报卡保持同一套表达：正文前带业务方公示行，``public_only`` 时只发简版卡。
+        """
+        notice = public_notice_line(
+            occurred_at=occurred_at, target_asset=target_asset, result_type=result_type
+        )
+        if self._resolve_public_only(public_only):
+            lines = [
+                "### [红队] 红队测试活动公示",
+                f"**时间**: {format_notice_time(occurred_at) or '未记录'}",
+                f"**业务**: {target_asset or '未标注'}",
+                f"**动作**: {public_result_type_label(result_type)}",
+                f"**状态**: {result_status_label(status)}",
+                f"**任务**: `{task_id}` · 成果 `{result_id}`",
+                "\n*AXIOM 自动化安全测试平台 · 红队活动公示*",
+            ]
+            return self.send_markdown(
+                f"【红队活动】{target_asset or task_id}", "\n\n".join(lines)
+            )
         lines = [
             "### ⚖️ AXIOM 红队成果审核结果",
+            notice,
             f"**任务编号**: `{task_id}`",
             f"**成果编号**: `{result_id}`",
             f"**成果标题**: {title}",
