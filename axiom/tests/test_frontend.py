@@ -4261,3 +4261,71 @@ def test_triggering_a_retest_posts_the_dedicated_endpoint_and_locks_both_buttons
     assert after["verdict"] == "未出结论"
 
     assert result["toasts"][-1]["message"] == "已创建 Reviewer 复测任务"
+
+
+def _run_task_directive_composer_fixture() -> dict[str, object]:
+    """建任务表单里的三类指令：预设填充 + 提交时过滤空值。"""
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    projects = ROOT / "src/axiom/static/js/projects.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{ projects: {{ methods: {{}} }} }} }};
+global.location = {{ hash: '#/tasks' }};
+eval(fs.readFileSync({json.dumps(str(projects))}, 'utf8'));
+const methods = window.AxiomModules.projects.methods;
+const ctx = Object.assign({{}}, methods, {{
+  directivePresets: [
+    {{ key:'worker_forbid_target', scope:'all_workers', label:'禁止测试指定资产',
+       template:'不允许测试 {{target}}。不得对其发起任何请求。', placeholder:'target', example:'pay.example.com' }},
+    {{ key:'explore_mark_traces', scope:'explore_all', label:'痕迹统一标记',
+       template:'痕迹统一用「{{marker}}」加 Intent 编号命名。', placeholder:'marker', example:'SecPentest-' }},
+    {{ key:'reason_no_authz', scope:'reason_all', label:'不派发越权类测试',
+       template:'不派发越权类测试：水平/垂直越权、IDOR 均不安排。', placeholder:null, example:'' }},
+  ],
+  newProject: {{ directives: {{
+    reason_all: {{ preset:'', text:'' }},
+    explore_all: {{ preset:'', text:'' }},
+    all_workers: {{ preset:'', text:'' }},
+  }} }},
+}});
+for (const pair of [['all_workers','worker_forbid_target'],['explore_all','explore_mark_traces'],['reason_all','reason_no_authz']]) {{
+  ctx.newProject.directives[pair[0]].preset = pair[1];
+  ctx.applyTaskDirectivePreset(pair[0]);
+}}
+const filled = JSON.parse(JSON.stringify(ctx.newProject.directives));
+const all = ctx.newTaskDirectives();
+ctx.newProject.directives.reason_all.text = '   ';
+ctx.newProject.directives.explore_all.text = '';
+const filtered = ctx.newTaskDirectives();
+process.stdout.write(JSON.stringify({{ filled, all, filtered }}));
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def test_task_composer_presets_fill_the_scope_slot() -> None:
+    """选预设就把占位符替换成示例值填进输入框——用户还要能接着改。"""
+    filled = _run_task_directive_composer_fixture()["filled"]
+
+    assert "pay.example.com" in filled["all_workers"]["text"]
+    assert "{target}" not in filled["all_workers"]["text"]
+    assert "SecPentest-" in filled["explore_all"]["text"]
+    assert "{marker}" not in filled["explore_all"]["text"]
+    # 没有占位符的预设原样填入
+    assert filled["reason_all"]["text"].startswith("不派发越权类测试")
+
+
+def test_task_composer_only_submits_non_empty_directives() -> None:
+    """三条都是可选的：空白不发，避免落一条没意义的空指令。"""
+    result = _run_task_directive_composer_fixture()
+
+    assert len(result["all"]) == 3
+    assert {item["scope"] for item in result["all"]} == {
+        "reason_all", "explore_all", "all_workers",
+    }
+    assert len(result["filtered"]) == 1
+    assert result["filtered"][0]["scope"] == "all_workers"

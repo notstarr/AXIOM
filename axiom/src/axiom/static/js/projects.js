@@ -187,6 +187,7 @@ window.AxiomModules.projects = {
       if (!this.newProject._guardTouched) this.newProject.guard_enabled = !!this.judgeSettings?.enabled_default;
       this.taskComposerStep = 1;
       this.showTaskComposer = true;
+      this.loadDirectivePresets();
     },
 
     deleteProjectGroup(id, title) {
@@ -940,7 +941,7 @@ window.AxiomModules.projects = {
 
     resetTaskDetailLoad(taskId = '') {
       const sectionNames = [
-        'project_group', 'graph', 'hints', 'todos', 'vulnerabilities',
+        'project_group', 'graph', 'directives', 'hints', 'todos', 'vulnerabilities',
         'artifacts', 'lead_artifacts', 'goal_cycles', 'goal_evaluations',
       ];
       this.taskDetailLoad = {
@@ -1010,7 +1011,8 @@ window.AxiomModules.projects = {
         next.goal_from_fact_ids = section.data?.goal_from_fact_ids || [];
         next.goal_history = section.data?.goal_history || [];
         next.project = { ...next.project, fact_count: next.facts.length, intent_count: next.intents.length };
-      } else if (name === 'hints') next.hints = section.data || [];
+      } else if (name === 'directives') next.directives = section.data || [];
+      else if (name === 'hints') next.hints = section.data || [];
       else if (name === 'todos') next.todos = section.data || [];
       else if (name === 'chains') next.chains = section.data || [];
       else if (name === 'red_team_results') next.red_team_results = section.data || [];
@@ -1332,6 +1334,40 @@ window.AxiomModules.projects = {
       return seconds;
     },
 
+    // ── 预设：只是录入捷径，落库的永远是替换后的最终文本 ──────────────
+    presetsForScope(scope) {
+      return (this.directivePresets || []).filter(item => item.scope === scope);
+    },
+    presetPlaceholderText(preset) {
+      const text = String(preset?.template || '');
+      if (!preset?.placeholder) return text;
+      return text.split(`{${preset.placeholder}}`).join(preset.example || '');
+    },
+    async loadDirectivePresets() {
+      if ((this.directivePresets || []).length) return this.directivePresets;
+      try {
+        const items = await this.api('GET', '/directive-presets');
+        this.directivePresets = Array.isArray(items) ? items : [];
+      } catch (e) {
+        this.directivePresets = [];
+      }
+      return this.directivePresets;
+    },
+    applyTaskDirectivePreset(scope) {
+      const slot = this.newProject?.directives?.[scope];
+      if (!slot) return;
+      const preset = this.presetsForScope(scope).find(item => item.key === slot.preset);
+      if (!preset) return;
+      slot.text = this.presetPlaceholderText(preset);
+    },
+    // 建任务时提交的常驻指令：空文本不发。
+    newTaskDirectives() {
+      const slots = this.newProject?.directives || {};
+      return ['reason_all', 'explore_all', 'all_workers']
+        .map(scope => ({ scope, content: String(slots[scope]?.text || '').trim() }))
+        .filter(item => item.content);
+    },
+
     newProjectRunDurationSeconds() {
       return this.runDurationSeconds(
         !!this.newProject.run_time_limited,
@@ -1567,6 +1603,8 @@ window.AxiomModules.projects = {
           seed_vulnerability_task_id: engagementMode === 'red_team'
             ? (this.newProject.seed_vulnerability_task_id || null)
             : null,
+          // 建任务时可选的常驻指令（三种作用域），空的由 newTaskDirectives 过滤掉
+          directives: this.newTaskDirectives(),
         };
         const data = await this.api('POST', '/projects', body);
         const pid = data.project.id;
@@ -1580,6 +1618,11 @@ window.AxiomModules.projects = {
           depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false,
           engagement_mode: 'vulnerability', rt_target_points: 100, rt_principal_id: '', rt_principal_label: '', rt_principal_tenant: '', rt_credential_id: '', rt_capabilities: '', rt_assets: '', rt_data_targets: [],
           seed_vulnerability_task_id: '', seed_counts: {},
+          directives: {
+            reason_all: { preset: '', text: '' },
+            explore_all: { preset: '', text: '' },
+            all_workers: { preset: '', text: '' },
+          },
         };
         await this.loadProjectGroups();
         await this.loadProjects();

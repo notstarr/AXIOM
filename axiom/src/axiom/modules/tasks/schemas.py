@@ -12,6 +12,28 @@ from axiom.modules.redteam.schemas import EngagementMode, RedTeamObjective
 DEFAULT_GOAL = "对该资产进行渗透测试，并挖掘10个高置信度的漏洞"
 MIN_RUN_DURATION_SECONDS = 60
 MAX_RUN_DURATION_SECONDS = 365 * 24 * 60 * 60
+MAX_DIRECTIVE_LENGTH = 2000
+
+
+class CreateTaskDirective(BaseModel):
+    """建任务时随附的常驻指令。
+
+    只开放三种常驻作用域：「仅一次」要绑定具体的 ReasonRun 或 Intent，建任务时
+    这两者都还不存在，所以不在建任务的入参里。
+    """
+
+    scope: Literal["reason_all", "explore_all", "all_workers"]
+    content: str
+
+    @field_validator("content")
+    @classmethod
+    def require_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        if len(value) > MAX_DIRECTIVE_LENGTH:
+            raise ValueError(f"must be at most {MAX_DIRECTIVE_LENGTH} characters")
+        return value
 
 
 def _validate_run_duration(value: int | None) -> int | None:
@@ -64,6 +86,7 @@ class CreateTask(BaseModel):
     engagement_mode: EngagementMode = "vulnerability"
     red_team_objective: RedTeamObjective | None = None
     seed_vulnerability_task_id: str | None = None
+    directives: list[CreateTaskDirective] = Field(default_factory=list, max_length=3)
     run_duration_seconds: int | None = Field(
         default=None,
         ge=MIN_RUN_DURATION_SECONDS,

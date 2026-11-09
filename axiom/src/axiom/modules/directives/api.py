@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, status
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
+from axiom.modules.directives.presets import PRESETS, DirectivePreset
 from axiom.modules.directives.schemas import (
     CreateDirective,
     Directive,
@@ -13,6 +14,13 @@ from axiom.modules.directives.schemas import (
 
 
 router = APIRouter(prefix="/tasks", tags=["directives"])
+presets_router = APIRouter(prefix="/directive-presets", tags=["directives"])
+
+
+@presets_router.get("", response_model=list[DirectivePreset])
+def list_directive_presets() -> list[DirectivePreset]:
+    """预置模板。建任务时还没有 task_id，所以这个端点不挂在任务路径下。"""
+    return PRESETS
 
 
 @router.get(

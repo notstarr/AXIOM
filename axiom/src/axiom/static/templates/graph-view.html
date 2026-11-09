@@ -677,12 +677,20 @@
         <div class="rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm">
           <h3 class="text-sm font-semibold text-slate-700">下发 Worker 指令</h3>
           <p class="text-[11px] text-slate-400 mt-1 leading-relaxed">指令是作业要求，按作用域直接约束对应阶段的 Worker；「共享知识」是业务背景，两者不同。一次性指令只在绑定的那一轮生效，已开跑的 Worker 不会收到新指令。</p>
-          <select x-model="newDirective.scope" class="mt-3 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400">
+          <select x-model="newDirective.scope" @change="newDirective.preset = ''" class="mt-3 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400">
             <option value="reason_all">对全体 Reason（一直生效）</option>
             <option value="reason_next">对下一次 Reason（仅一次）</option>
             <option value="explore_all">对全体 Explore（一直生效）</option>
             <option value="explore_one">对某个 Explore（仅一次）</option>
             <option value="all_workers">对全部 Worker（一直生效）</option>
+          </select>
+          <!-- 预设只填模板，落库的仍是替换后的文本；随时可以再手改 -->
+          <select x-show="presetsForScope(newDirective.scope).length > 0" x-model="newDirective.preset" @change="applyDirectivePreset()"
+            class="mt-2 w-full px-3 py-2 border border-indigo-200 bg-indigo-50/40 rounded-xl text-xs text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400">
+            <option value="">从预设开始（可再改）</option>
+            <template x-for="preset in presetsForScope(newDirective.scope)" :key="`directive-preset-${preset.key}`">
+              <option :value="preset.key" x-text="preset.label"></option>
+            </template>
           </select>
           <template x-if="newDirective.scope === 'explore_one'">
             <select x-model="newDirective.target_intent_id" class="mt-2 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400">

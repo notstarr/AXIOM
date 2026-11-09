@@ -279,3 +279,76 @@ def test_legacy_hint_writes_are_gone_but_reads_still_work(client) -> None:
         == 410
     )
     assert client.get(f"/api/v1/tasks/{task['id']}/hints").json() == []
+
+
+# ── 预设与「建任务时随附指令」────────────────────────────────────────────────
+
+def test_presets_are_served_without_a_task(client) -> None:
+    """预设要在建任务之前就能拿到——那时候还没有 task_id，端点不能挂在任务路径下。"""
+    response = client.get("/api/v1/directive-presets")
+
+    assert response.status_code == 200, response.text
+    presets = response.json()
+    scopes = {item["scope"] for item in presets}
+    assert {"reason_all", "explore_all", "all_workers"} <= scopes
+    # 三个用户要求的默认模板都在
+    labels = {item["label"] for item in presets}
+    assert "禁止测试指定资产" in labels
+    assert "痕迹统一标记" in labels
+    assert "不派发越权类测试" in labels
+    for item in presets:
+        assert item["template"].strip()
+
+
+def test_task_creation_persists_the_three_directives(client) -> None:
+    """建任务时随附的指令要和任务同一事务落库，建完就能在任务里看到。"""
+    project = client.post("/api/v1/projects", json={"title": "带指令建任务"}).json()
+    created = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "建时带指令",
+            "origin": "a.example.com",
+            "directives": [
+                {"scope": "all_workers", "content": "不允许测试 pay.example.com"},
+                {"scope": "explore_all", "content": "痕迹统一标记为 SecPentest-"},
+                {"scope": "reason_all", "content": "不派发越权类测试"},
+            ],
+        },
+    )
+
+    assert created.status_code == 201, created.text
+    task = created.json()
+    directives = client.get(f"/api/v1/tasks/{task['id']}/directives").json()
+
+    assert len(directives) == 3
+    by_scope = {item["scope"]: item for item in directives}
+    assert by_scope["all_workers"]["content"] == "不允许测试 pay.example.com"
+    assert by_scope["explore_all"]["content"] == "痕迹统一标记为 SecPentest-"
+    assert by_scope["reason_all"]["content"] == "不派发越权类测试"
+    # 建任务时只允许常驻作用域，三条都该是 active + persistent
+    for item in directives:
+        assert item["status"] == "active"
+        assert item["lifetime"] == "persistent"
+        assert item["target_intent_id"] is None
+
+
+def test_task_creation_without_directives_stays_empty(client) -> None:
+    """不带指令是默认行为，不能凭空多出三条空指令。"""
+    task = _task(client)
+    assert client.get(f"/api/v1/tasks/{task['id']}/directives").json() == []
+
+
+def test_task_creation_rejects_once_scopes(client) -> None:
+    """「仅一次」要绑定具体的 run/intent，建任务时这两者都还不存在，必须拒。"""
+    project = client.post("/api/v1/projects", json={"title": "非法作用域"}).json()
+    response = client.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": project["id"],
+            "title": "非法作用域",
+            "origin": "a.example.com",
+            "directives": [{"scope": "reason_next", "content": "只对下一轮说"}],
+        },
+    )
+    assert response.status_code == 422, response.text

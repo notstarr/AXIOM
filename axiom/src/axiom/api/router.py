@@ -34,6 +34,7 @@ from axiom.modules.tasks.api import router as tasks_router
 from axiom.modules.todos.api import router as todos_router
 from axiom.modules.token_usage.api import router as token_usage_router
 from axiom.modules.interventions.api import router as interventions_router
+from axiom.modules.directives.api import presets_router as directive_presets_router
 from axiom.modules.directives.api import router as directives_router
 from axiom.modules.vulnerabilities.api import router as vulnerabilities_router
 from axiom.modules.vulnerability_reviews.api import router as vulnerability_reviews_router
@@ -86,6 +87,7 @@ router.include_router(goals_router)
 router.include_router(token_usage_router)
 router.include_router(interventions_router)
 router.include_router(directives_router)
+router.include_router(directive_presets_router)
 router.include_router(auth_router)
 router.include_router(dingtalk_router)
 router.include_router(llm_gateway_router)

@@ -188,6 +188,7 @@ window.AxiomModules.state = {
     timelineBarVisible: true,
 
     showTaskComposer: false,
+    directivePresets: [],
     taskComposerStep: 1,
     showProjectGroupComposer: false,
     showGroupModal: false,
@@ -214,7 +215,14 @@ window.AxiomModules.state = {
     showDeleteModal: false,
     resumeTaskDialog: { open: false, taskId: '', title: '', limited: false, hours: 0, minutes: 0, submitting: false },
 
-    newProject: { parent_project_id: '', title: '', origin: '', goal: '对该资产进行渗透测试，并挖掘10个高置信度的漏洞', bootstrap: true, depth_mode: false, guard_enabled: false, hints: '', task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '', depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false, engagement_mode: 'vulnerability', rt_target_points: 100, seed_vulnerability_task_id: '', seed_counts: {} },
+    newProject: { parent_project_id: '', title: '', origin: '', goal: '对该资产进行渗透测试，并挖掘10个高置信度的漏洞', bootstrap: true, depth_mode: false, guard_enabled: false, hints: '', task_scope_targets: '', task_scope_exclude: '', task_scope_notes: '', depthInputMode: 'har', crawlerTaskId: '', worker_pool: [], run_time_limited: false, run_hours: 0, run_minutes: 0, _guardTouched: false, engagement_mode: 'vulnerability', rt_target_points: 100, seed_vulnerability_task_id: '', seed_counts: {},
+      // 建任务时可选的常驻指令：三种作用域各一份「选中的预设 + 最终文本」。
+      // 只做录入，落库后与在任务里补发的指令完全等价。
+      directives: {
+        reason_all: { preset: '', text: '' },
+        explore_all: { preset: '', text: '' },
+        all_workers: { preset: '', text: '' },
+      } },
     taskWorkerPoolEditor: { projectId: '', worker_pool: [], saving: false },
     projectGroupForm: { title: '', description: '' },
     projectGroupSettingsForm: { title: '', description: '', notes: '', status: 'active' },
@@ -223,7 +231,7 @@ window.AxiomModules.state = {
     concludeForm: { description: '', intentId: '' },
     completeForm: { description: '' },
     hintForm: { content: '' },
-    newDirective: { scope: 'reason_all', content: '', target_intent_id: '' },
+    newDirective: { scope: 'reason_all', content: '', target_intent_id: '', preset: '' },
     eligibleExplores: [],
     directiveSubmitting: false,
     blackboardEditorForManaged: false,

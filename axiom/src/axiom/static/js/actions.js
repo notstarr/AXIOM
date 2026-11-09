@@ -97,6 +97,13 @@ window.AxiomModules.actions = {
         all_workers: '全部 Worker · 常驻',
       }[scope] || scope || '未知作用域');
     },
+    // 图谱侧栏：选了预设就把模板填进输入框（落库的仍是填完的文本）
+    applyDirectivePreset() {
+      const preset = this.presetsForScope(this.newDirective.scope)
+        .find(item => item.key === this.newDirective.preset);
+      if (!preset) return;
+      this.newDirective.content = this.presetPlaceholderText(preset);
+    },
     directiveStatusLabel(item) {
       if (!item) return '';
       if (item.status === 'disabled' || item.archived) return '已停用';
@@ -104,7 +111,25 @@ window.AxiomModules.actions = {
       if (item.status === 'delivered') return '已投递';
       return '生效中';
     },
+    // 指令的下发/停用只改这一块，没必要整套重拉详情（还会被 hydration 锁挡住）。
+    async refreshDirectives() {
+      if (!this.selectedProjectId) return;
+      try {
+        const items = await this.api('GET', `/tasks/${this.selectedProjectId}/directives`);
+        if (this.project) this.project = { ...this.project, directives: items || [] };
+      } catch (e) { /* 列表刷新失败不该把已经成功的下发判成失败 */ }
+    },
+    // 概览里的「下发 / 管理」：切到图谱并直接打开指令侧栏。
+    async openTaskDirectivePanel() {
+      await this.switchTaskView('graph');
+      this.sidePanelCollapsed = false;
+      this.sideTab = 'directives';
+      await this.loadEligibleExplores();
+      await this.loadDirectivePresets();
+    },
     async loadEligibleExplores() {
+      // 打开指令面板时顺手把预设取回来，否则下拉是空的
+      void this.loadDirectivePresets();
       try {
         const items = await this.api('GET', `/projects/${this.selectedProjectId}/directives/eligible-explores`);
         this.eligibleExplores = Array.isArray(items) ? items : [];
@@ -130,7 +155,7 @@ window.AxiomModules.actions = {
           target_intent_id: scope === 'explore_one' ? this.newDirective.target_intent_id : null,
         });
         this.newDirective = { scope, content: '', target_intent_id: '' };
-        await this.loadProjectDetails(this.selectedProjectId);
+        await this.refreshDirectives();
         this.showToast('指令已下发');
       } catch (e) { this.showToast(e.message, 'error'); }
       finally { this.directiveSubmitting = false; }
@@ -140,7 +165,7 @@ window.AxiomModules.actions = {
       const disabled = item.status === 'disabled' || item.archived;
       try {
         await this.api('PATCH', `/projects/${this.selectedProjectId}/directives/${item.id}`, { disabled: !disabled });
-        await this.loadProjectDetails(this.selectedProjectId);
+        await this.refreshDirectives();
         this.showToast(disabled ? '指令已启用' : '指令已停用');
       } catch (e) { this.showToast(e.message, 'error'); }
     },

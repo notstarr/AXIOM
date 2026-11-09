@@ -158,6 +158,26 @@
           </template>
         </section>
 
+        <!-- Worker 指令：概览里也要能看见，否则只能在图谱侧栏发现这个能力 -->
+        <section class="sto-panel" style="padding:16px;">
+          <div class="flex items-start justify-between gap-2">
+            <div>
+              <p class="sto-label">Worker 指令</p>
+              <h3 class="mt-1 text-sm font-semibold text-slate-800" x-text="`${(project.directives || []).length} 条`"></h3>
+            </div>
+            <button @click="openTaskDirectivePanel()" class="shrink-0 text-[11px] text-indigo-600 hover:underline">下发 / 管理 →</button>
+          </div>
+          <div class="mt-3 space-y-2">
+            <template x-for="item in (project.directives || []).filter(d => !d.archived && d.status !== 'disabled').slice(0, 3)" :key="`ov-directive-${item.id}`">
+              <div class="rounded-lg border border-indigo-100 bg-indigo-50/40 px-2.5 py-2">
+                <span class="text-[9px] font-semibold text-indigo-600" x-text="directiveScopeLabel(item.scope)"></span>
+                <p class="mt-0.5 text-[11px] leading-5 text-slate-600" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" x-text="item.content"></p>
+              </div>
+            </template>
+            <p x-show="!(project.directives || []).length" class="text-[11px] leading-5 text-slate-400">还没有指令。建任务时可以选预设，也可以在这里补发。</p>
+          </div>
+        </section>
+
         <section class="sto-panel" style="padding:16px;">
           <details>
             <summary class="flex items-center justify-between cursor-pointer select-none" style="list-style:none;">

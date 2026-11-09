@@ -1109,6 +1109,8 @@
       }
     }
 
+    // 预设是纯静态模板，不挂在任务路径下——建任务时还没有 task_id。
+    if (path === '/directive-presets' && method === 'GET') return request('GET', '/directive-presets');
     if (path === '/projects' && method === 'GET') return (await request('GET', `/tasks${url.search}`, null, options)).map(mapTask);
     if (path === '/projects' && method === 'POST') {
       const task = await request('POST', '/tasks', {
@@ -1124,6 +1126,10 @@
         engagement_mode: body.engagement_mode || 'vulnerability',
         red_team_objective: body.red_team_objective || null,
         seed_vulnerability_task_id: body.seed_vulnerability_task_id || null,
+        // 建任务时随附的常驻指令；空内容的不发，避免落一条没意义的空指令。
+        directives: (body.directives || [])
+          .filter(item => item && item.scope && String(item.content || '').trim())
+          .map(item => ({ scope: item.scope, content: String(item.content).trim() })),
       });
       return { project: mapTask(task) };
     }

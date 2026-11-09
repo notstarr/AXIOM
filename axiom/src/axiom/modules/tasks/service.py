@@ -17,6 +17,7 @@ from sqlalchemy import (
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
 from axiom.modules.artifacts.tables import artifacts
+from axiom.modules.directives.repository import DirectiveRepository
 from axiom.modules.graph.repository import GraphRepository
 from axiom.modules.graph.tables import facts, intents
 from axiom.modules.goals.repository import GoalRepository
@@ -85,6 +86,7 @@ class TaskService:
         self.plan = PlanRepository()
         self.reason_service = ReasonService(engine)
         self.reviews = VulnerabilityReviewRepository()
+        self.directive_repo = DirectiveRepository()
         self.audit = AuditService(engine)
         self.sandboxes = sandboxes
 
@@ -138,6 +140,22 @@ class TaskService:
                 hints=command.hints,
                 now=now,
             )
+            # 建任务时随附的常驻指令：与任务同一事务落库，避免任务建好了、
+            # 指令却没进去，用户以为已经生效。
+            for draft in command.directives:
+                self.directive_repo.create(
+                    conn,
+                    task_id=task.id,
+                    content=draft.content,
+                    creator="human",
+                    scope=draft.scope,
+                    lifetime="persistent",
+                    target_intent_id=None,
+                    status="active",
+                    client_message_id=None,
+                    expires_at=None,
+                    now=now,
+                )
             cycle = self.goals.create_cycle(
                 conn,
                 task_id=task.id,
