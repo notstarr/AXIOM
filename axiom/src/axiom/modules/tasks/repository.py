@@ -101,23 +101,9 @@ class TaskRepository:
             "last_pause_reason": None,
         }
         conn.execute(tasks.insert().values(**values))
+        # hints 入参为兼容旧客户端而保留，但已停写：录入统一走 worker_directives。
+        # 表与计数器保留，历史 task_hints 行仍可解析（Todo/Goal 软引用、导出）。
         initialize_counter(conn, scope=task_id, kind="hint")
-        for content in hints:
-            conn.execute(
-                task_hints.insert().values(
-                    id=allocate_id(
-                        conn,
-                        scope=task_id,
-                        kind="hint",
-                        prefix="h",
-                    ),
-                    task_id=task_id,
-                    content=content,
-                    creator="human",
-                    created_at=now,
-                    archived=False,
-                )
-            )
         return self._task(values)
 
     def get(self, conn: Connection, task_id: str) -> Task | None:

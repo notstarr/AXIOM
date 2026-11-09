@@ -7,6 +7,7 @@ from axiom.modules.audit.tables import audit_events
 from axiom.modules.c2.tables import c2_listeners, c2_sessions, c2_tasks
 from axiom.modules.context.tables import context_revisions
 from axiom.modules.credentials.tables import credential_refreshes, credentials
+from axiom.modules.directives.tables import directive_deliveries, worker_directives
 from axiom.modules.graph.tables import facts, intent_sources, intents
 from axiom.modules.knowledge.tables import project_knowledge
 from axiom.modules.goals.tables import goal_evaluations, task_goal_cycles
@@ -78,4 +79,6 @@ ALL_TABLES = (
     c2_listeners,
     c2_sessions,
     c2_tasks,
+    worker_directives,
+    directive_deliveries,
 )

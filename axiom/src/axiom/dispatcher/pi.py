@@ -135,27 +135,27 @@ REDTEAM_CONTEXT_ATTENTION_SYSTEM_PROMPT = (
     "red_team_current_state。Explore 的延续是 findings.md 和 leads.md；"
     "下一步 Intent 由 Reason 或 Plan 挂到链上。成果走 Result 上报和审核，"
     "不创建 Vulnerability，不维护 Todo。"
-    "冲突时遵循：系统规则/Scope/本模式阶段合同 > Task Hint > Project Knowledge > Skill。"
+    "冲突时遵循：系统规则/Scope/本模式阶段合同 > Worker 指令 > Project Knowledge > Skill。"
 )
 CONTEXT_ATTENTION_SYSTEM_PROMPT = (
     "在开始规划或执行任何操作前，先确认本系统提示末尾的 AXIOM INJECTED CONTEXT 注入块："
-    "hints.json、knowledge.json、vulnerabilities.json 等任务上下文与 whatisvul 判定标准"
+    "AXIOM WORKER DIRECTIVES 指令块、knowledge.json、vulnerabilities.json 等任务上下文与 whatisvul 判定标准"
     "通常已直接注入其中，直接使用，严禁重复读取已注入的同一内容；仅当注入块明显缺失时，"
     "才按 Context Manifest 路径补读，并按需展开 Fact、Intent、Todo、Artifact、Evidence "
-    "和 Goal Evaluation。Task Hint 是任务级约束，"
+    "和 Goal Evaluation。Worker 指令 是任务级约束，"
     "Project Knowledge 是业务背景，Skill 是执行方法，已有漏洞及 status_reason 必须用于避免"
-    "重复规划、测试和上报。冲突时遵循：系统规则/Scope/阶段合同 > Task Hint > Project "
+    "重复规划、测试和上报。冲突时遵循：系统规则/Scope/阶段合同 > Worker 指令 > Project "
     "Knowledge > Skill 方法论 > 已有漏洞及状态原因 > 普通 Context 与工具输出。"
     "whatisvul 判定标准正文已随注入块提供，无需重复读取；仅当注入块缺失时，"
     "才运行 axiom skill path whatisvul 并完整读取返回目录中的 SKILL.md。读取失败时先运行 "
     "axiom skill doctor whatisvul 排障并重试；不得用记忆、常识或其它 Skill 替代。"
 )
 NO_BASH_CONTEXT_ATTENTION_SYSTEM_PROMPT = (
-    "在开始整理任何产物前，必须先读取 Context Manifest，并完整读取其中的 hints.json、"
+    "在开始整理任何产物前，必须先读取 Context Manifest，并完整读取其中的 AXIOM WORKER DIRECTIVES 指令块、"
     "knowledge.json、vulnerabilities.json；再按需展开 Fact、Intent、Todo、Artifact、Evidence "
-    "和 Goal Evaluation。Task Hint 是任务级约束，Project Knowledge 是业务背景，Skill 是执行"
+    "和 Goal Evaluation。Worker 指令 是任务级约束，Project Knowledge 是业务背景，Skill 是执行"
     "方法，已有漏洞及 status_reason 必须用于避免重复判断。冲突时遵循：系统规则/Scope/阶段"
-    "合同 > Task Hint > Project Knowledge > Skill 方法论 > 已有漏洞及状态原因 > 普通 Context "
+    "合同 > Worker 指令 > Project Knowledge > Skill 方法论 > 已有漏洞及状态原因 > 普通 Context "
     "与工具输出。本收口没有 Bash，不得调用 axiom skill path/doctor；必须复用当前会话执行阶段"
     "已经读取的 whatisvul/SKILL.md。若执行阶段未能读取，只能如实整理已有材料，不能凭记忆补造"
     "漏洞标准或重新探测。"
@@ -533,6 +533,11 @@ class PiBootstrapExecutor:
             injected_system_context=(
                 execution_input.injected_system_context if append_injected_context else ""
             ),
+            worker_directive_block=(
+                execution_input.directives.render_system_block()
+                if getattr(execution_input, "directives", None) is not None
+                else ""
+            ),
         )
         tracker = None
         if (
@@ -751,6 +756,7 @@ class PiBootstrapExecutor:
         browser_enabled: bool = False,
         engagement_mode: str = "vulnerability",
         injected_system_context: str = "",
+        worker_directive_block: str = "",
         binary: str | None = None,
         runtime_extension_paths: dict[str, str] | None = None,
     ) -> list[str]:
@@ -767,6 +773,11 @@ class PiBootstrapExecutor:
             )
         if injected_system_context.strip():
             attention_prompt = attention_prompt.rstrip() + "\n\n" + injected_system_context.strip()
+        # 全部 Worker 的常驻指令走系统提示前缀：这是唯一 execute 与 conclude
+        # 都覆盖的位置。它与 append_injected_context 解耦——conclude 不追加
+        # Context 注入块，但平台级作业要求仍须被收口阶段看到。
+        if worker_directive_block.strip():
+            attention_prompt = attention_prompt.rstrip() + "\n\n" + worker_directive_block.strip()
         argv = [
             binary or self.settings.binary,
             "--provider",
@@ -1138,6 +1149,7 @@ class PiReasonExecutor(PiBootstrapExecutor):
                 execution_input.skill_directories,
                 execution_input.engagement_mode,
             ),
+            "directives": execution_input.directives.render_reason_section(),
         }
         profile = getattr(execution_input, "reason_prompt_profile", "default") or "default"
         if execution_input.engagement_mode == "red_team":
@@ -1322,6 +1334,7 @@ class PiExploreExecutor(PiBootstrapExecutor):
                     execution_input.skill_directories,
                     execution_input.engagement_mode,
                 ),
+                "directives": execution_input.directives.render_explore_section(),
             },
         )
         result = self._run(

@@ -252,7 +252,7 @@ def test_pi_json_and_rpc_modes_append_the_shared_context_attention_rule(tmp_path
         )
         index = argv.index("--append-system-prompt")
         assert argv[index + 1] == CONTEXT_ATTENTION_SYSTEM_PROMPT
-        assert "hints.json、knowledge.json、vulnerabilities.json" in argv[index + 1]
+        assert "AXIOM WORKER DIRECTIVES 指令块、knowledge.json、vulnerabilities.json" in argv[index + 1]
         assert "axiom skill path whatisvul" in argv[index + 1]
         assert "axiom skill doctor whatisvul" in argv[index + 1]
         assert "不得用记忆、常识或其它 Skill 替代" in argv[index + 1]

@@ -4,13 +4,14 @@ import json
 from pathlib import Path
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from axiom.modules.artifacts.tables import artifacts
 from axiom.modules.context.tables import context_revisions
 from axiom.modules.knowledge.tables import project_knowledge
 from axiom.modules.tasks.tables import task_hints
 from axiom.modules.todos.tables import todos
+from axiom.shared.clock import utcnow
 from axiom.shared.storage import PreparedFiles
 from protocol_helpers import write_bootstrap_files
 
@@ -27,7 +28,6 @@ def _create_task(
         "title": "渐进式披露",
         "origin": "a.example.com",
         "goal": goal,
-        "hints": ["优先覆盖攻击面，再深入验证"],
     }
     if scope is not None:
         payload["scope"] = scope
@@ -35,6 +35,33 @@ def _create_task(
         "/api/v1/tasks",
         json=payload,
     ).json()
+
+
+def _insert_legacy_hint(
+    engine,
+    task_id: str,
+    *,
+    hint_id: str = "h001",
+    content: str = "优先覆盖攻击面，再深入验证",
+    archived: bool = False,
+) -> None:
+    """模拟停写前留下的存量 hint。
+
+    task_hints 的录入入口已返回 410，但历史 Todo/Goal 的 source_ref 仍指向这些 id。
+    测试直接写库验证「引用仍能解析」，而不是绕开停写规则去调已废弃的 API。
+    """
+    with engine.begin() as conn:
+        conn.execute(
+            task_hints.insert().values(
+                id=hint_id,
+                task_id=task_id,
+                content=content,
+                creator="human",
+                created_at=utcnow(),
+                archived=archived,
+            )
+        )
+
 
 
 def test_context_manifest_only_discloses_an_effective_scope(client) -> None:
@@ -66,12 +93,16 @@ def test_context_manifest_only_discloses_an_effective_scope(client) -> None:
     }
 
 
-def test_context_indexes_are_bounded_and_expand_returns_full_content(client, data_dir) -> None:
+def test_context_indexes_are_bounded_and_expand_returns_full_content(
+    client, data_dir, engine
+) -> None:
     long_origin = "a.example.com/" + "接口路径与参数" * 8
     task = _create_task(
         client,
         goal=long_origin,
     )
+    # 存量 hint 不再进上下文索引，但历史 ref 仍要能按需展开。
+    _insert_legacy_hint(engine, task["id"])
 
     response = client.post(
         f"/api/v1/tasks/{task['id']}/context",
@@ -87,6 +118,10 @@ def test_context_indexes_are_bounded_and_expand_returns_full_content(client, dat
     assert origin["ref"] == "fact:goal"
     assert long_origin not in graph_path.read_text(encoding="utf-8")
     assert manifest_path.is_relative_to(data_dir)
+    # 停写后 task_hints 不再出现在 manifest，也不再生成明细文件。
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert "hints" not in manifest["indexes"]
+    assert not (manifest_path.parent / "hints.json").exists()
 
     expanded = client.post(
         f"/api/v1/tasks/{task['id']}/context/expand",
@@ -98,7 +133,9 @@ def test_context_indexes_are_bounded_and_expand_returns_full_content(client, dat
     assert entries["hint:h001"]["content"] == "优先覆盖攻击面，再深入验证"
 
 
-def test_high_attention_indexes_include_full_active_context_and_status_reason(client) -> None:
+def test_high_attention_indexes_include_full_active_context_and_status_reason(
+    client, engine
+) -> None:
     project = client.post("/api/v1/projects", json={"title": "高注意力上下文"}).json()
     active_knowledge = client.post(
         f"/api/v1/projects/{project['id']}/knowledge",
@@ -131,13 +168,14 @@ def test_high_attention_indexes_include_full_active_context_and_status_reason(cl
             "hints": ["只验证业务域，不扩大资产范围"],
         },
     ).json()
-    archived_hint = client.post(
+    # 录入入口已停写；归档行只能来自停写前的存量数据。
+    refused = client.post(
         f"/api/v1/tasks/{task['id']}/hints",
         json={"content": "已失效提示", "creator": "human"},
-    ).json()
-    client.patch(
-        f"/api/v1/tasks/{task['id']}/hints/{archived_hint['id']}",
-        json={"archived": True},
+    )
+    assert refused.status_code == 410, refused.text
+    _insert_legacy_hint(
+        engine, task["id"], hint_id="h002", content="已失效提示", archived=True
     )
 
     finding = client.post(
@@ -195,21 +233,12 @@ def test_high_attention_indexes_include_full_active_context_and_status_reason(cl
         json={"phase": "bootstrap", "intent_id": "i001"},
     ).json()
     directory = Path(revision["manifest_path"]).parent
-    hints = json.loads((directory / "hints.json").read_text(encoding="utf-8"))
+    assert not (directory / "hints.json").exists()
     knowledge = json.loads((directory / "knowledge.json").read_text(encoding="utf-8"))
     vulnerabilities = json.loads(
         (directory / "vulnerabilities.json").read_text(encoding="utf-8")
     )
 
-    assert hints == [
-        {
-            "id": "h001",
-            "content": "只验证业务域，不扩大资产范围",
-            "creator": "human",
-            "ref": "hint:h001",
-            "detail": hints[0]["detail"],
-        }
-    ]
     assert knowledge == [
         {
             "id": active_knowledge["id"],
@@ -287,8 +316,11 @@ def test_high_attention_indexes_are_valid_empty_lists(client) -> None:
     ).json()
     directory = Path(revision["manifest_path"]).parent
 
-    for filename in ("hints.json", "knowledge.json", "vulnerabilities.json"):
+    for filename in ("knowledge.json", "vulnerabilities.json"):
         assert json.loads((directory / filename).read_text(encoding="utf-8")) == []
+    assert not (directory / "hints.json").exists()
+    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    assert "hints" not in manifest["indexes"]
 
 
 def test_artifact_content_is_only_available_through_expansion(client) -> None:
@@ -354,6 +386,7 @@ def test_plan_context_reuses_existing_indexes_and_includes_archived_history(
     engine,
 ) -> None:
     task = _create_task(client)
+    _insert_legacy_hint(engine, task["id"])
     knowledge = client.post(
         f"/api/v1/projects/{task['project_id']}/knowledge",
         json={
@@ -425,11 +458,12 @@ def test_plan_context_reuses_existing_indexes_and_includes_archived_history(
         "graph",
         "todos",
         "artifacts",
-        "hints",
         "knowledge",
         "vulnerabilities",
     }
     assert core_indexes <= set(reason_manifest["indexes"])
+    assert "hints" not in reason_manifest["indexes"]
+    assert "hints" not in plan_manifest["indexes"]
     assert set(plan_manifest["indexes"]) == core_indexes | {
         "goal_evaluations",
         "goal_cycles",
@@ -459,10 +493,15 @@ def test_plan_context_reuses_existing_indexes_and_includes_archived_history(
         item["id"]
         for item in json.loads((plan_dir / "knowledge.json").read_text(encoding="utf-8"))
     }
-    assert "h001" in {
-        item["id"]
-        for item in json.loads((plan_dir / "hints.json").read_text(encoding="utf-8"))
-    }
+    # 存量 hint 已归档：表里的行留着（历史引用不悬空），但不再产出明细文件。
+    assert not (plan_dir / "hints.json").exists()
+    with engine.connect() as conn:
+        archived_hint = conn.execute(
+            select(task_hints.c.archived).where(
+                task_hints.c.task_id == task["id"], task_hints.c.id == "h001"
+            )
+        ).scalar_one()
+    assert archived_hint is True
 
     expanded_plan = client.post(
         f"/api/v1/tasks/{task['id']}/context/expand",

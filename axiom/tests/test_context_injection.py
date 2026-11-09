@@ -43,8 +43,9 @@ def test_injection_is_delimited_hashed_and_keeps_manifest_refs(tmp_path: Path) -
     assert injected.content_hash
     assert "BEGIN AXIOM INJECTED CONTEXT" in injected.text
     assert "验证对象级授权" in injected.text
-    assert "h001" in injected.text
-    assert "hints.json" in injected.source_refs
+    # task_hints 已停写：即使旧 manifest 里还挂着 hints 索引，注入层也不再读它。
+    assert "h001" not in injected.text
+    assert "hints.json" not in injected.source_refs
     assert injected.estimated_tokens > 0
 
 
@@ -82,6 +83,9 @@ def test_injection_renders_catalog_cards_and_drops_removed_indexes(tmp_path: Pat
     )
     # Even large removed-index payloads must never leak into the prompt body.
     big_rows = [{"id": f"v{i:03d}", "title": "漏" * 200} for i in range(50)]
+    (root / "vulnerabilities.json").write_text(
+        json.dumps(big_rows, ensure_ascii=False), encoding="utf-8"
+    )
     (root / "todos.json").write_text("[]", encoding="utf-8")
     (root / "graph.json").write_text(json.dumps({"facts": []}), encoding="utf-8")
     revision = ContextRevision(

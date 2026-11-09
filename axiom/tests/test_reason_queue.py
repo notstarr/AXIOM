@@ -21,32 +21,34 @@ def _claim_active(client, task: dict, reason_run_id: str) -> dict:
     return claim
 
 
-def test_active_reason_is_separate_from_fifo_pending_runs(client) -> None:
+def test_reason_next_directives_queue_without_creating_reason_runs(client) -> None:
+    """「对下一次 reason 说」只排队：创建指令既不产生 ReasonRun，也不被合并消费。"""
     task, completed = _bootstrap_to_reason(client, reason_queue_limit=3)
     active = _claim_active(client, task, completed["next_reason_run_id"])
 
     first = _trigger_manual_reason(client, task["id"], actor="Alice")
     assert first.status_code == 200, first.text
-    hint_one = client.post(
-        f"/api/v1/tasks/{task['id']}/hints",
-        json={"content": "先验证 A", "creator": "Alice"},
+    before = client.get(f"/api/v1/tasks/{task['id']}").json()["queued_reason_runs"]
+
+    one = client.post(
+        f"/api/v1/tasks/{task['id']}/directives",
+        json={"content": "先验证 A", "creator": "Alice", "scope": "reason_next"},
     )
-    hint_two = client.post(
-        f"/api/v1/tasks/{task['id']}/hints",
-        json={"content": "再验证 B", "creator": "Alice"},
+    two = client.post(
+        f"/api/v1/tasks/{task['id']}/directives",
+        json={"content": "再验证 B", "creator": "Alice", "scope": "reason_next"},
     )
-    assert hint_one.status_code == 201, hint_one.text
-    assert hint_two.status_code == 201, hint_two.text
+    assert one.status_code == 201, one.text
+    assert two.status_code == 201, two.text
 
     current = client.get(f"/api/v1/tasks/{task['id']}").json()
     assert current["active_reason_run"]["id"] == active["reason_run_id"]
     queued = current["queued_reason_runs"]
-    assert [item["status"] for item in queued] == ["pending", "pending", "pending"]
-    assert [item["trigger"] for item in queued] == ["manual", "hint", "hint"]
-    assert [item["id"] for item in queued] == sorted(
-        (item["id"] for item in queued),
-        key=lambda value: int(value[2:]),
-    )
+    assert [item["id"] for item in queued] == [item["id"] for item in before]
+    assert all(item["trigger"] == "manual" for item in queued)
+    directives = client.get(f"/api/v1/tasks/{task['id']}/directives").json()
+    assert len(directives) == 2
+    assert all(item["status"] == "pending" for item in directives)
 
 
 def test_fact_trickle_below_batch_size_does_not_spawn_follow_up(client) -> None:
@@ -133,30 +135,38 @@ def test_unassessed_intent_does_not_bypass_batch_gate(client) -> None:
     ]
 
 
-def test_queue_limit_coalesces_to_tail_and_preserves_trigger_metadata(client) -> None:
+def test_queue_limit_keeps_reason_next_directives_pending(client) -> None:
+    """队列满时只会并入 tail，不会新建 run；一次性指令必须保持 pending。
+
+    这是 `_create_run` 作为唯一投递点的意义：coalesce / tail 分支都到不了那里，
+    指令因此不会被静默吞掉，也不会被 reason_queue_limit 挤掉。
+    """
+    from sqlalchemy import func, select
+
+    from axiom.modules.directives.tables import directive_deliveries
+
     task, completed = _bootstrap_to_reason(client, reason_queue_limit=1)
     _claim_active(client, task, completed["next_reason_run_id"])
 
     first = client.post(
-        f"/api/v1/tasks/{task['id']}/hints",
-        json={"content": "第一条提示", "creator": "Alice"},
+        f"/api/v1/tasks/{task['id']}/directives",
+        json={"content": "第一条指令", "creator": "Alice", "scope": "reason_next"},
     )
     second = client.post(
-        f"/api/v1/tasks/{task['id']}/hints",
-        json={"content": "第二条提示", "creator": "Bob"},
+        f"/api/v1/tasks/{task['id']}/directives",
+        json={"content": "第二条指令", "creator": "Bob", "scope": "reason_next"},
     )
     assert first.status_code == 201, first.text
     assert second.status_code == 201, second.text
 
-    current = client.get(f"/api/v1/tasks/{task['id']}").json()
-    [queued] = current["queued_reason_runs"]
-    assert queued["trigger"] == "hint"
-    assert queued["trigger_payload"]["coalesced_count"] == 1
-    assert queued["trigger_payload"]["trigger_sources"] == ["hint"]
-    assert [
-        event["payload"]["hint_content"]
-        for event in queued["trigger_payload"]["coalesced_triggers"]
-    ] == ["第一条提示", "第二条提示"]
+    directives = client.get(f"/api/v1/tasks/{task['id']}/directives").json()
+    assert [item["content"] for item in directives] == ["第一条指令", "第二条指令"]
+    assert all(item["status"] == "pending" for item in directives)
+    with client.app.state.container.engine.connect() as conn:
+        deliveries = conn.execute(
+            select(func.count()).select_from(directive_deliveries)
+        ).scalar_one()
+    assert deliveries == 0
 
 
 def test_same_fingerprint_reuses_matching_pending_not_queue_head(client) -> None:
@@ -164,13 +174,13 @@ def test_same_fingerprint_reuses_matching_pending_not_queue_head(client) -> None
     _claim_active(client, task, completed["next_reason_run_id"])
 
     first = _trigger_manual_reason(client, task["id"], actor="Alice")
-    hint = client.post(
-        f"/api/v1/tasks/{task['id']}/hints",
-        json={"content": "不同输入", "creator": "Alice"},
+    directive = client.post(
+        f"/api/v1/tasks/{task['id']}/directives",
+        json={"content": "不同输入", "creator": "Alice", "scope": "reason_next"},
     )
     duplicate = _trigger_manual_reason(client, task["id"], actor="Alice")
     assert first.status_code == 200, first.text
-    assert hint.status_code == 201, hint.text
+    assert directive.status_code == 201, directive.text
     assert duplicate.status_code == 200, duplicate.text
     assert duplicate.json()["id"] == first.json()["id"]
 
@@ -209,20 +219,19 @@ def test_late_binding_merges_new_fact_without_losing_queued_snapshot(client) -> 
     assert claim["reason_run_id"] == pending_id
 
 
-def test_claim_enforces_one_in_flight_and_pending_fifo(client) -> None:
+def test_claim_enforces_one_in_flight_and_directives_survive_it(client) -> None:
     task, completed = _bootstrap_to_reason(client, reason_queue_limit=3)
     active = _claim_active(client, task, completed["next_reason_run_id"])
     first = _trigger_manual_reason(client, task["id"], actor="first")
-    second = client.post(
-        f"/api/v1/tasks/{task['id']}/hints",
-        json={"content": "second trigger", "creator": "second"},
+    directive = client.post(
+        f"/api/v1/tasks/{task['id']}/directives",
+        json={"content": "等下一个新建的 run", "creator": "second", "scope": "reason_next"},
     )
     assert first.status_code == 200, first.text
-    assert second.status_code == 201, second.text
+    assert directive.status_code == 201, directive.text
     first_id = first.json()["id"]
     queued = client.get(f"/api/v1/tasks/{task['id']}").json()["queued_reason_runs"]
-    assert [item["trigger"] for item in queued] == ["manual", "hint"]
-    second_id = queued[1]["id"]
+    assert [item["trigger"] for item in queued] == ["manual"]
 
     active_conflict = client.post(
         f"/api/v1/dispatch/tasks/{task['id']}/reason-runs/{first_id}/claim",
@@ -231,25 +240,15 @@ def test_claim_enforces_one_in_flight_and_pending_fifo(client) -> None:
     assert active_conflict.status_code == 409, active_conflict.text
 
     _finish_reason_run(client.app.state.container.engine, task["id"], active["reason_run_id"])
-    fifo_conflict = client.post(
-        f"/api/v1/dispatch/tasks/{task['id']}/reason-runs/{second_id}/claim",
-        json={"worker_name": "worker-a"},
-    )
-    assert fifo_conflict.status_code == 409, fifo_conflict.text
-
     first_claim, _execution = claim_reason_run(
         client,
         task_id=task["id"],
         reason_run_id=first_id,
     )
-    _finish_reason_run(client.app.state.container.engine, task["id"], first_id)
-    second_claim, _execution = claim_reason_run(
-        client,
-        task_id=task["id"],
-        reason_run_id=second_id,
-    )
     assert first_claim["reason_run_id"] == first_id
-    assert second_claim["reason_run_id"] == second_id
+    # 这个 run 在指令创建之前就排队了，一次性指令仍应等下一个真正新建的 run。
+    items = client.get(f"/api/v1/tasks/{task['id']}/directives").json()
+    assert items[0]["status"] == "pending"
 
 
 def test_terminal_reason_failure_releases_fifo_head_to_next_pending(client) -> None:
@@ -282,8 +281,8 @@ def test_stopping_task_cancels_active_and_all_pending_reason_runs(client) -> Non
     active = _claim_active(client, task, completed["next_reason_run_id"])
     first = _trigger_manual_reason(client, task["id"], actor="first")
     second = client.post(
-        f"/api/v1/tasks/{task['id']}/hints",
-        json={"content": "排队中的提示", "creator": "second"},
+        f"/api/v1/tasks/{task['id']}/directives",
+        json={"content": "排队中的指令", "creator": "second", "scope": "reason_next"},
     )
     assert first.status_code == 200, first.text
     assert second.status_code == 201, second.text

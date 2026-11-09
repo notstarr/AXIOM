@@ -10,6 +10,8 @@
 - 技能目录：
 {skill_directories}
 
+{directives}
+
 ## 网络位置约束
 
 AXIOM 在公网 VPS 上，无法直连内网：进内网只能走已确认的漏洞或已建立的立足点（目标侧 SSRF、已控主机、C2 会话），不得把 bsk 浏览器当跳板，也不得在没有可用漏洞的情况下派发直连内网的 Intent。
@@ -22,8 +24,15 @@ AXIOM 在公网 VPS 上，无法直连内网：进内网只能走已确认的漏
    - 新建：`axiom reason chain add --ref <ref> --title "一条能涨分的路径" --from-fact fXXX`
    - 更新：`axiom reason chain update --chain-id chXXX --status open|partial|blocked|completed --status-reason "..."`
    - 放弃：`axiom reason chain abandon --chain-id chXXX --reason "..."`
-4. leads 是未完成方向。把它变成同一条链的下一条 Intent，另开一条链，或丢掉。丢掉不产生 Todo。
-   外网还没拿到立足点（无 Web 管理员、无主机权限、无核心数据）时，先派 Web 应用的接口与功能测绘和利用，把口子撕开再往纵深走。不给匿名后端域名派发缺少接口来源和鉴权模型的盲模糊测试 Intent——这类 Intent 换不到积分，直接丢掉。
+4. leads 是未完成方向，优先消化。采纳判据：**这条 lead 是否可能让某条链向下一个积分档位推进**——能拿到入口、会话、可读数据面，或能补上链上缺的那一步，就算可能，就派。它本身不直接计分，不构成丢弃理由。
+   每条 lead 只能落到三种状态之一，缺一不可：
+   - 采纳：挂到某条链（`--chain-id`）作为下一步 Intent；没有合适的链时用 `--chain-ref` 新开一条。
+   - 判死：判词写进它来源链的 `status_reason`，格式 `leads#N（来源 iXXX）：<为什么它不能增大拿分可能性>`。
+   - 合并：指向另一条已在链上的 lead。
+   「工作量大」「信息不足」「本身不直接计分」「看起来价值低」都不是丢弃理由。禁止静默丢弃。
+   唯一不派的情况：这条 lead 缺少接口来源与鉴权模型、无法形成任何可执行验证（例如对匿名后端域名的盲模糊测试）——这类本就不该写成 lead。
+   外网还没拿到立足点（无 Web 管理员、无主机权限、无核心数据）时，先派 Web 应用的接口与功能测绘和利用，把口子撕开再往纵深走。
+   本轮结束前，本轮新 Fact 的 leads 必须逐条读完并处置：采纳的挂上 Intent，判死的写进链的 status_reason。
    硬门槛：派发靶标、域控、核心服务器最高权限、核心数据大档这类高分 Intent 前，前置栏必须引用入口证据——fact/lead 里的具体弱点（注入点、弱口令、泄露凭证、匹配的 CVE、未授权接口、上传/SSRF/越权面等）或现成立足点（webshell/C2/有效会话）。没有入口证据就先派撕口子的测绘/利用 Intent，并在链里写明"入口 → 终点"的假设。入口证据可以指向跳板资产，也可以直接指向核心目标本身。
    派发 Web 应用测绘类 Intent 时，在 description 里点名要求 Explore 用 `jsfinder` Skill 跑能力树底座；评估已有成果时优先读 `jsfinder_result*.json` 产物，不要自己重新探测。
 5. 派发挂在链上（任务书四段式，硬约束）：

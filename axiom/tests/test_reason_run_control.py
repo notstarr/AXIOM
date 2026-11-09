@@ -436,43 +436,55 @@ def test_manual_reason_can_run_while_waiting_without_new_facts_and_reuses_reason
     assert client.get(f"/api/v1/tasks/{task['id']}").json()["phase"] == "waiting"
 
 
-def test_new_human_hint_immediately_triggers_reason_with_that_hint_as_reason(client) -> None:
+def test_reason_next_directive_is_bound_only_to_the_next_new_reason_run(client) -> None:
+    """创建「下一次 reason」指令不触发 ReasonRun；等系统自然新建 run 时才绑定。
+
+    这是与旧 hint 行为最关键的区别：hint 会立刻拉起一轮 reason 并把提示当
+    intent_description；指令只排队，且只在真正新建的 run 上冻结成 delivery。
+    """
     task, completed = _bootstrap_to_reason(client)
     engine = client.app.state.container.engine
     _finish_reason_run(engine, task["id"], completed["next_reason_run_id"])
 
-    response = client.post(
-        f"/api/v1/tasks/{task['id']}/hints",
-        json={"content": "优先验证投诉撤销后是否仍能重复提交", "creator": "Alice"},
+    created = client.post(
+        f"/api/v1/tasks/{task['id']}/directives",
+        json={
+            "content": "优先验证投诉撤销后是否仍能重复提交",
+            "creator": "Alice",
+            "scope": "reason_next",
+        },
     )
-
-    assert response.status_code == 201, response.text
-    hint = response.json()
+    assert created.status_code == 201, created.text
+    directive = created.json()
+    assert directive["status"] == "pending"
     current = client.get(f"/api/v1/tasks/{task['id']}").json()
     assert current["active_reason_run"] is None
-    [run] = current["queued_reason_runs"]
-    assert run["trigger"] == "hint"
-    assert run["trigger_payload"]["hint_id"] == hint["id"]
-    assert run["trigger_payload"]["hint_content"] == hint["content"]
-    assert run["trigger_payload"]["creator"] == "Alice"
-    assert current["phase"] == "reason"
+    assert current["queued_reason_runs"] == []
+    assert "优先验证投诉撤销后" not in json.dumps(current)
+
+    triggered = _trigger_manual_reason(client, task["id"], actor="Alice")
+    assert triggered.status_code == 200, triggered.text
+    run_id = triggered.json()["id"]
+
+    items = client.get(f"/api/v1/tasks/{task['id']}/directives").json()
+    assert items[0]["status"] == "delivered"
+    assert items[0]["delivered_run_id"] == run_id
 
     _claim, execution = claim_reason_run(
         client,
         task_id=task["id"],
-        reason_run_id=run["id"],
+        reason_run_id=run_id,
     )
-    assert f"Hint {hint['id']}" in execution["intent_description"]
-    assert hint["content"] in execution["intent_description"]
-    assert "Hint 是人工规划依据而不是已验证 Fact" in execution["intent_description"]
-    assert hint["content"] in execution["hints"]
-    assert execution["reason_prompt_profile"] == "human"
+    assert execution["directives"]["reason_once"]
+    assert directive["content"] in execution["directives"]["reason_once"][0]["content"]
+    assert execution["hints"] == []
 
 
-def test_new_hint_is_saved_without_duplicate_reason_when_trigger_conditions_are_unmet(
+def test_reason_next_directive_stays_queued_when_trigger_conditions_are_unmet(
     client,
 ) -> None:
-    project = client.post("/api/v1/projects", json={"title": "Hint Trigger Guard"}).json()
+    """Bootstrap 未完成、或已有排队 ReasonRun 时，指令都只排队，不新建 run。"""
+    project = client.post("/api/v1/projects", json={"title": "Directive Trigger Guard"}).json()
     fresh = client.post(
         "/api/v1/tasks",
         json={
@@ -482,8 +494,8 @@ def test_new_hint_is_saved_without_duplicate_reason_when_trigger_conditions_are_
         },
     ).json()
     before_bootstrap = client.post(
-        f"/api/v1/tasks/{fresh['id']}/hints",
-        json={"content": "先确认登录入口", "creator": "人工"},
+        f"/api/v1/tasks/{fresh['id']}/directives",
+        json={"content": "先确认登录入口", "creator": "人工", "scope": "reason_next"},
     )
     assert before_bootstrap.status_code == 201, before_bootstrap.text
     assert client.get(f"/api/v1/tasks/{fresh['id']}").json()["active_reason_run"] is None
@@ -491,15 +503,14 @@ def test_new_hint_is_saved_without_duplicate_reason_when_trigger_conditions_are_
     task, completed = _bootstrap_to_reason(client)
     active_id = completed["next_reason_run_id"]
     while_active = client.post(
-        f"/api/v1/tasks/{task['id']}/hints",
-        json={"content": "检查已有 Reason 是否会被重复创建", "creator": "人工"},
+        f"/api/v1/tasks/{task['id']}/directives",
+        json={"content": "检查已有 Reason 是否会被重复创建", "creator": "人工", "scope": "reason_next"},
     )
     assert while_active.status_code == 201, while_active.text
     current = client.get(f"/api/v1/tasks/{task['id']}").json()
     assert current["active_reason_run"] is None
-    assert len(current["queued_reason_runs"]) == 2
+    assert len(current["queued_reason_runs"]) == 1
     assert current["queued_reason_runs"][0]["id"] == active_id
-    assert current["queued_reason_runs"][1]["trigger"] == "hint"
     with client.app.state.container.engine.connect() as conn:
         count = conn.execute(
             select(func.count()).select_from(reason_runs).where(
@@ -507,8 +518,10 @@ def test_new_hint_is_saved_without_duplicate_reason_when_trigger_conditions_are_
                 reason_runs.c.status.in_(("pending", "claimed", "running", "concluding")),
             )
         ).scalar_one()
-    assert count == 2
-    assert while_active.json() in client.get(f"/api/v1/tasks/{task['id']}/hints").json()
+    assert count == 1
+    listed = client.get(f"/api/v1/tasks/{task['id']}/directives").json()
+    assert any(item["id"] == while_active.json()["id"] for item in listed)
+    assert listed[0]["status"] == "pending"
 
 
 def test_manual_reason_snapshots_open_and_failed_explore_but_not_later_facts(client) -> None:

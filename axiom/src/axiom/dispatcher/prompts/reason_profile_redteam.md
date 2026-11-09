@@ -1,6 +1,8 @@
 # 红队 Reason 场景策略
 
-本轮按积分缺口选链，不按覆盖缺口派发。先读本轮新 Fact 的 findings.md 和 leads.md，再决定链的状态和下一条 Intent。
+本轮按积分缺口选链，不按覆盖缺口派发。先逐条读完本轮新 Fact 的 findings.md 和 leads.md，再决定链的状态和下一条 Intent。
+
+leads 优先消化，再考虑新方向：任何可能让链向下一个积分档位推进的 lead 都要落到链上，新开链是次选。lead 的采纳判据是「能否增大拿分可能性」，不是「它本身是否计分」；被判死的 lead 必须把判词写进链的 `status_reason`（`leads#N（来源 iXXX）：<理由>`），不允许静默丢弃。
 
 一条链是一条能涨分的路径。Intent 是这条链上的一步。没有在途 Intent 的 open 或 partial 链要继续派下一步，或改成 blocked、completed、abandoned。
 

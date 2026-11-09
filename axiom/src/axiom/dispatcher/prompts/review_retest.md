@@ -22,7 +22,7 @@
 
 ## 二、读上下文
 
-- `review_target.json`、hints、相关 Fact/Intent 摘要已由 AXIOM 注入，不要重复读取已注入内容。
+- `review_target.json`、相关 Fact/Intent 摘要已由 AXIOM 注入，不要重复读取已注入内容。
   - 其中 `status` 与 `status_reason` 是**上一次的结论**，复测要与它对照，而不是照抄它。
   - `reproduction` 是上报时的复现步骤，**参考**用：照它自己再做一遍，报文不必与上报逐字相同。
 - 判定标准运行 `axiom skill path whatisvul` 读取。

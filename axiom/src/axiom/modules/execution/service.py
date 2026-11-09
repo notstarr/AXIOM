@@ -21,6 +21,8 @@ from axiom.modules.credentials.schemas import (
 from axiom.modules.dispatch.pool import json_list, narrow_pool_after_failure
 from axiom.modules.dispatch import breaker
 from axiom.modules.dispatch.retry import blames_worker, retry_blocked_event, retry_outcome
+from axiom.modules.directives.schemas import WorkerDirectiveBundle
+from axiom.modules.directives.service import DirectiveService
 from axiom.modules.execution.repository import ExecutionRepository
 from axiom.modules.execution.schemas import (
     ActivityCommand,
@@ -141,6 +143,7 @@ class ExecutionService:
         axiom_tools: AxiomToolService,
         reviews: VulnerabilityReviewService,
         sandboxes: TaskSandboxManager | None = None,
+        directives: DirectiveService | None = None,
     ):
         self.engine = engine
         self.store = store
@@ -156,6 +159,7 @@ class ExecutionService:
         self.vulnerabilities = VulnerabilityRepository()
         self.reviews = reviews
         self.sandboxes = sandboxes
+        self.directives = directives
         self.audit = AuditService(engine)
 
     def _run_directory(self, task_id: str, owner_id: str, lease_id: str, *, owner_kind: str = "intent"):
@@ -315,6 +319,40 @@ class ExecutionService:
             )
         return WorkerCredentialRefresh(id=refresh.id, content=refresh.content)
 
+    def _worker_directives(
+        self,
+        *,
+        task_id: str,
+        phase: str,
+        lease_id: str,
+        intent_id: str | None = None,
+        reason_run_id: str | None = None,
+    ) -> WorkerDirectiveBundle:
+        """Resolve this lease's directives once, then mark one-shots delivered.
+
+        Pure read of the delivery ledger plus an idempotent status bump: calling
+        ``/input`` four times for the same lease returns the same bundle. The
+        ledger itself is frozen at claim time, not here.
+        """
+        if self.directives is None:
+            return WorkerDirectiveBundle()
+        with self.engine.begin() as conn:
+            bundle = self.directives.resolve(
+                conn,
+                task_id=task_id,
+                phase=phase,
+                lease_id=lease_id,
+                intent_id=intent_id,
+                reason_run_id=reason_run_id,
+            )
+            self.directives.mark_delivered(
+                conn,
+                task_id=task_id,
+                lease_id=lease_id,
+                reason_run_id=reason_run_id,
+            )
+            return bundle
+
     def input(self, *, task_id: str, intent_id: str, command: LeaseCommand) -> ExecutionInput:
         with self.engine.connect() as conn:
             row = self.repository.input_row(conn, task_id, intent_id)
@@ -347,13 +385,19 @@ class ExecutionService:
                 "todo_id": row["todo_id"],
                 "origin": row["origin_input"],
                 "goal": row["goal"],
-                "hints": self.repository.hints(conn, task_id),
+                "hints": [],  # task_hints 已停写；指令走 directives 字段
                 "scope": self.repository.parse_scope(row),
                 "execute_timeout_seconds": execute_timeout,
                 "conclude_timeout_seconds": conclude_timeout,
                 "explore_no_progress_seconds": config.explore_no_progress_seconds,
                 "phase": row["kind"],
             }
+        bundle = self._worker_directives(
+            task_id=task_id,
+            phase=values["phase"],
+            lease_id=command.lease_id,
+            intent_id=intent_id,
+        )
         context = self.context.build(
             task_id=task_id,
             phase=values["phase"],
@@ -402,7 +446,8 @@ class ExecutionService:
             todo_id=values["todo_id"],
             origin=values["origin"],
             goal=values["goal"],
-            hints=values["hints"],
+            hints=[],
+            directives=bundle,
             skill_directories=assets["skill_directories"],
             mcp_tool_names=capabilities.mcp_tool_names,
             capability_environment=capabilities.mcp_environment,
@@ -450,13 +495,18 @@ class ExecutionService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.status != "running":
                 raise LeaseInactiveError("Task is not running")
-            hints = self.repository.hints(conn, task_id)
             goal_cycle = (
                 self.reason.goals.get_cycle(conn, task_id, task.current_goal_cycle_id)
                 if task.current_goal_cycle_id
                 else None
             )
 
+        bundle = self._worker_directives(
+            task_id=task_id,
+            phase="reason",
+            lease_id=command.lease_id,
+            reason_run_id=reason_run_id,
+        )
         context = self.context.build(
             task_id=task_id,
             phase="reason",
@@ -570,7 +620,8 @@ class ExecutionService:
             todo_id=None,
             origin=task.origin.original_input,
             goal=task.goal,
-            hints=hints,
+            hints=[],
+            directives=bundle,
             skill_directories=assets["skill_directories"],
             mcp_tool_names=capabilities.mcp_tool_names,
             capability_environment=capabilities.mcp_environment,
@@ -615,7 +666,6 @@ class ExecutionService:
                 raise NotFoundError(f"Task not found: {task_id}")
             if task.status != "running" or task.legacy_readonly or task.archived:
                 raise LeaseInactiveError("Task is not running")
-            hints = self.repository.hints(conn, task_id)
             # ``PlanService.start_run`` refreshes and persists the late-bound
             # snapshot under the Task lock.  Do not rebuild it here from all
             # current Facts: that would re-claim inputs reserved by another
@@ -625,6 +675,11 @@ class ExecutionService:
             # snapshot passed to the Plan worker.
             source_fact_ids = list(run.source_fact_ids)
 
+        bundle = self._worker_directives(
+            task_id=task_id,
+            phase="plan",
+            lease_id=command.lease_id,
+        )
         context = self.context.build(
             task_id=task_id,
             phase="plan",
@@ -676,7 +731,8 @@ class ExecutionService:
             source_fact_ids=source_fact_ids,
             origin=task.origin.original_input,
             goal=task.goal,
-            hints=hints,
+            hints=[],
+            directives=bundle,
             skill_directories=assets["skill_directories"],
             mcp_tool_names=capabilities.mcp_tool_names,
             capability_environment=capabilities.mcp_environment,
@@ -731,8 +787,12 @@ class ExecutionService:
                 vulnerability = self.vulnerabilities.get(conn, task_id, run.vulnerability_id)
                 if vulnerability is None or vulnerability.archived:
                     raise LeaseInactiveError("Vulnerability is no longer reviewable")
-            hints = self.repository.hints(conn, task_id)
 
+        bundle = self._worker_directives(
+            task_id=task_id,
+            phase="review",
+            lease_id=command.lease_id,
+        )
         context = self.context.build(
             task_id=task_id,
             phase="review",
@@ -806,7 +866,8 @@ class ExecutionService:
             intent_source_facts=[],
             origin=task.origin.original_input,
             goal=task.goal,
-            hints=hints,
+            hints=[],
+            directives=bundle,
             skill_directories=assets["skill_directories"],
             mcp_tool_names=capabilities.mcp_tool_names,
             capability_environment=capabilities.mcp_environment,
@@ -1031,6 +1092,12 @@ class ExecutionService:
                 now=now,
             ):
                 raise ConflictError("Intent lease is no longer active")
+            # 只在指令还没被 /input 取走时重开（reopen_queued 只认 queued）。
+            # 已经投递成功的指令不会因 worker 后续崩溃而被重复下发。
+            if self.directives is not None:
+                self.directives.reopen_queued(
+                    conn, task_id=task_id, lease_id=command.lease_id
+                )
             worker_pool = (
                 narrow_pool_after_failure(
                     conn,

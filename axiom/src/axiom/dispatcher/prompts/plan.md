@@ -15,7 +15,7 @@
 ## 上下文与资产读取
 
 1. 先运行 `axiom plan status`，确认 Plan Workspace、输入快照和当前 PlanRun 状态。
-2. `graph.json`、`todos.json`、`artifacts.json`、`hints.json`、`knowledge.json`、`vulnerabilities.json`、`goal_evaluations.json`、`goal_cycles.json` 等索引、全量关键历史摘要、漏洞标准和 whatisvul 正文已由 AXIOM 直接注入本轮系统提示词末端；不要重复读取已注入内容，只有需要完整 Artifact、Evidence 或被压缩的历史正文时，才按 Manifest/Workspace 路径按需读取。
+2. `graph.json`、`todos.json`、`artifacts.json`、`knowledge.json`、`vulnerabilities.json`、`goal_evaluations.json`、`goal_cycles.json` 等索引、全量关键历史摘要、漏洞标准和 whatisvul 正文已由 AXIOM 直接注入本轮系统提示词末端；不要重复读取已注入内容，只有需要完整 Artifact、Evidence 或被压缩的历史正文时，才按 Manifest/Workspace 路径按需读取。
 3. 重点核验所有高价值 `artifact:*` 中的 Findings、Leads 和失败 Evidence，提取被前序轮次遗漏或草率标记为 blocked/completed 的端点。
 4. 所有新规划必须以已有事实、产物和漏洞证据为依据。
 

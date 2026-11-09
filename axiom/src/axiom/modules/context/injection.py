@@ -73,7 +73,7 @@ class ContextInjectionService:
             engagement_mode = str(manifest.get("engagement_mode") or "")
         red_team = engagement_mode == "red_team"
         if phase == "explore":
-            wanted = ["hints", "knowledge", "artifacts"]
+            wanted = ["knowledge", "artifacts"]
             refs = [f"intent:{intent_id}"] if intent_id else []
             if intent_id:
                 source_refs.append(f"intent:{intent_id}")
@@ -81,13 +81,12 @@ class ContextInjectionService:
                 sections.append(("当前 Intent 溯源", self._read_detail(root, refs[0])))
             sections.extend(self._index_sections(root, indexes, wanted, source_refs))
         elif phase == "reason":
-            wanted = ["hints", "knowledge", "artifacts"]
+            wanted = ["knowledge", "artifacts"]
             sections.extend(self._index_sections(root, indexes, wanted, source_refs))
         elif phase == "plan":
             wanted = [
                 "graph",
                 "artifacts",
-                "hints",
                 "knowledge",
                 "goal_evaluations",
                 "goal_cycles",
@@ -96,12 +95,12 @@ class ContextInjectionService:
                 wanted[1:1] = ["todos", "vulnerabilities"]
             sections.extend(self._index_sections(root, indexes, wanted, source_refs))
         elif phase == "review":
-            wanted = ["review_target", "hints", "graph", "artifacts"]
+            wanted = ["review_target", "graph", "artifacts"]
             if not red_team:
                 wanted.append("vulnerabilities")
             sections.extend(self._index_sections(root, indexes, wanted, source_refs))
         else:  # bootstrap
-            wanted = ["hints", "knowledge", "graph"]
+            wanted = ["knowledge", "graph"]
             if not red_team:
                 wanted.append("vulnerabilities")
             # 种子漏洞只喂 bootstrap：Explore/Reason 靠 leads 与产物接力，
@@ -213,7 +212,6 @@ class ContextInjectionService:
 
 
 _CARD_DESCRIPTORS = {
-    "hints": "任务提示；明细按 manifest details/ 按需读取",
     "knowledge": "项目知识条目；明细按 manifest details/ 按需读取",
     "artifacts": (
         "产物登记（按 intent 递增）：findings/leads 在 artifacts/<intent_id>/；"

@@ -101,7 +101,7 @@ def _extract_plan_confidence(reason: str) -> str:
 
 
 class ReasonService:
-    def __init__(self, engine: Engine, *, store: FileStore | None = None, sandboxes: TaskSandboxManager | None = None, red_team=None):
+    def __init__(self, engine: Engine, *, store: FileStore | None = None, sandboxes: TaskSandboxManager | None = None, red_team=None, directives=None):
         self.engine = engine
         self.store = store
         self.repository = ReasonRepository()
@@ -111,6 +111,7 @@ class ReasonService:
         self.todos = TodoRepository()
         self.goals = GoalRepository()
         self.red_team = red_team
+        self.directives = directives
         self.audit = AuditService(engine)
 
     @staticmethod
@@ -1064,6 +1065,16 @@ class ReasonService:
             explore_conclude_max_seconds=config.explore_conclude_max_seconds,
             now=now,
         )
+        # 一次性 reason 指令只绑定到「真正新建」的 run。coalesce 合并到 pending
+        # 与队列满并入 tail 的分支都到不了这里，指令因此保持 pending，等下一个
+        # 真正新建的 run，不会被合并悄悄吞掉、也不会被队列上限挤没。
+        delivered = (
+            self.directives.deliver_for_reason_run(
+                conn, task_id=task.id, reason_run_id=run.id
+            )
+            if self.directives is not None
+            else []
+        )
         self.audit.record_in(
             conn,
             RecordAuditEvent(
@@ -1076,6 +1087,11 @@ class ReasonService:
                     "phase": "plan" if trigger == "plan" else "reason",
                     "trigger": trigger,
                     **trigger_payload,
+                    **(
+                        {"directive_ids": [row["id"] for row in delivered]}
+                        if delivered
+                        else {}
+                    ),
                 },
             ),
         )
@@ -1490,6 +1506,12 @@ class ReasonService:
                 now=now,
             ):
                 raise LeaseInactiveError("ReasonRun lease is no longer active")
+            # reason_next 的 delivery 不绑 lease（run 创建时就固定了），按 run_id
+            # 重开没被 /input 取走的指令；已投递的不动。
+            if self.directives is not None:
+                self.directives.reopen_queued(
+                    conn, task_id=task_id, reason_run_id=reason_run_id
+                )
             worker_pool = (
                 narrow_pool_after_failure(
                     conn,

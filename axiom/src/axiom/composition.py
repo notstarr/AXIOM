@@ -31,6 +31,7 @@ from axiom.modules.mac_bridge.service import MacBridgeService
 from axiom.modules.goals.service import GoalService
 from axiom.modules.settings.service import RuntimeSettingsService
 from axiom.modules.tasks.service import TaskService
+from axiom.modules.directives.service import DirectiveService
 from axiom.modules.todos.service import TodoService
 from axiom.modules.token_usage.service import TokenUsageService
 from axiom.modules.interventions.service import InterventionService
@@ -84,6 +85,7 @@ class Container:
     storage_admin: StorageAdminService
     token_usage: TokenUsageService
     interventions: InterventionService
+    directives: DirectiveService
     auth: AuthService
     sandboxes: TaskSandboxManager
     mac_bridge: MacBridgeService
@@ -98,6 +100,7 @@ class Container:
     ) -> "Container":
         store = FileStore(data_dir)
         sandboxes = TaskSandboxManager(engine, store)
+        directives = DirectiveService(engine)
         vulnerability_reviews = VulnerabilityReviewService(engine, store, sandboxes=sandboxes)
         archives = ArchiveService(engine, store, reviews=vulnerability_reviews)
         vulnerability_service = VulnerabilityService(
@@ -105,7 +108,7 @@ class Container:
         )
         context = ContextService(engine, store)
         red_team = RedTeamService(engine, reviews=vulnerability_reviews)
-        reason = ReasonService(engine, store=store, sandboxes=sandboxes, red_team=red_team)
+        reason = ReasonService(engine, store=store, sandboxes=sandboxes, red_team=red_team, directives=directives)
         plan = PlanService(engine, sandboxes=sandboxes, red_team=red_team)
         skills = SkillService(data_dir, engine=engine)
         phase_capabilities = PhaseCapabilityService(
@@ -135,7 +138,7 @@ class Container:
             graph=GraphService(engine, archives=archives, audit=audit),
             axiom_tools=axiom_tools,
             workers=WorkerService(engine),
-            dispatch=DispatchService(engine, reviews=vulnerability_reviews),
+            dispatch=DispatchService(engine, reviews=vulnerability_reviews, directives=directives),
             artifacts=artifacts,
             archives=archives,
             audit=audit,
@@ -149,6 +152,7 @@ class Container:
                 axiom_tools,
                 vulnerability_reviews,
                 sandboxes,
+                directives,
             ),
             todos=TodoService(engine),
             reason=reason,
@@ -184,6 +188,7 @@ class Container:
             storage_admin=StorageAdminService(engine, store),
             token_usage=token_usage,
             interventions=interventions,
+            directives=directives,
             auth=AuthService(data_dir),
             sandboxes=sandboxes,
             mac_bridge=MacBridgeService(data_dir),

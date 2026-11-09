@@ -528,6 +528,7 @@
       goal_cycles: [],
       goal_evaluations: [],
       hints: [],
+      directives: [],
       todos: [],
       chains: [],
       red_team_results: [],
@@ -556,6 +557,7 @@
       goal_cycles: [...(base.goal_cycles || [])],
       goal_evaluations: [...(base.goal_evaluations || [])],
       hints: [...(base.hints || [])],
+      directives: [...(base.directives || [])],
       todos: [...(base.todos || [])],
       chains: [...(base.chains || [])],
       red_team_results: [...(base.red_team_results || [])],
@@ -586,7 +588,7 @@
     }
 
     const allSections = [
-      'project_group', 'graph', 'hints', 'todos', 'vulnerabilities',
+      'project_group', 'graph', 'hints', 'directives', 'todos', 'vulnerabilities',
       'artifacts', 'lead_artifacts', 'goal_cycles', 'goal_evaluations',
     ];
     const selectedSections = Array.isArray(options.sections) && options.sections.length
@@ -638,6 +640,11 @@
     if (selectedSections.has('hints')) {
       pending.push(runSection('hints', () => request('GET', `/tasks/${taskId}/hints`, null, options), items => {
         detail.hints = items || [];
+      }));
+    }
+    if (selectedSections.has('directives')) {
+      pending.push(runSection('directives', () => request('GET', `/tasks/${taskId}/directives`, null, options), items => {
+        detail.directives = items || [];
       }));
     }
     if (selectedSections.has('todos')) {
@@ -703,9 +710,10 @@
 
     const project = await request('GET', `/projects/${task.project_id}`, null, options).catch(() => null);
     if (task.archived) return emptyTaskDetail(mappedTask, true);
-    const [graph, hints, todos, vulnerabilities, artifacts, leadArtifacts, bootstrapLeadArtifacts, goalCycles, goalEvaluations] = await Promise.all([
+    const [graph, hints, directives, todos, vulnerabilities, artifacts, leadArtifacts, bootstrapLeadArtifacts, goalCycles, goalEvaluations] = await Promise.all([
       request('GET', `/tasks/${taskId}/graph`, null, options),
-      request('GET', `/tasks/${taskId}/hints`, null, options),
+      request('GET', `/tasks/${taskId}/hints`, null, options).catch(() => []),
+      request('GET', `/tasks/${taskId}/directives`, null, options).catch(() => []),
       request('GET', `/tasks/${taskId}/todos?limit=200`, null, options),
       request('GET', `/tasks/${taskId}/vulnerabilities?limit=200`, null, options),
       request('GET', `/tasks/${taskId}/artifacts?limit=12`, null, options),
@@ -731,6 +739,7 @@
       goal_cycles: goalCycles || [],
       goal_evaluations: goalEvaluations || [],
       hints,
+      directives: directives || [],
       todos,
       chains: task.engagement_mode === 'red_team'
         ? await request('GET', `/tasks/${taskId}/red-team/chains`, null, options).catch(() => [])
@@ -1154,13 +1163,32 @@
       });
       return { project: mapTask(result), updated_unclaimed_intents: 0 };
     }
+    // hints 录入已停写：旧 UI 调用改投 directives（后端 /hints 的 POST/PATCH 返回 410）。
     if ((match = path.match(/^\/projects\/([^/]+)\/hints$/)) && method === 'POST') {
-      return request('POST', `/tasks/${match[1]}/hints`, { content: body.content, creator: body.creator || 'human' });
+      return request('POST', `/tasks/${match[1]}/directives`, {
+        content: body.content,
+        creator: body.creator || 'human',
+        scope: body.scope || 'reason_all',
+        target_intent_id: body.target_intent_id || null,
+      });
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/hints\/([^/]+)$/)) && method === 'PUT') {
-      return request('PATCH', `/tasks/${match[1]}/hints/${match[2]}`, {
+      return request('PATCH', `/tasks/${match[1]}/directives/${match[2]}`, {
         content: body.content,
       });
+    }
+    if ((match = path.match(/^\/projects\/([^/]+)\/directives\/eligible-explores$/)) && method === 'GET') {
+      return request('GET', `/tasks/${match[1]}/directives/eligible-explores`, null, options);
+    }
+    if ((match = path.match(/^\/projects\/([^/]+)\/directives$/))) {
+      if (method === 'GET') return request('GET', `/tasks/${match[1]}/directives`, null, options);
+      if (method === 'POST') return request('POST', `/tasks/${match[1]}/directives`, body, options);
+    }
+    if ((match = path.match(/^\/projects\/([^/]+)\/directives\/([^/]+)$/))) {
+      if (method === 'PUT' || method === 'PATCH') {
+        return request('PATCH', `/tasks/${match[1]}/directives/${match[2]}`, body, options);
+      }
+      if (method === 'DELETE') return request('DELETE', `/tasks/${match[1]}/directives/${match[2]}`, null, options);
     }
     if ((match = path.match(/^\/projects\/([^/]+)\/facts\/([^/]+)$/))) {
       if (method === 'PUT') return request('PATCH', `/tasks/${match[1]}/facts/${match[2]}`, {

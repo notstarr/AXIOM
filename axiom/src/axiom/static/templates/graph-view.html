@@ -394,9 +394,9 @@
       <div class="flex border-b border-slate-100 shrink-0">
         <button @click="sideTab = 'detail'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'detail' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">详情</button>
-        <button @click="sideTab = 'hints'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
-          :class="sideTab === 'hints' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">
-          提示 <span class="ml-0.5 text-[10px] opacity-60" x-text="project.hints.length"></span>
+        <button @click="sideTab = 'directives'; loadEligibleExplores()" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
+          :class="sideTab === 'directives' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">
+          指令 <span class="ml-0.5 text-[10px] opacity-60" x-text="(project.directives || []).length"></span>
         </button>
         <button @click="sideTab = 'board'; reloadBlackboardGroup(project?.project?.parent_project_id)" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'board' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">
@@ -672,36 +672,59 @@
         </template>
       </div>
 
-      <!-- Hints -->
-      <div x-show="sideTab === 'hints'" class="flex-1 overflow-y-auto p-4 space-y-3 bg-amber-50/25">
-        <template x-if="taskDetailSectionPending('hints')">
-          <div class="rounded-2xl border border-dashed border-amber-200 bg-white/80 px-5 py-10 text-center shadow-sm"><p class="text-sm text-slate-400">正在加载提示…</p></div>
-        </template>
-        <template x-if="taskDetailSectionError('hints')">
-          <div class="rounded-2xl border border-dashed border-rose-200 bg-white/80 px-5 py-10 text-center shadow-sm"><p class="text-sm text-rose-500">提示加载失败</p><button @click="retryTaskDetailSection('hints')" class="mt-2 text-xs text-brand-600 hover:underline">重试</button></div>
-        </template>
-        <template x-if="taskDetailSectionReady('hints') && project.hints.length === 0">
-          <div class="rounded-2xl border border-dashed border-amber-200 bg-white/80 px-5 py-10 text-center shadow-sm">
-            <p class="text-sm text-slate-300">暂无提示</p>
+      <!-- Worker 指令（替代旧 Hints 的录入与展示） -->
+      <div x-show="sideTab === 'directives'" class="flex-1 overflow-y-auto p-4 space-y-3 bg-indigo-50/20">
+        <div class="rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm">
+          <h3 class="text-sm font-semibold text-slate-700">下发 Worker 指令</h3>
+          <p class="text-[11px] text-slate-400 mt-1 leading-relaxed">指令是作业要求，按作用域直接约束对应阶段的 Worker；「共享知识」是业务背景，两者不同。一次性指令只在绑定的那一轮生效，已开跑的 Worker 不会收到新指令。</p>
+          <select x-model="newDirective.scope" class="mt-3 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400">
+            <option value="reason_all">对全体 Reason（一直生效）</option>
+            <option value="reason_next">对下一次 Reason（仅一次）</option>
+            <option value="explore_all">对全体 Explore（一直生效）</option>
+            <option value="explore_one">对某个 Explore（仅一次）</option>
+            <option value="all_workers">对全部 Worker（一直生效）</option>
+          </select>
+          <template x-if="newDirective.scope === 'explore_one'">
+            <select x-model="newDirective.target_intent_id" class="mt-2 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400">
+              <option value="">选择尚未领取的 Explore</option>
+              <template x-for="e in eligibleExplores" :key="e.intent_id">
+                <option :value="e.intent_id" x-text="`${e.intent_id} · ${(e.description || '').slice(0, 40)}`"></option>
+              </template>
+            </select>
+          </template>
+          <textarea x-model="newDirective.content" rows="3" placeholder="例：先复核登录态基线，再验证对象级归属" class="mt-2 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"></textarea>
+          <div class="mt-2 flex items-center justify-between gap-3">
+            <span class="text-[11px] text-slate-400">操作者：<span x-text="actorName()"></span></span>
+            <button @click="addDirective()" :disabled="!newDirective.content.trim() || directiveSubmitting"
+              class="px-4 py-1.5 text-xs bg-indigo-500 text-white rounded-xl font-medium hover:bg-indigo-600 transition disabled:opacity-30">下发指令</button>
           </div>
+        </div>
+
+        <template x-if="taskDetailSectionPending('directives')">
+          <div class="rounded-2xl border border-dashed border-indigo-200 bg-white/80 px-5 py-8 text-center shadow-sm"><p class="text-sm text-slate-400">正在加载指令…</p></div>
         </template>
-        <template x-for="h in project.hints" :key="h.id">
-          <div class="w-full text-left rounded-2xl border border-amber-200/80 bg-white shadow-sm overflow-hidden transition hover:bg-amber-50/40 cursor-pointer"
-               @click="openHintTimelineEntry(h.id)">
-            <div class="px-4 py-3 border-b border-amber-100 bg-amber-50/80 flex items-center justify-between">
+        <template x-if="taskDetailSectionError('directives')">
+          <div class="rounded-2xl border border-dashed border-rose-200 bg-white/80 px-5 py-8 text-center shadow-sm"><p class="text-sm text-rose-500">指令加载失败</p><button @click="retryTaskDetailSection('directives')" class="mt-2 text-xs text-brand-600 hover:underline">重试</button></div>
+        </template>
+        <template x-if="taskDetailSectionReady('directives') && (project.directives || []).length === 0">
+          <div class="rounded-2xl border border-dashed border-indigo-200 bg-white/80 px-5 py-8 text-center shadow-sm"><p class="text-sm text-slate-300">暂无指令</p></div>
+        </template>
+        <template x-for="d in (project.directives || [])" :key="d.id">
+          <div class="w-full text-left rounded-2xl border border-indigo-200/80 bg-white shadow-sm overflow-hidden">
+            <div class="px-4 py-3 border-b border-indigo-100 bg-indigo-50/70 flex items-center justify-between gap-2">
               <div class="flex items-center gap-2 min-w-0">
-                <span class="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span>
-                <span class="font-medium text-amber-800 truncate" x-text="h.creator"></span>
+                <span class="w-2 h-2 rounded-full bg-indigo-400 shrink-0"></span>
+                <span class="font-medium text-indigo-800 truncate text-xs" x-text="directiveScopeLabel(d.scope)"></span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded-md bg-white/80 border border-indigo-100 text-indigo-600 shrink-0" x-text="directiveStatusLabel(d)"></span>
               </div>
-              <div class="flex items-center gap-2">
-                <button @click.stop="openEditHint(h)" class="p-1 rounded-md hover:bg-amber-200 text-amber-400 hover:text-amber-700 transition" title="编辑">
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"/></svg>
-                </button>
-                <span class="text-amber-600/80 shrink-0 tabular-nums" x-text="formatTime(h.created_at)"></span>
+              <div class="flex items-center gap-2 shrink-0">
+                <button @click.stop="toggleDirective(d)" class="p-1 rounded-md hover:bg-indigo-200 text-indigo-500 hover:text-indigo-800 transition text-[10px]" x-text="(d.status === 'disabled' || d.archived) ? '启用' : '停用'"></button>
+                <span class="text-indigo-600/80 tabular-nums text-[10px]" x-text="formatTime(d.created_at)"></span>
               </div>
             </div>
             <div class="p-4">
-              <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="h.content"></p>
+              <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="d.content"></p>
+              <p class="mt-2 text-[10px] text-slate-400" x-show="d.target_intent_id" x-text="`目标 Explore：${d.target_intent_id}`"></p>
             </div>
           </div>
         </template>

@@ -1,22 +1,37 @@
 from __future__ import annotations
 
 
-def task_with_sources(client) -> dict:
+def task_with_sources(client, engine) -> dict:
     project = client.post("/api/v1/projects", json={"title": "系统"}).json()
-    return client.post(
+    task = client.post(
         "/api/v1/tasks",
         json={
             "project_id": project["id"],
             "title": "测试",
             "origin": "a.example.com",
             "goal": "完成测试",
-            "hints": ["优先验证授权"],
         },
     ).json()
+    # 录入已停写；Todo 的历史 hint 来源用停写前的存量行验证。
+    from axiom.modules.tasks.tables import task_hints
+    from axiom.shared.clock import utcnow
+
+    with engine.begin() as conn:
+        conn.execute(
+            task_hints.insert().values(
+                id="h001",
+                task_id=task["id"],
+                content="优先验证授权",
+                creator="human",
+                created_at=utcnow(),
+                archived=False,
+            )
+        )
+    return task
 
 
 def test_todo_is_single_level_and_status_can_be_updated(client) -> None:
-    task = task_with_sources(client)
+    task = task_with_sources(client, client.app.state.container.engine)
     created = client.post(
         f"/api/v1/tasks/{task['id']}/todos",
         json={
@@ -52,7 +67,7 @@ def test_todo_is_single_level_and_status_can_be_updated(client) -> None:
 
 
 def test_todo_rejects_unknown_sources_atomically(client) -> None:
-    task = task_with_sources(client)
+    task = task_with_sources(client, client.app.state.container.engine)
     response = client.post(
         f"/api/v1/tasks/{task['id']}/todos",
         json={
@@ -84,7 +99,7 @@ def test_todo_counter_auto_aligns_when_counter_falls_behind(client) -> None:
     from axiom.shared.ids import id_counters
     from sqlalchemy import update
 
-    task = task_with_sources(client)
+    task = task_with_sources(client, client.app.state.container.engine)
     task_id = task["id"]
 
     # 正常创建 td001

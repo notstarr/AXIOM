@@ -14,7 +14,6 @@ def setup_claimed_bootstrap(client) -> tuple[dict, dict]:
             "title": "攻击面发现",
             "origin": "https://a.example.com",
             "goal": "完成渗透测试",
-            "hints": ["优先识别后端接口"],
             "worker_pool": ["worker-a"],
         },
     ).json()
@@ -52,7 +51,7 @@ def test_bootstrap_closeout_is_atomic_and_materializes_registered_files(client, 
         json={"lease_id": claim["lease_id"]},
     ).json()
     assert execution_input["origin"] == "https://a.example.com"
-    assert execution_input["hints"] == ["优先识别后端接口"]
+    assert execution_input["hints"] == []
     assert Path(execution_input["run_dir"]).is_relative_to(data_dir)
     assert client.post(
         f"{base}/heartbeat",

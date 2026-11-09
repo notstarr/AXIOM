@@ -97,10 +97,8 @@ def test_task_creation_is_atomic_and_seeds_graph(client) -> None:
     }
     assert task["worker_pool"] == ["worker-a"]
 
-    hints = client.get(f"/api/v1/tasks/{task['id']}/hints").json()
-    assert [(item["id"], item["content"]) for item in hints] == [
-        ("h001", "优先验证对象级授权")
-    ]
+    # hints 入参为兼容旧客户端保留，但已停写：不再落库、不再注入 worker。
+    assert client.get(f"/api/v1/tasks/{task['id']}/hints").json() == []
 
     graph_response = client.get(f"/api/v1/tasks/{task['id']}/graph")
     assert graph_response.status_code == 200
@@ -400,7 +398,7 @@ def test_scope_normalizes_exact_and_wildcard_targets(client) -> None:
     }
 
 
-def test_task_settings_and_hints_can_be_edited_without_stale_graph_state(client) -> None:
+def test_task_settings_can_be_edited_without_stale_graph_state(client) -> None:
     project = create_project(client)
     task = client.post(
         "/api/v1/tasks",
@@ -438,23 +436,17 @@ def test_task_settings_and_hints_can_be_edited_without_stale_graph_state(client)
     assert goal["description"] == "验证所有高价值攻击面"
     assert graph["intents"][0]["worker_pool"] == ["worker-b"]
 
-    hint = client.post(
+    # hints 的写入与编辑都已停写；录入统一走 /directives。
+    refused = client.post(
         f"/api/v1/tasks/{task['id']}/hints",
         json={"content": "登录入口位于 /admin", "creator": "operator"},
     )
-    assert hint.status_code == 201, hint.text
-    changed = client.patch(
-        f"/api/v1/tasks/{task['id']}/hints/{hint.json()['id']}",
+    assert refused.status_code == 410, refused.text
+    refused_edit = client.patch(
+        f"/api/v1/tasks/{task['id']}/hints/h001",
         json={"content": "登录入口位于 /console"},
     )
-    assert changed.status_code == 200
-    assert changed.json()["content"] == "登录入口位于 /console"
-
-    archived = client.patch(
-        f"/api/v1/tasks/{task['id']}/hints/{hint.json()['id']}",
-        json={"archived": True},
-    )
-    assert archived.status_code == 200
+    assert refused_edit.status_code == 410, refused_edit.text
     assert client.get(f"/api/v1/tasks/{task['id']}/hints").json() == []
 
 

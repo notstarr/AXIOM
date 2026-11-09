@@ -8,6 +8,7 @@ from sqlalchemy import Engine, select
 from axiom.dispatcher.queue import fifo_head, is_retry_blocked
 from axiom.dispatcher.schemas import ClaimAction, ClaimedIntent, ClaimedWork, DispatcherSnapshot
 from axiom.modules.dispatch.retry import retry_outcome
+from axiom.modules.directives.service import DirectiveService
 from axiom.modules.audit.schemas import RecordAuditEvent
 from axiom.modules.audit.service import AuditService
 from axiom.modules.dispatch.pool import usable_pool
@@ -43,12 +44,16 @@ from axiom.shared.ids import new_lease_id
 
 
 class DispatchService:
-    def __init__(self, engine: Engine, *, reviews: VulnerabilityReviewService):
+    def __init__(
+        self, engine: Engine, *, reviews: VulnerabilityReviewService,
+        directives: DirectiveService | None = None,
+    ):
         self.engine = engine
         self.repository = DispatchRepository()
         self.reason = ReasonRepository()
         self.plan = PlanRepository()
         self.reviews = reviews
+        self.directives = directives
         self.audit = AuditService(engine)
 
     def recover_parked(self) -> RecoveryReport:
@@ -250,6 +255,19 @@ class DispatchService:
                 ),
             ):
                 raise ConflictError("Intent claim lost a concurrent race")
+            # 一次性指令在领取的同一事务里冻结到新 lease。/input 可能重试多次，
+            # 在那时消费会重投或漏投；已 claimed/running 的 Explore 在 create
+            # 阶段就被拦下了，不可能带着指令走到这里。
+            delivered = (
+                self.directives.deliver_for_intent(
+                    conn,
+                    task_id=task_id,
+                    intent_id=intent_id,
+                    lease_id=lease_id,
+                )
+                if self.directives is not None and intent["kind"] == "explore"
+                else []
+            )
             self.audit.record_in(
                 conn,
                 RecordAuditEvent(
@@ -259,7 +277,15 @@ class DispatchService:
                     worker=worker_name,
                     event_type="intent.claimed",
                     message=f"{intent['kind']} Intent 已由 Worker {worker_name} 领取",
-                    payload={"phase": intent["kind"], "lease_id": lease_id},
+                    payload={
+                        "phase": intent["kind"],
+                        "lease_id": lease_id,
+                        **(
+                            {"directive_ids": [row["id"] for row in delivered]}
+                            if delivered
+                            else {}
+                        ),
+                    },
                 ),
             )
             return intent
@@ -728,6 +754,13 @@ class DispatchService:
                     terminal=terminal,
                     now=now,
                 ):
+                    # 租约过期时若 /input 还没来得及取走指令，重开它等下一次领取。
+                    if self.directives is not None:
+                        self.directives.reopen_queued(
+                            conn,
+                            task_id=row["task_id"],
+                            lease_id=row["lease_id"],
+                        )
                     self.audit.record_in(
                         conn,
                         RecordAuditEvent(
@@ -769,6 +802,12 @@ class DispatchService:
                     terminal=terminal,
                     now=now,
                 ):
+                    if self.directives is not None:
+                        self.directives.reopen_queued(
+                            conn,
+                            task_id=row["task_id"],
+                            reason_run_id=row["id"],
+                        )
                     self.reason.abandon_open(
                         conn,
                         task_id=row["task_id"],

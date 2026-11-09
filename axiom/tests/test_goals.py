@@ -255,12 +255,24 @@ def test_goal_evidence_must_belong_to_the_same_task(client) -> None:
     assert client.get(f"/api/v1/tasks/{first['id']}").json()["status"] == "running"
 
 
-def test_unachieved_goal_may_reference_a_task_hint(client) -> None:
+def test_unachieved_goal_may_reference_a_task_hint(client, engine) -> None:
     task, reason_claim, completed = _active_reason(client)
-    hint = client.post(
-        f"/api/v1/tasks/{task['id']}/hints",
-        json={"content": "必须先由 Explore 独立复核"},
-    ).json()
+    # 录入已停写；这里构造停写前的存量行，验证历史引用仍可用。
+    from axiom.modules.tasks.tables import task_hints
+    from axiom.shared.clock import utcnow
+
+    with engine.begin() as conn:
+        conn.execute(
+            task_hints.insert().values(
+                id="h001",
+                task_id=task["id"],
+                content="必须先由 Explore 独立复核",
+                creator="human",
+                created_at=utcnow(),
+                archived=False,
+            )
+        )
+    hint = {"id": "h001"}
     workspace = client.post(
         f"/api/v1/tasks/{task['id']}/reason/workspaces",
         json={
@@ -303,7 +315,7 @@ def test_unachieved_goal_may_reference_a_task_hint(client) -> None:
     assert response.status_code == 200, response.text
 
 
-def test_task_hint_does_not_need_to_be_fact_evidence(client) -> None:
+def test_task_hint_does_not_need_to_be_fact_evidence(client, engine) -> None:
     project = client.post("/api/v1/projects", json={"title": "Goal Hint"}).json()
     task = client.post(
         "/api/v1/tasks",
@@ -311,9 +323,22 @@ def test_task_hint_does_not_need_to_be_fact_evidence(client) -> None:
             "project_id": project["id"],
             "title": "Goal Hint",
             "origin": "a.example.com",
-            "hints": ["完成所有验证"],
         },
     ).json()
+    from axiom.modules.tasks.tables import task_hints
+    from axiom.shared.clock import utcnow
+
+    with engine.begin() as conn:
+        conn.execute(
+            task_hints.insert().values(
+                id="h001",
+                task_id=task["id"],
+                content="完成所有验证",
+                creator="human",
+                created_at=utcnow(),
+                archived=False,
+            )
+        )
 
     response = client.post(
         f"/api/v1/tasks/{task['id']}/goal-evaluations",

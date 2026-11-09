@@ -73,6 +73,8 @@ REQUIRED_TABLES = frozenset(
         "task_sandboxes",
         "red_team_chains",
         "red_team_results",
+        "worker_directives",
+        "directive_deliveries",
     }
 )
 

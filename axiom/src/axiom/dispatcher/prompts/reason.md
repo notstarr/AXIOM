@@ -10,6 +10,8 @@
 - 技能目录（按需读取）：
 {skill_directories}
 
+{directives}
+
 ## 网络位置约束
 
 AXIOM 在公网 VPS 上，无法直连内网：进内网只能走已确认的漏洞或已建立的立足点（目标侧 SSRF、已控主机、C2 会话），不得把 bsk 浏览器当跳板，也不得在没有可用漏洞的情况下派发直连内网的 Intent。
@@ -18,7 +20,7 @@ AXIOM 在公网 VPS 上，无法直连内网：进内网只能走已确认的漏
 
 1. **上下文与产物读取**：
    - 运行 `axiom reason status` 确认工作区状态与待处理输入。
-   - `hints`、`knowledge`、`artifacts` 三张**目录卡**与触发快照、当前 Todo、新 Fact 摘要已由 AXIOM 注入；目录卡只含计数与查询路径——需要内容时按卡内路径与 Context Manifest 按需读取。
+   - `knowledge`、`artifacts` 两张**目录卡**与触发快照、当前 Todo、新 Fact 摘要已由 AXIOM 注入；目录卡只含计数与查询路径——需要内容时按卡内路径与 Context Manifest 按需读取。
    - `vulnerabilities`、`todos` 全量、`graph`（facts）**不再注入**：漏洞细节走漏洞库 CLI/钉钉记录，facts 细节按 ref 读 `details/`，todo 全量用 `axiom reason status` 查询。
    - 凡评审漏洞、判定 severity 或写入影响面结论前，运行 `axiom skill path whatisvul` 并完整读取 `whatisvul/SKILL.md`（失败则 `axiom skill doctor whatisvul`）。不要在未读取时臆测判定标准。
    - **攻击面推导**：规划派发时，运行 `axiom skill path web-attack-playbook` 读其 `SKILL.md` 形态索引，与已确认 Fact 及当前资产共同推导出还没打的攻击方式，据此派发 Intent——**派发的 Intent 本身就是该攻击方式**。

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from axiom.api.dependencies import get_container
 from axiom.composition import Container
@@ -66,7 +66,11 @@ def add_task_hint(
     body: CreateTaskHint,
     container: Container = Depends(get_container),
 ) -> TaskHint:
-    return container.tasks.add_hint(task_id, body)
+    """写入已停用。旧的 task_hints 行保留供历史 Todo/Goal 软引用解析。"""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="task_hints 已停写，请改用 /directives 下发 Worker 指令",
+    )
 
 
 @router.patch("/{task_id}/hints/{hint_id}", response_model=TaskHint)
@@ -76,7 +80,10 @@ def update_task_hint(
     body: UpdateTaskHint,
     container: Container = Depends(get_container),
 ) -> TaskHint:
-    return container.tasks.update_hint(task_id, hint_id, body)
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="task_hints 已停写，请改用 /directives 下发 Worker 指令",
+    )
 
 
 @router.post("/{task_id}/stop", response_model=Task)

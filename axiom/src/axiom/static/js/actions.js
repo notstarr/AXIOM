@@ -88,6 +88,62 @@ window.AxiomModules.actions = {
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
+    directiveScopeLabel(scope) {
+      return ({
+        reason_all: '全体 Reason · 常驻',
+        reason_next: '下一次 Reason · 一次',
+        explore_all: '全体 Explore · 常驻',
+        explore_one: '指定 Explore · 一次',
+        all_workers: '全部 Worker · 常驻',
+      }[scope] || scope || '未知作用域');
+    },
+    directiveStatusLabel(item) {
+      if (!item) return '';
+      if (item.status === 'disabled' || item.archived) return '已停用';
+      if (item.status === 'pending') return '待投递';
+      if (item.status === 'delivered') return '已投递';
+      return '生效中';
+    },
+    async loadEligibleExplores() {
+      try {
+        const items = await this.api('GET', `/projects/${this.selectedProjectId}/directives/eligible-explores`);
+        this.eligibleExplores = Array.isArray(items) ? items : [];
+      } catch (e) {
+        this.eligibleExplores = [];
+      }
+    },
+    async addDirective() {
+      if (this.directiveSubmitting) return;
+      const content = (this.newDirective.content || '').trim();
+      if (!content) return;
+      const scope = this.newDirective.scope;
+      if (scope === 'explore_one' && !this.newDirective.target_intent_id) {
+        this.showToast('请先选择一个尚未领取的 Explore', 'error');
+        return;
+      }
+      this.directiveSubmitting = true;
+      try {
+        await this.api('POST', `/projects/${this.selectedProjectId}/directives`, {
+          content,
+          creator: this.actorName(),
+          scope,
+          target_intent_id: scope === 'explore_one' ? this.newDirective.target_intent_id : null,
+        });
+        this.newDirective = { scope, content: '', target_intent_id: '' };
+        await this.loadProjectDetails(this.selectedProjectId);
+        this.showToast('指令已下发');
+      } catch (e) { this.showToast(e.message, 'error'); }
+      finally { this.directiveSubmitting = false; }
+    },
+    async toggleDirective(item) {
+      if (!item) return;
+      const disabled = item.status === 'disabled' || item.archived;
+      try {
+        await this.api('PATCH', `/projects/${this.selectedProjectId}/directives/${item.id}`, { disabled: !disabled });
+        await this.loadProjectDetails(this.selectedProjectId);
+        this.showToast(disabled ? '指令已启用' : '指令已停用');
+      } catch (e) { this.showToast(e.message, 'error'); }
+    },
     openHintModal() {
       if (!this.projectCanWriteHints()) return;
       this.hintForm = { content:'' };

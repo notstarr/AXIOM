@@ -206,7 +206,8 @@ class ContextService:
                     "graph": f"{base_key}/graph.json",
                     "todos": f"{base_key}/todos.json",
                     "artifacts": f"{base_key}/artifacts.json",
-                    "hints": f"{base_key}/hints.json",
+                    # hints 已停写：不再作为 worker 的输入索引。历史 hint 的
+                    # detail 文件仍会生成，供 Todo/Goal 的 hint:xxx 软引用解析。
                     "vulnerabilities": f"{base_key}/vulnerabilities.json",
                     "knowledge": f"{base_key}/knowledge.json",
                 }
@@ -897,30 +898,6 @@ class ContextService:
             }
             for row in artifact_rows
         ]
-        hint_index = [
-            {
-                "id": row["id"],
-                "content": row["content"],
-                "creator": row["creator"],
-                **(
-                    hint_relations.get(
-                        row["id"],
-                    {
-                        "processed": False,
-                        "associated_todo_ids": [],
-                        "associated_intent_ids": [],
-                        "associated_reason_run_ids": [],
-                        "associated_plan_run_ids": [],
-                    },
-                    )
-                    if include_archived
-                    else {}
-                ),
-                "ref": f"hint:{row['id']}",
-                "detail": _detail_path(f"hint:{row['id']}"),
-            }
-            for row in hint_rows
-        ]
         vulnerability_index = [
             {
                 "id": row["id"],
@@ -992,7 +969,6 @@ class ContextService:
                 "graph.json": _json(graph),
                 "todos.json": _json(todo_index),
                 "artifacts.json": _json(artifact_index),
-                "hints.json": _json(hint_index),
                 "vulnerabilities.json": _json(vulnerability_index),
                 "knowledge.json": _json(knowledge_index),
             }

@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from axiom.modules.artifacts.schemas import Artifact
+from axiom.modules.directives.schemas import WorkerDirectiveBundle
 from axiom.modules.vulnerabilities.schemas import ExploreVulnerabilityReport, Vulnerability
 
 
@@ -118,6 +119,9 @@ class ExecutionInput(BaseModel):
     origin: str
     goal: str
     hints: list[str] = Field(default_factory=list)
+    # 人工下发的 Worker 指令。与 hints 分开：hints 已停写且 dispatcher 从未消费，
+    # 而 directives 有作用域/一次性语义，由 pi.py 单独渲染进系统提示词与阶段章节。
+    directives: WorkerDirectiveBundle = Field(default_factory=WorkerDirectiveBundle)
     skill_directories: list[str] = Field(default_factory=list)
     mcp_tool_names: list[str] = Field(default_factory=list)
     capability_environment: dict[str, str] = Field(default_factory=dict)
@@ -182,6 +186,9 @@ class PlanExecutionInput(BaseModel):
     origin: str
     goal: str
     hints: list[str] = Field(default_factory=list)
+    # 人工下发的 Worker 指令。与 hints 分开：hints 已停写且 dispatcher 从未消费，
+    # 而 directives 有作用域/一次性语义，由 pi.py 单独渲染进系统提示词与阶段章节。
+    directives: WorkerDirectiveBundle = Field(default_factory=WorkerDirectiveBundle)
     skill_directories: list[str] = Field(default_factory=list)
     mcp_tool_names: list[str] = Field(default_factory=list)
     capability_environment: dict[str, str] = Field(default_factory=dict)
