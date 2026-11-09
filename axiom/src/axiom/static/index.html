@@ -4,11 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>axiom</title>
-<link rel="icon" href="/static/logo.jpg?v=20261109-directives-presets3" type="image/jpeg">
-<link rel="stylesheet" href="/static/apple.css?v=20261109-directives-presets3">
-<link rel="stylesheet" href="/static/tailwind.generated.css?v=20261109-directives-presets3">
-<script defer src="/static/vendor/alpine.min.js?v=20261109-directives-presets3"></script>
-<link rel="stylesheet" href="/static/custom.css?v=20261109-directives-presets3">
+<link rel="icon" href="/static/logo.jpg?v=20261109-directive-modal" type="image/jpeg">
+<link rel="stylesheet" href="/static/apple.css?v=20261109-directive-modal">
+<link rel="stylesheet" href="/static/tailwind.generated.css?v=20261109-directive-modal">
+<script defer src="/static/vendor/alpine.min.js?v=20261109-directive-modal"></script>
+<link rel="stylesheet" href="/static/custom.css?v=20261109-directive-modal">
 </head>
 <body class="h-screen overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="axiomApp()" style="background:var(--bg-secondary);color:var(--text-primary)">
 
@@ -17,7 +17,7 @@
   <div class="fixed inset-0 z-[100] flex items-center justify-center" style="background:var(--bg-secondary)">
     <div class="flex flex-col items-center gap-4">
       <div class="w-12 h-12 rounded-lg overflow-hidden" style="box-shadow:var(--shadow-sm)">
-        <img src="/static/logo.jpg?v=20261109-directives-presets3" alt="axiom" class="w-full h-full object-cover">
+        <img src="/static/logo.jpg?v=20261109-directive-modal" alt="axiom" class="w-full h-full object-cover">
       </div>
       <div class="w-40 h-[3px] rounded-full overflow-hidden" style="background:var(--border)">
         <div class="h-full w-1/3 rounded-full" style="background:var(--accent);animation:axiomBootSlide 1.1s ease-in-out infinite"></div>
@@ -32,7 +32,7 @@
       <div class="p-8 sm:p-10"
            style="background:var(--surface-modal); border:1px solid var(--border-default); border-radius:var(--radius-xl); box-shadow:var(--shadow-lg)">
         <div class="flex flex-col items-center text-center">
-          <div class="w-14 h-14 overflow-hidden" style="border-radius:var(--radius-md);box-shadow:var(--shadow-sm)"><img src="/static/logo.jpg?v=20261109-directives-presets3" alt="axiom" class="w-full h-full object-cover"></div>
+          <div class="w-14 h-14 overflow-hidden" style="border-radius:var(--radius-md);box-shadow:var(--shadow-sm)"><img src="/static/logo.jpg?v=20261109-directive-modal" alt="axiom" class="w-full h-full object-cover"></div>
           <h1 class="mt-4 text-xl font-bold tracking-tight" style="color:var(--text-primary)">AXIOM 控制台</h1>
           <p class="mt-1" style="font-size:var(--fs-meta);color:var(--text-tertiary)">安全测试编排平台 · 请登录后继续</p>
         </div>
@@ -73,7 +73,7 @@
 </button>
 <div class="mobile-sidebar-backdrop" x-show="mobileSidebarOpen" x-cloak @click="mobileSidebarOpen = false"></div>
 <aside class="sidebar" :class="{ 'is-collapsed': sidebarCollapsed, 'is-mobile-open': mobileSidebarOpen }">
-  <div class="sidebar-logo-row"><div class="sidebar-logo"><img src="/static/logo.jpg?v=20261109-directives-presets3" alt="axiom"></div><span class="sidebar-brand">AXIOM</span><button type="button" class="sidebar-collapse" @click="toggleSidebar()" :aria-label="sidebarCollapsed ? '展开侧栏' : '折叠侧栏'"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path :d="sidebarCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'"/></svg></button></div>
+  <div class="sidebar-logo-row"><div class="sidebar-logo"><img src="/static/logo.jpg?v=20261109-directive-modal" alt="axiom"></div><span class="sidebar-brand">AXIOM</span><button type="button" class="sidebar-collapse" @click="toggleSidebar()" :aria-label="sidebarCollapsed ? '展开侧栏' : '折叠侧栏'"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path :d="sidebarCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'"/></svg></button></div>
   <button type="button" class="nav-item nav-back" data-tooltip="返回上一页" x-show="pageHistory.length > 0" @click="goBack()"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg><span class="nav-label">返回</span></button>
   <nav class="sidebar-nav">
     <button type="button" class="nav-item" data-tooltip="仪表盘" :class="{ 'is-active': activePage === 'dashboard' }" @click="navigateTo('dashboard')"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6V4h-6v16ZM4 20h6v-4H4v4Z"/></svg><span class="nav-label">仪表盘</span></button>
@@ -238,6 +238,105 @@
         class="px-5 py-2 text-sm bg-amber-500 text-white rounded-xl font-medium hover:bg-amber-600 transition disabled:opacity-30 shadow-sm shadow-amber-200">添加</button>
     </div>
 </div>
+</div>
+
+<!-- Worker 指令：概览页就地弹窗（下发 + 管理），不再跳图谱 -->
+<div x-show="showDirectiveModal" x-cloak class="fixed inset-0 z-50 flex items-start justify-center overlay px-4 py-10" @click.self="closeDirectiveModal()" @keydown.escape.window="closeDirectiveModal()">
+  <div class="bg-white rounded-2xl shadow-2xl modal-enter w-full max-w-2xl max-h-[86vh] flex flex-col border border-slate-200/60" @click.stop>
+    <div class="shrink-0 flex items-start justify-between gap-4 px-5 py-4 border-b border-slate-100">
+      <div>
+        <h3 class="text-sm font-semibold text-slate-800">Worker 指令</h3>
+        <p class="mt-0.5 text-[11px] leading-5 text-slate-400">按作用域约束对应阶段的执行者；一次性指令只作用于绑定的那一轮，已开跑的 Worker 不会收到。</p>
+      </div>
+      <button type="button" @click="closeDirectiveModal()" class="shrink-0 p-1.5 rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-600" aria-label="关闭">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
+      <div>
+        <p class="text-[11px] font-semibold text-slate-500">作用域</p>
+        <div class="mt-1.5 grid grid-cols-2 gap-1.5">
+          <template x-for="opt in directiveScopeOptions" :key="`dscope-${opt.scope}`">
+            <button type="button" @click="newDirective.scope = opt.scope; newDirective.preset = ''; newDirective.target_intent_id = ''"
+              class="rounded-xl border px-2.5 py-2 text-left transition"
+              :class="[newDirective.scope === opt.scope ? 'border-brand-400 bg-indigo-50' : 'border-slate-200 bg-white hover:bg-slate-50', opt.scope === 'all_workers' ? 'col-span-2' : '']">
+              <span class="flex items-center gap-1.5">
+                <span class="text-[11px] font-semibold" :class="newDirective.scope === opt.scope ? 'text-indigo-700' : 'text-slate-600'" x-text="opt.label"></span>
+                <span class="ml-auto rounded px-1 py-0.5 text-[9px] font-semibold"
+                  :class="opt.lifetime === '常驻' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'" x-text="opt.lifetime"></span>
+              </span>
+              <span class="mt-0.5 block text-[10px] text-slate-400" x-text="opt.hint"></span>
+            </button>
+          </template>
+        </div>
+      </div>
+
+      <template x-if="newDirective.scope === 'explore_one'">
+        <div>
+          <label class="text-[11px] font-semibold text-slate-500">绑定 Explore</label>
+          <select x-model="newDirective.target_intent_id"
+            class="mt-1.5 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+            <option value="">选择尚未领取的 Explore</option>
+            <template x-for="e in eligibleExplores" :key="`dscope-explore-${e.intent_id}`">
+              <option :value="e.intent_id" x-text="`${e.intent_id} · ${(e.description || '').slice(0, 40)}`"></option>
+            </template>
+          </select>
+          <p x-show="!eligibleExplores.length" class="mt-1 text-[10px] text-slate-400">当前没有待领取的 Explore，可以先下发常驻指令。</p>
+        </div>
+      </template>
+
+      <div>
+        <div class="flex items-center justify-between gap-2">
+          <label class="text-[11px] font-semibold text-slate-500">指令内容</label>
+          <select x-show="presetsForScope(newDirective.scope).length > 0" x-model="newDirective.preset" @change="applyDirectivePreset()"
+            class="max-w-[210px] px-2 py-1 border border-slate-200 rounded-lg text-[11px] bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400">
+            <option value="">从预设开始（可再改）</option>
+            <template x-for="preset in presetsForScope(newDirective.scope)" :key="`dscope-preset-${preset.key}`">
+              <option :value="preset.key" x-text="preset.label"></option>
+            </template>
+          </select>
+        </div>
+        <textarea x-model="newDirective.content" rows="4" :placeholder="directiveContentPlaceholder()"
+          class="mt-1.5 w-full px-3 py-2 border border-slate-200 rounded-xl text-sm leading-6 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 placeholder:text-slate-300"></textarea>
+        <p class="mt-1 text-[10px] text-slate-400">操作者：<span x-text="actorName()"></span></p>
+      </div>
+
+      <div class="pt-1">
+        <div class="flex items-center justify-between">
+          <p class="text-[11px] font-semibold text-slate-500">已下发</p>
+          <span class="text-[10px] text-slate-400" x-text="`${(project?.directives || []).length} 条`"></span>
+        </div>
+        <p x-show="!(project?.directives || []).length" class="mt-2 rounded-xl border border-dashed border-slate-200 px-3 py-4 text-center text-[11px] text-slate-400">这个任务还没有指令</p>
+        <div class="mt-2 space-y-1.5">
+          <template x-for="d in (project?.directives || []).filter(x => !x.archived).slice(0, 12)" :key="`modal-directive-${d.id}`">
+            <div class="rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2">
+              <div class="flex items-center gap-2">
+                <span class="text-[9px] font-semibold text-indigo-700" x-text="directiveScopeLabel(d.scope)"></span>
+                <span class="rounded px-1 py-0.5 text-[9px] font-semibold"
+                  :class="(d.status === 'disabled' || d.archived) ? 'bg-slate-200 text-slate-500' : (d.status === 'pending' ? 'bg-amber-50 text-amber-700' : (d.status === 'delivered' ? 'bg-slate-100 text-slate-600' : 'bg-emerald-50 text-emerald-700'))"
+                  x-text="directiveStatusLabel(d)"></span>
+                <button type="button" @click="toggleDirective(d)" class="ml-auto text-[10px] text-slate-500 hover:underline"
+                  x-text="(d.status === 'disabled' || d.archived) ? '启用' : '停用'"></button>
+              </div>
+              <p class="mt-1 text-[11px] leading-5 text-slate-600 whitespace-pre-wrap break-words" x-text="d.content"></p>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <div class="shrink-0 flex items-center justify-between gap-2 px-5 py-3 border-t border-slate-100">
+      <span class="text-[10px] text-slate-400">一次性指令只对下一轮生效，重发不会叠加。</span>
+      <div class="flex items-center gap-2">
+        <button type="button" @click="closeDirectiveModal()" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
+        <button type="button" @click="addDirective()"
+          :disabled="!newDirective.content.trim() || directiveSubmitting || (newDirective.scope === 'explore_one' && !newDirective.target_intent_id)"
+          class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200"
+          x-text="directiveSubmitting ? '下发中…' : '下发指令'"></button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Blackboard Editor -->
@@ -560,27 +659,27 @@
   sentinel 区间在未登录请求时被 app.py 替换为单条 login.js 引用。
   ═══════════════════════════════════════════════════════════════════ -->
 <!--AXIOM_AUTH_SCRIPTS_START-->
-<script src="/static/js/state.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/helpers.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/core.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/projects.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/dashboard.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/skills.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/files.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/mcp.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/graph.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/human.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/lineage.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/archives.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/timeline.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/actions.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/dispatch.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/worker-tools.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/prompts.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/storage.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/redteam-resources.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/v2-adapter.js?v=20261109-directives-presets3"></script>
-<script src="/static/js/app.js?v=20261109-directives-presets3"></script>
+<script src="/static/js/state.js?v=20261109-directive-modal"></script>
+<script src="/static/js/helpers.js?v=20261109-directive-modal"></script>
+<script src="/static/js/core.js?v=20261109-directive-modal"></script>
+<script src="/static/js/projects.js?v=20261109-directive-modal"></script>
+<script src="/static/js/dashboard.js?v=20261109-directive-modal"></script>
+<script src="/static/js/skills.js?v=20261109-directive-modal"></script>
+<script src="/static/js/files.js?v=20261109-directive-modal"></script>
+<script src="/static/js/mcp.js?v=20261109-directive-modal"></script>
+<script src="/static/js/graph.js?v=20261109-directive-modal"></script>
+<script src="/static/js/human.js?v=20261109-directive-modal"></script>
+<script src="/static/js/lineage.js?v=20261109-directive-modal"></script>
+<script src="/static/js/archives.js?v=20261109-directive-modal"></script>
+<script src="/static/js/timeline.js?v=20261109-directive-modal"></script>
+<script src="/static/js/actions.js?v=20261109-directive-modal"></script>
+<script src="/static/js/dispatch.js?v=20261109-directive-modal"></script>
+<script src="/static/js/worker-tools.js?v=20261109-directive-modal"></script>
+<script src="/static/js/prompts.js?v=20261109-directive-modal"></script>
+<script src="/static/js/storage.js?v=20261109-directive-modal"></script>
+<script src="/static/js/redteam-resources.js?v=20261109-directive-modal"></script>
+<script src="/static/js/v2-adapter.js?v=20261109-directive-modal"></script>
+<script src="/static/js/app.js?v=20261109-directive-modal"></script>
 <!--AXIOM_AUTH_SCRIPTS_END-->
 </body>
 </html>

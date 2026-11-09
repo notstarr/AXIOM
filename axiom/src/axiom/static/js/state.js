@@ -232,6 +232,15 @@ window.AxiomModules.state = {
     completeForm: { description: '' },
     hintForm: { content: '' },
     newDirective: { scope: 'reason_all', content: '', target_intent_id: '', preset: '' },
+    showDirectiveModal: false,
+    // 弹窗里的作用域选择：五档一次性列出，比下拉更容易看清「常驻 / 一次」的差别。
+    directiveScopeOptions: [
+      { scope: 'reason_all', label: '对全体 Reason', lifetime: '常驻', hint: '约束每一轮规划' },
+      { scope: 'reason_next', label: '对下一次 Reason', lifetime: '一次', hint: '只作用于下一轮规划' },
+      { scope: 'explore_all', label: '对全体 Explore', lifetime: '常驻', hint: '约束每一次 explore' },
+      { scope: 'explore_one', label: '对某个 Explore', lifetime: '一次', hint: '绑定一个待领取的 Explore' },
+      { scope: 'all_workers', label: '对全部 Worker', lifetime: '常驻', hint: '追加到所有 Worker 的系统提示' },
+    ],
     eligibleExplores: [],
     directiveSubmitting: false,
     blackboardEditorForManaged: false,

@@ -4329,3 +4329,106 @@ def test_task_composer_only_submits_non_empty_directives() -> None:
     }
     assert len(result["filtered"]) == 1
     assert result["filtered"][0]["scope"] == "all_workers"
+
+
+def _run_directive_modal_fixture() -> dict[str, object]:
+    """概览页的指令弹窗：打开即重置表单，提交走同一套 POST。"""
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for frontend behavior tests")
+
+    actions = ROOT / "src/axiom/static/js/actions.js"
+    program = f"""
+const fs = require('fs');
+global.window = {{ AxiomModules: {{ actions: {{ methods: {{}} }} }} }};
+eval(fs.readFileSync({json.dumps(str(actions))}, 'utf8'));
+const methods = window.AxiomModules.actions.methods;
+const calls = [];
+const toasts = [];
+const ctx = Object.assign({{}}, methods, {{
+  selectedProjectId: 't_002',
+  project: {{ directives: [] }},
+  showDirectiveModal: false,
+  directiveSubmitting: false,
+  newDirective: {{ scope: 'all_workers', content: '上一轮的残留', target_intent_id: 'i999', preset: 'stale' }},
+  eligibleExplores: [],
+  directivePresetsLoaded: 0,
+  api: async (method, url, body) => {{
+    calls.push({{ method, url, body }});
+    if (url.indexOf('eligible-explores') >= 0) {{
+      return [{{ intent_id: 'i001', description: '待领取的探索' }}];
+    }}
+    if (method === 'POST') return {{ id: 'd002' }};
+    if (method === 'GET') return [
+      {{ id: 'd002', scope: 'explore_one', content: '只读验证', status: 'pending' }},
+    ];
+    return {{}};
+  }},
+  loadDirectivePresets() {{ this.directivePresetsLoaded += 1; return Promise.resolve(); }},
+  actorName() {{ return '人工'; }},
+  showToast(message, kind) {{ toasts.push({{ message, kind }}); }},
+}});
+
+(async () => {{
+  await ctx.openDirectiveModal();
+  const opened = {{
+    visible: ctx.showDirectiveModal,
+    scope: ctx.newDirective.scope,
+    content: ctx.newDirective.content,
+    preset: ctx.newDirective.preset,
+    target: ctx.newDirective.target_intent_id,
+    explores: ctx.eligibleExplores.length,
+    presetsLoaded: ctx.directivePresetsLoaded,
+  }};
+
+  ctx.newDirective = {{ scope: 'explore_one', content: '  只读验证  ', target_intent_id: 'i001', preset: '' }};
+  await ctx.addDirective();
+  const submitted = {{
+    visible: ctx.showDirectiveModal,
+    content: ctx.newDirective.content,
+    scope: ctx.newDirective.scope,
+    submitting: ctx.directiveSubmitting,
+    directives: (ctx.project.directives || []).length,
+  }};
+
+  ctx.closeDirectiveModal();
+  process.stdout.write(JSON.stringify({{ opened, submitted, afterClose: ctx.showDirectiveModal, calls, toasts }}));
+}})();
+"""
+    result = subprocess.run([node, "-e", program], check=True, capture_output=True, text=True)
+    return json.loads(result.stdout)
+
+
+def test_directive_modal_opens_in_place_with_a_clean_form() -> None:
+    """概览点「下发 / 管理」应当就地开弹窗，而且不能带着上一次的残留内容。"""
+    opened = _run_directive_modal_fixture()["opened"]
+
+    assert opened["visible"] is True
+    assert opened["scope"] == "reason_all"
+    assert opened["content"] == ""
+    assert opened["preset"] == ""
+    assert opened["target"] == ""
+    # 打开时顺手取待领取的 Explore 与预设，否则下拉是空的
+    assert opened["explores"] == 1
+    assert opened["presetsLoaded"] >= 1
+
+
+def test_directive_modal_submits_trimmed_content_and_keeps_the_dialog_open() -> None:
+    result = _run_directive_modal_fixture()
+    posts = [call for call in result["calls"] if call.get("method") == "POST"]
+
+    assert len(posts) == 1
+    assert posts[0]["url"] == "/projects/t_002/directives"
+    assert posts[0]["body"]["content"] == "只读验证"
+    assert posts[0]["body"]["scope"] == "explore_one"
+    assert posts[0]["body"]["target_intent_id"] == "i001"
+
+    submitted = result["submitted"]
+    # 弹窗不自动关：连着下发第二条是常态
+    assert submitted["visible"] is True
+    assert submitted["content"] == ""
+    assert submitted["submitting"] is False
+    assert submitted["directives"] == 1
+    assert result["toasts"][-1]["message"] == "指令已下发"
+    assert result["afterClose"] is False

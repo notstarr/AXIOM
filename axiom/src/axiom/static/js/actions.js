@@ -104,6 +104,16 @@ window.AxiomModules.actions = {
       if (!preset) return;
       this.newDirective.content = this.presetPlaceholderText(preset);
     },
+    // 输入框按作用域给例子，比一句通用 placeholder 更能说明「这个作用域该写什么」
+    directiveContentPlaceholder() {
+      return ({
+        reason_all: '例：不派发越权类测试，优先覆盖对象级读取接口',
+        reason_next: '例：这一轮先复核登录态基线，再决定下一步',
+        explore_all: '例：新增或编辑的内容、痕迹统一用 SecPentest-<Intent 编号> 命名',
+        explore_one: '例：这次只验证读取接口，不写库、不改状态',
+        all_workers: '例：不允许测试 pay.example.com',
+      }[this.newDirective.scope] || '写清楚约束，Worker 会按字面执行');
+    },
     directiveStatusLabel(item) {
       if (!item) return '';
       if (item.status === 'disabled' || item.archived) return '已停用';
@@ -119,13 +129,15 @@ window.AxiomModules.actions = {
         if (this.project) this.project = { ...this.project, directives: items || [] };
       } catch (e) { /* 列表刷新失败不该把已经成功的下发判成失败 */ }
     },
-    // 概览里的「下发 / 管理」：切到图谱并直接打开指令侧栏。
-    async openTaskDirectivePanel() {
-      await this.switchTaskView('graph');
-      this.sidePanelCollapsed = false;
-      this.sideTab = 'directives';
+    // 概览里的「下发 / 管理」：就地弹窗，不跳图谱。
+    // 跳图谱会丢掉当前上下文（概览里的任务目标、当前轮次），而且侧栏在小屏上不可见。
+    async openDirectiveModal() {
+      this.newDirective = { scope: 'reason_all', content: '', target_intent_id: '', preset: '' };
+      this.showDirectiveModal = true;
       await this.loadEligibleExplores();
-      await this.loadDirectivePresets();
+    },
+    closeDirectiveModal() {
+      this.showDirectiveModal = false;
     },
     async loadEligibleExplores() {
       // 打开指令面板时顺手把预设取回来，否则下拉是空的
